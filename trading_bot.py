@@ -99,6 +99,14 @@ class TradingBot:
 
         HARD_RULES["max_order_krw"] = max_order
         self.risk = RiskManager(init_cash=init_cash)
+
+        # ── KR / US 시장 예산 분리 ──────────────────────────────────────────
+        # .env: KR_ALLOC_PCT=60  →  KR 60%, US 40% 배분
+        kr_pct = min(100, max(0, int(os.getenv("KR_ALLOC_PCT", "60")))) / 100.0
+        self.kr_budget = init_cash * kr_pct
+        self.us_budget = init_cash * (1.0 - kr_pct)
+        log.info(f"예산 배분 | KR {self.kr_budget:,.0f}원 ({kr_pct*100:.0f}%) "
+                 f"/ US {self.us_budget:,.0f}원 ({(1-kr_pct)*100:.0f}%)")
         # ───────────────────────────────────────────────────────────────────
 
         self.today_judgment = {}
@@ -110,7 +118,104 @@ class TradingBot:
 
         # 재시작 시 이월 포지션 복구
         self._restore_positions()
+
+        # API 연결 상태 점검
+        self._startup_health_check()
         log.info(f"init | {'paper' if is_paper else 'live'}")
+
+    # ── API 헬스체크 ───────────────────────────────────────────────────────────
+
+    def _startup_health_check(self):
+        """봇 시작 시 연결된 API 전체 상태 점검 후 텔레그램 리포트"""
+        import os as _os
+        results: dict[str, str] = {}
+
+        # 1. KIS 토큰 (이미 __init__에서 획득했으면 OK)
+        results["KIS 토큰"] = "OK" if self.token else "FAIL - 토큰 없음"
+
+        # 2. KIS 실시간 시세 (삼성전자 호출)
+        try:
+            price_info = get_price("005930", self.token, market="KR")
+            results["KIS 시세 (005930)"] = f"OK ({price_info['price']:,}원)"
+        except Exception as e:
+            results["KIS 시세 (005930)"] = f"FAIL - {e}"
+
+        # 3. Alpha Vantage (US 시세)
+        av_key = _os.getenv("ALPHA_VANTAGE_KEY", "")
+        if av_key:
+            try:
+                candles = get_daily_ohlcv("NVDA", self.token, lookback_days=5, market="US")
+                results["Alpha Vantage (NVDA)"] = (
+                    f"OK ({len(candles)}일 캔들)" if not candles.empty else "WARN - 빈 데이터"
+                )
+            except Exception as e:
+                results["Alpha Vantage (NVDA)"] = f"FAIL - {e}"
+        else:
+            results["Alpha Vantage"] = "SKIP - ALPHA_VANTAGE_KEY 없음"
+
+        # 4. Telegram
+        try:
+            import requests as _req
+            tg_token = _os.getenv("TELEGRAM_TOKEN", "")
+            if tg_token:
+                resp = _req.get(
+                    f"https://api.telegram.org/bot{tg_token}/getMe", timeout=5
+                )
+                resp.raise_for_status()
+                bot_name = resp.json()["result"].get("username", "?")
+                results["Telegram"] = f"OK (@{bot_name})"
+            else:
+                results["Telegram"] = "SKIP - TELEGRAM_TOKEN 없음"
+        except Exception as e:
+            results["Telegram"] = f"FAIL - {e}"
+
+        # 5. DART (공시) - 선택
+        dart_key = _os.getenv("DART_API_KEY", "")
+        if dart_key:
+            try:
+                import requests as _req
+                resp = _req.get(
+                    "https://opendart.fss.or.kr/api/company.json",
+                    params={"crtfc_key": dart_key, "corp_code": "00126380"},
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                status = resp.json().get("status", "?")
+                results["DART API"] = "OK" if status == "000" else f"WARN - status={status}"
+            except Exception as e:
+                results["DART API"] = f"FAIL - {e}"
+        else:
+            results["DART API"] = "SKIP - DART_API_KEY 없음"
+
+        # 결과 로그 출력
+        ok_count  = sum(1 for v in results.values() if v.startswith("OK"))
+        fail_count = sum(1 for v in results.values() if v.startswith("FAIL"))
+        log.info("─── API Health Check ───────────────────────────────")
+        for name, status in results.items():
+            icon = "✓" if status.startswith("OK") else ("✗" if status.startswith("FAIL") else "–")
+            log.info(f"  {icon} {name}: {status}")
+        log.info(f"────────────────────── OK={ok_count} / FAIL={fail_count} ──")
+
+        # 텔레그램으로 헬스체크 결과 전송
+        lines = [f"{'paper' if self.is_paper else 'live'} 봇 시작 — API 점검 결과"]
+        for name, status in results.items():
+            icon = "✅" if status.startswith("OK") else ("❌" if status.startswith("FAIL") else "➖")
+            lines.append(f"{icon} {name}: {status}")
+        if fail_count:
+            lines.append(f"\n⚠️ {fail_count}개 API 연결 실패 — 확인 필요")
+        send("\n".join(lines))
+
+    # ── 시장별 예산 조회 ──────────────────────────────────────────────────────
+
+    def _market_budget_available(self, market: str) -> float:
+        """해당 시장에 추가로 배분 가능한 잔여 예산 (원)"""
+        budget = self.kr_budget if market == "KR" else self.us_budget
+        invested = sum(
+            p["entry"] * p["qty"]
+            for p in self.risk.positions
+            if self._ticker_market(p["ticker"]) == market
+        )
+        return max(0.0, budget - invested)
 
     # ── 포지션 영속성 ──────────────────────────────────────────────────────────
 
@@ -328,6 +433,12 @@ class TradingBot:
 
                 ok, _ = self.risk.can_open(ticker, price, size_pct)
                 if not ok:
+                    continue
+
+                # 시장별 예산 초과 확인
+                avail = self._market_budget_available(market)
+                if avail < price:  # 최소 1주 살 여유도 없으면 건너뜀
+                    log.debug(f"[{market}] 예산 소진 (잔여 {avail:,.0f}원 < {price:,.0f}원) → 신규진입 스킵")
                     continue
 
                 candles = get_daily_ohlcv(ticker, self.token, lookback_days=180, market=market)
