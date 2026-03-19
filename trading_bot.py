@@ -3,6 +3,7 @@ trading_bot.py
 Main loop for KR/US sessions. Paper by default, live with --live.
 """
 
+import os
 import sys
 import json
 import time
@@ -69,7 +70,34 @@ class TradingBot:
     def __init__(self, is_paper: bool = True):
         self.is_paper = is_paper
         self.token = get_access_token()
-        self.risk = RiskManager(init_cash=10_000_000)
+
+        # ── 투자 금액 설정 ──────────────────────────────────────────────────
+        # 모의투자: .env의 PAPER_CASH (기본 10,000,000원)
+        # 실계좌:  실제 KIS 잔고 조회 → 총자산(현금+평가액) 사용
+        if is_paper:
+            init_cash = int(os.getenv("PAPER_CASH", "10000000"))
+            max_order = int(os.getenv("MAX_ORDER_KRW", "500000"))
+            log.info(f"모의투자 | 가상자금 {init_cash:,}원 | 최대주문 {max_order:,}원")
+        else:
+            try:
+                bal = get_balance(self.token, market="KR")
+                init_cash = bal["cash"] + bal["total_eval"]
+                if init_cash <= 0:
+                    raise ValueError("잔고 0 — 계좌 확인 필요")
+                # 최대 주문: env 설정값 vs 총자산 5% 중 작은 값
+                env_cap = int(os.getenv("MAX_ORDER_KRW", "2000000"))
+                max_order = min(env_cap, int(init_cash * 0.05))
+                log.info(f"실계좌 | 총자산 {init_cash:,}원 "
+                         f"(현금 {bal['cash']:,} + 평가 {bal['total_eval']:,}) "
+                         f"| 최대주문 {max_order:,}원")
+            except Exception as e:
+                log.error(f"잔고 조회 실패: {e}")
+                raise SystemExit("실계좌 잔고 조회에 실패했습니다. 계좌/API 설정을 확인하세요.")
+
+        HARD_RULES["max_order_krw"] = max_order
+        self.risk = RiskManager(init_cash=init_cash)
+        # ───────────────────────────────────────────────────────────────────
+
         self.today_judgment = {}
         self.tuning_count = 0
         self.ws = None
