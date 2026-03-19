@@ -5,6 +5,7 @@ KIS API (KR) + AlphaVantage fallback (US quote/candles).
 
 import os
 import json
+import time
 import requests
 import threading
 import pandas as pd
@@ -19,10 +20,13 @@ ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")
 IS_PAPER = os.getenv("KIS_IS_PAPER", "true").lower() == "true"
 AV_KEY = os.getenv("ALPHA_VANTAGE_KEY", "")
 
-BASE_URL = (
+BASE_URL = os.getenv(
+    "KIS_BASE_URL",
+    (
     "https://openapivts.koreainvestment.com:29443"
     if IS_PAPER
     else "https://openapi.koreainvestment.com:9443"
+    ),
 )
 WS_URL = (
     "ws://ops.koreainvestment.com:31000"
@@ -30,6 +34,8 @@ WS_URL = (
     else "ws://ops.koreainvestment.com:21000"
 )
 TOKEN_FILE = "kis_token.json"
+KIS_HTTP_TIMEOUT = float(os.getenv("KIS_HTTP_TIMEOUT", "10"))
+KIS_TOKEN_RETRY = int(os.getenv("KIS_TOKEN_RETRY", "3"))
 
 
 def load_token():
@@ -52,15 +58,35 @@ def get_access_token():
     cached = load_token()
     if cached:
         return cached["access_token"]
-    resp = requests.post(
-        f"{BASE_URL}/oauth2/tokenP",
-        json={"grant_type": "client_credentials", "appkey": APP_KEY, "appsecret": APP_SECRET},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    save_token(data["access_token"], int(data.get("expires_in", 86400)))
-    return data["access_token"]
+    if not APP_KEY or not APP_SECRET:
+        raise RuntimeError("KIS_APP_KEY/KIS_APP_SECRET 값이 비어 있습니다. .env를 확인하세요.")
+
+    last_error = None
+    for attempt in range(1, max(1, KIS_TOKEN_RETRY) + 1):
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/oauth2/tokenP",
+                json={"grant_type": "client_credentials", "appkey": APP_KEY, "appsecret": APP_SECRET},
+                timeout=KIS_HTTP_TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            save_token(data["access_token"], int(data.get("expires_in", 86400)))
+            return data["access_token"]
+        except requests.exceptions.Timeout as e:
+            last_error = e
+            if attempt < KIS_TOKEN_RETRY:
+                time.sleep(1.5 * attempt)
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            break
+
+    raise RuntimeError(
+        "KIS 토큰 발급 연결 실패. "
+        f"URL={BASE_URL}/oauth2/tokenP, timeout={KIS_HTTP_TIMEOUT}s, retries={KIS_TOKEN_RETRY}. "
+        "망/방화벽에서 KIS 도메인(210.107.75.32) 29443/9443 포트 차단 여부를 확인하고, "
+        "필요 시 KIS_BASE_URL/KIS_HTTP_TIMEOUT 값을 조정하세요."
+    ) from last_error
 
 
 def _headers(token, tr_id=""):
