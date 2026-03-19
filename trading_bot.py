@@ -34,6 +34,9 @@ from kis_api import (
     place_order,
     KISWebSocket,
     get_daily_ohlcv,
+    get_index_change,
+    screen_market_kr,
+    screen_market_us,
 )
 from indicators import calc_all
 from risk_manager import RiskManager, HARD_RULES
@@ -46,7 +49,7 @@ from telegram_reporter import (
     daily_summary,
     status_report,
 )
-from minority_report.analysts import get_three_judgments, select_tickers, KR_UNIVERSE, US_UNIVERSE
+from minority_report.analysts import get_three_judgments, select_tickers
 from minority_report.consensus import build_consensus
 from minority_report.tuner import tune
 from minority_report.postmortem import run as run_postmortem
@@ -117,6 +120,8 @@ class TradingBot:
         self.tuning_count = 0
         self.ws = None
         self.price_cache = {}
+        self._ohlcv_cache: dict = {}        # ticker -> DataFrame (일봉 캐시)
+        self._ohlcv_cache_time: dict = {}   # ticker -> datetime (캐시 갱신 시각)
         self.session_active = False
         self.current_market = None
 
@@ -395,9 +400,14 @@ class TradingBot:
         judgments = get_three_judgments(digest_prompt, brain_summary, correction)
         consensus = build_consensus(judgments)
 
-        # 오늘 집중 종목 Claude 선택
-        universe = KR_UNIVERSE if market == "KR" else US_UNIVERSE
-        selected = select_tickers(market, digest_prompt, consensus["mode"], universe)
+        # 오늘 집중 종목: 스크리너 → Claude 선택
+        log.info(f"[스크리너] {market} 시장 스캔 중...")
+        if market == "KR":
+            candidates = screen_market_kr(self.token)
+        else:
+            candidates = screen_market_us()
+        log.info(f"[스크리너] {market} 후보 {len(candidates)}개 → Claude 선택 중...")
+        selected = select_tickers(market, digest_prompt, consensus["mode"], candidates)
         self.today_tickers[market] = selected
         log.info(f"[종목선택 확정] {market}: {selected}")
 
@@ -427,6 +437,17 @@ class TradingBot:
         self.price_cache[ticker] = price
         self.risk.update_prices(self.price_cache)
         self._process_exit_candidates()
+
+    def _get_ohlcv_cached(self, ticker: str, market: str, ttl_min: int = 60):
+        """일봉 OHLCV 캐시 — TTL 내 재요청 생략 (장중 일봉은 당일 완성 전까지 불변)"""
+        now = datetime.now(KST).replace(tzinfo=None)
+        cached_at = self._ohlcv_cache_time.get(ticker)
+        if cached_at and (now - cached_at).total_seconds() < ttl_min * 60:
+            return self._ohlcv_cache[ticker]
+        df = get_daily_ohlcv(ticker, self.token, lookback_days=180, market=market)
+        self._ohlcv_cache[ticker] = df
+        self._ohlcv_cache_time[ticker] = now
+        return df
 
     def run_cycle(self, market: str):
         if not self.session_active:
@@ -474,7 +495,7 @@ class TradingBot:
                     log.debug(f"  [{ticker}] 예산 소진 (잔여 {avail:,.0f}원 < {price:,.0f}원) → 스킵")
                     continue
 
-                candles = get_daily_ohlcv(ticker, self.token, lookback_days=180, market=market)
+                candles = self._get_ohlcv_cached(ticker, market)
                 if candles.empty:
                     log.debug(f"  [{ticker}] 캔들 없음")
                     continue
@@ -561,7 +582,7 @@ class TradingBot:
         elapsed = self.tuning_count * 30
 
         current_state = {
-            "index_change": 0,
+            "index_change": get_index_change(market),
             "volume_trend": "normal",
             "positions": [
                 {
@@ -639,7 +660,7 @@ class TradingBot:
 
         today = date.today().strftime("%Y-%m-%d")
         actual = {
-            "market_change": 0,
+            "market_change": get_index_change(market),
             "pnl_pct": self.risk.daily_pnl / self.risk.init_cash * 100,
             "pnl_krw": int(self.risk.daily_pnl),
             "win": self.risk.daily_pnl > 0,

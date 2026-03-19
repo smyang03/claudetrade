@@ -181,8 +181,32 @@ def fetch_kr_daily(ticker: str, start_yyyymmdd: str, end_yyyymmdd: str) -> pd.Da
     return df[(df["date"] >= pd.Timestamp(start_dt)) & (df["date"] <= pd.Timestamp(end_dt))]
 
 
+def fetch_kr_daily_yfinance(ticker: str, start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> pd.DataFrame:
+    """yfinance 폴백 — KIS API 실패 시 사용 (KOSPI: .KS, KOSDAQ: .KQ)"""
+    try:
+        import yfinance as yf
+    except ImportError:
+        return pd.DataFrame()
+    # 대부분 KOSPI 상장 — .KS 시도 후 실패 시 .KQ
+    for suffix in [".KS", ".KQ"]:
+        end_fetch = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+        df = yf.Ticker(f"{ticker}{suffix}").history(
+            start=start_dt.strftime("%Y-%m-%d"),
+            end=end_fetch,
+            auto_adjust=True,
+        )
+        if not df.empty:
+            df = df.reset_index()
+            df.columns = [c.lower() for c in df.columns]
+            if "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+            df = df[["date", "open", "high", "low", "close", "volume"]].copy()
+            return df.sort_values("date").reset_index(drop=True)
+    return pd.DataFrame()
+
+
 def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
-    """국내 주가 증분 수집 — 누락 구간만 KIS API 호출"""
+    """국내 주가 증분 수집 — KIS API 우선, 실패 시 yfinance 폴백"""
     print(f"\n[국내 주가] {start_dt.date()} ~ {end_dt.date()}")
 
     for ticker, name in KR_TICKERS.items():
@@ -199,7 +223,12 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
                 if start_dt < ex_min:
                     s = start_dt.strftime("%Y%m%d")
                     e = (ex_min - timedelta(days=1)).strftime("%Y%m%d")
-                    df_back = fetch_kr_daily(ticker, s, e)
+                    try:
+                        df_back = fetch_kr_daily(ticker, s, e)
+                    except Exception:
+                        df_back = pd.DataFrame()
+                    if df_back.empty:
+                        df_back = fetch_kr_daily_yfinance(ticker, start_dt, ex_min - timedelta(days=1))
                     if not df_back.empty:
                         fetch_parts.append(df_back)
                         print(f"         < 이전 {len(df_back)}일 추가")
@@ -209,7 +238,12 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
                 if end_dt > ex_max:
                     s = (ex_max + timedelta(days=1)).strftime("%Y%m%d")
                     e = end_dt.strftime("%Y%m%d")
-                    df_fwd = fetch_kr_daily(ticker, s, e)
+                    try:
+                        df_fwd = fetch_kr_daily(ticker, s, e)
+                    except Exception:
+                        df_fwd = pd.DataFrame()
+                    if df_fwd.empty:
+                        df_fwd = fetch_kr_daily_yfinance(ticker, ex_max + timedelta(days=1), end_dt)
                     if not df_fwd.empty:
                         fetch_parts.append(df_fwd)
                         print(f"         > 최신 {len(df_fwd)}일 추가")
@@ -221,10 +255,16 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
 
                 combined = pd.concat([existing] + fetch_parts)
             else:
-                # 최초 수집
+                # 최초 수집 — KIS 시도 후 실패 시 yfinance
                 s = start_dt.strftime("%Y%m%d")
                 e = end_dt.strftime("%Y%m%d")
-                combined = fetch_kr_daily(ticker, s, e)
+                try:
+                    combined = fetch_kr_daily(ticker, s, e)
+                except Exception:
+                    combined = pd.DataFrame()
+                if combined.empty:
+                    print(f"  [{ticker}] KIS 실패 → yfinance 폴백")
+                    combined = fetch_kr_daily_yfinance(ticker, start_dt, end_dt)
                 time.sleep(0.5)
 
             _save(path, combined, start_dt, end_dt, f"{name}({ticker})")

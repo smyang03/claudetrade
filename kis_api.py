@@ -133,27 +133,29 @@ def _get_price_kr(ticker, token):
 
 def _get_price_us_alpha(ticker):
     if not AV_KEY:
-        raise RuntimeError("ALPHA_VANTAGE_KEY is required for US quote")
-    resp = requests.get(
-        "https://www.alphavantage.co/query",
-        params={"function": "GLOBAL_QUOTE", "symbol": ticker, "apikey": AV_KEY},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    q = resp.json().get("Global Quote", {})
-    if not q:
-        raise RuntimeError(f"US quote unavailable for {ticker}")
-    return {
-        "ticker": ticker,
-        "name": ticker,
-        "price": round(float(q.get("05. price", 0)), 4),
-        "change": round(float(q.get("09. change", 0)), 4),
-        "change_rate": float(q.get("10. change percent", "0%").replace("%", "")),
-        "volume": int(float(q.get("06. volume", 0))),
-        "open": round(float(q.get("02. open", 0)), 4),
-        "high": round(float(q.get("03. high", 0)), 4),
-        "low": round(float(q.get("04. low", 0)), 4),
-    }
+        return _get_price_us_yf(ticker)
+    try:
+        resp = requests.get(
+            "https://www.alphavantage.co/query",
+            params={"function": "GLOBAL_QUOTE", "symbol": ticker, "apikey": AV_KEY},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        q = resp.json().get("Global Quote", {})
+        if not q or not q.get("05. price"):
+            raise ValueError("빈 응답")
+        return {
+            "ticker": ticker, "name": ticker,
+            "price": round(float(q.get("05. price", 0)), 4),
+            "change": round(float(q.get("09. change", 0)), 4),
+            "change_rate": float(q.get("10. change percent", "0%").replace("%", "")),
+            "volume": int(float(q.get("06. volume", 0))),
+            "open": round(float(q.get("02. open", 0)), 4),
+            "high": round(float(q.get("03. high", 0)), 4),
+            "low": round(float(q.get("04. low", 0)), 4),
+        }
+    except Exception:
+        return _get_price_us_yf(ticker)
 
 
 def get_price(ticker, token, market="KR"):
@@ -200,40 +202,98 @@ def _daily_ohlcv_kr(ticker, token, lookback_days=200):
     return df.sort_values("date").tail(lookback_days).reset_index(drop=True)
 
 
+def _daily_ohlcv_us_yf(ticker: str, lookback_days: int = 200) -> pd.DataFrame:
+    """yfinance US OHLCV 폴백 (AV 키 없거나 실패 시)"""
+    try:
+        import yfinance as yf
+    except ImportError:
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+    start = (datetime.now() - timedelta(days=lookback_days * 2)).strftime("%Y-%m-%d")
+    df = yf.Ticker(ticker).history(start=start, auto_adjust=True)
+    if df.empty:
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+    df = df.reset_index()
+    df.columns = [c.lower() for c in df.columns]
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    df = df[["date", "open", "high", "low", "close", "volume"]].copy()
+    return df.sort_values("date").tail(lookback_days).reset_index(drop=True)
+
+
+def _get_price_us_yf(ticker: str) -> dict:
+    """yfinance US 현재가 폴백"""
+    try:
+        import yfinance as yf
+    except ImportError:
+        raise RuntimeError("yfinance 미설치: pip install yfinance")
+    hist = yf.Ticker(ticker).history(period="2d")
+    if hist.empty:
+        raise RuntimeError(f"yfinance: {ticker} 데이터 없음")
+    row = hist.iloc[-1]
+    prev_close = float(hist.iloc[-2]["Close"]) if len(hist) > 1 else float(row["Close"])
+    price = float(row["Close"])
+    change = price - prev_close
+    return {
+        "ticker": ticker, "name": ticker,
+        "price": round(price, 4),
+        "change": round(change, 4),
+        "change_rate": round(change / prev_close * 100 if prev_close else 0, 2),
+        "volume": int(row["Volume"]),
+        "open": round(float(row["Open"]), 4),
+        "high": round(float(row["High"]), 4),
+        "low": round(float(row["Low"]), 4),
+    }
+
+
 def _daily_ohlcv_us_alpha(ticker, lookback_days=200):
     if not AV_KEY:
-        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
-    resp = requests.get(
-        "https://www.alphavantage.co/query",
-        params={"function": "TIME_SERIES_DAILY", "symbol": ticker, "outputsize": "full", "apikey": AV_KEY},
-        timeout=20,
-    )
-    resp.raise_for_status()
-    ts = resp.json().get("Time Series (Daily)", {})
-    if not ts:
-        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
-
-    rows = []
-    for d, v in ts.items():
-        rows.append(
-            {
-                "date": d,
-                "open": float(v["1. open"]),
-                "high": float(v["2. high"]),
-                "low": float(v["3. low"]),
-                "close": float(v["4. close"]),
-                "volume": float(v["5. volume"]),
-            }
+        return _daily_ohlcv_us_yf(ticker, lookback_days)
+    try:
+        resp = requests.get(
+            "https://www.alphavantage.co/query",
+            params={"function": "TIME_SERIES_DAILY", "symbol": ticker,
+                    "outputsize": "compact", "apikey": AV_KEY},  # compact = 100일, 무료 지원
+            timeout=20,
         )
-    df = pd.DataFrame(rows)
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    return df.sort_values("date").tail(lookback_days).reset_index(drop=True)
+        resp.raise_for_status()
+        ts = resp.json().get("Time Series (Daily)", {})
+        if not ts:
+            raise ValueError("빈 응답")
+        rows = [
+            {"date": d, "open": float(v["1. open"]), "high": float(v["2. high"]),
+             "low": float(v["3. low"]), "close": float(v["4. close"]),
+             "volume": float(v["5. volume"])}
+            for d, v in ts.items()
+        ]
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.sort_values("date").tail(lookback_days).reset_index(drop=True)
+        # compact 100일보다 lookback이 길면 yfinance로 보완
+        if len(df) < min(lookback_days, 80):
+            return _daily_ohlcv_us_yf(ticker, lookback_days)
+        return df
+    except Exception:
+        return _daily_ohlcv_us_yf(ticker, lookback_days)
 
 
 def get_daily_ohlcv(ticker, token, lookback_days=200, market="KR"):
     if market == "US":
         return _daily_ohlcv_us_alpha(ticker, lookback_days=lookback_days)
     return _daily_ohlcv_kr(ticker, token, lookback_days=lookback_days)
+
+
+def get_index_change(market: str) -> float:
+    """당일 지수 등락율 (%) — yfinance 사용 (^KS11=KOSPI, ^GSPC=S&P500)"""
+    try:
+        import yfinance as yf
+        symbol = "^KS11" if market == "KR" else "^GSPC"
+        df = yf.Ticker(symbol).history(period="2d")
+        if len(df) < 2:
+            return 0.0
+        prev = float(df["Close"].iloc[-2])
+        last = float(df["Close"].iloc[-1])
+        return (last - prev) / prev * 100 if prev else 0.0
+    except Exception:
+        return 0.0
 
 
 def get_balance(token, market="KR"):
@@ -318,6 +378,115 @@ def place_order(ticker, qty, price, side, token, market="KR"):
     if market == "US":
         return {"success": False, "msg": "US live order path is not implemented", "order_no": ""}
     return _place_order_kr(ticker, qty, price, side, token)
+
+
+# ── 시장 스크리너 ──────────────────────────────────────────────────────────────
+
+_US_FALLBACK_UNIVERSE = [
+    "NVDA", "TSLA", "AAPL", "MSFT", "AMZN",
+    "GOOGL", "META", "AMD", "SMCI", "PLTR",
+    "NFLX", "ORCL", "CRM", "SNOW", "UBER",
+]
+
+
+def screen_market_kr(token: str, top_n: int = 30) -> list:
+    """
+    KR 시장 스크리닝 — KIS 거래량 순위 API
+    반환: [{ticker, name, price, change_rate, volume, vol_ratio}]
+    장 외 시간이나 API 실패 시 빈 리스트 반환 (호출부에서 폴백 처리)
+    """
+    url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/volume-rank"
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_SCR_DIV_CODE":  "20171",
+        "FID_INPUT_ISCD":         "0000",
+        "FID_DIV_CLS_CODE":       "0",
+        "FID_BLNG_CLS_CODE":      "0",
+        "FID_TRGT_CLS_CODE":      "111111111",
+        "FID_TRGT_EXLS_CLS_CODE": "000000",
+        "FID_INPUT_PRICE_1":      "",
+        "FID_INPUT_PRICE_2":      "",
+        "FID_VOL_CNT":            "100000",
+        "FID_INPUT_DATE_1":       "",
+    }
+    try:
+        resp = requests.get(
+            url,
+            headers=_headers(token, "FHPST01710000"),
+            params=params,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("output", [])
+        result = []
+        for it in items[:top_n]:
+            ticker = it.get("mksc_shrn_iscd", "").strip()
+            if not ticker or not ticker.isdigit():
+                continue
+            try:
+                result.append({
+                    "ticker": ticker,
+                    "name": it.get("hts_kor_isnm", ticker),
+                    "price": int(it.get("stck_prpr", 0)),
+                    "change_rate": float(it.get("prdy_ctrt", 0)),
+                    "volume": int(it.get("acml_vol", 0)),
+                    "vol_ratio": float(it.get("vol_tnrt", 1.0)),
+                })
+            except (ValueError, TypeError):
+                continue
+        return result
+    except Exception as e:
+        return []
+
+
+def screen_market_us(top_n: int = 30) -> list:
+    """
+    US 시장 스크리닝 — Alpha Vantage TOP_GAINERS_LOSERS
+    실패 시 폴백 유니버스 반환
+    반환: [{ticker, name, price, change_rate, volume, vol_ratio}]
+    """
+    if AV_KEY:
+        try:
+            resp = requests.get(
+                "https://www.alphavantage.co/query",
+                params={"function": "TOP_GAINERS_LOSERS", "apikey": AV_KEY},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            candidates = []
+            seen: set = set()
+            for section in ("most_actively_traded", "top_gainers", "top_losers"):
+                for item in data.get(section, []):
+                    ticker = item.get("ticker", "").strip()
+                    # ETF/지수/워런트 제외 (알파벳만)
+                    if not ticker or ticker in seen or not ticker.isalpha():
+                        continue
+                    seen.add(ticker)
+                    try:
+                        candidates.append({
+                            "ticker": ticker,
+                            "name": ticker,
+                            "price": float(item.get("price", 0)),
+                            "change_rate": float(
+                                str(item.get("change_percentage", "0")).replace("%", "")
+                            ),
+                            "volume": int(item.get("volume", 0)),
+                            "vol_ratio": 1.0,
+                        })
+                    except (ValueError, TypeError):
+                        continue
+            if candidates:
+                return candidates[:top_n]
+        except Exception:
+            pass
+
+    # AV 실패 또는 키 없음 → 폴백 유니버스
+    return [
+        {"ticker": t, "name": t, "price": 0.0, "change_rate": 0.0,
+         "volume": 0, "vol_ratio": 1.0}
+        for t in _US_FALLBACK_UNIVERSE
+    ]
 
 
 class KISWebSocket:

@@ -50,3 +50,902 @@
 2026-03-20 00:30:42 [[32m[1mINFO    [0m] collect_kr_supplement:113 | [32m  ✅ KR supplement 저장: 2026-03-19.json[0m
 2026-03-20 00:30:42 [[32m[1mINFO    [0m] collect_us_supplement:118 | [32m[US supplement] 2026-03-19[0m
 2026-03-20 00:30:55 [[32m[1mINFO    [0m] collect_us_supplement:127 | [32m  ✅ US supplement 저장: 2026-03-19.json[0m
+2026-03-20 01:49:37 [[32m[1mINFO    [0m] collect_range:437 | [32m=======================================================[0m
+2026-03-20 01:49:37 [[32m[1mINFO    [0m] collect_range:438 | [32m  국내 뉴스 기간 수집: 2024-10-01 ~ 2026-03-20[0m
+2026-03-20 01:49:37 [[32m[1mINFO    [0m] collect_range:439 | [32m=======================================================[0m
+2026-03-20 01:49:37 [[32m[1mINFO    [0m] collect_range:452 | [32m총 384개 영업일 수집 예정[0m
+2026-03-20 01:49:37 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:49:37 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-01 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:49:38 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-01: 0건[0m
+2026-03-20 01:49:40 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-01: 0건[0m
+2026-03-20 01:49:40 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:49:40 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:49:42 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-01: 0건[0m
+2026-03-20 01:49:43 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:49:43 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:49:45 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-01: 0건[0m
+2026-03-20 01:49:45 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:49:45 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:49:47 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-01: 0건[0m
+2026-03-20 01:49:47 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:49:48 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:49:49 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-01: 0건[0m
+2026-03-20 01:49:50 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:49:50 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:49:50 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-01 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-01.json ━━━[0m
+2026-03-20 01:49:50 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.88초)[0m
+2026-03-20 01:49:52 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:49:52 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-02 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:49:52 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-02: 0건[0m
+2026-03-20 01:49:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-02: 0건[0m
+2026-03-20 01:49:55 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:49:55 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:49:57 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-02: 0건[0m
+2026-03-20 01:49:57 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:49:58 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:49:59 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-02: 0건[0m
+2026-03-20 01:50:00 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:00 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:02 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-02: 0건[0m
+2026-03-20 01:50:02 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:03 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:04 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-02: 0건[0m
+2026-03-20 01:50:05 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:05 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:05 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-02 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-02.json ━━━[0m
+2026-03-20 01:50:05 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.83초)[0m
+2026-03-20 01:50:07 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:50:07 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-03 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:50:07 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-03: 0건[0m
+2026-03-20 01:50:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-03: 0건[0m
+2026-03-20 01:50:10 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:10 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:12 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-03: 0건[0m
+2026-03-20 01:50:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:13 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-03: 0건[0m
+2026-03-20 01:50:15 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:15 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:17 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-03: 0건[0m
+2026-03-20 01:50:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:19 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-03: 0건[0m
+2026-03-20 01:50:20 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:20 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:20 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-03 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-03.json ━━━[0m
+2026-03-20 01:50:20 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.84초)[0m
+2026-03-20 01:50:22 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:50:22 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-04 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:50:22 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-04: 0건[0m
+2026-03-20 01:50:24 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-04: 0건[0m
+2026-03-20 01:50:25 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:25 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:27 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-04: 0건[0m
+2026-03-20 01:50:27 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:29 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-04: 0건[0m
+2026-03-20 01:50:30 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:30 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-04: 0건[0m
+2026-03-20 01:50:32 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:34 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-04: 0건[0m
+2026-03-20 01:50:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:35 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:35 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-04 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-04.json ━━━[0m
+2026-03-20 01:50:35 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.88초)[0m
+2026-03-20 01:50:37 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:50:37 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-07 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:50:37 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-07: 0건[0m
+2026-03-20 01:50:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-07: 0건[0m
+2026-03-20 01:50:40 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:40 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:42 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-07: 0건[0m
+2026-03-20 01:50:42 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:44 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-07: 0건[0m
+2026-03-20 01:50:45 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:45 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:47 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-07: 0건[0m
+2026-03-20 01:50:47 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:49 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-07: 0건[0m
+2026-03-20 01:50:49 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:50 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:50 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-07 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-07.json ━━━[0m
+2026-03-20 01:50:50 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.00초)[0m
+2026-03-20 01:50:50 [[32m[1mINFO    [0m] step:277 | [32m[국내뉴스수집] 5/384 (1.3%) | 속도 0.1건/초 | 남은시간 91.5분 | 오류 0건 | 2024-10-07[0m
+2026-03-20 01:50:52 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:50:52 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-08 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:50:52 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-08: 0건[0m
+2026-03-20 01:50:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-08: 0건[0m
+2026-03-20 01:50:55 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:55 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:57 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-08: 0건[0m
+2026-03-20 01:50:57 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:50:58 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:50:59 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-08: 0건[0m
+2026-03-20 01:51:00 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:00 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:02 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-08: 0건[0m
+2026-03-20 01:51:02 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:04 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-08: 0건[0m
+2026-03-20 01:51:05 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:05 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:05 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-08 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-08.json ━━━[0m
+2026-03-20 01:51:05 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.09초)[0m
+2026-03-20 01:51:07 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:51:07 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-09 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:51:07 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-09: 0건[0m
+2026-03-20 01:51:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-09: 0건[0m
+2026-03-20 01:51:10 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:10 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:12 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-09: 0건[0m
+2026-03-20 01:51:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-09: 0건[0m
+2026-03-20 01:51:15 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:15 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:17 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-09: 0건[0m
+2026-03-20 01:51:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:19 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-09: 0건[0m
+2026-03-20 01:51:19 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:20 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:20 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-09 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-09.json ━━━[0m
+2026-03-20 01:51:20 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.93초)[0m
+2026-03-20 01:51:22 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:51:22 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-10 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:51:22 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-10: 0건[0m
+2026-03-20 01:51:24 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-10: 0건[0m
+2026-03-20 01:51:25 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:25 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:27 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-10: 0건[0m
+2026-03-20 01:51:27 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:29 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-10: 0건[0m
+2026-03-20 01:51:30 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:30 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:32 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-10: 0건[0m
+2026-03-20 01:51:32 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:34 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-10: 0건[0m
+2026-03-20 01:51:35 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:35 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:35 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-10 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-10.json ━━━[0m
+2026-03-20 01:51:35 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.00초)[0m
+2026-03-20 01:51:37 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:51:37 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-11 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:51:37 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-11: 0건[0m
+2026-03-20 01:51:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-11: 0건[0m
+2026-03-20 01:51:40 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:40 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:42 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-11: 0건[0m
+2026-03-20 01:51:42 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:44 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-11: 0건[0m
+2026-03-20 01:51:45 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:45 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:47 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-11: 0건[0m
+2026-03-20 01:51:47 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:49 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-11: 0건[0m
+2026-03-20 01:51:50 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:50 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:50 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-11 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-11.json ━━━[0m
+2026-03-20 01:51:50 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.02초)[0m
+2026-03-20 01:51:52 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:51:52 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-14 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:51:52 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-14: 0건[0m
+2026-03-20 01:51:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-14: 0건[0m
+2026-03-20 01:51:55 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:55 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:57 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-14: 0건[0m
+2026-03-20 01:51:57 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:51:57 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:51:59 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-14: 0건[0m
+2026-03-20 01:52:00 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:00 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:02 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-14: 0건[0m
+2026-03-20 01:52:02 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:04 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-14: 0건[0m
+2026-03-20 01:52:05 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:05 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:05 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-14 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-14.json ━━━[0m
+2026-03-20 01:52:05 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.95초)[0m
+2026-03-20 01:52:05 [[32m[1mINFO    [0m] step:277 | [32m[국내뉴스수집] 10/384 (2.6%) | 속도 0.1건/초 | 남은시간 91.9분 | 오류 0건 | 2024-10-14[0m
+2026-03-20 01:52:07 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:52:07 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-15 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:52:07 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-15: 0건[0m
+2026-03-20 01:52:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-15: 0건[0m
+2026-03-20 01:52:10 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:10 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:12 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-15: 0건[0m
+2026-03-20 01:52:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-15: 0건[0m
+2026-03-20 01:52:15 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:15 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:17 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-15: 0건[0m
+2026-03-20 01:52:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:19 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-15: 0건[0m
+2026-03-20 01:52:20 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:20 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:20 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-15 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-15.json ━━━[0m
+2026-03-20 01:52:20 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.02초)[0m
+2026-03-20 01:52:22 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:52:22 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-16 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:52:22 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-16: 0건[0m
+2026-03-20 01:52:24 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-16: 0건[0m
+2026-03-20 01:52:25 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:25 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:27 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-16: 0건[0m
+2026-03-20 01:52:27 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:29 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-16: 0건[0m
+2026-03-20 01:52:30 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:30 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-16: 0건[0m
+2026-03-20 01:52:32 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:34 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-16: 0건[0m
+2026-03-20 01:52:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:35 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:35 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-16 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-16.json ━━━[0m
+2026-03-20 01:52:35 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.91초)[0m
+2026-03-20 01:52:37 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:52:37 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-17 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:52:37 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-17: 0건[0m
+2026-03-20 01:52:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-17: 0건[0m
+2026-03-20 01:52:40 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:40 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:41 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-17: 0건[0m
+2026-03-20 01:52:42 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:44 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-17: 0건[0m
+2026-03-20 01:52:44 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:45 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:46 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-17: 0건[0m
+2026-03-20 01:52:47 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:49 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-17: 0건[0m
+2026-03-20 01:52:49 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:50 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:50 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-17 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-17.json ━━━[0m
+2026-03-20 01:52:50 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.95초)[0m
+2026-03-20 01:52:52 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:52:52 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-18 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:52:52 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-18: 0건[0m
+2026-03-20 01:52:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-18: 0건[0m
+2026-03-20 01:52:55 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:55 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:57 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-18: 0건[0m
+2026-03-20 01:52:57 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:52:57 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:52:59 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-18: 0건[0m
+2026-03-20 01:52:59 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:00 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:01 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-18: 0건[0m
+2026-03-20 01:53:02 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:04 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-18: 0건[0m
+2026-03-20 01:53:04 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:05 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:05 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-18 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-18.json ━━━[0m
+2026-03-20 01:53:05 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.02초)[0m
+2026-03-20 01:53:07 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:53:07 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-21 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:53:07 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-21: 0건[0m
+2026-03-20 01:53:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-21: 0건[0m
+2026-03-20 01:53:10 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:10 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:11 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-21: 0건[0m
+2026-03-20 01:53:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-21: 0건[0m
+2026-03-20 01:53:14 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:15 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:16 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-21: 0건[0m
+2026-03-20 01:53:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:19 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-21: 0건[0m
+2026-03-20 01:53:19 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:20 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:20 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-21 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-21.json ━━━[0m
+2026-03-20 01:53:20 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.88초)[0m
+2026-03-20 01:53:20 [[32m[1mINFO    [0m] step:277 | [32m[국내뉴스수집] 15/384 (3.9%) | 속도 0.1건/초 | 남은시간 91.1분 | 오류 0건 | 2024-10-21[0m
+2026-03-20 01:53:22 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:53:22 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-22 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:53:22 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-22: 0건[0m
+2026-03-20 01:53:24 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-22: 0건[0m
+2026-03-20 01:53:24 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:25 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:26 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-22: 0건[0m
+2026-03-20 01:53:27 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:29 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-22: 0건[0m
+2026-03-20 01:53:29 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:30 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-22: 0건[0m
+2026-03-20 01:53:32 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:34 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-22: 0건[0m
+2026-03-20 01:53:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:35 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:35 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-22 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-22.json ━━━[0m
+2026-03-20 01:53:35 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.04초)[0m
+2026-03-20 01:53:37 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:53:37 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-23 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:53:37 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-23: 0건[0m
+2026-03-20 01:53:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-23: 0건[0m
+2026-03-20 01:53:40 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:40 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:42 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-23: 0건[0m
+2026-03-20 01:53:42 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:44 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-23: 0건[0m
+2026-03-20 01:53:44 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:45 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:46 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-23: 0건[0m
+2026-03-20 01:53:47 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:49 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-23: 0건[0m
+2026-03-20 01:53:49 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:50 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:50 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-23 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-23.json ━━━[0m
+2026-03-20 01:53:50 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.03초)[0m
+2026-03-20 01:53:52 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:53:52 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-24 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:53:52 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-24: 0건[0m
+2026-03-20 01:53:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-24: 0건[0m
+2026-03-20 01:53:55 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:55 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:57 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-24: 0건[0m
+2026-03-20 01:53:57 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:53:57 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:53:59 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-24: 0건[0m
+2026-03-20 01:53:59 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:00 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:01 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-24: 0건[0m
+2026-03-20 01:54:02 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:04 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-24: 0건[0m
+2026-03-20 01:54:04 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:05 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:05 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-24 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-24.json ━━━[0m
+2026-03-20 01:54:05 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.99초)[0m
+2026-03-20 01:54:07 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:54:07 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-25 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:54:07 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-25: 0건[0m
+2026-03-20 01:54:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-25: 0건[0m
+2026-03-20 01:54:09 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:10 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:11 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-25: 0건[0m
+2026-03-20 01:54:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-25: 0건[0m
+2026-03-20 01:54:14 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:15 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:16 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-25: 0건[0m
+2026-03-20 01:54:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:19 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-25: 0건[0m
+2026-03-20 01:54:19 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:20 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:20 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-25 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-25.json ━━━[0m
+2026-03-20 01:54:20 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.87초)[0m
+2026-03-20 01:54:22 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:54:22 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-28 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:54:22 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-28: 0건[0m
+2026-03-20 01:54:24 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-28: 0건[0m
+2026-03-20 01:54:24 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:25 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:26 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-28: 0건[0m
+2026-03-20 01:54:27 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:29 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-28: 0건[0m
+2026-03-20 01:54:29 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:30 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-28: 0건[0m
+2026-03-20 01:54:32 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:34 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-28: 0건[0m
+2026-03-20 01:54:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:34 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:34 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-28 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-28.json ━━━[0m
+2026-03-20 01:54:34 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.89초)[0m
+2026-03-20 01:54:34 [[32m[1mINFO    [0m] step:277 | [32m[국내뉴스수집] 20/384 (5.2%) | 속도 0.1건/초 | 남은시간 90.1분 | 오류 0건 | 2024-10-28[0m
+2026-03-20 01:54:36 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:54:36 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-29 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:54:37 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-29: 0건[0m
+2026-03-20 01:54:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-29: 0건[0m
+2026-03-20 01:54:39 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:40 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:41 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-29: 0건[0m
+2026-03-20 01:54:42 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:44 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-29: 0건[0m
+2026-03-20 01:54:44 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:45 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:46 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-29: 0건[0m
+2026-03-20 01:54:47 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:49 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-29: 0건[0m
+2026-03-20 01:54:49 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:50 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:50 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-29 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-29.json ━━━[0m
+2026-03-20 01:54:50 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.05초)[0m
+2026-03-20 01:54:52 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:54:52 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-30 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:54:52 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-30: 0건[0m
+2026-03-20 01:54:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-30: 0건[0m
+2026-03-20 01:54:54 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:55 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:56 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-30: 0건[0m
+2026-03-20 01:54:57 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:57 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:54:59 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-30: 0건[0m
+2026-03-20 01:54:59 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:54:59 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:01 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-30: 0건[0m
+2026-03-20 01:55:02 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:04 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-30: 0건[0m
+2026-03-20 01:55:04 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:04 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:04 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-30 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-30.json ━━━[0m
+2026-03-20 01:55:04 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.86초)[0m
+2026-03-20 01:55:06 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:55:06 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-10-31 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:55:07 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-10-31: 0건[0m
+2026-03-20 01:55:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-10-31: 0건[0m
+2026-03-20 01:55:09 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:10 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:11 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-10-31: 0건[0m
+2026-03-20 01:55:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-10-31: 0건[0m
+2026-03-20 01:55:14 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:14 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:16 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-10-31: 0건[0m
+2026-03-20 01:55:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:19 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-10-31: 0건[0m
+2026-03-20 01:55:19 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:19 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:19 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-10-31 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-10-31.json ━━━[0m
+2026-03-20 01:55:19 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.96초)[0m
+2026-03-20 01:55:21 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:55:21 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-01 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:55:22 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-01: 0건[0m
+2026-03-20 01:55:24 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-01: 0건[0m
+2026-03-20 01:55:24 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:25 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:26 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-01: 0건[0m
+2026-03-20 01:55:27 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:29 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-01: 0건[0m
+2026-03-20 01:55:29 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:29 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-01: 0건[0m
+2026-03-20 01:55:32 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:34 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-01: 0건[0m
+2026-03-20 01:55:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:34 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:34 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-01 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-01.json ━━━[0m
+2026-03-20 01:55:34 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.98초)[0m
+2026-03-20 01:55:36 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:55:36 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-04 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:55:36 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-04: 0건[0m
+2026-03-20 01:55:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-04: 0건[0m
+2026-03-20 01:55:39 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:39 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:41 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-04: 0건[0m
+2026-03-20 01:55:42 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:44 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-04: 0건[0m
+2026-03-20 01:55:44 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:44 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:46 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-04: 0건[0m
+2026-03-20 01:55:46 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:48 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-04: 0건[0m
+2026-03-20 01:55:49 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:49 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:49 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-04 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-04.json ━━━[0m
+2026-03-20 01:55:49 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.83초)[0m
+2026-03-20 01:55:49 [[32m[1mINFO    [0m] step:277 | [32m[국내뉴스수집] 25/384 (6.5%) | 속도 0.1건/초 | 남은시간 89.0분 | 오류 0건 | 2024-11-04[0m
+2026-03-20 01:55:51 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:55:51 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-05 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:55:51 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-05: 0건[0m
+2026-03-20 01:55:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-05: 0건[0m
+2026-03-20 01:55:54 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:54 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:56 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-05: 0건[0m
+2026-03-20 01:55:56 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:57 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:55:58 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-05: 0건[0m
+2026-03-20 01:55:59 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:55:59 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:01 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-05: 0건[0m
+2026-03-20 01:56:01 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:03 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-05: 0건[0m
+2026-03-20 01:56:04 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:04 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:04 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-05 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-05.json ━━━[0m
+2026-03-20 01:56:04 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.97초)[0m
+2026-03-20 01:56:06 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:56:06 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-06 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:56:06 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-06: 0건[0m
+2026-03-20 01:56:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-06: 0건[0m
+2026-03-20 01:56:09 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:09 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:11 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-06: 0건[0m
+2026-03-20 01:56:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-06: 0건[0m
+2026-03-20 01:56:14 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:14 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:16 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-06: 0건[0m
+2026-03-20 01:56:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:18 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-06: 0건[0m
+2026-03-20 01:56:19 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:19 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:19 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-06 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-06.json ━━━[0m
+2026-03-20 01:56:19 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.09초)[0m
+2026-03-20 01:56:21 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:56:21 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-07 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:56:21 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-07: 0건[0m
+2026-03-20 01:56:24 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-07: 0건[0m
+2026-03-20 01:56:24 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:24 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:26 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-07: 0건[0m
+2026-03-20 01:56:27 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:29 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-07: 0건[0m
+2026-03-20 01:56:29 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:29 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-07: 0건[0m
+2026-03-20 01:56:31 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:33 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-07: 0건[0m
+2026-03-20 01:56:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:34 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:34 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-07 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-07.json ━━━[0m
+2026-03-20 01:56:34 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.99초)[0m
+2026-03-20 01:56:36 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:56:36 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-08 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:56:37 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-08: 0건[0m
+2026-03-20 01:56:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-08: 0건[0m
+2026-03-20 01:56:39 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:40 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:41 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-08: 0건[0m
+2026-03-20 01:56:42 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:44 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-08: 0건[0m
+2026-03-20 01:56:44 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:44 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:46 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-08: 0건[0m
+2026-03-20 01:56:47 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:49 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-08: 0건[0m
+2026-03-20 01:56:49 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:49 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:49 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-08 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-08.json ━━━[0m
+2026-03-20 01:56:49 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.08초)[0m
+2026-03-20 01:56:51 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:56:51 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-11 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:56:52 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-11: 0건[0m
+2026-03-20 01:56:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-11: 0건[0m
+2026-03-20 01:56:54 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:54 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:56 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-11: 0건[0m
+2026-03-20 01:56:57 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:57 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:56:59 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-11: 0건[0m
+2026-03-20 01:56:59 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:56:59 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:01 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-11: 0건[0m
+2026-03-20 01:57:02 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:04 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-11: 0건[0m
+2026-03-20 01:57:04 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:04 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:04 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-11 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-11.json ━━━[0m
+2026-03-20 01:57:04 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.96초)[0m
+2026-03-20 01:57:04 [[32m[1mINFO    [0m] step:277 | [32m[국내뉴스수집] 30/384 (7.8%) | 속도 0.1건/초 | 남은시간 87.9분 | 오류 0건 | 2024-11-11[0m
+2026-03-20 01:57:06 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:57:06 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-12 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:57:07 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-12: 0건[0m
+2026-03-20 01:57:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-12: 0건[0m
+2026-03-20 01:57:09 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:10 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:11 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-12: 0건[0m
+2026-03-20 01:57:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-12: 0건[0m
+2026-03-20 01:57:14 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:14 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:16 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-12: 0건[0m
+2026-03-20 01:57:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:19 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-12: 0건[0m
+2026-03-20 01:57:19 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:19 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:19 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-12 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-12.json ━━━[0m
+2026-03-20 01:57:19 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.04초)[0m
+2026-03-20 01:57:21 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:57:21 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-13 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:57:22 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-13: 0건[0m
+2026-03-20 01:57:24 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-13: 0건[0m
+2026-03-20 01:57:24 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:25 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:26 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-13: 0건[0m
+2026-03-20 01:57:27 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:29 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-13: 0건[0m
+2026-03-20 01:57:29 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:30 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-13: 0건[0m
+2026-03-20 01:57:32 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:34 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-13: 0건[0m
+2026-03-20 01:57:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:34 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:34 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-13 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-13.json ━━━[0m
+2026-03-20 01:57:34 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.05초)[0m
+2026-03-20 01:57:36 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:57:36 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-14 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:57:37 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-14: 0건[0m
+2026-03-20 01:57:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-14: 0건[0m
+2026-03-20 01:57:39 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:39 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:41 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-14: 0건[0m
+2026-03-20 01:57:42 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:44 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-14: 0건[0m
+2026-03-20 01:57:44 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:44 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:46 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-14: 0건[0m
+2026-03-20 01:57:47 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:49 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-14: 0건[0m
+2026-03-20 01:57:49 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:49 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:49 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-14 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-14.json ━━━[0m
+2026-03-20 01:57:49 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.88초)[0m
+2026-03-20 01:57:51 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:57:51 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-15 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:57:52 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-15: 0건[0m
+2026-03-20 01:57:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-15: 0건[0m
+2026-03-20 01:57:54 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:54 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:56 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-15: 0건[0m
+2026-03-20 01:57:57 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:57 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:57:59 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-15: 0건[0m
+2026-03-20 01:57:59 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:57:59 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:01 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-15: 0건[0m
+2026-03-20 01:58:02 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:03 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-15: 0건[0m
+2026-03-20 01:58:04 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:04 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:04 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-15 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-15.json ━━━[0m
+2026-03-20 01:58:04 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.94초)[0m
+2026-03-20 01:58:06 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:58:06 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-18 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:58:06 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-18: 0건[0m
+2026-03-20 01:58:08 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-18: 0건[0m
+2026-03-20 01:58:09 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:09 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:11 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-18: 0건[0m
+2026-03-20 01:58:11 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:13 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-18: 0건[0m
+2026-03-20 01:58:14 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:14 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:16 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-18: 0건[0m
+2026-03-20 01:58:16 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:18 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-18: 0건[0m
+2026-03-20 01:58:19 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:19 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:19 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-18 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-18.json ━━━[0m
+2026-03-20 01:58:19 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.87초)[0m
+2026-03-20 01:58:19 [[32m[1mINFO    [0m] step:277 | [32m[국내뉴스수집] 35/384 (9.1%) | 속도 0.1건/초 | 남은시간 86.7분 | 오류 0건 | 2024-11-18[0m
+2026-03-20 01:58:21 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:58:21 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-19 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:58:21 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-19: 0건[0m
+2026-03-20 01:58:23 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-19: 0건[0m
+2026-03-20 01:58:24 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:24 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:26 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-19: 0건[0m
+2026-03-20 01:58:26 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:28 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-19: 0건[0m
+2026-03-20 01:58:29 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:29 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-19: 0건[0m
+2026-03-20 01:58:31 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:33 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-19: 0건[0m
+2026-03-20 01:58:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:34 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:34 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-19 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-19.json ━━━[0m
+2026-03-20 01:58:34 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.91초)[0m
+2026-03-20 01:58:36 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:58:36 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-20 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:58:36 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-20: 0건[0m
+2026-03-20 01:58:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-20: 0건[0m
+2026-03-20 01:58:39 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:39 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:41 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-20: 0건[0m
+2026-03-20 01:58:41 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:43 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-20: 0건[0m
+2026-03-20 01:58:44 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:44 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:46 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-20: 0건[0m
+2026-03-20 01:58:46 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:48 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-20: 0건[0m
+2026-03-20 01:58:49 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:49 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:49 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-20 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-20.json ━━━[0m
+2026-03-20 01:58:49 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.05초)[0m
+2026-03-20 01:58:51 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:58:51 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-21 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:58:51 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-21: 0건[0m
+2026-03-20 01:58:53 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-21: 0건[0m
+2026-03-20 01:58:54 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:54 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:56 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-21: 0건[0m
+2026-03-20 01:58:56 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:57 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:58:58 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-21: 0건[0m
+2026-03-20 01:58:59 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:58:59 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:01 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-21: 0건[0m
+2026-03-20 01:59:01 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:03 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-21: 0건[0m
+2026-03-20 01:59:04 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:04 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:04 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-21 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-21.json ━━━[0m
+2026-03-20 01:59:04 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.92초)[0m
+2026-03-20 01:59:06 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:59:06 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-22 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:59:06 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-22: 0건[0m
+2026-03-20 01:59:08 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-22: 0건[0m
+2026-03-20 01:59:09 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:09 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:11 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-22: 0건[0m
+2026-03-20 01:59:11 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:13 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-22: 0건[0m
+2026-03-20 01:59:14 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:14 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:16 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-22: 0건[0m
+2026-03-20 01:59:16 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:18 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-22: 0건[0m
+2026-03-20 01:59:19 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:19 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:19 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-22 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-22.json ━━━[0m
+2026-03-20 01:59:19 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.99초)[0m
+2026-03-20 01:59:21 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:59:21 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-25 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:59:21 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-25: 0건[0m
+2026-03-20 01:59:23 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-25: 0건[0m
+2026-03-20 01:59:24 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:24 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:26 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-25: 0건[0m
+2026-03-20 01:59:26 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:28 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-25: 0건[0m
+2026-03-20 01:59:29 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:29 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-25: 0건[0m
+2026-03-20 01:59:31 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:33 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-25: 0건[0m
+2026-03-20 01:59:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:34 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:34 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-25 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-25.json ━━━[0m
+2026-03-20 01:59:34 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.96초)[0m
+2026-03-20 01:59:34 [[32m[1mINFO    [0m] step:277 | [32m[국내뉴스수집] 40/384 (10.4%) | 속도 0.1건/초 | 남은시간 85.5분 | 오류 0건 | 2024-11-25[0m
+2026-03-20 01:59:36 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:59:36 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-26 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:59:36 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-26: 0건[0m
+2026-03-20 01:59:39 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-26: 0건[0m
+2026-03-20 01:59:39 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:39 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:41 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-26: 0건[0m
+2026-03-20 01:59:42 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:42 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:44 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-26: 0건[0m
+2026-03-20 01:59:44 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:44 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:46 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-26: 0건[0m
+2026-03-20 01:59:47 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:47 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:49 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-26: 0건[0m
+2026-03-20 01:59:49 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:49 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:49 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-26 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-26.json ━━━[0m
+2026-03-20 01:59:49 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.37초)[0m
+2026-03-20 01:59:51 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 01:59:51 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-27 뉴스 수집 시작 ━━━[0m
+2026-03-20 01:59:52 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-27: 0건[0m
+2026-03-20 01:59:54 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-27: 0건[0m
+2026-03-20 01:59:54 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:54 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:56 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-27: 0건[0m
+2026-03-20 01:59:57 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:57 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 01:59:59 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-27: 0건[0m
+2026-03-20 01:59:59 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 01:59:59 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:01 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-27: 0건[0m
+2026-03-20 02:00:02 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:02 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:04 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-27: 0건[0m
+2026-03-20 02:00:04 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:04 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:04 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-27 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-27.json ━━━[0m
+2026-03-20 02:00:04 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.93초)[0m
+2026-03-20 02:00:06 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 02:00:06 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-28 뉴스 수집 시작 ━━━[0m
+2026-03-20 02:00:07 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-28: 0건[0m
+2026-03-20 02:00:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-28: 0건[0m
+2026-03-20 02:00:09 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:10 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:11 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-28: 0건[0m
+2026-03-20 02:00:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-28: 0건[0m
+2026-03-20 02:00:14 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:14 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:16 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-28: 0건[0m
+2026-03-20 02:00:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:19 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-28: 0건[0m
+2026-03-20 02:00:19 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:19 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:19 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-28 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-28.json ━━━[0m
+2026-03-20 02:00:19 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.00초)[0m
+2026-03-20 02:00:21 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 02:00:21 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-11-29 뉴스 수집 시작 ━━━[0m
+2026-03-20 02:00:21 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-11-29: 0건[0m
+2026-03-20 02:00:24 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-11-29: 0건[0m
+2026-03-20 02:00:24 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:24 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:26 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-11-29: 0건[0m
+2026-03-20 02:00:27 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:27 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:29 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2024-11-29: 0건[0m
+2026-03-20 02:00:29 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:29 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:31 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2024-11-29: 0건[0m
+2026-03-20 02:00:32 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:32 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:33 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2024-11-29: 0건[0m
+2026-03-20 02:00:34 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:34 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:34 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2024-11-29 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2024-11-29.json ━━━[0m
+2026-03-20 02:00:34 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (12.87초)[0m
+2026-03-20 02:00:36 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 02:00:36 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2024-12-02 뉴스 수집 시작 ━━━[0m
+2026-03-20 02:00:36 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2024-12-02: 0건[0m
+2026-03-20 02:00:38 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2024-12-02: 0건[0m
+2026-03-20 02:00:39 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 02:00:39 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 02:00:41 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2024-12-02: 0건[0m
