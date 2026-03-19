@@ -46,14 +46,14 @@ def update_analyst(market: str, analyst: str, hit: bool, recent_days: list):
     perf["rate"] = round(perf["hit"] / perf["total"], 3)
 
     # 최근 7일
-    r7 = [d for d in recent_days[-7:] if analyst in d]
+    r7 = [d for d in recent_days[-7:] if f"{analyst}_result" in d]
     if r7:
         h7 = sum(1 for d in r7 if d.get(f"{analyst}_result") == "HIT")
         perf["recent_7d"] = {"total": len(r7), "hit": h7,
                               "rate": round(h7 / len(r7), 3)}
 
     # 최근 30일
-    r30 = [d for d in recent_days[-30:] if analyst in d]
+    r30 = [d for d in recent_days[-30:] if f"{analyst}_result" in d]
     if r30:
         h30 = sum(1 for d in r30 if d.get(f"{analyst}_result") == "HIT")
         perf["recent_30d"] = {"total": len(r30), "hit": h30,
@@ -74,7 +74,10 @@ def update_analyst(market: str, analyst: str, hit: bool, recent_days: list):
 
 def update_mode_performance(market: str, mode: str, pnl_pct: float, win: bool):
     brain = load()
-    mp = brain["markets"][market]["mode_performance"][mode]
+    mode_map = brain["markets"][market]["mode_performance"]
+    if mode not in mode_map:
+        mode_map[mode] = {"count": 0, "avg_pnl": 0.0, "win_rate": 0.0}
+    mp = mode_map[mode]
 
     prev_count = mp["count"]
     mp["count"] += 1

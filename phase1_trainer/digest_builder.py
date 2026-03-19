@@ -455,12 +455,13 @@ def digest_to_prompt(digest: dict) -> str:
     for ticker, t in tech.items():
         rsi_mark = "🔴과매도" if t["rsi"] < 30 else "🟢과매수" if t["rsi"] > 70 else ""
         vol_mark = "⚡폭증" if t["vol_ratio"] > 3 else "↑증가" if t["vol_ratio"] > 1.5 else ""
+        bb_display = t['bb_pos'] if 'bb_pos' in t else f"{t['bb_pct']:.0f}%"
         lines.append(
             f"  [{t.get('name',ticker)}] {t['close']:,} "
             f"{t['change_pct']:+.2f}% | "
             f"RSI {t['rsi']}{rsi_mark} | "
             f"MACD {t['macd']} | "
-            f"BB {t['bb_pos'] if 'bb_pos' in t else t['bb_pct']:.0f}% | "
+            f"BB {bb_display} | "
             f"거래량 {t['vol_ratio']:.1f}배{vol_mark} | "
             f"52주위치 {t['pos_52w']:.0f}%"
         )

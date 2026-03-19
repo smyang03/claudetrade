@@ -114,7 +114,7 @@ def daily_summary(date: str, market: str, pnl_pct: float, pnl_krw: int,
 {icon} <b>[일일 결산] {date} {market}</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 💰 오늘: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원
-📊 거래: {trades}건  승률: {win_rate:.1f}%
+📊 거래: {trades}건  승률: {win_rate*100:.1f}%
 💼 누적: {cumulative:,.0f}원
 
 🧠 판단 적중

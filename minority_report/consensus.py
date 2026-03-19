@@ -5,16 +5,19 @@ sys.path.insert(0,str(Path(__file__).parent.parent))
 from logger import get_minority_logger
 log = get_minority_logger()
 
+# 키는 sorted(cats) 결과와 일치해야 함 (알파벳 정렬: bear < bull < neutral)
+# 3명 투표의 모든 가능한 조합 10가지를 커버
 CONSENSUS_MAP = {
-    ("bull","bull","bull"):     {"mode":"AGGRESSIVE",    "size":100,"tp_mult":1.2},
-    ("bull","bull","neutral"):  {"mode":"MODERATE_BULL", "size":80, "tp_mult":1.1},
-    ("bull","bull","bear"):     {"mode":"CAUTIOUS",      "size":60, "tp_mult":1.0},
-    ("bull","neutral","neutral"):{"mode":"MILD_BULL",    "size":50, "tp_mult":1.0},
-    ("neutral","neutral","neutral"):{"mode":"NEUTRAL",   "size":40, "tp_mult":1.0},
-    ("bear","neutral","neutral"):{"mode":"MILD_BEAR",    "size":30, "tp_mult":0.9},
-    ("bear","bear","neutral"):  {"mode":"CAUTIOUS_BEAR", "size":20, "tp_mult":0.8},
-    ("bear","bear","bull"):     {"mode":"DEFENSIVE",     "size":10, "tp_mult":0.8},
-    ("bear","bear","bear"):     {"mode":"HALT",          "size":0,  "tp_mult":0.0},
+    ("bull","bull","bull"):           {"mode":"AGGRESSIVE",    "size":100,"tp_mult":1.2},
+    ("bull","bull","neutral"):        {"mode":"MODERATE_BULL", "size":80, "tp_mult":1.1},
+    ("bear","bull","bull"):           {"mode":"CAUTIOUS",      "size":60, "tp_mult":1.0},  # bull×2 + bear
+    ("bull","neutral","neutral"):     {"mode":"MILD_BULL",     "size":50, "tp_mult":1.0},
+    ("bear","bull","neutral"):        {"mode":"NEUTRAL",       "size":40, "tp_mult":1.0},  # 3자 의견분열
+    ("neutral","neutral","neutral"):  {"mode":"NEUTRAL",       "size":40, "tp_mult":1.0},
+    ("bear","neutral","neutral"):     {"mode":"MILD_BEAR",     "size":30, "tp_mult":0.9},
+    ("bear","bear","neutral"):        {"mode":"CAUTIOUS_BEAR", "size":20, "tp_mult":0.8},
+    ("bear","bear","bull"):           {"mode":"DEFENSIVE",     "size":10, "tp_mult":0.8},
+    ("bear","bear","bear"):           {"mode":"HALT",          "size":0,  "tp_mult":0.0},
 }
 
 def _cat(stance: str) -> str:

@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime
 sys.path.insert(0,str(Path(__file__).parent.parent))
 from logger import get_minority_logger
-import brain as BrainDB
+from claude_memory import brain as BrainDB
 
 log    = get_minority_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
