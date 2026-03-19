@@ -46,14 +46,14 @@ def update_analyst(market: str, analyst: str, hit: bool, recent_days: list):
     perf["rate"] = round(perf["hit"] / perf["total"], 3)
 
     # 최근 7일
-    r7 = [d for d in recent_days[-7:] if analyst in d]
+    r7 = [d for d in recent_days[-7:] if f"{analyst}_result" in d]
     if r7:
         h7 = sum(1 for d in r7 if d.get(f"{analyst}_result") == "HIT")
         perf["recent_7d"] = {"total": len(r7), "hit": h7,
                               "rate": round(h7 / len(r7), 3)}
 
     # 최근 30일
-    r30 = [d for d in recent_days[-30:] if analyst in d]
+    r30 = [d for d in recent_days[-30:] if f"{analyst}_result" in d]
     if r30:
         h30 = sum(1 for d in r30 if d.get(f"{analyst}_result") == "HIT")
         perf["recent_30d"] = {"total": len(r30), "hit": h30,
