@@ -96,9 +96,13 @@ def collect_kr_supplement(target_date: str):
         return
     log.info(f"[KR supplement] {target_date}")
     data = {"date": target_date, "flows": {}, "usd_krw": 0, "vkospi": 0}
+    KR_FLOW_TICKERS = [
+        "005930","000660","035420","005380","000270",
+        "051910","006400","035720","068270","028260","012330","003550",
+    ]
     try:
         token = _kis_token()
-        for ticker in ["005930","000660","035420"]:
+        for ticker in KR_FLOW_TICKERS:
             flow = fetch_investor_flow_kr(ticker, target_date, token)
             data["flows"][ticker] = flow
             time.sleep(0.5)

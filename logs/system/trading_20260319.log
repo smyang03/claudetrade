@@ -1,0 +1,57 @@
+2026-03-19 23:38:21 [[32m[1mINFO    [0m] __init__:83 | [32m모의투자 | 가상자금 30,000,000원 | 최대주문 1,000,000원[0m
+2026-03-19 23:38:21 [[32m[1mINFO    [0m] __init__:108 | [32m예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)[0m
+2026-03-19 23:38:22 [[32m[1mINFO    [0m] _startup_health_check:193 | [32m─── API Health Check ───────────────────────────────[0m
+2026-03-19 23:38:22 [[32m[1mINFO    [0m] _startup_health_check:196 | [32m  ✓ KIS 토큰: OK[0m
+2026-03-19 23:38:22 [[32m[1mINFO    [0m] _startup_health_check:196 | [32m  ✓ KIS 시세 (005930): OK (0원)[0m
+2026-03-19 23:38:22 [[32m[1mINFO    [0m] _startup_health_check:196 | [32m  – Alpha Vantage (NVDA): WARN - 빈 데이터[0m
+2026-03-19 23:38:22 [[32m[1mINFO    [0m] _startup_health_check:196 | [32m  ✓ Telegram: OK (@smyang03bot)[0m
+2026-03-19 23:38:22 [[32m[1mINFO    [0m] _startup_health_check:196 | [32m  – DART API: SKIP - DART_API_KEY 없음[0m
+2026-03-19 23:38:22 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m────────────────────── OK=3 / FAIL=0 ──[0m
+2026-03-19 23:40:59 [[32m[1mINFO    [0m] __init__:84 | [32m모의투자 | 가상자금 30,000,000원 | 최대주문 1,000,000원[0m
+2026-03-19 23:40:59 [[32m[1mINFO    [0m] __init__:109 | [32m예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)[0m
+2026-03-19 23:41:00 [[32m[1mINFO    [0m] _startup_health_check:194 | [32m─── API Health Check ───────────────────────────────[0m
+2026-03-19 23:41:00 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ KIS 토큰: OK[0m
+2026-03-19 23:41:00 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ KIS 시세 (005930): OK (0원)[0m
+2026-03-19 23:41:00 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  – Alpha Vantage (NVDA): WARN - 빈 데이터[0m
+2026-03-19 23:41:00 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ Telegram: OK (@smyang03bot)[0m
+2026-03-19 23:41:00 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  – DART API: SKIP - DART_API_KEY 없음[0m
+2026-03-19 23:41:00 [[32m[1mINFO    [0m] _startup_health_check:198 | [32m────────────────────── OK=3 / FAIL=0 ──[0m
+2026-03-19 23:41:01 [[32m[1mINFO    [0m] __init__:125 | [32minit | paper[0m
+2026-03-19 23:41:01 [[32m[1mINFO    [0m] main:636 | [32m=== Trading Bot Start ===[0m
+2026-03-19 23:41:01 [[32m[1mINFO    [0m] main:661 | [32mschedules registered[0m
+2026-03-19 23:44:25 [[32m[1mINFO    [0m] __init__:84 | [32m모의투자 | 가상자금 30,000,000원 | 최대주문 1,000,000원[0m
+2026-03-19 23:44:25 [[32m[1mINFO    [0m] __init__:109 | [32m예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)[0m
+2026-03-19 23:44:27 [[32m[1mINFO    [0m] _startup_health_check:194 | [32m─── API Health Check ───────────────────────────────[0m
+2026-03-19 23:44:27 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ KIS 토큰: OK[0m
+2026-03-19 23:44:27 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ KIS 시세 (005930): OK (0원)[0m
+2026-03-19 23:44:27 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  – Alpha Vantage (NVDA): WARN - 빈 데이터[0m
+2026-03-19 23:44:27 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ Telegram: OK (@smyang03bot)[0m
+2026-03-19 23:44:27 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  – DART API: SKIP - DART_API_KEY 없음[0m
+2026-03-19 23:44:27 [[32m[1mINFO    [0m] _startup_health_check:198 | [32m────────────────────── OK=3 / FAIL=0 ──[0m
+2026-03-19 23:44:28 [[32m[1mINFO    [0m] __init__:125 | [32minit | paper[0m
+2026-03-19 23:44:28 [[32m[1mINFO    [0m] main:636 | [32m=== Trading Bot Start ===[0m
+2026-03-19 23:44:28 [[32m[1mINFO    [0m] main:661 | [32mschedules registered[0m
+2026-03-19 23:46:28 [[32m[1mINFO    [0m] __init__:84 | [32m모의투자 | 가상자금 30,000,000원 | 최대주문 1,000,000원[0m
+2026-03-19 23:46:28 [[32m[1mINFO    [0m] __init__:109 | [32m예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)[0m
+2026-03-19 23:46:29 [[32m[1mINFO    [0m] _startup_health_check:194 | [32m─── API Health Check ───────────────────────────────[0m
+2026-03-19 23:46:29 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ KIS 토큰: OK[0m
+2026-03-19 23:46:29 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ KIS 시세 (005930): OK (0원)[0m
+2026-03-19 23:46:29 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  – Alpha Vantage (NVDA): WARN - 빈 데이터[0m
+2026-03-19 23:46:29 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ Telegram: OK (@smyang03bot)[0m
+2026-03-19 23:46:29 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  – DART API: SKIP - DART_API_KEY 없음[0m
+2026-03-19 23:46:29 [[32m[1mINFO    [0m] _startup_health_check:198 | [32m────────────────────── OK=3 / FAIL=0 ──[0m
+2026-03-19 23:46:30 [[32m[1mINFO    [0m] __init__:125 | [32minit | paper[0m
+2026-03-19 23:46:30 [[32m[1mINFO    [0m] main:636 | [32m=== Trading Bot Start ===[0m
+2026-03-19 23:46:30 [[32m[1mINFO    [0m] main:661 | [32mschedules registered[0m
+2026-03-19 23:52:39 [[32m[1mINFO    [0m] __init__:84 | [32m모의투자 | 가상자금 30,000,000원 | 최대주문 1,000,000원[0m
+2026-03-19 23:52:39 [[32m[1mINFO    [0m] __init__:109 | [32m예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)[0m
+2026-03-19 23:52:40 [[32m[1mINFO    [0m] _startup_health_check:194 | [32m─── API Health Check ───────────────────────────────[0m
+2026-03-19 23:52:40 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ KIS 토큰: OK[0m
+2026-03-19 23:52:40 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ KIS 시세 (005930): OK (0원)[0m
+2026-03-19 23:52:40 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  – Alpha Vantage (NVDA): WARN - 빈 데이터[0m
+2026-03-19 23:52:40 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  ✓ Telegram: OK (@smyang03bot)[0m
+2026-03-19 23:52:40 [[32m[1mINFO    [0m] _startup_health_check:197 | [32m  – DART API: SKIP - DART_API_KEY 없음[0m
+2026-03-19 23:52:40 [[32m[1mINFO    [0m] _startup_health_check:198 | [32m────────────────────── OK=3 / FAIL=0 ──[0m
+2026-03-19 23:52:41 [[32m[1mINFO    [0m] __init__:125 | [32minit | paper[0m
+2026-03-19 23:52:41 [[32m[1mINFO    [0m] main:636 | [32m=== Trading Bot Start ===[0m
+2026-03-19 23:52:41 [[32m[1mINFO    [0m] main:661 | [32mschedules registered[0m

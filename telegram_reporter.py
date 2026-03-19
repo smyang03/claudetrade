@@ -106,6 +106,27 @@ def emergency_alert(msg: str) -> str:
     send(text)
     return text
 
+def status_report(market: str, mode: str, positions: list,
+                  budget_avail: float, cash: float, tickers: list = None) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    if positions:
+        pos_lines = "\n".join(
+            f"  {p['ticker']} {p['qty']}주 | {p['current_price']:,}원 | "
+            f"PnL {(p['current_price'] / p['entry'] - 1) * 100:+.2f}%"
+            for p in positions
+        )
+    else:
+        pos_lines = "  없음"
+    watch = f"\n모니터링: {', '.join(tickers)}" if tickers else ""
+    text = f"""⏱ <b>[상태 보고 {now}] {market}</b>
+모드: <b>{mode}</b>
+보유 포지션:
+{pos_lines}
+예산 잔여: {budget_avail:,.0f}원 | 현금: {cash:,.0f}원{watch}"""
+    send(text)
+    return text
+
+
 def daily_summary(date: str, market: str, pnl_pct: float, pnl_krw: int,
                   trades: int, win_rate: float, cumulative: float,
                   judgments: dict, postmortem: dict) -> str:

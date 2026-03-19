@@ -38,13 +38,15 @@ from kis_api import (
 from indicators import calc_all
 from risk_manager import RiskManager, HARD_RULES
 from telegram_reporter import (
+    send,
     morning_briefing,
     tuning_report,
     trade_alert,
     pnl_alert,
     daily_summary,
+    status_report,
 )
-from minority_report.analysts import get_three_judgments
+from minority_report.analysts import get_three_judgments, select_tickers, KR_UNIVERSE, US_UNIVERSE
 from minority_report.consensus import build_consensus
 from minority_report.tuner import tune
 from minority_report.postmortem import run as run_postmortem
@@ -65,8 +67,9 @@ JUDGMENT_DIR.mkdir(parents=True, exist_ok=True)
 POSITIONS_FILE = Path("logs/open_positions.json")  # 포지션 영속성 파일
 POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-KR_TICKERS = ["005930", "000660", "035420"]
-US_TICKERS = ["NVDA", "TSLA", "AAPL"]
+# 동적 선택 실패 시 폴백 (기본 3종목)
+_DEFAULT_KR_TICKERS = ["005930", "000660", "035420"]
+_DEFAULT_US_TICKERS = ["NVDA", "TSLA", "AAPL"]
 
 
 class TradingBot:
@@ -110,6 +113,7 @@ class TradingBot:
         # ───────────────────────────────────────────────────────────────────
 
         self.today_judgment = {}
+        self.today_tickers: dict = {}   # {market: [ticker, ...]} — 매일 아침 Claude가 선택
         self.tuning_count = 0
         self.ws = None
         self.price_cache = {}
@@ -121,6 +125,18 @@ class TradingBot:
 
         # API 연결 상태 점검
         self._startup_health_check()
+
+        # Phase1 학습 상태 경고
+        try:
+            brain = BrainDB.load()
+            trained = brain["meta"]["trained_days_kr"] + brain["meta"]["trained_days_us"]
+            if trained == 0:
+                log.warning("⚠️  brain.json 학습 데이터 없음 — Phase1 시뮬레이션 권장:")
+                log.warning("   python phase1_trainer/historical_sim.py --market KR --start 2024-10-01")
+                log.warning("   python phase1_trainer/historical_sim.py --market US --start 2025-01-01")
+        except Exception:
+            pass
+
         log.info(f"init | {'paper' if is_paper else 'live'}")
 
     # ── API 헬스체크 ───────────────────────────────────────────────────────────
@@ -356,9 +372,8 @@ class TradingBot:
         self.risk.increment_holding_days()
 
         # 이월 포지션 현재가 갱신 (어제 종가 → 오늘 시가 방향으로 업데이트)
-        tickers_in_market = KR_TICKERS if market == "KR" else US_TICKERS
         for pos in self.risk.positions:
-            if pos["ticker"] in tickers_in_market:
+            if self._ticker_market(pos["ticker"]) == market:
                 try:
                     price_info = get_price(pos["ticker"], self.token, market=market)
                     self.price_cache[pos["ticker"]] = price_info["price"]
@@ -379,12 +394,20 @@ class TradingBot:
 
         judgments = get_three_judgments(digest_prompt, brain_summary, correction)
         consensus = build_consensus(judgments)
+
+        # 오늘 집중 종목 Claude 선택
+        universe = KR_UNIVERSE if market == "KR" else US_UNIVERSE
+        selected = select_tickers(market, digest_prompt, consensus["mode"], universe)
+        self.today_tickers[market] = selected
+        log.info(f"[종목선택 확정] {market}: {selected}")
+
         self.today_judgment = {
             "date": today,
             "market": market,
             "judgments": judgments,
             "consensus": consensus,
             "digest_prompt": digest_prompt,
+            "tickers": selected,
         }
 
         try:
@@ -395,8 +418,7 @@ class TradingBot:
         morning_briefing(market, judgments, consensus, balance, digest)
         log.info(f"consensus: {consensus['mode']} size={consensus['size']}%")
 
-        tickers = KR_TICKERS if market == "KR" else US_TICKERS
-        self.ws = KISWebSocket(self.token, tickers, on_tick=self._on_tick, market=market)
+        self.ws = KISWebSocket(self.token, selected, on_tick=self._on_tick, market=market)
         self.ws.start()
 
     def _on_tick(self, data: dict):
@@ -416,7 +438,15 @@ class TradingBot:
 
         mode = self.today_judgment.get("consensus", {}).get("mode", "CAUTIOUS")
         size_pct = self.today_judgment.get("consensus", {}).get("size", 50)
-        tickers = KR_TICKERS if market == "KR" else US_TICKERS
+        tickers = self.today_tickers.get(
+            market, _DEFAULT_KR_TICKERS if market == "KR" else _DEFAULT_US_TICKERS
+        )
+
+        now_str = datetime.now(KST).strftime("%H:%M")
+        log.info(
+            f"[{market} 사이클 {now_str}] 모드:{mode} size:{size_pct}% | "
+            f"종목:{tickers} | 포지션:{len(self.risk.positions)}개"
+        )
 
         for ticker in tickers:
             try:
@@ -427,22 +457,26 @@ class TradingBot:
                 self._process_exit_candidates()
 
                 if mode == "HALT":
+                    log.debug(f"  [{ticker}] HALT 모드 — 신규진입 스킵")
                     continue
                 if self._in_entry_blackout(market):
+                    log.debug(f"  [{ticker}] 블랙아웃 시간 — 스킵")
                     continue
 
-                ok, _ = self.risk.can_open(ticker, price, size_pct)
+                ok, reason = self.risk.can_open(ticker, price, size_pct)
                 if not ok:
+                    log.debug(f"  [{ticker}] 진입불가: {reason}")
                     continue
 
                 # 시장별 예산 초과 확인
                 avail = self._market_budget_available(market)
-                if avail < price:  # 최소 1주 살 여유도 없으면 건너뜀
-                    log.debug(f"[{market}] 예산 소진 (잔여 {avail:,.0f}원 < {price:,.0f}원) → 신규진입 스킵")
+                if avail < price:
+                    log.debug(f"  [{ticker}] 예산 소진 (잔여 {avail:,.0f}원 < {price:,.0f}원) → 스킵")
                     continue
 
                 candles = get_daily_ohlcv(ticker, self.token, lookback_days=180, market=market)
                 if candles.empty:
+                    log.debug(f"  [{ticker}] 캔들 없음")
                     continue
                 sig_df = calc_all(candles)
                 if sig_df.empty:
@@ -478,32 +512,44 @@ class TradingBot:
                         strategy_name = "volatility_breakout"
                         params = vb_p
 
-                if signal_fired and mode not in ("HALT", "DEFENSIVE"):
-                    sl_cap = abs(HARD_RULES["max_single_loss_pct"]) / 100.0
-                    sl_pct = min(params.get("sl_pct", 0.03), sl_cap)
-                    # mean_reversion: BB 중선(ma20)을 TP로 사용
-                    if strategy_name == "mean_reversion" and params.get("tp_bb_mid"):
-                        bb_mid = float(sig_df.iloc[i].get("ma20", price))
-                        tp_pct = max((bb_mid - price) / price, 0.005) if bb_mid > price else 0.03
-                    else:
-                        tp_pct = params.get("tp_pct", HARD_RULES["take_profit_pct"] / 100.0)
-                    qty = self.risk.calc_order_size(price, size_pct, sl_pct)
+                if not signal_fired:
+                    log.debug(f"  [{ticker}] 신호없음 {price:,}원")
+                    continue
 
-                    if self.is_paper:
-                        log.info(f"[PAPER BUY] {ticker} {qty}@{price:,}")
-                    else:
-                        result = place_order(ticker, qty, 0, "buy", self.token, market=market)
-                        if not result["success"]:
-                            log.error(f"order failed [{ticker}]: {result['msg']}")
-                            continue
+                if mode in ("HALT", "DEFENSIVE"):
+                    log.debug(f"  [{ticker}] {strategy_name} 신호 — {mode} 모드 진입 억제")
+                    continue
 
-                    tp = int(price * (1 + tp_pct))
-                    sl = int(price * (1 - sl_pct))
-                    self.risk.open_position(ticker, price, qty, strategy_name, tp_pct, sl_pct, params.get("max_hold", 1))
-                    trade_alert("buy", ticker, qty, price, strategy_name, tp, sl)
+                sl_cap = abs(HARD_RULES["max_single_loss_pct"]) / 100.0
+                sl_pct = min(params.get("sl_pct", 0.03), sl_cap)
+                # mean_reversion: BB 중선(ma20)을 TP로 사용
+                if strategy_name == "mean_reversion" and params.get("tp_bb_mid"):
+                    bb_mid = float(sig_df.iloc[i].get("ma20", price))
+                    tp_pct = max((bb_mid - price) / price, 0.005) if bb_mid > price else 0.03
+                else:
+                    tp_pct = params.get("tp_pct", HARD_RULES["take_profit_pct"] / 100.0)
+                qty = self.risk.calc_order_size(price, size_pct, sl_pct)
+
+                if self.is_paper:
+                    log.info(f"[PAPER BUY] {ticker} {qty}@{price:,} | {strategy_name}")
+                else:
+                    result = place_order(ticker, qty, 0, "buy", self.token, market=market)
+                    if not result["success"]:
+                        log.error(f"order failed [{ticker}]: {result['msg']}")
+                        continue
+
+                tp = int(price * (1 + tp_pct))
+                sl = int(price * (1 - sl_pct))
+                self.risk.open_position(ticker, price, qty, strategy_name, tp_pct, sl_pct, params.get("max_hold", 1))
+                trade_alert("buy", ticker, qty, price, strategy_name, tp, sl)
 
             except Exception as e:
                 log.error(f"cycle error [{ticker}]: {e}")
+
+        log.info(
+            f"[{market} 사이클 완료] 포지션:{len(self.risk.positions)}개 | "
+            f"현금:{self.risk.cash:,.0f}원"
+        )
 
     def run_tuning(self, market: str):
         if not self.session_active:
@@ -540,6 +586,19 @@ class TradingBot:
                 log.info(f"SL adjusted: {sl_adj:+.3f}")
 
         tuning_report(elapsed, result, self.today_judgment["consensus"]["mode"], self.risk.positions)
+
+    def _heartbeat(self):
+        """1시간마다 현재 상태를 로그 + 텔레그램으로 보고"""
+        if not self.session_active:
+            return
+        market = self.current_market
+        mode = self.today_judgment.get("consensus", {}).get("mode", "?")
+        tickers = self.today_tickers.get(market, [])
+        pos_txt = ", ".join(f"{p['ticker']}({p['qty']}주)" for p in self.risk.positions) or "없음"
+        now_str = datetime.now(KST).strftime("%H:%M")
+        log.info(f"[Heartbeat {now_str}] {market} | 모드:{mode} | 포지션:{pos_txt}")
+        avail = self._market_budget_available(market) if market else 0
+        status_report(market, mode, self.risk.positions, avail, self.risk.cash, tickers)
 
     def session_close(self, market: str):
         log.info(f"[{market}] session_close")
@@ -639,23 +698,14 @@ def main(is_paper: bool = True):
     schedule.every().day.at("22:20").do(bot.session_open, "US")
     schedule.every().day.at("05:00").do(bot.session_close, "US")
 
-    def kr_cycle():
-        bot.run_cycle("KR")
+    schedule.every(5).minutes.do(bot.run_cycle, "KR")
+    schedule.every(5).minutes.do(bot.run_cycle, "US")
 
-    def us_cycle():
-        bot.run_cycle("US")
+    schedule.every(30).minutes.do(bot.run_tuning, "KR")
+    schedule.every(30).minutes.do(bot.run_tuning, "US")
 
-    schedule.every(5).minutes.do(kr_cycle)
-    schedule.every(5).minutes.do(us_cycle)
-
-    def kr_tune():
-        bot.run_tuning("KR")
-
-    def us_tune():
-        bot.run_tuning("US")
-
-    schedule.every(30).minutes.do(kr_tune)
-    schedule.every(30).minutes.do(us_tune)
+    # 1시간마다 상태 보고 (세션 중일 때만 실제 전송)
+    schedule.every(60).minutes.do(bot._heartbeat)
 
     log.info("schedules registered")
     while True:
@@ -667,7 +717,58 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true", help="live mode")
     parser.add_argument("--paper", action="store_true", help="paper mode (default)")
+    parser.add_argument("--collect", choices=["KR", "US", "ALL"],
+                        help="데이터 수집 실행 후 종료: 주가→뉴스→supplement 순서로 수집")
+    parser.add_argument("--train", choices=["KR", "US", "ALL"],
+                        help="Phase1 역사 학습 실행 후 종료 (예: --train KR)")
+    parser.add_argument("--train-start", default=None,
+                        help="수집/학습 시작일 (기본: KR=2024-10-01 / US=2025-01-01)")
     args = parser.parse_args()
+
+    if args.collect:
+        # 1단계: 주가 수집
+        from phase1_trainer.price_collector import collect_kr_incremental, collect_us_incremental
+        col_start = args.train_start or "2024-10-01"
+        col_end   = date.today().strftime("%Y-%m-%d")
+        s_ts = __import__("pandas").Timestamp(col_start)
+        e_ts = __import__("pandas").Timestamp(col_end)
+        markets_col = ["KR", "US"] if args.collect == "ALL" else [args.collect]
+        if "KR" in markets_col:
+            log.info(f"[수집] KR 주가 {col_start} ~ {col_end}")
+            collect_kr_incremental(s_ts, e_ts)
+        if "US" in markets_col:
+            log.info(f"[수집] US 주가 {col_start} ~ {col_end}")
+            collect_us_incremental(s_ts, e_ts)
+
+        # 2단계: 뉴스 수집
+        from phase1_trainer.kr_news_collector import collect_range as kr_news_range
+        from phase1_trainer.us_news_collector import collect_range as us_news_range
+        from phase1_trainer.supplement_collector import collect_range as supp_range
+        if "KR" in markets_col:
+            log.info(f"[수집] KR 뉴스 {col_start} ~ {col_end}")
+            kr_news_range(col_start, col_end)
+        if "US" in markets_col:
+            log.info(f"[수집] US 뉴스 {col_start} ~ {col_end}")
+            us_news_range(col_start, col_end)
+
+        # 3단계: 보조 데이터
+        log.info(f"[수집] supplement {col_start} ~ {col_end}")
+        market_arg = args.collect if args.collect != "ALL" else "ALL"
+        supp_range(col_start, col_end, market=market_arg)
+
+        log.info("데이터 수집 완료. 이제 --train 으로 Phase1 학습을 실행하세요.")
+        sys.exit(0)
+
+    if args.train:
+        from phase1_trainer.historical_sim import run_simulation
+        markets = ["KR", "US"] if args.train == "ALL" else [args.train]
+        defaults = {"KR": "2024-10-01", "US": "2025-01-01"}
+        end = date.today().strftime("%Y-%m-%d")
+        for mkt in markets:
+            start = args.train_start or defaults[mkt]
+            log.info(f"Phase1 학습 시작: {mkt} {start} ~ {end}")
+            run_simulation(market=mkt, start=start, end=end)
+        sys.exit(0)
 
     is_paper = not args.live
     if not is_paper:

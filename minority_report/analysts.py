@@ -9,6 +9,22 @@ log    = get_minority_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
 MODEL  = "claude-sonnet-4-6"
 
+# ── 종목 유니버스 ──────────────────────────────────────────────────────────────
+
+KR_UNIVERSE = [
+    ("005930", "삼성전자"),  ("000660", "SK하이닉스"), ("035420", "NAVER"),
+    ("005380", "현대차"),    ("000270", "기아"),        ("051910", "LG화학"),
+    ("006400", "삼성SDI"),   ("035720", "카카오"),      ("068270", "셀트리온"),
+    ("028260", "삼성물산"),  ("012330", "현대모비스"),  ("003550", "LG"),
+]
+
+US_UNIVERSE = [
+    ("NVDA", "엔비디아"),  ("TSLA", "테슬라"),   ("AAPL", "애플"),
+    ("MSFT", "마이크로소프트"), ("AMZN", "아마존"), ("GOOGL", "알파벳"),
+    ("META", "메타"),      ("AMD", "AMD"),        ("SMCI", "슈퍼마이크로"),
+    ("PLTR", "팔란티어"),  ("NFLX", "넷플릭스"),
+]
+
 PERSONAS = {
     "bull":    "당신은 낙관적 관점의 주식 분석가입니다. 긍정적 신호와 상승 기회를 우선 포착합니다.",
     "bear":    "당신은 리스크 중심 분석가입니다. 위험 요소와 하락 가능성을 우선 포착합니다.",
@@ -59,3 +75,45 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
     neut = call_analyst("neutral", digest_prompt, brain_summary, correction)
     log.info(f"판단 완료 | Bull:{bull['stance']} Bear:{bear['stance']} Neut:{neut['stance']}")
     return {"bull":bull,"bear":bear,"neutral":neut}
+
+
+def select_tickers(market: str, digest_prompt: str,
+                   consensus_mode: str, universe: list) -> list:
+    """오늘 집중 모니터링할 종목을 Claude가 선택 (3~5개)"""
+    uni_lines = "\n".join(f"  {t}: {n}" for t, n in universe)
+    prompt = f"""주식 트레이딩 AI입니다. 오늘 {market} 장에서 집중 모니터링할 종목을 선택하세요.
+
+현재 합의 모드: {consensus_mode}
+
+후보 종목:
+{uni_lines}
+
+오늘 시장 데이터:
+{digest_prompt[:600]}
+
+규칙:
+- 반드시 3~5개 선택 (후보 코드만)
+- {consensus_mode} 모드에 맞는 종목 우선
+- HALT/DEFENSIVE: 저변동·방어주 위주
+- AGGRESSIVE/MODERATE_BULL: 모멘텀·수급 강한 종목
+
+JSON으로만:
+{{"tickers":["코드1","코드2","코드3"],"reasons":{{"코드1":"이유 한 문장"}}}}"""
+    valid = {t for t, _ in universe}
+    try:
+        resp = client.messages.create(model=MODEL, max_tokens=256,
+            messages=[{"role": "user", "content": prompt}])
+        raw = resp.content[0].text.strip()
+        if "```" in raw:
+            raw = raw.split("```")[1].replace("json", "").strip()
+        result = json.loads(raw)
+        tickers = [t for t in result.get("tickers", []) if t in valid][:5]
+        if not tickers:
+            raise ValueError("유효 종목 없음")
+        log.info(f"[종목선택] {market} → {tickers}")
+        for t, r in result.get("reasons", {}).items():
+            log.info(f"  {t}: {r[:60]}")
+        return tickers
+    except Exception as e:
+        log.error(f"[종목선택 오류] {e} → 기본값 사용")
+        return [t for t, _ in universe[:3]]

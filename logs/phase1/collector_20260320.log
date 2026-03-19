@@ -1,0 +1,52 @@
+2026-03-20 00:28:07 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 00:28:07 [[32m[1mINFO    [0m] collect_day:357 | [32m━━━ 2026-03-20 뉴스 수집 시작 ━━━[0m
+2026-03-20 00:28:07 [[36m[1mDEBUG   [0m] fetch_market_news:343 | [36m시황 뉴스 2026-03-20: 0건[0m
+2026-03-20 00:28:09 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005930] 2026-03-20: 0건[0m
+2026-03-20 00:28:10 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 00:28:10 [[32m[1mINFO    [0m] collect_day:415 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+2026-03-20 00:28:12 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [000660] 2026-03-20: 0건[0m
+2026-03-20 00:28:12 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 00:28:12 [[32m[1mINFO    [0m] collect_day:415 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+2026-03-20 00:28:14 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [035420] 2026-03-20: 0건[0m
+2026-03-20 00:28:15 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 00:28:15 [[32m[1mINFO    [0m] collect_day:415 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+2026-03-20 00:28:17 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [005380] 2026-03-20: 0건[0m
+2026-03-20 00:28:17 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 00:28:17 [[32m[1mINFO    [0m] collect_day:415 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+2026-03-20 00:28:19 [[36m[1mDEBUG   [0m] fetch_naver_news:234 | [36m네이버금융 [051910] 2026-03-20: 0건[0m
+2026-03-20 00:28:20 [[36m[1mDEBUG   [0m] fetch_bigkinds_news:274 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+2026-03-20 00:28:20 [[32m[1mINFO    [0m] collect_day:415 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+2026-03-20 00:28:20 [[32m[1mINFO    [0m] collect_day:424 | [32m━━━ 2026-03-20 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2026-03-20.json ━━━[0m
+2026-03-20 00:28:20 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (13.12초)[0m
+2026-03-20 00:28:33 [[32m[1mINFO    [0m] wrapper:203 | [32m▶ collect_day() 시작[0m
+2026-03-20 00:28:33 [[32m[1mINFO    [0m] collect_day:271 | [32m━━━ 2026-03-20 미국 뉴스 수집 시작 ━━━[0m
+2026-03-20 00:28:33 [[32m[1mINFO    [0m] check_macro_events:232 | [32m⚠️  2026-03-20 FOMC 주간 (변동성 주의)[0m
+2026-03-20 00:28:33 [[36m[1mDEBUG   [0m] fetch_av_news:127 | [36mAV 뉴스 [SPY] 2026-03-20: 0건[0m
+2026-03-20 00:28:45 [[36m[1mDEBUG   [0m] fetch_av_news:127 | [36mAV 뉴스 [QQQ] 2026-03-20: 0건[0m
+2026-03-20 00:28:57 [[32m[1mINFO    [0m] collect_day:282 | [32m  시장뉴스: 0건[0m
+2026-03-20 00:28:58 [[36m[1mDEBUG   [0m] fetch_av_news:127 | [36mAV 뉴스 [NVDA] 2026-03-20: 0건[0m
+2026-03-20 00:28:58 [[36m[1mDEBUG   [0m] collect_day:296 | [36m  AV [NVDA] 0건[0m
+2026-03-20 00:29:10 [[36m[1mDEBUG   [0m] fetch_sec_filings:206 | [36mSEC [NVDA] 2026-03-20: 0건[0m
+2026-03-20 00:29:11 [[32m[1mINFO    [0m] collect_day:329 | [32m  [엔비디아(NVDA)] 0건[0m
+2026-03-20 00:29:11 [[36m[1mDEBUG   [0m] fetch_av_news:127 | [36mAV 뉴스 [TSLA] 2026-03-20: 0건[0m
+2026-03-20 00:29:11 [[36m[1mDEBUG   [0m] collect_day:296 | [36m  AV [TSLA] 0건[0m
+2026-03-20 00:29:23 [[36m[1mDEBUG   [0m] fetch_sec_filings:206 | [36mSEC [TSLA] 2026-03-20: 0건[0m
+2026-03-20 00:29:24 [[32m[1mINFO    [0m] collect_day:329 | [32m  [테슬라(TSLA)] 0건[0m
+2026-03-20 00:29:24 [[36m[1mDEBUG   [0m] fetch_av_news:127 | [36mAV 뉴스 [AAPL] 2026-03-20: 0건[0m
+2026-03-20 00:29:24 [[36m[1mDEBUG   [0m] collect_day:296 | [36m  AV [AAPL] 0건[0m
+2026-03-20 00:29:37 [[36m[1mDEBUG   [0m] fetch_sec_filings:206 | [36mSEC [AAPL] 2026-03-20: 0건[0m
+2026-03-20 00:29:37 [[32m[1mINFO    [0m] collect_day:329 | [32m  [애플(AAPL)] 0건[0m
+2026-03-20 00:29:38 [[36m[1mDEBUG   [0m] fetch_av_news:127 | [36mAV 뉴스 [MSFT] 2026-03-20: 0건[0m
+2026-03-20 00:29:38 [[36m[1mDEBUG   [0m] collect_day:296 | [36m  AV [MSFT] 0건[0m
+2026-03-20 00:29:50 [[36m[1mDEBUG   [0m] fetch_sec_filings:206 | [36mSEC [MSFT] 2026-03-20: 0건[0m
+2026-03-20 00:29:51 [[32m[1mINFO    [0m] collect_day:329 | [32m  [마이크로소프트(MSFT)] 0건[0m
+2026-03-20 00:29:51 [[36m[1mDEBUG   [0m] fetch_av_news:127 | [36mAV 뉴스 [META] 2026-03-20: 0건[0m
+2026-03-20 00:29:51 [[36m[1mDEBUG   [0m] collect_day:296 | [36m  AV [META] 0건[0m
+2026-03-20 00:30:04 [[36m[1mDEBUG   [0m] fetch_sec_filings:206 | [36mSEC [META] 2026-03-20: 0건[0m
+2026-03-20 00:30:05 [[32m[1mINFO    [0m] collect_day:329 | [32m  [메타(META)] 0건[0m
+2026-03-20 00:30:05 [[32m[1mINFO    [0m] collect_day:337 | [32m━━━ 2026-03-20 완료 | 시장 0건 | 종목 0건 | FOMC=False | 저장: 2026-03-20.json ━━━[0m
+2026-03-20 00:30:05 [[32m[1mINFO    [0m] wrapper:212 | [32m✅ collect_day() 완료 (92.29초)[0m
+2026-03-20 00:30:28 [[32m[1mINFO    [0m] collect_kr_supplement:97 | [32m[KR supplement] 2026-03-19[0m
+2026-03-20 00:30:42 [[32m[1mINFO    [0m] collect_kr_supplement:113 | [32m  ✅ KR supplement 저장: 2026-03-19.json[0m
+2026-03-20 00:30:42 [[32m[1mINFO    [0m] collect_us_supplement:118 | [32m[US supplement] 2026-03-19[0m
+2026-03-20 00:30:55 [[32m[1mINFO    [0m] collect_us_supplement:127 | [32m  ✅ US supplement 저장: 2026-03-19.json[0m

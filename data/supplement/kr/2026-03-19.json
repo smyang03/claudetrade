@@ -1,0 +1,25 @@
+{
+  "date": "2026-03-19",
+  "flows": {
+    "005930": {
+      "foreign": -2135532,
+      "institution": -1121429,
+      "individual": 0,
+      "foreign_5d": 0
+    },
+    "000660": {
+      "foreign": -456883,
+      "institution": -149745,
+      "individual": 0,
+      "foreign_5d": 0
+    },
+    "035420": {
+      "foreign": -76456,
+      "institution": -89324,
+      "individual": 0,
+      "foreign_5d": 0
+    }
+  },
+  "usd_krw": 0.0,
+  "vkospi": 0
+}
