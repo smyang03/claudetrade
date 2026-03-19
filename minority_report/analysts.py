@@ -3,9 +3,11 @@ import os, json, time, sys
 import anthropic
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent.parent))
-from logger import get_minority_logger
+from logger import get_analysis_logger, get_judgment_logger, get_minority_logger
 
 log    = get_minority_logger()
+analysis_log = get_analysis_logger()
+judgment_log = get_judgment_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
 MODEL  = "claude-sonnet-4-6"
 
@@ -42,6 +44,18 @@ JSON으로만 응답:
         result = json.loads(raw)
         log.info(f"[{analyst_type}] {result.get('stance','-')} "
                  f"conf={result.get('confidence',0):.2f} | {result.get('key_reason','')[:60]}")
+        analysis_log.info(
+            f"[analyst] {analyst_type} {result.get('stance','-')}",
+            extra={"extra": {
+                "event": "analyst_response",
+                "analyst": analyst_type,
+                "stance": result.get("stance"),
+                "confidence": result.get("confidence"),
+                "key_reason": result.get("key_reason"),
+                "top_risks": result.get("top_risks", []),
+                "suggested_strategy": result.get("suggested_strategy"),
+            }},
+        )
         return result
     except Exception as e:
         log.error(f"[{analyst_type}] 오류: {e}")
@@ -58,6 +72,15 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
     time.sleep(delay)
     neut = call_analyst("neutral", digest_prompt, brain_summary, correction)
     log.info(f"판단 완료 | Bull:{bull['stance']} Bear:{bear['stance']} Neut:{neut['stance']}")
+    judgment_log.info(
+        f"[judgments] Bull:{bull['stance']} Bear:{bear['stance']} Neutral:{neut['stance']}",
+        extra={"extra": {
+            "event": "three_judgments",
+            "bull": bull,
+            "bear": bear,
+            "neutral": neut,
+        }},
+    )
     return {"bull":bull,"bear":bear,"neutral":neut}
 
 
@@ -120,6 +143,17 @@ JSON으로만:
         if not tickers:
             raise ValueError("유효 종목 없음")
         log.info(f"[종목선택] {market} → {tickers}")
+        analysis_log.info(
+            f"[selection] {market} {tickers}",
+            extra={"extra": {
+                "event": "ticker_selection",
+                "market": market,
+                "consensus_mode": consensus_mode,
+                "selected": tickers,
+                "candidate_count": len(candidates),
+                "reasons": result.get("reasons", {}),
+            }},
+        )
         for t, r in result.get("reasons", {}).items():
             log.info(f"  {t}: {r[:60]}")
         return tickers

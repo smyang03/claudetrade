@@ -11,6 +11,7 @@ import threading
 import pandas as pd
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from runtime_paths import get_runtime_path
 
 load_dotenv()
 
@@ -33,13 +34,13 @@ WS_URL = (
     if IS_PAPER
     else "ws://ops.koreainvestment.com:21000"
 )
-TOKEN_FILE = "kis_token.json"
+TOKEN_FILE = get_runtime_path("state", "kis_token.json")
 KIS_HTTP_TIMEOUT = float(os.getenv("KIS_HTTP_TIMEOUT", "10"))
 KIS_TOKEN_RETRY = int(os.getenv("KIS_TOKEN_RETRY", "3"))
 
 
 def load_token():
-    if not os.path.exists(TOKEN_FILE):
+    if not TOKEN_FILE.exists():
         return None
     with open(TOKEN_FILE, encoding="utf-8") as f:
         data = json.load(f)

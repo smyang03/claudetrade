@@ -17,14 +17,15 @@ from flask import Flask, jsonify, render_template_string
 from pathlib import Path
 from datetime import datetime, date, timedelta
 import json, sys, os
+from runtime_paths import get_runtime_path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 app = Flask(__name__)
 
 BASE_DIR    = Path(__file__).parent.parent
-LOG_DIR     = BASE_DIR / "logs" / "daily_judgment"
-BRAIN_PATH  = BASE_DIR / "claude_memory" / "brain.json"
+LOG_DIR     = get_runtime_path("logs", "daily_judgment", make_parents=False)
+BRAIN_PATH  = get_runtime_path("state", "brain.json")
 
 
 # ── 데이터 로더 ────────────────────────────────────────────────────────────────
@@ -40,8 +41,9 @@ def load_records(days: int = 60, market: str = "KR") -> list[dict]:
     return records
 
 def load_brain() -> dict:
-    if BRAIN_PATH.exists():
-        with open(BRAIN_PATH, encoding="utf-8") as f:
+    source = BRAIN_PATH if BRAIN_PATH.exists() else (BASE_DIR / "claude_memory" / "brain.json")
+    if source.exists():
+        with open(source, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
@@ -124,10 +126,13 @@ def api_judgments():
     return jsonify({
         "date":   rec.get("date", ""),
         "bull":   {**judgments.get("bull", {}),
+                   "result": postmortem.get("bull_result", ""),
                    "why": postmortem.get("bull_why", "")},
         "bear":   {**judgments.get("bear", {}),
+                   "result": postmortem.get("bear_result", ""),
                    "why": postmortem.get("bear_why", "")},
         "neutral":{**judgments.get("neutral", {}),
+                   "result": postmortem.get("neutral_result", ""),
                    "why": postmortem.get("neutral_why", "")},
         "consensus": rec.get("consensus", {}),
         "lesson": postmortem.get("key_lesson", ""),
@@ -164,8 +169,9 @@ def api_analyst_chart():
         start = max(0, i - window + 1)
         window_recs = records[start:i+1]
         def rate(analyst):
+            result_key = f"{analyst}_result"
             hits = sum(1 for rec in window_recs
-                       if rec.get("judgments",{}).get(analyst,{}).get("result") == "HIT")
+                       if rec.get("postmortem", {}).get(result_key) == "HIT")
             return round(hits / len(window_recs) * 100, 1)
 
         bull_hits.append(rate("bull"))

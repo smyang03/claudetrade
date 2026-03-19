@@ -27,10 +27,12 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trainer_logger, log_call, ProgressLogger
+from minority_report.consensus import build_consensus as runtime_build_consensus
 from phase1_trainer.digest_builder import (
     build_kr_digest, build_us_digest,
     load_digest, digest_to_prompt
 )
+from runtime_paths import get_runtime_path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "claude_memory"))
 import brain as BrainDB
@@ -39,32 +41,22 @@ log         = get_trainer_logger()
 client      = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
 BASE_DIR    = Path(__file__).parent.parent
 PRICE_DIR   = BASE_DIR / "data" / "price"
-JUDGMENT_DIR= BASE_DIR / "logs" / "daily_judgment"
+JUDGMENT_DIR= get_runtime_path("logs", "daily_judgment", make_parents=False)
 JUDGMENT_DIR.mkdir(parents=True, exist_ok=True)
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # ── 합의 룰 ───────────────────────────────────────────────────────────────────
 
-CONSENSUS_MAP = {
-    ("bull","bull","bull"):    {"mode":"AGGRESSIVE",     "size":100,"tp_mult":1.2},
-    ("bull","bull","neutral"): {"mode":"MODERATE_BULL",  "size":80, "tp_mult":1.1},
-    ("bull","bull","bear"):    {"mode":"CAUTIOUS",       "size":60, "tp_mult":1.0},
-    ("bull","neutral","neutral"):{"mode":"MILD_BULL",    "size":50, "tp_mult":1.0},
-    ("neutral","neutral","neutral"):{"mode":"NEUTRAL",   "size":40, "tp_mult":1.0},
-    ("bear","neutral","neutral"):{"mode":"MILD_BEAR",    "size":30, "tp_mult":0.9},
-    ("bear","bear","neutral"): {"mode":"CAUTIOUS_BEAR",  "size":20, "tp_mult":0.8},
-    ("bear","bear","bull"):    {"mode":"DEFENSIVE",      "size":10, "tp_mult":0.8},
-    ("bear","bear","bear"):    {"mode":"HALT",           "size":0,  "tp_mult":0.0},
-}
-
 def get_consensus(bull_stance: str, bear_stance: str, neut_stance: str) -> dict:
-    def to_cat(stance):
-        if stance in ("AGGRESSIVE","MODERATE_BULL","MILD_BULL"): return "bull"
-        if stance in ("HALT","DEFENSIVE","CAUTIOUS_BEAR"):       return "bear"
-        return "neutral"
-    key = tuple(sorted([to_cat(bull_stance), to_cat(bear_stance), to_cat(neut_stance)]))
-    return CONSENSUS_MAP.get(key, {"mode":"CAUTIOUS","size":40,"tp_mult":1.0})
+    return runtime_build_consensus(
+        {
+            "bull": {"stance": bull_stance, "confidence": 0.0, "key_reason": ""},
+            "bear": {"stance": bear_stance, "confidence": 0.0, "key_reason": ""},
+            "neutral": {"stance": neut_stance, "confidence": 0.0, "key_reason": ""},
+        },
+        check_minority=False,
+    )
 
 
 # ── Claude API 호출 ───────────────────────────────────────────────────────────

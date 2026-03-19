@@ -19,6 +19,7 @@ from datetime import datetime, date, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trainer_logger, log_call
+from runtime_paths import get_runtime_path
 
 log = get_trainer_logger()
 
@@ -163,7 +164,7 @@ def load_prev_result(market: str, target_date: str) -> dict:
     prev = (dt - timedelta(days=1)).strftime("%Y-%m-%d")
     # 평일 역순으로 최대 5일 탐색
     from pathlib import Path
-    jdir = BASE_DIR / "logs" / "daily_judgment"
+    jdir = get_runtime_path("logs", "daily_judgment", make_parents=False)
     for i in range(1, 6):
         d = (dt - timedelta(days=i)).strftime("%Y%m%d")
         p = jdir / f"{d}_{market}.json"

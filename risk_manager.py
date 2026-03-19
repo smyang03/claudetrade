@@ -60,15 +60,23 @@ class RiskManager:
             return False, f"max positions {HARD_RULES['max_positions']}"
         if any(p["ticker"] == ticker for p in self.positions):
             return False, "already holding"
+        if price <= 0:
+            return False, "invalid price"
         if self.cash < price:
             return False, "insufficient cash"
         return True, "OK"
 
-    def calc_order_size(self, price: float, mode_size_pct: int = 70, sl_pct: float = 0.03) -> int:
+    def calc_order_budget(self, mode_size_pct: int = 70) -> float:
         budget = self.cash * HARD_RULES["max_position_pct"] * (mode_size_pct / 100)
         budget = min(budget, HARD_RULES["max_order_krw"])
         budget = min(budget, self.cash * 0.5)
-        return max(1, int(budget / price))
+        return max(0.0, budget)
+
+    def calc_order_size(self, price: float, mode_size_pct: int = 70, sl_pct: float = 0.03) -> int:
+        if price <= 0:
+            return 0
+        budget = self.calc_order_budget(mode_size_pct)
+        return max(1, int(budget / price)) if budget >= price else 0
 
     def open_position(
         self,

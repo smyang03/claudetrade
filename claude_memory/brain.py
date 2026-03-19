@@ -8,14 +8,17 @@ import os
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
+from runtime_paths import get_runtime_path
 
-BRAIN_PATH = Path(__file__).parent / "brain.json"
+REPO_BRAIN_PATH = Path(__file__).parent / "brain.json"
+BRAIN_PATH = get_runtime_path("state", "brain.json")
 
 
 # ── 기본 읽기/쓰기 ────────────────────────────────────────────────────────────
 
 def load() -> dict:
-    with open(BRAIN_PATH, "r", encoding="utf-8") as f:
+    source = BRAIN_PATH if BRAIN_PATH.exists() else REPO_BRAIN_PATH
+    with open(source, "r", encoding="utf-8") as f:
         return json.load(f)
 
 

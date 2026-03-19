@@ -32,13 +32,14 @@ from datetime import datetime, date
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from functools import wraps
 import time
+from runtime_paths import get_runtime_path
 
 # ── 기본 경로 설정 ────────────────────────────────────────────────────────────
 
 BASE_DIR = Path(__file__).parent
-LOG_DIR  = BASE_DIR / "logs"
+LOG_DIR  = get_runtime_path("logs", make_parents=False)
 
-for subdir in ["system", "phase1", "brain", "daily"]:
+for subdir in ["system", "phase1", "brain", "daily", "analysis", "judgment"]:
     (LOG_DIR / subdir).mkdir(parents=True, exist_ok=True)
 
 
@@ -57,9 +58,15 @@ class ColorFormatter(logging.Formatter):
 
     def format(self, record):
         color = self.COLORS.get(record.levelname, "")
-        record.levelname = f"{color}{self.BOLD}{record.levelname:<8}{self.RESET}"
-        record.msg = f"{color}{record.msg}{self.RESET}"
-        return super().format(record)
+        original_levelname = record.levelname
+        original_msg = record.msg
+        try:
+            record.levelname = f"{color}{self.BOLD}{record.levelname:<8}{self.RESET}"
+            record.msg = f"{color}{record.msg}{self.RESET}"
+            return super().format(record)
+        finally:
+            record.levelname = original_levelname
+            record.msg = original_msg
 
 
 # ── JSON 포매터 (파일 저장용 - 파싱 쉽게) ────────────────────────────────────
@@ -159,6 +166,15 @@ def get_logger(
     ))
     logger.addHandler(eh)
 
+    err_json_path = LOG_DIR / "system" / f"error_{today}.jsonl"
+    ejh = RotatingFileHandler(
+        err_json_path, maxBytes=5*1024*1024,
+        backupCount=30, encoding="utf-8"
+    )
+    ejh.setLevel(logging.ERROR)
+    ejh.setFormatter(JsonFormatter())
+    logger.addHandler(ejh)
+
     logger.propagate = False
     _loggers[cache_key] = logger
     return logger
@@ -185,6 +201,14 @@ def get_trading_logger() -> logging.Logger:
 def get_minority_logger() -> logging.Logger:
     """마이너리티 리포트 로거"""
     return get_logger("minority", "system", level="DEBUG")
+
+def get_analysis_logger() -> logging.Logger:
+    """주가/스크리너/신호 추적 로거"""
+    return get_logger("analysis", "analysis", level="DEBUG")
+
+def get_judgment_logger() -> logging.Logger:
+    """판단/합의/사후분석 추적 로거"""
+    return get_logger("judgment", "judgment", level="INFO")
 
 def get_daily_logger() -> logging.Logger:
     """일별 이벤트 로거"""
@@ -299,7 +323,7 @@ class ProgressLogger:
 def tail_errors(log_type: str = "system", n: int = 20) -> list[dict]:
     """최근 오류 로그 n개 반환 (디버깅용)"""
     today    = date.today().strftime("%Y%m%d")
-    jsonl    = LOG_DIR / log_type / f"error_{today}.log"
+    jsonl    = LOG_DIR / log_type / f"error_{today}.jsonl"
     if not jsonl.exists():
         return []
     lines = jsonl.read_text(encoding="utf-8").strip().split("\n")

@@ -26,7 +26,7 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from logger import get_trading_logger
+from logger import get_analysis_logger, get_judgment_logger, get_trading_logger
 from kis_api import (
     get_access_token,
     get_price,
@@ -60,14 +60,17 @@ from strategy.gap_pullback import signal as gap_sig, params as gap_params
 from strategy.volatility_breakout import signal as vb_sig, params as vb_params
 
 from claude_memory import brain as BrainDB
+from runtime_paths import get_runtime_path
 
 log = get_trading_logger()
+analysis_log = get_analysis_logger()
+judgment_log = get_judgment_logger()
 KST = ZoneInfo("Asia/Seoul")
 
-JUDGMENT_DIR = Path("logs/daily_judgment")
+JUDGMENT_DIR = get_runtime_path("logs", "daily_judgment", make_parents=False)
 JUDGMENT_DIR.mkdir(parents=True, exist_ok=True)
 
-POSITIONS_FILE = Path("logs/open_positions.json")  # 포지션 영속성 파일
+POSITIONS_FILE = get_runtime_path("state", "open_positions.json")  # 포지션 영속성 파일
 POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # 동적 선택 실패 시 폴백 (기본 3종목)
@@ -120,10 +123,12 @@ class TradingBot:
         self.tuning_count = 0
         self.ws = None
         self.price_cache = {}
+        self.price_cache_raw = {}
         self._ohlcv_cache: dict = {}        # ticker -> DataFrame (일봉 캐시)
         self._ohlcv_cache_time: dict = {}   # ticker -> datetime (캐시 갱신 시각)
         self.session_active = False
         self.current_market = None
+        self.usd_krw_rate = float(os.getenv("USD_KRW_RATE", "1350"))
 
         # 재시작 시 이월 포지션 복구
         self._restore_positions()
@@ -302,6 +307,9 @@ class TradingBot:
     def _ticker_market(self, ticker: str) -> str:
         return "US" if ticker.isalpha() else "KR"
 
+    def _price_to_krw(self, price: float, market: str) -> float:
+        return price if market == "KR" else price * self.usd_krw_rate
+
     def _in_entry_blackout(self, market: str) -> bool:
         now = datetime.now(KST).time()
         no_new = HARD_RULES["no_new_entry_min"]
@@ -348,8 +356,9 @@ class TradingBot:
             ex = self.risk.close_position(cand["ticker"], cand["exit_price"], cand["reason"])
             if not ex:
                 continue
+            raw_exit = self.price_cache_raw.get(ex["ticker"], ex["exit_price"])
             pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), ex["reason"])
-            trade_alert("sell", ex["ticker"], ex["qty"], int(ex["exit_price"]), ex["strategy"], 0, 0, reason=ex["reason"])
+            trade_alert("sell", ex["ticker"], ex["qty"], int(raw_exit), ex["strategy"], 0, 0, reason=ex["reason"])
             # 전략별 성과 brain 업데이트
             try:
                 BrainDB.update_strategy_performance(
@@ -381,7 +390,9 @@ class TradingBot:
             if self._ticker_market(pos["ticker"]) == market:
                 try:
                     price_info = get_price(pos["ticker"], self.token, market=market)
-                    self.price_cache[pos["ticker"]] = price_info["price"]
+                    raw_price = price_info["price"]
+                    self.price_cache_raw[pos["ticker"]] = raw_price
+                    self.price_cache[pos["ticker"]] = self._price_to_krw(raw_price, market)
                 except Exception as e:
                     log.warning(f"이월 포지션 시가 조회 실패 [{pos['ticker']}]: {e}")
         self.risk.update_prices(self.price_cache)
@@ -399,6 +410,16 @@ class TradingBot:
 
         judgments = get_three_judgments(digest_prompt, brain_summary, correction)
         consensus = build_consensus(judgments)
+        judgment_log.info(
+            f"[open {today} {market}] consensus={consensus['mode']} size={consensus['size']}%",
+            extra={"extra": {
+                "event": "session_open_judgment",
+                "date": today,
+                "market": market,
+                "consensus": consensus,
+                "judgments": judgments,
+            }},
+        )
 
         # 오늘 집중 종목: 스크리너 → Claude 선택
         log.info(f"[스크리너] {market} 시장 스캔 중...")
@@ -406,10 +427,30 @@ class TradingBot:
             candidates = screen_market_kr(self.token)
         else:
             candidates = screen_market_us()
+        analysis_log.info(
+            f"[screen {today} {market}] candidates={len(candidates)}",
+            extra={"extra": {
+                "event": "screen_candidates",
+                "date": today,
+                "market": market,
+                "count": len(candidates),
+                "tickers": [c.get("ticker") for c in candidates[:20]],
+            }},
+        )
         log.info(f"[스크리너] {market} 후보 {len(candidates)}개 → Claude 선택 중...")
         selected = select_tickers(market, digest_prompt, consensus["mode"], candidates)
         self.today_tickers[market] = selected
         log.info(f"[종목선택 확정] {market}: {selected}")
+        judgment_log.info(
+            f"[select {today} {market}] {selected}",
+            extra={"extra": {
+                "event": "ticker_selection",
+                "date": today,
+                "market": market,
+                "selected": selected,
+                "consensus_mode": consensus["mode"],
+            }},
+        )
 
         self.today_judgment = {
             "date": today,
@@ -433,8 +474,10 @@ class TradingBot:
 
     def _on_tick(self, data: dict):
         ticker = data["ticker"]
-        price = data["price"]
-        self.price_cache[ticker] = price
+        market = self._ticker_market(ticker)
+        raw_price = data["price"]
+        self.price_cache_raw[ticker] = raw_price
+        self.price_cache[ticker] = self._price_to_krw(raw_price, market)
         self.risk.update_prices(self.price_cache)
         self._process_exit_candidates()
 
@@ -473,7 +516,9 @@ class TradingBot:
             try:
                 price_info = get_price(ticker, self.token, market=market)
                 price = price_info["price"]
-                self.price_cache[ticker] = price
+                risk_price = self._price_to_krw(price, market)
+                self.price_cache_raw[ticker] = price
+                self.price_cache[ticker] = risk_price
                 self.risk.update_prices(self.price_cache)
                 self._process_exit_candidates()
 
@@ -484,15 +529,38 @@ class TradingBot:
                     log.debug(f"  [{ticker}] 블랙아웃 시간 — 스킵")
                     continue
 
-                ok, reason = self.risk.can_open(ticker, price, size_pct)
+                ok, reason = self.risk.can_open(ticker, risk_price, size_pct)
                 if not ok:
+                    analysis_log.info(
+                        f"[skip {market}] {ticker} {reason}",
+                        extra={"extra": {
+                            "event": "entry_skip",
+                            "market": market,
+                            "ticker": ticker,
+                            "reason": reason,
+                            "price": price,
+                            "risk_price_krw": risk_price,
+                            "mode": mode,
+                        }},
+                    )
                     log.debug(f"  [{ticker}] 진입불가: {reason}")
                     continue
 
                 # 시장별 예산 초과 확인
                 avail = self._market_budget_available(market)
-                if avail < price:
-                    log.debug(f"  [{ticker}] 예산 소진 (잔여 {avail:,.0f}원 < {price:,.0f}원) → 스킵")
+                if avail < risk_price:
+                    analysis_log.info(
+                        f"[skip {market}] {ticker} budget_exhausted",
+                        extra={"extra": {
+                            "event": "entry_skip",
+                            "market": market,
+                            "ticker": ticker,
+                            "reason": "budget_exhausted",
+                            "available_budget_krw": avail,
+                            "risk_price_krw": risk_price,
+                        }},
+                    )
+                    log.debug(f"  [{ticker}] 예산 소진 (잔여 {avail:,.0f}원 < {risk_price:,.0f}원) → 스킵")
                     continue
 
                 candles = self._get_ohlcv_cached(ticker, market)
@@ -534,10 +602,31 @@ class TradingBot:
                         params = vb_p
 
                 if not signal_fired:
+                    analysis_log.info(
+                        f"[signal {market}] {ticker} none",
+                        extra={"extra": {
+                            "event": "signal_check",
+                            "market": market,
+                            "ticker": ticker,
+                            "signal": "none",
+                            "price": price,
+                            "mode": mode,
+                        }},
+                    )
                     log.debug(f"  [{ticker}] 신호없음 {price:,}원")
                     continue
 
                 if mode in ("HALT", "DEFENSIVE"):
+                    analysis_log.info(
+                        f"[signal {market}] {ticker} blocked_by_mode",
+                        extra={"extra": {
+                            "event": "signal_blocked",
+                            "market": market,
+                            "ticker": ticker,
+                            "strategy": strategy_name,
+                            "mode": mode,
+                        }},
+                    )
                     log.debug(f"  [{ticker}] {strategy_name} 신호 — {mode} 모드 진입 억제")
                     continue
 
@@ -549,8 +638,34 @@ class TradingBot:
                     tp_pct = max((bb_mid - price) / price, 0.005) if bb_mid > price else 0.03
                 else:
                     tp_pct = params.get("tp_pct", HARD_RULES["take_profit_pct"] / 100.0)
-                qty = self.risk.calc_order_size(price, size_pct, sl_pct)
+                qty = self.risk.calc_order_size(risk_price, size_pct, sl_pct)
+                if qty <= 0:
+                    log.debug(f"  [{ticker}] 주문가능 수량 0주")
+                    continue
+                order_cost = qty * risk_price
+                if order_cost > avail:
+                    log.debug(f"  [{ticker}] 시장 예산 초과 ({order_cost:,.0f}원 > {avail:,.0f}원) → 스킵")
+                    continue
+                if order_cost > self.risk.cash:
+                    log.debug(f"  [{ticker}] 현금 부족 ({order_cost:,.0f}원 > {self.risk.cash:,.0f}원) → 스킵")
+                    continue
 
+                analysis_log.info(
+                    f"[signal {market}] {ticker} {strategy_name} qty={qty}",
+                    extra={"extra": {
+                        "event": "entry_signal",
+                        "market": market,
+                        "ticker": ticker,
+                        "strategy": strategy_name,
+                        "mode": mode,
+                        "price": price,
+                        "risk_price_krw": risk_price,
+                        "qty": qty,
+                        "order_cost_krw": order_cost,
+                        "tp_pct": tp_pct,
+                        "sl_pct": sl_pct,
+                    }},
+                )
                 if self.is_paper:
                     log.info(f"[PAPER BUY] {ticker} {qty}@{price:,} | {strategy_name}")
                 else:
@@ -561,7 +676,7 @@ class TradingBot:
 
                 tp = int(price * (1 + tp_pct))
                 sl = int(price * (1 - sl_pct))
-                self.risk.open_position(ticker, price, qty, strategy_name, tp_pct, sl_pct, params.get("max_hold", 1))
+                self.risk.open_position(ticker, risk_price, qty, strategy_name, tp_pct, sl_pct, params.get("max_hold", 1))
                 trade_alert("buy", ticker, qty, price, strategy_name, tp, sl)
 
             except Exception as e:
@@ -638,6 +753,7 @@ class TradingBot:
 
         for pos in day_trades:
             cp = self.price_cache.get(pos["ticker"], pos["current_price"])
+            raw_cp = self.price_cache_raw.get(pos["ticker"], cp)
             if not self.is_paper:
                 result = place_order(pos["ticker"], pos["qty"], 0, "sell",
                                      self.token, market=market)
@@ -646,7 +762,7 @@ class TradingBot:
             ex = self.risk.close_position(pos["ticker"], cp, "session_close")
             if ex:
                 pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "session_close")
-                trade_alert("sell", ex["ticker"], ex["qty"], int(cp),
+                trade_alert("sell", ex["ticker"], ex["qty"], int(raw_cp),
                             ex["strategy"], 0, 0, reason="session_close")
             log.warning(f"[당일청산] {pos['ticker']} {cp:,.0f}")
 
@@ -674,6 +790,18 @@ class TradingBot:
             self.today_judgment,
             actual,
             self.today_judgment.get("digest_prompt", ""),
+        )
+        judgment_log.info(
+            f"[close {today} {market}] pnl={actual['pnl_pct']:+.2f}% mode={self.today_judgment.get('consensus', {}).get('mode', '-')}",
+            extra={"extra": {
+                "event": "session_close_judgment",
+                "date": today,
+                "market": market,
+                "actual_result": actual,
+                "consensus": self.today_judgment.get("consensus", {}),
+                "postmortem": pm,
+                "trades": self.risk.trade_log,
+            }},
         )
 
         record = {

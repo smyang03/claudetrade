@@ -3,10 +3,11 @@ import os, json, sys
 import anthropic
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent.parent))
-from logger import get_minority_logger
+from logger import get_judgment_logger, get_minority_logger
 from claude_memory import brain as BrainDB
 
 log    = get_minority_logger()
+judgment_log = get_judgment_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
 MODEL  = "claude-sonnet-4-6"
 
@@ -100,4 +101,15 @@ JSON으로만:
         BrainDB.update_correction_guide(market, cg)
     log.info(f"[postmortem {date}] Bull:{pm['bull_result']} Bear:{pm['bear_result']} "
              f"Neut:{pm['neutral_result']} | {pm['key_lesson'][:60]}")
+    judgment_log.info(
+        f"[postmortem {date} {market}] Bull:{pm['bull_result']} Bear:{pm['bear_result']} Neutral:{pm['neutral_result']}",
+        extra={"extra": {
+            "event": "postmortem",
+            "date": date,
+            "market": market,
+            "consensus_mode": consensus_mode,
+            "actual_result": actual_result,
+            "postmortem": pm,
+        }},
+    )
     return pm
