@@ -1,0 +1,290 @@
+{
+  "meta": {
+    "version": 0,
+    "created": "2026-03-19",
+    "last_updated": "2026-03-19",
+    "trained_days_kr": 0,
+    "trained_days_us": 0,
+    "description": "Claude 마이너리티 리포트 판단 메모리"
+  },
+  "markets": {
+    "KR": {
+      "trained_days": 0,
+      "training_period": {
+        "phase1": "2024-10-01 ~ 2024-12-31 (하락장 50일)",
+        "phase2": "2025-01-01 ~ 2025-05-31 (반등/횡보 50일)",
+        "phase3": "2025-06-01 ~ 현재 (강세장 150일)"
+      },
+      "current_regime": "unknown",
+      "analyst_performance": {
+        "bull": {
+          "total": 0,
+          "hit": 0,
+          "miss": 0,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "unknown"
+        },
+        "bear": {
+          "total": 0,
+          "hit": 0,
+          "miss": 0,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "unknown"
+        },
+        "neutral": {
+          "total": 0,
+          "hit": 0,
+          "miss": 0,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "unknown"
+        }
+      },
+      "mode_performance": {
+        "AGGRESSIVE": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "MODERATE_BULL": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "CAUTIOUS": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "DEFENSIVE": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "HALT": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        }
+      },
+      "strategy_performance": {
+        "모멘텀": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0
+        },
+        "평균회귀": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0
+        },
+        "갭+눌림": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0
+        }
+      },
+      "issue_patterns": [],
+      "tuning_patterns": {
+        "first_30min_downgrade": {
+          "count": 0,
+          "correct": 0,
+          "rate": 0.0,
+          "current_threshold": -0.003,
+          "insight": "초기값: 지수 -0.3% 이상 하락 시 하향 조정"
+        },
+        "mid_session_upgrade": {
+          "count": 0,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "초기값: 미확정"
+        }
+      },
+      "current_beliefs": {
+        "market_regime": "unknown",
+        "bull_reliability": "unknown",
+        "bear_reliability": "unknown",
+        "best_strategy": "unknown",
+        "avoid": [],
+        "emphasize": [],
+        "learned_lessons": []
+      },
+      "recent_days": []
+    },
+    "US": {
+      "trained_days": 0,
+      "training_period": {
+        "phase1": "2025-01-01 ~ 2025-04-30 (조정장 50일)",
+        "phase2": "2025-05-01 ~ 2025-09-30 (강세장 100일)",
+        "phase3": "2025-10-01 ~ 2025-12-31 (횡보 50일)",
+        "phase4": "2026-01-01 ~ 현재 (현재 조정 50일)"
+      },
+      "current_regime": "unknown",
+      "analyst_performance": {
+        "bull": {
+          "total": 0,
+          "hit": 0,
+          "miss": 0,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "unknown"
+        },
+        "bear": {
+          "total": 0,
+          "hit": 0,
+          "miss": 0,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "unknown"
+        },
+        "neutral": {
+          "total": 0,
+          "hit": 0,
+          "miss": 0,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "unknown"
+        }
+      },
+      "mode_performance": {
+        "AGGRESSIVE": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "MODERATE_BULL": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "CAUTIOUS": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "DEFENSIVE": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "HALT": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        }
+      },
+      "strategy_performance": {
+        "변동성돌파": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0,
+          "best_k": 0.45
+        }
+      },
+      "issue_patterns": [],
+      "tuning_patterns": {
+        "first_30min_downgrade": {
+          "count": 0,
+          "correct": 0,
+          "rate": 0.0,
+          "current_threshold": -0.005,
+          "insight": "초기값: 지수 -0.5% 이상 하락 시 하향 조정"
+        },
+        "fomc_halt": {
+          "count": 0,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "FOMC 발표일 HALT 효과"
+        }
+      },
+      "current_beliefs": {
+        "market_regime": "unknown",
+        "bull_reliability": "unknown",
+        "bear_reliability": "unknown",
+        "best_k_value": 0.45,
+        "avoid": [],
+        "emphasize": [],
+        "learned_lessons": []
+      },
+      "recent_days": []
+    }
+  },
+  "cross_market": {
+    "us_kr_correlation": 0.0,
+    "us_leads_kr_days": 1,
+    "insight": "초기값: 미확정",
+    "learned": false
+  },
+  "correction_guide": {
+    "KR": {
+      "generated_date": null,
+      "bull_adjustments": [],
+      "bear_adjustments": [],
+      "tuning_rules": [],
+      "today_notes": ""
+    },
+    "US": {
+      "generated_date": null,
+      "bull_adjustments": [],
+      "bear_adjustments": [],
+      "tuning_rules": [],
+      "today_notes": ""
+    }
+  }
+}

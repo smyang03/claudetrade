@@ -1,0 +1,9 @@
+requests
+anthropic
+python-dotenv
+pandas
+numpy
+beautifulsoup4
+websocket-client
+schedule
+flask
