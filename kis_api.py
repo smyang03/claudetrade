@@ -120,13 +120,13 @@ def _get_price_us_alpha(ticker):
     return {
         "ticker": ticker,
         "name": ticker,
-        "price": int(float(q.get("05. price", 0))),
-        "change": int(float(q.get("09. change", 0))),
+        "price": round(float(q.get("05. price", 0)), 4),
+        "change": round(float(q.get("09. change", 0)), 4),
         "change_rate": float(q.get("10. change percent", "0%").replace("%", "")),
         "volume": int(float(q.get("06. volume", 0))),
-        "open": int(float(q.get("02. open", 0))),
-        "high": int(float(q.get("03. high", 0))),
-        "low": int(float(q.get("04. low", 0))),
+        "open": round(float(q.get("02. open", 0)), 4),
+        "high": round(float(q.get("03. high", 0)), 4),
+        "low": round(float(q.get("04. low", 0)), 4),
     }
 
 

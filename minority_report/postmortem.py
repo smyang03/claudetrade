@@ -4,22 +4,30 @@ import anthropic
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent.parent))
 from logger import get_minority_logger
-import brain as BrainDB
+from claude_memory import brain as BrainDB
 
 log    = get_minority_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
 MODEL  = "claude-sonnet-4-6"
 
-def run(market: str, date: str, judgment: dict,
+def run(market: str, date: str, today_judgment: dict,
         actual_result: dict, digest_prompt: str) -> dict:
+    """
+    today_judgment: trading_bot의 self.today_judgment 전체 dict
+      {date, market, judgments:{bull,bear,neutral}, consensus:{mode,size,...}, digest_prompt}
+    """
+    judgments = today_judgment.get("judgments", {})
+    consensus = today_judgment.get("consensus", {})
+    consensus_mode = consensus.get("mode", "CAUTIOUS")
+
     brain_summary = BrainDB.generate_prompt_summary(market)
     prompt = f"""트레이딩 AI 사후 분석가입니다.
 
 판단:
-  Bull:    {judgment['bull']['stance']} / {judgment['bull']['key_reason']}
-  Bear:    {judgment['bear']['stance']} / {judgment['bear']['key_reason']}
-  Neutral: {judgment['neutral']['stance']} / {judgment['neutral']['key_reason']}
-  합의:    {judgment['consensus']['mode']}
+  Bull:    {judgments.get('bull',{}).get('stance','-')} / {judgments.get('bull',{}).get('key_reason','-')}
+  Bear:    {judgments.get('bear',{}).get('stance','-')} / {judgments.get('bear',{}).get('key_reason','-')}
+  Neutral: {judgments.get('neutral',{}).get('stance','-')} / {judgments.get('neutral',{}).get('key_reason','-')}
+  합의:    {consensus_mode}
 
 실제 결과:
   시장: {actual_result.get('market_change',0):+.2f}%
@@ -38,9 +46,11 @@ JSON으로만:
   "pattern_id":"기존ID 또는 null",
   "brain_updates":{{"bull_reliability_change":"up|down|stable",
     "bear_reliability_change":"up|down|stable",
-    "new_lesson":"교훈 또는 null","market_regime":"장세"}}}}"""
+    "new_lesson":"교훈 또는 null","market_regime":"장세"}},
+  "correction_guide":{{"bull_adjustments":[],"bear_adjustments":[],
+    "tuning_rules":[],"today_notes":""}}}}"""
     try:
-        resp = client.messages.create(model=MODEL,max_tokens=512,
+        resp = client.messages.create(model=MODEL,max_tokens=600,
             messages=[{"role":"user","content":prompt}])
         raw = resp.content[0].text.strip()
         if "```" in raw: raw=raw.split("```")[1].replace("json","").strip()
@@ -54,13 +64,15 @@ JSON으로만:
               "neutral_why":"자동","key_lesson":"오류로 자동 판정",
               "issue_type":"미분류","issue_desc":"","pattern_id":None,
               "brain_updates":{"bull_reliability_change":"stable",
-                "bear_reliability_change":"stable","new_lesson":None,"market_regime":"unknown"}}
+                "bear_reliability_change":"stable","new_lesson":None,"market_regime":"unknown"},
+              "correction_guide":{"bull_adjustments":[],"bear_adjustments":[],
+                "tuning_rules":[],"today_notes":""}}
     # brain 업데이트
     recent = BrainDB.load()["markets"][market].get("recent_days",[])
     BrainDB.update_analyst(market,"bull",  pm["bull_result"]=="HIT",  recent)
     BrainDB.update_analyst(market,"bear",  pm["bear_result"]=="HIT",  recent)
     BrainDB.update_analyst(market,"neutral",pm["neutral_result"]=="HIT",recent)
-    BrainDB.update_mode_performance(market,judgment["consensus"]["mode"],
+    BrainDB.update_mode_performance(market, consensus_mode,
         actual_result.get("pnl_pct",0), actual_result.get("win",False))
     bu = pm.get("brain_updates",{})
     if bu.get("new_lesson"):
@@ -76,12 +88,16 @@ JSON으로만:
         "insight":pm.get("key_lesson",""),
     })
     BrainDB.add_daily_record(market,{
-        "date":date,"mode":judgment["consensus"]["mode"],
+        "date":date,"mode":consensus_mode,
         "pnl_pct":actual_result.get("pnl_pct",0),
         "win":actual_result.get("win",False),
         "bull_result":pm["bull_result"],"bear_result":pm["bear_result"],
         "neutral_result":pm["neutral_result"],
     })
+    # 내일 Claude 보정 지침 업데이트
+    cg = pm.get("correction_guide", {})
+    if cg:
+        BrainDB.update_correction_guide(market, cg)
     log.info(f"[postmortem {date}] Bull:{pm['bull_result']} Bear:{pm['bear_result']} "
              f"Neut:{pm['neutral_result']} | {pm['key_lesson'][:60]}")
     return pm

@@ -74,7 +74,10 @@ def update_analyst(market: str, analyst: str, hit: bool, recent_days: list):
 
 def update_mode_performance(market: str, mode: str, pnl_pct: float, win: bool):
     brain = load()
-    mp = brain["markets"][market]["mode_performance"][mode]
+    mode_map = brain["markets"][market]["mode_performance"]
+    if mode not in mode_map:
+        mode_map[mode] = {"count": 0, "avg_pnl": 0.0, "win_rate": 0.0}
+    mp = mode_map[mode]
 
     prev_count = mp["count"]
     mp["count"] += 1

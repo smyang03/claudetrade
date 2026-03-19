@@ -132,6 +132,14 @@ class TradingBot:
                 continue
             pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), ex["reason"])
             trade_alert("sell", ex["ticker"], ex["qty"], int(ex["exit_price"]), ex["strategy"], 0, 0, reason=ex["reason"])
+            # 전략별 성과 brain 업데이트
+            try:
+                BrainDB.update_strategy_performance(
+                    market, ex.get("strategy", "unknown"),
+                    ex.get("pnl_pct", 0), ex.get("pnl", 0) > 0
+                )
+            except Exception as e:
+                log.warning(f"strategy brain update failed: {e}")
 
     def session_open(self, market: str):
         log.info("=" * 50)
@@ -256,7 +264,12 @@ class TradingBot:
                 if signal_fired and mode not in ("HALT", "DEFENSIVE"):
                     sl_cap = abs(HARD_RULES["max_single_loss_pct"]) / 100.0
                     sl_pct = min(params.get("sl_pct", 0.03), sl_cap)
-                    tp_pct = params.get("tp_pct", HARD_RULES["take_profit_pct"] / 100.0)
+                    # mean_reversion: BB 중선(ma20)을 TP로 사용
+                    if strategy_name == "mean_reversion" and params.get("tp_bb_mid"):
+                        bb_mid = float(sig_df.iloc[i].get("ma20", price))
+                        tp_pct = max((bb_mid - price) / price, 0.005) if bb_mid > price else 0.03
+                    else:
+                        tp_pct = params.get("tp_pct", HARD_RULES["take_profit_pct"] / 100.0)
                     qty = self.risk.calc_order_size(price, size_pct, sl_pct)
 
                     if self.is_paper:
@@ -339,7 +352,7 @@ class TradingBot:
         pm = run_postmortem(
             market,
             today,
-            self.today_judgment.get("judgments", {"bull": {}, "bear": {}, "neutral": {}}),
+            self.today_judgment,
             actual,
             self.today_judgment.get("digest_prompt", ""),
         )
@@ -360,13 +373,16 @@ class TradingBot:
         except Exception as e:
             log.warning(f"balance lookup failed [{market}]: {e}")
             balance = {"stocks": [], "total_eval": 0, "cash": 0, "total_profit": 0, "profit_rate": 0.0}
+        sell_trades = [t for t in self.risk.trade_log if t.get("side") == "sell"]
+        wins = sum(1 for t in sell_trades if t.get("pnl", 0) > 0)
+        win_rate = wins / len(sell_trades) if sell_trades else 0.0
         daily_summary(
             today,
             market,
             actual["pnl_pct"],
             actual["pnl_krw"],
             actual["trades"],
-            0,
+            win_rate,
             actual["cumulative"],
             self.today_judgment.get("judgments", {}),
             pm,
