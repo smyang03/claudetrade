@@ -21,6 +21,12 @@ ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")
 IS_PAPER = os.getenv("KIS_IS_PAPER", "true").lower() == "true"
 AV_KEY = os.getenv("ALPHA_VANTAGE_KEY", "")
 
+# 계좌번호 포맷 검증: "XXXXXXXXXX-XX" 형태여야 함
+if ACCOUNT_NO and "-" not in ACCOUNT_NO:
+    raise ValueError(
+        f"KIS_ACCOUNT_NO 포맷 오류: '{ACCOUNT_NO}' — 'XXXXXXXXXX-XX' 형식으로 입력하세요."
+    )
+
 BASE_URL = os.getenv(
     "KIS_BASE_URL",
     (

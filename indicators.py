@@ -37,7 +37,8 @@ def calc_all(df: pd.DataFrame) -> pd.DataFrame:
     # 52주 고저
     d["high52"] = d["high"].rolling(252).max()
     d["low52"]  = d["low"].rolling(252).min()
-    d["pos52"]  = (d["close"]-d["low52"])/(d["high52"]-d["low52"].replace(0,np.nan))*100
+    denom52 = (d["high52"] - d["low52"]).replace(0, np.nan)   # high==low 구간은 NaN 처리
+    d["pos52"]  = (d["close"] - d["low52"]) / denom52 * 100
     # 갭, 수익률
     d["gap_pct"]    = (d["open"]-d["close"].shift())/d["close"].shift()*100
     d["change_pct"] = d["close"].pct_change()*100
