@@ -48,6 +48,7 @@ from telegram_reporter import (
     pnl_alert,
     daily_summary,
     status_report,
+    send,
 )
 from minority_report.analysts import get_three_judgments, select_tickers
 from minority_report.consensus import build_consensus
@@ -803,7 +804,10 @@ class TradingBot:
 
                 tp = int(price * (1 + tp_pct))
                 sl = int(price * (1 - sl_pct))
-                self.risk.open_position(ticker, risk_price, qty, strategy_name, tp_pct, sl_pct, params.get("max_hold", 1))
+                opened = self.risk.open_position(ticker, risk_price, qty, strategy_name, tp_pct, sl_pct, params.get("max_hold", 1))
+                if not opened:
+                    log.error(f"open_position 실패 [{ticker}]: 현금 부족 또는 내부 오류 (cash={self.risk.cash:,.0f})")
+                    continue
                 trade_alert("buy", ticker, qty, price, strategy_name, tp, sl)
 
             except Exception as e:
@@ -905,7 +909,7 @@ class TradingBot:
         today = date.today().strftime("%Y-%m-%d")
         actual = {
             "market_change": get_index_change(market),
-            "pnl_pct": self.risk.daily_pnl / self.risk.init_cash * 100,
+            "pnl_pct": self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100,
             "pnl_krw": int(self.risk.daily_pnl),
             "win": self.risk.daily_pnl > 0,
             "trades": len(self.risk.trade_log),
