@@ -1014,6 +1014,23 @@ def main(is_paper: bool = True):
     schedule.every(60).minutes.do(bot._heartbeat)
 
     log.info("schedules registered")
+
+    # ── 봇 시작 시 이미 진행 중인 세션이 있으면 즉시 session_open ──────────────
+    now_kst = datetime.now(KST)
+    now_t   = now_kst.time()
+    kr_open  = dt_time(8, 50);  kr_close = dt_time(16, 0)
+    us_open  = dt_time(22, 20); us_close = dt_time(5, 0)
+
+    kr_mid_session = kr_open <= now_t < kr_close
+    us_mid_session = now_t >= us_open or now_t < us_close  # 자정 걸침
+
+    if kr_mid_session:
+        log.info("[startup] KR 세션 진행 중 — session_open 즉시 실행")
+        bot.session_open("KR")
+    if us_mid_session:
+        log.info("[startup] US 세션 진행 중 — session_open 즉시 실행")
+        bot.session_open("US")
+
     while True:
         schedule.run_pending()
         time.sleep(1)
