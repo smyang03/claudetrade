@@ -935,13 +935,19 @@ class TradingBot:
             "cumulative": int(self.risk.equity()),
         }
 
-        pm = run_postmortem(
-            market,
-            today,
-            self.today_judgment,
-            actual,
-            self.today_judgment.get("digest_prompt", ""),
-        )
+        # 판단이 없는 날(HALT, 에러 등)은 postmortem 스킵
+        if not self.today_judgment.get("judgments"):
+            log.info(f"[{market}] 오늘 판단 없음 — postmortem 생략")
+            pm = {}
+        else:
+            pm = run_postmortem(
+                market,
+                today,
+                self.today_judgment,
+                actual,
+                self.today_judgment.get("digest_prompt", ""),
+                trade_log=self.risk.trade_log,
+            )
         judgment_log.info(
             f"[close {today} {market}] pnl={actual['pnl_pct']:+.2f}% mode={self.today_judgment.get('consensus', {}).get('mode', '-')}",
             extra={"extra": {
