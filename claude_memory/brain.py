@@ -62,10 +62,11 @@ def update_analyst(market: str, analyst: str, hit: bool, recent_days: list):
         perf["recent_30d"] = {"total": len(r30), "hit": h30,
                                "rate": round(h30 / len(r30), 3)}
 
-    # 트렌드 판단
-    if perf["recent_7d"]["rate"] > perf["rate"] + 0.05:
+    # 트렌드 판단 (최근 30일 기준 비교)
+    recent_30d_rate = perf.get("recent_30d", {}).get("rate", perf["rate"])
+    if perf["recent_7d"]["rate"] > recent_30d_rate + 0.05:
         perf["trend"] = "improving"
-    elif perf["recent_7d"]["rate"] < perf["rate"] - 0.05:
+    elif perf["recent_7d"]["rate"] < recent_30d_rate - 0.05:
         perf["trend"] = "declining"
     else:
         perf["trend"] = "stable"
@@ -403,6 +404,123 @@ def update_correction_guide(market: str, guide: dict):
         **guide,
         "generated_date": date.today().isoformat()
     }
+    save(brain)
+
+
+# ── 배치 업데이트 (세션 종료 시 한 번에 저장) ────────────────────────────────
+
+def batch_update_all(market: str, updates: dict):
+    """
+    세션 종료 postmortem 결과를 한 번에 brain.json에 반영합니다.
+    updates 예시:
+    {
+      "analyst_hits": {"bull": True, "bear": False, "neutral": True},
+      "recent_days": [...],          # update_analyst용
+      "mode": "MODERATE_BULL",
+      "pnl_pct": 1.2,
+      "win": True,
+      "strategy": "momentum",
+      "daily_record": {...},         # add_daily_record용
+      "beliefs_update": {...},       # optional
+      "correction_guide": {...},     # optional
+    }
+    """
+    brain = load()
+    recent_days = updates.get("recent_days", [])
+
+    # 분석가 성과
+    analyst_hits = updates.get("analyst_hits", {})
+    for analyst, hit in analyst_hits.items():
+        perf = brain["markets"][market]["analyst_performance"][analyst]
+        perf["total"] += 1
+        if hit:
+            perf["hit"] += 1
+        else:
+            perf["miss"] += 1
+        perf["rate"] = round(perf["hit"] / perf["total"], 3)
+
+        r7 = [d for d in recent_days[-7:] if f"{analyst}_result" in d]
+        if r7:
+            h7 = sum(1 for d in r7 if d.get(f"{analyst}_result") == "HIT")
+            perf["recent_7d"] = {"total": len(r7), "hit": h7,
+                                  "rate": round(h7 / len(r7), 3)}
+        r30 = [d for d in recent_days[-30:] if f"{analyst}_result" in d]
+        if r30:
+            h30 = sum(1 for d in r30 if d.get(f"{analyst}_result") == "HIT")
+            perf["recent_30d"] = {"total": len(r30), "hit": h30,
+                                   "rate": round(h30 / len(r30), 3)}
+        recent_30d_rate = perf.get("recent_30d", {}).get("rate", perf["rate"])
+        if perf["recent_7d"]["rate"] > recent_30d_rate + 0.05:
+            perf["trend"] = "improving"
+        elif perf["recent_7d"]["rate"] < recent_30d_rate - 0.05:
+            perf["trend"] = "declining"
+        else:
+            perf["trend"] = "stable"
+
+    # 모드 성과
+    mode = updates.get("mode")
+    pnl_pct = updates.get("pnl_pct", 0.0)
+    win = updates.get("win", False)
+    if mode:
+        mode_map = brain["markets"][market]["mode_performance"]
+        if mode not in mode_map:
+            mode_map[mode] = {"count": 0, "avg_pnl": 0.0, "win_rate": 0.0}
+        mp = mode_map[mode]
+        prev_count = mp["count"]
+        mp["count"] += 1
+        mp["avg_pnl"] = round((mp["avg_pnl"] * prev_count + pnl_pct) / mp["count"], 4)
+        prev_wins = round(mp["win_rate"] * prev_count)
+        mp["win_rate"] = round((prev_wins + (1 if win else 0)) / mp["count"], 3)
+
+    # 전략 성과
+    strategy = updates.get("strategy")
+    if strategy:
+        sp = brain["markets"][market]["strategy_performance"]
+        if strategy not in sp:
+            sp[strategy] = {"count": 0, "win_rate": 0.0, "avg_pnl": 0.0}
+        s = sp[strategy]
+        prev_count = s["count"]
+        s["count"] += 1
+        s["avg_pnl"] = round((s["avg_pnl"] * prev_count + pnl_pct) / s["count"], 4)
+        prev_wins = round(s["win_rate"] * prev_count)
+        s["win_rate"] = round((prev_wins + (1 if win else 0)) / s["count"], 3)
+
+    # 일별 기록
+    daily_record = updates.get("daily_record")
+    if daily_record:
+        recent = brain["markets"][market]["recent_days"]
+        recent.append(daily_record)
+        brain["markets"][market]["recent_days"] = recent[-60:]
+        brain["meta"][f"trained_days_{'kr' if market == 'KR' else 'us'}"] += 1
+        brain["markets"][market]["trained_days"] += 1
+
+    # beliefs 업데이트
+    beliefs_update = updates.get("beliefs_update")
+    if beliefs_update:
+        beliefs = brain["markets"][market]["current_beliefs"]
+        for key in ["market_regime", "bull_reliability", "bear_reliability", "best_strategy"]:
+            if key in beliefs_update:
+                beliefs[key] = beliefs_update[key]
+        if "new_lesson" in beliefs_update:
+            beliefs.setdefault("learned_lessons", []).append(beliefs_update["new_lesson"])
+            beliefs["learned_lessons"] = beliefs["learned_lessons"][-10:]
+        if "add_avoid" in beliefs_update:
+            beliefs.setdefault("avoid", [])
+            if beliefs_update["add_avoid"] not in beliefs["avoid"]:
+                beliefs["avoid"].append(beliefs_update["add_avoid"])
+        if "add_emphasize" in beliefs_update:
+            beliefs.setdefault("emphasize", [])
+            if beliefs_update["add_emphasize"] not in beliefs["emphasize"]:
+                beliefs["emphasize"].append(beliefs_update["add_emphasize"])
+
+    # correction_guide
+    correction_guide = updates.get("correction_guide")
+    if correction_guide:
+        brain["correction_guide"][market] = {
+            **correction_guide,
+            "generated_date": date.today().isoformat()
+        }
+
     save(brain)
 
 

@@ -1,2 +1,0 @@
-{"timestamp": "2026-03-20T02:25:03.474400", "level": "\u001b[32m\u001b[1mINFO    \u001b[0m", "logger": "minority_system", "module": "consensus", "func": "build_consensus", "line": 48, "message": "\u001b[32m합의: MILD_BEAR size=30% minority=False\u001b[0m"}
-{"timestamp": "2026-03-20T02:25:03.474400", "level": "\u001b[32m\u001b[1mINFO    \u001b[0m", "logger": "minority_system", "module": "consensus", "func": "build_consensus", "line": 48, "message": "\u001b[32m합의: CAUTIOUS size=60% minority=False\u001b[0m"}

@@ -8,13 +8,11 @@ def target_price(row: pd.Series, k: float = 0.45) -> float:
 def signal(df: pd.DataFrame, i: int, params: dict) -> bool:
     if i < 5: return False
     row      = df.iloc[i]
-    k        = params.get("k", 0.45)
     vol_mult = params.get("vol_mult", 2.0)
     prev     = df.iloc[i-1]
-    prev_range = float(prev.get("high",0)) - float(prev.get("low",0))
-    target   = float(row.get("open",0)) + prev_range * k
-    close    = float(row.get("close",0))
-    vol_ratio= float(row.get("vol_ratio",1))
+    target   = target_price(prev, params.get("k", 0.45))
+    close    = float(row.get("close", 0))
+    vol_ratio= float(row.get("vol_ratio", 1))
     return close > target and vol_ratio > vol_mult
 
 def params(brain_mode: str, brain_k: float = 0.45) -> dict:

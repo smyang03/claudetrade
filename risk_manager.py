@@ -19,9 +19,10 @@ HARD_RULES = {
 
 
 class RiskManager:
-    def __init__(self, init_cash: float = 10_000_000):
+    def __init__(self, init_cash: float = 10_000_000, max_order_krw: float | None = None):
         self.init_cash = init_cash
         self.cash = init_cash
+        self.max_order_krw = max_order_krw if max_order_krw is not None else HARD_RULES["max_order_krw"]
         self.positions = []
         self.session_start_equity = init_cash
         self.daily_pnl = 0.0
@@ -68,7 +69,7 @@ class RiskManager:
 
     def calc_order_budget(self, mode_size_pct: int = 70) -> float:
         budget = self.cash * HARD_RULES["max_position_pct"] * (mode_size_pct / 100)
-        budget = min(budget, HARD_RULES["max_order_krw"])
+        budget = min(budget, self.max_order_krw)
         budget = min(budget, self.cash * 0.5)
         return max(0.0, budget)
 
@@ -86,7 +87,7 @@ class RiskManager:
         if atr_pct is not None and atr_pct > 0 and atr_target_pct > 0:
             # Volatility targeting (optional): reduce size in high ATR regimes.
             vol_scale = atr_target_pct / atr_pct
-            vol_scale = max(0.2, min(1.0, vol_scale))
+            vol_scale = max(0.1, min(1.0, vol_scale))
             budget *= vol_scale
         return max(1, int(budget / price)) if budget >= price else 0
 

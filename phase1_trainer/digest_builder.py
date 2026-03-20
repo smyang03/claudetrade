@@ -73,7 +73,8 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     d["bb_pct"]   = (d["close"] - d["bb_lower"]) / (d["bb_upper"] - d["bb_lower"]) * 100
     d["high52"]   = d["high"].rolling(252).max()
     d["low52"]    = d["low"].rolling(252).min()
-    d["pos52"]    = (d["close"] - d["low52"]) / (d["high52"] - d["low52"]) * 100
+    denom52 = (d["high52"] - d["low52"]).replace(0, float("nan"))
+    d["pos52"]    = (d["close"] - d["low52"]) / denom52 * 100
     d["gap"]      = (d["open"] - d["close"].shift(1)) / d["close"].shift(1) * 100
     d["vol_ratio"]= d["volume"] / d["vol_avg"]
     d["change_pct"]= d["close"].pct_change() * 100
@@ -94,7 +95,10 @@ def load_price_with_cache(market: str, ticker: str) -> pd.DataFrame:
                    cache_path.stat().st_mtime > raw_mtime)
 
     if cache_valid:
-        return pd.read_pickle(cache_path)
+        try:
+            return pd.read_pickle(cache_path)
+        except Exception:
+            cache_path.unlink(missing_ok=True)
 
     df = pd.read_csv(raw_path, parse_dates=["date"])
     df.columns = [c.lower() for c in df.columns]

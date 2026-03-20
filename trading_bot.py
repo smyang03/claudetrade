@@ -120,8 +120,7 @@ class TradingBot:
                 log.error(f"잔고 조회 실패: {e}")
                 raise SystemExit("실계좌 잔고 조회에 실패했습니다. 계좌/API 설정을 확인하세요.")
 
-        HARD_RULES["max_order_krw"] = max_order
-        self.risk = RiskManager(init_cash=init_cash)
+        self.risk = RiskManager(init_cash=init_cash, max_order_krw=max_order)
 
         # ── KR / US 시장 예산 분리 ──────────────────────────────────────────
         # .env: KR_ALLOC_PCT=60  →  KR 60%, US 40% 배분
@@ -379,9 +378,10 @@ class TradingBot:
             close_t = dt_time(5, 0)
 
         if market == "KR":
-            start_block_end = (datetime.combine(date.today(), open_t).timestamp() + no_new * 60)
-            end_block_start = (datetime.combine(date.today(), close_t).timestamp() - no_late * 60)
-            now_ts = datetime.combine(date.today(), now).timestamp()
+            # timezone-aware 비교 (KST 명시)
+            start_block_end = (datetime.combine(date.today(), open_t, tzinfo=KST).timestamp() + no_new * 60)
+            end_block_start = (datetime.combine(date.today(), close_t, tzinfo=KST).timestamp() - no_late * 60)
+            now_ts = datetime.now(KST).timestamp()
             return now_ts < start_block_end or now_ts > end_block_start
 
         # US crossing midnight
@@ -759,9 +759,12 @@ class TradingBot:
                     atr_val = float(sig_df.iloc[i].get("atr", 0) or 0)
                     if risk_price > 0 and atr_val > 0:
                         atr_pct = atr_val / risk_price
+                # 전략별 size_mult 적용 (예: momentum 0.4~1.0 → 합의 size_pct 스케일링)
+                size_mult = float(params.get("size_mult", 1.0))
+                effective_size = max(10, min(100, int(size_pct * size_mult)))
                 qty = self.risk.calc_order_size(
                     risk_price,
-                    size_pct,
+                    effective_size,
                     sl_pct,
                     atr_pct=atr_pct,
                     atr_target_pct=self.atr_target_pct,
@@ -843,14 +846,30 @@ class TradingBot:
         brain_summary = BrainDB.generate_prompt_summary(market)
         result = tune(market, elapsed, current_state, self.today_judgment, brain_summary)
 
-        if result.get("action") != "MAINTAIN":
+        action = result.get("action", "MAINTAIN")
+        if action != "MAINTAIN":
             old_mode = self.today_judgment["consensus"]["mode"]
             self.today_judgment["consensus"]["mode"] = result.get("mode", old_mode)
             sl_adj = result.get("sl_adj", 0)
             if sl_adj != 0:
+                adj_clamped = max(-0.10, min(0.10, float(sl_adj)))  # ±10% 이내로 제한
                 for pos in self.risk.positions:
-                    pos["sl"] = pos["sl"] * (1 + sl_adj)
-                log.info(f"SL adjusted: {sl_adj:+.3f}")
+                    pos["sl"] = pos["sl"] * (1 + adj_clamped)
+                log.info(f"SL adjusted: {adj_clamped:+.3f}")
+
+            # REVERSE: Claude가 장세 반전 판단 → 보유 포지션 전체 청산
+            if action == "REVERSE" and self.risk.positions:
+                log.warning(f"[REVERSE] 튜너 판단: {result.get('reason','')} — 포지션 전체 청산")
+                for pos in list(self.risk.positions):
+                    cp = self.price_cache.get(pos["ticker"], pos["current_price"])
+                    if not self.is_paper:
+                        place_order(pos["ticker"], pos["qty"], 0, "sell",
+                                    self.token, market=self._ticker_market(pos["ticker"]))
+                    ex = self.risk.close_position(pos["ticker"], cp, "tuner_reverse")
+                    if ex:
+                        pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "tuner_reverse")
+                        trade_alert("sell", ex["ticker"], ex["qty"], int(cp),
+                                    ex["strategy"], 0, 0, reason="tuner_reverse")
 
         tuning_report(elapsed, result, self.today_judgment["consensus"]["mode"], self.risk.positions)
 

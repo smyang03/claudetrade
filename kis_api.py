@@ -255,10 +255,11 @@ def _daily_ohlcv_us_alpha(ticker, lookback_days=200):
     if not AV_KEY:
         return _daily_ohlcv_us_yf(ticker, lookback_days)
     try:
+        outputsize = "full" if lookback_days > 100 else "compact"
         resp = requests.get(
             "https://www.alphavantage.co/query",
             params={"function": "TIME_SERIES_DAILY", "symbol": ticker,
-                    "outputsize": "compact", "apikey": AV_KEY},  # compact = 100일, 무료 지원
+                    "outputsize": outputsize, "apikey": AV_KEY},
             timeout=20,
         )
         resp.raise_for_status()
