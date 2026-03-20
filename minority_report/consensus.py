@@ -25,7 +25,11 @@ def _cat(stance: str) -> str:
     if stance in ("HALT","DEFENSIVE","CAUTIOUS_BEAR","MILD_BEAR"): return "bear"
     return "neutral"
 
-def build_consensus(judgments: dict, check_minority: bool = True) -> dict:
+TRIGGER_WORDS_KR = ["공시", "급락", "세력", "서킷", "이탈", "장중 -"]
+TRIGGER_WORDS_US = ["halt", "circuit", "crash", "sec", "fraud", "bankrupt", "plunge"]
+
+
+def build_consensus(judgments: dict, check_minority: bool = True, market: str = "KR") -> dict:
     bull = judgments["bull"]; bear = judgments["bear"]; neut = judgments["neutral"]
     cats = [_cat(bull["stance"]), _cat(bear["stance"]), _cat(neut["stance"])]
     key  = tuple(sorted(cats))
@@ -36,12 +40,13 @@ def build_consensus(judgments: dict, check_minority: bool = True) -> dict:
     if check_minority:
         bear_reason = bear.get("key_reason","").lower()
         bear_conf   = bear.get("confidence",0)
-        trigger_words = ["공시","급락","세력","서킷","이탈","장중 -"]
+        trigger_words = TRIGGER_WORDS_US if market == "US" else TRIGGER_WORDS_KR
         if any(w in bear_reason for w in trigger_words) and bear_conf > 0.7:
             base["mode"] = "DEFENSIVE"
             base["size"] = max(10, base["size"]//2)
+            base["tp_mult"] = max(0.7, base.get("tp_mult", 1.0) * 0.8)
             minority_triggered = True
-            log.warning(f"⚠️ 마이너리티 룰 발동: {bear_reason[:60]}")
+            log.warning(f"⚠️ 마이너리티 룰 발동 [{market}]: {bear_reason[:60]}")
 
     base["minority_triggered"] = minority_triggered
     base["vote"] = cats

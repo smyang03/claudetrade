@@ -15,7 +15,7 @@ log = get_minority_logger()
 analysis_log = get_analysis_logger()
 judgment_log = get_judgment_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-MODEL = "claude-sonnet-4-6"
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 PERSONAS = {
     "bull": "You are a bullish equity analyst. Prioritize upside opportunities and positive catalysts.",

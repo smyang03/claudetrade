@@ -43,9 +43,11 @@ def calc_all(df: pd.DataFrame) -> pd.DataFrame:
     d["gap_pct"]    = (d["open"]-d["close"].shift())/d["close"].shift()*100
     d["change_pct"] = d["close"].pct_change()*100
     # 신호 생성
+    valid_ma = d["ma5"].notna() & d["ma20"].notna() & d["ma60"].notna()
     d["ma_align"] = np.where(
-        (d["ma5"]>d["ma20"]) & (d["ma20"]>d["ma60"]), "정배열",
-        np.where((d["ma5"]<d["ma20"]) & (d["ma20"]<d["ma60"]), "역배열", "혼재"))
+        ~valid_ma, "혼재",
+        np.where((d["ma5"]>d["ma20"]) & (d["ma20"]>d["ma60"]), "정배열",
+        np.where((d["ma5"]<d["ma20"]) & (d["ma20"]<d["ma60"]), "역배열", "혼재")))
     d["macd_cross"] = np.where(
         (d["macd"]>d["macd_signal"]) & (d["macd"].shift()<=d["macd_signal"].shift()),
         "골든크로스",
