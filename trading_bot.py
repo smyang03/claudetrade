@@ -61,6 +61,12 @@ from strategy.volatility_breakout import signal as vb_sig, params as vb_params
 
 from claude_memory import brain as BrainDB
 from runtime_paths import get_runtime_path
+from universe_manager import (
+    UniverseConfig,
+    build_universe_from_candidates,
+    load_universe_snapshot,
+    save_universe_snapshot,
+)
 
 log = get_trading_logger()
 analysis_log = get_analysis_logger()
@@ -76,6 +82,13 @@ POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
 # 동적 선택 실패 시 폴백 (기본 3종목)
 _DEFAULT_KR_TICKERS = ["005930", "000660", "035420"]
 _DEFAULT_US_TICKERS = ["NVDA", "TSLA", "AAPL"]
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
 class TradingBot:
@@ -120,6 +133,7 @@ class TradingBot:
 
         self.today_judgment = {}
         self.today_tickers: dict = {}   # {market: [ticker, ...]} — 매일 아침 Claude가 선택
+        self.today_universe: dict = {}
         self.tuning_count = 0
         self.ws = None
         self.price_cache = {}
@@ -129,6 +143,14 @@ class TradingBot:
         self.session_active = False
         self.current_market = None
         self.usd_krw_rate = float(os.getenv("USD_KRW_RATE", "1350"))
+        self.enable_limit_order = _env_bool("ENABLE_LIMIT_ORDER", False)
+        self.limit_order_offset_bps = int(os.getenv("LIMIT_ORDER_OFFSET_BPS", "5"))
+        self.enable_slippage_guard = _env_bool("ENABLE_SLIPPAGE_GUARD", False)
+        self.max_est_slippage_bps = float(os.getenv("MAX_EST_SLIPPAGE_BPS", "25"))
+        self.enable_atr_position_sizing = _env_bool("ENABLE_ATR_POSITION_SIZING", False)
+        self.atr_target_pct = float(os.getenv("ATR_TARGET_PCT", "0.015"))
+        self.enable_dynamic_universe = _env_bool("ENABLE_DYNAMIC_UNIVERSE", False)
+        self.dynamic_universe_top_n = int(os.getenv("DYNAMIC_UNIVERSE_TOP_N", "20"))
 
         # 재시작 시 이월 포지션 복구
         self._restore_positions()
@@ -310,6 +332,38 @@ class TradingBot:
     def _price_to_krw(self, price: float, market: str) -> float:
         return price if market == "KR" else price * self.usd_krw_rate
 
+    def _compute_order_price(self, side: str, market: str, raw_price: float) -> float:
+        """Return 0 for market order, or adjusted limit price when enabled."""
+        if not self.enable_limit_order:
+            return 0
+        if raw_price <= 0:
+            return 0
+        offset = max(0.0, self.limit_order_offset_bps / 10000.0)
+        if side == "buy":
+            px = raw_price * (1.0 + offset)
+        else:
+            px = raw_price * (1.0 - offset)
+        if market == "KR":
+            return int(max(1, round(px)))
+        return round(px, 4)
+
+    @staticmethod
+    def _estimate_slippage_bps(price_info: dict) -> float:
+        """
+        Lightweight proxy from intraday range.
+        Keeps default behavior unchanged unless feature flag is enabled.
+        """
+        try:
+            price = float(price_info.get("price", 0))
+            high = float(price_info.get("high", 0))
+            low = float(price_info.get("low", 0))
+            if price <= 0 or high <= 0 or low <= 0 or high < low:
+                return 0.0
+            range_bps = ((high - low) / price) * 10000.0
+            return max(0.0, min(200.0, range_bps * 0.05))
+        except Exception:
+            return 0.0
+
     def _in_entry_blackout(self, market: str) -> bool:
         now = datetime.now(KST).time()
         no_new = HARD_RULES["no_new_entry_min"]
@@ -348,7 +402,9 @@ class TradingBot:
         for cand in candidates:
             market = self._ticker_market(cand["ticker"])
             if not self.is_paper:
-                result = place_order(cand["ticker"], cand["qty"], 0, "sell", self.token, market=market)
+                raw_px = self.price_cache_raw.get(cand["ticker"], cand["exit_price"])
+                order_px = self._compute_order_price("sell", market, float(raw_px))
+                result = place_order(cand["ticker"], cand["qty"], order_px, "sell", self.token, market=market)
                 if not result["success"]:
                     log.error(f"sell order failed [{cand['ticker']}]: {result['msg']}")
                     continue
@@ -401,7 +457,39 @@ class TradingBot:
                      f"{[(p['ticker'], p['current_price']) for p in self.risk.positions]}")
 
         today = date.today().strftime("%Y-%m-%d")
-        digest = build_kr_digest(today) if market == "KR" else build_us_digest(today)
+        pre_candidates = None
+        universe_tickers = None
+        if self.enable_dynamic_universe:
+            if market == "KR":
+                pre_candidates = screen_market_kr(self.token)
+            else:
+                pre_candidates = screen_market_us()
+            if pre_candidates:
+                snapshot = build_universe_from_candidates(
+                    market=market,
+                    target_date=today,
+                    candidates=pre_candidates,
+                    config=UniverseConfig(top_n=max(3, self.dynamic_universe_top_n)),
+                    source="runtime_screen",
+                )
+                save_universe_snapshot(snapshot)
+                self.today_universe[market] = snapshot
+                universe_tickers = snapshot.get("tickers", [])
+                log.info(
+                    f"[유니버스] {market} 후보 {len(pre_candidates)} -> "
+                    f"{len(universe_tickers)}개"
+                )
+            else:
+                snapshot = load_universe_snapshot(market, today)
+                if snapshot.get("tickers"):
+                    self.today_universe[market] = snapshot
+                    universe_tickers = snapshot.get("tickers", [])
+                    log.info(f"[유니버스] {market} 스냅샷 로드 {len(universe_tickers)}개")
+
+        if market == "KR":
+            digest = build_kr_digest(today, universe_tickers=universe_tickers)
+        else:
+            digest = build_us_digest(today, universe_tickers=universe_tickers)
         digest_prompt = digest_to_prompt(digest)
 
         brain_summary = BrainDB.generate_prompt_summary(market)
@@ -423,10 +511,17 @@ class TradingBot:
 
         # 오늘 집중 종목: 스크리너 → Claude 선택
         log.info(f"[스크리너] {market} 시장 스캔 중...")
-        if market == "KR":
+        if pre_candidates is not None:
+            candidates = pre_candidates
+        elif market == "KR":
             candidates = screen_market_kr(self.token)
         else:
             candidates = screen_market_us()
+
+        selection_pool = candidates
+        snapshot = self.today_universe.get(market, {})
+        if self.enable_dynamic_universe and snapshot.get("candidates"):
+            selection_pool = snapshot.get("candidates", candidates)
         analysis_log.info(
             f"[screen {today} {market}] candidates={len(candidates)}",
             extra={"extra": {
@@ -437,8 +532,8 @@ class TradingBot:
                 "tickers": [c.get("ticker") for c in candidates[:20]],
             }},
         )
-        log.info(f"[스크리너] {market} 후보 {len(candidates)}개 → Claude 선택 중...")
-        selected = select_tickers(market, digest_prompt, consensus["mode"], candidates)
+        log.info(f"[스크리너] {market} 후보 {len(selection_pool)}개 → Claude 선택 중...")
+        selected = select_tickers(market, digest_prompt, consensus["mode"], selection_pool)
         self.today_tickers[market] = selected
         log.info(f"[종목선택 확정] {market}: {selected}")
         judgment_log.info(
@@ -459,6 +554,7 @@ class TradingBot:
             "consensus": consensus,
             "digest_prompt": digest_prompt,
             "tickers": selected,
+            "universe_tickers": [c.get("ticker") for c in selection_pool if c.get("ticker")],
         }
 
         try:
@@ -517,6 +613,25 @@ class TradingBot:
                 price_info = get_price(ticker, self.token, market=market)
                 price = price_info["price"]
                 risk_price = self._price_to_krw(price, market)
+                if self.enable_slippage_guard:
+                    est_slippage_bps = self._estimate_slippage_bps(price_info)
+                    if est_slippage_bps > self.max_est_slippage_bps:
+                        analysis_log.info(
+                            f"[skip {market}] {ticker} est_slippage_too_high",
+                            extra={"extra": {
+                                "event": "entry_skip",
+                                "market": market,
+                                "ticker": ticker,
+                                "reason": "est_slippage_too_high",
+                                "est_slippage_bps": est_slippage_bps,
+                                "max_est_slippage_bps": self.max_est_slippage_bps,
+                            }},
+                        )
+                        log.debug(
+                            f"  [{ticker}] est slippage {est_slippage_bps:.1f}bps > "
+                            f"{self.max_est_slippage_bps:.1f}bps -> skip"
+                        )
+                        continue
                 self.price_cache_raw[ticker] = price
                 self.price_cache[ticker] = risk_price
                 self.risk.update_prices(self.price_cache)
@@ -638,7 +753,18 @@ class TradingBot:
                     tp_pct = max((bb_mid - price) / price, 0.005) if bb_mid > price else 0.03
                 else:
                     tp_pct = params.get("tp_pct", HARD_RULES["take_profit_pct"] / 100.0)
-                qty = self.risk.calc_order_size(risk_price, size_pct, sl_pct)
+                atr_pct = None
+                if self.enable_atr_position_sizing:
+                    atr_val = float(sig_df.iloc[i].get("atr", 0) or 0)
+                    if risk_price > 0 and atr_val > 0:
+                        atr_pct = atr_val / risk_price
+                qty = self.risk.calc_order_size(
+                    risk_price,
+                    size_pct,
+                    sl_pct,
+                    atr_pct=atr_pct,
+                    atr_target_pct=self.atr_target_pct,
+                )
                 if qty <= 0:
                     log.debug(f"  [{ticker}] 주문가능 수량 0주")
                     continue
@@ -669,7 +795,8 @@ class TradingBot:
                 if self.is_paper:
                     log.info(f"[PAPER BUY] {ticker} {qty}@{price:,} | {strategy_name}")
                 else:
-                    result = place_order(ticker, qty, 0, "buy", self.token, market=market)
+                    order_px = self._compute_order_price("buy", market, float(price))
+                    result = place_order(ticker, qty, order_px, "buy", self.token, market=market)
                     if not result["success"]:
                         log.error(f"order failed [{ticker}]: {result['msg']}")
                         continue
@@ -755,7 +882,8 @@ class TradingBot:
             cp = self.price_cache.get(pos["ticker"], pos["current_price"])
             raw_cp = self.price_cache_raw.get(pos["ticker"], cp)
             if not self.is_paper:
-                result = place_order(pos["ticker"], pos["qty"], 0, "sell",
+                order_px = self._compute_order_price("sell", market, float(raw_cp))
+                result = place_order(pos["ticker"], pos["qty"], order_px, "sell",
                                      self.token, market=market)
                 if not result["success"]:
                     log.error(f"force sell failed [{pos['ticker']}]: {result['msg']}")

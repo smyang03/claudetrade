@@ -72,10 +72,22 @@ class RiskManager:
         budget = min(budget, self.cash * 0.5)
         return max(0.0, budget)
 
-    def calc_order_size(self, price: float, mode_size_pct: int = 70, sl_pct: float = 0.03) -> int:
+    def calc_order_size(
+        self,
+        price: float,
+        mode_size_pct: int = 70,
+        sl_pct: float = 0.03,
+        atr_pct: float | None = None,
+        atr_target_pct: float = 0.015,
+    ) -> int:
         if price <= 0:
             return 0
         budget = self.calc_order_budget(mode_size_pct)
+        if atr_pct is not None and atr_pct > 0 and atr_target_pct > 0:
+            # Volatility targeting (optional): reduce size in high ATR regimes.
+            vol_scale = atr_target_pct / atr_pct
+            vol_scale = max(0.2, min(1.0, vol_scale))
+            budget *= vol_scale
         return max(1, int(budget / price)) if budget >= price else 0
 
     def open_position(

@@ -33,6 +33,13 @@ CACHE_DIR   = BASE_DIR / "data" / "cache"
 for d in [DIGEST_DIR, CACHE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+
+def _ticker_map(market: str, universe_tickers: list[str] | None = None) -> dict:
+    base = KR_TICKERS if market == "KR" else US_TICKERS
+    if not universe_tickers:
+        return dict(base)
+    return {t: base.get(t, t) for t in universe_tickers}
+
 KR_TICKERS = {"005930":"삼성전자","000660":"SK하이닉스","035420":"NAVER"}
 US_TICKERS = {"NVDA":"엔비디아","TSLA":"테슬라","AAPL":"애플"}
 
@@ -184,7 +191,7 @@ def load_prev_result(market: str, target_date: str) -> dict:
 # ── 핵심 digest 생성 ──────────────────────────────────────────────────────────
 
 @log_call(logger=log, level="INFO")
-def build_kr_digest(target_date: str) -> dict:
+def build_kr_digest(target_date: str, universe_tickers: list[str] | None = None) -> dict:
     """
     국내 daily_digest 생성
     목표: ~800 토큰
@@ -206,8 +213,9 @@ def build_kr_digest(target_date: str) -> dict:
     }
 
     # ── Layer B: 종목 핵심 지표 (~300 토큰) ──────────────────────────────────
+    ticker_map = _ticker_map("KR", universe_tickers)
     layer_b = {}
-    for ticker, name in KR_TICKERS.items():
+    for ticker, name in ticker_map.items():
         df = load_price_with_cache("KR", ticker)
         if df.empty:
             log.warning(f"주가 데이터 없음: {ticker}")
@@ -262,7 +270,7 @@ def build_kr_digest(target_date: str) -> dict:
     # ── Layer C: 뉴스 선별 (~200 토큰) ───────────────────────────────────────
     # 전체 뉴스 수집
     all_news = list(news.get("market_news", []))
-    for code in KR_TICKERS:
+    for code in ticker_map:
         corp = news.get("corp_news", {}).get(code, {})
         all_news.extend(corp.get("items", []))
 
@@ -277,13 +285,14 @@ def build_kr_digest(target_date: str) -> dict:
     # 공시 별도 (중요도 최상)
     disclosures = []
     for code, items in news.get("disclosures", {}).items():
-        name = KR_TICKERS.get(code, code)
+        name = ticker_map.get(code, code)
         for d in items[:2]:
             disclosures.append(f"[{name}] {d.get('title','')}")
 
     digest = {
         "date":        target_date,
         "market":      "KR",
+        "universe_tickers": list(ticker_map.keys()),
         "context":     layer_a,
         "technicals":  layer_b,
         "top_news":    layer_c,
@@ -304,7 +313,7 @@ def build_kr_digest(target_date: str) -> dict:
 
 
 @log_call(logger=log, level="INFO")
-def build_us_digest(target_date: str) -> dict:
+def build_us_digest(target_date: str, universe_tickers: list[str] | None = None) -> dict:
     """미국 daily_digest 생성"""
     log.info(f"[미국 digest] {target_date}")
     supp = load_supplement("US", target_date)
@@ -331,8 +340,9 @@ def build_us_digest(target_date: str) -> dict:
         "premarket":  supp.get("premarket", {}),
     }
 
+    ticker_map = _ticker_map("US", universe_tickers)
     layer_b = {}
-    for ticker, name in US_TICKERS.items():
+    for ticker, name in ticker_map.items():
         df = load_price_with_cache("US", ticker)
         if df.empty:
             continue
@@ -373,7 +383,7 @@ def build_us_digest(target_date: str) -> dict:
         }
 
     all_news = list(news.get("market_news", []))
-    for t in US_TICKERS:
+    for t in ticker_map:
         items = news.get("corp_news", {}).get(t, {}).get("items", [])
         all_news.extend(items)
     top_news = filter_top_news(all_news, top_n=5)
@@ -382,6 +392,7 @@ def build_us_digest(target_date: str) -> dict:
     digest = {
         "date":        target_date,
         "market":      "US",
+        "universe_tickers": list(ticker_map.keys()),
         "context":     layer_a,
         "technicals":  layer_b,
         "top_news":    layer_c,
