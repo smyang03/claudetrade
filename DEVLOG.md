@@ -326,5 +326,76 @@ session_close()
 
 ---
 
+---
+
+## [2026-03-22] 머지 충돌 해결 + 검증
+
+### 배경
+로컬 브랜치(Run-First 아키텍처 변경)와 원격 브랜치(PR #4~#7 버그 수정)가 diverge → 5개 파일 충돌 발생
+
+### 충돌 해결 전략
+- **HEAD(로컬) 우선**: 2라운드 토론, 가중 합의, 체결 내역 분석 등 핵심 기능
+- **Remote 통합**: 동적 유니버스 빌더, 세션 자동 감지, 타입 안전 코드, NaN 처리
+
+### 파일별 충돌 해결 내용
+
+| 파일 | 로컬(HEAD) 보존 | Remote 통합 |
+|------|-----------------|-------------|
+| `analysts.py` | 2라운드 토론, 강화된 한국어 페르소나 | `_sanitize_analyst_result()`, 타입 안전 select_tickers |
+| `consensus.py` | 가중 합의 엔진(`_get_weights`) | `TRIGGER_WORDS_KR/US` 시장별 분리 |
+| `postmortem.py` | HALT 가드, `_format_trade_log`, `_strategy_pnl` | 개선된 ━━━ 포맷 프롬프트, `add_daily_record` 필드 추가 |
+| `digest_builder.py` | 동적 롤링 윈도우(`min_periods=5`) | NaN 안전 처리(`denom52`) |
+| `trading_bot.py` | 긴급 재판단, 환율 자동화, `round1_judgments` 보존 | 동적 유니버스 빌더, KR/US 세션 명시적 시간 체크 |
+
+### 추가 삭제
+- `__pycache__` 전체 (원격에서 이미 .gitignore 처리됨)
+- 오래된 날짜 로그 파일들
+- 이상한 `main` 파일 (git rename 오류로 생성된 빈 파일)
+
+---
+
+## [2026-03-22] Python 3.9 호환성 버그 수정
+
+### 문제
+시스템 Python이 3.9.12인데 코드에 3.10+ 전용 union type hint(`X | None`) 사용 → `TypeError` 발생
+
+### 수정 파일
+- `phase1_trainer/digest_builder.py`: `list[str] | None` → `Optional[List[str]]`, `from typing import Optional, List` 추가
+- `phase1_trainer/historical_sim.py`: 동일 처리
+- `trading_bot.py`: `date | None` → 타입 힌트 제거 (기본값 `None` 유지)
+- `risk_manager.py`: `from __future__ import annotations`로 이미 호환 — 수정 불필요
+
+---
+
+## [2026-03-22] 전체 시스템 검증 결과
+
+모든 핵심 기능을 API 호출 없이 구조적으로 검증 완료:
+
+| 검증 항목 | 결과 |
+|-----------|------|
+| 핵심 모듈 임포트 9개 | 전부 OK |
+| brain.json 모드 완전성 (KR/US) | 전부 OK (9개 모드 존재) |
+| 가중 합의 3케이스 | 정상 (mixed→CAUTIOUS, bull→MODERATE_BULL, 마이너리티룰 발동) |
+| postmortem 체결 내역 파싱 | 정상 |
+| HALT 스킵 안전장치 | 정상 |
+| USD/KRW 자동 갱신 | 1,504.83 정상 반환 |
+| TradingBot 필수 메서드 6개 | 전부 존재 |
+| `_session_events`, `_last_reinvoke_tuning`, `usd_krw` | `__init__`에 존재 확인 |
+| 긴급 재판단 트리거 로직 5케이스 | 전부 정상 |
+| Training Record 13개 필드 | 전부 존재 |
+| BrainDB 메서드 14개 | 전부 존재 |
+| 2라운드 토론 구조 (`_debate`, r1, r2) | 확인 |
+
+**검증 환경**: Python 3.9.12, Windows 11
+
+---
+
+## 현재 시스템 상태 (2026-03-22 기준)
+
+- **코드**: 머지 완료, 검증 통과, main 브랜치 최신
+- **brain.json**: cold-start 상태 (실 운영 데이터 0일)
+- **가중 합의**: 10 영업일 이상 운영 전까지 1:1:1 균등 가중치
+- **다음 단계**: paper 모드 실행 → 매 세션 brain.json 축적 시작
+
 *Last updated: 2026-03-22*
-*Context session: 전체 아키텍처 전환 + Run-First 구현*
+*Context session: 머지 충돌 해결 + Python 3.9 호환성 수정 + 전체 검증*
