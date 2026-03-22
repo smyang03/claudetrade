@@ -139,6 +139,11 @@ class RiskManager:
             "max_hold": max_hold,
             "held_days": 0,
             "entry_date": date.today().isoformat(),
+            # 트레일링 스탑
+            "trailing": False,       # 트레일링 모드 여부
+            "trail_sl": 0.0,         # 트레일링 SL 가격
+            "trail_pct": 0.03,       # 트레일링 폭 (기본 3%)
+            "tp_triggered": False,   # TP 도달 여부 (중복 방지)
         }
         self.positions.append(pos)
         evt = {
@@ -158,6 +163,11 @@ class RiskManager:
         for pos in self.positions:
             if pos["ticker"] in prices:
                 pos["current_price"] = prices[pos["ticker"]]
+                # 트레일링 모드: SL을 현재가 기준으로 끌어올림 (내려가지 않음)
+                if pos.get("trailing") and pos["current_price"] > 0:
+                    new_trail = pos["current_price"] * (1 - pos["trail_pct"])
+                    if new_trail > pos["trail_sl"]:
+                        pos["trail_sl"] = new_trail
 
     def increment_holding_days(self, today_iso: Optional[str] = None):
         if today_iso is None:
@@ -173,15 +183,34 @@ class RiskManager:
         for pos in self.positions:
             cp = pos["current_price"]
             reason = None
-            if cp >= pos["tp"]:
-                reason = "take_profit"
-            elif cp <= pos["sl"]:
-                reason = "stop_loss"
-            elif pos["held_days"] >= pos["max_hold"]:
-                reason = "max_hold"
+            if pos.get("trailing"):
+                # 트레일링 모드: trail_sl 발동 여부만 체크
+                if cp <= pos["trail_sl"]:
+                    reason = "trail_stop"
+                elif pos["held_days"] >= pos["max_hold"]:
+                    reason = "max_hold"
+            else:
+                if cp >= pos["tp"] and not pos.get("tp_triggered"):
+                    reason = "tp_check"      # TP 도달 → trading_bot에서 처리
+                elif cp <= pos["sl"]:
+                    reason = "stop_loss"
+                elif pos["held_days"] >= pos["max_hold"]:
+                    reason = "max_hold"
             if reason:
                 candidates.append({**pos, "exit_price": cp, "reason": reason})
         return candidates
+
+    def activate_trailing(self, ticker: str, trail_pct: float):
+        """포지션을 트레일링 스탑 모드로 전환"""
+        for pos in self.positions:
+            if pos["ticker"] == ticker:
+                pos["trailing"]     = True
+                pos["trail_pct"]    = trail_pct
+                pos["trail_sl"]     = pos["current_price"] * (1 - trail_pct)
+                pos["tp_triggered"] = True
+                log.info(f"[TRAILING] {ticker} trail_sl={pos['trail_sl']:,.0f} ({trail_pct*100:.1f}%)")
+                return True
+        return False
 
     def close_position(self, ticker: str, exit_price: float, reason: str):
         for pos in list(self.positions):

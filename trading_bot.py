@@ -168,6 +168,11 @@ class TradingBot:
         self.enable_dynamic_universe = _env_bool("ENABLE_DYNAMIC_UNIVERSE", False)
         self.dynamic_universe_top_n = int(os.getenv("DYNAMIC_UNIVERSE_TOP_N", "20"))
 
+        # 트레일링 스탑
+        self.enable_trailing_stop     = _env_bool("TRAILING_STOP_ENABLED", True)
+        self.trailing_stop_pct        = max(0.01, min(0.10, float(os.getenv("TRAILING_STOP_PCT", "3")) / 100))
+        self.enable_trailing_analyst  = _env_bool("TRAILING_ANALYST_ENABLED", False)
+
         # 텔레그램 중복 방지용 마지막 전송 상태
         self._last_tg_state: dict = {}
 
@@ -421,28 +426,74 @@ class TradingBot:
         candidates = self.risk.get_exit_candidates()
         for cand in candidates:
             market = self._ticker_market(cand["ticker"])
-            if not self.is_paper:
-                raw_px = self.price_cache_raw.get(cand["ticker"], cand["exit_price"])
-                order_px = self._compute_order_price("sell", market, float(raw_px))
-                result = place_order(cand["ticker"], cand["qty"], order_px, "sell", self.token, market=market)
-                if not result["success"]:
-                    log.error(f"sell order failed [{cand['ticker']}]: {result['msg']}")
-                    continue
 
-            ex = self.risk.close_position(cand["ticker"], cand["exit_price"], cand["reason"])
-            if not ex:
+            # ── TP 도달 → 트레일링 스탑 처리 ──────────────────────────────
+            if cand["reason"] == "tp_check":
+                if self.enable_trailing_stop:
+                    self._handle_tp_trailing(cand, market)
+                else:
+                    # trailing 비활성화 → 기존처럼 즉시 청산
+                    self._execute_sell(cand, market, reason="take_profit")
                 continue
-            raw_exit = self.price_cache_raw.get(ex["ticker"], ex["exit_price"])
-            pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), ex["reason"])
-            trade_alert("sell", ex["ticker"], ex["qty"], int(raw_exit), ex["strategy"], 0, 0, reason=ex["reason"], market=market)
-            # 전략별 성과 brain 업데이트
+
+            self._execute_sell(cand, market, reason=cand["reason"])
+
+    def _handle_tp_trailing(self, cand: dict, market: str):
+        """TP 도달 시 트레일링 스탑 전환 (분석가 합의 옵션)"""
+        ticker     = cand["ticker"]
+        trail_pct  = self.trailing_stop_pct
+
+        if self.enable_trailing_analyst:
+            # 분석가 3명에게 HOLD/SELL 물어봄
             try:
-                BrainDB.update_strategy_performance(
-                    market, ex.get("strategy", "unknown"),
-                    ex.get("pnl_pct", 0), ex.get("pnl", 0) > 0
+                from minority_report.hold_advisor import ask as advisor_ask
+                digest = self.today_judgment.get("digest_prompt", "")
+                advice = advisor_ask(cand, market, digest)
+                if advice["action"] == "SELL":
+                    log.info(f"[TP→분석가합의:SELL] {ticker} — 즉시 청산")
+                    send(f"🔴 <b>[TP→분석가 SELL]</b> {ticker}\n분석가 합의: 즉시 청산")
+                    self._execute_sell(cand, market, reason="tp_analyst_sell")
+                    return
+                trail_pct = advice["trail_pct"]
+                log.info(f"[TP→분석가합의:HOLD] {ticker} trail={trail_pct:.2%}")
+                send(
+                    f"📈 <b>[TP→분석가 HOLD]</b> {ticker}\n"
+                    f"트레일링 스탑 {trail_pct*100:.1f}% 활성화"
                 )
             except Exception as e:
-                log.warning(f"strategy brain update failed: {e}")
+                log.warning(f"[hold_advisor] 오류 → trail 기본값 적용: {e}")
+        else:
+            log.info(f"[TP→트레일링] {ticker} trail={trail_pct:.2%} (분석가 생략)")
+            send(
+                f"📈 <b>[TP 도달 → 트레일링]</b> {ticker}\n"
+                f"트레일링 스탑 {trail_pct*100:.1f}% 활성화"
+            )
+
+        self.risk.activate_trailing(ticker, trail_pct)
+
+    def _execute_sell(self, cand: dict, market: str, reason: str):
+        """실제 매도 실행 + 텔레그램 알림"""
+        if not self.is_paper:
+            raw_px   = self.price_cache_raw.get(cand["ticker"], cand["exit_price"])
+            order_px = self._compute_order_price("sell", market, float(raw_px))
+            result   = place_order(cand["ticker"], cand["qty"], order_px, "sell", self.token, market=market)
+            if not result["success"]:
+                log.error(f"sell order failed [{cand['ticker']}]: {result['msg']}")
+                return
+
+        ex = self.risk.close_position(cand["ticker"], cand["exit_price"], reason)
+        if not ex:
+            return
+        raw_exit = self.price_cache_raw.get(ex["ticker"], ex["exit_price"])
+        pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), reason)
+        trade_alert("sell", ex["ticker"], ex["qty"], int(raw_exit), ex["strategy"], 0, 0, reason=reason, market=market)
+        try:
+            BrainDB.update_strategy_performance(
+                market, ex.get("strategy", "unknown"),
+                ex.get("pnl_pct", 0), ex.get("pnl", 0) > 0
+            )
+        except Exception as e:
+            log.warning(f"strategy brain update failed: {e}")
 
     def session_open(self, market: str):
         log.info("=" * 50)
