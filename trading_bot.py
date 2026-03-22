@@ -144,14 +144,8 @@ class TradingBot:
 
         self.risk = RiskManager(init_cash=init_cash, max_order_krw=max_order, market="KR")
 
-        # ── KR / US 시장 예산 분리 ──────────────────────────────────────────
-        # .env: KR_ALLOC_PCT=60  →  KR 60%, US 40% 배분
-        kr_pct = min(100, max(0, int(os.getenv("KR_ALLOC_PCT", "60")))) / 100.0
-        self.kr_budget = init_cash * kr_pct
-        self.us_budget = init_cash * (1.0 - kr_pct)
-        log.info(f"예산 배분 | KR {self.kr_budget:,.0f}원 ({kr_pct*100:.0f}%) "
-                 f"/ US {self.us_budget:,.0f}원 ({(1-kr_pct)*100:.0f}%)")
-        # ───────────────────────────────────────────────────────────────────
+        # KR/US 공유 풀 — 단일 현금 계좌, 시장 구분 없이 사용
+        log.info(f"공유 풀 | 총자금 {init_cash:,.0f}원 (KR/US 공용)")
 
         self.today_judgment = {}
         self.today_tickers: dict = {}   # {market: [ticker, ...]} — 매일 아침 Claude가 선택
@@ -287,14 +281,8 @@ class TradingBot:
     # ── 시장별 예산 조회 ──────────────────────────────────────────────────────
 
     def _market_budget_available(self, market: str) -> float:
-        """해당 시장에 추가로 배분 가능한 잔여 예산 (원)"""
-        budget = self.kr_budget if market == "KR" else self.us_budget
-        invested = sum(
-            p["entry"] * p["qty"]
-            for p in self.risk.positions
-            if self._ticker_market(p["ticker"]) == market
-        )
-        return max(0.0, budget - invested)
+        """사용 가능한 현금 잔액 (KR/US 공유 풀)"""
+        return max(0.0, self.risk.cash)
 
     # ── 포지션 영속성 ──────────────────────────────────────────────────────────
 
@@ -1311,9 +1299,8 @@ def main(is_paper: bool = True):
     send(
         f"🤖 <b>봇 시작됨 [{mode_txt}]</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"💰 초기자금: {bot.risk.init_cash:,}원\n"
+        f"💰 초기자금: {bot.risk.init_cash:,}원 (KR/US 공유)\n"
         f"📦 1회 최대주문: {int(bot.risk.max_order_krw):,}원\n"
-        f"⚙️ KR할당: {int(os.getenv('KR_ALLOC_PCT','60'))}%\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"명령어: <b>?</b> 입력 시 도움말  |  <b>/setorder 300000</b> 으로 주문금액 변경"
     )
