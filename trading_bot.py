@@ -52,6 +52,7 @@ from telegram_reporter import (
     dashboard_push,
     analyst_reinvoke_alert,
 )
+from telegram_commander import commander as tg_commander
 from minority_report.analysts import get_three_judgments, select_tickers
 from minority_report.consensus import build_consensus
 from minority_report.tuner import tune
@@ -1300,6 +1301,10 @@ def _in_session_now(market: str) -> bool:
 def main(is_paper: bool = True):
     bot = TradingBot(is_paper=is_paper)
     log.info("=== Trading Bot Start ===")
+
+    # 텔레그램 명령어 수신 시작 (백그라운드 스레드)
+    tg_commander.start(bot)
+    send("🤖 봇 시작됨 — 명령어: <b>?</b> 입력 시 도움말")
 
     schedule.every().day.at("08:50").do(bot.session_open, "KR")
     schedule.every().day.at("16:00").do(bot.session_close, "KR")
