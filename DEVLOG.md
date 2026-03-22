@@ -326,6 +326,56 @@ session_close()
 
 ---
 
+## [2026-03-22] 수수료 반영 + 예산 계산 개선 + 텔레그램 강화
+
+### 1. 수수료 시스템 (risk_manager.py)
+
+- `FEE_RATES` 상수 추가: KR 매수 0.015%, KR 매도 0.195%(증권거래세 포함), US 0.015%
+- `_fee(side, amount)` 메서드 추가
+- `open_position`: 매수 수수료 즉시 `cash` 차감 + `daily_pnl` 반영
+- `close_position`: 매도 수수료 차감 후 `pnl` 계산 (gross_pnl → net_pnl)
+- `total_fee` 필드 추가 — 세션별 누적 수수료 추적
+- `reset_daily_state`: `total_fee = 0.0` 초기화
+- `get_status`: `total_fee` 포함
+
+### 2. 예산 계산 단순화 (risk_manager.py)
+
+**변경 전**:
+```python
+budget = cash * max_position_pct(20%) * mode_pct
+budget = min(budget, max_order_krw)
+budget = min(budget, cash * 0.5)
+```
+
+**변경 후**:
+```python
+budget = max_order_krw * mode_pct   # 단일 기준
+budget = min(budget, cash)          # 현금 부족 시 잔액 전부
+```
+
+**왜**: `max_position_pct=20%`가 남은 현금 기준으로 계산되어 현금이 43만원 남으면 예산이 6만원으로 쪼그라드는 문제. `MAX_ORDER_KRW` 하나로 단순화하고 현금 부족 시 잔액 전부 활용.
+
+### 3. 텔레그램 수수료 표시 (telegram_reporter.py)
+
+- `trade_alert()`: `market` 파라미터 추가, 총금액·수수료 표시
+- `dashboard_push()`: `max_order_krw`, `total_fee` 파라미터 추가 후 표시
+
+### 4. 텔레그램 명령어 강화 (telegram_commander.py)
+
+- `/setorder [금액]`: 장중 최대 주문금액 실시간 변경 (10,000원 ~ 1,000만원)
+- `/status` (`/s`): 최대주문·수수료 합계 표시
+- `/pnl` (`/p`): 수수료 합계·최대주문 표시
+- HELP_TEXT에 `/setorder` 추가
+
+### 5. 봇 시작 알림 개선 (trading_bot.py)
+
+- 시작 시 초기자금·최대주문·KR할당 표시
+- `session_open`에서 `self.risk.market = market` 설정
+
+### 6. 버그 수정 (trading_bot.py)
+
+- `action_changed` 미정의 변수 → `action != "MAINTAIN"` 으로 수정 (NameError 버그)
+
 ---
 
 ## [2026-03-22] 머지 충돌 해결 + 검증

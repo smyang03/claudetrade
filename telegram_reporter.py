@@ -152,11 +152,21 @@ def tuning_report(elapsed_min: int, tuning_result: dict,
     return text
 
 def trade_alert(side: str, ticker: str, qty: int, price: int,
-                strategy: str, tp: int, sl: int, reason: str = "") -> str:
+                strategy: str, tp: int, sl: int, reason: str = "",
+                market: str = "KR") -> str:
     icon = "🟢" if side=="buy" else "🔴"
+    total = price * qty
+    # KR: 매수 0.015%, 매도 0.015%+증권거래세 0.18%=0.195%
+    # US: 매수/매도 0.015% (해외주식 수수료)
+    if market == "KR":
+        fee_rate = 0.00015 if side == "buy" else 0.00195
+    else:
+        fee_rate = 0.00015
+    fee = int(total * fee_rate)
     text = f"""━━━━━━━━━━━━━━━━
 {icon} <b>[{'매수' if side=='buy' else '매도'} 체결]</b>
 종목: {ticker}  {qty}주 @{price:,}원
+총금액: {total:,}원  수수료≈{fee:,}원
 전략: {strategy}
 {'TP: ' + f'{tp:,}원  SL: {sl:,}원' if side=='buy' else '사유: '+reason}
 ━━━━━━━━━━━━━━━━"""
@@ -199,7 +209,8 @@ def status_report(market: str, mode: str, positions: list,
 
 def dashboard_push(market: str, mode: str, positions: list,
                    cash: float, pnl_pct: float, pnl_krw: int,
-                   judgments: dict, tickers: list) -> str:
+                   judgments: dict, tickers: list,
+                   max_order_krw: int = 0, total_fee: int = 0) -> str:
     """
     대시보드 상태를 텔레그램으로 전송.
     변동 없으면 호출 전에 걸러야 함 (이 함수 자체는 항상 전송).
@@ -227,12 +238,16 @@ def dashboard_push(market: str, mode: str, positions: list,
 
     pnl_icon = "🟢" if pnl_pct > 0 else "🔴" if pnl_pct < 0 else "⚪"
     credit_line = _credit_line()
+    fee_line  = f"수수료: {total_fee:,}원" if total_fee else ""
+    order_line = f"최대주문: {max_order_krw:,}원" if max_order_krw else ""
+    settings_line = "  ".join(filter(None, [order_line, fee_line]))
 
     text = f"""{icon} <b>[{market} 현황 {now}]</b>
 ━━━━━━━━━━━━━━━━
 모드: <b>{mode}</b>
 {pnl_icon} 오늘 P&L: {pnl_pct:+.2f}%  {pnl_krw:+,}원
 💰 현금: {cash:,.0f}원
+{settings_line}
 ━━━━━━━━━━━━━━━━
 🧠 판단
 {j_lines}

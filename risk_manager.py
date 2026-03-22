@@ -5,6 +5,14 @@ from logger import get_trading_logger
 
 log = get_trading_logger()
 
+# 수수료율 (근사값)
+# KR 매수: 0.015%, KR 매도: 0.015% + 증권거래세 0.18% = 0.195%
+# US 매수/매도: 0.015%
+FEE_RATES = {
+    "KR": {"buy": 0.00015, "sell": 0.00195},
+    "US": {"buy": 0.00015, "sell": 0.00015},
+}
+
 HARD_RULES = {
     "max_daily_loss_pct": -3.0,
     "max_single_loss_pct": -3.0,
@@ -19,16 +27,23 @@ HARD_RULES = {
 
 
 class RiskManager:
-    def __init__(self, init_cash: float = 10_000_000, max_order_krw: Optional[float] = None):
+    def __init__(self, init_cash: float = 10_000_000, max_order_krw: Optional[float] = None,
+                 market: str = "KR"):
         self.init_cash = init_cash
         self.cash = init_cash
         self.max_order_krw = max_order_krw if max_order_krw is not None else HARD_RULES["max_order_krw"]
+        self.market = market
         self.positions = []
         self.session_start_equity = init_cash
         self.daily_pnl = 0.0
+        self.total_fee = 0.0          # 누적 수수료
         self.halted = False
         self.all_trade_log = []
         self.trade_log = []
+
+    def _fee(self, side: str, amount: float) -> float:
+        rate = FEE_RATES.get(self.market, FEE_RATES["KR"])[side]
+        return amount * rate
 
     def equity(self) -> float:
         pos_val = sum(p["qty"] * p["current_price"] for p in self.positions)
@@ -41,6 +56,7 @@ class RiskManager:
     def reset_daily_state(self, clear_trade_log: bool = True):
         self.session_start_equity = self.equity()
         self.daily_pnl = 0.0
+        self.total_fee = 0.0
         self.halted = False
         if clear_trade_log:
             self.trade_log = []
@@ -68,9 +84,10 @@ class RiskManager:
         return True, "OK"
 
     def calc_order_budget(self, mode_size_pct: int = 70) -> float:
-        budget = self.cash * HARD_RULES["max_position_pct"] * (mode_size_pct / 100)
-        budget = min(budget, self.max_order_krw)
-        budget = min(budget, self.cash * 0.5)
+        # MAX_ORDER_KRW 기준, 모드별 비율 조절
+        budget = self.max_order_krw * (mode_size_pct / 100)
+        # 현금 부족 시 잔액 전부 사용
+        budget = min(budget, self.cash)
         return max(0.0, budget)
 
     def calc_order_size(
@@ -102,11 +119,15 @@ class RiskManager:
         max_hold: int = 1,
     ):
         cost = price * qty
-        if cost > self.cash:
-            log.warning(f"insufficient cash need={cost:,} cash={self.cash:,}")
+        fee  = self._fee("buy", cost)
+        total_cost = cost + fee
+        if total_cost > self.cash:
+            log.warning(f"insufficient cash need={total_cost:,} cash={self.cash:,}")
             return False
 
-        self.cash -= cost
+        self.cash -= total_cost
+        self.total_fee += fee
+        self.daily_pnl -= fee          # 매수 수수료 즉시 반영
         pos = {
             "ticker": ticker,
             "entry": price,
@@ -167,10 +188,13 @@ class RiskManager:
             if pos["ticker"] != ticker:
                 continue
 
-            pnl = (exit_price - pos["entry"]) * pos["qty"]
-            pnl_pct = (exit_price - pos["entry"]) / pos["entry"] * 100
-            self.cash += exit_price * pos["qty"]
-            self.daily_pnl += pnl
+            gross_pnl = (exit_price - pos["entry"]) * pos["qty"]
+            sell_fee  = self._fee("sell", exit_price * pos["qty"])
+            pnl       = gross_pnl - sell_fee
+            pnl_pct   = pnl / (pos["entry"] * pos["qty"]) * 100
+            self.cash += exit_price * pos["qty"] - sell_fee
+            self.total_fee += sell_fee
+            self.daily_pnl += gross_pnl - sell_fee
             self.positions.remove(pos)
 
             closed = {
@@ -217,5 +241,6 @@ class RiskManager:
             "positions": len(self.positions),
             "daily_pnl": self.daily_pnl,
             "daily_return": self.daily_return(),
+            "total_fee": self.total_fee,
             "halted": self.halted,
         }

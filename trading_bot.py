@@ -142,7 +142,7 @@ class TradingBot:
                 log.error(f"잔고 조회 실패: {e}")
                 raise SystemExit("실계좌 잔고 조회에 실패했습니다. 계좌/API 설정을 확인하세요.")
 
-        self.risk = RiskManager(init_cash=init_cash, max_order_krw=max_order)
+        self.risk = RiskManager(init_cash=init_cash, max_order_krw=max_order, market="KR")
 
         # ── KR / US 시장 예산 분리 ──────────────────────────────────────────
         # .env: KR_ALLOC_PCT=60  →  KR 60%, US 40% 배분
@@ -446,7 +446,7 @@ class TradingBot:
                 continue
             raw_exit = self.price_cache_raw.get(ex["ticker"], ex["exit_price"])
             pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), ex["reason"])
-            trade_alert("sell", ex["ticker"], ex["qty"], int(raw_exit), ex["strategy"], 0, 0, reason=ex["reason"])
+            trade_alert("sell", ex["ticker"], ex["qty"], int(raw_exit), ex["strategy"], 0, 0, reason=ex["reason"], market=market)
             # 전략별 성과 brain 업데이트
             try:
                 BrainDB.update_strategy_performance(
@@ -476,6 +476,7 @@ class TradingBot:
         self._refresh_token()
         self.session_active = True
         self.current_market = market
+        self.risk.market = market          # 수수료율 시장에 맞게 설정
         self.tuning_count = 0
         self._session_events = []          # 세션 이벤트 초기화
         self.risk.reset_daily_state(clear_trade_log=True)
@@ -956,7 +957,7 @@ class TradingBot:
                 if not opened:
                     log.error(f"open_position 실패 [{ticker}]: 현금 부족 또는 내부 오류 (cash={self.risk.cash:,.0f})")
                     continue
-                trade_alert("buy", ticker, qty, price, strategy_name, tp, sl)
+                trade_alert("buy", ticker, qty, price, strategy_name, tp, sl, market=market)
 
             except Exception as e:
                 log.error(f"cycle error [{ticker}]: {e}")
@@ -1015,10 +1016,10 @@ class TradingBot:
                     if ex:
                         pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "tuner_reverse")
                         trade_alert("sell", ex["ticker"], ex["qty"], int(cp),
-                                    ex["strategy"], 0, 0, reason="tuner_reverse")
+                                    ex["strategy"], 0, 0, reason="tuner_reverse", market=market)
 
         # 모드가 바뀐 경우만 tuning_report 전송, 유지면 스킵
-        if action_changed:
+        if action != "MAINTAIN":
             tuning_report(elapsed, result, self.today_judgment["consensus"]["mode"], self.risk.positions)
             self._maybe_push_dashboard(force=True)
         else:
@@ -1160,7 +1161,9 @@ class TradingBot:
         pnl_krw   = int(self.risk.daily_pnl)
 
         dashboard_push(market, mode, self.risk.positions,
-                       self.risk.cash, pnl_pct, pnl_krw, judgments, tickers)
+                       self.risk.cash, pnl_pct, pnl_krw, judgments, tickers,
+                       max_order_krw=int(self.risk.max_order_krw),
+                       total_fee=int(self.risk.total_fee))
         self._last_tg_state = state
 
     def _heartbeat(self):
@@ -1202,7 +1205,7 @@ class TradingBot:
             if ex:
                 pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "session_close")
                 trade_alert("sell", ex["ticker"], ex["qty"], int(raw_cp),
-                            ex["strategy"], 0, 0, reason="session_close")
+                            ex["strategy"], 0, 0, reason="session_close", market=market)
             log.warning(f"[당일청산] {pos['ticker']} {cp:,.0f}")
 
         if multi_days:
@@ -1304,7 +1307,16 @@ def main(is_paper: bool = True):
 
     # 텔레그램 명령어 수신 시작 (백그라운드 스레드)
     tg_commander.start(bot)
-    send("🤖 봇 시작됨 — 명령어: <b>?</b> 입력 시 도움말")
+    mode_txt = "모의투자" if is_paper else "실계좌"
+    send(
+        f"🤖 <b>봇 시작됨 [{mode_txt}]</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"💰 초기자금: {bot.risk.init_cash:,}원\n"
+        f"📦 1회 최대주문: {int(bot.risk.max_order_krw):,}원\n"
+        f"⚙️ KR할당: {int(os.getenv('KR_ALLOC_PCT','60'))}%\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"명령어: <b>?</b> 입력 시 도움말  |  <b>/setorder 300000</b> 으로 주문금액 변경"
+    )
 
     schedule.every().day.at("08:50").do(bot.session_open, "KR")
     schedule.every().day.at("16:00").do(bot.session_close, "KR")
