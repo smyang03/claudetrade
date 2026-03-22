@@ -237,7 +237,7 @@ def _cmd_credit() -> str:
             f"🤖 <b>AI 크레딧 사용량</b>\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"오늘: ${td['cost_usd']:.4f}  (≈{td['cost_krw']:,}원)\n"
-            f"  입력 {td['input_tokens']:,}tok  출력 {td['output_tokens']:,}tok\n"
+            f"  입력 {td['input']:,}tok  출력 {td['output']:,}tok  {td['calls']}회\n"
             f"누적: ${tot['cost_usd']:.4f}  (≈{tot['cost_krw']:,}원)"
         )
     except Exception as e:
