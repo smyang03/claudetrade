@@ -1349,3 +1349,9 @@
 2026-03-22 14:31:25 [INFO    ] run_cycle:523 | [KR 사이클 14:31] 모드:NEUTRAL size:40% | 종목:['114800', '252670', '069540', '046120', '002780'] | 포지션:0개
 2026-03-22 14:31:26 [ERROR   ] run_cycle:696 | cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
 2026-03-22 14:31:26 [ERROR   ] run_cycle:696 | cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+2026-03-22 14:31:26 [INFO    ] run_cycle:698 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-22 14:36:26 [INFO    ] run_cycle:523 | [KR 사이클 14:36] 모드:NEUTRAL size:40% | 종목:['114800', '252670', '069540', '046120', '002780'] | 포지션:0개
+2026-03-22 14:36:26 [ERROR   ] run_cycle:696 | cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+2026-03-22 14:36:26 [ERROR   ] run_cycle:696 | cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+2026-03-22 14:36:26 [ERROR   ] run_cycle:696 | cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+2026-03-22 14:36:26 [INFO    ] run_cycle:698 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원

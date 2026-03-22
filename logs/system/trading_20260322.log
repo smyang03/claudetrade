@@ -61,3 +61,164 @@
 2026-03-22 12:45:43 [INFO    ] open_position:120 | [BUY] X 2@100,000 TP=106000 SL=97000
 2026-03-22 12:45:43 [INFO    ] open_position:120 | [BUY] Y 1@50,000 TP=53000 SL=48500
 2026-03-22 12:45:43 [INFO    ] close_position:183 | [max_hold] Y +0 (+0.00%)
+2026-03-22 14:38:28 [INFO    ] __init__:127 | 모의투자 | 가상자금 30,000,000원 | 최대주문 1,000,000원
+2026-03-22 14:38:28 [INFO    ] __init__:151 | 예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)
+2026-03-22 14:38:30 [INFO    ] _startup_health_check:271 | ─── API Health Check ───────────────────────────────
+2026-03-22 14:38:30 [INFO    ] _startup_health_check:274 |   ✓ KIS 토큰: OK
+2026-03-22 14:38:30 [INFO    ] _startup_health_check:274 |   ✓ KIS 시세 (005930): OK (0원)
+2026-03-22 14:38:30 [INFO    ] _startup_health_check:274 |   ✓ Alpha Vantage (NVDA): OK (5일 캔들)
+2026-03-22 14:38:30 [INFO    ] _startup_health_check:274 |   ✓ Telegram: OK (@smyang03bot)
+2026-03-22 14:38:30 [INFO    ] _startup_health_check:274 |   – DART API: SKIP - DART_API_KEY 없음
+2026-03-22 14:38:30 [INFO    ] _startup_health_check:275 | ────────────────────── OK=4 / FAIL=0 ──
+2026-03-22 14:38:31 [INFO    ] __init__:202 | init | paper
+2026-03-22 14:38:31 [INFO    ] main:1302 | === Trading Bot Start ===
+2026-03-22 14:38:31 [INFO    ] main:1318 | schedules registered
+2026-03-22 14:38:31 [INFO    ] main:1330 | [startup] KR 세션 진행 중 — session_open 즉시 실행
+2026-03-22 14:38:31 [INFO    ] session_open:459 | ==================================================
+2026-03-22 14:38:31 [INFO    ] session_open:460 | [KR] session_open
+2026-03-22 14:38:34 [INFO    ] session_open:464 | [KR] 휴장일 — 세션 스킵
+2026-03-22 15:19:03 [INFO    ] start:333 | [TelegramCommander] 명령어 수신 시작
+2026-03-22 15:20:39 [INFO    ] __init__:128 | 모의투자 | 가상자금 30,000,000원 | 최대주문 1,000,000원
+2026-03-22 15:20:39 [INFO    ] __init__:152 | 예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)
+2026-03-22 15:20:41 [INFO    ] _startup_health_check:272 | ─── API Health Check ───────────────────────────────
+2026-03-22 15:20:41 [INFO    ] _startup_health_check:275 |   ✓ KIS 토큰: OK
+2026-03-22 15:20:41 [INFO    ] _startup_health_check:275 |   ✓ KIS 시세 (005930): OK (0원)
+2026-03-22 15:20:41 [INFO    ] _startup_health_check:275 |   ✓ Alpha Vantage (NVDA): OK (5일 캔들)
+2026-03-22 15:20:41 [INFO    ] _startup_health_check:275 |   ✓ Telegram: OK (@smyang03bot)
+2026-03-22 15:20:41 [INFO    ] _startup_health_check:275 |   – DART API: SKIP - DART_API_KEY 없음
+2026-03-22 15:20:41 [INFO    ] _startup_health_check:276 | ────────────────────── OK=4 / FAIL=0 ──
+2026-03-22 15:20:42 [INFO    ] __init__:203 | init | paper
+2026-03-22 15:20:42 [INFO    ] main:1303 | === Trading Bot Start ===
+2026-03-22 15:20:42 [INFO    ] start:333 | [TelegramCommander] 명령어 수신 시작
+2026-03-22 15:20:43 [INFO    ] main:1323 | schedules registered
+2026-03-22 15:20:43 [INFO    ] main:1335 | [startup] KR 세션 진행 중 — session_open 즉시 실행
+2026-03-22 15:20:43 [INFO    ] session_open:460 | ==================================================
+2026-03-22 15:20:43 [INFO    ] session_open:461 | [KR] session_open
+2026-03-22 15:20:46 [INFO    ] session_open:465 | [KR] 휴장일 — 세션 스킵
+2026-03-22 15:20:56 [INFO    ] _poll_loop:357 | [commander] 명령 수신: ?
+2026-03-22 15:21:07 [INFO    ] _poll_loop:357 | [commander] 명령 수신: /mode
+2026-03-22 15:21:29 [INFO    ] _poll_loop:357 | [commander] 명령 수신: /judge
+2026-03-22 15:31:12 [INFO    ] _poll_loop:357 | [commander] 명령 수신: /brain
+2026-03-22 15:31:46 [INFO    ] _poll_loop:357 | [commander] 명령 수신: /credit
+2026-03-22 15:40:47 [INFO    ] __init__:128 | 모의투자 | 가상자금 30,000,000원 | 최대주문 1,000,000원
+2026-03-22 15:40:47 [INFO    ] __init__:152 | 예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)
+2026-03-22 15:40:49 [INFO    ] _startup_health_check:272 | ─── API Health Check ───────────────────────────────
+2026-03-22 15:40:49 [INFO    ] _startup_health_check:275 |   ✓ KIS 토큰: OK
+2026-03-22 15:40:49 [INFO    ] _startup_health_check:275 |   ✓ KIS 시세 (005930): OK (0원)
+2026-03-22 15:40:49 [INFO    ] _startup_health_check:275 |   ✓ Alpha Vantage (NVDA): OK (5일 캔들)
+2026-03-22 15:40:49 [INFO    ] _startup_health_check:275 |   ✓ Telegram: OK (@smyang03bot)
+2026-03-22 15:40:49 [INFO    ] _startup_health_check:275 |   – DART API: SKIP - DART_API_KEY 없음
+2026-03-22 15:40:49 [INFO    ] _startup_health_check:276 | ────────────────────── OK=4 / FAIL=0 ──
+2026-03-22 15:40:50 [INFO    ] __init__:203 | init | paper
+2026-03-22 15:40:50 [INFO    ] main:1303 | === Trading Bot Start ===
+2026-03-22 15:40:50 [INFO    ] start:333 | [TelegramCommander] 명령어 수신 시작
+2026-03-22 15:40:51 [INFO    ] main:1323 | schedules registered
+2026-03-22 15:40:51 [INFO    ] main:1335 | [startup] KR 세션 진행 중 — session_open 즉시 실행
+2026-03-22 15:40:51 [INFO    ] session_open:460 | ==================================================
+2026-03-22 15:40:51 [INFO    ] session_open:461 | [KR] session_open
+2026-03-22 15:40:54 [INFO    ] session_open:465 | [KR] 휴장일 — 세션 스킵
+2026-03-22 15:41:18 [INFO    ] _poll_loop:357 | [commander] 명령 수신: ?
+2026-03-22 15:41:26 [INFO    ] _poll_loop:357 | [commander] 명령 수신: /credit
+2026-03-22 16:00:00 [INFO    ] session_close:1178 | [KR] session_close
+2026-03-22 16:33:37 [INFO    ] _poll_loop:357 | [commander] 명령 수신: /s
+2026-03-22 18:31:27 [INFO    ] _poll_loop:357 | [commander] 명령 수신: /mode
+2026-03-22 18:31:32 [INFO    ] _poll_loop:357 | [commander] 명령 수신: /s
+2026-03-22 20:43:01 [INFO    ] __init__:128 | 모의투자 | 가상자금 30,000,000원 | 최대주문 1,000,000원
+2026-03-22 20:43:01 [INFO    ] __init__:152 | 예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)
+2026-03-22 20:43:04 [INFO    ] _startup_health_check:272 | ─── API Health Check ───────────────────────────────
+2026-03-22 20:43:04 [INFO    ] _startup_health_check:275 |   ✓ KIS 토큰: OK
+2026-03-22 20:43:04 [INFO    ] _startup_health_check:275 |   ✓ KIS 시세 (005930): OK (0원)
+2026-03-22 20:43:04 [INFO    ] _startup_health_check:275 |   ✓ Alpha Vantage (NVDA): OK (5일 캔들)
+2026-03-22 20:43:04 [INFO    ] _startup_health_check:275 |   ✓ Telegram: OK (@smyang03bot)
+2026-03-22 20:43:04 [INFO    ] _startup_health_check:275 |   – DART API: SKIP - DART_API_KEY 없음
+2026-03-22 20:43:04 [INFO    ] _startup_health_check:276 | ────────────────────── OK=4 / FAIL=0 ──
+2026-03-22 20:43:04 [INFO    ] __init__:203 | init | paper
+2026-03-22 20:43:04 [INFO    ] main:1306 | === Trading Bot Start ===
+2026-03-22 20:43:04 [INFO    ] start:368 | [TelegramCommander] 명령어 수신 시작
+2026-03-22 20:43:05 [INFO    ] main:1335 | schedules registered
+2026-03-22 20:44:54 [INFO    ] __init__:128 | 모의투자 | 가상자금 30,000,000원 | 최대주문 3,000,000원
+2026-03-22 20:44:54 [INFO    ] __init__:152 | 예산 배분 | KR 18,000,000원 (60%) / US 12,000,000원 (40%)
+2026-03-22 20:44:56 [INFO    ] _startup_health_check:272 | ─── API Health Check ───────────────────────────────
+2026-03-22 20:44:56 [INFO    ] _startup_health_check:275 |   ✓ KIS 토큰: OK
+2026-03-22 20:44:56 [INFO    ] _startup_health_check:275 |   ✓ KIS 시세 (005930): OK (0원)
+2026-03-22 20:44:56 [INFO    ] _startup_health_check:275 |   ✓ Alpha Vantage (NVDA): OK (5일 캔들)
+2026-03-22 20:44:56 [INFO    ] _startup_health_check:275 |   ✓ Telegram: OK (@smyang03bot)
+2026-03-22 20:44:56 [INFO    ] _startup_health_check:275 |   – DART API: SKIP - DART_API_KEY 없음
+2026-03-22 20:44:56 [INFO    ] _startup_health_check:276 | ────────────────────── OK=4 / FAIL=0 ──
+2026-03-22 20:44:57 [INFO    ] __init__:203 | init | paper
+2026-03-22 20:44:57 [INFO    ] main:1306 | === Trading Bot Start ===
+2026-03-22 20:44:57 [INFO    ] start:368 | [TelegramCommander] 명령어 수신 시작
+2026-03-22 20:44:58 [INFO    ] main:1335 | schedules registered
+2026-03-22 21:07:56 [INFO    ] open_position:159 | [BUY] 005930 5@75,000 TP=79500 SL=72750
+2026-03-22 21:07:56 [INFO    ] activate_trailing:211 | [TRAILING] 005930 trail_sl=77,212 (3.0%)
+2026-03-22 21:07:56 [INFO    ] close_position:249 | [trail_stop] 005930 +19,230 (+5.13%)
+2026-03-22 21:08:12 [INFO    ] open_position:159 | [BUY] 000660 3@130,000 TP=137800 SL=126100
+2026-03-22 21:08:12 [INFO    ] open_position:159 | [BUY] 035420 7@68,000 TP=69700 SL=67320
+2026-03-22 21:08:12 [INFO    ] open_position:159 | [BUY] 051910 1@480,000 TP=508800 SL=465600
+2026-03-22 21:08:12 [INFO    ] open_position:159 | [BUY] 005380 2@220,000 TP=233200 SL=213400
+2026-03-22 21:08:12 [INFO    ] activate_trailing:211 | [TRAILING] 005380 trail_sl=213,400 (3.0%)
+2026-03-22 21:09:07 [INFO    ] open_position:159 | [BUY] 005930 5@75,000 TP=79500 SL=72750
+2026-03-22 21:09:08 [INFO    ] activate_trailing:211 | [TRAILING] 005930 trail_sl=77,610 (2.5%)
+2026-03-22 21:09:08 [INFO    ] open_position:159 | [BUY] 000660 5@130,000 TP=137800 SL=126100
+2026-03-22 21:09:08 [INFO    ] close_position:249 | [tp_analyst_sell] 000660 +38,155 (+5.87%)
+2026-03-22 21:09:08 [INFO    ] open_position:159 | [BUY] 035720 5@55,000 TP=58300 SL=53350
+2026-03-22 21:09:08 [INFO    ] activate_trailing:211 | [TRAILING] 035720 trail_sl=56,648 (3.0%)
+2026-03-22 21:09:08 [INFO    ] close_position:249 | [trail_stop] 035720 +44,376 (+16.14%)
+2026-03-22 21:17:47 [INFO    ] open_position:162 | [BUY] 005930 2@70,000 TP=74200 SL=67900
+2026-03-22 21:17:47 [INFO    ] activate_trailing:217 | [TRAILING] 005930 trail_sl=71,974 (3.0%)
+2026-03-22 21:18:08 [INFO    ] open_position:162 | [BUY] 005930 2@70,000 TP=74200 SL=67900
+2026-03-22 21:18:08 [INFO    ] activate_trailing:217 | [TRAILING] 005930 trail_sl=71,974 (3.0%)
+2026-03-22 21:18:08 [INFO    ] close_position:255 | [trail_stop] 005930 +7,113 (+5.08%)
+2026-03-22 21:18:49 [WARNING ] _log_decision:152 | [hold_advisor] 결정 로그 기록 실패: [Errno 2] No such file or directory: 'E:\\code\\claudetrade\\logs\\hold_advisor\\decisions_2026-03-22.jsonl'
+2026-03-22 21:28:31 [INFO    ] open_position:162 | [BUY] 000660 2@85,000 TP=90100 SL=82450
+2026-03-22 21:28:31 [INFO    ] close_position:255 | [take_profit] 000660 +7,853 (+4.62%)
+2026-03-22 21:28:31 [INFO    ] open_position:162 | [BUY] 005930 3@70,000 TP=74200 SL=67900
+2026-03-22 21:28:31 [INFO    ] close_position:255 | [take_profit] 005930 +12,166 (+5.79%)
+2026-03-22 21:28:31 [INFO    ] open_position:162 | [BUY] NVDA 1@850 TP=918 SL=816
+2026-03-22 21:28:49 [INFO    ] open_position:162 | [BUY] 000660 2@85,000 TP=90100 SL=82450
+2026-03-22 21:28:49 [INFO    ] close_position:255 | [take_profit] 000660 +7,853 (+4.62%)
+2026-03-22 21:28:49 [INFO    ] open_position:162 | [BUY] 005930 3@70,000 TP=74200 SL=67900
+2026-03-22 21:28:49 [INFO    ] close_position:255 | [take_profit] 005930 +12,166 (+5.79%)
+2026-03-22 21:28:49 [INFO    ] open_position:162 | [BUY] NVDA 1@850 TP=918 SL=816
+2026-03-22 21:29:04 [INFO    ] open_position:162 | [BUY] 000660 2@85,000 TP=90100 SL=82450
+2026-03-22 21:29:04 [INFO    ] close_position:255 | [take_profit] 000660 +7,853 (+4.62%)
+2026-03-22 21:29:04 [INFO    ] open_position:162 | [BUY] NVDA 1@800 TP=864 SL=768
+2026-03-22 21:29:04 [INFO    ] close_position:255 | [stop_loss] NVDA -22 (-2.69%)
+2026-03-22 21:29:04 [INFO    ] open_position:162 | [BUY] 005930 3@70,000 TP=74200 SL=67900
+2026-03-22 21:29:04 [INFO    ] close_position:255 | [take_profit] 005930 +12,166 (+5.79%)
+2026-03-22 21:29:04 [INFO    ] open_position:162 | [BUY] 035420 1@180,000 TP=190800 SL=174600
+2026-03-22 21:30:18 [INFO    ] open_position:162 | [BUY] 000660 2@85,000 TP=90100 SL=82450
+2026-03-22 21:30:18 [INFO    ] close_position:255 | [take_profit] 000660 +7,853 (+4.62%)
+2026-03-22 21:30:18 [INFO    ] open_position:162 | [BUY] NVDA 1@850 TP=918 SL=816
+2026-03-22 21:30:18 [INFO    ] close_position:255 | [stop_loss] NVDA -32 (-3.72%)
+2026-03-22 21:30:18 [INFO    ] open_position:162 | [BUY] 005930 3@70,000 TP=74200 SL=67900
+2026-03-22 21:30:18 [INFO    ] close_position:255 | [take_profit] 005930 +12,166 (+5.79%)
+2026-03-22 21:30:18 [INFO    ] open_position:162 | [BUY] 035420 1@180,000 TP=190800 SL=174600
+2026-03-22 21:43:59 [INFO    ] open_position:162 | [BUY] NVDA 1@850 TP=918 SL=816
+2026-03-22 21:43:59 [INFO    ] close_position:255 | [stop_loss] NVDA -32 (-3.72%)
+2026-03-22 21:43:59 [INFO    ] open_position:162 | [BUY] 000660 2@85,000 TP=90100 SL=82450
+2026-03-22 21:43:59 [INFO    ] close_position:255 | [take_profit] 000660 +9,849 (+5.79%)
+2026-03-22 21:43:59 [INFO    ] open_position:162 | [BUY] 005930 3@70,000 TP=74200 SL=67900
+2026-03-22 21:43:59 [INFO    ] close_position:255 | [take_profit] 005930 +12,166 (+5.79%)
+2026-03-22 21:43:59 [INFO    ] open_position:162 | [BUY] 035420 1@180,000 TP=190800 SL=174600
+2026-03-22 21:43:59 [INFO    ] _cmd_setorder:408 | [commander] max_order_krw 변경: 500,000 → 300,000
+2026-03-22 21:44:40 [INFO    ] open_position:162 | [BUY] 005930 3@70,000 TP=74200 SL=67900
+2026-03-22 21:44:40 [INFO    ] activate_trailing:217 | [TRAILING] 005930 trail_sl=71,974 (3.0%)
+2026-03-22 21:44:40 [INFO    ] close_position:255 | [trail_stop] 005930 +10,369 (+4.94%)
+2026-03-22 21:44:40 [INFO    ] open_position:162 | [BUY] 005930 2@70,000 TP=74200 SL=67900
+2026-03-22 21:44:40 [INFO    ] open_position:162 | [BUY] 000660 1@85,000 TP=90100 SL=82450
+2026-03-22 21:44:40 [INFO    ] open_position:162 | [BUY] 035420 1@180,000 TP=190800 SL=174600
+2026-03-22 21:45:32 [INFO    ] open_position:162 | [BUY] 005930 5@70,000 TP=74200 SL=67900
+2026-03-22 21:45:32 [INFO    ] open_position:162 | [BUY] 005930 5@70,000 TP=74200 SL=67900
+2026-03-22 21:45:32 [INFO    ] open_position:162 | [BUY] 000660 4@85,000 TP=90100 SL=82450
+2026-03-22 21:45:32 [INFO    ] open_position:162 | [BUY] 035420 1@180,000 TP=190800 SL=174600
+2026-03-22 21:45:32 [INFO    ] open_position:162 | [BUY] 005930 3@70,000 TP=74200 SL=67900
+2026-03-22 21:45:32 [INFO    ] close_position:255 | [take_profit] 005930 +12,166 (+5.79%)
+2026-03-22 21:46:20 [INFO    ] open_position:162 | [BUY] 005930 30@100,000 TP=106000 SL=95000
+2026-03-22 21:46:20 [WARNING ] check_halt:67 | daily loss limit reached (-3.00%) -> halt
+2026-03-22 21:46:20 [INFO    ] open_position:162 | [BUY] 005930 2@70,000 TP=74200 SL=67900
+2026-03-22 21:48:50 [INFO    ] open_position:162 | [BUY] 005930 3@70,000 TP=74200 SL=67900
+2026-03-22 21:48:50 [INFO    ] open_position:162 | [BUY] 000660 2@87,000 TP=92220 SL=84390
+2026-03-22 21:48:50 [INFO    ] open_position:162 | [BUY] 035420 1@180,000 TP=189000 SL=174600
+2026-03-22 21:48:50 [INFO    ] activate_trailing:217 | [TRAILING] 005930 trail_sl=71,974 (3.0%)
+2026-03-22 21:48:50 [INFO    ] close_position:255 | [trail_stop] 005930 +10,669 (+5.08%)

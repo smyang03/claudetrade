@@ -8,11 +8,13 @@ import os
 import json
 import time
 import anthropic
+from datetime import datetime
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trading_logger
 from credit_tracker import record as credit_record
+from runtime_paths import get_runtime_path
 
 log    = get_trading_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
@@ -114,4 +116,38 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
         f"[hold_advisor] {ticker} → {action} "
         f"(HOLD {hold_score:.2f} vs SELL {sell_score:.2f}) trail={trail_pct:.2f}"
     )
+
+    # ── 결정 시점 JSONL 기록 ──────────────────────────────────────────────────
+    _log_decision(ticker, market, pos, action, trail_pct, votes)
+
     return {"action": action, "trail_pct": round(trail_pct, 3), "votes": votes}
+
+
+def _log_decision(ticker: str, market: str, pos: dict,
+                  action: str, trail_pct: float, votes: dict):
+    """hold_advisor 결정을 JSONL 파일에 기록"""
+    try:
+        log_dir = get_runtime_path("logs", "hold_advisor", make_parents=False)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        today   = datetime.now().strftime("%Y-%m-%d")
+        log_file = log_dir / f"decisions_{today}.jsonl"
+
+        entry = {
+            "ts":         datetime.now().isoformat(timespec="seconds"),
+            "ticker":     ticker,
+            "market":     market,
+            "entry":      pos.get("entry", 0),
+            "tp_price":   pos.get("tp", 0),
+            "current":    pos.get("current_price", 0),
+            "pnl_pct":    round((pos.get("current_price", 0) / pos.get("entry", 1) - 1) * 100, 3),
+            "held_days":  pos.get("held_days", 0),
+            "decision":   action,
+            "trail_pct":  trail_pct,
+            "votes": {k: {"action": v["action"], "confidence": v["confidence"],
+                          "reason": v["reason"]} for k, v in votes.items()},
+            "outcome":    None,   # 청산 후 채워짐
+        }
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log.warning(f"[hold_advisor] 결정 로그 기록 실패: {e}")

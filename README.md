@@ -180,7 +180,8 @@ claudetrade/
 │   ├── analysts.py             # Bull·Bear·Neutral 2라운드 판단 + 종목 선택
 │   ├── consensus.py            # 가중 점수 합의 + 마이너리티 룰
 │   ├── tuner.py                # 장중 30분 재검토
-│   └── postmortem.py           # 장마감 사후 분석 + 전략별 성과 집계
+│   ├── postmortem.py           # 장마감 사후 분석 + 전략별 성과 집계
+│   └── hold_advisor.py         # TP 도달 시 분석가 3명 HOLD/SELL 합의 → 트레일링 스탑 결정
 │
 ├── strategy/
 │   ├── momentum.py             # 모멘텀 (KR) — MA정배열 + MACD골든크로스 + 거래량
@@ -210,6 +211,7 @@ claudetrade/
 ├── logs/
 │   ├── daily_judgment/         # training record (YYYYMMDD_KR.json)
 │   ├── judgment/               # JSONL 원본 로그 (프롬프트+응답)
+│   ├── hold_advisor/           # hold_advisor 결정/결과 JSONL (decisions_YYYY-MM-DD.jsonl)
 │   ├── system/                 # 봇 실행 로그
 │   └── analysis/               # 신호 분석 로그
 │
@@ -325,6 +327,28 @@ Bear가 "공시·급락·세력·서킷·이탈" 키워드 언급 + confidence >
 | `max_order_krw` | .env 설정 | 1회 주문 한도 (모드별 70~100% 적용) |
 | `no_new_entry_min` | 10분 | 개장 직후 신규 진입 금지 |
 | `close_before_min` | 10분 | 마감 10분 전 전량 청산 |
+
+### 트레일링 스탑 (hold_advisor)
+
+TP(목표가)에 도달한 포지션은 즉시 청산하지 않고 **트레일링 스탑**으로 전환해 추가 수익을 추구할 수 있다.
+
+```
+TRAILING_STOP_ENABLED=false  → TP 도달 시 즉시 청산 (기본)
+TRAILING_STOP_ENABLED=true   → TP 도달 시 트레일링 스탑 전환
+
+TRAILING_ANALYST_ENABLED=false  → 트레일링 폭 고정 (TRAIL_PCT)
+TRAILING_ANALYST_ENABLED=true   → hold_advisor 3명 분석가 HOLD/SELL 합의 후 결정
+```
+
+| 단계 | 동작 |
+|------|------|
+| TP 도달 | `hold_advisor.ask()` 호출 → 분석가 3명 HOLD/SELL 투표 |
+| HOLD 다수 | 트레일링 스탑 전환, `trail_pct` = HOLD 투표자 평균 제안값 (2~5%) |
+| SELL 다수 | 즉시 청산 |
+| trail_sl 발동 | 청산 + `hold_advisor` 결과 기록 (JSONL + brain.json) |
+
+**결정 로그**: `logs/hold_advisor/decisions_YYYY-MM-DD.jsonl`
+**성과 누적**: `state/brain.json` → `hold_advisor_performance`
 
 ### 주문 예산 계산
 
@@ -448,8 +472,12 @@ DART_API_KEY=...
 # 투자 설정
 PAPER_CASH=10000000        # 모의 가상자금 (기본 1000만원)
 MAX_ORDER_KRW=500000       # 1회 최대 주문금액
-KR_ALLOC_PCT=60            # KR 예산 비율 % (나머지 US)
 # USD_KRW_RATE는 세션 시작 시 yfinance로 자동 갱신됨 (기본 1350)
+
+# 트레일링 스탑 (선택)
+TRAILING_STOP_ENABLED=false    # TP 도달 시 트레일링 스탑 전환 여부
+TRAILING_ANALYST_ENABLED=false # hold_advisor 분석가 합의 사용 여부
+TRAIL_PCT=0.03                 # 트레일링 폭 기본값 (3%)
 ```
 
 ### 데이터 수집 (최초 1회)
@@ -525,9 +553,11 @@ python trading_bot.py --live
 | `DART_API_KEY` | ☑ | DART 공시 API |
 | `PAPER_CASH` | - | 모의 가상자금 (기본: 10,000,000) |
 | `MAX_ORDER_KRW` | - | 1회 최대 주문금액 (기본: 500,000) |
-| `KR_ALLOC_PCT` | - | KR 예산 비율 % (기본: 60) |
 | `ANTHROPIC_MODEL` | - | Claude 모델 (기본: claude-sonnet-4-6) |
 | `CLAUDETRADE_RUNTIME_DIR` | - | 런타임 파일 저장 경로 |
+| `TRAILING_STOP_ENABLED` | - | TP 도달 시 트레일링 스탑 전환 (기본: false) |
+| `TRAILING_ANALYST_ENABLED` | - | hold_advisor 분석가 합의 사용 (기본: false) |
+| `TRAIL_PCT` | - | 트레일링 폭 기본값 (기본: 0.03 = 3%) |
 
 ---
 
@@ -539,18 +569,24 @@ python trading_bot.py --live
 |--------|------|
 | `?` / `/help` | 명령어 목록 |
 | `/s` / `/status` | 현재 상태 (모드·포지션·손익·수수료) |
-| `/p` / `/pnl` | 오늘 손익 상세 + 수수료 합계 |
+| `/p` / `/pnl` | 오늘 손익 상세 + 수수료 분리 + 분석가 성과 |
+| `/trades [건수\|종목]` | 전체 매매 원장 (날짜별, 기본 20건) |
 | `/pos` | 보유 포지션 목록 |
 | `/mode` | 현재 합의 모드 |
 | `/judge` | 오늘 아침 판단 요약 |
 | `/brain` | 누적 학습 요약 |
 | `/credit` | Claude API 비용 조회 |
 | `/setorder [금액]` | 1회 최대 주문금액 변경 (세션 내 임시) |
+| `/trail on\|off` | 트레일링 스탑 활성화/비활성화 |
+| `/trail_pct [값]` | 트레일링 폭 변경 (예: `/trail_pct 0.04`) |
+| `/trail_analyst on\|off` | hold_advisor 분석가 합의 사용 여부 |
 | `/claude` | Claude 긴급 재판단 트리거 |
 | `/close [종목]` | 특정 종목 즉시 청산 (예: `/close 005930`) |
 | `/closeall` | 전체 포지션 청산 ⚠️ |
 
-> `/setorder`는 현재 세션에만 적용된다. 영구 변경은 `.env`의 `MAX_ORDER_KRW` 수정.
+> `/setorder`, `/trail`, `/trail_pct`, `/trail_analyst`는 현재 세션에만 적용된다. 영구 변경은 `.env` 수정.
+>
+> `/trades`는 건수(숫자 1~999) 또는 종목코드를 인수로 받는다: `/trades 50`, `/trades 005930`, `/trades NVDA`
 
 ---
 

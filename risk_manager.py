@@ -144,6 +144,9 @@ class RiskManager:
             "trail_sl": 0.0,         # 트레일링 SL 가격
             "trail_pct": 0.03,       # 트레일링 폭 (기본 3%)
             "tp_triggered": False,   # TP 도달 여부 (중복 방지)
+            # hold_advisor 기록
+            "hold_advice": None,     # {"action", "trail_pct", "votes"} or None
+            "tp_price": 0.0,         # TP 도달 당시 가격
         }
         self.positions.append(pos)
         evt = {
@@ -200,7 +203,7 @@ class RiskManager:
                 candidates.append({**pos, "exit_price": cp, "reason": reason})
         return candidates
 
-    def activate_trailing(self, ticker: str, trail_pct: float):
+    def activate_trailing(self, ticker: str, trail_pct: float, hold_advice: dict = None):
         """포지션을 트레일링 스탑 모드로 전환"""
         for pos in self.positions:
             if pos["ticker"] == ticker:
@@ -208,6 +211,9 @@ class RiskManager:
                 pos["trail_pct"]    = trail_pct
                 pos["trail_sl"]     = pos["current_price"] * (1 - trail_pct)
                 pos["tp_triggered"] = True
+                pos["tp_price"]     = pos["current_price"]   # TP 도달 시점 가격
+                if hold_advice is not None:
+                    pos["hold_advice"] = hold_advice
                 log.info(f"[TRAILING] {ticker} trail_sl={pos['trail_sl']:,.0f} ({trail_pct*100:.1f}%)")
                 return True
         return False

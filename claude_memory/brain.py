@@ -520,6 +520,58 @@ def update_debate_outcome(market: str, target_date: str, correct: bool):
             return
 
 
+# ── hold_advisor 성과 누적 ────────────────────────────────────────────────────
+
+def update_hold_advisor_performance(
+    market: str,
+    ticker: str,
+    decision: str,           # "HOLD" | "SELL"
+    success: bool,
+    extra_pnl_pct: float,    # HOLD: 트레일 이후 추가 수익%, SELL: 즉시 실현 수익%
+):
+    """
+    TP 도달 후 hold_advisor 결정 결과를 brain.json에 누적.
+    - HOLD → 청산가 > tp_price : success=True
+    - SELL → TP 즉시 실현 자체가 성공
+    """
+    brain = load()
+    if "hold_advisor_performance" not in brain:
+        brain["hold_advisor_performance"] = {
+            "total": 0,
+            "hold_count": 0, "hold_success": 0,
+            "sell_count": 0,
+            "hold_avg_extra_pnl": 0.0,
+            "recent": [],
+        }
+    hp = brain["hold_advisor_performance"]
+
+    hp["total"] += 1
+    if decision == "HOLD":
+        hp["hold_count"] += 1
+        if success:
+            hp["hold_success"] += 1
+        # 누적 평균 추가수익
+        n = hp["hold_count"]
+        hp["hold_avg_extra_pnl"] = round(
+            (hp["hold_avg_extra_pnl"] * (n - 1) + extra_pnl_pct) / n, 4
+        )
+    else:
+        hp["sell_count"] += 1
+
+    # 최근 20건 보관
+    hp["recent"].append({
+        "date":          date.today().isoformat(),
+        "market":        market,
+        "ticker":        ticker,
+        "decision":      decision,
+        "success":       success,
+        "extra_pnl_pct": round(extra_pnl_pct, 4),
+    })
+    hp["recent"] = hp["recent"][-20:]
+
+    save(brain)
+
+
 # ── 크로스마켓 업데이트 ───────────────────────────────────────────────────────
 
 def update_cross_market(correlation: float, insight: str):

@@ -449,3 +449,177 @@ budget = min(budget, cash)          # 현금 부족 시 잔액 전부
 
 *Last updated: 2026-03-22*
 *Context session: 머지 충돌 해결 + Python 3.9 호환성 수정 + 전체 검증*
+
+---
+
+## [2026-03-22] 트레일링 스탑 + hold_advisor + 텔레그램 UI 개선 + 버그 8개 수정
+
+### 배경
+
+모의투자 시작 전 전체 기능 사전 점검 요청. 수수료 반영 실제 손익 표시, 날짜별 매매 원장, 분석가 성공률 표시, TP 이후 추가 수익 추구(트레일링 스탑) 기능 추가. 이후 종합 버그 시뮬레이션으로 8개 버그 발견 및 수정 완료.
+
+---
+
+### 1. hold_advisor 시스템 (minority_report/hold_advisor.py)
+
+**신규 파일 추가**
+
+- TP(목표가) 도달 시 분석가 3명(Bull/Bear/Neutral)에게 HOLD/SELL 의견 수집
+- HOLD confidence 합산 > SELL confidence 합산이면 트레일링 스탑 전환, 아니면 즉시 청산
+- 각 분석가의 `trail_pct` 제안값 평균 → 트레일링 폭 결정 (2~5% 범위 강제)
+- `_log_decision()`: 결정 시점 JSONL 기록 (`logs/hold_advisor/decisions_YYYY-MM-DD.jsonl`)
+
+```python
+PERSONAS = {
+    "bull":    "15년 성장주 모멘텀 트레이더 — 추세 살아있으면 보유 선호",
+    "bear":    "헤지펀드 리스크 매니저 — 이익 실현 타이밍, 욕심 경계",
+    "neutral": "퀀트 통계 분석가 — 데이터 기반 냉정 판단",
+}
+```
+
+**환경변수**:
+- `TRAILING_STOP_ENABLED=true`: TP 도달 시 트레일링 스탑 전환 활성화 (기본 false)
+- `TRAILING_ANALYST_ENABLED=true`: hold_advisor 분석가 합의 사용 (기본 false → 즉시 트레일링)
+- `TRAIL_PCT=0.03`: 트레일링 폭 기본값
+
+---
+
+### 2. brain.py — `update_hold_advisor_performance()` 신규
+
+```python
+def update_hold_advisor_performance(market, ticker, decision, success, extra_pnl_pct):
+    # hold_advisor_performance 필드 생성/누적
+    # decision: "HOLD"|"SELL"
+    # success: HOLD → 추가 수익 달성 여부, SELL → TP 직후 하락 여부
+    # recent: 최근 20건 이력 유지
+```
+
+brain.json에 `hold_advisor_performance` 키로 성과 누적:
+- `total`, `hold_count`, `hold_success`, `sell_count`, `hold_avg_extra_pnl`, `recent`
+
+---
+
+### 3. risk_manager.py — 트레일링 스탑 필드 추가
+
+`open_position()` 포지션 dict에 신규 필드 추가:
+```python
+"trailing":      False,   # 트레일링 모드 여부
+"trail_sl":      0.0,     # 트레일링 SL 가격
+"trail_pct":     0.03,    # 트레일링 폭
+"tp_triggered":  False,   # TP 도달 여부 (중복 방지)
+"hold_advice":   None,    # hold_advisor 결과 {action, trail_pct, votes}
+"tp_price":      0.0,     # TP 도달 당시 가격
+```
+
+`activate_trailing(ticker, trail_pct, hold_advice=None)` 신규:
+- 포지션을 트레일링 모드로 전환
+- `trail_sl = current_price × (1 - trail_pct)` 초기 설정
+- `tp_triggered = True` (중복 TP 방지)
+- `hold_advice` 보존
+
+`update_prices()`: 트레일링 모드에서 현재가 상승 시 `trail_sl` 자동 상향 (래칫 방식)
+
+`get_exit_candidates()`: 트레일링 모드에서는 `trail_sl` 발동 여부만 체크
+
+---
+
+### 4. trading_bot.py — 트레일링 스탑 + hold_advisor 통합
+
+**`_handle_tp_trailing()`** 신규:
+- TP 도달 시 `TRAILING_STOP_ENABLED` 확인
+- `TRAILING_ANALYST_ENABLED` 이면 `hold_advisor.ask()` 호출
+- HOLD 결정 → `risk.activate_trailing(hold_advice=...)` 호출
+- SELL 결정 → 즉시 `_execute_sell()`
+
+**`_execute_sell(hold_advice=None)`** 개선:
+- 청산 후 `_record_hold_advisor_outcome()` 호출
+
+**`_record_hold_advisor_outcome()`** 신규:
+- 청산된 포지션의 `hold_advice` 확인
+- HOLD 결정이었으면 TP 가격 대비 청산 가격으로 추가 수익 계산
+- JSONL outcome 필드 업데이트 + brain.json 성과 누적
+
+**`_update_hold_advisor_jsonl_outcome()`** 신규:
+- `logs/hold_advisor/decisions_YYYY-MM-DD.jsonl`에서 해당 ticker/ts 행을 찾아 `outcome` 필드 기록
+
+---
+
+### 5. telegram_reporter.py — 대시보드 + 알림 개선
+
+**`dashboard_push()`**:
+- "수수료 차감 후" 명시: `오늘 순손익(수수료 차감 후): {pnl_pct:+.2f}%`
+- 보유 포지션 섹션 분리 (`📌 보유 포지션`)
+- `/pnl  전체: /trades` 유도 문구 추가
+
+**`pnl_alert()`**:
+- "(수수료 차감 후)" 문구 추가
+
+---
+
+### 6. telegram_commander.py — `/pnl` 개선 + `/trades` 신규
+
+**`_cmd_pnl()` 전면 개선**:
+```
+🟢 오늘 순손익: +1.23%  +6,150원
+  · 실현손익(수수료 전): +7,125원
+  · 수수료(누적): -975원
+
+📋 청산 내역 (3건)
+  POSCO홀딩스 | 매수 78,000 → 매도 83,200 | +5.26% | +2,080원
+
+🧠 hold_advisor 성과
+  HOLD 결정: 2건 (성공 1건 50.0%)
+  평균 추가수익: +0.8%
+
+📊 분석가 성과 (오늘)
+  bull: HIT  bear: MISS  neutral: HIT
+```
+
+**`_cmd_trades()` 신규** (`/trades [인수]`):
+- 기본 20건, 날짜 내림차순, 날짜별 그룹화
+- 인수 판단: `isdigit() and 1 ≤ n ≤ 999` → 건수, 4자리 이상 숫자 → 종목코드
+- KR: 원화(원), US: 달러(USD) 자동 단위 구분
+- 매도 건에 순손익(pnl) 표시
+
+---
+
+### 7. 버그 8개 수정
+
+| # | 심각도 | 파일 | 내용 | 원인 | 수정 |
+|---|--------|------|------|------|------|
+| BUG-01 | Critical | trading_bot.py | `reused=True`일 때 `debate_meta` NameError | 중복 블록 존재, `if not reused:` 밖에서 사용 | 중복 블록(L773~821) 제거, `if not reused:` 내부에서만 정의/사용 |
+| BUG-02 | Critical | trading_bot.py | `select_tickers()` 이중 실행 | `if not reused:` 블록 안팎에 두 번 호출 | 중복 블록 제거 |
+| BUG-03 | High | trading_bot.py | `tuning_report(prev_mode=이미_변경된_모드)` | 모드 변경 후 `self.mode`를 prev_mode로 전달 | `old_mode` 변수 분리해서 전달 |
+| BUG-04 | Medium | trading_bot.py | `actual["trades"]` buy+sell 합산 → 청산 건수 2배 보고 | `trade_log`에 buy+sell 모두 포함 | `_sell_log` 분리해서 청산 건수만 카운트 |
+| BUG-05 | Medium | trading_bot.py | session_close 강제청산 시 hold_advisor 결과 기록 누락 | 강제청산 경로에 `_record_hold_advisor_outcome` 미호출 | `force_close_all` 후 결과 기록 추가 |
+| BUG-06 | Medium | trading_bot.py | `pnl_pct`를 `init_cash` 기준 계산 | `session_start_equity` 대신 `init_cash` 사용 | `pnl_pct = daily_pnl / max(session_start_equity, 1) * 100` |
+| BUG-07 | Medium | telegram_commander.py | `/trades 005930` 종목코드를 건수(5930)로 오인 | `isdigit() and len < 4` 조건 미비 | `isdigit() and 1 <= int(n) <= 999` 조건으로 수정 |
+| BUG-08 | Low | hold_advisor.py | `logs/hold_advisor/` 디렉토리 미생성 오류 | `get_runtime_path`가 부모 디렉토리만 생성 | `log_dir.mkdir(parents=True, exist_ok=True)` 명시적 추가 |
+
+---
+
+### 8. 제거된 환경변수
+
+- **`KR_ALLOC_PCT`**: KR/US 공유 풀 방식으로 전환되어 불필요. `.env` 예시 및 README 환경변수 표에서 제거.
+
+---
+
+### 9. 모의투자 시작 전 종합 검증 결과 (2026-03-22)
+
+버그 수정 후 8개 핵심 항목 시뮬레이션 검증 통과:
+
+| 검증 항목 | 결과 |
+|-----------|------|
+| BUG-01,02: reused=True 경로 debate_meta 없이 정상 흐름 | 통과 |
+| BUG-03: tuning_report에 old_mode 전달 | 통과 |
+| BUG-04: _sell_log 분리, trades 청산 건수만 | 통과 |
+| BUG-05: 강제청산 경로 hold_advisor 결과 기록 | 통과 |
+| BUG-06: pnl_pct = daily_pnl / session_start_equity | 통과 |
+| BUG-07: /trades 005930 종목코드 정상 인식 | 통과 |
+| BUG-08: hold_advisor JSONL 디렉토리 생성 | 통과 |
+| /pnl 수수료 역산 (gross_pnl = daily_pnl + total_fee) | 통과 |
+
+**시스템 상태**: 모든 버그 수정 완료, 모의투자 시작 준비 완료.
+
+*Last updated: 2026-03-22*
+*Context session: 트레일링 스탑 + hold_advisor + 텔레그램 UI 개선 + 버그 8개 수정 + 모의투자 사전 검증*

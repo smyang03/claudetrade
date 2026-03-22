@@ -443,6 +443,7 @@ class TradingBot:
         ticker     = cand["ticker"]
         trail_pct  = self.trailing_stop_pct
 
+        hold_advice = None
         if self.enable_trailing_analyst:
             # 분석가 3명에게 HOLD/SELL 물어봄
             try:
@@ -452,9 +453,11 @@ class TradingBot:
                 if advice["action"] == "SELL":
                     log.info(f"[TP→분석가합의:SELL] {ticker} — 즉시 청산")
                     send(f"🔴 <b>[TP→분석가 SELL]</b> {ticker}\n분석가 합의: 즉시 청산")
-                    self._execute_sell(cand, market, reason="tp_analyst_sell")
+                    self._execute_sell(cand, market, reason="tp_analyst_sell",
+                                       hold_advice=advice)
                     return
-                trail_pct = advice["trail_pct"]
+                trail_pct  = advice["trail_pct"]
+                hold_advice = advice
                 log.info(f"[TP→분석가합의:HOLD] {ticker} trail={trail_pct:.2%}")
                 send(
                     f"📈 <b>[TP→분석가 HOLD]</b> {ticker}\n"
@@ -469,10 +472,11 @@ class TradingBot:
                 f"트레일링 스탑 {trail_pct*100:.1f}% 활성화"
             )
 
-        self.risk.activate_trailing(ticker, trail_pct)
+        self.risk.activate_trailing(ticker, trail_pct, hold_advice=hold_advice)
 
-    def _execute_sell(self, cand: dict, market: str, reason: str):
-        """실제 매도 실행 + 텔레그램 알림"""
+    def _execute_sell(self, cand: dict, market: str, reason: str,
+                      hold_advice: dict = None):
+        """실제 매도 실행 + 텔레그램 알림 + hold_advisor 결과 기록"""
         if not self.is_paper:
             raw_px   = self.price_cache_raw.get(cand["ticker"], cand["exit_price"])
             order_px = self._compute_order_price("sell", market, float(raw_px))
@@ -480,6 +484,10 @@ class TradingBot:
             if not result["success"]:
                 log.error(f"sell order failed [{cand['ticker']}]: {result['msg']}")
                 return
+
+        # hold_advice: 분석가 SELL 즉시 청산 시 전달된 advice
+        # cand에 저장된 hold_advice(포지션에서 온 것)도 확인
+        advice_used = hold_advice or cand.get("hold_advice")
 
         ex = self.risk.close_position(cand["ticker"], cand["exit_price"], reason)
         if not ex:
@@ -494,6 +502,91 @@ class TradingBot:
             )
         except Exception as e:
             log.warning(f"strategy brain update failed: {e}")
+
+        # ── hold_advisor 결과 기록 ─────────────────────────────────────────────
+        if advice_used:
+            self._record_hold_advisor_outcome(ex, market, advice_used)
+
+    def _record_hold_advisor_outcome(self, ex: dict, market: str, advice: dict):
+        """
+        청산 완료 후 hold_advisor 결정의 성공/실패 판정 및 기록.
+        - HOLD 결정: exit_price > tp_price → 추가 수익 실현 → 성공
+        - SELL 결정: TP 즉시 실현 자체 → 성공 (기회비용은 사후 비교)
+        """
+        try:
+            decision    = advice.get("action", "SELL")
+            tp_price    = ex.get("tp_price", 0.0) or ex.get("tp", 0.0)
+            exit_price  = ex.get("exit_price", 0.0)
+            entry_price = ex.get("entry", 0.0)
+
+            if decision == "HOLD":
+                # HOLD 성공: 청산가 > TP 도달가 (트레일 덕에 더 벌었음)
+                success = exit_price > tp_price if tp_price > 0 else (ex.get("pnl", 0) > 0)
+                # 추가 수익: TP 대비 청산가 차이
+                extra_pnl_pct = ((exit_price / tp_price - 1) * 100) if tp_price > 0 else 0.0
+            else:  # SELL (즉시 청산)
+                # TP 도달 → 즉시 청산 자체는 수익 실현
+                success = ex.get("pnl", 0) > 0
+                extra_pnl_pct = ex.get("pnl_pct", 0.0)
+
+            # brain.json 누적
+            BrainDB.update_hold_advisor_performance(
+                market, ex["ticker"], decision, success, extra_pnl_pct
+            )
+
+            # JSONL outcome 업데이트
+            self._update_hold_advisor_jsonl_outcome(
+                ex["ticker"], decision, success, exit_price, extra_pnl_pct
+            )
+
+            result_icon = "✅" if success else "❌"
+            log.info(
+                f"[hold_advisor 결과] {ex['ticker']} {decision} → "
+                f"{result_icon} {'성공' if success else '실패'} "
+                f"extra_pnl={extra_pnl_pct:+.2f}%"
+            )
+        except Exception as e:
+            log.warning(f"[hold_advisor] 결과 기록 실패: {e}")
+
+    def _update_hold_advisor_jsonl_outcome(
+        self, ticker: str, decision: str, success: bool,
+        exit_price: float, extra_pnl_pct: float
+    ):
+        """오늘자 decisions JSONL에서 해당 종목 미완료 레코드에 outcome을 기록"""
+        try:
+            from runtime_paths import get_runtime_path as _grp
+            from datetime import datetime as _dt
+            log_dir  = _grp("logs", "hold_advisor", make_parents=False)
+            today    = _dt.now().strftime("%Y-%m-%d")
+            log_file = log_dir / f"decisions_{today}.jsonl"
+            if not log_file.exists():
+                return
+
+            lines = log_file.read_text(encoding="utf-8").splitlines()
+            updated = []
+            patched = False
+            for line in reversed(lines):
+                if not patched:
+                    try:
+                        rec = json.loads(line)
+                        if rec.get("ticker") == ticker and rec.get("outcome") is None:
+                            rec["outcome"] = {
+                                "success":       success,
+                                "exit_price":    exit_price,
+                                "extra_pnl_pct": round(extra_pnl_pct, 4),
+                                "decision":      decision,
+                            }
+                            line = json.dumps(rec, ensure_ascii=False)
+                            patched = True
+                    except Exception:
+                        pass
+                updated.append(line)
+
+            log_file.write_text(
+                "\n".join(reversed(updated)) + "\n", encoding="utf-8"
+            )
+        except Exception as e:
+            log.warning(f"[hold_advisor] JSONL outcome 업데이트 실패: {e}")
 
     def session_open(self, market: str):
         log.info("=" * 50)
@@ -599,6 +692,7 @@ class TradingBot:
                         "consensus": saved["consensus"],
                         "digest_prompt": saved.get("digest_prompt", ""),
                         "tickers": saved.get("tickers", []),
+                        "universe_tickers": saved.get("universe_tickers", []),
                         # debate 필드 복원 (파인튜닝 데이터 연속성 유지)
                         "round1_judgments": saved.get("round1_judgments", {}),
                         "debate_changes": saved.get("debate_changes", []),
@@ -673,59 +767,10 @@ class TradingBot:
                 "consensus": consensus,
                 "digest_prompt": digest_prompt,
                 "tickers": selected,
+                "universe_tickers": [c.get("ticker") for c in candidates if c.get("ticker")],
                 "round1_judgments": debate_meta.get("r1", {}),
                 "debate_changes":   debate_meta.get("changes", []),
             }
-
-        # 오늘 집중 종목: 스크리너 → Claude 선택
-        log.info(f"[스크리너] {market} 시장 스캔 중...")
-        if pre_candidates is not None:
-            candidates = pre_candidates
-        elif market == "KR":
-            candidates = screen_market_kr(self.token)
-        else:
-            candidates = screen_market_us()
-
-        selection_pool = candidates
-        snapshot = self.today_universe.get(market, {})
-        if self.enable_dynamic_universe and snapshot.get("candidates"):
-            selection_pool = snapshot.get("candidates", candidates)
-        analysis_log.info(
-            f"[screen {today} {market}] candidates={len(candidates)}",
-            extra={"extra": {
-                "event": "screen_candidates",
-                "date": today,
-                "market": market,
-                "count": len(candidates),
-                "tickers": [c.get("ticker") for c in candidates[:20]],
-            }},
-        )
-        log.info(f"[스크리너] {market} 후보 {len(selection_pool)}개 → Claude 선택 중...")
-        selected = select_tickers(market, digest_prompt, consensus["mode"], selection_pool)
-        self.today_tickers[market] = selected
-        log.info(f"[종목선택 확정] {market}: {selected}")
-        judgment_log.info(
-            f"[select {today} {market}] {selected}",
-            extra={"extra": {
-                "event": "ticker_selection",
-                "date": today,
-                "market": market,
-                "selected": selected,
-                "consensus_mode": consensus["mode"],
-            }},
-        )
-
-        self.today_judgment = {
-            "date": today,
-            "market": market,
-            "judgments": judgments,
-            "consensus": consensus,
-            "digest_prompt": digest_prompt,
-            "tickers": selected,
-            "universe_tickers": [c.get("ticker") for c in selection_pool if c.get("ticker")],
-            "round1_judgments": debate_meta.get("r1", {}),
-            "debate_changes":   debate_meta.get("changes", []),
-        }
 
         # 대시보드가 장 중에도 오늘 판단을 볼 수 있도록 session_open 직후 즉시 기록
         try:
@@ -1059,7 +1104,7 @@ class TradingBot:
 
         # 모드가 바뀐 경우만 tuning_report 전송, 유지면 스킵
         if action != "MAINTAIN":
-            tuning_report(elapsed, result, self.today_judgment["consensus"]["mode"], self.risk.positions)
+            tuning_report(elapsed, result, old_mode, self.risk.positions)
             self._maybe_push_dashboard(force=True)
         else:
             log.info(f"[튜닝 {elapsed}분] MAINTAIN — 텔레그램 스킵")
@@ -1175,7 +1220,7 @@ class TradingBot:
         market = self.current_market or ""
         mode   = self.today_judgment.get("consensus", {}).get("mode", "")
         pos_key = tuple(sorted((p["ticker"], p["qty"]) for p in self.risk.positions))
-        pnl_bucket = round(self.risk.daily_pnl / max(self.risk.init_cash, 1) * 100, 1)  # 0.1% 단위
+        pnl_bucket = round(self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100, 1)  # 0.1% 단위
         return {
             "market":     market,
             "mode":       mode,
@@ -1196,7 +1241,7 @@ class TradingBot:
         mode      = self.today_judgment.get("consensus", {}).get("mode", "?")
         judgments = self.today_judgment.get("judgments", {})
         tickers   = self.today_tickers.get(market, [])
-        pnl_pct   = self.risk.daily_pnl / max(self.risk.init_cash, 1) * 100
+        pnl_pct   = self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100
         pnl_krw   = int(self.risk.daily_pnl)
 
         dashboard_push(market, mode, self.risk.positions,
@@ -1245,6 +1290,9 @@ class TradingBot:
                 pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "session_close")
                 trade_alert("sell", ex["ticker"], ex["qty"], int(raw_cp),
                             ex["strategy"], 0, 0, reason="session_close", market=market)
+                # hold_advisor 결과 기록 (트레일링 활성화 상태였던 포지션)
+                if ex.get("hold_advice"):
+                    self._record_hold_advisor_outcome(ex, market, ex["hold_advice"])
             log.warning(f"[당일청산] {pos['ticker']} {cp:,.0f}")
 
         if multi_days:
@@ -1256,12 +1304,13 @@ class TradingBot:
         self._save_positions()
 
         today = date.today().strftime("%Y-%m-%d")
+        _sell_log = [t for t in self.risk.trade_log if t.get("side") == "sell"]
         actual = {
             "market_change": get_index_change(market),
             "pnl_pct": self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100,
             "pnl_krw": int(self.risk.daily_pnl),
             "win": self.risk.daily_pnl > 0,
-            "trades": len(self.risk.trade_log),
+            "trades": len(_sell_log),   # 청산(매도) 건수만
             "cumulative": int(self.risk.equity()),
         }
 

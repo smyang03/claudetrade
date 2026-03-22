@@ -174,9 +174,11 @@ def trade_alert(side: str, ticker: str, qty: int, price: int,
     return text
 
 def pnl_alert(ticker: str, pnl_pct: float, pnl_krw: int, reason: str) -> str:
-    icon = "✅" if pnl_krw>0 else "❌"
-    text = f"""{icon} <b>[청산]</b> {ticker}
-{fmt_pct(pnl_pct)}  {pnl_krw:+,}원  ({reason})"""
+    icon = "✅" if pnl_krw > 0 else "❌"
+    text = (
+        f"{icon} <b>[청산]</b> {ticker}\n"
+        f"{fmt_pct(pnl_pct)}  {pnl_krw:+,}원 (수수료 차감 후)  ({reason})"
+    )
     send(text)
     return text
 
@@ -238,20 +240,24 @@ def dashboard_push(market: str, mode: str, positions: list,
 
     pnl_icon = "🟢" if pnl_pct > 0 else "🔴" if pnl_pct < 0 else "⚪"
     credit_line = _credit_line()
-    fee_line  = f"수수료: {total_fee:,}원" if total_fee else ""
+    fee_line   = f"수수료(누적): {total_fee:,}원" if total_fee else ""
     order_line = f"최대주문: {max_order_krw:,}원" if max_order_krw else ""
     settings_line = "  ".join(filter(None, [order_line, fee_line]))
 
     text = f"""{icon} <b>[{market} 현황 {now}]</b>
 ━━━━━━━━━━━━━━━━
 모드: <b>{mode}</b>
-{pnl_icon} 오늘 P&L: {pnl_pct:+.2f}%  {pnl_krw:+,}원
+{pnl_icon} 오늘 순손익(수수료 차감 후): {pnl_pct:+.2f}%  {pnl_krw:+,}원
 💰 현금: {cash:,.0f}원
 {settings_line}
+━━━━━━━━━━━━━━━━
+📌 보유 포지션
+{pos_lines}
 ━━━━━━━━━━━━━━━━
 🧠 판단
 {j_lines}
 ━━━━━━━━━━━━━━━━
+📋 거래내역: /pnl  전체: /trades
 📌 모니터링: {', '.join(tickers) if tickers else '-'}
 {credit_line}"""
     send(text)
