@@ -34,6 +34,18 @@ from functools import wraps
 import time
 from runtime_paths import get_runtime_path
 
+# Windows 콘솔 UTF-8 강제 설정 (✓ ✅ ⚠️ 등 유니코드 출력)
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ── 기본 경로 설정 ────────────────────────────────────────────────────────────
 
 BASE_DIR = Path(__file__).parent

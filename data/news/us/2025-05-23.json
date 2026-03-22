@@ -1,0 +1,67 @@
+{
+  "date": "2025-05-23",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-23",
+          "title": "[] ['NFiniTi inc.  (NFTN)  (CIK 0001544400)']",
+          "content": "2025-05-23",
+          "url": "https://www.sec.gov2025-05-23",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-23",
+          "title": "[] ['Holistic Asset Finance Group Co., Ltd.  (HAFG)  (CIK 0001367993)']",
+          "content": "2025-05-23",
+          "url": "https://www.sec.gov2025-05-23",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-23",
+          "title": "[] ['Zoom Communications, Inc.  (ZM)  (CIK 0001585521)']",
+          "content": "2025-05-23",
+          "url": "https://www.sec.gov2025-05-23",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T13:59:57.027405"
+}

@@ -1,0 +1,83 @@
+{
+  "date": "2025-11-04",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": true,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-04",
+          "title": "[] ['INTEGRAL AD SCIENCE HOLDING CORP.  (IAS)  (CIK 0001842718)']",
+          "content": "2025-11-04",
+          "url": "https://www.sec.gov2025-11-04",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-04",
+          "title": "[] ['ENTRAVISION COMMUNICATIONS CORP  (EVC)  (CIK 0001109116)']",
+          "content": "2025-11-04",
+          "url": "https://www.sec.gov2025-11-04",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-04",
+          "title": "[] ['MYRIAD GENETICS INC  (MYGN)  (CIK 0000899923)']",
+          "content": "2025-11-04",
+          "url": "https://www.sec.gov2025-11-04",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-04",
+          "title": "[] ['SHOPIFY INC.  (SHOP)  (CIK 0001594805)']",
+          "content": "2025-11-04",
+          "url": "https://www.sec.gov2025-11-04",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-04",
+          "title": "[] ['New ERA Energy & Digital, Inc.  (NUAI, NUAIW)  (CIK 0002028336)']",
+          "content": "2025-11-04",
+          "url": "https://www.sec.gov2025-11-04",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T21:26:25.404936"
+}

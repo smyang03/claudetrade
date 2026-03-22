@@ -1,0 +1,92 @@
+{
+  "date": "2024-03-07",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-07",
+          "title": "[] ['Serve Robotics Inc. /DE/  (SERV)  (CIK 0001832483)']",
+          "content": "2024-03-07",
+          "url": "https://www.sec.gov2024-03-07",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-07",
+          "title": "[] ['NETWORK-1 TECHNOLOGIES, INC.  (NTIP)  (CIK 0001065078)']",
+          "content": "2024-03-07",
+          "url": "https://www.sec.gov2024-03-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-07",
+          "title": "[] ['Orchestra BioMed Holdings, Inc.  (OBIO)  (CIK 0001814114)']",
+          "content": "2024-03-07",
+          "url": "https://www.sec.gov2024-03-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-07",
+          "title": "[] ['Red Violet, Inc.  (RDVT)  (CIK 0001720116)']",
+          "content": "2024-03-07",
+          "url": "https://www.sec.gov2024-03-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-07",
+          "title": "[] ['Intrepid Potash, Inc.  (IPI)  (CIK 0001421461)']",
+          "content": "2024-03-07",
+          "url": "https://www.sec.gov2024-03-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-07",
+          "title": "[] ['Phathom Pharmaceuticals, Inc.  (PHAT)  (CIK 0001783183)']",
+          "content": "2024-03-07",
+          "url": "https://www.sec.gov2024-03-07",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:54:28.913557"
+}

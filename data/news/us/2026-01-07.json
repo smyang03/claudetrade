@@ -1,0 +1,674 @@
+{
+  "date": "2026-01-07",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Does Dual AI-Focused Buy Initiations Transform the Bull Case For Digital Realty Trust (DLR)?",
+          "content": "Deutsche Bank and Goldman Sachs have initiated \"Buy\" ratings for Digital Realty Trust (DLR), citing strong AI-related demand, lease renewal opportunities, and a significant development pipeline. The article highlights DLR's role as a key infrastructure provider for AI and cloud computing and anticipates its Q4 2025 results on February 5, 2026, as a crucial update for investors to assess the company's alignment with the AI-driven narrative. Despite the bullish outlook, the article also notes the ",
+          "url": "https://simplywall.st/stocks/us/real-estate/nyse-dlr/digital-realty-trust/news/does-dual-ai-focused-buy-initiations-transform-the-bull-case",
+          "sentiment_score": 0.284427,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.558327
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Who Are the Long-Term Winners of AI?",
+          "content": "This article discusses the long-term winners of AI, moving beyond the initial productivity gains to focus on companies that can truly capture lasting value. It argues that market power, the ability to capitalize on unmet demand, and careful selection of sectors will be crucial for sustained profitability from AI. The article highlights that while AI lowers costs, competitive dynamics can erode profits unless companies have strong market positions or can unlock new markets through reduced prices.",
+          "url": "https://www.bny.com/investments/no/en/intermediary/news-and-insights/articles/who-are-the-long-term-winners-of-ai.html",
+          "sentiment_score": 0.321911,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.63315
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Robeco Institutional Asset Management B.V. Grows Position in PTC Inc. $PTC",
+          "content": "Robeco Institutional Asset Management B.V. significantly increased its stake in PTC Inc. by 119.5% in Q3, now owning 361,938 shares valued at $73.48 million. Institutional investors collectively hold 95.14% of PTC, while insiders have recently sold shares totaling over $10 million. Analysts maintain a \"Moderate Buy\" rating for PTC with a consensus price target of $205.92.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-robeco-institutional-asset-management-bv-grows-position-in-ptc-inc-ptc-2026-01-07/",
+          "sentiment_score": 0.333199,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.632702
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "CGDV ETF at $44.17 Targets $52 as Dividend Value and AI Leaders Drive 2026 Upside",
+          "content": "The Capital Group Dividend Value ETF (CGDV), currently trading at $44.17, delivered an 86% price return over three years and expects to reach $52 by 2026, driven by its exposure to AI leaders and growth-oriented sectors like technology and industrials. Despite its \"dividend value\" label, CGDV acts more like a growth-tilted core equity fund with moderate yield, focusing on companies with accelerating future earnings growth rather than deep value or high current yield. The ETF's strong performance",
+          "url": "https://www.tradingnews.com/news/cgdv-etf-at-44-usd-targets-52-usd-ai-leaders-drive-2026-upside",
+          "sentiment_score": 0.317493,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.724385
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Enterprise infrastructure shift: Dell and Microsoft drive AI",
+          "content": "Dell Technologies Inc. and Microsoft Corp. are collaborating to reshape enterprise infrastructure, making AI a central component. Their initiatives, including Dell's AI Factory and Microsoft's Azure integrations, aim to simplify AI adoption, move beyond proof-of-concepts to scalable deployment, and build infrastructure optimized for agentic AI. This partnership signals a major shift towards \"infrastructure as an AI platform\" in the enterprise IT market.",
+          "url": "https://siliconangle.com/2026/01/07/enterprise-infrastructure-dell-microsoft-ai-microsoftignite/",
+          "sentiment_score": 0.481751,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "The Smartest Dividend ETF to Buy With $2,000 Right Now",
+          "content": "This article recommends the JPMorgan Nasdaq Equity Premium Income ETF (JEPQ) as a smart dividend investment. The JEPQ ETF utilizes a covered call strategy on top Nasdaq-100 technology stocks, offering a current dividend yield of over 10% monthly. It provides a way for investors to get significant dividend income from high-performing tech companies, although it sacrifices potential for massive stock price appreciation.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/JPM/pressreleases/36933894/the-smartest-dividend-etf-to-buy-with-2000-right-now/",
+          "sentiment_score": 0.118971,
+          "sentiment_label": "Neutral",
+          "relevance": 0.621439
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "McGraw Hill Appoints Philip Moyer as CEO",
+          "content": "McGraw Hill has announced the appointment of Philip Moyer as its new President and CEO, effective February 9, 2026. Moyer, who brings extensive experience in technology and AI, will succeed Simon Allen, who will transition to Chair of the Board of Directors. This leadership change is expected to leverage Moyer's background in AI-driven transformation to further McGraw Hill's growth and innovation in educational solutions.",
+          "url": "https://www.citybiz.co/article/789628/mcgraw-hill-appoints-philip-moyer-as-ceo/",
+          "sentiment_score": 0.297787,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.55427
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Daily summary: Alphabet shares support sentiments on Wall Street 🗽Oil, precious metals and crypto slide",
+          "content": "Alphabet shares (GOOGL.US) supported Wall Street sentiment, rising 3% due to advancements in autonomous vehicles and AI, despite China's advice against Nvidia chip purchases. Meanwhile, oil prices fell below $60 per barrel on weaker demand risks, and precious metals like gold, silver, and platinum experienced significant downturns. Bitcoin also lost momentum, failing to breach $95,000 amidst a bearish market outlook.",
+          "url": "https://www.xtb.com/int/market-analysis/news-and-research/daily-summary-alphabet-shares-support-sentiments-on-wall-street-oil-precious-metals-and-crypto-slide",
+          "sentiment_score": 0.130139,
+          "sentiment_label": "Neutral",
+          "relevance": 0.576035
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Alphabet Trades Near Highs as Earnings Power and AI Spend Justify a Premium",
+          "content": "Alphabet Inc. (NASDAQ:GOOGL) is trading near its 52-week highs, driven by strong earnings growth and significant strategic investments in AI infrastructure, including custom Tensor Processing Units (TPUs) and large-scale energy acquisition for data centers. The company's core advertising business remains robust, complemented by rapid expansion in Google Cloud and other segments, justifying its premium valuation despite market concerns about AI competition and regulatory pressures. The article ar",
+          "url": "https://m.investing.com/analysis/alphabet-trades-near-highs-as-earnings-power-and-ai-spend-justify-a-premium-200672863?ampMode=1",
+          "sentiment_score": -0.113413,
+          "sentiment_label": "Neutral",
+          "relevance": 0.5744
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Jack in the Box completes 'store of the future' tech transformation",
+          "content": "Jack in the Box Inc. has finalized the deployment of the Qu unified commerce platform across all its 2,100+ restaurants, replacing a legacy system. This transformation integrates all order channels onto a single cloud-based data backbone, improving efficiency, cutting training time, and enabling operations through outages. The company anticipates higher check averages, advanced AI-driven analytics, and increased digital sales as part of its \"Jack on Track\" initiative.",
+          "url": "https://chainstoreage.com/jack-box-completes-store-future-tech-transformation",
+          "sentiment_score": 0.290838,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.569279
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Western Europe Colocation Data Center Portfolio Analysis Report 2025: AWS, Microsoft, Google Scale AI Campuses as Digital Realty, Equinix, NTT, Data4, and Vantage Lead by Capacity - Forecast to 2029 - ResearchAndMarkets.com",
+          "content": "The \"Western Europe Existing & Upcoming Data Center Portfolio\" report from ResearchAndMarkets.com highlights that Western Europe boasts over 1,025 existing data centers, with the UK leading in power capacity. Major cloud providers like AWS, Microsoft, and Google are expanding their data center campuses to support AI workloads, while Digital Realty, Equinix, NTT, Data4, and Vantage are key colocation operators. The report provides detailed analysis of both existing and upcoming data centers, cove",
+          "url": "https://aijourn.com/western-europe-colocation-data-center-portfolio-analysis-report-2025-aws-microsoft-google-scale-ai-campuses-as-digital-realty-equinix-ntt-data4-and-vantage-lead-by-capacity-forecast-to-2029/",
+          "sentiment_score": 0.30408,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.739966
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Microsoft, Hexagon Put Humanoid Robots On Factory Floors",
+          "content": "Microsoft (NASDAQ: MSFT) and Hexagon have announced a collaboration to accelerate the development of humanoid robots for manufacturing and inspection, leveraging AI and cloud tools. This partnership aims to address labor shortages and enhance data-driven production and AI-based automation across various industries, starting with automotive and aerospace. Microsoft shares rose on Wednesday following the announcement.",
+          "url": "https://www.benzinga.com/markets/equities/26/01/49763566/microsoft-hexagon-put-humanoid-robots-on-factory-floors",
+          "sentiment_score": 0.417604,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Satellite Modem Market Size, Trends 2031 By Key Players- Gilat",
+          "content": "The global Satellite Modem Market was valued at USD 457.04 Million in 2024 and is projected to reach USD 702.52 Million by 2031, growing at a CAGR of 6.09% during the forecast period. The market is being redefined by AI and Machine Learning, with trends like multi-orbit compatibility and software-defined modems driving growth, while high initial costs and regulatory hurdles present restraints. Key players include Gilat Satellite Networks Ltd., Novelsat, and Comtech EF Data Corporation.",
+          "url": "https://www.openpr.com/news/4339613/satellite-modem-market-size-trends-2031-by-key-players-gilat",
+          "sentiment_score": 0.340143,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.616934
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "ORCL Stock Price, Forecast & Analysis | ORACLE CORP (NYSE:ORCL)",
+          "content": "This article provides a detailed analysis of Oracle Corp (ORCL) stock, including its current price, key statistics, short and long-term performance, and analyst ratings. It highlights Oracle's business segments, financial health concerns, and forecasts for future growth, with analysts expecting a significant price increase. The article also lists key competitors and offers a comprehensive overview for potential investors.",
+          "url": "https://www.chartmill.com/stock/quote/ORCL/profile",
+          "sentiment_score": 0.132858,
+          "sentiment_label": "Neutral",
+          "relevance": 0.647604
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Microsoft is company behind $1B data center proposed in Lowell Township",
+          "content": "Microsoft has identified itself as the company proposing a $1 billion data center in Lowell Township, Michigan, after earlier confidentiality agreements. The company plans to engage with the community regarding the project, which is still in its early stages with details like design and timeline yet to be determined. The project would be located at Covenant Business Park if it moves forward.",
+          "url": "https://www.mlive.com/news/grand-rapids/2026/01/microsoft-is-company-behind-1b-data-center-proposed-in-lowell-township.html",
+          "sentiment_score": 0.277425,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Silver price slumps hit SLV ETF and silver miner stocks as traders brace for US jobs data",
+          "content": "Silver prices and related stocks, including the iShares Silver Trust (SLV) and major silver miners, experienced a significant drop. This downturn is attributed to profit-taking after a recent surge and anticipation of Friday's U.S. payrolls report, which could impact interest rate expectations and the dollar. Traders are also wary of upcoming commodity index rebalancing flows that could force silver futures selling.",
+          "url": "https://ts2.tech/en/silver-price-slumps-hit-slv-etf-and-silver-miner-stocks-as-traders-brace-for-us-jobs-data/",
+          "sentiment_score": -0.138636,
+          "sentiment_label": "Neutral",
+          "relevance": 0.649793
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Microsoft Dips 9% in 3 Months: 3 Reasons Why the Stock is Still a Buy",
+          "content": "Microsoft shares have dropped 9% in the last three months, presenting a buying opportunity for long-term investors. This decline occurred despite strong Q1 fiscal 2026 results, primarily due to concerns about high capital expenditure for AI and questions regarding its monetization. However, the company's robust positions in cloud computing, AI, and enterprise software, along with its strong financial health, suggest significant future upside.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/ORCL/pressreleases/36931446/microsoft-dips-9-in-3-months-3-reasons-why-the-stock-is-still-a-buy/",
+          "sentiment_score": 0.401107,
+          "sentiment_label": "Bullish",
+          "relevance": 0.995628
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Solana ETF Sees $1.9 Million Walk Out the Door as Investors Reassess Crypto Risk",
+          "content": "The Solana ETF (SOLZ) experienced a significant outflow of $1.9 million on January 2, 2026, representing nearly 1.5% of its assets under management. This outflow suggests increased investor caution following a volatile period for Solana (SOL-USD), which has seen a 36.38% drop in value over the past three months. The fund's current AUM stands at $128.96 million, with future flows into SOLZ expected to indicate investor confidence in Solana's long-term prospects.",
+          "url": "https://www.tipranks.com/news/cryptocurrencies/solana-etf-sees-1-9-million-walk-out-the-door-as-investors-reassess-crypto-risk",
+          "sentiment_score": -0.107579,
+          "sentiment_label": "Neutral",
+          "relevance": 0.561794
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Riot Platforms offloads $161M in Bitcoin in December amid strategy shift",
+          "content": "Riot Platforms sold 1,818 Bitcoin for $161.6 million in December as part of a strategic shift away from solely Bitcoin mining. The company aims to monetize its power and data center infrastructure by supporting artificial intelligence workloads, and will transition to quarterly disclosures. This move reflects a broader trend among Bitcoin miners to seek additional revenue streams beyond BTC production, especially after the 2024 halving.",
+          "url": "https://www.tradingview.com/news/cointelegraph:455e7791f094b:0-riot-platforms-offloads-161m-in-bitcoin-in-december-amid-strategy-shift/",
+          "sentiment_score": 0.303936,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.626633
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Rockwell Automation Announces Latest Season of ROKStudios Video Series Showcasing the Future of Industrial Operations and Sustainable Transformation | Corporate",
+          "content": "Rockwell Automation has announced the latest season of its ROKStudios video series, featuring insights from industry leaders on digitalization, sustainability, and smart automation. The series highlights how digital transformation and collaborative partnerships are fostering a more resilient, efficient, and sustainable future for manufacturing. It includes discussions on topics such as digital excellence in life sciences, sustainable growth through smart manufacturing systems, and the role of in",
+          "url": "https://www.eqs-news.com/news/corporate-news/rockwell-automation-praesentiert-neue-rokstudios-staffel-zur-zukunft-industrieller-prozesse-und-nachhaltigen-transformation/06b23b2d-c80f-4f2e-9ca0-2aeb9bec5411_en",
+          "sentiment_score": 0.51981,
+          "sentiment_label": "Bullish",
+          "relevance": 0.591997
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Masa Depan AI PC: HP Perkenalkan EliteBook X G2 dan OmniBook Ultra Berbasis Snapdragon X2 Elite",
+          "content": "HP Inc. unveiled new AI-powered devices, including PCs and printers, at CES 2026 to enhance work productivity and employee well-being. Key launches include the HP EliteBook X G2 and OmniBook Ultra 14, the first commercial and consumer notebooks with Snapdragon X2 Elite processors, offering up to 85 TOPS NPU performance. HP also integrated Microsoft Copilot into its Office Print printers for smart document management and announced a strategic rebranding of its gaming lineup under HyperX.",
+          "url": "https://hybrid.co.id/post/masa-depan-ai-pc-hp-perkenalkan-elitebook-x-g2-dan-omnibook-ultra-berbasis-snapdragon-x2-elite/",
+          "sentiment_score": 0.247326,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.61915
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Strategy Inc stock rises after MSCI drops plan to kick bitcoin-treasury firms out of indexes",
+          "content": "Strategy Inc. (MSTR.O) saw its stock rise after MSCI announced it would not remove companies holding significant digital assets from its indexes, alleviating a major technical risk. While this offers a reprieve, analysts note that the issue may only be postponed, and the broader review could still lead to reclassification for firms like Strategy, which holds substantial bitcoin on its balance sheet. The company recently purchased more bitcoin and reported a significant Q4 unrealized loss related",
+          "url": "https://ts2.tech/en/strategy-inc-stock-rises-after-msci-drops-plan-to-kick-bitcoin-treasury-firms-out-of-indexes/",
+          "sentiment_score": 0.131118,
+          "sentiment_label": "Neutral",
+          "relevance": 0.641283
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Generative Artificial Intelligence (AI) in Chatbots Global Market Analysis Report 2025 Featuring Major Players - Amazon, Google, Microsoft, Meta, IBM, Salesforce - Long-term Forecast to 2029 and 2034",
+          "content": "The generative AI in chatbots market is experiencing rapid growth, driven by demand for personalization, cloud integration, and automation in customer service, with projections to reach $35.68 billion by 2029. Key players like Amazon, Google, and Microsoft are leading advancements, including API-driven integration and strategic acquisitions, while factors like global trade relations and ethical AI investments influence the market landscape. North America currently leads, with Asia-Pacific poised",
+          "url": "https://www.globenewswire.com/news-release/2026/01/07/3214759/0/en/Generative-Artificial-Intelligence-AI-in-Chatbots-Global-Market-Analysis-Report-2025-Featuring-Major-Players-Amazon-Google-Microsoft-Meta-IBM-Salesforce-Long-term-Forecast-to-2029-.html",
+          "sentiment_score": 0.417785,
+          "sentiment_label": "Bullish",
+          "relevance": 0.73335
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Benchmark Electronics appoints Josh Hollin as new chief technology officer By Investing.com",
+          "content": "Benchmark Electronics Inc. (NYSE:BHE) has announced the appointment of Josh Hollin as Senior Vice President and Chief Technology Officer, effective January 16, 2026, following Jan Janick's retirement. Hollin brings over 25 years of engineering experience, including senior roles at GoPro, AMP Robotics, and Flex. The company, which provides engineering and manufacturing services across various industries, reported strong Q3 2025 earnings and a current market capitalization of $1.58 billion.",
+          "url": "https://in.investing.com/news/company-news/benchmark-electronics-appoints-josh-hollin-as-new-chief-technology-officer-93CH-5177122",
+          "sentiment_score": 0.141199,
+          "sentiment_label": "Neutral",
+          "relevance": 0.590613
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Is Zscaler’s New CMO Hire Reframing Its Zero Trust and AI Security Narrative for Investors (ZS)?",
+          "content": "Zscaler, Inc. has appointed Sunil Frida as Chief Marketing Officer to lead global marketing and brand strategy for its Zero Trust and AI security portfolio. This strategic hire aims to sharpen Zscaler’s messaging amidst growing AI-driven cyber threats and a competitive market, potentially influencing its long-term Zero Trust growth and competitive positioning. Investors should consider how this move could reinforce demand for newer, lower-margin products while still being aware of risks from pub",
+          "url": "https://simplywall.st/stocks/us/software/nasdaq-zs/zscaler/news/is-zscalers-new-cmo-hire-reframing-its-zero-trust-and-ai-sec",
+          "sentiment_score": 0.072443,
+          "sentiment_label": "Neutral",
+          "relevance": 0.615694
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "December Market Review",
+          "content": "The December market review highlights the S&P 500's double-digit gains for the third consecutive year, reaching 38 new record highs. While technology tailwinds are expected to continue, increased volatility and a shift from multiple expansion to earnings as the primary growth engine for equities are anticipated. The article also covers the Federal Reserve's interest rate cut amidst a cooling labor market and persistently elevated inflation, along with other key economic indicators and market tre",
+          "url": "https://montgomerycountynews.net/december-market-review-p14108-154.htm",
+          "sentiment_score": 0.262327,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.625606
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Artificial Intelligence (AI) Voice De-identification Global Market Analysis Report 2025 Featuring Key Players - Microsoft, IBM, SoundHound AI, OpenAI, Axis Communications - Forecasts to 2029 and 2034",
+          "content": "The global Artificial Intelligence (AI) voice de-identification market is experiencing rapid growth, driven by increasing data privacy concerns, regulatory compliance, and the widespread use of voice-based applications. The market is projected to grow from $0.56 billion in 2024 to $1.66 billion by 2029, with a CAGR of 24.4%. Key players like Microsoft, IBM, and SoundHound AI are innovating in this space, with North America currently leading the market and Asia-Pacific expected to be the fastest-",
+          "url": "https://finance.yahoo.com/news/artificial-intelligence-ai-voice-identification-155200735.html",
+          "sentiment_score": 0.30931,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.971098
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Microsoft Dips 9% in 3 Months: 3 Reasons Why the Stock is Still a Buy",
+          "content": "Microsoft shares have dropped 9% in the last three months, despite strong first-quarter fiscal 2026 results. This correction presents a buying opportunity due to Azure's accelerating growth, the expanding Copilot AI ecosystem, and the company's robust financial position. These factors, alongside a justified valuation premium, suggest significant upside potential for long-term investors.",
+          "url": "https://sg.finance.yahoo.com/news/microsoft-dips-9-3-months-160000644.html",
+          "sentiment_score": 0.413476,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Microsoft Dips 9% in 3 Months: 3 Reasons Why the Stock is Still a Buy",
+          "content": "Microsoft's stock has pulled back by 9% in the last three months, presenting a compelling entry point for long-term investors. This decline is attributed to concerns over elevated capital expenditure for AI and questions about AI monetization, despite stellar Q1 fiscal 2026 results. The article highlights Azure's market share momentum, the expanding Copilot ecosystem, and Microsoft's strong financial position as key reasons to buy the stock.",
+          "url": "https://www.tradingview.com/news/zacks:92f1019c6094b:0-microsoft-dips-9-in-3-months-3-reasons-why-the-stock-is-still-a-buy/",
+          "sentiment_score": 0.409485,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Best Quantum Computing Companies to Watch in 2026",
+          "content": "This article highlights leading quantum computing companies to watch in 2026, focusing on their distinct strategies and advancements. IonQ is noted for its record-breaking accuracy, while tech giants like Alphabet, Microsoft, and IBM integrate quantum computing into their cloud services and enterprise relationships. Nvidia differentiates itself by developing hybrid quantum-classical computing systems.",
+          "url": "https://blockonomi.com/best-quantum-computing-companies-to-watch-in-2026/",
+          "sentiment_score": 0.323237,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.717149
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "New browser tool hides ChatGPT data as AI veteran lines up to lead Vocodia",
+          "content": "Vocodia Holdings Corp (OTC: VHAI) announced its intent to acquire a 51% stake in Privacy Pal LLC, a developer of browser-based AI data protection. This strategic move aims to integrate PrivacyPal's privacy technology with Vocodia's conversational AI. Upon the closing of the transaction, tech industry veteran Jason Melo will become Vocodia's CEO, while current CEO Brian Podolak will transition to Chief Visionary Officer, focusing on product innovation.",
+          "url": "https://www.stocktitan.net/news/VHAI/vocodia-announces-commitment-letter-to-acquire-a-majority-of-privacy-zz0m1qly7d8n.html",
+          "sentiment_score": 0.149054,
+          "sentiment_label": "Neutral",
+          "relevance": 0.555951
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "The Smartest Dividend ETF to Buy With $2,000 Right Now",
+          "content": "The article recommends the JPMorgan Nasdaq Equity Premium Income ETF (JEPQ) for investors seeking high dividend yields from technology stocks. JEPQ utilizes a covered call strategy on Nasdaq-100 stocks, offering a current dividend yield of over 10% despite top tech companies typically having low dividends. While it doesn't offer the growth potential of direct tech stock investment, it provides substantial income, with a $2,000 investment potentially yielding nearly $200 annually.",
+          "url": "https://finviz.com/news/269848/the-smartest-dividend-etf-to-buy-with-2000-right-now",
+          "sentiment_score": 0.299071,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.633617
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "CIO maintains a positive investment outlook for global equities",
+          "content": "UBS CIO maintains a positive investment outlook for global equities, forecasting a 10% upside for the MSCI All Country World index by year-end, despite geopolitical concerns. This outlook is driven by anticipated interest rate cuts by the Fed, a sluggish labor market, contained inflation, and fiscal stimulus in major economies. The report advises investors to add to preferred markets including the US, China (especially its tech sector), Europe, and Japan.",
+          "url": "https://www.ubs.com/us/en/wealth-management/insights/market-news/article.2964603.html",
+          "sentiment_score": 0.348668,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.625582
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "HSBC remains bullish on Big Tech while highlighting challenges, opportunities in 2026 for AI value chain",
+          "content": "HSBC Global Investment Research has maintained its bullish stance and price targets on major tech companies. The firm also identified both challenges and opportunities within the AI value chain, encompassing cloud, chips, large language models, and hardware, looking ahead to 2026. Key areas of focus include AI infrastructure bottlenecks, capital expenditure forecasts for cloud and AI hardware, and the evolving market for GPUs and ASIC chips.",
+          "url": "https://seekingalpha.com/news/4537294-hsbc-remains-bullish-on-big-tech-while-highlighting-challenges-opportunities-in-2026-for-ai-value-chain",
+          "sentiment_score": 0.394342,
+          "sentiment_label": "Bullish",
+          "relevance": 0.91552
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Microsoft, MISO Deploy AI To Modernize US Power Grid As Data Center And Electrification Demand Accelerates",
+          "content": "Microsoft and the Midcontinent Independent System Operator (MISO) have partnered to modernize the US power grid across 15 states using AI and cloud platforms. This collaboration aims to enhance grid planning and real-time operations, reducing decision cycles from weeks to minutes, to address the accelerating demand from data centers and electrification. The initiative supports MISO's $22 billion transmission expansion and US grid reliability goals, positioning AI as a crucial element in managing",
+          "url": "https://esgnews.com/microsoft-miso-deploy-ai-to-modernize-us-power-grid-as-data-center-and-electrification-demand-accelerates/",
+          "sentiment_score": 0.469321,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Weatherly Asset Management L. P. Trims Holdings in Microsoft Corporation $MSFT",
+          "content": "Weatherly Asset Management L. P. reduced its stake in Microsoft Corporation by 1.8%, selling 1,824 shares and now holding 100,093 shares valued at $51.84 million, making it their third-largest holding. This comes as Microsoft reported strong quarterly earnings, beating expectations with an EPS of $4.13 and revenue of $77.67 billion, alongside announcing a quarterly dividend of $0.91. Despite some insider selling, institutional ownership remains high at 71.13%, and analysts generally maintain a p",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-weatherly-asset-management-l-p-trims-holdings-in-microsoft-corporation-msft-2026-01-07/",
+          "sentiment_score": 0.259405,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Microsoft, MISO Partner to Modernize Grid for Increased Demand from Data Centers, Electrification",
+          "content": "Microsoft and Midcontinent Independent System Operator (MISO) have announced a new collaboration to modernize the electricity grid using AI and cloud technology. This partnership aims to address growing energy demands from data centers and electrification, enabling MISO to make faster, more informed decisions and enhance grid reliability. The initiative will focus on improving forecasting, optimizing grid operations, and accelerating data-driven insights to build a resilient and sustainable powe",
+          "url": "https://www.esgtoday.com/microsoft-partners-with-miso-to-modernize-grid-for-increased-demand-from-data-centers-electrification/",
+          "sentiment_score": 0.47685,
+          "sentiment_label": "Bullish",
+          "relevance": 0.999158
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Janus Henderson sees global shifts, AI innovation and capital costs emerging as key themes for 2026 investing",
+          "content": "Janus Henderson Investors CEO Ali Dibadj identifies global shifts (geopolitical risk, regionalization), AI-driven innovation, and the cost of capital as primary investment themes for 2026. He notes that these forces are evolving, creating both new risks and opportunities for investors. Dibadj emphasizes the need for active management to navigate these changes, especially concerning the political influence on markets, the broad economic impact of AI, and the ongoing shift in capital costs support",
+          "url": "https://www.zawya.com/en/press-release/companies-news/janus-henderson-sees-global-shifts-ai-innovation-and-capital-costs-emerging-as-key-themes-for-2026-investing-ip4nbed6",
+          "sentiment_score": 0.331406,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.625532
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Alibaba Stock Price Forecast - BABA Stock at $154: AI Cloud Surges 34% While Instant Commerce Explodes",
+          "content": "Alibaba (NYSE:BABA) is investing heavily in AI and cloud infrastructure, committing RMB 380 billion, leading to a 34% surge in Cloud Intelligence Group revenue and triple-digit AI-related cloud growth. Despite a reported 5% revenue increase, underlying growth is closer to 15% when accounting for divestitures, with all major operating blocks showing double-digit growth. The company is actively sacrificing short-term EBITA margins to secure market dominance in fast-growing instant commerce and exp",
+          "url": "https://www.tradingnews.com/news/alibaba-stock-price-forecast-babaa-stock-at-154-usd",
+          "sentiment_score": 0.23244,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.645596
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "SkyOak Wealth LLC Acquires 8,400 Shares of International Business Machines Corporation $IBM",
+          "content": "SkyOak Wealth LLC increased its stake in International Business Machines (IBM) by 59.3% in Q3, purchasing an additional 8,400 shares and bringing its total holdings to 22,566 shares valued at $6.37 million. This positions IBM as its 26th largest holding, comprising 1.2% of its portfolio. IBM has recently reported strong quarterly earnings, beating EPS estimates and showing a 9.1% year-over-year revenue increase while institutional investors hold approximately 58.96% of the company's stock.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-skyoak-wealth-llc-acquires-8400-shares-of-international-business-machines-corporation-ibm-2026-01-07/",
+          "sentiment_score": 0.217617,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.60153
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Apple (NASDAQ: AAPL) Stock Price Prediction and Forecast 2026-2030 (Jan 2026)",
+          "content": "This article provides a comprehensive stock price prediction and forecast for Apple (NASDAQ: AAPL) from 2026 to 2030. It highlights key drivers such as AI offerings, wearables, and services, projecting significant upside potential based on these factors and historical performance. The forecast, which considers various market conditions and potential geopolitical impacts, suggests Apple's stock could reach $717.90 by 2030, representing over 173% upside.",
+          "url": "https://247wallst.com/forecasts/2026/01/07/apple-inc-aapl-price-prediction-and-forecast-2025-2030/",
+          "sentiment_score": 0.210305,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.64423
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Amazon Stock (NASDAQ: AMZN) Price Prediction and Forecast 2026-2030 for January 7",
+          "content": "This article provides a detailed price prediction and forecast for Amazon (NASDAQ: AMZN) stock from 2026 to 2030, based on an analysis of its e-commerce, AWS, and advertising segments. It highlights Amazon's strong past performance and future growth drivers, such as AI investments and new initiatives like the Nova AI model, despite increasing competition. The forecast projects a significant upside for Amazon's share price, estimating it to reach $524.67 per share by the end of 2030.",
+          "url": "https://247wallst.com/investing/2026/01/07/amazon-stock-amzn-price-prediction-and-forecast/",
+          "sentiment_score": -0.099745,
+          "sentiment_label": "Neutral",
+          "relevance": 0.632285
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Can Retirees Count on JEPQs 10.4% Dividend and Monthly Payments?",
+          "content": "The article examines whether retirees can rely on the JPMorgan Nasdaq Equity Premium Income ETF (JEPQ) for its high yield and monthly payouts. JEPQ utilizes a covered call strategy on Nasdaq-100 stocks, leading to fluctuating monthly distributions and potentially capping upside potential in strong bull markets. It also discusses an alternative, the Schwab U.S. Dividend Equity ETF (SCHD), which offers lower but more predictable dividend growth, suggesting a blended strategy could balance income a",
+          "url": "https://247wallst.com/investing/2026/01/07/can-retirees-count-on-jepqs-10-4-dividend-and-monthly-payments/",
+          "sentiment_score": 0.140082,
+          "sentiment_label": "Neutral",
+          "relevance": 0.625607
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Wall Street’s AI Endorsement and Trust Tests Could Be A Game Changer For DoorDash (DASH)",
+          "content": "J.P. Morgan recently highlighted DoorDash as a top internet stock for 2026, driven by its advancements in autonomous delivery and new AI-powered platform features. This endorsement, alongside DoorDash's efforts to maintain platform integrity amidst challenges, emphasizes the potential for AI and automation to enhance efficiency and address costs. While these innovations sharpen DoorDash's core investment thesis around scaling its platform, they also underline the critical need to preserve custom",
+          "url": "https://www.sahmcapital.com/news/content/wall-streets-ai-endorsement-and-trust-tests-could-be-a-game-changer-for-doordash-dash-2026-01-07",
+          "sentiment_score": 0.29374,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.585468
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Louisiana State Employees Retirement System Purchases 3,638 Shares of Synopsys, Inc. $SNPS",
+          "content": "The Louisiana State Employees Retirement System increased its holding in Synopsys, Inc. by 18.7% during the third quarter, adding 3,638 shares to now own 23,138 shares valued at $11.42 million. Synopsys reported strong quarterly results with EPS beating estimates and revenue up 37.8% year-over-year, alongside positive guidance for FY2026 and Q1 2026. Analysts maintain a \"Moderate Buy\" consensus rating for Synopsys, with a $562.13 average price target.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-louisiana-state-employees-retirement-system-purchases-3638-shares-of-synopsys-inc-snps-2026-01-07/",
+          "sentiment_score": 0.250771,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.562941
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Here's Why Analysts Consider Microsoft (MSFT) a Top AI Play for 2026",
+          "content": "Analysts from Wedbush and Evercore consider Microsoft (MSFT) a top artificial intelligence investment for 2026. Wedbush highlights Microsoft as the \"clear front-runner\" in enterprise-scale AI, with 2026 expected to be a significant inflection year for AI growth. Evercore also positions MSFT as a key player due to its deep integration in enterprise IT spending, AI products, and cloud platform.",
+          "url": "https://finviz.com/news/269140/heres-why-analysts-consider-microsoft-msft-a-top-ai-play-for-2026",
+          "sentiment_score": 0.426223,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Microsoft Earnings Preview: What to Expect",
+          "content": "Microsoft (MSFT) is set to announce its fiscal Q2 2026 results, with analysts forecasting an adjusted EPS of $3.86, an increase of 19.5% year-over-year, and $15.86 for fiscal 2026. Despite a Q1 earnings beat, shares declined due to profitability pressures from AI investments, particularly a $3.1 billion loss related to OpenAI. Analysts maintain a \"Strong Buy\" rating with an average target price of $630.07, indicating a potential 31.7% upside.",
+          "url": "https://markets.financialcontent.com/wral/article/barchart-2026-1-7-microsoft-earnings-preview-what-to-expect",
+          "sentiment_score": 0.312784,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "MISO partners with Microsoft to deploy AI tools in effort to modernize grid planning and operations",
+          "content": "The Midcontinent Independent System Operator (MISO) has partnered with Microsoft to develop a unified data platform using Azure and Foundry AI technologies. This collaboration aims to modernize grid planning and operations by enhancing forecasting, long-range transmission planning, and real-time reliability. The initiative is expected to significantly reduce decision-making cycle times from weeks to minutes, allowing MISO to better manage the evolving energy mix, increasing demand, and data cent",
+          "url": "https://www.datacenterdynamics.com/en/news/miso-partners-with-microsoft-to-deploy-ai-tools-in-effort-to-modernize-grid-planning-and-operations/",
+          "sentiment_score": 0.499957,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Vistra Corp Acquires Cogentrix Energy Natural Gas Power Plants, Including 2 In PA, As Part Of Strategy To Feed A.I. Data Centers [Locking Up More Energy For A.I. Data Centers]",
+          "content": "Vistra Corp has acquired Cogentrix Energy's 10 natural gas power generation facilities, totaling 5,500 MW, including two in Pennsylvania. This acquisition is part of a broader strategy by energy companies and AI data center developers to secure power for data centers, raising concerns among consumer advocates about potential energy price increases for regular ratepayers. The article highlights that the soaring demand from AI data centers is pushing Pennsylvania's electric grid closer to unreliab",
+          "url": "http://paenvironmentdaily.blogspot.com/2026/01/vistra-corp-acquires-cogentrix-energy.html",
+          "sentiment_score": 0.288496,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.660904
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "2 Unstoppable Growth Stocks to Buy and Hold Through 2035",
+          "content": "This article identifies MercadoLibre (MELI) and Microsoft (MSFT) as two strong growth stocks for long-term investors to hold through 2035. MercadoLibre is adapting to competition in the Latin American e-commerce market by enhancing its offerings and leveraging advertising opportunities. Microsoft is poised for continued growth through its booming cloud and AI businesses, despite heavy investment in AI, and offers a strong competitive advantage with its Azure platform and impressive dividend grow",
+          "url": "https://finviz.com/news/269097/2-unstoppable-growth-stocks-to-buy-and-hold-through-2035",
+          "sentiment_score": 0.403684,
+          "sentiment_label": "Bullish",
+          "relevance": 0.899701
+        }
+      ],
+      "count": 50,
+      "avg_sentiment": 0.27092056000000003
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Alphabet Trades Near Highs as Earnings Power and AI Spend Justify a Premium",
+          "content": "Alphabet Inc. (NASDAQ:GOOGL) is trading near its 52-week highs, driven by strong earnings growth and significant strategic investments in AI infrastructure, including custom Tensor Processing Units (TPUs) and large-scale energy acquisition for data centers. The company's core advertising business remains robust, complemented by rapid expansion in Google Cloud and other segments, justifying its premium valuation despite market concerns about AI competition and regulatory pressures. The article ar",
+          "url": "https://m.investing.com/analysis/alphabet-trades-near-highs-as-earnings-power-and-ai-spend-justify-a-premium-200672863?ampMode=1",
+          "sentiment_score": 0.348462,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.722506
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "The Memory Storm: Apple Faces Margin Compression as Component Costs Surge Ahead of Earnings",
+          "content": "Apple Inc. (NASDAQ: AAPL) is experiencing margin compression due to surging memory component costs, specifically DRAM and NAND flash, ahead of its Q1 2026 earnings report. This has led to a stock slide and a temporary market capitalization shift to Alphabet Inc., as Apple chooses to absorb these increased costs to maintain stable product pricing. Investors are keenly watching the upcoming earnings call for guidance on gross margins and the growth of its Services segment to assess the company's a",
+          "url": "https://markets.financialcontent.com/stocks/article/marketminute-2026-1-7-the-memory-storm-apple-faces-margin-compression-as-component-costs-surge-ahead-of-earnings",
+          "sentiment_score": 0.091715,
+          "sentiment_label": "Neutral",
+          "relevance": 0.563518
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Generative Artificial Intelligence (AI) in Chatbots Global Market Analysis Report 2025 Featuring Major Players - Amazon, Google, Microsoft, Meta, IBM, Salesforce - Long-term Forecast to 2029 and 2034",
+          "content": "The generative AI in chatbots market is experiencing rapid growth, driven by demand for personalization, cloud integration, and automation in customer service, with projections to reach $35.68 billion by 2029. Key players like Amazon, Google, and Microsoft are leading advancements, including API-driven integration and strategic acquisitions, while factors like global trade relations and ethical AI investments influence the market landscape. North America currently leads, with Asia-Pacific poised",
+          "url": "https://www.globenewswire.com/news-release/2026/01/07/3214759/0/en/Generative-Artificial-Intelligence-AI-in-Chatbots-Global-Market-Analysis-Report-2025-Featuring-Major-Players-Amazon-Google-Microsoft-Meta-IBM-Salesforce-Long-term-Forecast-to-2029-.html",
+          "sentiment_score": 0.405064,
+          "sentiment_label": "Bullish",
+          "relevance": 0.734265
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Penguin Solutions Surpasses Q1 Expectations, Analyst Notes Reduced Reliance on Meta",
+          "content": "Penguin Solutions Inc (NASDAQ: PENG) exceeded Q1 earnings and revenue expectations, driven by strong performance in Advanced Computing and Integrated Memory segments. Rosenblatt Securities maintained a Buy rating, citing the company's progress in AI and reduced reliance on Meta Platforms Inc, with a price target of $30. Management reaffirmed full-year guidance, projecting approximately 6% revenue growth.",
+          "url": "https://www.bitget.com/news/detail/12560605134889",
+          "sentiment_score": 0.103226,
+          "sentiment_label": "Neutral",
+          "relevance": 0.635899
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Penguin Solutions Beats Q1 Consensus, Shifts Away From Meta - Penguin Solutions (NASDAQ:PENG)",
+          "content": "Penguin Solutions Inc. (NASDAQ:PENG) exceeded Q1 revenue and earnings expectations, driven by strong growth in its Advanced Computing and Integrated Memory segments. Rosenblatt Securities reiterated a Buy rating and $30 price target, highlighting the company's increasing independence from Meta deployments as a key growth driver. The analyst notes that this shift and expansion into enterprise customers are expected to accelerate revenue growth, despite a slowdown in the LED business.",
+          "url": "https://www.benzinga.com/analyst-stock-ratings/analyst-color/26/01/49755618/penguin-solutions-beats-q1-becomes-less-dependent-on-meta-analyst",
+          "sentiment_score": -0.135353,
+          "sentiment_label": "Neutral",
+          "relevance": 0.722482
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Oracle stock slips as Jefferies sticks with $400 target; jobs report and dividend date loom",
+          "content": "Oracle (ORCL) shares slipped on Wednesday despite Jefferies reiterating a Buy rating and a $400 price target, as investors weigh the company's AI-driven cloud growth prospects and upcoming economic data. The stock's performance is tied to its ability to convert signed cloud contracts into revenue and the broader macroeconomic environment, particularly ahead of Friday's U.S. payrolls report and Oracle's dividend record date. Jefferies highlights Oracle as a top large-cap pick, expecting meaningfu",
+          "url": "https://ts2.tech/en/oracle-stock-slips-as-jefferies-sticks-with-400-target-jobs-report-and-dividend-date-loom/",
+          "sentiment_score": 0.107416,
+          "sentiment_label": "Neutral",
+          "relevance": 0.627068
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Meta Names C.J. Mahoney Chief Legal Officer | 2026 Leadership - News and Statistics",
+          "content": "Meta Platforms has appointed C.J. Mahoney as its new chief legal officer, effective Wednesday, January 7. Mahoney, who previously served as Microsoft's senior legal executive and deputy U.S. trade representative, will report directly to Meta CEO Mark Zuckerberg. This appointment follows the departure of former chief legal officer Jennifer Newstead, who is joining Apple.",
+          "url": "https://www.indexbox.io/blog/meta-appoints-cj-mahoney-as-chief-legal-officer/",
+          "sentiment_score": 0.147025,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Garmin and Meta announce automotive OEM proof of concept with Garmin Unified Cabin and Meta Neural Band",
+          "content": "Garmin and Meta have announced a proof-of-concept integrating Meta's Neural Band with Garmin's Unified Cabin for automotive OEMs. Unveiled at CES 2026, this technology allows passengers to control in-vehicle infotainment with subtle hand gestures detected by the Neural Band, offering a new method for in-car interaction and entertainment. The collaboration aims to enhance convenience and situational awareness within vehicles.",
+          "url": "https://br.advfn.com/noticias/PRNUS/2026/artigo/97560657",
+          "sentiment_score": 0.348129,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.858685
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "NBIS - Nebius Group Latest Stock News & Market Updates",
+          "content": "This page provides the latest news and market updates for Nebius Group (NBIS), focusing on its advancements in AI infrastructure solutions. Key announcements include offering NVIDIA Vera Rubin NVL72, new versions of Nebius AI Cloud with Blackwell Ultra compute, the Robotics & Physical AI Awards, Q3 2025 financial results with a Meta agreement, and the launch of Nebius Token Factory for AI inference. The company is actively expanding its AI infrastructure through technology partnerships and produ",
+          "url": "https://www.stocktitan.net/news/NBIS/",
+          "sentiment_score": 0.20742,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.738948
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Sen. Shelley Moore Capito Sells Off Shares of Microsoft Corporation (NASDAQ:MSFT)",
+          "content": "Senator Shelley Moore Capito (R-West Virginia) recently sold between $1,001 and $15,000 of Microsoft (MSFT) stock on December 16, 2025, according to a January 6th filing. This sale is part of a series of tech trades by the Senator, including sales of Apple and Alphabet, and a purchase of Meta Platforms. Microsoft recently exceeded earnings expectations, announced a quarterly dividend, and continues to advance its Azure/AI narrative through strategic initiatives and acquisitions, maintaining a \"M",
+          "url": "https://www.marketbeat.com/instant-alerts/sen-shelley-moore-capito-sells-off-shares-of-microsoft-corporation-nasdaqmsft-2026-01-07/",
+          "sentiment_score": 0.038557,
+          "sentiment_label": "Neutral",
+          "relevance": 0.638429
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Wristband that reads muscle signals could let car passengers control screens",
+          "content": "Garmin and Meta have partnered to showcase a new automotive proof-of-concept at CES 2026, integrating Meta Neural Band EMG wearable input with Garmin Unified Cabin in-vehicle systems. This innovation allows car passengers to control infotainment functions using subtle finger gestures, aiming for a more intuitive and hands-free entertainment experience. The collaboration highlights advancements in digital cockpits and gesture control, extending Garmin's focus on innovative automotive OEM solution",
+          "url": "https://www.stocktitan.net/news/GRMN/garmin-and-meta-announce-automotive-oem-proof-of-concept-with-garmin-72lrp9dnyljq.html",
+          "sentiment_score": 0.424171,
+          "sentiment_label": "Bullish",
+          "relevance": 0.8981
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "Vistra Active With Acquisitions, Contract Signings",
+          "content": "Vistra Corp is actively engaged in acquisitions and contract signings, leveraging its extensive power generation fleet and retail energy business. Recent activities include securing massive contracts with Meta and acquiring Cogentrix, positioning the company to benefit from the increasing electricity demands of data centers, manufacturing, and electric vehicles. The company, which emerged from bankruptcy in 2016, also has a diverse asset mix that supports its growth strategy.",
+          "url": "https://www.morningstar.com/company-reports/1417223-vistra-active-with-acquisitions-contract-signings",
+          "sentiment_score": 0.272578,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.647626
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-07",
+          "title": "S&P 500 retreats from fresh record highs as Alphabet climb fizzles",
+          "content": "The S&P 500 recently pulled back from an intraday all-time high, as a rally in Alphabet lost momentum despite ongoing optimism surrounding AI-driven growth. The market also focused on soft labor market data and geopolitical developments, including a US strike on Venezuela. Investors are also looking forward to upcoming earnings reports from companies like Constellation Brands and monitoring oil price movements tied to international events.",
+          "url": "https://www.investing.com/news/stock-market-news/wall-st-futures-steady-after-dow-sp-500-hit-record-highs-amid-ai-optimism-4433888",
+          "sentiment_score": -0.292658,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.628583
+        }
+      ],
+      "count": 13,
+      "avg_sentiment": 0.15890399999999996
+    }
+  },
+  "collected_at": "2026-03-21T00:19:25.259053"
+}

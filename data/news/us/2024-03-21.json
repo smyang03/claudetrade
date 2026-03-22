@@ -1,0 +1,100 @@
+{
+  "date": "2024-03-21",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": true,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-21",
+          "title": "[] ['Accenture plc  (ACN)  (CIK 0001467373)']",
+          "content": "2024-03-21",
+          "url": "https://www.sec.gov2024-03-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-21",
+          "title": "[] ['Accenture plc  (ACN)  (CIK 0001467373)']",
+          "content": "2024-03-21",
+          "url": "https://www.sec.gov2024-03-21",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-21",
+          "title": "[] ['Mineralys Therapeutics, Inc.  (MLYS)  (CIK 0001933414)']",
+          "content": "2024-03-21",
+          "url": "https://www.sec.gov2024-03-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-21",
+          "title": "[] ['Alto Neuroscience, Inc.  (ANRO)  (CIK 0001999480)']",
+          "content": "2024-03-21",
+          "url": "https://www.sec.gov2024-03-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-21",
+          "title": "[] ['ARS Pharmaceuticals, Inc.  (SPRY)  (CIK 0001671858)']",
+          "content": "2024-03-21",
+          "url": "https://www.sec.gov2024-03-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-21",
+          "title": "[] ['Compass Therapeutics, Inc.  (CMPX)  (CIK 0001738021)']",
+          "content": "2024-03-21",
+          "url": "https://www.sec.gov2024-03-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-21",
+          "title": "[] ['Instil Bio, Inc.  (TIL)  (CIK 0001789769)']",
+          "content": "2024-03-21",
+          "url": "https://www.sec.gov2024-03-21",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T11:32:43.357458"
+}

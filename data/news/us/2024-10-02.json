@@ -1,0 +1,141 @@
+{
+  "date": "2024-10-02",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2024-10-02",
+          "title": "Cantor Fitzgerald Upgrades Teradyne, Inc. (TER) to Overweight, Citing Strong AI Leverage and Industry Recovery Potential",
+          "content": "Cantor Fitzgerald has upgraded Teradyne, Inc. (TER) to Overweight, adding it to their Top Picks list due to its strong leverage to AI, networking, high bandwidth memory, and custom silicon. The upgrade also highlights Teradyne's potential for recovery in broader industry sectors like auto and industrial test, and its strong positioning in the robotics and mobile markets. The article contextualizes this decision within the massive ongoing investments in AI infrastructure, including specialized ha",
+          "url": "https://finance.yahoo.com/news/cantor-fitzgerald-upgrades-teradyne-inc-092714464.html",
+          "sentiment_score": 0.325676,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.634638
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2024-10-02",
+          "title": "Poolside raises $500M to take on GitHub and others with its AI coding assistants",
+          "content": "Poolside Inc., an AI coding startup, has secured $500 million in a Series B funding round, bringing its total raised capital to $626 million and valuing the company at $3 billion. The company, co-founded by former GitHub CTO Jason Warner, is developing generative AI coding assistants that utilize reinforcement learning to continuously improve, aiming to compete with existing solutions like GitHub Copilot. Poolside plans to use the new funds for R&D, go-to-market initiatives, and purchasing 10,00",
+          "url": "https://siliconangle.com/2024/10/02/poolside-raises-500m-take-github-others-ai-coding-assistants/",
+          "sentiment_score": 0.346233,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.853236
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2024-10-02",
+          "title": "Michael Dell Sells $1.2B Worth Of Dell Stock, Reducing Stake Amid Company's Recent S&P 500 Inclusion And AI Expansion",
+          "content": "Michael Dell, CEO of Dell Technologies Inc., sold 10 million shares of Class C Common Stock for over $1.2 billion, reducing his stake in the company. This comes shortly after Dell's inclusion in the S&P 500 Index and amid CEO Dell's vocal support for generative AI's rapid advancement. Despite the sale, the company's stock has surged 58.50% year-to-date.",
+          "url": "https://finance.yahoo.com/news/michael-dell-sells-1-2b-200111284.html",
+          "sentiment_score": 0.300336,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.629042
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2024-10-02",
+          "title": "Coherent Corp. (COHR) Unveils 1.6T SiPho Product with NVIDIA Chip, Set to Challenge Marvell and Broadcom by 2025",
+          "content": "Coherent Corp. (COHR) has unveiled a new 1.6T SiPho product, enhanced with a 5nm NVIDIA chip, which is expected to go into production by late 2025. This development positions Coherent to potentially challenge competitors like Marvell and Broadcom in the long term by offering advanced optoelectronic components crucial for AI infrastructure. The article highlights the significant investments companies are making in AI infrastructure, including specialized hardware and data centers, to meet the inc",
+          "url": "https://finance.yahoo.com/news/coherent-corp-cohr-unveils-1-125059171.html",
+          "sentiment_score": 0.30069,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.820709
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2024-10-02",
+          "title": "Trade Like a Member of Congress With These 2 ETFs",
+          "content": "This article discusses two ETFs, the Subversive Unusual Whales Democratic ETF (BATS: NANC) and the Subversive Unusual Whales Republican ETF (BATS: KRUZ), which track the stock trades of U.S. members of Congress. The NANC ETF, heavily invested in technology stocks like NVIDIA and Microsoft, has seen a 50% increase since its inception, while the KRUZ ETF, with a more diversified approach including financial and industrial sectors, has risen 25%. Both ETFs offer investors a way to potentially benef",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/JPM/pressreleases/28859526/trade-like-a-member-of-congress-with-these-2-etfs/",
+          "sentiment_score": 0.495054,
+          "sentiment_label": "Bullish",
+          "relevance": 0.841728
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2024-10-02",
+          "title": "Crusoe partners with Vast Data for high performance storage on Crusoe Cloud",
+          "content": "Crusoe Energy Systems is collaborating with Vast Data to provide high-performance AI storage, called \"Shared Disks,\" to its Crusoe Cloud customers, offering petabyte-scale file systems with high read/write bandwidth and a 99.5 percent SLA. Additionally, Crusoe is partnering with SES AI Corporation to accelerate material discovery for batteries using Crusoe's AI cloud and Nvidia H100 virtualized instances, aiming to map the molecular universe and improve energy storage solutions. This dual collab",
+          "url": "https://www.datacenterdynamics.com/en/news/crusoe-partners-with-vast-data-for-high-performance-storage-on-crusoe-cloud/",
+          "sentiment_score": 0.337981,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.624594
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2024-10-02",
+          "title": "Tech Collaboration Designed to Power the Future",
+          "content": "Southern California Edison (SCE) and NVIDIA have partnered in what they call the \"Intelligent Grid Collaboration\" to address the rapidly increasing demand for electricity, which is projected to grow 35% faster than previously estimated. This collaboration aims to develop AI and other technology solutions to make the electric grid more intelligent, autonomous, and adaptive, focusing on enhancing customer load interconnection, improving inspections, and optimizing incident management. The initiati",
+          "url": "https://energized.edison.com/stories/tech-collaboration-designed-to-power-the-future",
+          "sentiment_score": 0.543467,
+          "sentiment_label": "Bullish",
+          "relevance": 0.922219
+        }
+      ],
+      "count": 7,
+      "avg_sentiment": 0.378491
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2024-10-02",
+          "title": "U.S. Ford Motor Company Sales Fell 11 Percent In September 2024",
+          "content": "Ford Motor Company's U.S. sales declined by 11 percent in September 2024, totaling 147,831 units. While Ford brand sales decreased, Lincoln sales saw an increase. The company's year-to-date sales for 2024 still show an increase of 2.7 percent.",
+          "url": "https://fordauthority.com/2024/10/ford-motor-company-sales-numbers-figures-results-september-2024-usa/",
+          "sentiment_score": 0.147155,
+          "sentiment_label": "Neutral",
+          "relevance": 0.640103
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.147155
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-02",
+          "title": "[] ['NETWORK-1 TECHNOLOGIES, INC.  (NTIP)  (CIK 0001065078)']",
+          "content": "2024-10-02",
+          "url": "https://www.sec.gov2024-10-02",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-02",
+          "title": "[] ['RECURSION PHARMACEUTICALS, INC.  (RXRX)  (CIK 0001601830)']",
+          "content": "2024-10-02",
+          "url": "https://www.sec.gov2024-10-02",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T03:26:23.747566"
+}

@@ -1,0 +1,166 @@
+2026-03-21 00:27:14 [INFO    ] get_three_judgments:68 | 3명 판단 요청 시작
+2026-03-21 00:27:14 [ERROR   ] call_analyst:61 | [bull] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZrvBFt9FvJZ5TwPq4g'}
+2026-03-21 00:27:16 [ERROR   ] call_analyst:61 | [bear] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZs3fTUdVzvFf6xZkmx'}
+2026-03-21 00:27:18 [ERROR   ] call_analyst:61 | [neutral] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZsB7gRoQvAZUU2BmwD'}
+2026-03-21 00:27:18 [INFO    ] get_three_judgments:74 | 판단 완료 | Bull:NEUTRAL Bear:NEUTRAL Neut:NEUTRAL
+2026-03-21 00:27:18 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-21 00:27:18 [ERROR   ] select_tickers:161 | [종목선택 오류] Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZsDJtig3NLoik8xxxA'} → 기본값 사용
+2026-03-21 00:28:20 [INFO    ] get_three_judgments:68 | 3명 판단 요청 시작
+2026-03-21 00:28:21 [ERROR   ] call_analyst:61 | [bull] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZwqEEwDjk7Pth43rGB'}
+2026-03-21 00:28:23 [ERROR   ] call_analyst:61 | [bear] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZwxdyb1W7vgi9NLTkY'}
+2026-03-21 00:28:24 [ERROR   ] call_analyst:61 | [neutral] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZx6G7g5FpsRQnmonsD'}
+2026-03-21 00:28:24 [INFO    ] get_three_judgments:74 | 판단 완료 | Bull:NEUTRAL Bear:NEUTRAL Neut:NEUTRAL
+2026-03-21 00:28:24 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-21 00:28:25 [ERROR   ] select_tickers:161 | [종목선택 오류] Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZx9AVXvUVssYtQSEe7'} → 기본값 사용
+2026-03-21 00:53:06 [INFO    ] get_three_judgments:68 | 3명 판단 요청 시작
+2026-03-21 00:53:15 [INFO    ] call_analyst:45 | [bull] MILD_BULL conf=0.55 | 애플 RSI 25.2 극단적 과매도 구간 진입으로 단기 기술적 반등 가능성 높음
+2026-03-21 00:53:26 [INFO    ] call_analyst:45 | [bear] CAUTIOUS_BEAR conf=0.72 | 3개 주요 종목 모두 MACD 데드크로스 + 하락 마감, 애플 RSI 과매도 경고에도 반등 없이 추가 하락 
+2026-03-21 00:53:39 [INFO    ] call_analyst:45 | [neutral] MILD_BEAR conf=0.55 | 전 종목 MACD 데드크로스 + 하락 마감, 애플 RSI 과매도 구간 진입으로 단기 약세 흐름 우세
+2026-03-21 00:53:39 [INFO    ] get_three_judgments:74 | 판단 완료 | Bull:MILD_BULL Bear:CAUTIOUS_BEAR Neut:MILD_BEAR
+2026-03-21 00:53:39 [INFO    ] build_consensus:48 | 합의: DEFENSIVE size=10% minority=False
+2026-03-21 00:53:45 [ERROR   ] select_tickers:161 | [종목선택 오류] Unterminated string starting at: line 1 column 317 (char 316) → 기본값 사용
+2026-03-21 00:55:31 [INFO    ] get_three_judgments:68 | 3명 판단 요청 시작
+2026-03-21 00:55:40 [INFO    ] call_analyst:45 | [bull] MILD_BEAR conf=0.62 | 3종목 모두 MACD 데드크로스 진행 중이나, 애플 RSI 25.2 과매도 구간은 단기 반등 기회로 주목
+2026-03-21 00:55:52 [ERROR   ] call_analyst:61 | [bear] 오류: Unterminated string starting at: line 8 column 5 (char 540)
+2026-03-21 00:56:03 [INFO    ] call_analyst:45 | [neutral] MILD_BEAR conf=0.52 | 3개 주요 종목 모두 MACD 데드크로스 + 하락 마감, 애플 RSI 과매도 진입으로 단기 하방 압력 우위
+2026-03-21 00:56:03 [INFO    ] get_three_judgments:74 | 판단 완료 | Bull:MILD_BEAR Bear:NEUTRAL Neut:MILD_BEAR
+2026-03-21 00:56:03 [INFO    ] build_consensus:48 | 합의: CAUTIOUS_BEAR size=20% minority=False
+2026-03-21 00:56:10 [ERROR   ] select_tickers:161 | [종목선택 오류] Unterminated string starting at: line 1 column 285 (char 284) → 기본값 사용
+2026-03-21 00:58:03 [INFO    ] get_three_judgments:68 | 3명 판단 요청 시작
+2026-03-21 00:58:12 [INFO    ] call_analyst:45 | [bull] MILD_BULL conf=0.52 | 애플 RSI 25.2 극단적 과매도 구간 진입으로 단기 반등 트리거 가능성 높음
+2026-03-21 00:58:25 [INFO    ] call_analyst:45 | [bear] CAUTIOUS_BEAR conf=0.72 | 3종목 모두 MACD 데드크로스 진행 중이며, 애플 RSI 25.2 과매도·테슬라 BB -6% 하단 이탈로 
+2026-03-21 00:58:35 [INFO    ] call_analyst:45 | [neutral] MILD_BEAR conf=0.52 | 전 종목 MACD 데드크로스 및 하락 마감, 애플 RSI 과매도 구간 진입으로 단기 하방 압력 우세
+2026-03-21 00:58:35 [INFO    ] get_three_judgments:74 | 판단 완료 | Bull:MILD_BULL Bear:CAUTIOUS_BEAR Neut:MILD_BEAR
+2026-03-21 00:58:35 [WARNING ] build_consensus:44 | ⚠️ 마이너리티 룰 발동: 3종목 모두 macd 데드크로스 진행 중이며, 애플 rsi 25.2 과매도·테슬라 bb -6% 하단 이탈로 
+2026-03-21 00:58:35 [INFO    ] build_consensus:48 | 합의: DEFENSIVE size=10% minority=True
+2026-03-21 00:58:42 [ERROR   ] select_tickers:161 | [종목선택 오류] Unterminated string starting at: line 1 column 293 (char 292) → 기본값 사용
+2026-03-21 01:13:02 [INFO    ] get_three_judgments:70 | 3명 판단 요청 시작
+2026-03-21 01:13:14 [INFO    ] call_analyst:47 | [bull] MILD_BEAR conf=0.62 | 3종목 전체 MACD 데드크로스 + 애플 RSI 과매도(25.2) 진입으로 단기 하방 압력 우세하나, 과매도
+2026-03-21 01:13:26 [INFO    ] call_analyst:47 | [bear] CAUTIOUS_BEAR conf=0.72 | 3개 주요 종목 전반에 걸친 MACD 데드크로스 동조화 + 애플 RSI 25 극단적 과매도 + 거래량 저조(
+2026-03-21 01:13:36 [INFO    ] call_analyst:47 | [neutral] MILD_BEAR conf=0.52 | 3개 주요 종목 모두 MACD 데드크로스 + 하락 마감, 애플 RSI 과매도 진입으로 단기 하방 압력 우세
+2026-03-21 01:13:36 [INFO    ] get_three_judgments:76 | 판단 완료 | Bull:MILD_BEAR Bear:CAUTIOUS_BEAR Neut:MILD_BEAR
+2026-03-21 01:13:36 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-21 01:13:43 [INFO    ] select_tickers:148 | [종목선택] US → ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-21 01:13:43 [INFO    ] select_tickers:161 |   AAPL: RSI 25.2 과매도 구간으로 HALT 모드에서 단기 반등 방어적 접근 가능, 대형 우량주로 하방 리스크 
+2026-03-21 01:13:43 [INFO    ] select_tickers:161 |   MSFT: 대형 방어주로 HALT 모드에 적합하며 안정적 펀더멘털 기반 낮은 변동성 기대
+2026-03-21 01:13:43 [INFO    ] select_tickers:161 |   GOOGL: 메가캡 기술주 중 상대적 안정성 보유, HALT 모드 방어적 포지션으로 적합
+2026-03-21 01:13:43 [INFO    ] select_tickers:161 |   AMZN: 광범위한 사업 다각화로 시장 변동성 방어에 유리한 대형 우량주
+2026-03-21 01:21:24 [INFO    ] get_three_judgments:70 | 3명 판단 요청 시작
+2026-03-21 01:21:34 [INFO    ] call_analyst:47 | [bull] MILD_BEAR conf=0.62 | 전 종목 MACD 데드크로스 + 낮은 거래량 속 하락은 매수세 부재를 시사하나, 애플 RSI 과매도 구간 진
+2026-03-21 01:21:44 [INFO    ] call_analyst:47 | [bear] CAUTIOUS_BEAR conf=0.72 | 3종목 전체 MACD 데드크로스 + 테슬라 RSI 38 / 애플 RSI 25 과매도 구간 진입으로 하방 압력
+2026-03-21 01:21:54 [INFO    ] call_analyst:47 | [neutral] MILD_BEAR conf=0.52 | 3개 주요 종목 모두 MACD 데드크로스 진행 중이며 거래량 감소 동반 하락으로 단기 하방 압력 우세
+2026-03-21 01:21:54 [INFO    ] get_three_judgments:76 | 판단 완료 | Bull:MILD_BEAR Bear:CAUTIOUS_BEAR Neut:MILD_BEAR
+2026-03-21 01:21:54 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-21 01:22:00 [INFO    ] select_tickers:148 | [종목선택] US → ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-21 01:22:00 [INFO    ] select_tickers:161 |   AAPL: RSI 25.2 과매도 구간으로 단기 반등 가능성, HALT 모드에서 대형 방어주로 리스크 제한적
+2026-03-21 01:22:00 [INFO    ] select_tickers:161 |   MSFT: 안정적 대형 기술주로 HALT/DEFENSIVE 모드에 적합, 변동성 낮고 펀더멘털 견고
+2026-03-21 01:22:00 [INFO    ] select_tickers:161 |   GOOGL: 대형 우량주로 급등락 가능성 낮아 HALT 모드 방어적 포지션에 적합
+2026-03-21 01:22:00 [INFO    ] select_tickers:161 |   AMZN: 클라우드·커머스 다각화된 수익구조로 방어적 특성 보유, 안정적 대형주
+2026-03-21 01:28:01 [INFO    ] get_three_judgments:70 | 3명 판단 요청 시작
+2026-03-21 01:28:11 [INFO    ] call_analyst:47 | [bull] MILD_BEAR conf=0.62 | 전 종목 MACD 데드크로스 + VIX 25.2 고조 속에서도 애플 RSI 25.2 과매도 구간 진입으로 단
+2026-03-21 01:28:23 [INFO    ] call_analyst:47 | [bear] CAUTIOUS_BEAR conf=0.72 | S&P500·나스닥 동반 하락, VIX 25.2 고조, 주요 3종목 전부 MACD 데드크로스 상태로 하락 압
+2026-03-21 01:28:34 [INFO    ] call_analyst:47 | [neutral] MILD_BEAR conf=0.62 | S&P500·나스닥 동반 하락, VIX 25대 상승, 주요 3종목 모두 MACD 데드크로스로 단기 약세 압력
+2026-03-21 01:28:34 [INFO    ] get_three_judgments:76 | 판단 완료 | Bull:MILD_BEAR Bear:CAUTIOUS_BEAR Neut:MILD_BEAR
+2026-03-21 01:28:34 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-21 01:28:41 [INFO    ] select_tickers:148 | [종목선택] US → ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-21 01:28:41 [INFO    ] select_tickers:161 |   AAPL: RSI 25.2 과매도 구간 진입으로 단기 반등 가능성 존재, HALT 모드에서 대형 방어주로 리스크 제한적
+2026-03-21 01:28:41 [INFO    ] select_tickers:161 |   MSFT: 시장 하락 속에서도 상대적으로 안정적인 대형 기술주, HALT 모드 방어적 접근에 적합
+2026-03-21 01:28:41 [INFO    ] select_tickers:161 |   GOOGL: VIX 25 수준의 변동성 환경에서 광고·클라우드 수익 기반 안정적 펀더멘털 보유 방어주
+2026-03-21 01:28:41 [INFO    ] select_tickers:161 |   AMZN: 시장 전반 약세 국면에서 e커머스·AWS 다각화 수익구조로 낙폭 방어 기대, 저변동 대형주
+2026-03-21 01:52:09 [INFO    ] get_three_judgments:70 | 3명 판단 요청 시작
+2026-03-21 01:52:20 [INFO    ] call_analyst:47 | [bull] MILD_BEAR conf=0.62 | S&P500·나스닥 동반 하락 속 VIX 25.6 고조와 세 종목 모두 MACD 데드크로스 진행 중이나, 애
+2026-03-21 01:52:31 [INFO    ] call_analyst:47 | [bear] CAUTIOUS_BEAR conf=0.72 | S&P500·나스닥 동반 하락에 VIX 25.6 상승, 주요 3종목 모두 MACD 데드크로스 진행 중으로 단
+2026-03-21 01:52:43 [INFO    ] call_analyst:47 | [neutral] MILD_BEAR conf=0.62 | S&P500·나스닥 동반 하락, VIX 25.6 경계권, 주요 3종목 전체 MACD 데드크로스 및 저거래량으
+2026-03-21 01:52:43 [INFO    ] get_three_judgments:76 | 판단 완료 | Bull:MILD_BEAR Bear:CAUTIOUS_BEAR Neut:MILD_BEAR
+2026-03-21 01:52:43 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-21 01:52:50 [INFO    ] select_tickers:148 | [종목선택] US → ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-21 01:52:50 [INFO    ] select_tickers:161 |   AAPL: RSI 25.2 과매도 구간으로 단기 반등 가능성, HALT 모드에서 대형 방어주로 리스크 제한적
+2026-03-21 01:52:50 [INFO    ] select_tickers:161 |   MSFT: 시장 하락 속 상대적으로 안정적인 대형 기술주, 방어적 포지션에 적합
+2026-03-21 01:52:50 [INFO    ] select_tickers:161 |   GOOGL: 광고·클라우드 수익 기반의 안정적 펀더멘털, 시장 변동성 확대 시 방어력 보유
+2026-03-21 01:52:50 [INFO    ] select_tickers:161 |   AMZN: 이커머스·AWS 다각화 수익 구조로 하락장 방어력 우수, HALT 모드 적합 대형주
+2026-03-21 02:22:13 [INFO    ] tune:44 | [튜닝 30분] MAINTAIN → HALT | 30분 경과 후 지수 변동 데이터 미확인(NaN) 및 보유 포지션 없음으로 아침 HALT 판단 유지, 신규 
+2026-03-21 02:52:17 [INFO    ] tune:44 | [튜닝 60분] MAINTAIN → HALT | 60분 경과 후 지수 변동 데이터 미수신(NaN) 및 보유 포지션 없음으로 아침 HALT 판단 유지, 신규 
+2026-03-21 03:22:23 [INFO    ] tune:44 | [튜닝 90분] MAINTAIN → HALT | 90분 경과 후 지수 변동 데이터 부재(nan%)로 시장 방향 확인 불가, 보유 포지션 없어 조정 불필요하며
+2026-03-21 03:52:27 [INFO    ] tune:44 | [튜닝 120분] MAINTAIN → HALT | 아침 HALT 판단 이후 지수 추가 -1.53% 하락으로 약세 흐름 지속 중이며 보유 포지션 없어 조정 불필
+2026-03-21 04:22:31 [INFO    ] tune:44 | [튜닝 150분] MAINTAIN → HALT | 보유 포지션 없는 상태에서 지수 추가 하락(-1.57%)으로 하락 압력 지속 확인, HALT 유지가 최적
+2026-03-21 04:52:37 [INFO    ] tune:44 | [튜닝 180분] MAINTAIN → HALT | 아침 HALT 판단 이후 지수 추가 -1.69% 하락으로 하방 압력 지속 확인, 보유 포지션 없어 조정 불필
+2026-03-21 05:00:10 [ERROR   ] run:62 | postmortem 오류: Unterminated string starting at: line 15 column 19 (char 761)
+2026-03-21 05:00:10 [INFO    ] run:104 | [postmortem 2026-03-21] Bull:MISS Bear:HIT Neut:PARTIAL | 오류로 자동 판정
+2026-03-21 08:50:05 [INFO    ] get_three_judgments:70 | 3명 판단 요청 시작
+2026-03-21 08:50:20 [INFO    ] call_analyst:47 | [bull] MODERATE_BULL conf=0.62 | 삼성전자·SK하이닉스·NAVER 모두 MACD 골든크로스 신호가 동시 출현하며 반등 모멘텀이 형성되고 있습니
+2026-03-21 08:50:34 [INFO    ] call_analyst:47 | [bear] MILD_BEAR conf=0.62 | 반도체 양대 주축 동반 하락 및 저거래량 속 골든크로스는 신뢰도 낮은 기술적 신호로, 실질적 매수 동력 부재
+2026-03-21 08:50:47 [INFO    ] call_analyst:47 | [neutral] NEUTRAL conf=0.52 | MACD 골든크로스로 단기 반등 신호가 있으나 RSI 미약·거래량 부진·원화 약세(1,504원)가 상승 탄력
+2026-03-21 08:50:47 [INFO    ] get_three_judgments:76 | 판단 완료 | Bull:MODERATE_BULL Bear:MILD_BEAR Neut:NEUTRAL
+2026-03-21 08:50:47 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-21 08:50:57 [INFO    ] select_tickers:148 | [종목선택] KR → ['069540', '046120', '078590', '002780', '261780']
+2026-03-21 08:50:57 [INFO    ] select_tickers:161 |   069540: 빛과전자 +29.82% 급등에 거래량 51.3배로 강한 모멘텀, NEUTRAL 모드에서 단기 추세 추종 가능
+2026-03-21 08:50:57 [INFO    ] select_tickers:161 |   046120: 오르비텍 +24.77% 상승에 거래량 54.8배로 수급 집중, 중립 장세에서 개별 모멘텀 유효
+2026-03-21 08:50:57 [INFO    ] select_tickers:161 |   078590: 휴림에이텍 +11.84%에 거래량 90배로 수급 폭발, 단기 변동성 대비 충분한 유동성 확보
+2026-03-21 08:50:57 [INFO    ] select_tickers:161 |   002780: 진흥기업 +10.05% 거래량 64.7배로 안정적 급등 패턴, 급등 초기 단계 진입 가능성
+2026-03-21 08:50:57 [INFO    ] select_tickers:161 |   261780: 차백신연구소 거래량 134.2배 최대 수준이나 보합권(-0.12%), 대규모 수급 유입 포착으로 방향성 모니
+2026-03-21 08:52:23 [INFO    ] tune:44 | [튜닝 30분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승과 거래량 정상 수준으로 아침 NEUTRAL 판단이 유효하며, 보유 포지션 없어 
+2026-03-21 09:22:32 [INFO    ] tune:44 | [튜닝 60분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 이후 60분간 지수 +0.31% 소폭 상승에 거래량 정상·이상신호 없음으로 모멘텀 
+2026-03-21 09:52:41 [ERROR   ] tune:53 | 튜닝 오류: Error code: 529 - {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}, 'request_id': 'req_011CZFJyPCdLitWFLaAybyAA'}
+2026-03-21 10:22:46 [INFO    ] tune:44 | [튜닝 120분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 대비 지수 +0.31% 소폭 상승으로 MACD 골든크로스 반등 모멘텀이 일부 확인되
+2026-03-21 10:52:51 [INFO    ] tune:44 | [튜닝 150분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단과 부합하며, 보유 포지션 없고 이상 신호도 없어 현
+2026-03-21 11:22:56 [INFO    ] tune:44 | [튜닝 180분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 대비 +0.31% 소폭 상승으로 MACD 골든크로스 모멘텀이 유효하나, 거래량 no
+2026-03-21 11:53:00 [INFO    ] tune:44 | [튜닝 210분] MAINTAIN → NEUTRAL | 아침 MACD 골든크로스 반등 신호에도 불구하고 210분 경과 후 지수 +0.31% 소폭 상승에 그쳐 모멘텀
+2026-03-21 12:23:05 [INFO    ] tune:44 | [튜닝 240분] MAINTAIN → NEUTRAL | 아침 MACD 골든크로스 신호 대비 지수 +0.31% 소폭 상승으로 모멘텀 확인 중이나, 거래량 정상·이상 
+2026-03-21 12:53:10 [INFO    ] tune:44 | [튜닝 270분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 대비 270분 경과 후 +0.31% 소폭 상승에 그쳐 MACD 골든크로스 모멘텀이 
+2026-03-21 13:23:15 [INFO    ] tune:44 | [튜닝 300분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 대비 300분 경과 후 지수 +0.31% 소폭 상승에 그쳐 MACD 골든크로스 모멘
+2026-03-21 13:53:20 [INFO    ] tune:44 | [튜닝 330분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 이후 330분 경과 시점에 지수 +0.31% 소폭 상승·거래량 정상·이상 신호 없음
+2026-03-21 14:23:24 [INFO    ] tune:44 | [튜닝 360분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 이후 360분 경과 시점에 지수 +0.31% 소폭 상승과 정상 거래량이 확인되나, 
+2026-03-21 14:53:30 [INFO    ] tune:44 | [튜닝 390분] MAINTAIN → NEUTRAL | 아침 MACD 골든크로스 신호에도 불구하고 390분 경과 후 지수 +0.31% 소폭 상승에 그치고 보유 포지
+2026-03-21 15:23:35 [INFO    ] tune:44 | [튜닝 420분] MAINTAIN → NEUTRAL | 아침 MACD 골든크로스 반등 신호 대비 420분 경과 후 지수 +0.31% 소폭 상승에 그쳐 모멘텀 강도가
+2026-03-21 15:53:40 [INFO    ] tune:44 | [튜닝 450분] MAINTAIN → NEUTRAL | 아침 MACD 골든크로스 신호에도 불구하고 450분 경과 후 지수 +0.31% 소폭 상승에 그쳐 모멘텀이 제
+2026-03-21 16:00:12 [ERROR   ] run:62 | postmortem 오류: Unterminated string starting at: line 15 column 19 (char 777)
+2026-03-21 16:00:12 [INFO    ] run:104 | [postmortem 2026-03-21] Bull:MISS Bear:HIT Neut:PARTIAL | 오류로 자동 판정
+2026-03-21 22:20:01 [INFO    ] get_three_judgments:70 | 3명 판단 요청 시작
+2026-03-21 22:20:12 [INFO    ] call_analyst:47 | [bull] CAUTIOUS_BEAR conf=0.72 | S&P500 -1.51%, 나스닥 -2.01%의 광범위한 하락과 VIX 26.8 고조 속에 주요 3종목 모두
+2026-03-21 22:20:22 [INFO    ] call_analyst:47 | [bear] DEFENSIVE conf=0.82 | S&P500 -1.51%, 나스닥 -2.01%의 동반 하락과 VIX 26.8 고점권, DXY 99.5 달러 
+2026-03-21 22:20:35 [INFO    ] call_analyst:47 | [neutral] DEFENSIVE conf=0.72 | S&P500 -1.51%, 나스닥 -2.01%의 광범위한 하락과 VIX 26.8 상승, 3개 주요 종목 모두
+2026-03-21 22:20:35 [INFO    ] get_three_judgments:76 | 판단 완료 | Bull:CAUTIOUS_BEAR Bear:DEFENSIVE Neut:DEFENSIVE
+2026-03-21 22:20:35 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-21 22:20:41 [INFO    ] select_tickers:148 | [종목선택] US → ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-21 22:20:41 [INFO    ] select_tickers:161 |   AAPL: RSI 25.2 과매도 구간으로 HALT 모드에서 방어적 저점 관찰 대상, 대형 우량주로 변동성 상대적 제한
+2026-03-21 22:20:41 [INFO    ] select_tickers:161 |   MSFT: 시장 하락 국면에서 안정적 수익 기반의 대형 방어주, HALT 모드 적합 저변동 후보
+2026-03-21 22:20:41 [INFO    ] select_tickers:161 |   GOOGL: 광고·클라우드 다각화된 수익 구조로 하락장 방어력 보유, 급등락 위험 낮은 대형주
+2026-03-21 22:20:41 [INFO    ] select_tickers:161 |   AMZN: 이커머스·AWS 기반 안정적 현금흐름, HALT 모드 하 변동성 제한적 대형 방어 후보
+2026-03-21 22:23:59 [INFO    ] tune:44 | [튜닝 30분] MAINTAIN → HALT | 아침 HALT 판단 이후 30분 경과 시점에서 지수 -1.51% 추가 하락 지속, 거래량 normal 수준으
+2026-03-21 22:54:03 [INFO    ] tune:44 | [튜닝 60분] MAINTAIN → HALT | 60분 경과 후에도 지수 -1.51% 하락 지속으로 아침 HALT 판단이 유효하며 보유 포지션 없어 조정 불
+2026-03-21 23:24:10 [INFO    ] tune:44 | [튜닝 90분] MAINTAIN → HALT | 아침 HALT 판단 이후 90분간 추가 하락 없이 -1.51% 수준 유지되고 있으나 거래량 정상·이상신호 없
+2026-03-21 23:54:15 [INFO    ] tune:44 | [튜닝 120분] MAINTAIN → HALT | 지수 -1.51% 하락이 아침 판단과 일치하고 보유 포지션 없어 조정 불필요, HALT 유지가 최적
+2026-03-22 00:24:20 [INFO    ] tune:44 | [튜닝 150분] MAINTAIN → HALT | 150분 경과 후에도 지수 -1.51% 하락 지속으로 아침 HALT 판단이 유효하며 보유 포지션 없어 조정 
+2026-03-22 00:54:24 [INFO    ] tune:44 | [튜닝 180분] MAINTAIN → HALT | 180분 경과 후에도 지수 -1.51% 하락 지속으로 아침 HALT 판단이 유효하며 보유 포지션 없어 조정 
+2026-03-22 01:24:30 [INFO    ] tune:44 | [튜닝 210분] MAINTAIN → HALT | 지수 -1.51% 낙폭이 아침 판단과 동일 수준으로 유지되고 있으며 거래량 정상·이상 신호 없음으로 HALT
+2026-03-22 01:54:35 [INFO    ] tune:44 | [튜닝 240분] MAINTAIN → HALT | 아침 판단과 동일하게 지수 -1.51% 하락 지속 중이며 보유 포지션 없고 이상 신호 부재로 HALT 유지가
+2026-03-22 02:24:40 [INFO    ] tune:44 | [튜닝 270분] MAINTAIN → HALT | 아침 HALT 판단 유효 — 270분 경과 후에도 지수 -1.51% 하락 지속으로 Bear 압력 변화 없고 
+2026-03-22 02:54:46 [INFO    ] tune:44 | [튜닝 300분] MAINTAIN → HALT | 아침 판단 이후 300분 경과했으나 지수 추가 하락 없이 -1.51% 수준 유지 중이며 보유 포지션 없고 이
+2026-03-22 03:24:50 [INFO    ] tune:44 | [튜닝 330분] MAINTAIN → HALT | 아침 판단(HALT) 이후 330분 경과 시점에도 지수 -1.51% 하락이 지속되며 추세 반전 신호 부재, 
+2026-03-22 03:54:55 [INFO    ] tune:44 | [튜닝 360분] MAINTAIN → HALT | 360분 경과 후에도 지수 -1.51% 유지되며 아침 판단과 동일한 하락 압력 지속, 보유 포지션 없어 조정
+2026-03-22 04:25:00 [INFO    ] tune:44 | [튜닝 390분] MAINTAIN → HALT | 아침 HALT 판단과 동일하게 지수 -1.51% 하락이 지속되고 있으며 보유 포지션 없음으로 현 리스크 관리
+2026-03-22 04:55:04 [INFO    ] tune:44 | [튜닝 420분] MAINTAIN → HALT | 아침 HALT 판단과 현재 -1.51% 낙폭이 일치하며 보유 포지션 없고 이상 신호 없으므로 리스크 관리 기
+2026-03-22 05:00:12 [ERROR   ] run:62 | postmortem 오류: Unterminated string starting at: line 18 column 3 (char 889)
+2026-03-22 05:00:12 [INFO    ] run:104 | [postmortem 2026-03-22] Bull:MISS Bear:HIT Neut:PARTIAL | 오류로 자동 판정
+2026-03-22 08:50:02 [INFO    ] get_three_judgments:70 | 3명 판단 요청 시작
+2026-03-22 08:50:11 [INFO    ] call_analyst:47 | [bull] MODERATE_BULL conf=0.62 | 삼성전자·SK하이닉스·NAVER 3종목 모두 MACD 골든크로스 진행 중이며, NAVER RSI 31.7 과
+2026-03-22 08:50:25 [INFO    ] call_analyst:47 | [bear] CAUTIOUS_BEAR conf=0.62 | USD/KRW 1,504원대 고환율 지속과 반도체 대형주(삼성전자·SK하이닉스) 동반 하락, VKOSPI 데
+2026-03-22 08:50:35 [INFO    ] call_analyst:47 | [neutral] NEUTRAL conf=0.52 | 코스피 소폭 상승(+0.31%)과 MACD 골든크로스 신호가 공존하나, 반도체 대형주 하락·거래량 부진·고환
+2026-03-22 08:50:35 [INFO    ] get_three_judgments:76 | 판단 완료 | Bull:MODERATE_BULL Bear:CAUTIOUS_BEAR Neut:NEUTRAL
+2026-03-22 08:50:35 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-22 08:50:42 [INFO    ] select_tickers:148 | [종목선택] KR → ['114800', '252670', '069540', '046120', '002780']
+2026-03-22 08:50:42 [INFO    ] select_tickers:161 |   114800: NEUTRAL 모드에서 인버스 ETF로 시장 하방 헤지, 거래량 22.4배로 활발하며 방어적 포지션 적합
+2026-03-22 08:50:42 [INFO    ] select_tickers:161 |   252670: 코스피 약세 시 수혜 가능한 2X 인버스 ETF, 거래량 41.1배로 유동성 충분하며 헤지 수단으로 활용
+2026-03-22 08:50:42 [INFO    ] select_tickers:161 |   069540: +29.82% 강한 모멘텀과 거래량 51.3배, NEUTRAL 모드 내 소형 모멘텀 종목으로 단기 추세 추종
+2026-03-22 08:50:42 [INFO    ] select_tickers:161 |   046120: +24.77% 상승에 거래량 54.8배 급증, 단기 모멘텀 강하고 추세 지속 가능성 보유
+2026-03-22 08:50:42 [INFO    ] select_tickers:161 |   002780: +10.05% 상승과 거래량 64.7배, 안정적 상승 폭에 거래량 급증으로 NEUTRAL 모드에서 균형 있는
+2026-03-22 08:54:07 [INFO    ] tune:44 | [튜닝 30분] MAINTAIN → NEUTRAL | 30분 경과 후 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 방향성 일치, 이상 신호 없고 거래
+2026-03-22 09:24:13 [INFO    ] tune:44 | [튜닝 60분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 부합하며, MACD 골든크로스 및 NAVER 과매도
+2026-03-22 09:54:17 [INFO    ] tune:44 | [튜닝 90분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 유효하며, MACD 골든크로스 및 NAVER 과매도
+2026-03-22 10:24:24 [INFO    ] tune:44 | [튜닝 120분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단과 방향성 일치하며, MACD 골든크로스 진행 및 N
+2026-03-22 10:54:30 [INFO    ] tune:44 | [튜닝 150분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 방향성 부합하나 포지션 없어 조정 불필요, MACD
+2026-03-22 11:24:37 [INFO    ] tune:44 | [튜닝 180분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 부합하며 MACD 골든크로스 진행 중인 3종목 모니
+2026-03-22 11:54:41 [INFO    ] tune:44 | [튜닝 210분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 유효하며, 보유 포지션 없어 조정 불필요
+2026-03-22 12:24:46 [INFO    ] tune:44 | [튜닝 240분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 유효하며, MACD 골든크로스 진행 중인 상황에서 
+2026-03-22 12:54:52 [INFO    ] tune:44 | [튜닝 270분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 대비 지수 +0.31% 소폭 상승으로 방향성 일치하나 270분 경과 시점에 이상 신
+2026-03-22 13:24:57 [INFO    ] tune:44 | [튜닝 300분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단이 유효하며, MACD 골든크로스 진행 중인 3종목의

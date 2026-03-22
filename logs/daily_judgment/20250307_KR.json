@@ -1,0 +1,67 @@
+{
+  "date": "2025-03-07",
+  "market": "KR",
+  "mode": "historical_sim",
+  "judgments": {
+    "bull": {
+      "stance": "NEUTRAL",
+      "confidence": 0.3,
+      "key_reason": "API 오류: Error code: 400 - {'type': 'error', 'error': {'typ",
+      "full_reasoning": "",
+      "top_risks": [],
+      "suggested_strategy": "관망"
+    },
+    "bear": {
+      "stance": "NEUTRAL",
+      "confidence": 0.3,
+      "key_reason": "API 오류: Error code: 400 - {'type': 'error', 'error': {'typ",
+      "full_reasoning": "",
+      "top_risks": [],
+      "suggested_strategy": "관망"
+    },
+    "neutral": {
+      "stance": "NEUTRAL",
+      "confidence": 0.3,
+      "key_reason": "API 오류: Error code: 400 - {'type': 'error', 'error': {'typ",
+      "full_reasoning": "",
+      "top_risks": [],
+      "suggested_strategy": "관망"
+    }
+  },
+  "consensus": {
+    "mode": "NEUTRAL",
+    "size": 40,
+    "tp_mult": 1.0,
+    "minority_triggered": false,
+    "vote": [
+      "neutral",
+      "neutral",
+      "neutral"
+    ]
+  },
+  "actual_result": {
+    "market_change": 0,
+    "pnl_pct": 0,
+    "win": false,
+    "cumulative": 10000000
+  },
+  "postmortem": {
+    "bull_result": "MISS",
+    "bear_result": "HIT",
+    "neutral_result": "PARTIAL",
+    "bull_why": "자동 판정",
+    "bear_why": "자동 판정",
+    "neutral_why": "자동 판정",
+    "key_lesson": "API 오류로 자동 판정",
+    "issue_type": "미분류",
+    "issue_description": "",
+    "pattern_id": null,
+    "brain_updates": {
+      "bull_reliability_change": "stable",
+      "bear_reliability_change": "stable",
+      "new_lesson": null,
+      "market_regime": "unknown"
+    }
+  },
+  "trades": []
+}

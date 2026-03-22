@@ -1,0 +1,92 @@
+{
+  "date": "2025-08-05",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-05",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-08-05",
+          "url": "https://www.sec.gov2025-08-05",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-05",
+          "title": "[] ['CommScope Holding Company, Inc.  (COMM)  (CIK 0001517228)']",
+          "content": "2025-08-05",
+          "url": "https://www.sec.gov2025-08-05",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-05",
+          "title": "[] ['ENTRAVISION COMMUNICATIONS CORP  (EVC)  (CIK 0001109116)']",
+          "content": "2025-08-05",
+          "url": "https://www.sec.gov2025-08-05",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-05",
+          "title": "[] ['DoubleVerify Holdings, Inc.  (DV)  (CIK 0001819928)']",
+          "content": "2025-08-05",
+          "url": "https://www.sec.gov2025-08-05",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-05",
+          "title": "[] ['DigitalOcean Holdings, Inc.  (DOCN)  (CIK 0001582961)']",
+          "content": "2025-08-05",
+          "url": "https://www.sec.gov2025-08-05",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-05",
+          "title": "[] ['ADVANCED MICRO DEVICES INC  (AMD)  (CIK 0000002488)']",
+          "content": "2025-08-05",
+          "url": "https://www.sec.gov2025-08-05",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T17:17:58.379023"
+}

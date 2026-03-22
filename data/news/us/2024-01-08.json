@@ -1,0 +1,83 @@
+{
+  "date": "2024-01-08",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-01-08",
+          "title": "[] ['DELCATH SYSTEMS, INC.  (DCTH)  (CIK 0000872912)']",
+          "content": "2024-01-08",
+          "url": "https://www.sec.gov2024-01-08",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-01-08",
+          "title": "[] ['NewAmsterdam Pharma Co N.V.  (NAMS, NAMSW)  (CIK 0001936258)']",
+          "content": "2024-01-08",
+          "url": "https://www.sec.gov2024-01-08",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-01-08",
+          "title": "[] ['Axogen, Inc.  (AXGN)  (CIK 0000805928)']",
+          "content": "2024-01-08",
+          "url": "https://www.sec.gov2024-01-08",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-01-08",
+          "title": "[] ['Annexon, Inc.  (ANNX)  (CIK 0001528115)']",
+          "content": "2024-01-08",
+          "url": "https://www.sec.gov2024-01-08",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-01-08",
+          "title": "[] ['HilleVax, Inc.  (HLVX)  (CIK 0001888012)']",
+          "content": "2024-01-08",
+          "url": "https://www.sec.gov2024-01-08",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T08:10:47.895968"
+}

@@ -1,0 +1,59 @@
+{
+  "date": "2025-09-09",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-09-09",
+          "title": "[] ['Enovix Corp  (ENVX, ENVXW)  (CIK 0001828318)']",
+          "content": "2025-09-09",
+          "url": "https://www.sec.gov2025-09-09",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-09-09",
+          "title": "[] ['Aura Fat Projects Acquisition Corp  (CIK 0001901886)']",
+          "content": "2025-09-09",
+          "url": "https://www.sec.gov2025-09-09",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T18:52:52.755847"
+}

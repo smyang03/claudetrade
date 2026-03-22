@@ -1,0 +1,76 @@
+{
+  "date": "2024-06-03",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-06-03",
+          "title": "[] ['Roth CH Acquisition V Co.  (ROCL, ROCLU, ROCLW)  (CIK 0001885998)']",
+          "content": "2024-06-03",
+          "url": "https://www.sec.gov2024-06-03",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-06-03",
+          "title": "[] ['Roth CH Acquisition V Co.  (ROCL, ROCLU, ROCLW)  (CIK 0001885998)']",
+          "content": "2024-06-03",
+          "url": "https://www.sec.gov2024-06-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-06-03",
+          "title": "[] ['MID AMERICA APARTMENT COMMUNITIES INC.  (MAA, MAA-PI)  (CIK 0000912595)', 'Mid-America Apartments, L.P.  (CIK 0001581776)']",
+          "content": "2024-06-03",
+          "url": "https://www.sec.gov2024-06-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-06-03",
+          "title": "[] ['MGO Global Inc.  (MGOL)  (CIK 0001902794)']",
+          "content": "2024-06-03",
+          "url": "https://www.sec.gov2024-06-03",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T14:50:48.755366"
+}

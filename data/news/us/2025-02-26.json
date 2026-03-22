@@ -1,0 +1,124 @@
+{
+  "date": "2025-02-26",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['Singularity Future Technology Ltd.  (SGLY)  (CIK 0001422892)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['Taboola.com Ltd.  (TBLA, TBLAW)  (CIK 0001840502)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['RingCentral, Inc.  (RNG)  (CIK 0001384905)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['Sinclair, Inc.  (SBGI)  (CIK 0001971213)', 'Sinclair Broadcast Group, LLC  (CIK 0000912752)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-26",
+          "title": "[] ['Matterport, Inc./DE  (MTTR)  (CIK 0001819394)']",
+          "content": "2025-02-26",
+          "url": "https://www.sec.gov2025-02-26",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:04:03.503130"
+}

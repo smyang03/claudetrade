@@ -1,0 +1,59 @@
+{
+  "date": "2023-12-19",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-12-19",
+          "title": "[] ['Ryman Hospitality Properties, Inc.  (RHP)  (CIK 0001040829)']",
+          "content": "2023-12-19",
+          "url": "https://www.sec.gov2023-12-19",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-12-19",
+          "title": "[] ['BIMI International Medical Inc.  (BIMI)  (CIK 0001213660)']",
+          "content": "2023-12-19",
+          "url": "https://www.sec.gov2023-12-19",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T07:17:25.755627"
+}

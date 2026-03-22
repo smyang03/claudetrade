@@ -1,0 +1,92 @@
+{
+  "date": "2024-03-29",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-29",
+          "title": "[] ['ASPAC I Acquisition Corp.  (CIK 0001868775)']",
+          "content": "2024-03-29",
+          "url": "https://www.sec.gov2024-03-29",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-29",
+          "title": "[] ['BuzzFeed, Inc.  (BZFD, BZFDW)  (CIK 0001828972)']",
+          "content": "2024-03-29",
+          "url": "https://www.sec.gov2024-03-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-29",
+          "title": "[] ['NRX Pharmaceuticals, Inc.  (NRXP, NRXPW)  (CIK 0001719406)']",
+          "content": "2024-03-29",
+          "url": "https://www.sec.gov2024-03-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-29",
+          "title": "[] ['Sprinklr, Inc.  (CXM)  (CIK 0001569345)']",
+          "content": "2024-03-29",
+          "url": "https://www.sec.gov2024-03-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-29",
+          "title": "[] ['WisdomTree Bitcoin Fund  (BTCW)  (CIK 0001850391)']",
+          "content": "2024-03-29",
+          "url": "https://www.sec.gov2024-03-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-29",
+          "title": "[] ['First Wave BioPharma, Inc.  (ENTO)  (CIK 0001604191)']",
+          "content": "2024-03-29",
+          "url": "https://www.sec.gov2024-03-29",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T11:55:39.986263"
+}

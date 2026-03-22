@@ -1,0 +1,83 @@
+{
+  "date": "2024-11-12",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-12",
+          "title": "[] ['INTEGRAL AD SCIENCE HOLDING CORP.  (IAS)  (CIK 0001842718)']",
+          "content": "2024-11-12",
+          "url": "https://www.sec.gov2024-11-12",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-12",
+          "title": "[] ['OneMeta Inc.  (ONEI)  (CIK 0001388295)']",
+          "content": "2024-11-12",
+          "url": "https://www.sec.gov2024-11-12",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-12",
+          "title": "[] ['MARIN SOFTWARE INC  (MRIN)  (CIK 0001389002)']",
+          "content": "2024-11-12",
+          "url": "https://www.sec.gov2024-11-12",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-12",
+          "title": "[] ['BuzzFeed, Inc.  (BZFD, BZFDW)  (CIK 0001828972)']",
+          "content": "2024-11-12",
+          "url": "https://www.sec.gov2024-11-12",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-12",
+          "title": "[] ['CHEGG, INC  (CHGG)  (CIK 0001364954)']",
+          "content": "2024-11-12",
+          "url": "https://www.sec.gov2024-11-12",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T05:14:58.627399"
+}

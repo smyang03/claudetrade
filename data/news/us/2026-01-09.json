@@ -1,0 +1,2066 @@
+{
+  "date": "2026-01-09",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-09",
+      "title": "Stock Market News Review: SPY Secures Record High on Unemployment Rate Drop and Rising Consumer Sentiment",
+      "content": "The S&P 500 ETF (SPY) reached a new record high of $694.07, and the Nasdaq 100 ETF (QQQ) also closed strong, driven by a drop in the unemployment rate to 4.4% in December 2025. While consumer sentiment rose, nonfarm payrolls for December were lower than estimated, and job gains for 2025 were the worst since 2003 outside of a recession. Inflation concerns persist, with Atlanta Fed President Raphael Bostic indicating that the Fed must remain focused on lowering prices before considering rate cuts ",
+      "url": "https://www.tipranks.com/news/stock-market-news-review-spy-secures-record-high-on-unemployment-rate-drop-and-rising-consumer-sentiment",
+      "sentiment_score": 0.442938,
+      "sentiment_label": "Bullish",
+      "relevance": 1.0
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-09",
+      "title": "Stock Market Live January 9, 2026: S&P 500 (SPY) Gaining Momentum on Fed Cut Hopes",
+      "content": "The stock market is showing early morning gains, with the S&P 500 gaining momentum, largely due to speculation that recent job figures could lead the Federal Reserve to cut interest rates. Gold prices are also recovering, while investors await a potential Supreme Court ruling on the legality of tariffs. Additionally, nuclear energy stocks like Vistra Energy (VST) and Oklo (OKLO) are soaring following Meta's plans to secure significant nuclear power for its data centers.",
+      "url": "https://247wallst.com/investing/2026/01/09/stock-market-live-january-9-2026-sp-500-spy-gaining-momentum-on-fed-cut-hopes/",
+      "sentiment_score": 0.431201,
+      "sentiment_label": "Bullish",
+      "relevance": 1.0
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-09",
+      "title": "Stock Market Today: Dow, Nasdaq 100 And S&P 500 Futures Gain After December Jobs Data— General Motors, Tilray In Focus (UPDATED)",
+      "content": "U.S. stock futures for the Dow, Nasdaq 100, and S&P 500 advanced on Friday following the December jobs report, which indicated a moderately cooling but resilient labor market. Notable stock movements included Tilray Brands (TLRY) jumping on strong earnings, Offerpad Solutions (OPAD) surging due to a new proposal from President Trump, and General Motors (GM) declining after reporting EV investment losses. Analyst insights from Scott Wren of Wells Fargo Investment Institute suggested a focus on AI",
+      "url": "https://www.benzinga.com/markets/equities/26/01/49807204/stock-market-today-nasdaq-100-sp-500-futures-gain-as-investors-await-december-jobs-report-general-motors-offerpad-tilray-in-focus",
+      "sentiment_score": 0.202674,
+      "sentiment_label": "Somewhat-Bullish",
+      "relevance": 0.909883
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-09",
+      "title": "Stock Market News Review: SPY, QQQ Waver Despite Trade Deficit Narrowing to 17-Year Low; Atlanta Fed Doubling Q4 GDP Estimate",
+      "content": "Despite positive economic news including a narrowed trade deficit, an increased Q4 GDP estimate by the Atlanta Fed, and Fitch raising its 2025/2026 GDP estimates, the S&P 500 ETF (SPY) and Nasdaq 100 ETF (QQQ) both closed negatively. Federal Reserve Governor Stephen Miran and Treasury Secretary Scott Bessent advocated for significant rate cuts to support the labor market and further economic growth, but investors anticipate the Fed will hold rates steady at its January 28th meeting. Initial jobl",
+      "url": "https://www.tipranks.com/news/stock-market-news-review-spy-qqq-waver-despite-trade-deficit-narrowing-to-17-year-low-atlanta-fed-doubling-q4-gdp-estimate",
+      "sentiment_score": -0.211555,
+      "sentiment_label": "Somewhat-Bearish",
+      "relevance": 0.99012
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-09",
+      "title": "If You'd Invested $1,000 in the Invesco QQQ ETF 27 Years Ago, Here's How Much You'd Have Today",
+      "content": "The Invesco QQQ Trust ETF, which tracks the Nasdaq-100, has delivered a 1,340% return since its inception in 1999, despite an 80% drawdown during the early 2000s tech bubble. A $1,000 investment at launch would now be worth $14,190. If invested at the market bottom in October 2002, the return would be over 3,613%.",
+      "url": "https://www.theglobeandmail.com/investing/markets/stocks/AAPL-Q/pressreleases/36957211/if-you-d-invested-1-000-in-the-invesco-qqq-etf-27-years-ago-here-s-how-much-you-d-have-today/",
+      "sentiment_score": 0.430861,
+      "sentiment_label": "Bullish",
+      "relevance": 1.0
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-09",
+      "title": "Morgan Stanley's Mike Wilson Sees 'Crystal Clear' Earnings Growth, Says 'Big Beautiful Bill' Will Fuel Consumer Stocks Rally",
+      "content": "Morgan Stanley's Mike Wilson is highly bullish on the U.S. equity market, forecasting high teens earnings growth and exceptional performance for the consumer goods sector. He believes that stabilizing Federal Reserve policies and legislative tailwinds, including tax cuts, will fuel a surge in consumer spending after a \"rolling recession.\" Despite anticipating a market correction, Wilson advises investors to view dips as buying opportunities, maintaining a positive long-term outlook for growth.",
+      "url": "https://www.benzinga.com/markets/equities/26/01/49806058/morgan-stanleys-mike-wilson-sees-crystal-clear-earnings-growth-says-big-beautiful-bill-will-fuel-consumer-stocks-rally",
+      "sentiment_score": 0.039647,
+      "sentiment_label": "Neutral",
+      "relevance": 0.345251
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-09",
+      "title": "If You'd Invested $1,000 in the Invesco QQQ ETF 27 Years Ago, Here's How Much You'd Have Today",
+      "content": "The Invesco QQQ Trust ETF, launched in early 1999, has been a significant performer despite experiencing an over 80% drawdown during the early 2000s tech bubble. A $1,000 investment at its inception would now be worth approximately $14,190, representing a 1,340% total return. If invested at the market bottom in October 2002, the same amount would have grown by over 3,613%.",
+      "url": "https://www.theglobeandmail.com/investing/markets/stocks/AAPL/pressreleases/36957211/if-youd-invested-1000-in-the-invesco-qqq-etf-27-years-ago-heres-how-much-youd-have-today/",
+      "sentiment_score": 0.412931,
+      "sentiment_label": "Bullish",
+      "relevance": 1.0
+    }
+  ],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Aeva Technologies' CEO Sold 488,000 Shares Worth $6.3 Million",
+          "content": "Aeva Technologies' CEO, Soroush Salehian Dardashti, sold 488,160 shares valued at approximately $6.3 million on January 2, 2026. This transaction was his largest single direct sale and reduced his direct holdings by 11.61%, though he still retains over 3.7 million shares (direct and indirect). Despite the sale, the stock price subsequently soared due to a deal with Nvidia, suggesting the CEO may have sold prematurely.",
+          "url": "https://www.fool.com/coverage/filings/2026/01/10/aeva-technologies-ceo-sold-488-000-shares-worth-usd6-3-million/",
+          "sentiment_score": 0.416815,
+          "sentiment_label": "Bullish",
+          "relevance": 0.821168
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "SMH vs SOXX: What's the Better Semiconductor ETF Buy?",
+          "content": "This article compares two prominent semiconductor ETFs, VanEck Semiconductor ETF (SMH) and iShares Semiconductor ETF (SOXX), to determine which is a better investment. The main difference lies in their portfolio concentration: SMH is more concentrated with heavy weighting towards large companies like Nvidia and Taiwan Semiconductor, while SOXX caps individual holdings for broader diversification. The author suggests SMH is currently better due to the market's large-cap bias, but acknowledges SOX",
+          "url": "https://www.fool.com/investing/2026/01/06/smh-vs-soxx-better-buy-semiconductor-etf/",
+          "sentiment_score": 0.33487,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.738104
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "2026 US Stock Market Outlook: Where to Find Investing Opportunities",
+          "content": "The US equity market was trading at a 4% discount to fair value estimates as of December 31, 2025, driven by significant fair value increases in mega-cap stocks and despite an overall market rise. Investors can find attractive opportunities in small-cap, mid-cap, and certain large-cap growth and value stocks, with Real Estate, Technology, Energy, and Communications sectors showing significant undervaluation. The outlook for 2026 predicts continued volatility due to high AI valuations, a change i",
+          "url": "https://www.morningstar.com/markets/2026-us-stock-market-outlook-where-find-investing-opportunities",
+          "sentiment_score": 0.281482,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.859104
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Senator Dumps Apple, Google, Microsoft To End 2025—But Refuses To Sell This Mag 7 Underperformer",
+          "content": "Senator Shelley Moore Capito (R-W.Va.) sold shares of Apple, Alphabet, and Microsoft in December 2025, according to recent disclosures. Despite divesting from these major Magnificent Seven stocks, Capito chose to retain her Meta Platforms shares, which she bought multiple times throughout 2025. This decision is noteworthy given Meta's second-worst performance among the Magnificent Seven in 2025, suggesting a long-term belief in the company perhaps due to undervaluation.",
+          "url": "https://finance.yahoo.com/news/senator-dumps-apple-google-microsoft-223108948.html",
+          "sentiment_score": 0.100636,
+          "sentiment_label": "Neutral",
+          "relevance": 0.636084
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Top Research Reports for NVIDIA, Alphabet & Amazon.com",
+          "content": "This article from Zacks Research Daily presents expert analysis on 16 major stocks, highlighting new research reports on NVIDIA, Alphabet, and Amazon.com, which have shown strong market performance due to advancements in AI, cloud services, and e-commerce. It details the growth drivers and potential headwinds for each company, along with a special feature on micro-cap stock CBL & Associates Properties and other notable reports.",
+          "url": "https://www.tradingview.com/news/zacks:3d987ed62094b:0-top-research-reports-for-nvidia-alphabet-amazon-com/",
+          "sentiment_score": 0.345165,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.91372
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "LM Funding America receives Nasdaq notice for minimum bid price deficiency",
+          "content": "LM Funding America (NASDAQ:LMFA) has received a notice from Nasdaq regarding non-compliance with the minimum $1.00 bid price requirement for its common stock, having traded below this threshold for 35 consecutive business days. The company has a 180-day grace period to regain compliance and may be eligible for an extension, but failure to do so could lead to delisting. This comes amid financial challenges, including significant cash burn and a \"WEAK\" InvestingPro Financial Health Score, despite ",
+          "url": "https://www.investing.com/news/sec-filings/lm-funding-america-receives-nasdaq-notice-for-minimum-bid-price-deficiency-93CH-4440376",
+          "sentiment_score": -0.103201,
+          "sentiment_label": "Neutral",
+          "relevance": 0.620534
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Teradyne Rides on Accelerating AI Infrastructure Demand: What's Ahead?",
+          "content": "Teradyne (TER) is experiencing significant growth driven by the accelerating demand for AI infrastructure, particularly in its Semiconductor Test business, and is actively integrating AI into its robotics products. Despite facing stiff competition from companies like Advantest and ABB, Teradyne anticipates continued AI-related demand to fuel its growth. The company's stock has surged, though it trades at a premium compared to its industry peers.",
+          "url": "https://www.easternprogress.com/teradyne-rides-on-accelerating-ai-infrastructure-demand-whats-ahead/article_053b3e6e-8d49-5c28-8e6d-426daa04758c.html",
+          "sentiment_score": 0.247702,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.603791
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Form 424B2 GOLDMAN SACHS GROUP INC",
+          "content": "GS Finance Corp., guaranteed by The Goldman Sachs Group, Inc., is offering Autocallable Variable Coupon Equity-Linked Notes due January 30, 2031. The notes' coupon payments and potential automatic call depend on the performance of the Class C capital stock of Alphabet Inc., common stock of NVIDIA Corporation, Class A common stock of Meta Platforms, Inc., and common stock of Tesla, Inc. Investors face risks related to variable coupon amounts, automatic redemption, market value fluctuations, and t",
+          "url": "https://www.streetinsider.com/SEC+Filings/Form+424B2+GOLDMAN+SACHS+GROUP+INC/25831142.html",
+          "sentiment_score": 0.067822,
+          "sentiment_label": "Neutral",
+          "relevance": 0.898741
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Microsoft stock holds near $480 as Copilot Checkout rollout sets up a Jan. 28 earnings test",
+          "content": "Microsoft shares are hovering near $480 after the company introduced a new Copilot checkout feature and other AI tools for retailers. Investors are now looking ahead to the fiscal 2026 second-quarter earnings report on January 28, which will provide insight into demand for Microsoft's cloud and AI businesses and clarity on its outlook, with Wells Fargo lowering its price target but maintaining an \"Overweight\" rating. The success of the new retail AI features and the impact of AI spending on marg",
+          "url": "https://ts2.tech/en/microsoft-stock-holds-near-480-as-copilot-checkout-rollout-sets-up-a-jan-28-earnings-test/",
+          "sentiment_score": 0.115617,
+          "sentiment_label": "Neutral",
+          "relevance": 0.643152
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "A Look At Innoviz Technologies (INVZ) Valuation After InnovizThree LiDAR And NVIDIA Edge Processing Reveal",
+          "content": "Innoviz Technologies (INVZ) recently unveiled its InnovizThree LiDAR with an integrated RGB camera and a partnership with NVIDIA for edge processing at CES 2026. Despite a recent 33.63% jump in stock price, the company has seen significant declines over the past year and three years. Analysts suggest the stock is 57% undervalued with a narrative fair value of US$2.65, based on aggressive growth assumptions, though its current P/S ratio suggests investors are already paying a premium.",
+          "url": "https://simplywall.st/stocks/us/tech/nasdaq-invz/innoviz-technologies/news/a-look-at-innoviz-technologies-invz-valuation-after-innovizt",
+          "sentiment_score": 0.235319,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.823441
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Will Illumina (ILMN) Beat Estimates Again in Its Next Earnings Report?",
+          "content": "This article analyzes whether Illumina (ILMN) is likely to beat its earnings estimates again, based on its past performance and the Zacks Earnings ESP. Illumina, which has a history of surpassing earnings estimates by 16.09% on average in the last two quarters, currently has a positive Earnings ESP of +1.80% and a Zacks Rank #3 (Hold). This combination suggests a high probability of another earnings beat in its upcoming report.",
+          "url": "https://www.sharewise.com/de/news_articles/Will_Illumina_ILMN_Beat_Estimates_Again_in_Its_Next_Earnings_Report_Zacks_20260109_1810",
+          "sentiment_score": 0.317528,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.565252
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Micron vs. NVIDIA: One AI Chip Stock is Poised to Win Big in 2026",
+          "content": "This article compares Micron Technology (MU) and NVIDIA (NVDA), two prominent AI chip stocks, assessing their potential for growth in 2026. While Micron saw significant gains in the previous year due to high-bandwidth memory (HBM) chip demand, NVIDIA's strong performance is driven by its CUDA platform and Blackwell chips. The analysis concludes that NVIDIA appears to be a more stable stock with greater growth potential in 2026, despite both companies currently holding a Zacks Rank #1 (Strong Buy",
+          "url": "https://sg.finance.yahoo.com/news/micron-vs-nvidia-one-ai-200500396.html",
+          "sentiment_score": 0.346941,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.978429
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Straubel sells QuantumScape (QS) shares worth $305,690",
+          "content": "Jeffrey B. Straubel, a director at QuantumScape Corp (NYSE:QS), sold 27,106 shares of Class A Common Stock worth $305,690 on January 5, 2026, under a Rule 10b5-1 trading plan. The shares were sold at a weighted average price of $11.2776. This transaction follows other significant company developments, including a new joint development agreement with a top-10 global automaker, completion of key equipment installation, and a planned stock listing transfer to Nasdaq.",
+          "url": "https://www.investing.com/news/insider-trading-news/straubel-sells-quantumscape-qs-shares-worth-305690-93CH-4436019",
+          "sentiment_score": 0.143667,
+          "sentiment_label": "Neutral",
+          "relevance": 0.604426
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "The Great Compute Pivot: How IREN Transformed from Bitcoin Miner to AI Infrastructure Titan",
+          "content": "IREN Limited (IREN), formerly Iris Energy, has successfully transitioned from a Bitcoin miner to a leading AI cloud infrastructure provider, highlighted by a significant $9.7 billion, five-year AI cloud agreement with Microsoft. This strategic pivot, driven by leveraging its robust power infrastructure for AI's high demands, has re-rated the company and created a valuation gap with traditional crypto miners. The article details IREN's journey, challenges overcome, and the broader industry trend ",
+          "url": "https://markets.financialcontent.com/stocks/article/marketminute-2026-1-9-the-great-compute-pivot-how-iren-transformed-from-bitcoin-miner-to-ai-infrastructure-titan",
+          "sentiment_score": 0.329633,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.662185
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Amentum Holdings (AMTM) Stock Rises to 52-Week High - Jan 8, 2026 - News and Statistics",
+          "content": "Shares of government engineering solutions provider Amentum Holdings (AMTM) surged 2.4% on January 8, 2026, reaching a 52-week high. This rise followed positive analyst commentary, including increased price targets from Cantor Fitzgerald and BofA Securities, and a new contract award. Despite high stock volatility, the market viewed these developments as significant for Amentum, which has seen a 6% increase since the year's beginning.",
+          "url": "https://www.indexbox.io/blog/amentum-stock-hits-52-week-high-on-analyst-praise-new-contract/",
+          "sentiment_score": 0.137676,
+          "sentiment_label": "Neutral",
+          "relevance": 0.621742
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Tesla vs BYD: Who Really Leads the Global EV Market?",
+          "content": "In 2025, BYD surpassed Tesla in global Battery Electric Vehicle (BEV) sales, driven by its broader product range and lower-priced models, alongside strong hybrid sales. While Tesla's vehicle deliveries declined, its overall revenue remained resilient due to rapid growth in energy storage and other non-automotive sectors. The article suggests that Tesla's long-term valuation is increasingly tied to its advancements in autonomy, AI, and energy infrastructure, rather than purely vehicle sale volume",
+          "url": "https://www.securities.io/tesla-vs-byd-global-ev-leadership/",
+          "sentiment_score": -0.13151,
+          "sentiment_label": "Neutral",
+          "relevance": 0.63396
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Microchip Technology (NASDAQ:MCHP) Given New $83.00 Price Target at Mizuho",
+          "content": "Mizuho has increased its price target for Microchip Technology (NASDAQ:MCHP) to $83.00 from $80.00, maintaining an \"outperform\" rating, indicating a potential upside of over 10%. This adjustment follows Microchip's raised Q4 sales guidance, a strategic partnership with NVIDIA for custom firmware, and a slight beat on recent quarterly EPS and revenue. The semiconductor company currently holds a \"Moderate Buy\" consensus rating among analysts with an average price target of $77.62.",
+          "url": "https://www.marketbeat.com/instant-alerts/microchip-technology-nasdaqmchp-given-new-8300-price-target-at-mizuho-2026-01-09/",
+          "sentiment_score": 0.318498,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.732217
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Mizuho Picks Nvidia, Broadcom, Lumentum as Top AI Chip Stocks for 2026",
+          "content": "Mizuho Securities has identified Nvidia, Lumentum, and Broadcom as its top AI chip stock picks for 2026, driven by strong AI-related demand in accelerators, optical networking, and advanced chips. The firm also recommends watching Microchip Technology and Lam Research, and expects continued strength in wafer fab equipment and memory from companies like Micron and SanDisk due to growing AI data center needs. While cautious on autos, analog chips, PCs, and smartphones, Mizuho views semiconductor v",
+          "url": "https://www.tradingview.com/news/gurufocus:0ae85c493094b:0-mizuho-picks-nvidia-broadcom-lumentum-as-top-ai-chip-stocks-for-2026/",
+          "sentiment_score": 0.390905,
+          "sentiment_label": "Bullish",
+          "relevance": 0.868729
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Intel stock jumps 10% after CEO meets with Trump",
+          "content": "Intel's stock jumped 10% after CEO Lip-Bu Tan met with President Donald Trump, who touted U.S. investment in the chipmaker and new microprocessors introduced by the company. Trump celebrated the federal government's nearly $9 billion investment and Intel's progress in bringing chip manufacturing back to America. Despite financial headwinds and job cuts, Intel's new 18A technology and potential deals with companies like Apple signal a significant effort in its comeback.",
+          "url": "https://www.oregonlive.com/silicon-forest/2026/01/intel-stock-jumps-10-after-ceo-meets-with-trump.html",
+          "sentiment_score": 0.300836,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.600331
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Caterpillar & NVIDIA: Expand Physical AI for Manufacturing",
+          "content": "Caterpillar and NVIDIA have expanded their collaboration, announced at CES 2026, to integrate physical AI into manufacturing processes. The partnership focuses on deploying edge AI, autonomy, and digital twins across construction, mining, and power equipment to enhance safety and productivity. Key initiatives include using NVIDIA Jetson Thor for real-time processing and autonomous operations, implementing generative AI with Cat AI Assistant for operator support, and leveraging NVIDIA AI Factory ",
+          "url": "https://constructiondigital.com/articles/caterpillar-nvidia-expand-physical-ai",
+          "sentiment_score": 0.400567,
+          "sentiment_label": "Bullish",
+          "relevance": 0.934229
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Can an Expanding Portfolio Help Skyworks' Shares Recover in 2026?",
+          "content": "Skyworks Solutions (SWKS) shares have underperformed due to macroeconomic challenges and inventory digestion, despite the company's expanding portfolio. New product introductions, such as highly integrated Wi-SUN/LoRaWAN RF front-end modules and automotive-grade solutions, aim to capitalize on robust demand in Mobile and Broad Markets, including AI-driven Android products, edge IoT, automotive, and infrastructure. While analysts project a decrease in net sales and earnings for fiscal 2026, Skywo",
+          "url": "https://www.tradingview.com/news/zacks:ee9db7b30094b:0-can-an-expanding-portfolio-help-skyworks-shares-recover-in-2026/",
+          "sentiment_score": 0.304988,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.623817
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Why Is Lam Research (LRCX) Stock Soaring Today",
+          "content": "Lam Research (LRCX) stock rose significantly after Goldman Sachs raised its price target and maintained a Buy rating, citing broad strength in the semiconductor industry. Mizuho also views the wafer fabrication equipment sector positively for 2026. This positive sentiment is amplified by strong global semiconductor sales and record results from major industry players like Taiwan Semiconductor Manufacturing, indicating robust demand for AI chips.",
+          "url": "https://finviz.com/news/272240/why-is-lam-research-lrcx-stock-soaring-today",
+          "sentiment_score": 0.434146,
+          "sentiment_label": "Bullish",
+          "relevance": 0.633103
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "4 Stocks to Boost Your Portfolio on Steady Jump in Semiconductor Sales",
+          "content": "The semiconductor market is experiencing rapid growth, driven by increasing enthusiasm for artificial intelligence (AI), particularly generative AI. Global semiconductor sales reached $75.3 billion in November, marking a 3.5% month-over-month increase and a 29.8% year-over-year surge. This article suggests four semiconductor stocks—Analog Devices (ADI), NVIDIA Corporation (NVDA), MACOM Technology Solutions Holdings (MTSI), and Amtech Systems (ASYS)—as strong investment opportunities given the se",
+          "url": "https://www.sharewise.com/us/news_articles/4_Stocks_to_Boost_Your_Portfolio_on_Steady_Jump_in_Semiconductor_Sales_Zacks_20260109_1651",
+          "sentiment_score": 0.710568,
+          "sentiment_label": "Bullish",
+          "relevance": 0.827881
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Why SolarEdge (SEDG) Stock Is Trading Up Today",
+          "content": "SolarEdge Technologies (SEDG) stock surged 5.8% after TD Cowen upgraded its rating to Buy from Hold and increased its price target, citing the company's successful turnaround plan and new product launches improving profit margins and market share. Other analysts, including Morgan Stanley and Jefferies, also raised their ratings or price targets, reflecting a more favorable view of the company. Despite the recent gains, SEDG is still trading significantly below its 52-week high, indicating potent",
+          "url": "https://finviz.com/news/272264/why-solaredge-sedg-stock-is-trading-up-today",
+          "sentiment_score": 0.12157,
+          "sentiment_label": "Neutral",
+          "relevance": 0.601988
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "11 emerging technologies to watch in 2026",
+          "content": "This article identifies 11 emerging technologies to watch in 2026, ranging from advancements in AIoT and robotics to quantum computing and structural batteries. It details the potential impact and key developments within each technology, highlighting their capacity to revolutionize various industries and aspects of society. The piece also includes insights from market reports and surveys on adoption and growth projections for these innovations.",
+          "url": "https://www.techtarget.com/searchenterpriseai/feature/Emerging-technologies-to-watch",
+          "sentiment_score": 0.343745,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.623123
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Arbe Robotics (ARBE) Is Up 7.6% After Unveiling NVIDIA‑Powered AI Radar Platform for Hands‑Off Driving",
+          "content": "Arbe Robotics announced at CES 2026 a new AI-based perception platform for hands-off driving, combining its ultra-HD radar with NVIDIA's accelerated computing. This development aims to solidify Arbe's role in higher levels of vehicle autonomy by creating AI-based occupancy grids for complex highway scenarios. While the NVIDIA collaboration and recent design wins strengthen Arbe's investment case, the company still faces challenges related to funding needs, execution risk, and achieving material ",
+          "url": "https://simplywall.st/stocks/us/tech/nasdaq-arbe/arbe-robotics/news/arbe-robotics-arbe-is-up-76-after-unveiling-nvidiapowered-ai",
+          "sentiment_score": 0.348838,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.875981
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Caterpillar Teams With Nvidia to Deploy AI in Factories",
+          "content": "Caterpillar Inc. is investing millions in artificial intelligence technology, collaborating with Nvidia Corp. to transform its factories and products. This initiative will see the deployment of an AI-driven ecosystem, including the Cat AI Assistant for construction equipment and the use of Nvidia AI Factory for digital twins to optimize manufacturing processes. Caterpillar also plans to invest $100 million over five years for workforce training in AI-enabled industrial systems.",
+          "url": "https://www.assemblymag.com/articles/99752-caterpillar-teams-with-nvidia-to-deploy-ai-in-factories",
+          "sentiment_score": 0.735325,
+          "sentiment_label": "Bullish",
+          "relevance": 0.816061
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "How CES has ‘reinvented’ itself for the marketing industry",
+          "content": "CES is evolving beyond a pure tech show, attracting legacy brands like John Deere and Lego that are using the event to showcase their technological innovations and reach the marketing industry. While AI remains a dominant theme, these traditional companies are highlighting the practical applications of technology, emphasizing usefulness and purpose. The event has also seen an increasing presence of marketing and communications professionals, with many executives leveraging \"C Space\" to connect w",
+          "url": "https://www.campaignlive.com/article/1944715/ces-reinvented-itself-marketing-industry?bulletin=the-campaign-fix",
+          "sentiment_score": 0.320325,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.838881
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "UBER vs. BIDU: Which Stock Is Better Placed in the Promising AV Space?",
+          "content": "The article compares Uber (UBER) and Baidu (BIDU) in the rapidly growing autonomous vehicle (AV) market, highlighting their different strategies. Uber focuses on partnerships to avoid high R&D costs, while Baidu is a key player with its Apollo Go platform, primarily in China but expanding globally. Despite Uber's commendable AV ambitions, Baidu is presented as the more favorable investment due to its valuation, brighter 2026 earnings outlook, and stronger price performance.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/UBER/pressreleases/36969357/uber-vs-bidu-which-stock-is-better-placed-in-the-promising-av-space/",
+          "sentiment_score": 0.317444,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.605988
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Broadcom or Nvidia? Why Not Both and This Lesser Known Stock Too.",
+          "content": "Mizuho analysts predict that major U.S. tech companies will increase their spending on artificial intelligence by almost one-third this year, signaling continued growth for chip makers. The article suggests that investors don't have to choose between Broadcom and Nvidia, and highlights a lesser-known stock, LITE, as a potential winner in this AI-driven market. This stock is considered \"well-positioned\" to benefit from the ongoing competition between Broadcom and Nvidia.",
+          "url": "https://www.barrons.com/articles/broadcom-stock-price-nvidia-ai-chips-630116b1",
+          "sentiment_score": 0.34844,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.809059
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "NVIDIA Unveils Multi-Agent Intelligent Warehouse and Catalog Enrichment AI Blueprints to Power the Retail Pipeline",
+          "content": "NVIDIA has introduced new Multi-Agent Intelligent Warehouse (MAIW) and Retail Catalog Enrichment AI Blueprints, open-source developer references designed to optimize the retail value chain. These blueprints aim to solve issues like warehouse workflow inefficiencies, sparse product data, and inconsistent catalog information by leveraging generative AI and agentic systems. This initiative is part of NVIDIA's broader strategy to integrate AI infrastructure throughout the warehouse-to-consumer workf",
+          "url": "https://blogs.nvidia.com/blog/multi-agent-intelligent-warehouse-and-catalog-enrichment-blueprints/",
+          "sentiment_score": 0.430048,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Assessing Amkor Technology (AMKR) Valuation After Needham’s Upgraded AI Packaging Outlook",
+          "content": "Needham & Company has upgraded its outlook for Amkor Technology (AMKR) due to its role in AI chip packaging, leading to a significant increase in its stock price. Despite this optimism, the article questions if the AI future is already priced into the stock, noting its current valuation of $52.72 significantly exceeds the analyst target of $39.38 and an intrinsic value estimate of $4.19. The analysis suggests AMKR is overvalued based on P/E ratios and a discounted cash flow model, cautioning inv",
+          "url": "https://simplywall.st/stocks/us/semiconductors/nasdaq-amkr/amkor-technology/news/assessing-amkor-technology-amkr-valuation-after-needhams-upg",
+          "sentiment_score": 0.30969,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.646788
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Arrive AI Celebrates 2025 Milestones",
+          "content": "Arrive AI (NASDAQ:ARAI) has released its 2025 Year in Review, highlighting significant achievements in public markets, product development, partnerships, and intellectual property. Key milestones include a Nasdaq direct listing, joining the Russell 2000® and 3000® Indexes, expanding healthcare deployments, and forming strategic partnerships for global expansion. The company also accelerated software development through the NVIDIA Connect program and expanded its patent portfolio.",
+          "url": "https://www.coloradoan.com/press-release/story/37828/arrive-ai-celebrates-2025-milestones/",
+          "sentiment_score": 0.337303,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.616208
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Urban Outfitters stock hits all-time high of 84.0 USD",
+          "content": "Urban Outfitters Inc. (URBN) stock reached an all-time high of $84.00, marking a 46.3% increase over the past year. The company boasts a market capitalization of $7.5 billion, a P/E ratio of 15.69, and a perfect Piotroski Score of 9, indicating strong financial health and reflecting strategic initiatives and consumer demand. Recent analyst target adjustments and strong Q3 fiscal 2025 earnings further highlight its robust performance.",
+          "url": "https://www.investing.com/news/company-news/urban-outfitters-stock-hits-alltime-high-of-840-usd-93CH-4437783",
+          "sentiment_score": 0.114323,
+          "sentiment_label": "Neutral",
+          "relevance": 0.59046
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Higher Capacity HDDs Drive Western Digital's Revenue Growth",
+          "content": "Western Digital's HDD business is experiencing significant revenue growth, driven by increasing demand for higher-capacity drives and robust exabyte consumption from large-scale customers. The company shipped 204 exabytes in Q1 fiscal year 2026, a 23% year-over-year increase, fueled by AI and data-intensive workloads. Western Digital is also making strong progress on its next-generation HAMR drives, with purchase orders extending through 2027 from top customers.",
+          "url": "https://www.yourwyominglink.com/higher-capacity-hdds-drive-western-digitals-revenue-growth/article_bf5c1cba-50e1-5c84-bf43-76e74235124e.html",
+          "sentiment_score": 0.228787,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.585619
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Bernstein mantém classificação Outperform para ações da Broadcom em meio à dominância em IA",
+          "content": "Bernstein reiterated an Outperform rating and a $475 price target for Broadcom Inc. (NASDAQ:AVGO), citing strong conviction in the company's continued dominance in the AI ASIC sector despite investor concerns about competition. The firm believes Broadcom's technical innovations and strategic positioning with NVIDIA benefit its growth, leading analysts to revise earnings upwards and supporting its valuation with a PEG ratio of 0.24. Recent reports also highlight Broadcom's significant revenue gro",
+          "url": "https://br.investing.com/news/analyst-ratings/bernstein-mantem-classificacao-outperform-para-acoes-da-broadcom-em-meio-a-dominancia-em-ia-93CH-1795247",
+          "sentiment_score": 0.303709,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.737453
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Zacks Industry Outlook Highlights NVIDIA and Amtech Systems",
+          "content": "Zacks Equity Research highlights NVIDIA (NVDA) and Amtech Systems (ASYS) within the Semiconductor – General industry, noting that both companies are well-positioned to benefit from the ongoing AI technological revolution. While geopolitical instability and high valuations present some near-term challenges, the long-term outlook for the semiconductor industry remains bright due to increasing demand across various sectors like AI, HPC, and automotive. Global semiconductor sales are projected for s",
+          "url": "https://www.sharewise.com/de/news_articles/Zacks_Industry_Outlook_Highlights_NVIDIA_and_Amtech_Systems_Zacks_20260109_1107",
+          "sentiment_score": 0.410283,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Taiwan Semiconductor Started 2nm Chip Production. Time to Buy?",
+          "content": "Taiwan Semiconductor Manufacturing (TSM) has started 2nm chip production, leading to a 52% stock gain in the past year. Analysts like JPMorgan remain bullish on TSMC's leadership in critical 2nm projects, despite Intel's growing foundry momentum and geopolitical risks. With future processes like enhanced 2nm and 1.6nm in preparation, TSMC is well-positioned to capitalize on increasing AI demand.",
+          "url": "https://247wallst.com/investing/2026/01/09/taiwan-semiconductor-started-2nm-chip-production-time-to-buy/",
+          "sentiment_score": 0.349062,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.616849
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Synopsys, Inc. $SNPS Holdings Raised by State of Alaska Department of Revenue",
+          "content": "The State of Alaska Department of Revenue increased its stake in Synopsys, Inc. (NASDAQ:SNPS) by 62.5% in the third quarter, acquiring an additional 10,855 shares to hold a total of 28,222 shares valued at $13.92 million. Other institutional investors also adjusted their positions in the semiconductor company. Synopsys recently reported strong quarterly earnings, topping consensus estimates, and analysts have issued varied ratings, with a consensus of \"Moderate Buy.\"",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-synopsys-inc-snps-holdings-raised-by-state-of-alaska-department-of-revenue-2026-01-09/",
+          "sentiment_score": 0.302706,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.631906
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "These Were Among the Best-Performing ETFs in 2025. Are They Still Buys for 2026?",
+          "content": "This article examines three top-performing ETFs of 2025 – the SPDR Gold Shares ETF (GLD), the Abrdn Physical Platinum Shares ETF (PPLT), and the VanEck Semiconductor ETF (SMH) – and assesses their continued viability for 2026. It details each ETF's structure, holdings, expense ratios, and significant returns, highlighting how two of them offer exposure to precious metals and one to the booming semiconductor industry. The analysis provides investors with insights into diversification strategies a",
+          "url": "https://markets.financialcontent.com/stocks/article/barchart-2026-1-9-these-were-among-the-best-performing-etfs-in-2025-are-they-still-buys-for-2026",
+          "sentiment_score": 0.315657,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.730934
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Spoke.com - These Were Among the Best-Performing ETFs in 2025. Are They Still Buys for 2026?",
+          "content": "This article reviews three top-performing ETFs from 2025: SPDR Gold Shares ETF (GLD), Abrdn Physical Platinum Shares ETF (PPLT), and VanEck Semiconductor ETF (SMH). It details their holdings, expense ratios, recent performance, and suitability for investors looking for diversification and exposure to precious metals or the semiconductor industry. The article suggests these ETFs could still be good buys for 2026 due to their strong performance and underlying investment themes.",
+          "url": "https://markets.financialcontent.com/spoke/article/barchart-2026-1-9-these-were-among-the-best-performing-etfs-in-2025-are-they-still-buys-for-2026",
+          "sentiment_score": 0.613668,
+          "sentiment_label": "Bullish",
+          "relevance": 0.646957
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Nisa Investment Advisors LLC Sells 27,149 Shares of Analog Devices, Inc. $ADI",
+          "content": "Nisa Investment Advisors LLC reduced its stake in Analog Devices (NASDAQ:ADI) by 13.4% in the third quarter, selling 27,149 shares and retaining 176,137 shares valued at $43.28 million. Analog Devices reported strong quarterly earnings, beating analyst expectations with an EPS of $2.26 and revenue of $3.08 billion, a 25.9% increase year-over-year. The company maintains a \"Moderate Buy\" consensus rating from analysts with an average target price of $287.22, and recently announced a quarterly divi",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-nisa-investment-advisors-llc-sells-27149-shares-of-analog-devices-inc-adi-2026-01-09/",
+          "sentiment_score": 0.147555,
+          "sentiment_label": "Neutral",
+          "relevance": 0.608264
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Oak Family Advisors LLC Has $17.30 Million Stock Position in Taiwan Semiconductor Manufacturing Company Ltd. $TSM",
+          "content": "Oak Family Advisors LLC recently trimmed its stake in Taiwan Semiconductor Manufacturing Company (TSM) by 13.1% in Q3 2025, yet TSM remains its largest holding, valued at $17.30 million. The company is experiencing strong AI-driven growth, with Q4 revenue exceeding forecasts and a projected 31.6% year-over-year revenue increase for 2025 due to robust AI chip demand. Despite a consensus \"Buy\" rating and a raised dividend, some investors are concerned about premium valuations amid the AI spending ",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-oak-family-advisors-llc-has-1730-million-stock-position-in-taiwan-semiconductor-manufacturing-company-ltd-tsm-2026-01-09/",
+          "sentiment_score": 0.303941,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.646891
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Aehr Test Systems (NASDAQ:AEHR) Q2 2026 Earnings Call Transcript",
+          "content": "Aehr Test Systems (NASDAQ: AEHR) reported Q2 2026 earnings, beating expectations with an EPS of -$0.04 against an expected -$0.08. The company is experiencing increased demand for its semiconductor test and burn-in solutions, particularly driven by AI and data center infrastructure growth, leading to reinstated financial guidance for the second half of fiscal 2026 with projected revenues between $25 million and $30 million. They anticipate strong bookings of $60 million to $80 million, primarily",
+          "url": "https://www.insidermonkey.com/blog/aehr-test-systems-nasdaqaehr-q2-2026-earnings-call-transcript-1672226/",
+          "sentiment_score": 0.292302,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.648504
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Wall Street Slept On CRH plc – Here’s Why This ‘Boring’ Stock Is Suddenly Going Viral",
+          "content": "CRH plc, a building materials giant, is gaining attention in financial circles, especially after shifting its primary listing to the U.S. While not a \"sexy\" stock, it's being highlighted on finance TikTok and YouTube as a solid infrastructure play, offering value, dividends, and exposure to government spending and construction booms. The article explores why this seemingly \"boring\" stock could be a profitable, long-term addition to a diversified portfolio, despite potential risks from interest r",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/wall-street-slept-on-crh-plc-here-s-why-this-boring-stock-is/68472670",
+          "sentiment_score": -0.148601,
+          "sentiment_label": "Neutral",
+          "relevance": 0.556078
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Bernstein reiterates Outperform rating on Broadcom stock amid AI dominance By Investing.com",
+          "content": "Bernstein analyst Stacy Rasgon has reiterated an Outperform rating and a $475.00 price target for Broadcom Limited, affirming conviction in the company's AI dominance despite investor concerns about rising competition. The report dismisses threats from competitors and customer-owned tooling as \"overblown,\" citing Broadcom's unique ability to enable XPU customers to keep pace with NVIDIA’s AI roadmap. Broadcom's strong financial performance, technical innovations, and attractive valuation metrics",
+          "url": "https://in.investing.com/news/analyst-ratings/bernstein-reiterates-outperform-rating-on-broadcom-stock-amid-ai-dominance-93CH-5180499",
+          "sentiment_score": 0.29211,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.728482
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "First Trust Has an ETF That Might Be Better Than the Nasdaq and QQQ",
+          "content": "The First Trust Dow Jones Internet Index Fund (FDN) offers an equal-weight alternative to the Nasdaq and QQQ by focusing on pure internet companies. However, FDN has significantly underperformed QQQ over the past one and five years, primarily due to its lack of exposure to mega-cap tech stocks like Nvidia, Apple, and Microsoft. For investors seeking broad tech exposure or those focused on the \"Magnificent Seven,\" QQQ or the Direxion NASDAQ-100 Equal Weighted Index Shares (QQQE) might be better o",
+          "url": "https://247wallst.com/investing/2026/01/09/first-trust-has-an-etf-that-might-be-better-than-the-nasdaq-and-qqq/",
+          "sentiment_score": 0.256345,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.689934
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jim Cramer on Teradyne: \"I Would Not Step Away From It\"",
+          "content": "Jim Cramer expressed a strong positive sentiment towards Teradyne (NASDAQ: TER), calling it \"one hell of a company\" despite its current high valuation. He indicated he would still be a buyer if the stock pulled back, reiterating his long-standing view of Teradyne as a well-run company with strong performance in the semiconductor industry. The article also mentions Teradyne's significant Q3 2025 performance, with its stock up 53% for the quarter.",
+          "url": "https://finviz.com/news/271655/jim-cramer-on-teradyne-i-would-not-step-away-from-it",
+          "sentiment_score": 0.246852,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.588644
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jim Cramer Says He’d Rather Own Broadcom (AVGO)",
+          "content": "Jim Cramer prefers Broadcom (AVGO) over Salesforce, highlighting Broadcom's strong performance and CEO Hock Tan's leadership in the technology industry. Broadcom has seen its shares gain 49% in the past year due to its custom chip design capabilities, benefiting from AI-generated attention. Analysts like Goldman Sachs and UBS have also maintained positive ratings and price targets for Broadcom, citing its strong position in the enterprise silicon market.",
+          "url": "https://www.insidermonkey.com/blog/jim-cramer-says-hed-rather-own-broadcom-avgo-1672109/",
+          "sentiment_score": 0.31678,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.619367
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "TSMC fourth-quarter revenue jumps 20%, beats forecasts",
+          "content": "TSMC, the world's largest contract chipmaker, reported a 20.45% increase in fourth-quarter revenue, reaching T$1.046 trillion ($33.11 billion), exceeding market forecasts driven by strong demand for AI applications. The company, which supplies Nvidia and Apple, benefited significantly from AI growth. TSMC's shares gained 44.2% last year, outperforming the broader market, and it is set to release full Q4 earnings and updated guidance on January 15.",
+          "url": "https://www.reuters.com/world/asia-pacific/tsmc-posts-q4-revenue-104608-billion-above-forecasts-2026-01-09/",
+          "sentiment_score": 0.321711,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.723538
+        }
+      ],
+      "count": 50,
+      "avg_sentiment": 0.28653176
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "LM Funding America receives Nasdaq notice for minimum bid price deficiency",
+          "content": "LM Funding America (NASDAQ:LMFA) has received a notice from Nasdaq regarding non-compliance with the minimum $1.00 bid price requirement for its common stock, having traded below this threshold for 35 consecutive business days. The company has a 180-day grace period to regain compliance and may be eligible for an extension, but failure to do so could lead to delisting. This comes amid financial challenges, including significant cash burn and a \"WEAK\" InvestingPro Financial Health Score, despite ",
+          "url": "https://www.investing.com/news/sec-filings/lm-funding-america-receives-nasdaq-notice-for-minimum-bid-price-deficiency-93CH-4440376",
+          "sentiment_score": 0.216947,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.641972
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Form 424B2 GOLDMAN SACHS GROUP INC",
+          "content": "GS Finance Corp., guaranteed by The Goldman Sachs Group, Inc., is offering Autocallable Variable Coupon Equity-Linked Notes due January 30, 2031. The notes' coupon payments and potential automatic call depend on the performance of the Class C capital stock of Alphabet Inc., common stock of NVIDIA Corporation, Class A common stock of Meta Platforms, Inc., and common stock of Tesla, Inc. Investors face risks related to variable coupon amounts, automatic redemption, market value fluctuations, and t",
+          "url": "https://www.streetinsider.com/SEC+Filings/Form+424B2+GOLDMAN+SACHS+GROUP+INC/25831142.html",
+          "sentiment_score": 0.092261,
+          "sentiment_label": "Neutral",
+          "relevance": 0.880016
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Straubel sells QuantumScape (QS) shares worth $305,690",
+          "content": "Jeffrey B. Straubel, a director at QuantumScape Corp (NYSE:QS), sold 27,106 shares of Class A Common Stock worth $305,690 on January 5, 2026, under a Rule 10b5-1 trading plan. The shares were sold at a weighted average price of $11.2776. This transaction follows other significant company developments, including a new joint development agreement with a top-10 global automaker, completion of key equipment installation, and a planned stock listing transfer to Nasdaq.",
+          "url": "https://www.investing.com/news/insider-trading-news/straubel-sells-quantumscape-qs-shares-worth-305690-93CH-4436019",
+          "sentiment_score": 0.12643,
+          "sentiment_label": "Neutral",
+          "relevance": 0.626544
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "GM to take $6 billion writedown on EV pullback",
+          "content": "General Motors announced a $6 billion charge to reduce its electric vehicle investments, primarily due to contract settlements with suppliers, as the company adjusts to changing market demand and federal policy shifts. This move follows a similar, larger writedown by Ford and indicates a broader industry pullback on EV production plans. While GM stated its U.S. EV lineup remains unaffected, the company will incur further charges related to supply chain negotiations and saw its EV sales dip after",
+          "url": "https://www.reuters.com/business/autos-transportation/gm-take-6-billion-writedown-ev-pullback-2026-01-08/",
+          "sentiment_score": 0.110135,
+          "sentiment_label": "Neutral",
+          "relevance": 0.641979
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Tesla vs BYD: Who Really Leads the Global EV Market?",
+          "content": "In 2025, BYD surpassed Tesla in global Battery Electric Vehicle (BEV) sales, driven by its broader product range and lower-priced models, alongside strong hybrid sales. While Tesla's vehicle deliveries declined, its overall revenue remained resilient due to rapid growth in energy storage and other non-automotive sectors. The article suggests that Tesla's long-term valuation is increasingly tied to its advancements in autonomy, AI, and energy infrastructure, rather than purely vehicle sale volume",
+          "url": "https://www.securities.io/tesla-vs-byd-global-ev-leadership/",
+          "sentiment_score": -0.243036,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Exclusive: Nukkleus CEO Reveals 'Drone And Anti-Drone' M&A Focus Following Israeli Defense Tech Acquisition",
+          "content": "Nukkleus Inc. is focusing on drone and anti-drone technology for future mergers and acquisitions, as confirmed by CEO Menny Shalom. This strategic pivot follows their recent $14 million acquisition of Israeli defense firm Tiltan Software Engineering, which will serve as a foundation for their new unmanned aerial systems vertical. The company aims to develop \"battle-tested\" solutions addressing navigation resilience in GPS-denied environments for the U.S. and European defense markets.",
+          "url": "https://finance.yahoo.com/news/exclusive-nukkleus-ceo-reveals-drone-173105124.html",
+          "sentiment_score": 0.03632,
+          "sentiment_label": "Neutral",
+          "relevance": 0.637958
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Tesla stock surges nearly 2% today: here’s why analysts see more upside",
+          "content": "Tesla's stock rose nearly 2% on optimism surrounding its Cybercab production timeline and Full Self-Driving advancements, leading analysts to increase price targets. The company is transitioning its narrative from a traditional automaker to a leader in AI and autonomous mobility, with Cybercab production set to begin in April 2026 and the robotaxi service expanding. Analysts like Wedbush Securities, Mizuho Securities, and Piper Sandler highlight the potential for high-margin autonomous services ",
+          "url": "https://www.tradingview.com/news/invezz:739c33f9c094b:0-tesla-stock-surges-nearly-2-today-here-s-why-analysts-see-more-upside/",
+          "sentiment_score": 0.506448,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "The week in GRC: JPMorgan Chase dumps proxy advisors for internal AI tool as Elliott builds stake in Lululemon",
+          "content": "This article summarizes the week's governance, risk, and compliance news. Key developments include Elliott Investment Management's significant stake in Lululemon amidst leadership changes and slowing sales, JPMorgan Chase replacing proxy advisors with an internal AI tool for shareholder votes, and the Trump administration investigating corporate DE&I programs under federal fraud law. It also covers Exor's extended shareholder agreement with Piero Ferrari, activist investor Toms Capital's pressur",
+          "url": "https://www.governance-intelligence.com/shareholders-activism/week-grc-jpmorgan-chase-dumps-proxy-advisors-internal-ai-tool-elliott-builds",
+          "sentiment_score": 0.445514,
+          "sentiment_label": "Bullish",
+          "relevance": 0.620106
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Tesla Stock Is Rising -- Analysts Talk 2026 Robotaxi Catalysts",
+          "content": "Tesla shares rose after New Street Research highlighted the global robotaxi market as approaching an inflection point, expecting commercial operations to expand in 2026. Analyst Peter Vogel reiterated a Buy rating and a $600 price target, emphasizing Tesla's structural advantages in lower vehicle costs, vertical integration, and a flexible supply model that leverages customer-owned vehicles. Anticipated catalysts for 2026 include progress in unsupervised self-driving and the start of Cybercab pr",
+          "url": "https://www.tradingview.com/news/gurufocus:96dadf5de094b:0-tesla-stock-is-rising-analysts-talk-2026-robotaxi-catalysts/",
+          "sentiment_score": 0.468844,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "ARK Innovation ETF Pivots Toward AI and Digital Infrastructure",
+          "content": "The ARK Innovation ETF (ARKK) has strategically shifted its investment focus towards AI-powered precision medicine and digital asset infrastructure, moving away from traditional software and fintech. This pivot involves increasing stakes in AI healthcare companies like Tempus AI and Beam Therapeutics, while trimming exposure to firms such as Robinhood and Roblox, and adding a position in Circle Internet Group. The fund delivered strong returns in 2025 and early 2026, with healthcare now its larg",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/ark-innovation-etf-pivots-toward-ai-and-digital-infrastructure/68472997",
+          "sentiment_score": 0.209413,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.60817
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Urban Outfitters stock hits all-time high of 84.0 USD",
+          "content": "Urban Outfitters Inc. (URBN) stock reached an all-time high of $84.00, marking a 46.3% increase over the past year. The company boasts a market capitalization of $7.5 billion, a P/E ratio of 15.69, and a perfect Piotroski Score of 9, indicating strong financial health and reflecting strategic initiatives and consumer demand. Recent analyst target adjustments and strong Q3 fiscal 2025 earnings further highlight its robust performance.",
+          "url": "https://www.investing.com/news/company-news/urban-outfitters-stock-hits-alltime-high-of-840-usd-93CH-4437783",
+          "sentiment_score": 0.116866,
+          "sentiment_label": "Neutral",
+          "relevance": 0.561298
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Nio Dec exports surge 79% from Nov to record 750 units",
+          "content": "Nio's exports in December surged by 79% from November to a record 750 units, according to data from the China Passenger Car Association. The company also recorded strong domestic sales, ranking ninth in China's NEV market with 47,385 vehicles sold. Nio plans to expand its international presence to 40 countries and regions by year-end, primarily leveraging its new Firefly sub-brand for global market exploration.",
+          "url": "https://cnevpost.com/2026/01/09/nio-dec-2025-exports/",
+          "sentiment_score": 0.135451,
+          "sentiment_label": "Neutral",
+          "relevance": 0.638818
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "SG Americas Securities LLC Has $14.55 Million Stock Holdings in Pool Corporation $POOL",
+          "content": "SG Americas Securities LLC decreased its stake in Pool Corporation (NASDAQ:POOL) by 48.0% in the third quarter, reducing its holdings to 46,914 shares valued at $14.55 million. Other institutional investors like Cim LLC, MassMutual Private Wealth & Trust FSB, Whittier Trust Co., Mitchell & Pahl Private Wealth LLC, and Heritage Family Offices LLP also adjusted their positions in the specialty retailer. The company has a consensus rating of \"Hold\" and a target price of $317.38 from analysts.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-sg-americas-securities-llc-has-1455-million-stock-holdings-in-pool-corporation-pool-2026-01-09/",
+          "sentiment_score": 0.026799,
+          "sentiment_label": "Neutral",
+          "relevance": 0.554929
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Top Small Cap Stocks To Watch Now – January 6th",
+          "content": "This article identifies five small-cap stocks—Spring Valley Acquisition (SV), Alumis (ALMS), Sidus Space (SIDU), Direxion Daily TSLA Bear 1X Shares (TSLS), and Aeva Technologies (AEVA)—as top picks to watch. These companies are highlighted based on their recent high dollar trading volume and represent various sectors including biotech, space-as-a-service, and LiDAR technology. The article defines small-cap stocks as offering high growth potential but also higher volatility and risk.",
+          "url": "https://www.defenseworld.net/2026/01/08/top-small-cap-stocks-to-watch-now-january-6th.html",
+          "sentiment_score": -0.310335,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.634227
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Tesla China Sales Rise 13.2% In December To Clock Best Month Ever",
+          "content": "Tesla Inc. saw a significant increase in its China sales for December, reaching 93,843 vehicles, which represents a 13.2% year-over-year and 31.2% quarter-over-quarter growth, marking its best sales month ever in the region. This growth comes even as Tesla's overall Q4 deliveries fell short of analyst expectations and its rival BYD Co. Ltd. surpassed it as the world's largest EV maker. Despite BYD's global success, its domestic sales in China have declined, and Chinese automakers' exports have g",
+          "url": "https://www.benzinga.com/markets/asia/26/01/49808052/tesla-china-sales-rise-13-2-in-december-to-clock-best-month-ever",
+          "sentiment_score": 0.245598,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "TD Cowen reiterates Buy rating on Senseonics stock, citing attractive 2026 setup",
+          "content": "TD Cowen has reiterated a Buy rating and $15.00 price target for Senseonics Holdings (NYSE:SENS), citing an attractive commercial outlook for 2026 and potential upside of over 116% from its current price. The firm anticipates a \"commercial inflection\" due to accelerated adoption of its Eversense 365 product, expanding gross margins, and direct commercialization efforts. Despite a recent EPS miss, the company's stock remained stable, and upcoming product catalysts alongside a move to the Nasdaq G",
+          "url": "https://www.investing.com/news/analyst-ratings/td-cowen-reiterates-buy-rating-on-senseonics-stock-citing-attractive-2026-setup-93CH-4437643",
+          "sentiment_score": 0.001384,
+          "sentiment_label": "Neutral",
+          "relevance": 0.559045
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Novabay Pharmaceuticals stock hits 52-week high at 11.49 USD",
+          "content": "NovaBay Pharmaceuticals Inc. (NBY) saw its stock hit a 52-week high of $11.49, reflecting a 2141.39% 1-year price return and a 390.34% revenue growth. Despite this surge and a $1.38 billion market capitalization, analysts do not anticipate profitability this year. Recent corporate developments include filing for Series E Non-Voting Convertible Preferred Stock and CEO David Lazar's resignation following a stock transfer agreement.",
+          "url": "https://www.investing.com/news/company-news/novabay-pharmaceuticals-stock-hits-52week-high-at-1149-usd-93CH-4439898",
+          "sentiment_score": 0.106655,
+          "sentiment_label": "Neutral",
+          "relevance": 0.575406
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Google's Larry Page Reportedly Exits California Over Proposed Billionaire Tax, Joining Peter Thiel, But This CEO Hasn't 'Thought About It Even Once'",
+          "content": "Google co-founder Larry Page has reportedly moved his family office and key assets out of California to avoid a proposed \"billionaire tax,\" joining other tech titans like Peter Thiel and Elon Musk in leaving the state. In contrast, Nvidia CEO Jensen Huang remains committed to California, stating tax policy won't drive him away. This divergence highlights a growing rift between Silicon Valley's elite and state legislators over the tax, which is intended to fund healthcare and education.",
+          "url": "https://www.sahmcapital.com/news/content/googles-larry-page-reportedly-exits-california-over-proposed-billionaire-tax-joining-peter-thiel-but-this-ceo-hasnt-thought-about-it-even-once-2026-01-08",
+          "sentiment_score": -0.255736,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.581983
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Enphase Energy (ENPH): Navigating the Solar Winter and the GaN Revolution",
+          "content": "Enphase Energy (ENPH), a leading solar microinverter company, is undergoing a significant transformation in early 2026, often referred to as the \"Solar Winter.\" The company is adapting to recent legislative changes, high interest rates, and the maturation of the residential solar market by focusing on Gallium Nitride (GaN) innovation, bidirectional EV charging, and expanding into the commercial sector. Despite a sharp decline in stock value from its 2022 peak, the company maintains a strong fina",
+          "url": "https://markets.financialcontent.com/stocks/article/predictstreet-2026-1-9-enphase-energy-enph-navigating-the-solar-winter-and-the-gan-revolution",
+          "sentiment_score": 0.148674,
+          "sentiment_label": "Neutral",
+          "relevance": 0.623939
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Enphase Energy (ENPH): Navigating the Solar Winter and the GaN Revolution",
+          "content": "Enphase Energy (ENPH) is undergoing a significant transformation, navigating a \"Solar Winter\" marked by legislative shifts and a maturing residential solar market. The company is innovating with Gallium Nitride (GaN) technology, bidirectional EV charging, and a strategic focus on the commercial sector to adapt its business model. Despite a significant stock price decline, Enphase aims to leverage its updated IQ9 series, battery storage, and Virtual Power Plant capabilities to recover and thrive ",
+          "url": "https://markets.financialcontent.com/wral/article/predictstreet-2026-1-9-enphase-energy-enph-navigating-the-solar-winter-and-the-gan-revolution",
+          "sentiment_score": 0.111353,
+          "sentiment_label": "Neutral",
+          "relevance": 0.642288
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "FEPI Somehow Gives You 25% Income Off Big Tech Stocks That Hardly Pay Dividends",
+          "content": "The REX FANG & Innovation Equity Premium Income ETF (FEPI) generates a 25% annual distribution from major tech stocks that pay minimal dividends by selling covered call options. While FEPI offers substantial income and returned approximately 40% total over the past year, it achieves this by capping upside potential and is subject to market volatility. The strategy involves inherent sector-specific risks due to its high concentration in technology, and distributions can fluctuate based on options",
+          "url": "https://247wallst.com/investing/2026/01/09/fepi-somehow-gives-you-25-income-off-big-tech-stocks-that-hardly-pay-dividends/",
+          "sentiment_score": 0.140941,
+          "sentiment_label": "Neutral",
+          "relevance": 0.618521
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Chinese automaker Xpeng touts AI pivot in face of fierce competition",
+          "content": "Chinese automaker Xpeng is reportedly focusing on an AI pivot to address fierce competition in the market. The article only provides a headline and mentions this strategic shift. No further details are available in the provided text.",
+          "url": "https://www.tradingview.com/news/reuters.com,2026:newsml_L1N3YA04F:0-chinese-automaker-xpeng-touts-ai-pivot-in-face-of-fierce-competition/",
+          "sentiment_score": 0.135277,
+          "sentiment_label": "Neutral",
+          "relevance": 0.734051
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Nio (NYSE: NIO) Stock Price Prediction and Forecast 2026-2030 (Jan 8)",
+          "content": "This article provides a stock price prediction and forecast for Nio (NYSE: NIO) from 2026 to 2030, highlighting its significant growth potential due to new product launches, growing market share, and international expansion. Despite past volatility and cautious Wall Street sentiment, the company's advancements in battery technology and focus on younger consumers are expected to drive substantial gains for shareholders, with a projected stock price of $23.56 by 2030. The forecast is underpinned b",
+          "url": "https://247wallst.com/forecasts/2026/01/08/nio-nio-stock-price-prediction-and-forecast-2025-2030/",
+          "sentiment_score": 0.228416,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.561682
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "iSpecimen Postpones Annual Meeting Due to Lack Quorum",
+          "content": "iSpecimen Inc. (ISPC) postponed its 2025 annual meeting of stockholders due to a lack of quorum and plans to reconvene on January 23, 2026. The company is experiencing a strong downtrend with deteriorating financial performance, persistent cash burn, and Nasdaq delisting risk. Analysts currently rate ISPC as a Sell with a price target of $0.28.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/ISPC-Q/pressreleases/36916477/ispecimen-postpones-annual-meeting-due-to-lack-quorum/",
+          "sentiment_score": 0.136592,
+          "sentiment_label": "Neutral",
+          "relevance": 0.646307
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "US Stock ETF Tracker | Intel leads the tech sector rally, with the triple-leveraged semiconductor ETF surging over 8% and the double-leveraged INTC ETF skyrocketing more than 21%; Q2 revenue surged 250%, pushing the double-leveraged APLD ETF up 35",
+          "content": "Intel's significant surge led a tech sector rally, with the triple-leveraged semiconductor ETF increasing over 8% and the double-leveraged INTC ETF soaring more than 21%. Applied Digital's Q2 revenue jump of 250% propelled the double-leveraged APLD ETF up 35%. This report details the top gainers and decliners across various US equity ETFs, including large-cap index, industry, bond, and commodity ETFs, highlighting key market movements.",
+          "url": "https://news.futunn.com/en/post/67199850/us-stock-etf-tracker-intel-leads-the-tech-sector-rally",
+          "sentiment_score": 0.269644,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.638346
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Callan JMB director Dial buys shares worth $2409",
+          "content": "Callan JMB Inc. director Gerald Dial recently purchased 2,000 shares of the company's common stock for $2,409. The purchases were made at prices between $1.20 and $1.22 per share, which is below the stock's Fair Value according to InvestingPro data. The company has also announced strategic initiatives including a preliminary agreement for manufacturing equipment at its Texas facility and an expansion into food sampling logistics.",
+          "url": "https://www.investing.com/news/insider-trading-news/callan-jmb-director-dial-buys-shares-worth-2409-93CH-4433168",
+          "sentiment_score": -0.418877,
+          "sentiment_label": "Bearish",
+          "relevance": 0.562761
+        }
+      ],
+      "count": 26,
+      "avg_sentiment": 0.10722992307692307
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Seagate Technology Holdings PLC stock outperforms competitors on strong trading day",
+          "content": "Seagate Technology Holdings PLC (STX) stock recorded a strong performance on Friday, surpassing its competitors in the technology sector. The stock closed at $96.53, marking a 3.10% increase from the previous day, and traded higher than its 52-week average. This positive movement occurred despite a mixed day for the broader market indices, with the Dow and S&P 500 experiencing slight declines.",
+          "url": "https://www.msn.com/en-us/money/topstocks/seagate-technology-holdings-plc-stock-outperforms-competitors-on-strong-trading-day/ar-AA1TV4iF",
+          "sentiment_score": 0.204341,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.713534
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "2026 US Stock Market Outlook: Where to Find Investing Opportunities",
+          "content": "The US equity market was trading at a 4% discount to fair value estimates as of December 31, 2025, driven by significant fair value increases in mega-cap stocks and despite an overall market rise. Investors can find attractive opportunities in small-cap, mid-cap, and certain large-cap growth and value stocks, with Real Estate, Technology, Energy, and Communications sectors showing significant undervaluation. The outlook for 2026 predicts continued volatility due to high AI valuations, a change i",
+          "url": "https://www.morningstar.com/markets/2026-us-stock-market-outlook-where-find-investing-opportunities",
+          "sentiment_score": 0.203928,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.707715
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Senator Dumps Apple, Google, Microsoft To End 2025—But Refuses To Sell This Mag 7 Underperformer",
+          "content": "Senator Shelley Moore Capito (R-W.Va.) sold shares of Apple, Alphabet, and Microsoft in December 2025, according to recent disclosures. Despite divesting from these major Magnificent Seven stocks, Capito chose to retain her Meta Platforms shares, which she bought multiple times throughout 2025. This decision is noteworthy given Meta's second-worst performance among the Magnificent Seven in 2025, suggesting a long-term belief in the company perhaps due to undervaluation.",
+          "url": "https://finance.yahoo.com/news/senator-dumps-apple-google-microsoft-223108948.html",
+          "sentiment_score": 0.110094,
+          "sentiment_label": "Neutral",
+          "relevance": 0.927344
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "LM Funding America receives Nasdaq notice for minimum bid price deficiency",
+          "content": "LM Funding America (NASDAQ:LMFA) has received a notice from Nasdaq regarding non-compliance with the minimum $1.00 bid price requirement for its common stock, having traded below this threshold for 35 consecutive business days. The company has a 180-day grace period to regain compliance and may be eligible for an extension, but failure to do so could lead to delisting. This comes amid financial challenges, including significant cash burn and a \"WEAK\" InvestingPro Financial Health Score, despite ",
+          "url": "https://www.investing.com/news/sec-filings/lm-funding-america-receives-nasdaq-notice-for-minimum-bid-price-deficiency-93CH-4440376",
+          "sentiment_score": 0.115569,
+          "sentiment_label": "Neutral",
+          "relevance": 0.618529
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Alphabet (GOOG) stock ticks up after-hours as Google sets Feb. 4 earnings call, CEO sale disclosed",
+          "content": "Alphabet's Class C shares rose about 1% in after-hours trading after the company announced its Q4 and full-year 2025 earnings call for February 4th. This news follows CEO Sundar Pichai's disclosed sale of 32,500 Class C shares totaling approximately $10.4 million. The article also highlights an analyst upgrade for Alphabet and ongoing regulatory challenges for the company.",
+          "url": "https://ts2.tech/en/alphabet-goog-stock-ticks-up-after-hours-as-google-sets-feb-4-earnings-call-ceo-sale-disclosed/",
+          "sentiment_score": 0.140435,
+          "sentiment_label": "Neutral",
+          "relevance": 0.638836
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Microsoft stock holds near $480 as Copilot Checkout rollout sets up a Jan. 28 earnings test",
+          "content": "Microsoft shares are hovering near $480 after the company introduced a new Copilot checkout feature and other AI tools for retailers. Investors are now looking ahead to the fiscal 2026 second-quarter earnings report on January 28, which will provide insight into demand for Microsoft's cloud and AI businesses and clarity on its outlook, with Wells Fargo lowering its price target but maintaining an \"Overweight\" rating. The success of the new retail AI features and the impact of AI spending on marg",
+          "url": "https://ts2.tech/en/microsoft-stock-holds-near-480-as-copilot-checkout-rollout-sets-up-a-jan-28-earnings-test/",
+          "sentiment_score": 0.108065,
+          "sentiment_label": "Neutral",
+          "relevance": 0.614986
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "The Best Warren Buffett Stocks to Buy With $2,500 Right Now",
+          "content": "This article identifies three top Warren Buffett stocks—American Express, Coca-Cola, and Moody's—that investors can consider buying with $2,500. It highlights American Express's strong brand and affluent customer base, Coca-Cola's iconic global brand and asset-light model, and Moody's crucial role in financial markets with high barriers to entry. The piece emphasizes Warren Buffett's investment philosophy, even after his retirement as Berkshire Hathaway CEO.",
+          "url": "https://finviz.com/news/272516/the-best-warren-buffett-stocks-to-buy-with-2500-right-now",
+          "sentiment_score": 0.136635,
+          "sentiment_label": "Neutral",
+          "relevance": 0.63549
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "US senators ask Apple and Google to remove X, Grok from app stores (AAPL:NASDAQ)",
+          "content": "A group of U.S. senators has formally requested that Apple and Google remove the X and Grok apps from their respective app stores. The senators' concern stems from the apps' alleged role in generating nonconsensual sexualized images of women. This action highlights ongoing concerns about content moderation and app store responsibility for user-generated content.",
+          "url": "https://seekingalpha.com/news/4538131-us-senators-ask-apple-and-google-to-remove-x-grok-from-app-stores",
+          "sentiment_score": -0.119083,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Why has Apple Chosen Chase to be its New Card Issuer?",
+          "content": "Apple has announced that JPMorgan Chase will become the new issuer for the Apple Card, moving its financial product from its previous issuer to one of the largest lenders in the US. The agreement, valued at an estimated $20 billion in card balances, is expected to transition over approximately 24 months, with Mastercard remaining the payment network. This partnership strengthens Chase's position in co-branded finance and digital transactions, allowing existing Apple Card customers to retain curr",
+          "url": "https://fintechmagazine.com/news/why-has-apple-chosen-chase-to-be-its-new-card-issuer",
+          "sentiment_score": 0.309107,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Intel stock jumps 10% after CEO meets with Trump",
+          "content": "Intel's stock jumped 10% after CEO Lip-Bu Tan met with President Donald Trump, who touted U.S. investment in the chipmaker and new microprocessors introduced by the company. Trump celebrated the federal government's nearly $9 billion investment and Intel's progress in bringing chip manufacturing back to America. Despite financial headwinds and job cuts, Intel's new 18A technology and potential deals with companies like Apple signal a significant effort in its comeback.",
+          "url": "https://www.oregonlive.com/silicon-forest/2026/01/intel-stock-jumps-10-after-ceo-meets-with-trump.html",
+          "sentiment_score": 0.330333,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.628487
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Democratic senators demand Apple, Google take X and Grok off app stores over sexual images",
+          "content": "Three Democratic U.S. senators have urged Apple and Google to remove X and its AI chatbot Grok from their app stores. The senators cite the spread of nonconsensual sexual images of women and minors on the platform as the reason for their demand. They stated that the apps should be removed until X addresses these policy violations.",
+          "url": "https://www.reuters.com/world/us/democratic-senators-demand-apple-google-take-x-grok-off-app-stores-over-sexual-2026-01-09/",
+          "sentiment_score": -0.249762,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jamf named a Leader in the 2026 Gartner® Magic Quadrant™ for Endpoint Management Tools",
+          "content": "Jamf, a company specializing in managing and securing Apple devices for businesses, has been recognized as a Leader in the 2026 Gartner Magic Quadrant for Endpoint Management Tools. This recognition highlights Jamf's strong execution and vision, emphasizing its Apple-first platform that unifies management, security, and AI-driven automation. Jamf aims to simplify operations, reduce risk, and enhance the Apple user experience for organizations globally.",
+          "url": "https://aijourn.com/jamf-named-a-leader-in-the-2026-gartner-magic-quadrant-for-endpoint-management-tools/",
+          "sentiment_score": 0.676163,
+          "sentiment_label": "Bullish",
+          "relevance": 0.636833
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jamf named a Leader in the 2026 Gartner® Magic Quadrant™ for Endpoint Management Tools",
+          "content": "Jamf, a company specializing in managing and securing Apple devices, announced it has been recognized as a Leader in the 2026 Gartner Magic Quadrant for Endpoint Management Tools. The recognition highlights Jamf's strong execution and vision, particularly its Apple-first platform which unifies management, security, and AI-driven automation. Jamf empowers organizations with Apple-native depth, enterprise-grade security, and seamless integration, contrasting with cross-platform tools that often fo",
+          "url": "https://www.businesswire.com/news/home/20260109710281/en/Jamf-named-a-Leader-in-the-2026-Gartner-Magic-Quadrant-for-Endpoint-Management-Tools",
+          "sentiment_score": 0.32369,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.700461
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Taiwan Semiconductor Started 2nm Chip Production. Time to Buy?",
+          "content": "Taiwan Semiconductor Manufacturing (TSM) has started 2nm chip production, leading to a 52% stock gain in the past year. Analysts like JPMorgan remain bullish on TSMC's leadership in critical 2nm projects, despite Intel's growing foundry momentum and geopolitical risks. With future processes like enhanced 2nm and 1.6nm in preparation, TSMC is well-positioned to capitalize on increasing AI demand.",
+          "url": "https://247wallst.com/investing/2026/01/09/taiwan-semiconductor-started-2nm-chip-production-time-to-buy/",
+          "sentiment_score": 0.205178,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.631074
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "CDW Corp.: The Quiet Backbone Powering Enterprise IT in the AI Era",
+          "content": "CDW Corp. has evolved into an IT powerhouse, offering a hybrid marketplace and services model that addresses the complexities of modern enterprise IT, particularly in the age of cloud and AI. The company acts as a crucial intermediary, providing solution design, procurement, deployment, managed services, and support for AI and modern workplace initiatives. Its competitive edge lies in its scale, specialization, end-to-end lifecycle approach, neutral multi-vendor positioning, strong public sector",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/cdw-corp-the-quiet-backbone-powering-enterprise-it-in-the-ai-era/68472998",
+          "sentiment_score": 0.314549,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.603322
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Apple CEO Steve Jobs Unveils the First iPhone – This Day in History",
+          "content": "On January 9, 2007, Steve Jobs introduced the first iPhone, a device that revolutionized mobile technology by combining a widescreen iPod, a mobile phone, and an internet communicator. Despite initial skepticism, its touchscreen interface and later the App Store transformed the smartphone market and propelled Apple into one of the world's most valuable companies. The iPhone's debut is considered a pivotal moment in tech history, reshaping digital communication and fostering an entire app economy",
+          "url": "https://amac.us/newsline/lifestyle/apple-ceo-steve-jobs-unveils-the-first-iphone-this-day-in-history/",
+          "sentiment_score": 0.033647,
+          "sentiment_label": "Neutral",
+          "relevance": 0.334518
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Zebra Technologies Is Quietly Running The Barcode World – But Is This Stock Your Next Power Play?",
+          "content": "Zebra Technologies, a leader in data capture and tracking with products like barcode scanners and mobile printers, is a significant player in e-commerce, retail, logistics, and healthcare. The company is also expanding into automation, robot-powered warehouses, and AI-driven analytics. While not a trendy meme stock, Zebra offers steady exposure to the infrastructure of commerce and automation, making it a \"cop on dips\" for long-term investors despite potential hardware-heavy risks and cyclical e",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/zebra-technologies-is-quietly-running-the-barcode-world-but-is-this/68472703",
+          "sentiment_score": 0.140706,
+          "sentiment_label": "Neutral",
+          "relevance": 0.611853
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "First Trust Has an ETF That Might Be Better Than the Nasdaq and QQQ",
+          "content": "The First Trust Dow Jones Internet Index Fund (FDN) offers an equal-weight alternative to the Nasdaq and QQQ by focusing on pure internet companies. However, FDN has significantly underperformed QQQ over the past one and five years, primarily due to its lack of exposure to mega-cap tech stocks like Nvidia, Apple, and Microsoft. For investors seeking broad tech exposure or those focused on the \"Magnificent Seven,\" QQQ or the Direxion NASDAQ-100 Equal Weighted Index Shares (QQQE) might be better o",
+          "url": "https://247wallst.com/investing/2026/01/09/first-trust-has-an-etf-that-might-be-better-than-the-nasdaq-and-qqq/",
+          "sentiment_score": 0.260609,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.648144
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "SG Americas Securities LLC Boosts Stock Position in Cirrus Logic, Inc. $CRUS",
+          "content": "SG Americas Securities LLC significantly increased its stake in Cirrus Logic (NASDAQ:CRUS) during the third quarter of 2025 by purchasing an additional 159,411 shares, bringing its total ownership to 171,165 shares valued at $21.445 million. This increase reflects institutional confidence, despite some insider selling by executives. Analysts currently rate Cirrus Logic as a \"Moderate Buy\" with a consensus price target of $141.67, following strong Q3 earnings that surpassed expectations.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-sg-americas-securities-llc-boosts-stock-position-in-cirrus-logic-inc-crus-2026-01-09/",
+          "sentiment_score": 0.120266,
+          "sentiment_label": "Neutral",
+          "relevance": 0.732687
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "FedEx stock rating upgraded to Buy at BofA Securities on strong outlook",
+          "content": "BofA Securities has upgraded FedEx (NYSE:FDX) stock from Neutral to Buy, increasing its price target to $365.00 from $315.00, citing strong near-term performance potential. The upgrade follows FedEx's impressive fiscal second-quarter results, including a 7% year-over-year revenue growth and a 19% increase in EPS, leading other analysts like Stifel, Truist Securities, and TD Cowen to also raise their price targets. The firm also named FedEx as one of its top transportation sector picks for 2026.",
+          "url": "https://www.investing.com/news/analyst-ratings/fedex-stock-rating-upgraded-to-buy-at-bofa-securities-on-strong-outlook-93CH-4439241",
+          "sentiment_score": 0.123741,
+          "sentiment_label": "Neutral",
+          "relevance": 0.569849
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Corning (GLW)'s a \"Potential Winner,\" Says Jim Cramer",
+          "content": "Jim Cramer has identified Corning Incorporated (GLW) as a \"potential winner,\" particularly noting its strong performance in 2025 with an 84% stock increase, and its growing partnership with Apple. Analysts from Morgan Stanley and JPMorgan also view GLW favorably, citing its potential to benefit from the AI trade expanding into data center infrastructure. Cramer contrasts Corning's hardware success with software companies like Salesforce, suggesting a shift in market dynamics.",
+          "url": "https://finviz.com/news/272284/corning-glws-a-potential-winner-says-jim-cramer",
+          "sentiment_score": 0.24226,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.647167
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "TSMC fourth-quarter revenue jumps 20%, beats forecasts",
+          "content": "TSMC, the world's largest contract chipmaker, reported a 20.45% increase in fourth-quarter revenue, reaching T$1.046 trillion ($33.11 billion), exceeding market forecasts driven by strong demand for AI applications. The company, which supplies Nvidia and Apple, benefited significantly from AI growth. TSMC's shares gained 44.2% last year, outperforming the broader market, and it is set to release full Q4 earnings and updated guidance on January 15.",
+          "url": "https://www.reuters.com/world/asia-pacific/tsmc-posts-q4-revenue-104608-billion-above-forecasts-2026-01-09/",
+          "sentiment_score": 0.331246,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.618594
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "KLP Kapitalforvaltning AS Purchases 69,300 Shares of Skyworks Solutions, Inc. $SWKS",
+          "content": "KLP Kapitalforvaltning AS has significantly increased its stake in Skyworks Solutions, Inc. by purchasing an additional 69,300 shares, bringing their total to 218,900 shares valued at approximately $16.85 million. This increase in institutional ownership comes as two company executives recently sold portions of their holdings. Skyworks Solutions reported strong Q3 earnings, exceeding consensus estimates, and announced a quarterly dividend with a 4.7% yield.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-klp-kapitalforvaltning-as-purchases-69300-shares-of-skyworks-solutions-inc-swks-2026-01-09/",
+          "sentiment_score": 0.126511,
+          "sentiment_label": "Neutral",
+          "relevance": 0.643932
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Snap Inc. $65 Million Securities Class Action Settlement",
+          "content": "Snap Inc. has agreed to a $65 million settlement in a securities class action lawsuit. The lawsuit alleged that Snap and its executives made misleading statements about the impact of Apple's privacy changes on Snap's advertising business, leading to inflated stock prices. Investors who purchased Snap securities or options between February 5, 2021, and October 21, 2021, may be eligible for a cash payment from the settlement.",
+          "url": "https://www.claimdepot.com/settlements/snap-securities-settlement",
+          "sentiment_score": -0.137834,
+          "sentiment_label": "Neutral",
+          "relevance": 0.647992
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "The Renaissance of the Gold Standard: A Deep Dive into Goldman Sachs (GS) Ahead of 2026 Earnings",
+          "content": "Goldman Sachs is set to report its Q4 and full-year 2025 earnings next week, following a strong \"renaissance year\" in 2025 where its stock reached all-time highs. The firm has refocused on its core competencies of investment banking, trading, and asset management after exiting consumer banking. Analysts are closely watching for sustained Return on Equity (ROE) and the firm's outlook for 2026, especially concerning the anticipated dealmaking renaissance and IPO wave.",
+          "url": "https://markets.financialcontent.com/stocks/article/predictstreet-2026-1-9-the-renaissance-of-the-gold-standard-a-deep-dive-into-goldman-sachs-gs-ahead-of-2026-earnings",
+          "sentiment_score": 0.094082,
+          "sentiment_label": "Neutral",
+          "relevance": 0.612241
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "FSM Wealth Advisors LLC Raises Holdings in Apple Inc. $AAPL",
+          "content": "FSM Wealth Advisors LLC increased its stake in Apple Inc. (NASDAQ:AAPL) by 3.9% in the third quarter of 2025, now holding 74,351 shares worth $18.93 million. This makes Apple the firm's 11th largest position, accounting for 2.7% of its portfolio. The article also touches on positive analyst sentiment, recent price target increases for AAPL, and key company catalysts such as Apple's Q3 earnings beat and JPMorgan replacing Goldman Sachs as the Apple Card issuer.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-fsm-wealth-advisors-llc-raises-holdings-in-apple-inc-aapl-2026-01-09/",
+          "sentiment_score": 0.349255,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "TD Cowen reiterates Buy rating on Senseonics stock, citing attractive 2026 setup",
+          "content": "TD Cowen has reiterated a Buy rating and $15.00 price target for Senseonics Holdings (NYSE:SENS), citing an attractive commercial outlook for 2026 and potential upside of over 116% from its current price. The firm anticipates a \"commercial inflection\" due to accelerated adoption of its Eversense 365 product, expanding gross margins, and direct commercialization efforts. Despite a recent EPS miss, the company's stock remained stable, and upcoming product catalysts alongside a move to the Nasdaq G",
+          "url": "https://www.investing.com/news/analyst-ratings/td-cowen-reiterates-buy-rating-on-senseonics-stock-citing-attractive-2026-setup-93CH-4437643",
+          "sentiment_score": 0.040171,
+          "sentiment_label": "Neutral",
+          "relevance": 0.571819
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Apple Inc. $AAPL is Castle Rock Wealth Management LLC's 5th Largest Position",
+          "content": "Castle Rock Wealth Management LLC has reduced its stake in Apple (AAPL) by 4.1% in Q3, making it their 5th largest holding, valued at $14.15 million. Despite this, Apple reported strong quarterly earnings, beating expectations with an EPS of $1.85 and revenue of $102.47 billion, and analysts maintain a \"Moderate Buy\" rating with an average target of $283.92. Insider selling by executives Chris Kondo and Kevan Parekh was noted, though institutional investors hold a significant 67.73% of the compa",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-apple-inc-aapl-is-castle-rock-wealth-management-llcs-5th-largest-position-2026-01-09/",
+          "sentiment_score": 0.207488,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Voya Financial (VOYA) Stock Is Up, What You Need To Know",
+          "content": "Shares of Voya Financial (NYSE:VOYA) rose 2% after Barclays upgraded the stock to Overweight and increased its price target from $83 to $93, indicating confidence in its future performance. The stock's modest volatility suggests the market views this news as meaningful. Voya Financial has seen a 4.8% increase since the beginning of the year and has reached a new 52-week high, with long-term investors seeing significant returns.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/VOYA/pressreleases/36952182/voya-financial-voya-stock-is-up-what-you-need-to-know/",
+          "sentiment_score": 0.115361,
+          "sentiment_label": "Neutral",
+          "relevance": 0.585586
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Intel Corporation (INTC) Launches Next Generation of AI PCs at CES 2026",
+          "content": "Intel Corporation (INTC) launched its next generation of AI PCs at CES 2026 with its Core Ultra Series 3 processors, built on the Intel 18A semiconductor process. This new series is expected to be the most broadly adopted AI PC platform, with pre-orders for the first laptop beginning on January 6, 2026. Following the launch, Melius Research upgraded Intel's stock to Buy, citing confidence in its foundry business and potential adoption of upcoming nodes by companies like Nvidia and Apple.",
+          "url": "https://finance.yahoo.com/news/intel-corporation-intc-launches-next-092139025.html",
+          "sentiment_score": 0.103829,
+          "sentiment_label": "Neutral",
+          "relevance": 0.629914
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jamf named a Leader in the 2026 Gartner® Magic Quadrant™ for Endpoint Management Tools",
+          "content": "Jamf, a company specializing in managing and securing Apple devices for businesses, has been recognized as a Leader in the 2026 Gartner® Magic Quadrant™ for Endpoint Management Tools. This recognition highlights Jamf's strong vision and execution, providing an Apple-first platform that integrates management, security, and AI-driven automation. The company emphasizes its ability to reduce risk, simplify operations, and enhance the Apple experience for employees and IT teams, especially as organiz",
+          "url": "https://markets.financialcontent.com/wral/article/bizwire-2026-1-9-jamf-named-a-leader-in-the-2026-gartner-magic-quadrant-for-endpoint-management-tools",
+          "sentiment_score": 0.319417,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.705057
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "VeriSign, Inc. $VRSN Holdings Lifted by Cerity Partners LLC",
+          "content": "Cerity Partners LLC increased its stake in VeriSign, Inc. (NASDAQ:VRSN) by 27.9% in the third quarter, bringing its total holding to 91,490 shares valued at approximately $25.58 million. Despite this increase in institutional ownership, analyst ratings for VeriSign are mixed, with a consensus \"Hold\" rating and an average price target of $282. The company recently reported a slight EPS beat and 7.3% revenue growth, while also announcing a quarterly dividend and noting significant insider stock sa",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-verisign-inc-vrsn-holdings-lifted-by-cerity-partners-llc-2026-01-09/",
+          "sentiment_score": 0.138194,
+          "sentiment_label": "Neutral",
+          "relevance": 0.645352
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Tim Cook | Biography, Apple CEO, & Business Executive",
+          "content": "This article provides a biography of Tim Cook, current CEO of Apple Inc. It covers his early life and career, his rise through Apple to succeed Steve Jobs as CEO in 2011, and his tenure and legacy, including the expansion of Apple's product lines and services, leading the company to record valuations and becoming the first to reach a $1 trillion market capitalization.",
+          "url": "https://www.britannica.com/money/Tim-Cook",
+          "sentiment_score": 0.448501,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "FEPI Somehow Gives You 25% Income Off Big Tech Stocks That Hardly Pay Dividends",
+          "content": "The REX FANG & Innovation Equity Premium Income ETF (FEPI) generates a 25% annual distribution from major tech stocks that pay minimal dividends by selling covered call options. While FEPI offers substantial income and returned approximately 40% total over the past year, it achieves this by capping upside potential and is subject to market volatility. The strategy involves inherent sector-specific risks due to its high concentration in technology, and distributions can fluctuate based on options",
+          "url": "https://247wallst.com/investing/2026/01/09/fepi-somehow-gives-you-25-income-off-big-tech-stocks-that-hardly-pay-dividends/",
+          "sentiment_score": 0.125393,
+          "sentiment_label": "Neutral",
+          "relevance": 0.723546
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Breaking the decoding bottleneck: Fast and accurate software decoding for Quantum LDPC codes",
+          "content": "IonQ has developed a new Beam Search Decoder for Quantum LDPC codes that significantly improves accuracy and speed for quantum error correction. This software-based decoder, which runs on standard CPUs, challenges the industry assumption that supercomputers are needed for large-scale fault-tolerant quantum computing, particularly for trapped-ion architectures. This innovation allows IonQ to achieve fault-tolerant correction with greater efficiency and lower cost compared to other approaches.",
+          "url": "https://www.ionq.com/blog/breaking-the-decoding-bottleneck-fast-and-accurate-software-decoding-for-quantum-ldpc-codes",
+          "sentiment_score": 0.247947,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.639856
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Apple Inc. $AAPL Shares Sold by 180 Wealth Advisors LLC",
+          "content": "180 Wealth Advisors LLC reduced its stake in Apple Inc. by 1.9% in the third quarter, selling 2,016 shares, though Apple remains its third-largest holding. Other institutional investors showed mixed activity, with some increasing and others decreasing their positions. The article also highlights recent insider selling, analyst price targets, and Apple's financial performance, including its latest quarterly earnings and dividend announcement.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-apple-inc-aapl-shares-sold-by-180-wealth-advisors-llc-2026-01-09/",
+          "sentiment_score": 0.0052,
+          "sentiment_label": "Neutral",
+          "relevance": 0.907776
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jim Cramer on Alphabet: “I Bet It Keeps Climbing in 2026”",
+          "content": "Jim Cramer expressed his confidence in Alphabet (NASDAQ: GOOGL), predicting it will continue to climb in 2026, much like 2025. He regretted selling the stock from his Charitable Trust in 2025, highlighting Alphabet's strong performance driven by its generative AI platform, Gemini, and other ventures like YouTube, Waymo, and Google Cloud. Despite the stock no longer being cheap, Cramer considers its 28 times trailing earnings estimate reasonable given its growth prospects, confirming his trust's ",
+          "url": "https://www.insidermonkey.com/blog/jim-cramer-on-alphabet-i-bet-it-keeps-climbing-in-2026-1671616/",
+          "sentiment_score": 0.137369,
+          "sentiment_label": "Neutral",
+          "relevance": 0.562196
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Profit Investment Ditches FirstCash Shares Worth $2.6 Million in Portfolio Shake-up",
+          "content": "Profit Investment Management, LLC has fully exited its position in FirstCash Holdings, Inc. (FCFS), selling 16,257 shares for an estimated $2.58 million. This move is part of a broader portfolio downsizing, as the firm reduced its overall assets under management by 69% quarter over quarter. Despite the sale, FirstCash has shown strong performance, with shares up 57.16% over the past year, outperforming the S&P 500.",
+          "url": "https://www.fool.com/coverage/filings/2026/01/08/profit-investment-ditches-firstcash-shares-worth-usd2-6-million-in-portfolio-shake-up/",
+          "sentiment_score": 0.146542,
+          "sentiment_label": "Neutral",
+          "relevance": 0.604129
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "If You'd Invested $1,000 in the Invesco QQQ ETF 27 Years Ago, Here's How Much You'd Have Today",
+          "content": "The Invesco QQQ Trust ETF, launched in early 1999, has been a significant performer despite experiencing an over 80% drawdown during the early 2000s tech bubble. A $1,000 investment at its inception would now be worth approximately $14,190, representing a 1,340% total return. If invested at the market bottom in October 2002, the same amount would have grown by over 3,613%.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/AAPL/pressreleases/36957211/if-youd-invested-1000-in-the-invesco-qqq-etf-27-years-ago-heres-how-much-youd-have-today/",
+          "sentiment_score": 0.314153,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.612847
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Apple, Google Smartwatches Targeted in Trade Agency IP Probe",
+          "content": "The US International Trade Commission is investigating Apple Inc., Google LLC, and other smartwatches over alleged patent infringement related to fall-detection technology. The probe was initiated by UnaliWear Inc., which is seeking an import ban on specific smartwatch models from Apple, Google, Samsung, and Garmin. This marks another intellectual property dispute for Apple at the ITC, following a recent case concerning blood-oxygen sensors.",
+          "url": "https://news.bloomberglaw.com/international-trade/apple-google-smartwatches-targeted-in-trade-agency-ip-probe",
+          "sentiment_score": -0.326709,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.974596
+        }
+      ],
+      "count": 40,
+      "avg_sentiment": 0.162914675
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Seagate Technology Holdings PLC stock outperforms competitors on strong trading day",
+          "content": "Seagate Technology Holdings PLC (STX) stock recorded a strong performance on Friday, surpassing its competitors in the technology sector. The stock closed at $96.53, marking a 3.10% increase from the previous day, and traded higher than its 52-week average. This positive movement occurred despite a mixed day for the broader market indices, with the Dow and S&P 500 experiencing slight declines.",
+          "url": "https://www.msn.com/en-us/money/topstocks/seagate-technology-holdings-plc-stock-outperforms-competitors-on-strong-trading-day/ar-AA1TV4iF",
+          "sentiment_score": 0.190783,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.704556
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Senator Dumps Apple, Google, Microsoft To End 2025—But Refuses To Sell This Mag 7 Underperformer",
+          "content": "Senator Shelley Moore Capito (R-W.Va.) sold shares of Apple, Alphabet, and Microsoft in December 2025, according to recent disclosures. Despite divesting from these major Magnificent Seven stocks, Capito chose to retain her Meta Platforms shares, which she bought multiple times throughout 2025. This decision is noteworthy given Meta's second-worst performance among the Magnificent Seven in 2025, suggesting a long-term belief in the company perhaps due to undervaluation.",
+          "url": "https://finance.yahoo.com/news/senator-dumps-apple-google-microsoft-223108948.html",
+          "sentiment_score": 0.109278,
+          "sentiment_label": "Neutral",
+          "relevance": 0.748005
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Meta strikes deals with Vistra, Oklo, TerraPower",
+          "content": "Tech giant Meta has announced three significant agreements with Vistra, TerraPower, and Oklo, aiming to support the expansion of nuclear energy capacity to power its growing data centers and AI operations. These deals, originating from a December 2024 RFP, involve funding for uprates at existing nuclear plants and the development of new advanced reactor projects, potentially adding up to 6.6 GW of energy by 2035. This initiative underscores Meta's strategy to invest in capital-intensive energy t",
+          "url": "https://www.ans.org/news/article-7666/meta-strikes-deals-with-vistra-oklo-terrapower/",
+          "sentiment_score": 0.331422,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.604809
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Microsoft stock holds near $480 as Copilot Checkout rollout sets up a Jan. 28 earnings test",
+          "content": "Microsoft shares are hovering near $480 after the company introduced a new Copilot checkout feature and other AI tools for retailers. Investors are now looking ahead to the fiscal 2026 second-quarter earnings report on January 28, which will provide insight into demand for Microsoft's cloud and AI businesses and clarity on its outlook, with Wells Fargo lowering its price target but maintaining an \"Overweight\" rating. The success of the new retail AI features and the impact of AI spending on marg",
+          "url": "https://ts2.tech/en/microsoft-stock-holds-near-480-as-copilot-checkout-rollout-sets-up-a-jan-28-earnings-test/",
+          "sentiment_score": 0.135023,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "ISG to Evaluate Cybersecurity Services, Solutions Providers",
+          "content": "Information Services Group (ISG) has launched a research study to evaluate providers of cybersecurity services, aiming to help enterprises protect sensitive data and strengthen cyber resilience against increasingly sophisticated threats. The study will culminate in a series of ISG Provider Lens® reports, \"Cybersecurity — Services and Solutions,\" set for release in July 2026, offering detailed analysis across seven key cybersecurity quadrants, including strategic security services, next-gen SOC/M",
+          "url": "https://www.businesswire.com/news/home/20260109350304/en/ISG-to-Evaluate-Cybersecurity-Services-Solutions-Providers",
+          "sentiment_score": 0.254357,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.533532
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "The Great Compute Pivot: How IREN Transformed from Bitcoin Miner to AI Infrastructure Titan",
+          "content": "IREN Limited (IREN), formerly Iris Energy, has successfully transitioned from a Bitcoin miner to a leading AI cloud infrastructure provider, highlighted by a significant $9.7 billion, five-year AI cloud agreement with Microsoft. This strategic pivot, driven by leveraging its robust power infrastructure for AI's high demands, has re-rated the company and created a valuation gap with traditional crypto miners. The article details IREN's journey, challenges overcome, and the broader industry trend ",
+          "url": "https://markets.financialcontent.com/stocks/article/marketminute-2026-1-9-the-great-compute-pivot-how-iren-transformed-from-bitcoin-miner-to-ai-infrastructure-titan",
+          "sentiment_score": 0.323186,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.715248
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Microsoft: Super-Investors Are Trimming Their Top Position (NASDAQ:MSFT)",
+          "content": "Microsoft remains the most-owned stock among \"super-investors,\" but recent disclosures indicate significant trimming of positions. The article suggests that MSFT's current market price of $478 already fully incorporates aggressive growth assumptions, while the average holding price for these investors is higher at $517. This disparity could lead to continued selling pressure as investors further trim their holdings.",
+          "url": "https://seekingalpha.com/article/4858424-microsoft-super-investors-trimming-their-top-position",
+          "sentiment_score": -0.38738,
+          "sentiment_label": "Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Amazon’s Bold New Ask Could Change Employee Behavior",
+          "content": "Amazon is implementing a new performance review process that requires employees to detail their biggest accomplishments to help calculate future pay. This shift, which emphasizes individual contributions, aligns with CEO Andy Jassy's focus on productivity and is part of a broader trend in the tech industry where companies are increasingly measuring employee output. The change is aimed more at salary evaluations than potential layoffs.",
+          "url": "https://www.inc.com/ava-levinson/amazons-bold-new-ask-could-change-employee-behavior/91286483",
+          "sentiment_score": 0.11543,
+          "sentiment_label": "Neutral",
+          "relevance": 0.623802
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Snap-On Inc stock hits 52-week high at $365.92",
+          "content": "Snap-On Inc (SNA) stock has reached a new 52-week high of $365.92, showing a 9.92% increase over the past year. This milestone follows strong third-quarter 2025 earnings, which exceeded Wall Street expectations, and a 14% increase in its quarterly dividend. Analysts from Tigress Financial Partners and BofA Securities have maintained or raised price targets, indicating a positive outlook for the company's financial trajectory.",
+          "url": "https://www.investing.com/news/company-news/snapon-inc-stock-hits-52week-high-at-36592-93CH-4440025",
+          "sentiment_score": 0.236944,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.574625
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "What is HPE GreenLake and how does it work?",
+          "content": "HPE GreenLake is an as-a-service offering that provides cloud-like flexibility for on-premises IT infrastructure, allowing businesses to pay for IT resources based on consumption. It offers preconfigured systems, hardware, software, and professional services, eliminating upfront capital expenditures and providing continuous monitoring and support. While it offers benefits like agility and simplified IT operations, organizations must carefully evaluate its total cost of ownership and compliance i",
+          "url": "https://www.techtarget.com/searchdatacenter/feature/What-is-HPE-GreenLake-and-how-does-it-work",
+          "sentiment_score": 0.234522,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.625997
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "HP Menampilkan Masa Depan Dunia Kerja di CES 2026",
+          "content": "HP showcased its vision for the future of work at CES 2026, focusing on human-centered innovation driven by AI. New product launches included AI PCs like the HP EliteBoard G1a and EliteBook X G2 Series, as well as AI-integrated printers with Microsoft Copilot. HP also announced the unification of its gaming brands under HyperX and the launch of the Future of Work Accelerator 2026 program to support technology access and skills development.",
+          "url": "https://marketing.co.id/hp-menampilkan-masa-depan-dunia-kerja-di-ces-2026/",
+          "sentiment_score": 0.422272,
+          "sentiment_label": "Bullish",
+          "relevance": 0.717118
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Stocks Start First Full Week of 2026 Strong",
+          "content": "The Dow, Nasdaq, and S&P 500 all posted significant gains, marking their best weekly performance since early November, fueled by investor optimism for 2026. Homebuilding stocks surged after President Trump ordered mortgage giants to purchase $200 billion in mortgage bonds, leading to a sharp decline in mortgage rates. Oil and gold also recorded weekly gains amidst geopolitical developments and increased demand.",
+          "url": "https://finviz.com/news/272529/stocks-start-first-full-week-of-2026-strong",
+          "sentiment_score": 0.304665,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.582379
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "11 emerging technologies to watch in 2026",
+          "content": "This article identifies 11 emerging technologies to watch in 2026, ranging from advancements in AIoT and robotics to quantum computing and structural batteries. It details the potential impact and key developments within each technology, highlighting their capacity to revolutionize various industries and aspects of society. The piece also includes insights from market reports and surveys on adoption and growth projections for these innovations.",
+          "url": "https://www.techtarget.com/searchenterpriseai/feature/Emerging-technologies-to-watch",
+          "sentiment_score": 0.302435,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.638522
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Nessel challenges MPSC approval of DTE's data center electricity deal",
+          "content": "Michigan Attorney General Dana Nessel is challenging the state energy regulators' approval of DTE Energy Co.'s special electricity contracts for a high-profile data center in Saline Township. Nessel argues that the Michigan Public Service Commission (MPSC) lacked the statutory authority to approve these contracts without a contested process, thereby preventing public intervention to protect ratepayers. She has filed a petition for rehearing, expressing concern over the fast-tracked decision and ",
+          "url": "https://www.detroitnews.com/story/business/2026/01/09/dte-energy-saline-township-oracle-openai-data-center-michigan-attorney-general-dana-nessel/88099102007/",
+          "sentiment_score": 0.217119,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.57855
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Will Accelerating AWS Revenue Growth Drive AMZN Stock's 2026 Rally?",
+          "content": "Amazon's cloud computing division, AWS, is experiencing a significant reacceleration in growth, with its strongest quarterly performance in nearly three years, driven by increasing demand for AI-related infrastructure. This resurgence, coupled with substantial capital investments in data centers and AI technology, positions Amazon for a strong rally in 2026. The company's innovative AI offerings and a robust cloud backlog of $200 billion further reinforce its dominant market position and future ",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/AMZN/pressreleases/36969900/will-accelerating-aws-revenue-growth-drive-amzn-stocks-2026-rally/",
+          "sentiment_score": 0.298296,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.740366
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Salesforce Plunges 20% in a Year: Is CRM Stock Still a Hold?",
+          "content": "Salesforce's stock has dropped 17.9% over the past year, underperforming its industry and competitors due to a decelerating growth trend and cautious enterprise spending. Despite this, the company's strategic focus on enterprise software, AI integration, and recent acquisitions, combined with its current undervalued P/E multiple relative to peers and the industry, suggests it may still be a hold for long-term investors. Salesforce holds a Zacks Rank #3 (Hold), indicating potential for future gai",
+          "url": "https://www.nasdaq.com/articles/salesforce-plunges-20-year-crm-stock-still-hold",
+          "sentiment_score": 0.206998,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.671264
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jim Cramer Discusses Salesforce (CRM)’s Business",
+          "content": "Jim Cramer commented on Salesforce (CRM), suggesting that investors should buy the stock due to its \"agentics business,\" which he dubbed \"Agentforce.\" He noted that this \"growth business\" is crucial as the traditional software \"seat business\" faces disruption from AI. Cramer also mentioned that while he thinks investors should buy Salesforce, he would rather own Broadcom.",
+          "url": "https://www.insidermonkey.com/blog/jim-cramer-discusses-salesforce-crms-business-1672508/?amp=1",
+          "sentiment_score": 0.09353,
+          "sentiment_label": "Neutral",
+          "relevance": 0.593981
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jamf named a Leader in the 2026 Gartner® Magic Quadrant™ for Endpoint Management Tools",
+          "content": "Jamf, a company specializing in managing and securing Apple devices for businesses, has been recognized as a Leader in the 2026 Gartner Magic Quadrant for Endpoint Management Tools. This recognition highlights Jamf's strong execution and vision, emphasizing its Apple-first platform that unifies management, security, and AI-driven automation. Jamf aims to simplify operations, reduce risk, and enhance the Apple user experience for organizations globally.",
+          "url": "https://aijourn.com/jamf-named-a-leader-in-the-2026-gartner-magic-quadrant-for-endpoint-management-tools/",
+          "sentiment_score": 0.11347,
+          "sentiment_label": "Neutral",
+          "relevance": 0.58411
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Broadcom CEO Tan Hock E sells $24.3 million in stock By Investing.com",
+          "content": "Broadcom CEO Tan Hock E sold 70,000 shares of company stock on January 6, 2026, for approximately $24.3 million across multiple transactions. Following these sales, Tan Hock E directly owns 132,836 shares and indirectly owns 775,638 shares through a trust. The article also notes Broadcom's strong financial performance, particularly in AI semiconductors, which has led to raised price targets from analysts and new product launches.",
+          "url": "https://za.investing.com/news/insider-trading-news/broadcom-ceo-tan-hock-e-sells-243-million-in-stock-93CH-4054393",
+          "sentiment_score": 0.103426,
+          "sentiment_label": "Neutral",
+          "relevance": 0.52818
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Salesforce Plunges 20% in a Year: Is CRM Stock Still a Hold?",
+          "content": "Salesforce's stock has underperformed significantly over the past year, dropping nearly 18% while competitors saw gains. This decline is attributed to a decelerating growth trend and cautious enterprise spending, impacting both revenue and EPS forecasts. However, the company's strategic shift towards enterprise software, AI integration, and attractive valuation suggest it might still be a hold for long-term investors.",
+          "url": "https://finviz.com/news/271957/salesforce-plunges-20-in-a-year-is-crm-stock-still-a-hold",
+          "sentiment_score": 0.217283,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.842642
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Microsoft partners PayPal and Stripe for Copilot AI shopping",
+          "content": "Microsoft has partnered with PayPal, Shopify, and Stripe to introduce Copilot Checkout, allowing shoppers to complete purchases directly within Copilot without external redirection. The integration will enable users to buy products from various retailers directly through the AI chat, with Stripe facilitating secure transactions via its Agentic Commerce Protocol and PayPal powering merchant inventory and payment options. This initiative aims to streamline the shopping experience and enhance custo",
+          "url": "https://www.finextra.com/newsarticle/47122/microsoft-partners-paypal-and-stripe-for-copilot-ai-shopping",
+          "sentiment_score": 0.423326,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "AI: What’s Next for Fiserv After Alliance with Microsoft?",
+          "content": "Fiserv has expanded its partnership with Microsoft to integrate generative AI and Microsoft 365 Copilot across its global workforce and development platforms. This collaboration aims to enhance internal productivity, accelerate the delivery of AI-driven financial solutions, and improve fraud detection and risk management. By leveraging Microsoft's infrastructure, Fiserv seeks to lead the development of next-generation commerce infrastructure and financial tools.",
+          "url": "https://fintechmagazine.com/news/ai-whats-next-for-fiserv-after-alliance-with-microsoft",
+          "sentiment_score": 0.44835,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "CDW Corp.: The Quiet Backbone Powering Enterprise IT in the AI Era",
+          "content": "CDW Corp. has evolved into an IT powerhouse, offering a hybrid marketplace and services model that addresses the complexities of modern enterprise IT, particularly in the age of cloud and AI. The company acts as a crucial intermediary, providing solution design, procurement, deployment, managed services, and support for AI and modern workplace initiatives. Its competitive edge lies in its scale, specialization, end-to-end lifecycle approach, neutral multi-vendor positioning, strong public sector",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/cdw-corp-the-quiet-backbone-powering-enterprise-it-in-the-ai-era/68472998",
+          "sentiment_score": 0.337463,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.643234
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "AI company ServiceNow hires former Microsoft CLO as next legal head",
+          "content": "ServiceNow, an AI company, has appointed Hossein Nowbar, former CLO at Microsoft, as its new chief legal officer and president. He replaces Russ Elmer, who will transition to a special counsel role. Nowbar will oversee global legal, ethics, governance, compliance, risk, and government affairs functions, bringing over three decades of experience relevant to AI.",
+          "url": "https://www.globallegalpost.com/news/ai-company-servicenow-hires-former-microsoft-clo-as-next-legal-head-1312179919",
+          "sentiment_score": 0.103468,
+          "sentiment_label": "Neutral",
+          "relevance": 0.731815
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Amazon (NASDAQ: AMZN) Stock Price Prediction in 2030: Bull, Bear, & Baseline Forecasts (Jan 9)",
+          "content": "This article provides bull, bear, and baseline stock price predictions for Amazon (NASDAQ: AMZN) in 2030. It analyzes Amazon's historical performance, key growth drivers such as e-commerce, Amazon Web Services (AWS), and advertising, and projects future stock values based on different scenarios, ranging from a bullish $431 to a bearish $77, with a baseline of $250 per share.",
+          "url": "https://247wallst.com/forecasts/2026/01/09/amazon-amzn-stock-price-prediction-in-2030-bull-base-bear-forecasts/",
+          "sentiment_score": 0.1363,
+          "sentiment_label": "Neutral",
+          "relevance": 0.639454
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "EBay | History, Description, & Facts | Britannica Money",
+          "content": "eBay, launched in 1995 by Pierre Omidyar, is a global online auction and trading company known for matching buyers and sellers of goods. The company grew significantly through the 1990s and 2000s, expanding internationally and making notable acquisitions like PayPal and Skype, though many were later divested. In the 2020s, eBay has focused on tech innovation, including NFT integration and AI tools, while also addressing ongoing controversies such as counterfeit goods and data security.",
+          "url": "https://www.britannica.com/money/eBay",
+          "sentiment_score": 0.120979,
+          "sentiment_label": "Neutral",
+          "relevance": 0.643239
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Zebra Technologies Is Quietly Running The Barcode World – But Is This Stock Your Next Power Play?",
+          "content": "Zebra Technologies, a leader in data capture and tracking with products like barcode scanners and mobile printers, is a significant player in e-commerce, retail, logistics, and healthcare. The company is also expanding into automation, robot-powered warehouses, and AI-driven analytics. While not a trendy meme stock, Zebra offers steady exposure to the infrastructure of commerce and automation, making it a \"cop on dips\" for long-term investors despite potential hardware-heavy risks and cyclical e",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/zebra-technologies-is-quietly-running-the-barcode-world-but-is-this/68472703",
+          "sentiment_score": 0.106146,
+          "sentiment_label": "Neutral",
+          "relevance": 0.569109
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Salesforce Plunges 20% in a Year: Is CRM Stock Still a Hold?",
+          "content": "Salesforce's stock has dropped 17.9% over the past year, underperforming its industry and competitors due to decelerating revenue growth and cautious enterprise spending. Despite this, the company is focusing on integrating AI, expanding its enterprise software portfolio, and making strategic acquisitions to reignite growth. With a valuation that appears discounted compared to its peers, the article suggests holding CRM stock for long-term gains.",
+          "url": "https://www.tradingview.com/news/zacks:b7fcbaca2094b:0-salesforce-plunges-20-in-a-year-is-crm-stock-still-a-hold/",
+          "sentiment_score": 0.218608,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.747099
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Wall Street Slept On CRH plc – Here’s Why This ‘Boring’ Stock Is Suddenly Going Viral",
+          "content": "CRH plc, a building materials giant, is gaining attention in financial circles, especially after shifting its primary listing to the U.S. While not a \"sexy\" stock, it's being highlighted on finance TikTok and YouTube as a solid infrastructure play, offering value, dividends, and exposure to government spending and construction booms. The article explores why this seemingly \"boring\" stock could be a profitable, long-term addition to a diversified portfolio, despite potential risks from interest r",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/wall-street-slept-on-crh-plc-here-s-why-this-boring-stock-is/68472670",
+          "sentiment_score": -0.144311,
+          "sentiment_label": "Neutral",
+          "relevance": 0.533914
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Palouse Capital Management Inc. Makes New $1.99 Million Investment in Fiserv, Inc. $FISV",
+          "content": "Palouse Capital Management Inc. has initiated a new position in Fiserv, Inc. (NASDAQ:FISV), purchasing 15,417 shares worth approximately $1.99 million during the third quarter. This investment signals institutional confidence, with large investors now holding 90.98% of the company's stock, despite mixed sentiment regarding near-term earnings and legal risks. Fiserv is navigating positive developments like an AI partnership with Microsoft and Clover biometric payments, countered by analyst expect",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-palouse-capital-management-inc-makes-new-199-million-investment-in-fiserv-inc-fisv-2026-01-09/",
+          "sentiment_score": 0.407476,
+          "sentiment_label": "Bullish",
+          "relevance": 0.673412
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "GOOGL: Alphabet CEO Offloads $10 Million in Stock Near Record Peak",
+          "content": "Alphabet CEO Sundar Pichai sold 32,500 Class C shares of GOOGL stock for approximately $10.4 million on January 7, with prices ranging from $315.39 to $326.05 per share. Despite the sale, Pichai retains over 2.4 million shares (Class A and C combined). The sale occurred as Alphabet's stock traded near its 52-week high, driven by strong results and AI momentum, and while insider sales are common for diversification or tax purposes, they do not necessarily indicate a change in company outlook.",
+          "url": "https://www.tradingview.com/news/gurufocus:3a75ece12094b:0-googl-alphabet-ceo-offloads-10-million-in-stock-near-record-peak/",
+          "sentiment_score": 0.243676,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.592478
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Lecap Asset Management Ltd. Sells 2,102 Shares of Intuit Inc. $INTU",
+          "content": "Lecap Asset Management Ltd. significantly reduced its stake in Intuit Inc. by 63.4% in Q3, selling 2,102 shares and retaining 1,216 shares valued at approximately $830,000. While institutional ownership remains high, notable insider selling has occurred, including major transactions by CEO Sasan Goodarzi and Director Scott Cook. Intuit recently declared a quarterly dividend of $1.20 per share, payable on January 16th, and has received largely positive analyst ratings, though some insider sales a",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-lecap-asset-management-ltd-sells-2102-shares-of-intuit-inc-intu-2026-01-09/",
+          "sentiment_score": 0.300055,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.632173
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Global AI Adoption in 2025 – AI Economy Institute",
+          "content": "The article analyzes global AI adoption in the second half of 2025, revealing a significant increase in generative AI tool usage worldwide, with roughly one in six people now using such tools. However, it highlights a widening digital divide, as adoption in the Global North grew nearly twice as fast as in the Global South. The report details leading countries in AI adoption like the UAE and Singapore, examines South Korea's surge due to national policies and model improvements, and notes the dra",
+          "url": "https://www.microsoft.com/en-us/corporate-responsibility/topics/ai-economy-institute/reports/global-ai-adoption-2025/",
+          "sentiment_score": 0.207423,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Data Backup and Recovery Software Market to Reach USD 26.3 Billion by 2030 | Strong 10.6% CAGR | North America Leads with 38% Share | Key Players: IBM, Oracle, Dell, Commvault, Veritas, Microsoft",
+          "content": "The global data backup and recovery software market is projected to grow from US$ 11.1 billion in 2022 to US$ 26.3 billion by 2030, exhibiting a CAGR of 10.6%. This growth is driven by the increasing volume of digital data, rising cyber threats, and the need for business continuity. North America currently leads the market with a 38% share, while cloud-based solutions and hybrid deployment models are dominating the market segments.",
+          "url": "https://www.openpr.com/news/4342327/data-backup-and-recovery-software-market-to-reach-usd-26-3",
+          "sentiment_score": 0.259725,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.650912
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "[Breaking] ITR Refund of Rs. 5.37cr not Paid to Microsoft Corp India for 8 Years: Delhi HC orders Refund with Interest",
+          "content": "The Delhi High Court has ordered an income tax refund of Rs. 5.37 crore with interest to Microsoft Corporation India Private Limited, after an 8-year delay. The court criticized the income tax department for its callousness and \"unreasonable prayer\" for a 12-week extension, setting a deadline of February 15, 2026, for payment. Justice Dinesh Mehta and Justice Vinod Kumar warned the Deputy Commissioner of Income Tax that any further delay would result in a personal penalty of Rs. 1,00,000.",
+          "url": "https://www.taxscan.in/top-stories/itr-refund-of-rs-537cr-not-paid-to-microsoft-corp-india-for-8-years-delhi-hc-orders-refund-with-interest-1441663",
+          "sentiment_score": 0.344326,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.946989
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Google's Larry Page Reportedly Exits California Over Proposed Billionaire Tax, Joining Peter Thiel, But This CEO Hasn't 'Thought About It Even Once'",
+          "content": "Google co-founder Larry Page has reportedly moved his family office and key assets out of California to avoid a proposed \"billionaire tax,\" joining other tech titans like Peter Thiel and Elon Musk in leaving the state. In contrast, Nvidia CEO Jensen Huang remains committed to California, stating tax policy won't drive him away. This divergence highlights a growing rift between Silicon Valley's elite and state legislators over the tax, which is intended to fund healthcare and education.",
+          "url": "https://www.sahmcapital.com/news/content/googles-larry-page-reportedly-exits-california-over-proposed-billionaire-tax-joining-peter-thiel-but-this-ceo-hasnt-thought-about-it-even-once-2026-01-08",
+          "sentiment_score": -0.241113,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.615692
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "IOT Gateway Market Size, Trends 2031 By Key Players- Cisco Systems Inc., IBM Corporation, Intel Corporation",
+          "content": "The IoT Gateway Market is experiencing significant growth driven by increasing deployments of connected devices, rising industrial automation, and expanding smart infrastructure initiatives. Key players like Cisco Systems Inc., IBM Corporation, and Intel Corporation are at the forefront, addressing challenges such as fragmented standards and cybersecurity risks. The market's future will be shaped by advancements in edge AI, 5G connectivity, and vertical-specific solutions across various industri",
+          "url": "https://www.openpr.com/news/4342152/iot-gateway-market-size-trends-2031-by-key-players-cisco",
+          "sentiment_score": 0.345152,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.635275
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "The American Solar Fortress: A Deep-Dive Analysis of First Solar (FSLR)",
+          "content": "First Solar (FSLR) has established itself as a leading American solar manufacturer, leveraging unique thin-film technology and strategic manufacturing expansions to maintain a strong market position despite industry headwinds. The company benefits from the re-industrialization of the U.S. and the electricity demands of AI data centers, boasting a robust financial performance, a fortress balance sheet, and a strong backlog. Its \"Made in America\" approach and immunity to the polysilicon cycle, cou",
+          "url": "https://markets.financialcontent.com/stocks/article/predictstreet-2026-1-9-the-american-solar-fortress-a-deep-dive-analysis-of-first-solar-fslr",
+          "sentiment_score": 0.251738,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.569436
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Discord Confidentially Files for IPO, Targeting Potential 2026 Debut",
+          "content": "Discord has confidentially filed for an Initial Public Offering (IPO) with the U.S. Securities and Exchange Commission, targeting a potential U.S. market debut around March 2026. The company is working with Goldman Sachs and JPMorgan Chase as lead underwriters. Discord was last valued at $14.7–15 billion and projects 2024 revenue of about $725 million with over 200 million monthly active users, having previously rejected a substantial acquisition offer from Microsoft in 2021.",
+          "url": "https://mlq.ai/news/discord-confidentially-files-for-ipo-targeting-potential-2026-debut/",
+          "sentiment_score": 0.177709,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.737157
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Voya Financial (VOYA) Stock Is Up, What You Need To Know",
+          "content": "Shares of Voya Financial (NYSE:VOYA) rose 2% after Barclays upgraded the stock to Overweight and increased its price target from $83 to $93, indicating confidence in its future performance. The stock's modest volatility suggests the market views this news as meaningful. Voya Financial has seen a 4.8% increase since the beginning of the year and has reached a new 52-week high, with long-term investors seeing significant returns.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/VOYA/pressreleases/36952182/voya-financial-voya-stock-is-up-what-you-need-to-know/",
+          "sentiment_score": 0.126315,
+          "sentiment_label": "Neutral",
+          "relevance": 0.637163
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Break market concentration with global stocks",
+          "content": "Invesco's article highlights the growing market concentration in a few US big tech and AI giants, stressing the importance of diversification through global stocks. It argues that the AI trade is becoming more nuanced, requiring active management and fundamental analysis to identify true winners rather than relying on broad exposure. The authors advocate for a disciplined, bottom-up stock-picking process across sectors and regions to build resilient portfolios.",
+          "url": "https://www.invesco.com/be/en/insights/break-market-concentration-with-global-stocks.html",
+          "sentiment_score": 0.334188,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.602521
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Break market concentration with global stocks",
+          "content": "This article argues for diversifying portfolios with global stocks to mitigate the risks associated with market concentration in a few large US tech and AI firms. It highlights that the \"AI trade\" is becoming more nuanced, requiring careful selection of companies embedding AI meaningfully, rather than just experimenting. The authors advocate for an active, fundamentals-driven investment approach to capture global opportunities and ensure more resilient portfolios.",
+          "url": "https://www.invesco.com/lu/en/insights/break-market-concentration-with-global-stocks.html",
+          "sentiment_score": 0.148679,
+          "sentiment_label": "Neutral",
+          "relevance": 0.724024
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Why Constellation Energy Rallied Nearly 60% in 2025",
+          "content": "Constellation Energy's shares rallied nearly 60% in 2025 due to its position as a key player in the AI buildout and increasing electricity demand. The company announced a major acquisition of Calpine, adding significant natural gas and geothermal capacity to its nuclear fleet. Additionally, Constellation secured new power purchase agreements with AI hyperscalers and benefited from a more favorable regulatory environment.",
+          "url": "https://finviz.com/news/271970/why-constellation-energy-rallied-nearly-60-in-2025",
+          "sentiment_score": 0.348081,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.634302
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "European Firms Seek Sovereign Clouds for Compliance, Resilience",
+          "content": "European enterprises are increasingly adopting sovereign cloud solutions to meet stricter regulations, manage geopolitical risks, and enhance data sovereignty and transparency, according to a report by ISG. This shift is turning sovereign cloud from a compliance tool into core infrastructure, driven by regulatory enforcement, security concerns, and the need for AI adoption within EU jurisdiction. The report highlights that key criteria for platform selection include regulatory alignment, operati",
+          "url": "https://www.businesswire.com/news/home/20260109509091/en/European-Firms-Seek-Sovereign-Clouds-for-Compliance-Resilience",
+          "sentiment_score": 0.300031,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.706774
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Did Elastic’s CISA SIEM Partnership and Bedrock Tie-Up Just Reframe Elastic’s (ESTC) AI-Security Narrative?",
+          "content": "Elastic N.V. recently announced a significant partnership with CISA for a SIEM-as-a-Service platform for federal agencies, with potential contract value up to US$130 million, and new monitoring features for Amazon Bedrock AgentCore. These collaborations highlight Elastic's strategy to integrate its AI and search capabilities into federal cybersecurity and AI ecosystems. While these developments reinforce Elastic's security use cases and potential for revenue stickiness, the article also advises ",
+          "url": "https://simplywall.st/stocks/us/software/nyse-estc/elastic/news/did-elastics-cisa-siem-partnership-and-bedrock-tie-up-just-r",
+          "sentiment_score": -0.112897,
+          "sentiment_label": "Neutral",
+          "relevance": 0.648166
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Fiserv and Microsoft Expand AI Integration",
+          "content": "Fiserv has announced an expanded strategic collaboration with Microsoft to integrate AI deeply into its development platforms and operations. The partnership aims to boost internal productivity through tools like Microsoft 365 Copilot and support the delivery of AI-driven solutions for Fiserv clients. Fiserv is also extending its use of Microsoft Foundry, an Azure-based AI platform, and has already deployed GitHub Copilot to over 8,000 software engineers to enhance development and accelerate sol",
+          "url": "https://fintechnews.ch/aifintech/fiserv-microsoft-ai-collaboration/80328/",
+          "sentiment_score": 0.435338,
+          "sentiment_label": "Bullish",
+          "relevance": 0.972926
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Microsoft Corporation (MSFT) Announces the Acquisition of Osmos",
+          "content": "Microsoft Corporation (NASDAQ:MSFT) has announced its acquisition of Osmos, an agentic AI data engineering platform, on January 5th. This acquisition aims to enhance Microsoft Fabric's goal of unifying data and analytics on one secure platform. Additionally, Microsoft formed a multi-year partnership with Cognizant on December 18th to integrate AI-powered solutions across various industries, utilizing Microsoft's cloud and AI services.",
+          "url": "https://www.insidermonkey.com/blog/microsoft-corporation-msft-announces-the-acquisition-of-osmos-1671646/",
+          "sentiment_score": 0.407873,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jim Cramer Says He Is \"Looking for Amazon to Put Up Much Bigger Gains in 2026\"",
+          "content": "Jim Cramer is optimistic about Amazon's performance in 2026, citing strong growth in its web services business, significant investment in AI through Anthropic, and continued double-digit growth in its retail sector. Despite heavy AI infrastructure spending, Cramer believes these investments will directly generate revenue, leading him to anticipate substantial gains for AMZN stock this year. The stock has already shown a nearly 5% increase over the past three sessions, reflecting positive sentime",
+          "url": "https://finviz.com/news/271673/jim-cramer-says-he-is-looking-for-amazon-to-put-up-much-bigger-gains-in-2026",
+          "sentiment_score": 0.115778,
+          "sentiment_label": "Neutral",
+          "relevance": 0.638977
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "SEALSQ and Kaynes SemiCon Reach Final Agreement to Develop a Sovereign Indian Post-Quantum Semiconductor Joint Venture in Alignment with MeitY",
+          "content": "SEALSQ Corp and Kaynes SemiCon have finalized an agreement to establish SEALKAYNESQ Ltd, a joint venture in India focused on developing a sovereign Indian Post-Quantum semiconductor platform. This initiative, aligned with India's MeitY, aims to create a high-assurance industrial platform for quantum-resistant technologies, reinforcing India's digital sovereignty and national security. The JV will establish a secure semiconductor design, test, and on-shore personalization center and will leverage",
+          "url": "https://www.nasdaq.com/press-release/sealsq-and-kaynes-semicon-reach-final-agreement-develop-sovereign-indian-post-quantum",
+          "sentiment_score": 0.117448,
+          "sentiment_label": "Neutral",
+          "relevance": 0.565327
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "‘ZombieAgent’ Attack Let Researchers Take Over ChatGPT",
+          "content": "Radware researchers successfully bypassed ChatGPT's security protocols using a new indirect prompt injection technique called \"ZombieAgent.\" This attack allowed them to exfiltrate user data and implant persistent malicious logic within the AI agent's long-term memory. The vulnerabilities, reported to OpenAI in September and fixed in December, demonstrate how attackers could turn ChatGPT into a persistent spy tool through malicious emails or files, affecting any enterprise application connected t",
+          "url": "https://www.securityweek.com/zombieagent-attack-let-researchers-take-over-chatgpt/",
+          "sentiment_score": -0.110784,
+          "sentiment_label": "Neutral",
+          "relevance": 0.621285
+        }
+      ],
+      "count": 50,
+      "avg_sentiment": 0.19959209999999994
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Fidelity Has a Pure Play ETF You Should Look at for 2026",
+          "content": "The Fidelity MSCI Communication Services Index ETF (FCOM) offers a diversified alternative to highly concentrated \"Magnificent Seven\" investments for investors heading into 2026. FCOM balances exposure to tech giants like Meta and Alphabet with traditional communications infrastructure companies such as Verizon and AT&T, providing a blend of growth potential and higher dividend yields. While FCOM's diversification may lead to underperformance during pure growth rallies, its 0.084% expense ratio ",
+          "url": "https://247wallst.com/investing/2026/01/09/fidelity-has-a-pure-play-etf-you-should-look-at-for-2026/",
+          "sentiment_score": 0.41751,
+          "sentiment_label": "Bullish",
+          "relevance": 0.819623
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Senator Dumps Apple, Google, Microsoft To End 2025—But Refuses To Sell This Mag 7 Underperformer",
+          "content": "Senator Shelley Moore Capito (R-W.Va.) sold shares of Apple, Alphabet, and Microsoft in December 2025, according to recent disclosures. Despite divesting from these major Magnificent Seven stocks, Capito chose to retain her Meta Platforms shares, which she bought multiple times throughout 2025. This decision is noteworthy given Meta's second-worst performance among the Magnificent Seven in 2025, suggesting a long-term belief in the company perhaps due to undervaluation.",
+          "url": "https://finance.yahoo.com/news/senator-dumps-apple-google-microsoft-223108948.html",
+          "sentiment_score": 0.217852,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.806604
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "California firm to bring nuclear reactors to Ohio to power Meta",
+          "content": "Oklo, a California-based nuclear energy company, has partnered with Meta Platforms, Inc. to establish a 1.2-gigawatt power campus in Pike County, Ohio, using 16 advanced nuclear reactors to power Meta's data centers. This project aims to address the significant demand for electrical energy from power-hungry data centers and is expected to create numerous jobs. While proponents hail it as a \"new era\" for Ohio's energy sector, some local residents express concerns about environmental safety and la",
+          "url": "https://www.dispatch.com/story/business/energy-resource/2026/01/09/oklo-partners-with-meta-on-nuclear-plants-to-power-data-centers-in-ohio/88081380007/",
+          "sentiment_score": 0.400856,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Meta strikes deals with Vistra, Oklo, TerraPower",
+          "content": "Tech giant Meta has announced three significant agreements with Vistra, TerraPower, and Oklo, aiming to support the expansion of nuclear energy capacity to power its growing data centers and AI operations. These deals, originating from a December 2024 RFP, involve funding for uprates at existing nuclear plants and the development of new advanced reactor projects, potentially adding up to 6.6 GW of energy by 2035. This initiative underscores Meta's strategy to invest in capital-intensive energy t",
+          "url": "https://www.ans.org/news/article-7666/meta-strikes-deals-with-vistra-oklo-terrapower/",
+          "sentiment_score": 0.80183,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Meta agreement advances plan for large nuclear power site in Ohio",
+          "content": "Meta has signed an agreement with nuclear technology company Oklo for a power plant project in Ohio. This nuclear facility is intended to support Meta's data centers in the region. The move comes amidst growing concerns about the power grid's capacity to meet the surging demand from data centers.",
+          "url": "https://www.bizjournals.com/columbus/news/2026/01/09/meta-oklo-ohio-nuclear-power-data-centers.html",
+          "sentiment_score": 0.332402,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Vistra Corp. Strikes $4 Billion Deal, Agrees to Separate Deal With Meta",
+          "content": "Vistra Corp. has acquired Cogentrix Energy for $4 billion, adding 5,500 MW of natural gas generation capacity to its portfolio. Additionally, Vistra has entered into a 20-year power purchase agreement with Meta to provide over 2,600 MW of zero-carbon energy from its nuclear plants in the PJM region. The article also covers KKR's acquisition of Dallas-based sports PE firm Arctos Partners for $1 billion and PMG's acquisition of Digital Voices.",
+          "url": "https://www.dmagazine.com/business-economy/2026/01/vistra-corp-acquires-cogentrix-energy-for-4-billion-agrees-to-separate-deal-with-meta/",
+          "sentiment_score": 0.413008,
+          "sentiment_label": "Bullish",
+          "relevance": 0.714662
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Form 424B2 GOLDMAN SACHS GROUP INC",
+          "content": "GS Finance Corp., guaranteed by The Goldman Sachs Group, Inc., is offering Autocallable Variable Coupon Equity-Linked Notes due January 30, 2031. The notes' coupon payments and potential automatic call depend on the performance of the Class C capital stock of Alphabet Inc., common stock of NVIDIA Corporation, Class A common stock of Meta Platforms, Inc., and common stock of Tesla, Inc. Investors face risks related to variable coupon amounts, automatic redemption, market value fluctuations, and t",
+          "url": "https://www.streetinsider.com/SEC+Filings/Form+424B2+GOLDMAN+SACHS+GROUP+INC/25831142.html",
+          "sentiment_score": 0.089952,
+          "sentiment_label": "Neutral",
+          "relevance": 0.851425
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Meta strikes deals with Vistra, Oklo, TerraPower",
+          "content": "Meta announced three agreements with Vistra, Oklo, and TerraPower aiming to support both uprates at existing nuclear power plants and the development of new advanced reactor projects. These deals could finance up to 6.6 GW of new and existing energy by 2035 to meet Meta's growing data center and AI-driven energy needs. The partnerships include funding for TerraPower's Natrium units, development of an advanced nuclear technology campus with Oklo, and support for uprates at Vistra's existing nucle",
+          "url": "https://www.ans.org/news/2026-01-12/article-7666/meta-strikes-deals-with-vistra-oklo-terrapower/",
+          "sentiment_score": 0.400154,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Google, Meta, Amazon, Netflix And Microsoft Escape Tough New European Rules: Report",
+          "content": "Google, Meta, Amazon, Netflix, and Microsoft are expected to avoid mandatory obligations under the EU's new Digital Networks Act. Instead, the proposal will invite these tech giants to participate in a voluntary cooperation system rather than facing strict regulations. This decision comes despite lobbying from European telecom operators and aims to boost investment in broadband infrastructure.",
+          "url": "https://www.sahmcapital.com/news/content/google-meta-amazon-netflix-and-microsoft-escape-tough-new-european-rules-report-2026-01-09",
+          "sentiment_score": 0.258265,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.993686
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Meta signs nuclear energy deals to power Prometheus AI supercluster",
+          "content": "Meta has announced agreements with three nuclear power providers—Vistra, TerraPower, and Oklo—to power its Prometheus supercluster AI computing system being built in New Albany, Ohio. These deals are crucial for supporting Meta's ambitious AI development, with a goal to add 6.6 gigawatts of power by 2035. The move reflects a broader trend among tech giants investing in nuclear energy to meet the massive power demands of AI infrastructure.",
+          "url": "https://www.cnbc.com/2026/01/09/meta-signs-nuclear-energy-deals-to-power-prometheus-ai-supercluster.html",
+          "sentiment_score": 0.349914,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.909257
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Stocks Start First Full Week of 2026 Strong",
+          "content": "The Dow, Nasdaq, and S&P 500 all posted significant gains, marking their best weekly performance since early November, fueled by investor optimism for 2026. Homebuilding stocks surged after President Trump ordered mortgage giants to purchase $200 billion in mortgage bonds, leading to a sharp decline in mortgage rates. Oil and gold also recorded weekly gains amidst geopolitical developments and increased demand.",
+          "url": "https://finviz.com/news/272529/stocks-start-first-full-week-of-2026-strong",
+          "sentiment_score": 0.311429,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.748068
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Vistra and Meta Announce Agreements to Support Nuclear Plants in PJM and Add New Nuclear Generation to the Grid",
+          "content": "Vistra and Meta have entered into 20-year power purchase agreements (PPAs) totaling over 2,600 megawatts (MW) from three Vistra nuclear plants in the PJM region to support Meta's operations. The agreements include 2,176 MW of existing generation and an additional 433 MW from nuclear uprates, marking the largest nuclear uprates supported by a corporate customer in the United States. This partnership ensures the continued operation of Vistra's Beaver Valley, Davis-Besse, and Perry nuclear power pl",
+          "url": "https://br.advfn.com/noticias/PRNUS/2026/artigo/97587370",
+          "sentiment_score": 0.627787,
+          "sentiment_label": "Bullish",
+          "relevance": 0.810439
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "AI company ServiceNow hires former Microsoft CLO as next legal head",
+          "content": "ServiceNow, an AI company, has appointed Hossein Nowbar, former CLO at Microsoft, as its new chief legal officer and president. He replaces Russ Elmer, who will transition to a special counsel role. Nowbar will oversee global legal, ethics, governance, compliance, risk, and government affairs functions, bringing over three decades of experience relevant to AI.",
+          "url": "https://www.globallegalpost.com/news/ai-company-servicenow-hires-former-microsoft-clo-as-next-legal-head-1312179919",
+          "sentiment_score": 0.145834,
+          "sentiment_label": "Neutral",
+          "relevance": 0.643438
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "ASP Isotopes Stock Surged Over 13% Today – Why The Company Stands To Gain From Meta’s Nuclear Energy Deal With TerraPower",
+          "content": "ASP Isotopes (ASPI) stock surged over 13% after Meta Platforms (META) announced a long-term agreement with TerraPower to secure nuclear energy. ASP Isotopes had previously finalized agreements with TerraPower in 2025 to finance and supply fuel for advanced nuclear projects. The company's proprietary Aerodynamic Separation Process and focus on High-Assay Low-Enriched Uranium (HALEU) position it favorably for the growing demand for nuclear energy.",
+          "url": "https://stocktwits.com/news-articles/markets/equity/asp-isotopes-stock-surged-today-why-the-company-stands-to-gain-from-meta-nuclear-energy-deal-with-terra-power/cmU2hJCR4dX",
+          "sentiment_score": 0.307412,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.82499
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Why Vistra (VST) stock is jumping premarket: Meta signs 20-year nuclear power deals",
+          "content": "Vistra (VST) stock surged approximately 8% in premarket trading after Meta Platforms signed 20-year agreements to purchase nuclear power from three Vistra plants in Ohio and Pennsylvania. These deals aim to secure reliable, zero-carbon electricity for Meta's surging data center demand and AI buildout. The agreements involve over 2,600 megawatts of energy, including existing generation and output increases, with Meta's purchases starting in late 2026.",
+          "url": "https://ts2.tech/en/why-vistra-vst-stock-is-jumping-premarket-meta-signs-20-year-nuclear-power-deals/",
+          "sentiment_score": 0.400278,
+          "sentiment_label": "Bullish",
+          "relevance": 0.871984
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "First Trust Has an ETF That Might Be Better Than the Nasdaq and QQQ",
+          "content": "The First Trust Dow Jones Internet Index Fund (FDN) offers an equal-weight alternative to the Nasdaq and QQQ by focusing on pure internet companies. However, FDN has significantly underperformed QQQ over the past one and five years, primarily due to its lack of exposure to mega-cap tech stocks like Nvidia, Apple, and Microsoft. For investors seeking broad tech exposure or those focused on the \"Magnificent Seven,\" QQQ or the Direxion NASDAQ-100 Equal Weighted Index Shares (QQQE) might be better o",
+          "url": "https://247wallst.com/investing/2026/01/09/first-trust-has-an-etf-that-might-be-better-than-the-nasdaq-and-qqq/",
+          "sentiment_score": 0.078409,
+          "sentiment_label": "Neutral",
+          "relevance": 0.703904
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Vistra (VST) Stock Soars in Premarket on Major Nuclear Power Deal With Meta",
+          "content": "Vistra (NYSE: VST) stock surged over 13% in premarket trading after announcing a 20-year nuclear energy agreement with Meta. This landmark deal involves Vistra supplying over 2,600 megawatts of zero-carbon energy from three nuclear plants to Meta and includes significant capacity expansion and license renewals. The agreement is poised to boost Vistra's long-term growth and address the increasing power demands of AI operations, while also bringing substantial economic benefits to local communitie",
+          "url": "https://tokenist.com/vistra-vst-stock-soars-in-premarket-on-major-nuclear-power-deal-with-meta/",
+          "sentiment_score": 0.330552,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.841269
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Why Constellation Energy Stock Popped Today",
+          "content": "Constellation Energy (CEG) stock rose by 4% due to two positive news items. Investment bank TD Cowen initiated coverage with a buy rating and a $440 price target, and Meta Platforms announced an expanded commitment to nuclear energy, indirectly securing Constellation's future revenue. Despite the positive news, the stock is considered expensive at 37 times trailing earnings compared to its 15% long-term earnings growth forecast.",
+          "url": "https://finviz.com/news/272222/why-constellation-energy-stock-popped-today",
+          "sentiment_score": 0.220108,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.831684
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "AMD in 2026: The Systems-Led Challenger in the AI Super-Cycle",
+          "content": "Advanced Micro Devices (AMD) has transformed into a leading challenger in the AI semiconductor market, largely due to its strategic shift towards high-performance computing and data center AI under CEO Lisa Su. With the release of its MI350 and MI400 series accelerators, and significant improvements in its ROCm software, AMD is fiercely competing with Nvidia, despite notable risks like supply chain concentration and market cyclicality. The company's strong financial performance, innovative produ",
+          "url": "https://markets.financialcontent.com/stocks/article/predictstreet-2026-1-9-amd-in-2026-the-systems-led-challenger-in-the-ai-super-cycle",
+          "sentiment_score": 0.110989,
+          "sentiment_label": "Neutral",
+          "relevance": 0.573646
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Vistra and Meta Announce Agreements to Support Nuclear Plants in PJM and Add New Nuclear Generation to the Grid",
+          "content": "Vistra and Meta have signed 20-year power purchase agreements (PPAs) that will provide over 2,600 megawatts of zero-carbon energy from three Vistra nuclear plants to support Meta's operations. The agreements include both existing generation and an additional 433 MW from nuclear uprates, representing the largest corporate customer-supported nuclear uprates in the United States. This partnership ensures the continued operation of these nuclear plants, fosters local economic development, and suppor",
+          "url": "https://www.prnewswire.com/news-releases/vistra-and-meta-announce-agreements-to-support-nuclear-plants-in-pjm-and-add-new-nuclear-generation-to-the-grid-302656941.html",
+          "sentiment_score": 0.449245,
+          "sentiment_label": "Bullish",
+          "relevance": 0.832759
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Here's What the Street Thinks About Amazon.com (AMZN)",
+          "content": "Wolfe Research recently lowered Amazon's (AMZN) price target to $275 from $305, while Evercore ISI maintained a Buy rating with a $335 target, citing the potential of its AI-powered shopping assistant, Rufus. Evercore anticipates Rufus and agentic commerce could significantly boost Amazon's advertising revenue and retail GMV by 2028. The article suggests that while Amazon has investment potential, other AI stocks might offer greater upside and less risk.",
+          "url": "https://finviz.com/news/272179/heres-what-the-street-thinks-about-amazoncom-amzn",
+          "sentiment_score": 0.143313,
+          "sentiment_label": "Neutral",
+          "relevance": 0.517495
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Kenvue Appoints Madhav Nayak as Vice President and CMO for Asia-Pacific",
+          "content": "Kenvue has appointed Madhav Nayak as Vice President and Chief Marketing Officer for Asia-Pacific. He will lead brand strategy and commercial performance for Kenvue's brands across the region, including Johnson's, Neutrogena, and Listerine. Nayak brings over two decades of FMCG and consumer marketing expertise, having previously held leadership roles at KFC Asia, Meta, and Unilever.",
+          "url": "https://cio.eletsonline.com/news/kenvue-appoints-madhav-nayak-as-vice-president-and-cmo-for-asia-pacific/75529/",
+          "sentiment_score": 0.107162,
+          "sentiment_label": "Neutral",
+          "relevance": 0.583954
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Break market concentration with global stocks",
+          "content": "This article argues for diversifying portfolios with global stocks to mitigate the risks associated with market concentration in a few large US tech and AI firms. It highlights that the \"AI trade\" is becoming more nuanced, requiring careful selection of companies embedding AI meaningfully, rather than just experimenting. The authors advocate for an active, fundamentals-driven investment approach to capture global opportunities and ensure more resilient portfolios.",
+          "url": "https://www.invesco.com/lu/en/insights/break-market-concentration-with-global-stocks.html",
+          "sentiment_score": 0.069529,
+          "sentiment_label": "Neutral",
+          "relevance": 0.636439
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Why Constellation Energy Rallied Nearly 60% in 2025",
+          "content": "Constellation Energy's shares rallied nearly 60% in 2025 due to its position as a key player in the AI buildout and increasing electricity demand. The company announced a major acquisition of Calpine, adding significant natural gas and geothermal capacity to its nuclear fleet. Additionally, Constellation secured new power purchase agreements with AI hyperscalers and benefited from a more favorable regulatory environment.",
+          "url": "https://finviz.com/news/271970/why-constellation-energy-rallied-nearly-60-in-2025",
+          "sentiment_score": 0.302171,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.705838
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Jim Cramer Says He Is \"Looking for Amazon to Put Up Much Bigger Gains in 2026\"",
+          "content": "Jim Cramer is optimistic about Amazon's performance in 2026, citing strong growth in its web services business, significant investment in AI through Anthropic, and continued double-digit growth in its retail sector. Despite heavy AI infrastructure spending, Cramer believes these investments will directly generate revenue, leading him to anticipate substantial gains for AMZN stock this year. The stock has already shown a nearly 5% increase over the past three sessions, reflecting positive sentime",
+          "url": "https://finviz.com/news/271673/jim-cramer-says-he-is-looking-for-amazon-to-put-up-much-bigger-gains-in-2026",
+          "sentiment_score": 0.141264,
+          "sentiment_label": "Neutral",
+          "relevance": 0.622575
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Google, Meta, Amazon, Netflix And Microsoft Escape Tough New European Rules: Report",
+          "content": "The European Commission's upcoming Digital Networks Act (DNA) is expected to exempt major U.S. tech companies like Google, Meta, Amazon, Netflix, and Microsoft from binding new obligations. Instead, these companies will participate in a voluntary cooperation system, prioritizing investment in telecom infrastructure over strict regulation of tech giants. This approach, which aims to boost competitiveness and accelerate broadband development, may face pushback from national regulators and follows ",
+          "url": "https://www.benzinga.com/markets/tech/26/01/49804721/google-meta-amazon-netflix-and-microsoft-escape-tough-new-european-rules-report",
+          "sentiment_score": 0.270222,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.900251
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "The Truth About International Business Machines: Why Everyone Is Suddenly Paying Attention",
+          "content": "This article examines International Business Machines (IBM) as a potential AI dark horse, arguing that while it lacks the social media hype of other tech giants, its focus on enterprise AI, hybrid cloud, and automation makes it an attractive investment for those seeking long-term value and dividends. The piece contrasts IBM's \"grown-up tech\" stability with the high-volatility, meme-stock plays, positioning it as a steady alternative for a diversified portfolio.",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/the-truth-about-international-business-machines-why-everyone-is-suddenly/68471657",
+          "sentiment_score": 0.054351,
+          "sentiment_label": "Neutral",
+          "relevance": 0.585618
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-09",
+          "title": "Callan JMB director Dial buys shares worth $2409",
+          "content": "Callan JMB Inc. director Gerald Dial recently purchased 2,000 shares of the company's common stock for $2,409. The purchases were made at prices between $1.20 and $1.22 per share, which is below the stock's Fair Value according to InvestingPro data. The company has also announced strategic initiatives including a preliminary agreement for manufacturing equipment at its Texas facility and an expansion into food sampling logistics.",
+          "url": "https://www.investing.com/news/insider-trading-news/callan-jmb-director-dial-buys-shares-worth-2409-93CH-4433168",
+          "sentiment_score": 0.397578,
+          "sentiment_label": "Bullish",
+          "relevance": 0.572755
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-01-09",
+          "title": "[] ['Vistra Corp.  (VST)  (CIK 0001692819)']",
+          "content": "2026-01-09",
+          "url": "https://www.sec.gov2026-01-09",
+          "form_type": ""
+        }
+      ],
+      "count": 29,
+      "avg_sentiment": 0.28101296551724136
+    }
+  },
+  "collected_at": "2026-03-21T00:24:29.600045"
+}

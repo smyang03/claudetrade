@@ -1,0 +1,75 @@
+{
+  "date": "2024-05-14",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-14",
+          "title": "[] ['NETWORK-1 TECHNOLOGIES, INC.  (NTIP)  (CIK 0001065078)']",
+          "content": "2024-05-14",
+          "url": "https://www.sec.gov2024-05-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-14",
+          "title": "[] ['THUMZUP MEDIA Corp  (TZUP)  (CIK 0001853825)']",
+          "content": "2024-05-14",
+          "url": "https://www.sec.gov2024-05-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-14",
+          "title": "[] ['BuzzFeed, Inc.  (BZFD, BZFDW)  (CIK 0001828972)']",
+          "content": "2024-05-14",
+          "url": "https://www.sec.gov2024-05-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-14",
+          "title": "[] ['MAIA Biotechnology, Inc.  (MAIA)  (CIK 0001878313)']",
+          "content": "2024-05-14",
+          "url": "https://www.sec.gov2024-05-14",
+          "form_type": ""
+        }
+      ],
+      "count": 4,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T13:57:28.143613"
+}

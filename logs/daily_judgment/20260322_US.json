@@ -1,0 +1,91 @@
+{
+  "date": "2026-03-21",
+  "market": "US",
+  "judgments": {
+    "bull": {
+      "stance": "CAUTIOUS_BEAR",
+      "confidence": 0.72,
+      "key_reason": "S&P500 -1.51%, 나스닥 -2.01%의 광범위한 하락과 VIX 26.8 고조 속에 주요 3종목 모두 MACD 데드크로스 진행 중으로 단기 반등 포착보다 리스크 관리 우선",
+      "full_reasoning": "시장 전반이 약세 압력을 받고 있으며 VIX 26.8은 공포 구간 진입을 시사합니다. 다만 애플 RSI 25.2 과매도 신호는 단기 기술적 반등 가능성을 내포하고 있어 완전한 HALT보다는 소극적 베어 포지션 유지가 적절합니다. 거래량이 전반적으로 0.4~0.7배로 낮아 하락의 추세적 확산보다는 관망 심리가 지배적임을 감안, 섣부른 역방향 진입은 자제하되 과매도 종목의 기술적 반등 기회를 소량 모니터링합니다.",
+      "top_risks": [
+        "VIX 26.8 이상 추가 급등 시 투매 가속화로 기술적 지지선 붕괴 가능",
+        "DXY 99.5 달러 강세 지속 시 글로벌 자금 이탈 및 나스닥 추가 압박"
+      ],
+      "suggested_strategy": "평균회귀"
+    },
+    "bear": {
+      "stance": "DEFENSIVE",
+      "confidence": 0.82,
+      "key_reason": "S&P500 -1.51%, 나스닥 -2.01%의 동반 하락과 VIX 26.8 고점권, DXY 99.5 달러 약세 속 주요 3종목 모두 MACD 데드크로스로 하방 압력 지속",
+      "full_reasoning": "VIX 26.8은 공포 구간 진입을 시사하며 단기 변동성 확대 가능성이 높다. 테슬라 RSI 38.4, 애플 RSI 25.2 과매도 신호는 반등 가능성을 열어두나, 거래량이 전 종목 0.4~0.7배로 매수 주체가 부재한 상황에서 기술적 반등보다 추가 하락 리스크가 우선된다. 전일 HALT 판단 이후 지수가 추가 -1.69% 하락한 흐름이 오늘도 이어지고 있어 신규 진입보다 관망·방어 포지션이 적절하다.",
+      "top_risks": [
+        "VIX 26.8 고점권에서 추가 급등 시 패닉셀 및 연쇄 하락 가능성",
+        "거래량 저조(0.4~0.7배) 속 과매도 반등 시도 실패 시 지지선 붕괴 위험"
+      ],
+      "suggested_strategy": "관망"
+    },
+    "neutral": {
+      "stance": "DEFENSIVE",
+      "confidence": 0.72,
+      "key_reason": "S&P500 -1.51%, 나스닥 -2.01%의 광범위한 하락과 VIX 26.8 상승, 3개 주요 종목 모두 MACD 데드크로스 상태로 단기 약세 흐름 지속 중",
+      "full_reasoning": "VIX 26.8은 시장 불안심리가 상당 수준임을 시사하며, DXY 99.5의 달러 약세는 위험자산 회피 흐름과 복합적 신호를 형성한다. 엔비디아·테슬라·애플 3종목 모두 MACD 데드크로스 상태이고, 테슬라 RSI 38.4·애플 RSI 25.2(과매도 구간)로 하락 압력이 지속되고 있으나 애플의 과매도는 단기 반등 가능성도 내포한다. 거래량이 전반적으로 0.4~0.7배 수준으로 저조해 하락 확신보다는 관망 심리가 강하며, 포지션 진입보다 리스크 관리 우선이 적절하다.",
+      "top_risks": [
+        "VIX 추가 상승 및 거시 불확실성(관세·연준 정책) 지속으로 지수 추가 하락 가능",
+        "애플 과매도 구간에서의 단기 반등 시도가 실패할 경우 하방 가속화"
+      ],
+      "suggested_strategy": "관망"
+    }
+  },
+  "consensus": {
+    "mode": "HALT",
+    "size": 0,
+    "tp_mult": 0.0,
+    "minority_triggered": false,
+    "vote": [
+      "bear",
+      "bear",
+      "bear"
+    ]
+  },
+  "digest_prompt": "[2026-03-21 US 시장 데이터]\n\n▶ 시장 컨텍스트\n  S&P500 -1.51% | 나스닥 -2.01% | VIX 26.8 | DXY 99.5\n\n▶ 종목 기술 지표\n  [엔비디아] 178.2 -1.22% | RSI 51.3 | MACD 데드크로스 | BB 21% | 거래량 0.5배 | 52주위치 nan%\n  [테슬라] 382.23 -2.69% | RSI 38.4 | MACD 데드크로스 | BB -6% | 거래량 0.7배 | 52주위치 nan%\n  [애플] 248.41 -0.61% | RSI 25.2🔴과매도 | MACD 데드크로스 | BB 9% | 거래량 0.4배 | 52주위치 nan%",
+  "tickers": [
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN"
+  ],
+  "actual_result": {
+    "market_change": -1.5138182356779244,
+    "pnl_pct": 0.0,
+    "pnl_krw": 0,
+    "win": false,
+    "trades": 0,
+    "cumulative": 30000000
+  },
+  "postmortem": {
+    "bull_result": "MISS",
+    "bear_result": "HIT",
+    "neutral_result": "PARTIAL",
+    "bull_why": "자동",
+    "bear_why": "자동",
+    "neutral_why": "자동",
+    "key_lesson": "오류로 자동 판정",
+    "issue_type": "미분류",
+    "issue_desc": "",
+    "pattern_id": null,
+    "brain_updates": {
+      "bull_reliability_change": "stable",
+      "bear_reliability_change": "stable",
+      "new_lesson": null,
+      "market_regime": "unknown"
+    },
+    "correction_guide": {
+      "bull_adjustments": [],
+      "bear_adjustments": [],
+      "tuning_rules": [],
+      "today_notes": ""
+    }
+  },
+  "trades": [],
+  "mode": "paper"
+}

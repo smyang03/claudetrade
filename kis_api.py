@@ -159,10 +159,41 @@ def _get_price_us_alpha(ticker):
         return _get_price_us_yf(ticker)
 
 
+def _get_price_kr_yf(ticker: str) -> dict:
+    """KIS API 실패 시 yfinance로 KR 현재가 폴백"""
+    try:
+        import yfinance as yf
+        suffix = ".KQ" if ticker.startswith(("09", "27", "29", "33")) else ".KS"
+        t = yf.Ticker(f"{ticker}{suffix}")
+        info = t.fast_info
+        price = int(info.last_price or 0)
+        if price == 0:
+            hist = t.history(period="2d")
+            if not hist.empty:
+                price = int(hist["Close"].iloc[-1])
+        return {
+            "ticker": ticker, "name": ticker,
+            "price": price,
+            "change": 0, "change_rate": 0.0,
+            "volume": 0, "open": price, "high": price, "low": price,
+        }
+    except Exception:
+        return {
+            "ticker": ticker, "name": ticker,
+            "price": 0, "change": 0, "change_rate": 0.0,
+            "volume": 0, "open": 0, "high": 0, "low": 0,
+        }
+
+
 def get_price(ticker, token, market="KR"):
     if market == "US":
         return _get_price_us_alpha(ticker)
-    return _get_price_kr(ticker, token)
+    try:
+        return _get_price_kr(ticker, token)
+    except Exception as e:
+        import logging
+        logging.getLogger("trading").warning(f"KIS 가격 조회 실패 [{ticker}] → yfinance 폴백: {e}")
+        return _get_price_kr_yf(ticker)
 
 
 def _daily_ohlcv_kr(ticker, token, lookback_days=200):
@@ -295,6 +326,39 @@ def get_index_change(market: str) -> float:
         return (last - prev) / prev * 100 if prev else 0.0
     except Exception:
         return 0.0
+
+
+def get_usd_krw() -> float:
+    """실시간 USD/KRW 환율 조회 (yfinance 우선 → AlphaVantage → .env 기본값)"""
+    # 1차: yfinance (무료, 실시간)
+    try:
+        import yfinance as yf
+        rate = yf.Ticker("USDKRW=X").fast_info.last_price
+        if rate and rate > 100:
+            return round(float(rate), 2)
+    except Exception:
+        pass
+
+    # 2차: AlphaVantage FX (API 키 있을 때)
+    if AV_KEY:
+        try:
+            resp = requests.get(
+                "https://www.alphavantage.co/query",
+                params={"function": "CURRENCY_EXCHANGE_RATE",
+                        "from_currency": "USD", "to_currency": "KRW",
+                        "apikey": AV_KEY},
+                timeout=10,
+            )
+            rate = float(resp.json()
+                         .get("Realtime Currency Exchange Rate", {})
+                         .get("5. Exchange Rate", 0))
+            if rate > 100:
+                return round(rate, 2)
+        except Exception:
+            pass
+
+    # 3차: .env 기본값
+    return float(os.getenv("USD_KRW_RATE", "1350"))
 
 
 def get_balance(token, market="KR"):

@@ -1,0 +1,84 @@
+{
+  "date": "2025-05-14",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-14",
+          "title": "[] ['Circle Energy, Inc./NV  (CRCE)  (CIK 0001911467)']",
+          "content": "2025-05-14",
+          "url": "https://www.sec.gov2025-05-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-14",
+          "title": "[] ['Circle Energy, Inc./NV  (CRCE)  (CIK 0001911467)']",
+          "content": "2025-05-14",
+          "url": "https://www.sec.gov2025-05-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-14",
+          "title": "[] ['Circle Energy, Inc./NV  (CRCE)  (CIK 0001911467)']",
+          "content": "2025-05-14",
+          "url": "https://www.sec.gov2025-05-14",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-14",
+          "title": "[] ['Alto Neuroscience, Inc.  (ANRO)  (CIK 0001999480)']",
+          "content": "2025-05-14",
+          "url": "https://www.sec.gov2025-05-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-14",
+          "title": "[] ['Grove Collaborative Holdings, Inc.  (GROV, GROVW)  (CIK 0001841761)']",
+          "content": "2025-05-14",
+          "url": "https://www.sec.gov2025-05-14",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T13:33:28.674729"
+}

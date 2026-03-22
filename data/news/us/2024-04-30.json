@@ -1,0 +1,83 @@
+{
+  "date": "2024-04-30",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": true,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-04-30",
+          "title": "[] ['LABORATORY CORP OF AMERICA HOLDINGS  (LH)  (CIK 0000920148)']",
+          "content": "2024-04-30",
+          "url": "https://www.sec.gov2024-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-04-30",
+          "title": "[] ['AMAZON COM INC  (AMZN)  (CIK 0001018724)']",
+          "content": "2024-04-30",
+          "url": "https://www.sec.gov2024-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-04-30",
+          "title": "[] ['STREAMLINE HEALTH SOLUTIONS INC.  (STRM)  (CIK 0001008586)']",
+          "content": "2024-04-30",
+          "url": "https://www.sec.gov2024-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-04-30",
+          "title": "[] ['PINTEREST, INC.  (PINS)  (CIK 0001506293)']",
+          "content": "2024-04-30",
+          "url": "https://www.sec.gov2024-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-04-30",
+          "title": "[] ['AERWINS Technologies Inc.  (AWIN, AWINW)  (CIK 0001855631)']",
+          "content": "2024-04-30",
+          "url": "https://www.sec.gov2024-04-30",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T13:19:28.272804"
+}

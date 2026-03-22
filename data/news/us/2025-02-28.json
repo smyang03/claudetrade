@@ -1,0 +1,83 @@
+{
+  "date": "2025-02-28",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-28",
+          "title": "[] ['NETWORK-1 TECHNOLOGIES, INC.  (NTIP)  (CIK 0001065078)']",
+          "content": "2025-02-28",
+          "url": "https://www.sec.gov2025-02-28",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-28",
+          "title": "[] ['INTEGRAL AD SCIENCE HOLDING CORP.  (IAS)  (CIK 0001842718)']",
+          "content": "2025-02-28",
+          "url": "https://www.sec.gov2025-02-28",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-28",
+          "title": "[] ['INTEGRAL AD SCIENCE HOLDING CORP.  (IAS)  (CIK 0001842718)']",
+          "content": "2025-02-28",
+          "url": "https://www.sec.gov2025-02-28",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-28",
+          "title": "[] ['TXNM ENERGY INC  (TXNM)  (CIK 0001108426)', 'TEXAS NEW MEXICO POWER CO  (CIK 0000022767)', 'PUBLIC SERVICE CO OF NEW MEXICO  (CIK 0000081023)']",
+          "content": "2025-02-28",
+          "url": "https://www.sec.gov2025-02-28",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-28",
+          "title": "[] ['Criteo S.A.  (CRTO)  (CIK 0001576427)']",
+          "content": "2025-02-28",
+          "url": "https://www.sec.gov2025-02-28",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:11:44.333547"
+}

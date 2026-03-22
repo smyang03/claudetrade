@@ -6,6 +6,7 @@ from datetime import datetime
 sys.path.insert(0,str(Path(__file__).parent.parent))
 from logger import get_minority_logger
 from claude_memory import brain as BrainDB
+from credit_tracker import record as credit_record
 
 log    = get_minority_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
@@ -39,6 +40,7 @@ JSON으로만:
         raw = resp.content[0].text.strip()
         if "```" in raw: raw = raw.split("```")[1].replace("json","").strip()
         result = json.loads(raw)
+        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, f"tune_{elapsed_min}min")
         log.info(f"[튜닝 {elapsed_min}분] {result.get('action','-')} "
                  f"→ {result.get('mode','-')} | {result.get('reason','')[:60]}")
         # 튜닝 패턴 기록

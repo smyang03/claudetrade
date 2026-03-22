@@ -1,0 +1,67 @@
+{
+  "date": "2024-03-27",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-27",
+          "title": "[] ['Advanced Voice Recognition Systems, Inc  (RIVF)  (CIK 0001342936)']",
+          "content": "2024-03-27",
+          "url": "https://www.sec.gov2024-03-27",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-27",
+          "title": "[] ['Orchestra BioMed Holdings, Inc.  (OBIO)  (CIK 0001814114)']",
+          "content": "2024-03-27",
+          "url": "https://www.sec.gov2024-03-27",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-27",
+          "title": "[] ['Evofem Biosciences, Inc.  (EVFM)  (CIK 0001618835)']",
+          "content": "2024-03-27",
+          "url": "https://www.sec.gov2024-03-27",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T11:48:07.563012"
+}

@@ -1,0 +1,83 @@
+{
+  "date": "2024-02-20",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-20",
+          "title": "[] ['DigitalBridge Group, Inc.  (DBRG, DBRG-PH, DBRG-PI, DBRG-PJ)  (CIK 0001679688)']",
+          "content": "2024-02-20",
+          "url": "https://www.sec.gov2024-02-20",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-20",
+          "title": "[] ['CHEGG, INC  (CHGG)  (CIK 0001364954)']",
+          "content": "2024-02-20",
+          "url": "https://www.sec.gov2024-02-20",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-20",
+          "title": "[] ['MEDIFAST INC  (MED)  (CIK 0000910329)']",
+          "content": "2024-02-20",
+          "url": "https://www.sec.gov2024-02-20",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-20",
+          "title": "[] ['NEW YORK TIMES CO  (NYT)  (CIK 0000071691)']",
+          "content": "2024-02-20",
+          "url": "https://www.sec.gov2024-02-20",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-20",
+          "title": "[] ['CHOICE HOTELS INTERNATIONAL INC /DE  (CHH)  (CIK 0001046311)']",
+          "content": "2024-02-20",
+          "url": "https://www.sec.gov2024-02-20",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:09:00.026154"
+}

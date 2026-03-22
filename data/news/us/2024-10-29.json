@@ -1,0 +1,83 @@
+{
+  "date": "2024-10-29",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-29",
+          "title": "[] ['Shutterstock, Inc.  (SSTK)  (CIK 0001549346)']",
+          "content": "2024-10-29",
+          "url": "https://www.sec.gov2024-10-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-29",
+          "title": "[] ['Shutterstock, Inc.  (SSTK)  (CIK 0001549346)']",
+          "content": "2024-10-29",
+          "url": "https://www.sec.gov2024-10-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-29",
+          "title": "[] ['ADVANCED MICRO DEVICES INC  (AMD)  (CIK 0000002488)']",
+          "content": "2024-10-29",
+          "url": "https://www.sec.gov2024-10-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-29",
+          "title": "[] ['LABCORP HOLDINGS INC.  (LH)  (CIK 0000920148)']",
+          "content": "2024-10-29",
+          "url": "https://www.sec.gov2024-10-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-29",
+          "title": "[] ['GLYCOMIMETICS INC  (GLYC)  (CIK 0001253689)']",
+          "content": "2024-10-29",
+          "url": "https://www.sec.gov2024-10-29",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T04:37:00.178567"
+}

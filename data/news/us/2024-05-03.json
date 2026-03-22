@@ -1,0 +1,100 @@
+{
+  "date": "2024-05-03",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": true,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-03",
+          "title": "[] ['Apple Inc.  (AAPL)  (CIK 0000320193)']",
+          "content": "2024-05-03",
+          "url": "https://www.sec.gov2024-05-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-03",
+          "title": "[] ['Apple Inc.  (AAPL)  (CIK 0000320193)']",
+          "content": "2024-05-03",
+          "url": "https://www.sec.gov2024-05-03",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-03",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2024-05-03",
+          "url": "https://www.sec.gov2024-05-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-03",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2024-05-03",
+          "url": "https://www.sec.gov2024-05-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-03",
+          "title": "[] ['fuboTV Inc. /FL  (FUBO)  (CIK 0001484769)']",
+          "content": "2024-05-03",
+          "url": "https://www.sec.gov2024-05-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-03",
+          "title": "[] ['GoDaddy Inc.  (GDDY)  (CIK 0001609711)']",
+          "content": "2024-05-03",
+          "url": "https://www.sec.gov2024-05-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-03",
+          "title": "[] ['PNM RESOURCES INC  (TXNM)  (CIK 0001108426)', 'TEXAS NEW MEXICO POWER CO  (CIK 0000022767)', 'PUBLIC SERVICE CO OF NEW MEXICO  (PNMXO)  (CIK 0000081023)']",
+          "content": "2024-05-03",
+          "url": "https://www.sec.gov2024-05-03",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T13:30:56.340396"
+}

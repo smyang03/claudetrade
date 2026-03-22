@@ -1,0 +1,75 @@
+{
+  "date": "2023-11-01",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-01",
+          "title": "[] ['ANSYS INC  (ANSS)  (CIK 0001013462)']",
+          "content": "2023-11-01",
+          "url": "https://www.sec.gov2023-11-01",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-01",
+          "title": "[] ['Terreno Realty Corp  (TRNO)  (CIK 0001476150)']",
+          "content": "2023-11-01",
+          "url": "https://www.sec.gov2023-11-01",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-01",
+          "title": "[] ['Summit Hotel Properties, Inc.  (INN, INN-PE, INN-PF)  (CIK 0001497645)']",
+          "content": "2023-11-01",
+          "url": "https://www.sec.gov2023-11-01",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-01",
+          "title": "[] ['AMARIN CORP PLC\\\\UK  (AMRN)  (CIK 0000897448)']",
+          "content": "2023-11-01",
+          "url": "https://www.sec.gov2023-11-01",
+          "form_type": ""
+        }
+      ],
+      "count": 4,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T05:08:22.517999"
+}

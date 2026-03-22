@@ -1,0 +1,83 @@
+{
+  "date": "2025-02-21",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-21",
+          "title": "[] ['bluebird bio, Inc.  (BLUE)  (CIK 0001293971)']",
+          "content": "2025-02-21",
+          "url": "https://www.sec.gov2025-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-21",
+          "title": "[] ['bluebird bio, Inc.  (BLUE)  (CIK 0001293971)']",
+          "content": "2025-02-21",
+          "url": "https://www.sec.gov2025-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-21",
+          "title": "[] ['DROPBOX, INC.  (DBX)  (CIK 0001467623)']",
+          "content": "2025-02-21",
+          "url": "https://www.sec.gov2025-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-21",
+          "title": "[] ['Savers Value Village, Inc.  (SVV)  (CIK 0001883313)']",
+          "content": "2025-02-21",
+          "url": "https://www.sec.gov2025-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-02-21",
+          "title": "[] ['CADENCE DESIGN SYSTEMS INC  (CDNS)  (CIK 0000813672)']",
+          "content": "2025-02-21",
+          "url": "https://www.sec.gov2025-02-21",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T09:52:32.757083"
+}

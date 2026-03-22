@@ -280,6 +280,50 @@ def update_beliefs(market: str, beliefs_update: dict):
     save(brain)
 
 
+# ── 개별 분석가 맞춤 피드백 생성 ──────────────────────────────────────────────
+
+def generate_analyst_summary(market: str, analyst_type: str) -> str:
+    """
+    각 분석가에게 자신의 과거 적중률만 따로 피드백
+    analyst_type: 'bull' | 'bear' | 'neutral'
+    """
+    brain = load()
+    m    = brain["markets"][market]
+    perf = m["analyst_performance"][analyst_type]
+    total = perf["total"]
+    rate  = perf["rate"] * 100
+    r7    = perf["recent_7d"]["rate"] * 100
+    r7n   = perf["recent_7d"]["total"]
+    trend = perf["trend"]
+
+    if total < 5:
+        return (f"[개인 실적] 데이터 부족 ({total}일) — "
+                f"아직 통계가 없으니 기본 성향으로 판단하세요.")
+
+    # 트렌드별 조언
+    if trend == "declining":
+        trend_msg = "최근 판단이 빗나가는 추세 → stance를 1단계 보수적으로 조정하세요."
+    elif trend == "improving":
+        trend_msg = "최근 판단이 잘 맞고 있습니다 → 현재 성향을 신뢰하세요."
+    else:
+        trend_msg = "판단 정확도가 안정적입니다 → 현재 기준을 유지하세요."
+
+    # 전체 적중률별 추가 조언
+    if rate < 40:
+        rate_msg = "전반 적중률 낮음 — 확신이 없으면 NEUTRAL 쪽으로 한 단계 완화하세요."
+    elif rate > 65:
+        rate_msg = "전반 적중률 높음 — 자신의 판단을 신뢰하세요."
+    else:
+        rate_msg = "적중률 보통 — 신호가 명확할 때만 강한 stance를 선택하세요."
+
+    return (
+        f"[{analyst_type.upper()} 개인 실적] "
+        f"누적 {rate:.1f}% ({total}일) | "
+        f"최근7일 {r7:.1f}% ({r7n}건, {trend})\n"
+        f"→ {trend_msg} {rate_msg}"
+    )
+
+
 # ── Claude 프롬프트용 요약 생성 ───────────────────────────────────────────────
 
 def generate_prompt_summary(market: str) -> str:
@@ -373,6 +417,106 @@ def generate_prompt_summary(market: str) -> str:
 이 정보를 바탕으로 오늘 판단 시 가중치를 조정하세요.
 """
     return summary
+
+
+# ── 토론 기록 관리 ────────────────────────────────────────────────────────────
+
+def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
+    """
+    R1→R2 토론 결과를 brain.json에 저장
+    r1, r2: {"bull":..., "bear":..., "neutral":...}
+    """
+    brain = load()
+    m = brain["markets"][market]
+    if "debate_history" not in m:
+        m["debate_history"] = []
+
+    changes = []
+    for atype in ("bull", "bear", "neutral"):
+        r1s = r1[atype].get("stance", "")
+        r2s = r2[atype].get("stance", "")
+        if r1s != r2s or r2[atype].get("changed"):
+            changes.append({
+                "analyst":   atype,
+                "r1_stance": r1s,
+                "r2_stance": r2s,
+                "reason":    r2[atype].get("change_reason", ""),
+            })
+
+    entry = {
+        "date":              target_date,
+        "r1": {k: {"stance": r1[k].get("stance"), "confidence": r1[k].get("confidence"),
+                   "key_reason": r1[k].get("key_reason", "")[:80]} for k in r1},
+        "r2": {k: {"stance": r2[k].get("stance"), "confidence": r2[k].get("confidence"),
+                   "key_reason": r2[k].get("key_reason", "")[:80]} for k in r2},
+        "changes":           changes,
+        "consensus_shifted": len(changes) > 0,
+        "outcome":           None,   # postmortem 후 채움
+    }
+
+    # 최근 30일치만 보존
+    m["debate_history"].append(entry)
+    m["debate_history"] = m["debate_history"][-30:]
+    save(brain)
+
+
+def get_debate_summary(market: str, n: int = 5) -> str:
+    """
+    최근 n일 토론 패턴 요약 → R2 프롬프트에 주입
+    '변경 시 적중률', '어떤 논거가 설득력 있었나' 등
+    """
+    brain = load()
+    history = brain["markets"][market].get("debate_history", [])
+    if not history:
+        return ""
+
+    recent = history[-n:]
+    lines  = []
+
+    # 변경 vs 유지 적중률
+    change_results  = [h for h in history if h["consensus_shifted"] and h["outcome"] is not None]
+    keep_results    = [h for h in history if not h["consensus_shifted"] and h["outcome"] is not None]
+    change_hit_rate = (sum(1 for h in change_results if h["outcome"] == "correct") / len(change_results)
+                       if change_results else None)
+    keep_hit_rate   = (sum(1 for h in keep_results if h["outcome"] == "correct") / len(keep_results)
+                       if keep_results else None)
+
+    stat_line = ""
+    if change_hit_rate is not None:
+        stat_line = (f"의견 변경 시 적중률 {change_hit_rate*100:.0f}% ({len(change_results)}건) | "
+                     f"유지 시 {keep_hit_rate*100:.0f}% ({len(keep_results)}건)")
+
+    lines.append(f"[과거 토론 패턴 — 최근 {len(recent)}일]")
+    if stat_line:
+        lines.append(f"  통계: {stat_line}")
+
+    for h in reversed(recent):
+        outcome_mark = {"correct": "✅", "wrong": "❌"}.get(h.get("outcome"), "⏳")
+        if h["changes"]:
+            change_txt = ", ".join(
+                f"{c['analyst'].upper()} {c['r1_stance']}→{c['r2_stance']} ({c['reason'][:30]})"
+                for c in h["changes"]
+            )
+            lines.append(f"  {h['date']} {outcome_mark} 변경: {change_txt}")
+        else:
+            r1_modes = " ".join(f"{k}={v['stance']}" for k, v in h["r1"].items())
+            lines.append(f"  {h['date']} {outcome_mark} 전원유지: {r1_modes}")
+
+    return "\n".join(lines)
+
+
+def update_debate_outcome(market: str, target_date: str, correct: bool):
+    """
+    postmortem 후 해당 날 토론 결과가 맞았는지 업데이트
+    correct: True=합의 방향이 실제 결과와 일치
+    """
+    brain = load()
+    history = brain["markets"][market].get("debate_history", [])
+    for entry in reversed(history):
+        if entry["date"] == target_date:
+            entry["outcome"] = "correct" if correct else "wrong"
+            save(brain)
+            return
 
 
 # ── 크로스마켓 업데이트 ───────────────────────────────────────────────────────

@@ -1,0 +1,124 @@
+{
+  "date": "2024-02-21",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-21",
+          "title": "[] ['Shutterstock, Inc.  (SSTK)  (CIK 0001549346)']",
+          "content": "2024-02-21",
+          "url": "https://www.sec.gov2024-02-21",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:12:47.543751"
+}

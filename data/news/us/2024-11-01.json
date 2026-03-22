@@ -1,0 +1,76 @@
+{
+  "date": "2024-11-01",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-01",
+          "title": "[] ['Apple Inc.  (AAPL)  (CIK 0000320193)']",
+          "content": "2024-11-01",
+          "url": "https://www.sec.gov2024-11-01",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-01",
+          "title": "[] ['Apple Inc.  (AAPL)  (CIK 0000320193)']",
+          "content": "2024-11-01",
+          "url": "https://www.sec.gov2024-11-01",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-01",
+          "title": "[] ['TREASURE GLOBAL INC  (TGL)  (CIK 0001905956)']",
+          "content": "2024-11-01",
+          "url": "https://www.sec.gov2024-11-01",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-01",
+          "title": "[] ['fuboTV Inc. /FL  (FUBO)  (CIK 0001484769)']",
+          "content": "2024-11-01",
+          "url": "https://www.sec.gov2024-11-01",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T04:48:18.286805"
+}

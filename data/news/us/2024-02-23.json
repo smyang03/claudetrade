@@ -1,0 +1,75 @@
+{
+  "date": "2024-02-23",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-23",
+          "title": "[] ['MARIN SOFTWARE INC  (MRIN)  (CIK 0001389002)']",
+          "content": "2024-02-23",
+          "url": "https://www.sec.gov2024-02-23",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-23",
+          "title": "[] ['Criteo S.A.  (CRTO)  (CIK 0001576427)']",
+          "content": "2024-02-23",
+          "url": "https://www.sec.gov2024-02-23",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-23",
+          "title": "[] ['EXPONENT INC  (EXPO)  (CIK 0000851520)']",
+          "content": "2024-02-23",
+          "url": "https://www.sec.gov2024-02-23",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-23",
+          "title": "[] ['DIGITAL REALTY TRUST, INC.  (DLR, DLR-PJ, DLR-PK, DLR-PL)  (CIK 0001297996)', 'DIGITAL REALTY TRUST, L.P.  (CIK 0001494877)']",
+          "content": "2024-02-23",
+          "url": "https://www.sec.gov2024-02-23",
+          "form_type": ""
+        }
+      ],
+      "count": 4,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:20:20.766321"
+}

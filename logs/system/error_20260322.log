@@ -1,0 +1,9 @@
+2026-03-22 08:30:07 [ERROR   ] trading_system | run_kr_update:44
+  주가 최신화 실패: No module named 'dotenv'
+
+2026-03-22 08:30:07 [ERROR   ] trading_system | run_kr_update:52
+  KR 뉴스 수집 실패: No module named 'dotenv'
+
+2026-03-22 08:30:07 [ERROR   ] trading_system | run_kr_update:61
+  KR supplement 실패: No module named 'dotenv'
+

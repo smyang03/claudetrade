@@ -1,0 +1,68 @@
+2026-03-22 12:09:14 [INFO    ] build_consensus:48 | 합의: AGGRESSIVE size=100% minority=False
+2026-03-22 12:09:14 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-22 12:09:14 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-22 12:09:14 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-22 12:09:14 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-22 12:09:14 [INFO    ] build_consensus:48 | 합의: CAUTIOUS size=60% minority=False
+2026-03-22 12:09:14 [INFO    ] build_consensus:48 | 합의: CAUTIOUS size=60% minority=False
+2026-03-22 12:14:39 [INFO    ] build_consensus:48 | 합의: AGGRESSIVE size=100% minority=False
+2026-03-22 12:14:39 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-22 12:14:39 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-22 12:14:39 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-22 12:14:39 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-22 12:14:39 [INFO    ] build_consensus:48 | 합의: CAUTIOUS size=60% minority=False
+2026-03-22 12:14:39 [WARNING ] build_consensus:44 | ⚠️ 마이너리티 룰 발동: 급락 징후 서킷 위험
+2026-03-22 12:14:39 [INFO    ] build_consensus:48 | 합의: DEFENSIVE size=50% minority=True
+2026-03-22 12:15:27 [INFO    ] build_consensus:48 | 합의: AGGRESSIVE size=100% minority=False
+2026-03-22 12:15:27 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-22 12:15:27 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-22 12:15:27 [INFO    ] build_consensus:48 | 합의: NEUTRAL size=40% minority=False
+2026-03-22 12:15:27 [INFO    ] build_consensus:48 | 합의: HALT size=0% minority=False
+2026-03-22 12:15:27 [INFO    ] build_consensus:48 | 합의: CAUTIOUS size=60% minority=False
+2026-03-22 12:15:27 [WARNING ] build_consensus:44 | ⚠️ 마이너리티 룰 발동: 급락 징후 서킷 위험
+2026-03-22 12:15:27 [INFO    ] build_consensus:48 | 합의: DEFENSIVE size=50% minority=True
+2026-03-22 12:28:52 [DEBUG   ] _get_weights:89 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:28:52 [INFO    ] build_consensus:159 | 합의: MODERATE_BULL size=80% score=+0.633 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:28:52 [DEBUG   ] _get_weights:89 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:28:52 [INFO    ] build_consensus:159 | 합의: DEFENSIVE size=10% score=-0.633 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:28:52 [DEBUG   ] _get_weights:89 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:28:52 [INFO    ] build_consensus:159 | 합의: DEFENSIVE size=10% score=-0.570 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:28:52 [DEBUG   ] _get_weights:89 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:28:52 [INFO    ] build_consensus:159 | 합의: NEUTRAL size=40% score=+0.070 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:28:52 [WARNING ] build_consensus:123 | ⚠️ 마이너리티 룰 발동: 급락 징후 서킷 위험
+2026-03-22 12:28:52 [DEBUG   ] _get_weights:89 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:28:52 [INFO    ] build_consensus:159 | 합의: DEFENSIVE size=40% score=+0.740 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-22 12:30:08 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:08 [INFO    ] build_consensus:167 | 합의: AGGRESSIVE size=88% score=+1.000 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:30:08 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:08 [INFO    ] build_consensus:167 | 합의: HALT size=0% score=-1.000 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:30:08 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:08 [INFO    ] build_consensus:167 | 합의: DEFENSIVE size=8% score=-0.900 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:30:08 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:08 [INFO    ] build_consensus:167 | 합의: CAUTIOUS size=53% score=+0.100 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:30:08 [WARNING ] build_consensus:124 | ⚠️ 마이너리티 룰 발동: 급락 징후 서킷 위험
+2026-03-22 12:30:08 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:08 [INFO    ] build_consensus:167 | 합의: DEFENSIVE size=47% score=+0.900 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-22 12:30:41 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:41 [INFO    ] build_consensus:167 | 합의: AGGRESSIVE size=88% score=+1.000 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:30:41 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:41 [INFO    ] build_consensus:167 | 합의: HALT size=0% score=-1.000 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:30:41 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:41 [INFO    ] build_consensus:167 | 합의: DEFENSIVE size=8% score=-0.900 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:30:41 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:41 [INFO    ] build_consensus:167 | 합의: CAUTIOUS size=53% score=+0.100 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:30:41 [WARNING ] build_consensus:124 | ⚠️ 마이너리티 룰 발동: 급락 징후 서킷 위험
+2026-03-22 12:30:41 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:30:41 [INFO    ] build_consensus:167 | 합의: DEFENSIVE size=47% score=+0.900 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-22 12:45:43 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:45:43 [INFO    ] build_consensus:167 | 합의: AGGRESSIVE size=88% score=+1.000 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:45:43 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:45:43 [INFO    ] build_consensus:167 | 합의: HALT size=0% score=-1.000 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:45:43 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:45:43 [INFO    ] build_consensus:167 | 합의: DEFENSIVE size=8% score=-0.900 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:45:43 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:45:43 [INFO    ] build_consensus:167 | 합의: CAUTIOUS size=53% score=+0.100 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 12:45:43 [WARNING ] build_consensus:124 | ⚠️ 마이너리티 룰 발동: 급락 징후 서킷 위험
+2026-03-22 12:45:43 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 12:45:43 [INFO    ] build_consensus:167 | 합의: DEFENSIVE size=47% score=+0.900 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-22 13:40:18 [INFO    ] run:70 | [postmortem skip] 2026-03-22 KR — HALT 또는 판단 없음

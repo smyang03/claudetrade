@@ -1,0 +1,83 @@
+{
+  "date": "2024-02-22",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-22",
+          "title": "[] ['Booking Holdings Inc.  (BKNG)  (CIK 0001075531)']",
+          "content": "2024-02-22",
+          "url": "https://www.sec.gov2024-02-22",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-22",
+          "title": "[] ['Coursera, Inc.  (COUR)  (CIK 0001651562)']",
+          "content": "2024-02-22",
+          "url": "https://www.sec.gov2024-02-22",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-22",
+          "title": "[] ['RingCentral, Inc.  (RNG)  (CIK 0001384905)']",
+          "content": "2024-02-22",
+          "url": "https://www.sec.gov2024-02-22",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-22",
+          "title": "[] ['TrueCar, Inc.  (TRUE)  (CIK 0001327318)']",
+          "content": "2024-02-22",
+          "url": "https://www.sec.gov2024-02-22",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-22",
+          "title": "[] ['IMMUNIC, INC.  (IMUX)  (CIK 0001280776)']",
+          "content": "2024-02-22",
+          "url": "https://www.sec.gov2024-02-22",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:16:33.894269"
+}

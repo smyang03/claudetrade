@@ -1,0 +1,92 @@
+{
+  "date": "2025-08-07",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-07",
+          "title": "[] ['DigitalBridge Group, Inc.  (DBRG, DBRG-PH, DBRG-PI, DBRG-PJ)  (CIK 0001679688)']",
+          "content": "2025-08-07",
+          "url": "https://www.sec.gov2025-08-07",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-07",
+          "title": "[] ['INTEGRAL AD SCIENCE HOLDING CORP.  (IAS)  (CIK 0001842718)']",
+          "content": "2025-08-07",
+          "url": "https://www.sec.gov2025-08-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-07",
+          "title": "[] ['Constellation Energy Corp  (CEG)  (CIK 0001868275)', 'CONSTELLATION ENERGY GENERATION LLC  (CIK 0001168165)']",
+          "content": "2025-08-07",
+          "url": "https://www.sec.gov2025-08-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-07",
+          "title": "[] ['WhiteHorse Finance, Inc.  (WHF, WHFCL)  (CIK 0001552198)']",
+          "content": "2025-08-07",
+          "url": "https://www.sec.gov2025-08-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-07",
+          "title": "[] ['TAKE TWO INTERACTIVE SOFTWARE INC  (TTWO)  (CIK 0000946581)']",
+          "content": "2025-08-07",
+          "url": "https://www.sec.gov2025-08-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-07",
+          "title": "[] ['RELMADA THERAPEUTICS, INC.  (RLMD)  (CIK 0001553643)']",
+          "content": "2025-08-07",
+          "url": "https://www.sec.gov2025-08-07",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T17:25:31.344410"
+}

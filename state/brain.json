@@ -1,0 +1,603 @@
+{
+  "meta": {
+    "version": 69,
+    "created": "2026-03-19",
+    "last_updated": "2026-03-22",
+    "trained_days_kr": 1,
+    "trained_days_us": 2,
+    "description": "Claude 마이너리티 리포트 판단 메모리"
+  },
+  "markets": {
+    "KR": {
+      "trained_days": 1,
+      "training_period": {
+        "phase1": "2024-10-01 ~ 2024-12-31 (하락장 50일)",
+        "phase2": "2025-01-01 ~ 2025-05-31 (반등/횡보 50일)",
+        "phase3": "2025-06-01 ~ 현재 (강세장 150일)"
+      },
+      "current_regime": "unknown",
+      "analyst_performance": {
+        "bull": {
+          "total": 1,
+          "hit": 0,
+          "miss": 1,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "stable"
+        },
+        "bear": {
+          "total": 1,
+          "hit": 1,
+          "miss": 0,
+          "rate": 1.0,
+          "recent_7d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "declining"
+        },
+        "neutral": {
+          "total": 1,
+          "hit": 0,
+          "miss": 1,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 0,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "stable"
+        }
+      },
+      "mode_performance": {
+        "AGGRESSIVE": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "MODERATE_BULL": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "CAUTIOUS": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "DEFENSIVE": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "HALT": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "NEUTRAL": {
+          "count": 1,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "MILD_BULL": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "MILD_BEAR": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "CAUTIOUS_BEAR": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        }
+      },
+      "strategy_performance": {
+        "모멘텀": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0
+        },
+        "평균회귀": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0
+        },
+        "갭+눌림": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0
+        },
+        "momentum": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0
+        },
+        "mean_reversion": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0
+        },
+        "gap_pullback": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0
+        }
+      },
+      "issue_patterns": [
+        {
+          "id": "P001",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": []
+        }
+      ],
+      "tuning_patterns": {
+        "first_30min_downgrade": {
+          "count": 0,
+          "correct": 0,
+          "rate": 0.0,
+          "current_threshold": -0.003,
+          "insight": "초기값: 지수 -0.3% 이상 하락 시 하향 조정"
+        },
+        "mid_session_upgrade": {
+          "count": 0,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "초기값: 미확정"
+        },
+        "30min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "30분 경과 후 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 방향성 일치, 이상 신호 없고 거래량 정상 수준으로 기존 판단 유지가 적절"
+        },
+        "60min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 부합하며, MACD 골든크로스 및 NAVER 과매도 반등 시그널 유효성 유지 중이나 60분 경과 시점에서 추세 확정 전 관망 유지가 적절"
+        },
+        "120min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단과 방향성 일치하며, MACD 골든크로스 진행 및 NAVER 과매도 반등 시그널은 아직 유효하나 확인 신호 부재로 포지션 미보유 상태 유지가 적절함"
+        },
+        "150min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 방향성 부합하나 포지션 없어 조정 불필요, MACD 골든크로스 및 NAVER 과매도 신호 유효성 지속 모니터링 중"
+        },
+        "180min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 부합하며 MACD 골든크로스 진행 중인 3종목 모니터링 지속, 보유 포지션 없어 조정 불필요"
+        },
+        "210min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 유효하며, 보유 포지션 없어 조정 불필요"
+        },
+        "240min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 유효하며, MACD 골든크로스 진행 중인 상황에서 방향성 확인 전 포지션 변경 불필요"
+        },
+        "270min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 NEUTRAL 판단 대비 지수 +0.31% 소폭 상승으로 방향성 일치하나 270분 경과 시점에 이상 신호 없고 보유 포지션 없어 현 상태 유지가 최적"
+        },
+        "300min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단이 유효하며, MACD 골든크로스 진행 중인 3종목의 방향성 확인까지 추가 관망이 적절함"
+        },
+        "330min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 NEUTRAL 판단 대비 지수 +0.31% 소폭 상승으로 방향성 미확인, 보유 포지션 없어 조정 불필요하며 MACD 골든크로스·NAVER 과매도 시그널 유효성 지속 모니터링 중"
+        },
+        "360min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 NEUTRAL 판단 이후 360분 경과 시점에 지수 +0.31% 소폭 상승과 정상 거래량이 확인되나, 보유 포지션 없고 이상 신호도 없어 기존 중립 기조 유지가 적절합니다."
+        },
+        "390min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 MACD 골든크로스 신호에도 불구하고 390분 경과 후 지수 +0.31% 소폭 상승에 그치고 보유 포지션 및 이상 신호 없어 현 NEUTRAL 기조 유지가 적절합니다."
+        },
+        "420min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 MACD 골든크로스 반등 신호 대비 420분 경과 후 지수 +0.31% 소폭 상승에 그쳐 모멘텀 강도가 약하나, 보유 포지션 없고 이상 신호 없으므로 현 NEUTRAL 기조 유지가 적절합니다."
+        },
+        "450min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 MACD 골든크로스 신호에도 불구하고 450분 경과 후 지수 +0.31% 소폭 상승에 그쳐 모멘텀이 제한적이며, 보유 포지션 없고 이상 신호 없어 현 중립 기조 유지가 적절합니다."
+        },
+        "90min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 유효하며, MACD 골든크로스 및 NAVER 과매도 반등 시나리오 진행 중 이상 신호 없음"
+        }
+      },
+      "current_beliefs": {
+        "market_regime": "unknown",
+        "bull_reliability": "unknown",
+        "bear_reliability": "unknown",
+        "best_strategy": "unknown",
+        "avoid": [],
+        "emphasize": [],
+        "learned_lessons": []
+      },
+      "recent_days": [
+        {
+          "date": "2026-03-21",
+          "mode": "NEUTRAL",
+          "pnl_pct": 0.0,
+          "win": false,
+          "bull_result": "MISS",
+          "bear_result": "HIT",
+          "neutral_result": "PARTIAL"
+        }
+      ],
+      "debate_history": []
+    },
+    "US": {
+      "trained_days": 2,
+      "training_period": {
+        "phase1": "2025-01-01 ~ 2025-04-30 (조정장 50일)",
+        "phase2": "2025-05-01 ~ 2025-09-30 (강세장 100일)",
+        "phase3": "2025-10-01 ~ 2025-12-31 (횡보 50일)",
+        "phase4": "2026-01-01 ~ 현재 (현재 조정 50일)"
+      },
+      "current_regime": "unknown",
+      "analyst_performance": {
+        "bull": {
+          "total": 2,
+          "hit": 0,
+          "miss": 2,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 1,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 1,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "stable"
+        },
+        "bear": {
+          "total": 2,
+          "hit": 2,
+          "miss": 0,
+          "rate": 1.0,
+          "recent_7d": {
+            "total": 1,
+            "hit": 1,
+            "rate": 1.0
+          },
+          "recent_30d": {
+            "total": 1,
+            "hit": 1,
+            "rate": 1.0
+          },
+          "trend": "stable"
+        },
+        "neutral": {
+          "total": 2,
+          "hit": 0,
+          "miss": 2,
+          "rate": 0.0,
+          "recent_7d": {
+            "total": 1,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "recent_30d": {
+            "total": 1,
+            "hit": 0,
+            "rate": 0.0
+          },
+          "trend": "stable"
+        }
+      },
+      "mode_performance": {
+        "AGGRESSIVE": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "MODERATE_BULL": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "CAUTIOUS": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "DEFENSIVE": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "HALT": {
+          "count": 2,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "MILD_BULL": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "NEUTRAL": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "MILD_BEAR": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        },
+        "CAUTIOUS_BEAR": {
+          "count": 0,
+          "avg_pnl": 0.0,
+          "win_rate": 0.0
+        }
+      },
+      "strategy_performance": {
+        "변동성돌파": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0,
+          "best_k": 0.45
+        },
+        "volatility_breakout": {
+          "count": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0,
+          "best_k": 0.45
+        }
+      },
+      "issue_patterns": [
+        {
+          "id": "P001",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": []
+        },
+        {
+          "id": "P002",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": []
+        }
+      ],
+      "tuning_patterns": {
+        "first_30min_downgrade": {
+          "count": 0,
+          "correct": 0,
+          "rate": 0.0,
+          "current_threshold": -0.005,
+          "insight": "초기값: 지수 -0.5% 이상 하락 시 하향 조정"
+        },
+        "fomc_halt": {
+          "count": 0,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "FOMC 발표일 HALT 효과"
+        },
+        "30min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 HALT 판단 이후 30분 경과 시점에서 지수 -1.51% 추가 하락 지속, 거래량 normal 수준으로 매수 주체 부재 확인되며 이상 신호 없이 하락 기조 유지 중이므로 보유 포지션 없는 현 상태에서 관망 유지가 최선"
+        },
+        "60min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "60분 경과 후에도 지수 -1.51% 하락 지속으로 아침 HALT 판단이 유효하며 보유 포지션 없어 조정 불필요"
+        },
+        "90min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 HALT 판단 이후 90분간 추가 하락 없이 -1.51% 수준 유지되고 있으나 거래량 정상·이상신호 없음에도 VIX 고조 및 MACD 데드크로스 환경 미해소로 보유 포지션 없는 현 상태 유지가 최적"
+        },
+        "120min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 -1.51% 하락이 아침 판단과 일치하고 보유 포지션 없어 조정 불필요, HALT 유지가 최적"
+        },
+        "150min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "150분 경과 후에도 지수 -1.51% 하락 지속으로 아침 HALT 판단이 유효하며 보유 포지션 없어 조정 불필요"
+        },
+        "180min_tune": {
+          "count": 2,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "180분 경과 후에도 지수 -1.51% 하락 지속으로 아침 HALT 판단이 유효하며 보유 포지션 없어 조정 불필요"
+        },
+        "210min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "지수 -1.51% 낙폭이 아침 판단과 동일 수준으로 유지되고 있으며 거래량 정상·이상 신호 없음으로 HALT 기조 변경 근거 부재"
+        },
+        "240min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 판단과 동일하게 지수 -1.51% 하락 지속 중이며 보유 포지션 없고 이상 신호 부재로 HALT 유지가 최적"
+        },
+        "270min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 HALT 판단 유효 — 270분 경과 후에도 지수 -1.51% 하락 지속으로 Bear 압력 변화 없고 보유 포지션 없어 조정 불필요"
+        },
+        "300min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 판단 이후 300분 경과했으나 지수 추가 하락 없이 -1.51% 수준 유지 중이며 보유 포지션 없고 이상 신호 부재로 HALT 유지가 최적"
+        },
+        "330min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 판단(HALT) 이후 330분 경과 시점에도 지수 -1.51% 하락이 지속되며 추세 반전 신호 부재, 보유 포지션 없어 조정 불필요"
+        },
+        "360min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "360분 경과 후에도 지수 -1.51% 유지되며 아침 판단과 동일한 하락 압력 지속, 보유 포지션 없어 조정 불필요"
+        },
+        "390min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 HALT 판단과 동일하게 지수 -1.51% 하락이 지속되고 있으며 보유 포지션 없음으로 현 리스크 관리 기조 유지가 최적"
+        },
+        "420min_tune": {
+          "count": 1,
+          "correct": 0,
+          "rate": 0.0,
+          "insight": "아침 HALT 판단과 현재 -1.51% 낙폭이 일치하며 보유 포지션 없고 이상 신호 없으므로 리스크 관리 기조 유지"
+        }
+      },
+      "current_beliefs": {
+        "market_regime": "unknown",
+        "bull_reliability": "unknown",
+        "bear_reliability": "unknown",
+        "best_k_value": 0.45,
+        "avoid": [],
+        "emphasize": [],
+        "learned_lessons": []
+      },
+      "recent_days": [
+        {
+          "date": "2026-03-21",
+          "mode": "HALT",
+          "pnl_pct": 0.0,
+          "win": false,
+          "bull_result": "MISS",
+          "bear_result": "HIT",
+          "neutral_result": "PARTIAL"
+        },
+        {
+          "date": "2026-03-22",
+          "mode": "HALT",
+          "pnl_pct": 0.0,
+          "win": false,
+          "bull_result": "MISS",
+          "bear_result": "HIT",
+          "neutral_result": "PARTIAL"
+        }
+      ],
+      "debate_history": []
+    }
+  },
+  "cross_market": {
+    "us_kr_correlation": 0.0,
+    "us_leads_kr_days": 1,
+    "insight": "초기값: 미확정",
+    "learned": false
+  },
+  "correction_guide": {
+    "KR": {
+      "bull_adjustments": [],
+      "bear_adjustments": [],
+      "tuning_rules": [],
+      "today_notes": "",
+      "generated_date": "2026-03-21"
+    },
+    "US": {
+      "bull_adjustments": [],
+      "bear_adjustments": [],
+      "tuning_rules": [],
+      "today_notes": "",
+      "generated_date": "2026-03-22"
+    }
+  }
+}

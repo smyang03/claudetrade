@@ -76,18 +76,37 @@ def fetch_vix(target_date: str) -> float:
 
 @log_retry(max_retries=3, delay=12.0, logger=log)
 def fetch_usd_krw(target_date: str) -> float:
-    """환율 USD/KRW"""
-    if not AV_KEY: return 0.0
-    url = "https://www.alphavantage.co/query"
-    params = {"function":"FX_DAILY","from_symbol":"USD","to_symbol":"KRW",
-              "apikey":AV_KEY,"outputsize":"compact"}
+    """환율 USD/KRW (AlphaVantage 우선 → yfinance 폴백)"""
+    # 1차: AlphaVantage FX_DAILY (역사 데이터)
+    if AV_KEY:
+        try:
+            url = "https://www.alphavantage.co/query"
+            params = {"function": "FX_DAILY", "from_symbol": "USD", "to_symbol": "KRW",
+                      "apikey": AV_KEY, "outputsize": "compact"}
+            resp = requests.get(url, params=params, timeout=20)
+            ts   = resp.json().get("Time Series FX (Daily)", {})
+            row  = ts.get(target_date, {})
+            rate = float(row.get("4. close", 0))
+            if rate > 100:
+                return rate
+        except Exception:
+            pass
+
+    # 2차: yfinance (최근 데이터 / 무료)
     try:
-        resp = requests.get(url,params=params,timeout=20)
-        data = resp.json()
-        ts   = data.get("Time Series FX (Daily)",{})
-        row  = ts.get(target_date,{})
-        return float(row.get("4. close",0))
-    except: return 0.0
+        import yfinance as yf
+        hist = yf.Ticker("USDKRW=X").history(start=target_date, end=target_date)
+        if hist.empty:
+            # 당일 데이터가 없으면 최근 1일 조회
+            hist = yf.Ticker("USDKRW=X").history(period="5d")
+        if not hist.empty:
+            rate = float(hist["Close"].iloc[-1])
+            if rate > 100:
+                return round(rate, 2)
+    except Exception:
+        pass
+
+    return 0.0
 
 def collect_kr_supplement(target_date: str):
     path = SUPP_DIR/"kr"/f"{target_date}.json"

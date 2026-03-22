@@ -35,6 +35,7 @@ from kis_api import (
     KISWebSocket,
     get_daily_ohlcv,
     get_index_change,
+    get_usd_krw,
     screen_market_kr,
     screen_market_us,
 )
@@ -48,6 +49,8 @@ from telegram_reporter import (
     pnl_alert,
     daily_summary,
     status_report,
+    dashboard_push,
+    analyst_reinvoke_alert,
 )
 from minority_report.analysts import get_three_judgments, select_tickers
 from minority_report.consensus import build_consensus
@@ -76,6 +79,25 @@ POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
 # 동적 선택 실패 시 폴백 (기본 3종목)
 _DEFAULT_KR_TICKERS = ["005930", "000660", "035420"]
 _DEFAULT_US_TICKERS = ["NVDA", "TSLA", "AAPL"]
+
+# 거래소 캘린더 (XKRX=한국거래소, XNYS=NYSE)
+_EXCHANGE_MAP = {"KR": "XKRX", "US": "XNYS"}
+_ec_cache: dict = {}  # 캘린더 객체 캐시
+
+
+def _is_trading_day(market: str, check_date: date | None = None) -> bool:
+    """오늘이 해당 시장의 정규 거래일인지 확인 (주말·공휴일 모두 처리)"""
+    check_date = check_date or date.today()
+    exchange = _EXCHANGE_MAP.get(market, "XNYS")
+    try:
+        import exchange_calendars as ec
+        if exchange not in _ec_cache:
+            _ec_cache[exchange] = ec.get_calendar(exchange)
+        return bool(_ec_cache[exchange].is_session(str(check_date)))
+    except Exception as e:
+        # exchange_calendars 없거나 오류 시 주말만 체크
+        log.warning(f"거래소 캘린더 조회 실패 ({exchange}): {e} — 주말 체크만 적용")
+        return check_date.weekday() < 5
 
 
 class TradingBot:
@@ -129,6 +151,15 @@ class TradingBot:
         self.session_active = False
         self.current_market = None
         self.usd_krw_rate = float(os.getenv("USD_KRW_RATE", "1350"))
+
+        # 텔레그램 중복 방지용 마지막 전송 상태
+        self._last_tg_state: dict = {}
+
+        # 긴급 재판단 쿨다운 (마지막 재호출 튜닝 카운트, 60분=2사이클 간격 유지)
+        self._last_reinvoke_tuning: int = -99
+
+        # 장중 이벤트 기록 (튜닝/긴급재판단) — session_close 시 daily_judgment에 포함
+        self._session_events: list = []
 
         # 재시작 시 이월 포지션 복구
         self._restore_positions()
@@ -372,6 +403,13 @@ class TradingBot:
         log.info("=" * 50)
         log.info(f"[{market}] session_open")
 
+        # ── 휴장일 체크 (주말 + 공휴일) ─────────────────────────────────────
+        if not _is_trading_day(market):
+            log.info(f"[{market}] 휴장일 — 세션 스킵")
+            self.session_active = False
+            self.current_market = None
+            return
+
         if market == "US" and not self.is_paper:
             log.warning("[US] live mode is not supported yet. session skipped.")
             self.session_active = False
@@ -382,8 +420,19 @@ class TradingBot:
         self.session_active = True
         self.current_market = market
         self.tuning_count = 0
+        self._session_events = []          # 세션 이벤트 초기화
         self.risk.reset_daily_state(clear_trade_log=True)
         self.risk.increment_holding_days()
+
+        # ── USD/KRW 환율 자동 갱신 ────────────────────────────────────────────
+        try:
+            new_rate = get_usd_krw()
+            if new_rate > 100:
+                old_rate = self.usd_krw_rate
+                self.usd_krw_rate = new_rate
+                log.info(f"[환율 갱신] USD/KRW {old_rate:,.0f} → {new_rate:,.2f}원")
+        except Exception as e:
+            log.warning(f"[환율 갱신 실패] {e} — 이전 값 {self.usd_krw_rate:,.0f}원 유지")
 
         # 이월 포지션 현재가 갱신 (어제 종가 → 오늘 시가 방향으로 업데이트)
         for pos in self.risk.positions:
@@ -401,72 +450,123 @@ class TradingBot:
                      f"{[(p['ticker'], p['current_price']) for p in self.risk.positions]}")
 
         today = date.today().strftime("%Y-%m-%d")
-        digest = build_kr_digest(today) if market == "KR" else build_us_digest(today)
-        digest_prompt = digest_to_prompt(digest)
 
-        brain_summary = BrainDB.generate_prompt_summary(market)
-        brain_data = BrainDB.load()
-        correction = json.dumps(brain_data.get("correction_guide", {}).get(market, {}), ensure_ascii=False)
+        # ── 재시작 시 당일 판단 재사용 ────────────────────────────────────────
+        live_path = JUDGMENT_DIR / f"{today.replace('-', '')}_{market}.json"
+        reused = False
+        if live_path.exists():
+            try:
+                with open(live_path, "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+                saved_mode = saved.get("mode", "")
+                if saved_mode not in ("historical_sim",) and saved.get("judgments") and saved.get("consensus"):
+                    self.today_judgment = {
+                        "date": today,
+                        "market": market,
+                        "judgments": saved["judgments"],
+                        "consensus": saved["consensus"],
+                        "digest_prompt": saved.get("digest_prompt", ""),
+                        "tickers": saved.get("tickers", []),
+                        # debate 필드 복원 (파인튜닝 데이터 연속성 유지)
+                        "round1_judgments": saved.get("round1_judgments", {}),
+                        "debate_changes": saved.get("debate_changes", []),
+                    }
+                    self.today_tickers[market] = saved.get("tickers", [])
+                    judgments = saved["judgments"]
+                    consensus = saved["consensus"]
+                    digest_prompt = saved.get("digest_prompt", "")
+                    reused = True
+                    log.info(f"[재시작 판단 재사용] {today} {market} consensus={consensus['mode']}")
+            except Exception as e:
+                log.warning(f"저장된 판단 로드 실패: {e}")
 
-        judgments = get_three_judgments(digest_prompt, brain_summary, correction)
-        consensus = build_consensus(judgments)
-        judgment_log.info(
-            f"[open {today} {market}] consensus={consensus['mode']} size={consensus['size']}%",
-            extra={"extra": {
-                "event": "session_open_judgment",
+        if not reused:
+            digest = build_kr_digest(today) if market == "KR" else build_us_digest(today)
+            digest_prompt = digest_to_prompt(digest)
+
+            brain_summary = BrainDB.generate_prompt_summary(market)
+            brain_data = BrainDB.load()
+            correction = json.dumps(brain_data.get("correction_guide", {}).get(market, {}), ensure_ascii=False)
+
+            judgments = get_three_judgments(digest_prompt, brain_summary, correction, market=market)
+            consensus = build_consensus(judgments, market=market)
+            judgment_log.info(
+                f"[open {today} {market}] consensus={consensus['mode']} size={consensus['size']}%",
+                extra={"extra": {
+                    "event": "session_open_judgment",
+                    "date": today,
+                    "market": market,
+                    "consensus": consensus,
+                    "judgments": judgments,
+                }},
+            )
+
+            # 오늘 집중 종목: 스크리너 → Claude 선택
+            log.info(f"[스크리너] {market} 시장 스캔 중...")
+            if market == "KR":
+                candidates = screen_market_kr(self.token)
+            else:
+                candidates = screen_market_us()
+            analysis_log.info(
+                f"[screen {today} {market}] candidates={len(candidates)}",
+                extra={"extra": {
+                    "event": "screen_candidates",
+                    "date": today,
+                    "market": market,
+                    "count": len(candidates),
+                    "tickers": [c.get("ticker") for c in candidates[:20]],
+                }},
+            )
+            log.info(f"[스크리너] {market} 후보 {len(candidates)}개 → Claude 선택 중...")
+            selected = select_tickers(market, digest_prompt, consensus["mode"], candidates)
+            self.today_tickers[market] = selected
+            log.info(f"[종목선택 확정] {market}: {selected}")
+            judgment_log.info(
+                f"[select {today} {market}] {selected}",
+                extra={"extra": {
+                    "event": "ticker_selection",
+                    "date": today,
+                    "market": market,
+                    "selected": selected,
+                    "consensus_mode": consensus["mode"],
+                }},
+            )
+
+            # _debate 메타데이터 분리 후 today_judgment에 함께 보관
+            debate_meta = judgments.pop("_debate", {})
+            self.today_judgment = {
                 "date": today,
                 "market": market,
-                "consensus": consensus,
                 "judgments": judgments,
-            }},
-        )
+                "consensus": consensus,
+                "digest_prompt": digest_prompt,
+                "tickers": selected,
+                "round1_judgments": debate_meta.get("r1", {}),
+                "debate_changes":   debate_meta.get("changes", []),
+            }
 
-        # 오늘 집중 종목: 스크리너 → Claude 선택
-        log.info(f"[스크리너] {market} 시장 스캔 중...")
-        if market == "KR":
-            candidates = screen_market_kr(self.token)
-        else:
-            candidates = screen_market_us()
-        analysis_log.info(
-            f"[screen {today} {market}] candidates={len(candidates)}",
-            extra={"extra": {
-                "event": "screen_candidates",
-                "date": today,
-                "market": market,
-                "count": len(candidates),
-                "tickers": [c.get("ticker") for c in candidates[:20]],
-            }},
-        )
-        log.info(f"[스크리너] {market} 후보 {len(candidates)}개 → Claude 선택 중...")
-        selected = select_tickers(market, digest_prompt, consensus["mode"], candidates)
-        self.today_tickers[market] = selected
-        log.info(f"[종목선택 확정] {market}: {selected}")
-        judgment_log.info(
-            f"[select {today} {market}] {selected}",
-            extra={"extra": {
-                "event": "ticker_selection",
-                "date": today,
-                "market": market,
-                "selected": selected,
-                "consensus_mode": consensus["mode"],
-            }},
-        )
+            # 대시보드가 장 중에도 오늘 판단을 볼 수 있도록 session_open 직후 즉시 기록
+            try:
+                with open(live_path, "w", encoding="utf-8") as f:
+                    json.dump({
+                        **self.today_judgment,
+                        "mode": "paper" if self.is_paper else "live",
+                    }, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                log.warning(f"판단 임시저장 실패: {e}")
 
-        self.today_judgment = {
-            "date": today,
-            "market": market,
-            "judgments": judgments,
-            "consensus": consensus,
-            "digest_prompt": digest_prompt,
-            "tickers": selected,
-        }
-
+        selected = self.today_tickers.get(market, [])
         try:
             balance = get_balance(self.token, market=market)
         except Exception as e:
             log.warning(f"balance lookup failed [{market}]: {e}")
             balance = {"stocks": [], "total_eval": 0, "cash": 0, "total_profit": 0, "profit_rate": 0.0}
-        morning_briefing(market, judgments, consensus, balance, digest)
+        if not reused:
+            morning_briefing(market, judgments, consensus, balance, digest,
+                             round1_judgments=debate_meta.get("r1", {}),
+                             debate_changes=debate_meta.get("changes", []))
+        else:
+            log.info(f"[재시작] 브리핑 스킵 (당일 판단 재사용) consensus={consensus['mode']}")
         log.info(f"consensus: {consensus['mode']} size={consensus['size']}%")
 
         self.ws = KISWebSocket(self.token, selected, on_tick=self._on_tick, market=market)
@@ -686,6 +786,7 @@ class TradingBot:
             f"[{market} 사이클 완료] 포지션:{len(self.risk.positions)}개 | "
             f"현금:{self.risk.cash:,.0f}원"
         )
+        self._maybe_push_dashboard()  # 포지션/P&L 변화 있으면 텔레그램 전송
 
     def run_tuning(self, market: str):
         if not self.session_active:
@@ -712,7 +813,8 @@ class TradingBot:
         brain_summary = BrainDB.generate_prompt_summary(market)
         result = tune(market, elapsed, current_state, self.today_judgment, brain_summary)
 
-        if result.get("action") != "MAINTAIN":
+        action_changed = result.get("action") != "MAINTAIN"
+        if action_changed:
             old_mode = self.today_judgment["consensus"]["mode"]
             self.today_judgment["consensus"]["mode"] = result.get("mode", old_mode)
             sl_adj = result.get("sl_adj", 0)
@@ -721,20 +823,162 @@ class TradingBot:
                     pos["sl"] = pos["sl"] * (1 + sl_adj)
                 log.info(f"SL adjusted: {sl_adj:+.3f}")
 
-        tuning_report(elapsed, result, self.today_judgment["consensus"]["mode"], self.risk.positions)
+        # 모드가 바뀐 경우만 tuning_report 전송, 유지면 스킵
+        if action_changed:
+            tuning_report(elapsed, result, self.today_judgment["consensus"]["mode"], self.risk.positions)
+            self._maybe_push_dashboard(force=True)
+        else:
+            log.info(f"[튜닝 {elapsed}분] MAINTAIN — 텔레그램 스킵")
 
-    def _heartbeat(self):
-        """1시간마다 현재 상태를 로그 + 텔레그램으로 보고"""
+        # 세션 이벤트 기록 (파인튜닝 데이터 — MAINTAIN 포함 전체 기록)
+        self._session_events.append({
+            "type":    "tuning",
+            "elapsed": elapsed,
+            "action":  result.get("action", "MAINTAIN"),
+            "mode":    result.get("mode", ""),
+            "reason":  result.get("reason", ""),
+            "warning": result.get("warning"),
+            "index_change": current_state.get("index_change", 0),
+        })
+
+        # ── 긴급 재판단 조건 체크 ──────────────────────────────────────────────
+        should_reinvoke, trigger = self._should_reinvoke_analysts(result, current_state)
+        if should_reinvoke:
+            self._reinvoke_analysts(market, trigger)
+
+    # ── 긴급 재판단 ───────────────────────────────────────────────────────────
+
+    # 분석가 재투입 조건 (하나라도 해당하면 True)
+    _REINVOKE_INDEX_THRESHOLD = -2.0   # 지수 -2% 이상 급락
+    _REINVOKE_COOLDOWN_CYCLES = 2      # 최소 2사이클(60분) 간격
+
+    def _should_reinvoke_analysts(self, result: dict, current_state: dict) -> tuple:
+        """분석가 재투입 여부. (bool, trigger_reason)"""
+        # 쿨다운 체크 (같은 세션에서 60분 내 재호출 방지)
+        if self.tuning_count - self._last_reinvoke_tuning < self._REINVOKE_COOLDOWN_CYCLES:
+            return False, ""
+
+        # 조건 1: 튜너가 방향 전환 권고
+        if result.get("action") == "REVERSE":
+            return True, f"REVERSE 권고: {result.get('reason', '')[:60]}"
+
+        # 조건 2: 지수 -2% 이상 급락
+        idx_chg = current_state.get("index_change", 0)
+        if idx_chg <= self._REINVOKE_INDEX_THRESHOLD:
+            return True, f"지수 급락 {idx_chg:+.2f}%"
+
+        # 조건 3: 튜너 경고 발령 + TIGHTEN (MAINTAIN이면 낮은 위험)
+        if result.get("warning") and result.get("action") == "TIGHTEN":
+            return True, f"튜너 경고: {result['warning']}"
+
+        return False, ""
+
+    def _reinvoke_analysts(self, market: str, trigger: str):
+        """이상 신호 감지 시 분석가 3명 긴급 재호출 → 판단·합의 갱신"""
+        log.warning(f"[긴급 재판단 시작] {market} | 트리거: {trigger}")
+        try:
+            digest_prompt = self.today_judgment.get("digest_prompt", "")
+            brain_summary = BrainDB.generate_prompt_summary(market)
+            brain_data = BrainDB.load()
+            correction = json.dumps(
+                brain_data.get("correction_guide", {}).get(market, {}),
+                ensure_ascii=False,
+            )
+
+            new_judgments = get_three_judgments(
+                digest_prompt, brain_summary, correction, market=market
+            )
+            new_consensus = build_consensus(new_judgments, market=market)
+
+            old_mode = self.today_judgment.get("consensus", {}).get("mode", "?")
+            debate_meta = new_judgments.pop("_debate", {})
+
+            self.today_judgment["judgments"] = new_judgments
+            self.today_judgment["consensus"] = new_consensus
+            self._last_reinvoke_tuning = self.tuning_count
+
+            judgment_log.info(
+                f"[reinvoke {market}] {old_mode} → {new_consensus['mode']} | {trigger}",
+                extra={"extra": {
+                    "event": "analyst_reinvoke",
+                    "market": market,
+                    "trigger": trigger,
+                    "old_mode": old_mode,
+                    "new_mode": new_consensus["mode"],
+                    "judgments": new_judgments,
+                    "consensus": new_consensus,
+                }},
+            )
+            log.warning(
+                f"[긴급 재판단 완료] {old_mode} → {new_consensus['mode']} "
+                f"size={new_consensus['size']}%"
+            )
+
+            # 세션 이벤트 기록 (긴급 재판단)
+            self._session_events.append({
+                "type":          "reinvoke",
+                "elapsed":       self.tuning_count * 30,
+                "trigger":       trigger,
+                "old_mode":      old_mode,
+                "new_mode":      new_consensus["mode"],
+                "new_judgments": new_judgments,
+                "debate_meta":   debate_meta,
+            })
+
+            analyst_reinvoke_alert(
+                market, trigger, old_mode, new_consensus["mode"],
+                new_judgments, new_consensus,
+                round1_judgments=debate_meta.get("r1", {}),
+                debate_changes=debate_meta.get("changes", []),
+            )
+            self._maybe_push_dashboard(force=True)
+
+        except Exception as e:
+            log.error(f"[긴급 재판단 실패] {e}")
+
+    def _build_tg_state(self) -> dict:
+        """현재 상태 스냅샷 (변화 감지용)"""
+        market = self.current_market or ""
+        mode   = self.today_judgment.get("consensus", {}).get("mode", "")
+        pos_key = tuple(sorted((p["ticker"], p["qty"]) for p in self.risk.positions))
+        pnl_bucket = round(self.risk.daily_pnl / max(self.risk.init_cash, 1) * 100, 1)  # 0.1% 단위
+        return {
+            "market":     market,
+            "mode":       mode,
+            "pos_key":    pos_key,
+            "pnl_bucket": pnl_bucket,
+            "cash_m":     round(self.risk.cash / 1_000_000, 2),  # 1만원 단위
+        }
+
+    def _maybe_push_dashboard(self, force: bool = False):
+        """상태 변화 있을 때만 텔레그램 대시보드 푸시"""
         if not self.session_active:
             return
-        market = self.current_market
-        mode = self.today_judgment.get("consensus", {}).get("mode", "?")
-        tickers = self.today_tickers.get(market, [])
+        state = self._build_tg_state()
+        if not force and state == self._last_tg_state:
+            return  # 변화 없음 → 스킵
+
+        market    = self.current_market
+        mode      = self.today_judgment.get("consensus", {}).get("mode", "?")
+        judgments = self.today_judgment.get("judgments", {})
+        tickers   = self.today_tickers.get(market, [])
+        pnl_pct   = self.risk.daily_pnl / max(self.risk.init_cash, 1) * 100
+        pnl_krw   = int(self.risk.daily_pnl)
+
+        dashboard_push(market, mode, self.risk.positions,
+                       self.risk.cash, pnl_pct, pnl_krw, judgments, tickers)
+        self._last_tg_state = state
+
+    def _heartbeat(self):
+        """1시간마다 로그 + 변화 없어도 강제 텔레그램 전송"""
+        if not self.session_active:
+            return
+        market  = self.current_market
+        mode    = self.today_judgment.get("consensus", {}).get("mode", "?")
         pos_txt = ", ".join(f"{p['ticker']}({p['qty']}주)" for p in self.risk.positions) or "없음"
         now_str = datetime.now(KST).strftime("%H:%M")
         log.info(f"[Heartbeat {now_str}] {market} | 모드:{mode} | 포지션:{pos_txt}")
-        avail = self._market_budget_available(market) if market else 0
-        status_report(market, mode, self.risk.positions, avail, self.risk.cash, tickers)
+        self._maybe_push_dashboard(force=True)  # 1시간마다 강제 전송
 
     def session_close(self, market: str):
         log.info(f"[{market}] session_close")
@@ -790,6 +1034,7 @@ class TradingBot:
             self.today_judgment,
             actual,
             self.today_judgment.get("digest_prompt", ""),
+            trade_log=self.risk.trade_log,   # 당일 체결 내역 전달
         )
         judgment_log.info(
             f"[close {today} {market}] pnl={actual['pnl_pct']:+.2f}% mode={self.today_judgment.get('consensus', {}).get('mode', '-')}",
@@ -804,16 +1049,22 @@ class TradingBot:
             }},
         )
 
+        # ── 파인튜닝/프롬프트 개선을 위한 완전한 training record 저장 ──────────
         record = {
-            **self.today_judgment,
-            "actual_result": actual,
-            "postmortem": pm,
-            "trades": self.risk.trade_log,
+            **self.today_judgment,          # date, market, judgments, consensus,
+                                            # digest_prompt, tickers,
+                                            # round1_judgments, debate_changes 포함
+            "actual_result":  actual,
+            "postmortem":     pm,
+            "trades":         self.risk.trade_log,
+            "session_events": self._session_events,   # 튜닝/긴급재판단 전체 이력
             "mode": "paper" if self.is_paper else "live",
         }
         path = JUDGMENT_DIR / f"{today.replace('-', '')}_{market}.json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(record, f, ensure_ascii=False, indent=2)
+        log.info(f"[training record 저장] {path.name} "
+                 f"| events={len(self._session_events)}")
 
         try:
             balance = get_balance(self.token, market=market)
@@ -838,6 +1089,15 @@ class TradingBot:
 
 
 
+def _in_session_now(market: str) -> bool:
+    """현재 KST 시각이 해당 시장 세션 중인지 확인"""
+    now = datetime.now(ZoneInfo("Asia/Seoul")).time()
+    if market == "KR":
+        return dt_time(8, 50) <= now < dt_time(16, 0)
+    else:  # US: 22:20 ~ (자정 넘어) 05:00
+        return now >= dt_time(22, 20) or now < dt_time(5, 0)
+
+
 def main(is_paper: bool = True):
     bot = TradingBot(is_paper=is_paper)
     log.info("=== Trading Bot Start ===")
@@ -857,6 +1117,14 @@ def main(is_paper: bool = True):
     schedule.every(60).minutes.do(bot._heartbeat)
 
     log.info("schedules registered")
+
+    # 봇 재시작 시 이미 세션 중이면 즉시 session_open 트리거
+    for market in ("KR", "US"):
+        if _in_session_now(market) and not bot.session_active:
+            log.info(f"[재시작 복구] {market} 세션 중 감지 → session_open 즉시 실행")
+            bot.session_open(market)
+            break  # 두 시장이 동시에 열리는 경우는 없음
+
     while True:
         schedule.run_pending()
         time.sleep(1)

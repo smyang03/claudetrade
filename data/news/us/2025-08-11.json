@@ -1,0 +1,83 @@
+{
+  "date": "2025-08-11",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-11",
+          "title": "[] ['Babcock & Wilcox Enterprises, Inc.  (BW, BWNB, BWSN, BW-PA)  (CIK 0001630805)']",
+          "content": "2025-08-11",
+          "url": "https://www.sec.gov2025-08-11",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-11",
+          "title": "[] ['Holistic Asset Finance Group Co., Ltd.  (HAFG)  (CIK 0001367993)']",
+          "content": "2025-08-11",
+          "url": "https://www.sec.gov2025-08-11",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-11",
+          "title": "[] ['enCore Energy Corp.  (EU)  (CIK 0001500881)']",
+          "content": "2025-08-11",
+          "url": "https://www.sec.gov2025-08-11",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-11",
+          "title": "[] ['Life360, Inc.  (LIF, LIFX)  (CIK 0001581760)']",
+          "content": "2025-08-11",
+          "url": "https://www.sec.gov2025-08-11",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-11",
+          "title": "[] ['fuboTV Inc. /FL  (FUBO)  (CIK 0001484769)']",
+          "content": "2025-08-11",
+          "url": "https://www.sec.gov2025-08-11",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T17:33:05.805262"
+}

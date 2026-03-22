@@ -1,0 +1,1758 @@
+{
+  "date": "2026-01-12",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-12",
+      "title": "Low Volatility Is One Reason To Look At Options On This Fund",
+      "content": "The S&P 500 recently reached a new record high, continuing gains from a bull market that began in March 2020. This sustained growth and the current extremely subdued volatility make the SPDR S&P 500 Trust (SPY) ETF an attractive option for investors considering options strategies. The article suggests that low volatility could be a key factor for those looking into options on this fund.",
+      "url": "https://www.investors.com/research/options/spy-etf-spdr-sp500-exchange-traded-fund-options/",
+      "sentiment_score": 0.315221,
+      "sentiment_label": "Somewhat-Bullish",
+      "relevance": 1.0
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-12",
+      "title": "SPY ETF Daily Update, 1/12/2026",
+      "content": "The SPDR S&P 500 ETF Trust (SPY) saw a slight gain of 0.04% on Monday morning amidst concerns about the Federal Reserve's independence and a proposal to cap credit card interest rates impacting financial stocks. SPY, which closely tracks the S&P 500 Index, has experienced $1 billion in net outflows over the past five days, though retail sentiment remains positive. According to TipRanks' ETF analyst consensus, SPY maintains a Moderate Buy rating with an average price target of $800.11, implying a",
+      "url": "https://www.tipranks.com/news/spy-etf-daily-update-1-12-2026",
+      "sentiment_score": 0.047503,
+      "sentiment_label": "Neutral",
+      "relevance": 0.31188
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-01-12",
+      "title": "Stock Market Live January 12, 2026: S&P 500 (SPY) Sinks on DOJ Investigation into Powell",
+      "content": "The stock market saw significant drops as the S&P 500, Dow, and Nasdaq declined due to a DOJ criminal investigation into Federal Reserve Chair Jerome Powell concerning his Senate Banking Committee testimony on Fed office renovations. Investors sought safe havens, leading to a surge in gold and silver prices. Additionally, President Trump's call for a one-year 10% cap on credit card interest rates impacted credit card stocks, while Walmart gained after news of its inclusion in the NASDAQ 100.",
+      "url": "https://247wallst.com/investing/2026/01/12/stock-market-live-january-12-2026-sp-500-spy-sinks-on-doj-investigation-into-powell/",
+      "sentiment_score": -0.40027,
+      "sentiment_label": "Bearish",
+      "relevance": 1.0
+    }
+  ],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Is the Vanguard 500 Index Fund ETF a Buy Now?",
+          "content": "The article discusses the Vanguard S&P 500 ETF (VOO), highlighting its benefits such as easy access to the S&P 500, a strong track record of returns (322% in the past decade), and a very low expense ratio of 0.03%. It suggests that investors should focus on long-term investing and avoid market timing, despite current high valuations and concerns about an AI bubble. The ETF is presented as one of the best available investment options due to its diversified exposure to the U.S. economy.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/MSFT/pressreleases/36997599/is-the-vanguard-500-index-fund-etf-a-buy-now/",
+          "sentiment_score": 0.322543,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.628347
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Digi Power X Secures $20 Million NVIDIA B300 GPU Purchase from Supermicro to Power NeoCloudz(TM) GPU-as-a-Service Platform",
+          "content": "Digi Power X Inc. has announced a definitive agreement to acquire approximately $20 million of next-generation NVIDIA B300 GPUs from Supermicro. These GPUs will power the company's NeoCloudz(TM) GPU-as-a-Service platform, targeting initial customer availability in March 2026. This move marks a strategic expansion for Digi Power X into recurring, high-margin AI infrastructure revenues, with an expected positive return on invested capital within 30 months.",
+          "url": "https://www.northjersey.com/press-release/story/137500/digi-power-x-secures-20-million-nvidia-b300-gpu-purchase-from-supermicro-to-power-neocloudztm-gpu-as-a-service-platform/",
+          "sentiment_score": 0.343005,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.892076
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "3 Value Stocks That Fall Short",
+          "content": "This article identifies three value stocks—Central Garden & Pet (CENT), Spectrum Brands (SPB), and Pfizer (PFE)—that it argues fall short as good investments despite appearing cheap. The author details specific reasons for avoiding each, such as flat sales estimates, underwhelming returns on capital, and organic revenue underperformance, suggesting they may be value traps rather than hidden gems. The article also recommends considering a curated list of \"High-Quality stocks\" from StockStory as a",
+          "url": "https://finviz.com/news/275079/3-value-stocks-that-fall-short",
+          "sentiment_score": 0.3444,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.610254
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Applied Materials Stock: Riding The AI Hardware Wave While Valuations Get Tested",
+          "content": "Applied Materials (AMAT) has become a crucial supplier to the AI and advanced chip industry, experiencing significant stock appreciation despite recent volatility. Analysts are largely constructive on the stock, with most maintaining \"Buy\" equivalent ratings and expecting further upside. The company's future performance hinges on AI-related capital spending, the broader semiconductor cycle, and geopolitical factors, with the market cautiously optimistic about its central role in the ecosystem.",
+          "url": "https://www.ad-hoc-news.de/boerse/ueberblick/applied-materials-stock-riding-the-ai-hardware-wave-while-valuations-get/68479107",
+          "sentiment_score": 0.324749,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.603093
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Exascale Labs Inc. to Combine with D. Boral ARC Acquisition I Corp. to Become Publicly Listed Company",
+          "content": "Exascale Labs Inc., an AI compute infrastructure platform, has announced a definitive business combination agreement with D. Boral ARC Acquisition I Corp., a SPAC. This transaction will position Exascale as a publicly listed company, expected to list on Nasdaq, aiming to accelerate growth and meet the increasing demand for AI infrastructure. The combined company is anticipated to have an equity value of approximately $500 million, with the closing expected in the second quarter of 2026.",
+          "url": "https://www.accessnewswire.com/newsroom/en/banking-and-financial-services/exascale-labs-inc.-to-combine-with-d.-boral-arc-acquisition-i-corp.-1126561",
+          "sentiment_score": 0.322037,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.613931
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Thermo Fisher se une à NVIDIA para desenvolver soluções laboratoriais com IA",
+          "content": "Thermo Fisher Scientific está colaborando com a NVIDIA para desenvolver soluções de automação laboratorial baseadas em IA. Esta parceria visa melhorar a precisão e a velocidade nos laboratórios, integrando instrumentos científicos com a infraestrutura de IA da NVIDIA, incluindo o supercomputador DGX Spark e modelos como NeMo e BioNeMo. A colaboração procura criar sistemas laboratoriais mais intuitivos e reduzir tarefas manuais para acelerar o avanço nas ciências da vida.",
+          "url": "https://br.investing.com/news/company-news/thermo-fisher-se-une-a-nvidia-para-desenvolver-solucoes-laboratoriais-com-ia-93CH-1797645",
+          "sentiment_score": 0.482911,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "MKS Inc. Unveils Photonics Solutions to Advance AI, Quantum, and Biotech at Photonics West 2026",
+          "content": "MKS Inc. (NASDAQ: MKSI) will showcase its latest photonics solutions for AI, quantum computing, biophotonics, security, and advanced manufacturing at Photonics West 2026. The company will feature products like Newport HybrYX stages, Spectra-Physics Talon Ace lasers, and InSight X3+ tunable lasers, highlighting its \"Surround the Workpiece\" strategy for end-to-end solutions. The announcement comes as MKS stock trades above its 200-day moving average, despite no new revenue or guidance figures bein",
+          "url": "https://www.stocktitan.net/news/MKSI/mks-inc-unveils-photonics-solutions-to-advance-ai-quantum-and-119fec0i57l9.html",
+          "sentiment_score": 0.172489,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.577473
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Thermo Fisher Scientific Announces Strategic Collaboration With NVIDIA Leveraging AI to Advance Scientific Instrumentation and Accelerate Laboratory Performance",
+          "content": "Thermo Fisher Scientific has announced a strategic collaboration with NVIDIA to integrate AI into scientific instrumentation and accelerate laboratory performance. This partnership aims to modernize lab processes, improve accuracy, and speed up scientific discoveries by leveraging NVIDIA's AI platform, including DGX Spark, NeMo, and BioNeMo, with Thermo Fisher's lab technologies. The goal is to create more intuitive and automated laboratory workflows, ultimately amplifying productivity in life s",
+          "url": "https://www.businesswire.com/news/home/20260112999582/en/Thermo-Fisher-Scientific-Announces-Strategic-Collaboration-With-NVIDIA-Leveraging-AI-to-Advance-Scientific-Instrumentation-and-Accelerate-Laboratory-Performance",
+          "sentiment_score": 0.698706,
+          "sentiment_label": "Bullish",
+          "relevance": 0.925899
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Thermo Fisher Scientific Announces Strategic Collaboration With NVIDIA Leveraging AI to Advance Scientific Instrumentation and Accelerate Laboratory Performance",
+          "content": "Thermo Fisher Scientific has announced a strategic collaboration with NVIDIA to integrate AI-based solutions and laboratory automation. This partnership aims to leverage NVIDIA's AI platform and Thermo Fisher's scientific instruments to enhance automation, accuracy, and speed in laboratories. The objective is to reduce manual tasks for scientists, accelerate scientific advancement, and create an integrated environment where data, instruments, and software work together with AI to boost productiv",
+          "url": "https://finance.yahoo.com/news/thermo-fisher-scientific-announces-strategic-213000164.html",
+          "sentiment_score": 0.446548,
+          "sentiment_label": "Bullish",
+          "relevance": 0.914533
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Blink Charging (BLNK) Shares Skyrocket, What You Need To Know",
+          "content": "Shares of Blink Charging (BLNK) surged 22.2% following increased investor optimism about the EV charging infrastructure provider's expansion plans and favorable industry news. The company recently raised $20 million through a public offering to fund its fast-charging network expansion, coinciding with positive developments in the EV charging sector, including government efforts to reduce charging costs. Despite the significant jump, BLNK shares are still trading well below their 52-week high.",
+          "url": "https://markets.financialcontent.com/wral/article/stockstory-2026-1-12-blink-charging-blnk-shares-skyrocket-what-you-need-to-know",
+          "sentiment_score": -0.229938,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.647644
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Behind the Scenes at CES 2026: Intelligent Product Lifecycle with PTC",
+          "content": "This article discusses how PTC, a software company specializing in product lifecycle management, is leveraging AI to transform product development and manufacturing. Steve Dertien of PTC highlights how AI can free engineers from time-consuming change management tasks to focus on innovation, optimize supply chains, and accelerate time to market. The piece emphasizes the importance of data quality, process reevaluation, and organizational change for companies adopting AI in their product developme",
+          "url": "https://www.bbntimes.com/technology/behind-the-scenes-at-ces-2026-intelligent-product-lifecycle-with-ptc",
+          "sentiment_score": 0.535026,
+          "sentiment_label": "Bullish",
+          "relevance": 0.631962
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Assessing Astera Labs (ALAB) Valuation After Analyst Optimism On Scorpio X And NVLink Fusion",
+          "content": "Astera Labs (ALAB) has seen a 7.9% share price gain since New Year's Eve, driven by analyst optimism regarding its Scorpio X revenue and upcoming products like larger switches and NVLink Fusion. While the company is considered undervalued at $162.61 against an analyst target of $197.26, its P/E ratio of 138.1x is significantly higher than peers, suggesting potential valuation risk if growth expectations aren't met. The article highlights the importance of UALink adoption for long-term growth but",
+          "url": "https://simplywall.st/stocks/us/semiconductors/nasdaq-alab/astera-labs/news/assessing-astera-labs-alab-valuation-after-analyst-optimism",
+          "sentiment_score": 0.240988,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.604514
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Penguin Solutions Stock To $13?",
+          "content": "Trefis Team suggests that Penguin Solutions (PENG) stock, currently trading at $18.58 after a 14% drop, could fall further to $13. Their assessment is pessimistic due to the company's weak operating performance and financial condition, combined with a moderate valuation, making the stock unattractive. While PENG shows moderate growth and strong financial stability, its very weak profitability and downturn resilience are significant concerns.",
+          "url": "https://www.trefis.com/stock/peng/articles2/586968/penguin-solutions-stock-to-13/2026-01-08",
+          "sentiment_score": 0.002161,
+          "sentiment_label": "Neutral",
+          "relevance": 0.648262
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple will use Google’s Gemini models to power new Siri release",
+          "content": "Apple Inc. has announced a multi-year partnership with Google LLC to integrate Google's Gemini series of large language models into its Siri voice assistant. The upgraded Siri, part of Apple's new AI suite called Apple Intelligence, is expected to provide more personalized responses and handle multi-step tasks across various apps, rolling out later this year. This collaboration has also reportedly pushed Alphabet Inc.'s market capitalization above $4 trillion, making it the fourth company to rea",
+          "url": "https://siliconangle.com/2026/01/12/apple-will-use-googles-gemini-models-power-new-siri-release/",
+          "sentiment_score": 0.150539,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.566528
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "BlackBerry: Strong QNX Strategy Bolstered by Alloy Kore Announcement at CES",
+          "content": "BlackBerry's recent announcements at CES, including the launch of Alloy Kore in partnership with Vector, reinforce its strong QNX strategy for automotive software. Morningstar maintains its fair value estimate for BlackBerry, noting that the company's focus on expanding QNX into new use cases and increasing dollar content per vehicle aligns with their long-term growth outlook. The firm believes that QNX and Alloy Kore will help carmakers shorten time-to-market and achieve greater penetration in ",
+          "url": "https://global.morningstar.com/en-ca/stocks/blackberry-strong-qnx-strategy-bolstered-by-alloy-kore-announcement-ces",
+          "sentiment_score": 0.313209,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.605776
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Credo Technology (CRDO) stock climbs as AI-chip trade stays hot; Needham conference next",
+          "content": "Credo Technology Group Holding Ltd (CRDO) stock rose 3.1% to $155.10, fueled by enthusiasm for AI-driven semiconductors and its role in data center infrastructure. The company is set to present at Needham & Company’s Growth Conference, and investors are also looking ahead to Taiwan Semiconductor Manufacturing Co's (TSMC) earnings report for further insights into AI chip demand. While the stock's valuation reflects fast growth, risks such as a slowdown in AI spending or increased competition coul",
+          "url": "https://ts2.tech/en/credo-technology-crdo-stock-climbs-as-ai-chip-trade-stays-hot-needham-conference-next/",
+          "sentiment_score": 0.336307,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.604348
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Caterpillar Launches AI Assistant for Equipment Management",
+          "content": "Caterpillar Inc. has introduced Cat AI Assistant at CES 2026, marking its entry into AI-powered fleet management for heavy equipment. This new conversational AI tool aims to streamline equipment operations by linking Caterpillar's digital applications into a single interface. The system will provide predictive maintenance, step-by-step repair guidance for technicians, and real-time in-cab coaching for operators, addressing skilled labor shortages in construction.",
+          "url": "https://www.forconstructionpros.com/equipment-management/product/22957799/caterpillar-cat-caterpillar-launches-ai-assistant-for-equipment-management",
+          "sentiment_score": 0.304258,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.626018
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Nvidia, Eli Lilly to spend $1 billion over five years on joint research lab",
+          "content": "Nvidia and Eli Lilly announced a joint research lab in the San Francisco Bay area, investing $1 billion over five years. The lab will utilize Nvidia's Vera Rubin AI chips to develop new treatments, building on Lilly's previous investment in Nvidia's AI supercomputer. Researchers from both companies will collaborate to generate data and train biotechnology AI models, with Nvidia also releasing new AI models for drug development.",
+          "url": "https://www.reuters.com/business/healthcare-pharmaceuticals/nvidia-eli-lilly-spend-1-billion-over-five-years-joint-research-lab-2026-01-12/",
+          "sentiment_score": 0.488947,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "The Autonomous Trucking Stock Investors Overlook",
+          "content": "The article discusses Aurora Innovation (NASDAQ: AUR), an autonomous trucking company held in Cathie Wood's Ark Autonomous Technology & Robotics ETF. Aurora aims to address challenges in the freight industry like driver shortages and high costs by developing self-driving trucks, with operations already approved between Dallas and Houston. While the company is in an early stage with significant losses, it has $1.6 billion in cash to fund operations until mid-2027, making it a speculative but pote",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/AUR-Q/pressreleases/37004920/the-autonomous-trucking-stock-investors-overlook/",
+          "sentiment_score": 0.112859,
+          "sentiment_label": "Neutral",
+          "relevance": 0.618179
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Nvidia partners with Lilly to launch $1B AI drug discovery lab",
+          "content": "Nvidia and Eli Lilly have partnered to invest $1 billion over five years to establish an AI co-innovation lab in the San Francisco Bay Area. This lab will integrate Lilly's scientific expertise with Nvidia's AI engineering to develop large datasets and powerful AI models, utilizing Nvidia's BioNeMo platform and their next-gen Vera Rubin AI chips. The initiative aims to significantly accelerate the drug research and development process, building on Lilly's previous plans to use Nvidia's Blackwell",
+          "url": "https://www.techtarget.com/pharmalifesciences/news/366636927/Nvidia-partners-with-Lilly-to-launch-1B-AI-drug-discovery-lab",
+          "sentiment_score": 0.410365,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "NVIDIA Huge Head & Shoulders forming. $127 technical Target. for NASDAQ:NVDA by TradingShot",
+          "content": "NVIDIA Corporation (NVDA) appears to be forming a Head and Shoulders pattern, with the Right Shoulder currently developing since its October 29, 2025 high. A bearish divergence is indicated by the 1D RSI showing Lower Highs since July 17, 2025. This pattern suggests a potential break of support within a month, targeting $127.00 based on its technical extension to the 2.0 Fibonacci level.",
+          "url": "https://www.tradingview.com/chart/NVDA/5Xvb8aix-NVIDIA-Huge-Head-Shoulders-forming-127-technical-Target/",
+          "sentiment_score": -0.381912,
+          "sentiment_label": "Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Hesai Group (HSAI) Scales Up Lidar for NVIDIA DRIVE Hyperion 10 and Physical AI Ambitions",
+          "content": "Hesai Group has been selected as a lidar partner for NVIDIA’s DRIVE AGX Hyperion 10 and plans to more than double its annual lidar production capacity to over 4 million units by 2026. These developments underscore Hesai's strategy to expand manufacturing, strengthen ties in automotive and robotics, and integrate its lidar technology into autonomous driving platforms and emerging \"physical AI\" applications. The increased production capacity, while supporting existing and future NVIDIA demand, als",
+          "url": "https://simplywall.st/stocks/us/automobiles/nasdaq-hsai/hesai-group/news/hesai-group-hsai-scales-up-lidar-for-nvidia-drive-hyperion-1/amp",
+          "sentiment_score": 0.210186,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.814785
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Cisco stock slips as Supreme Court case and inflation data loom — what to know about CSCO",
+          "content": "Cisco shares (CSCO.O) experienced a slight decline in trading due to ongoing attention on a U.S. Supreme Court review concerning a human-rights lawsuit and anticipation of upcoming U.S. inflation data. Investors are closely monitoring these developments, alongside Cisco's dividend schedule and next earnings report on Feb. 11, which will provide insight into demand signals and guidance. The company is actively promoting its role in the \"new era of AI innovation,\" emphasizing its networking, secur",
+          "url": "https://ts2.tech/en/cisco-stock-slips-as-supreme-court-case-and-inflation-data-loom-what-to-know-about-csco/",
+          "sentiment_score": 0.10694,
+          "sentiment_label": "Neutral",
+          "relevance": 0.618629
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple calls on Google to help smarten up Siri and bring other AI features to the iPhone",
+          "content": "Apple is partnering with Google to integrate Google's Gemini AI technology into its \"Apple Intelligence\" suite for the iPhone and other products. This collaboration aims to enhance Siri and other AI features, addressing Apple's previous delays in the AI race. The deal is seen as a significant validation for Google, whose parent company, Alphabet, recently surpassed Apple in market value, driven by its AI advancements.",
+          "url": "https://www.nbcbayarea.com/news/local/apple-google-siri-ai-features-iphone/4012500/",
+          "sentiment_score": -0.23655,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.640635
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Why The VanEck Semiconductor ETF Rallied Almost 50% in 2025",
+          "content": "The VanEck Semiconductor ETF (SMH) surged 48.7% in 2025, largely due to the ongoing artificial intelligence boom. While Nvidia, the largest component, underperformed the ETF, Micron Technology was a significant contributor to the outperformance with a 240.2% rally. The sector's continued growth is dependent on the sustained usefulness and progress of AI, as well as the spending plans of major players like OpenAI.",
+          "url": "https://www.fool.com/investing/2026/01/12/why-the-vaneck-semiconductor-etf-rallied-almost-50/",
+          "sentiment_score": 0.314977,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.847396
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Sizing Up Whether The Global Select Equity ETF Is A Buy Right Now",
+          "content": "The JPMorgan Global Select Equity ETF (JGLO) launched in September 2023 with $7.1 billion in assets and a 0.47% expense ratio. The ETF, which has gained 15% over the past year, is heavily concentrated in six mega-cap tech stocks, holding over a quarter of its assets in NVIDIA, Microsoft, Apple, Amazon, Alphabet, and Meta. This concentration creates vulnerability if global equity returns broaden beyond U.S. mega-caps, exemplified by its underperformance against the iShares MSCI ACWI ETF in early ",
+          "url": "https://247wallst.com/investing/2026/01/12/sizing-up-whether-the-global-select-equity-etf-is-a-buy-right-now/",
+          "sentiment_score": -0.1382,
+          "sentiment_label": "Neutral",
+          "relevance": 0.641465
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Hedge Fund and Insider Trading News: Ray Dalio, Chris Rokos, Steven Cohen, Bill Ackman, Israel Englander, Scott Bessent, Citadel Investment Group, Eisler Capital, Virco Mfg Corp (VIRC), Annexon Inc (ANNX), and More",
+          "content": "This article compiles recent news related to hedge funds and insider trading, featuring prominent figures like Ray Dalio, Steven Cohen, and Bill Ackman. It highlights various activities, including investment strategies, fund performance, and significant insider transactions in companies like Virco Mfg Corp (VIRC) and Annexon Inc (ANNX). The report also touches upon specific market movements and financial news from across the industry.",
+          "url": "https://www.insidermonkey.com/blog/hedge-fund-and-insider-trading-news-ray-dalio-chris-rokos-steven-cohen-bill-ackman-israel-englander-scott-bessent-citadel-investment-group-eisler-capital-virco-mfg-corp-virc-annexon-inc-1673580/",
+          "sentiment_score": 0.119268,
+          "sentiment_label": "Neutral",
+          "relevance": 0.647153
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "3 Breakout Growth Stocks You Can Buy and Hold for the Next Decade",
+          "content": "This article highlights three growth stocks—Rubrik (cybersecurity), Comfort Systems USA (data centers), and Xometry (manufacturing)—that are recommended for long-term investment over the next decade. Each company is positioned to benefit from durable industry trends, exhibiting strong growth, solid financials, or innovative approaches within their respective sectors.",
+          "url": "https://finviz.com/news/274264/3-breakout-growth-stocks-you-can-buy-and-hold-for-the-next-decade",
+          "sentiment_score": 0.127739,
+          "sentiment_label": "Neutral",
+          "relevance": 0.577378
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Form 424B2 GOLDMAN SACHS GROUP INC",
+          "content": "This SEC filing (Form 424B2) from Goldman Sachs Group Inc. details a new offering of Callable Equity-Linked Notes due February 2, 2029, guaranteed by The Goldman Sachs Group, Inc. The notes do not bear interest and their maturity payment is linked to the performance of the lesser performing stock among Tesla, Meta Platforms, and NVIDIA. Goldman Sachs has the option to redeem the notes on various \"call payment dates\" beginning in February 2027.",
+          "url": "https://www.streetinsider.com/SEC+Filings/Form+424B2+GOLDMAN+SACHS+GROUP+INC/25836793.html",
+          "sentiment_score": 0.126258,
+          "sentiment_label": "Neutral",
+          "relevance": 0.650455
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Nvidia and Eli Lilly launch Co-Innovation AI Lab to advance drug discovery",
+          "content": "Nvidia and Eli Lilly have partnered to create a new AI-focused co-innovation lab in the San Francisco Bay Area, aiming to accelerate drug discovery and development. The lab will combine Lilly's medical expertise with Nvidia's AI and computing capabilities, leveraging Nvidia's BioNeMo platform for developing AI models and pioneering robotics in pharmaceutical research. Both companies plan to invest up to $1 billion over five years to support this initiative, which is expected to transform drug di",
+          "url": "https://www.proactiveinvestors.com/companies/news/1085506/nvidia-and-eli-lilly-launch-co-innovation-ai-lab-to-advance-drug-discovery-1085506.html",
+          "sentiment_score": 0.402621,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Caterpillar stock hits all-time high at $627.75",
+          "content": "Caterpillar Inc. (NYSE: CAT) stock reached an all-time high of $627.75, reflecting a 78.62% increase over the past year and a 53.15% surge in the last six months. This surge in price and a P/E ratio of 32.09 indicate strong investor confidence, despite CAT appearing overvalued compared to its InvestingPro Fair Value. The company continues to demonstrate financial stability with 56 consecutive years of dividend payments and is implementing strategic initiatives like AI integration and leadership ",
+          "url": "https://www.investing.com/news/company-news/caterpillar-stock-hits-alltime-high-at-62775-93CH-4442702",
+          "sentiment_score": 0.347285,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.636004
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Why Alphabet (GOOGL) stock is up today: Google shares jump over 1% as Alphabet becomes the fourth company",
+          "content": "Alphabet (GOOGL) shares surged over 1% on January 12, 2026, pushing its market capitalization beyond $4 trillion for the first time, making it the fourth company to reach this milestone. This rally is primarily driven by a multi-year AI partnership with Apple, making Google's Gemini the AI backbone for Siri, along with strong Google Cloud growth and successful Gemini 3 model rollout. The company has also surpassed Apple in total market value for the first time since 2019, reflecting renewed inve",
+          "url": "https://m.economictimes.com/news/international/us/why-alphabet-googl-stock-is-up-today-google-shares-jump-over-1-as-alphabet-becomes-the-fourth-company-to-cross-the-4-trillion-market-cap-milestone/articleshow/126489623.cms",
+          "sentiment_score": 0.310642,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.61037
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Ford unveils in-house-built processor module for future vehicles",
+          "content": "Ford has introduced an in-house-built processor module designed to be the \"brain\" of its future software-defined vehicles. This high-performance computer aims to reduce costs by 10-15% per unit and democratize advanced vehicle technology, making it more accessible to a wider range of Ford customers. By vertically integrating hardware and software development, Ford seeks to gain greater control over its vehicle technology stack, similar to General Motors' strategy.",
+          "url": "https://www.wardsauto.com/news/ford-unveils-in-house-built-compute-module-universal-EV-architecture-CES/809283/",
+          "sentiment_score": 0.004468,
+          "sentiment_label": "Neutral",
+          "relevance": 0.615894
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet hits $4 trillion valuation as AI refocus lifts sentiment",
+          "content": "Alphabet achieved a $4 trillion market valuation, driven by its intensified focus on artificial intelligence, following a deal for Apple's AI models to be based on Google's Gemini. The company's stock has surged about 65% in 2025, outperforming peers, and it has also seen significant growth in its Google Cloud unit and a stable advertising business. This milestone makes Alphabet the fourth company to reach this valuation, reflecting a significant shift in investor sentiment.",
+          "url": "https://www.reuters.com/business/alphabet-hits-4-trillion-valuation-ai-refocus-lifts-sentiment-2026-01-12/",
+          "sentiment_score": 0.314654,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.594488
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Google-Parent Alphabet Becomes Newest $4 Trillion Company, Joining Nvidia",
+          "content": "Alphabet's market capitalization briefly surpassed $4 trillion, making it the latest tech company to hit this valuation, driven by optimism over its AI advancements. This surge follows the successful launch of its Gemini 3 model and Apple's decision to integrate Gemini into Siri. Alphabet joins Nvidia above the $4 trillion mark, while Apple and Microsoft have fallen slightly below it.",
+          "url": "https://www.wsj.com/tech/ai/google-4-trillion-valuation-0a022302?gaa_at=eafs&gaa_n=AWEtsqe7PXfAgObG4dXsyE5-MR97TfRu1kLzDNslg9SBLD1n0kwDfr2Tk0wW&gaa_ts=696538f5&gaa_sig=n4tu01RJzMeK9kwl3Dz28m5u0rkE5s5v1wXpvZcpTFUABJIl16187NwBqQZHpCKxAm1TRvT3eJZpIA7M77cedA%3D%3D",
+          "sentiment_score": 0.38019,
+          "sentiment_label": "Bullish",
+          "relevance": 0.855082
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "The Smartest Way to Invest $2,000 If You Believe in AI's Next Wave",
+          "content": "This article explores investment opportunities in the next wave of AI, specifically focusing on agentic and physical AI as highlighted by Nvidia's CEO Jensen Huang. It suggests investing in companies like Uber Technologies or Nebius Group for exposure to autonomous driving and data centers, while also mentioning the broader AI market. The author discusses current market sentiment on AI valuations and emphasizes the need for data centers to power AI's future.",
+          "url": "https://finviz.com/news/273902/the-smartest-way-to-invest-2000-if-you-believe-in-ais-next-wave",
+          "sentiment_score": 0.340439,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.924281
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "AlphaTON expands exposure to decentralized Telegram-based Cocoon AI with NVIDIA deal",
+          "content": "AlphaTON Capital Corp (Nasdaq: ATON) has secured a $46 million compute infrastructure deal to scale the decentralized, Telegram-native Cocoon AI network, which compensates users in Toncoin for GPU rental to process AI queries. The agreement involves acquiring 576 NVIDIA B300 chips, with financing through cash, non-recourse debt, and equity. Cocoon AI, built on the TON blockchain, aims to offer a privacy-preserving alternative to larger AI platforms like Google's Gemini or OpenAI's ChatGPT to Tel",
+          "url": "https://www.theblock.co/post/385140/alphaton-expands-exposure-to-decentralized-telegram-based-cocoon-ai-with-nvidia-deal",
+          "sentiment_score": 0.318087,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.80125
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet hits $4-trillion valuation as AI refocus lifts sentiment",
+          "content": "Alphabet briefly reached a $4 trillion market valuation, driven by its intensified focus on artificial intelligence. This surge, which saw its class-A shares hit a record high, reflects growing investor confidence and follows the company surpassing Apple in market capitalization for the first time since 2019. The company's AI efforts, including its Google Cloud unit and the Gemini models, have contributed significantly to its strong performance and market leadership.",
+          "url": "https://www.gmanetwork.com/news/money/companies/972586/alphabet-hits-4-trillion-valuation-as-ai-refocus-lifts-sentiment/story/",
+          "sentiment_score": 0.234998,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.600924
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple’s TSMC Dominance Wanes as AI Demand from Nvidia, AMD Drives Revenue Surge",
+          "content": "Apple's long-standing dominance over TSMC is diminishing as the surging demand for AI chips from companies like Nvidia and AMD reshapes the semiconductor manufacturing landscape. TSMC's Q4 2025 revenue growth, driven primarily by AI processor orders, indicates a significant power shift. While Apple continues to reserve advanced nodes and ramp up its own AI efforts, the diversification of TSMC's client base means less leverage for Apple and a more competitive environment for cutting-edge technolo",
+          "url": "https://www.webpronews.com/apples-tsmc-dominance-wanes-as-ai-demand-from-nvidia-amd-drives-revenue-surge/",
+          "sentiment_score": 0.433349,
+          "sentiment_label": "Bullish",
+          "relevance": 0.929879
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Applied Materials stock rises on Susquehanna upgrade as chip gear spending call widens",
+          "content": "Applied Materials (AMAT) shares rose 1.7% in early trading following an upgrade from Susquehanna to \"Positive\" with a price target increase from $180 to $400. The upgrade is based on anticipated increased spending in wafer fab equipment (WFE), with projections of $120 billion in current spending and potential for over $150 billion. Investors are now looking forward to upcoming CPI data and TSMC's earnings call for further market signals.",
+          "url": "https://ts2.tech/en/applied-materials-stock-rises-on-susquehanna-upgrade-as-chip-gear-spending-call-widens/",
+          "sentiment_score": 0.148879,
+          "sentiment_label": "Neutral",
+          "relevance": 0.586221
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet Becomes Newest $4 Trillion Company, Joining Nvidia and Apple",
+          "content": "Alphabet's market capitalization surpassed $4 trillion in intraday trading, making it the latest tech giant to reach this milestone. This achievement is attributed to investor optimism surrounding its growing artificial intelligence business and the recent launch of its Gemini 3 AI model. Shares of Alphabet rose to a record $334.04 on Monday morning, reflecting strong growth of 65.4% last year.",
+          "url": "https://www.wsj.com/tech/ai/google-4-trillion-valuation-0a022302?gaa_at=eafs&gaa_n=AWEtsqdxUf1Fzt04XX4EcA64qa_fn2kJatexmSN0F7FcJkP_ONAcSC8ipbbB&gaa_ts=696523f3&gaa_sig=Kun6ikeZi4-va0eAzTUvLFe711jkLxsd-OBwpEoUV_0m8-Zo2BJfR1Q-Gp1DM_6nzaBrDVS0TbN9gyk4YwFX4g%3D%3D",
+          "sentiment_score": 0.414917,
+          "sentiment_label": "Bullish",
+          "relevance": 0.811434
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Daily Penny Alerts - Blink Charging (BLNK) Shares Skyrocket, What You Need To Know",
+          "content": "Shares of Blink Charging (BLNK) surged by 22.2% following investor optimism surrounding the company's expansion plans, supported by recent funding and positive industry news. The company raised approximately $20 million in a public offering last month, intending to use the funds to expand its fast-charging network. This growth coincides with favorable developments in the EV charging sector, including government efforts to reduce public charging costs and the emergence of new superfast charging h",
+          "url": "https://markets.financialcontent.com/minyanville/article/stockstory-2026-1-12-blink-charging-blnk-shares-skyrocket-what-you-need-to-know",
+          "sentiment_score": -0.264825,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.623725
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "SolarEdge (SEDG) Shares Skyrocket, What You Need To Know",
+          "content": "SolarEdge (NASDAQ:SEDG) shares jumped significantly after TD Cowen upgraded the stock to \"Buy\" from \"Hold\" and raised its price target to $38, citing the company's progress in its turnaround plan. The upgrade was based on new product launches improving profit margins and market share, as well as strong initial demand for its new commercial storage system in Germany. This positive news follows other analysts also viewing the company more favorably, despite its shares still trading below their 52-",
+          "url": "https://finviz.com/news/274216/solaredge-sedg-shares-skyrocket-what-you-need-to-know",
+          "sentiment_score": 0.302486,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.625478
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Accelsius Closes $65 Million Series B Funding Led by Johnson Controls; Legrand Joining Round to Scale Liquid Cooling for Gigawatt-Class AI Factories – Company Announcement - FT.com",
+          "content": "Accelsius, a leader in two-phase, direct-to-chip liquid cooling for AI and high-performance computing, has closed a $65 million Series B funding round. The round was led by Johnson Controls, with strategic investment from Legrand, to scale liquid cooling solutions for AI factories. This investment will accelerate Accelsius' expansion, global reach, and the deployment of its proprietary NeuCool® technology, crucial for managing the extreme thermal demands of next-generation AI and HPC chips.",
+          "url": "https://markets.ft.com/data/announce/detail?dockey=600-202601121100BIZWIRE_USPRX____20260112_BW588650-1",
+          "sentiment_score": 0.305345,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.614754
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "The Bull Case For IonQ (IONQ) Could Change Following Rapid Sales Growth And New Quantum Milestones - Learn Why",
+          "content": "IonQ recently reported significant year-on-year sales growth and achieved world-record quantum gate fidelity, alongside early completion of its Tempo system milestones and new international deployments. While the company is still experiencing widening losses due to heavy R&D investment, these achievements strengthen the case for its trapped-ion technology moving towards commercial viability. However, investors should remain aware of execution risks such as widening losses, ongoing dilution, vola",
+          "url": "https://simplywall.st/stocks/us/tech/nyse-ionq/ionq/news/the-bull-case-for-ionq-ionq-could-change-following-rapid-sal",
+          "sentiment_score": 0.008709,
+          "sentiment_label": "Neutral",
+          "relevance": 0.565159
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Assessing Arm Holdings (ARM) Valuation After Physical AI Reorganization Into Robotics And Automotive",
+          "content": "Arm Holdings (ARM) has undergone a reorganization, creating a new Physical AI unit that groups automotive and robotics, while separating cloud/AI and edge products. This restructuring comes as Arm's stock has seen significant declines over the past three months and a year, leading investors to reassess its growth prospects. Despite being down, the stock is still considered overvalued by Simply Wall St's narrative, with an intrinsic fair value estimated at $70 compared to its current price of US$",
+          "url": "https://simplywall.st/stocks/us/semiconductors/nasdaq-arm/arm-holdings/news/assessing-arm-holdings-arm-valuation-after-physical-ai-reorg/amp",
+          "sentiment_score": 0.206,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.619967
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "SMCI Plunges 45% in 3 Months: Time to Buy, Sell or Hold the Stock?",
+          "content": "Super Micro Computer (SMCI) shares have dropped 44.9% in the last three months, leading to an attractive valuation. Despite facing near-term challenges like contracting gross margins and negative free cash flow due to rapid expansion and customer concentration, the company is strategically positioning itself to capitalize on the AI market with high-performance servers and new product lines. Therefore, the article suggests holding the stock for now, acknowledging both its challenges and growth po",
+          "url": "https://finviz.com/news/273771/smci-plunges-45-in-3-months-time-to-buy-sell-or-hold-the-stock",
+          "sentiment_score": 0.205489,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.629288
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "AlphaTON Capital Closes $46M AI Infrastructure Expansion to Address Significant Market Demands for Confidential Compute",
+          "content": "AlphaTON Capital (NASDAQ: ATON) announced the closing of a $46 million AI compute infrastructure deal to expand its deployment of Telegram's Cocoon AI confidential compute, adding 576 NVIDIA B300 chips. This expansion aims to meet the demand for privacy-preserving, decentralized AI infrastructure, particularly for workloads that cannot run on Big Tech platforms due to privacy and data sovereignty concerns. The deal is projected to deliver a 27% IRR and 3.82x equity multiple, with deployment sche",
+          "url": "https://www.sahmcapital.com/news/content/alphaton-capital-closes-46m-ai-infrastructure-expansion-to-address-significant-market-demands-for-confidential-compute-2026-01-12",
+          "sentiment_score": 0.317977,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.850371
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Natera (NTRA) Joins Forces with NVIDIA to Boost AI in Precision Medicine",
+          "content": "Natera (NTRA) has partnered with NVIDIA to advance its AI foundation model platform for precision medicine, aiming to improve diagnostics and personalized treatments. This collaboration leverages NVIDIA's computing technology to enhance genomic analysis efficiency and reduce costs, with initial results showing significant improvements in running time and training speed. Despite strong revenue growth and a solid balance sheet, Natera faces profitability challenges and its stock appears overvalued",
+          "url": "https://www.gurufocus.com/news/4106388/natera-ntra-joins-forces-with-nvidia-to-boost-ai-in-precision-medicine",
+          "sentiment_score": 0.436373,
+          "sentiment_label": "Bullish",
+          "relevance": 0.82243
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "NVIDIA BioNeMo Platform Adopted by Life Sciences Leaders to Accelerate AI-Driven Drug Discovery",
+          "content": "NVIDIA has significantly expanded its BioNeMo platform to accelerate AI-driven biology and drug discovery, with new models, data processing libraries, and customization tools. Leading life sciences companies like Lilly and Thermo Fisher are integrating BioNeMo into their workflows, with Lilly launching an AI co-innovation lab and Thermo Fisher focusing on autonomous lab infrastructure. This expansion aims to create a continuous learning cycle, turning experimental data into actionable AI intelli",
+          "url": "https://nvidianews.nvidia.com/news/nvidia-bionemo-platform-adopted-by-life-sciences-leaders-to-accelerate-ai-driven-drug-discovery",
+          "sentiment_score": 0.405263,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        }
+      ],
+      "count": 50,
+      "avg_sentiment": 0.23888321999999995
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "GM CEO Mary Barra tells automotive press she has 'no regrets' over EVs",
+          "content": "GM CEO Mary Barra stated she has \"no regrets\" regarding the company's approach to electric vehicles despite regulatory disruptions and significant special charges related to EV production plan changes. Barra emphasized a pragmatic path forward for GM's EV future, acknowledging that the transition might take longer without incentives and highlighting the company's self-help efforts to mitigate tariff impacts. GM reported a $7.6 billion loss from pivoting away from its initial EV production plans ",
+          "url": "https://www.freep.com/story/money/cars/general-motors/2026/01/12/gm-ceo-mary-barra-has-no-regrets-over-electric-vehicles/88144367007/",
+          "sentiment_score": 0.108008,
+          "sentiment_label": "Neutral",
+          "relevance": 0.645118
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Lululemon Raises Q4 Outlook on Strong Holiday Demand",
+          "content": "Lululemon Athletica has increased its Q4 2025 revenue and EPS outlook, now expecting figures at the high end of previous guidance due to strong holiday season performance. The company's gross margin, operating expenses, and effective tax rate guidance remain unchanged, suggesting resilient demand despite challenges in the U.S. market. TipRanks' AI Analyst, Spark, rates LULU as Outperform, noting its financial strength and strategic growth initiatives, but also highlights risks like increased cos",
+          "url": "https://www.tipranks.com/news/company-announcements/lululemon-raises-q4-outlook-on-strong-holiday-demand",
+          "sentiment_score": -0.311686,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.57203
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Itaú Unibanco Schedules Interactive Investor Meeting for 4Q25 Results in Early February 2026",
+          "content": "Itaú Unibanco (ITUB) announced it will release its fourth-quarter 2025 results on February 4, 2026, after trading hours. Following this, the bank will host an interactive investor meeting with senior management and a Q&A session on February 5, 2026, to discuss the performance. This event highlights the bank's commitment to transparency and engagement with international capital markets.",
+          "url": "https://www.tipranks.com/news/company-announcements/itau-unibanco-schedules-interactive-investor-meeting-for-4q25-results-in-early-february-2026",
+          "sentiment_score": -0.057075,
+          "sentiment_label": "Neutral",
+          "relevance": 0.541504
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Automakers' share in China NEV market in 2025: BYD leads with 27.2%, Tesla 5th with 4.9%",
+          "content": "In 2025, BYD maintained its lead in China's new energy vehicle (NEV) market with a 27.2% share, despite a 6.3% year-on-year sales decline. Tesla, ranking fifth, saw its market share drop to 4.9% from 6.0% in 2024. Geely and Changan also showed significant growth in the NEV and overall passenger vehicle markets, respectively.",
+          "url": "https://cnevpost.com/2026/01/12/automakers-share-china-nev-market-2025/",
+          "sentiment_score": -0.213663,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Tesla Inc. (TSLA) Wells Fargo Maintains Bearish Forecast",
+          "content": "Wells Fargo analyst Colin Langan has reaffirmed an Underweight (Sell-equivalent) rating for Tesla Inc. (TSLA), despite an upward revision of the 12-month price target to $130 from $120. The firm remains bearish due to concerns over slowing vehicle demand, intensifying competition, margin pressure, and a belief that Tesla's valuation is disconnected from its near-term earnings power, implying a significant downside from its current share price.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/TSLA/pressreleases/37003578/tesla-inc-tsla-wells-fargo-maintains-bearish-forecast/",
+          "sentiment_score": -0.441578,
+          "sentiment_label": "Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Hedge Fund and Insider Trading News: Ray Dalio, Chris Rokos, Steven Cohen, Bill Ackman, Israel Englander, Scott Bessent, Citadel Investment Group, Eisler Capital, Virco Mfg Corp (VIRC), Annexon Inc (ANNX), and More",
+          "content": "This article compiles recent news related to hedge funds and insider trading, featuring prominent figures like Ray Dalio, Steven Cohen, and Bill Ackman. It highlights various activities, including investment strategies, fund performance, and significant insider transactions in companies like Virco Mfg Corp (VIRC) and Annexon Inc (ANNX). The report also touches upon specific market movements and financial news from across the industry.",
+          "url": "https://www.insidermonkey.com/blog/hedge-fund-and-insider-trading-news-ray-dalio-chris-rokos-steven-cohen-bill-ackman-israel-englander-scott-bessent-citadel-investment-group-eisler-capital-virco-mfg-corp-virc-annexon-inc-1673580/",
+          "sentiment_score": -0.223173,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.740111
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Form 424B2 GOLDMAN SACHS GROUP INC",
+          "content": "This SEC filing (Form 424B2) from Goldman Sachs Group Inc. details a new offering of Callable Equity-Linked Notes due February 2, 2029, guaranteed by The Goldman Sachs Group, Inc. The notes do not bear interest and their maturity payment is linked to the performance of the lesser performing stock among Tesla, Meta Platforms, and NVIDIA. Goldman Sachs has the option to redeem the notes on various \"call payment dates\" beginning in February 2027.",
+          "url": "https://www.streetinsider.com/SEC+Filings/Form+424B2+GOLDMAN+SACHS+GROUP+INC/25836793.html",
+          "sentiment_score": 0.103952,
+          "sentiment_label": "Neutral",
+          "relevance": 0.702311
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "The Smartest Way to Invest $2,000 If You Believe in AI's Next Wave",
+          "content": "This article explores investment opportunities in the next wave of AI, specifically focusing on agentic and physical AI as highlighted by Nvidia's CEO Jensen Huang. It suggests investing in companies like Uber Technologies or Nebius Group for exposure to autonomous driving and data centers, while also mentioning the broader AI market. The author discusses current market sentiment on AI valuations and emphasizes the need for data centers to power AI's future.",
+          "url": "https://finviz.com/news/273902/the-smartest-way-to-invest-2000-if-you-believe-in-ais-next-wave",
+          "sentiment_score": -0.206427,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.586602
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "NIO stock jumps nearly 6% as Firefly delivery milestone puts China EV demand back in focus",
+          "content": "NIO stock rose almost 6% after its compact-car division, Firefly, hit a 40,000 vehicle delivery milestone, signaling improved near-term demand in China's EV market. This rally comes amidst broader market jitters and increased scrutiny on China's battery supply chain policies. However, the article questions if higher volumes will translate to consistent profits given the competitive EV landscape and upcoming U.S. inflation data as a key macro catalyst.",
+          "url": "https://ts2.tech/en/nio-stock-jumps-nearly-6-as-firefly-delivery-milestone-puts-china-ev-demand-back-in-focus/",
+          "sentiment_score": 0.223314,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.638826
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Cornyn drops in at Tesla's Gigafactory Texas to tout Elon Musk's investments in Texas",
+          "content": "Senator John Cornyn visited Tesla's Gigafactory Texas, praising Elon Musk's investments and job creation in the state amidst his tough primary race. He is also scheduled to visit SpaceX Starbase and Lockheed-Martin as part of his campaign efforts. Cornyn's efforts to align with Musk could help secure support from Trump's base, especially as the primary election approaches.",
+          "url": "https://www.statesman.com/business/technology/article/tesla-elon-musk-john-cornyn-gigafactory-starbase-21290445.php",
+          "sentiment_score": 0.441697,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Astronics Corporation stock hits all-time high of 67.59 USD By Investing.com",
+          "content": "Astronics Corporation (ATRO) stock has reached an all-time high of $67.59, driven by strong performance and investor confidence in the aerospace sector. Although the stock is trading just below its 52-week high, InvestingPro analysis suggests it may be overvalued and in overbought territory. The company recently reported strong Q3 2025 earnings and received increased price targets from analysts, reflecting positive outlooks for its future growth.",
+          "url": "https://ca.investing.com/news/company-news/astronics-corporation-stock-hits-alltime-high-of-6759-usd-93CH-4397247",
+          "sentiment_score": 0.101257,
+          "sentiment_label": "Neutral",
+          "relevance": 0.567827
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Where Will Nio Stock Be in 1 Year?",
+          "content": "Nio, a Chinese EV producer, has seen its stock price drop significantly since its 2021 peak, now trading below its IPO price. Despite past challenges, the company is showing signs of accelerated delivery growth and improving vehicle margins due to new models and European expansion. Analysts predict continued revenue growth for Nio, suggesting its current low valuation could lead to a rally if market conditions improve and US-China trade tensions ease.",
+          "url": "https://finviz.com/news/273932/where-will-nio-stock-be-in-1-year",
+          "sentiment_score": 0.123218,
+          "sentiment_label": "Neutral",
+          "relevance": 0.695555
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Ford eyes an eyes-off driving tech, aims for $30,000 EV in 2028",
+          "content": "Ford is targeting an \"eyes-off\" driving technology for a new $30,000 EV set to launch in 2028. This strategy aims to introduce advanced features in affordable, mainstream vehicles, differentiating Ford from competitors. The new EV will be built on a \"Universal EV platform,\" designed to simplify manufacturing, and will be supported by a new AI assistant and an updated in-house software system.",
+          "url": "http://www.alcircle.com/news/ford-eyes-an-eyes-off-driving-tech-aims-for-30-000-ev-in-2028-116878",
+          "sentiment_score": 0.101015,
+          "sentiment_label": "Neutral",
+          "relevance": 0.744711
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Lithium's Resurgence: Scotiabank Upgrades Albemarle as EV Supply Chain Braces for New Growth Phase",
+          "content": "Scotiabank has upgraded Albemarle Corporation (ALB) to \"Sector Outperform\" and significantly raised its price target from $85 to $200, signaling a bullish outlook for the lithium market. This upgrade reflects a belief that the market has cleared excess inventory, supply discipline has tightened conditions, and demand from EVs, BESS, and AI data centers is poised for significant growth in 2026. The shift marks the end of a multi-year bear cycle for lithium, with implications for EV manufacturers,",
+          "url": "https://markets.financialcontent.com/wral/article/marketminute-2026-1-12-lithiums-resurgence-scotiabank-upgrades-albemarle-as-ev-supply-chain-braces-for-new-growth-phase",
+          "sentiment_score": -0.297105,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.610182
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Hardman Johnston Global Advisors LLC Has $21.59 Million Stock Holdings in PayPal Holdings, Inc. $PYPL",
+          "content": "Hardman Johnston Global Advisors LLC significantly reduced its stake in PayPal Holdings, Inc. by 17.1% in Q3, selling over 66,503 shares but still retaining 321,996 shares valued at $21.59 million. Despite some positive news like a partnership with Microsoft and strong quarterly earnings, PayPal faces mixed analyst sentiment, holding an average \"Hold\" rating with a target price of $77.26. Insider selling activity also occurred, while institutional investors collectively own 68.32% of the company",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-hardman-johnston-global-advisors-llc-has-2159-million-stock-holdings-in-paypal-holdings-inc-pypl-2026-01-12/",
+          "sentiment_score": -0.332644,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.621228
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "JPMorgan Chase Takes Notifiable 6.9% Stake in Hexagon Composites",
+          "content": "JPMorgan Chase & Co., through J.P. Morgan Securities PLC, has acquired a 6.929% stake in Hexagon Composites ASA, holding over 17 million shares as of January 7, 2026. This significant investment crosses the 5% ownership threshold, positioning JPMorgan as a key institutional shareholder and possibly indicating growing international investor interest in Hexagon Composites. The latest analyst rating for HXGCF stock is a Hold with a price target of NOK10.00.",
+          "url": "https://www.tipranks.com/news/company-announcements/jpmorgan-chase-takes-notifiable-6-9-stake-in-hexagon-composites",
+          "sentiment_score": -0.125665,
+          "sentiment_label": "Neutral",
+          "relevance": 0.646231
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Does WEX's (WEX) Embedded B2B Payments Push Mark a Shift in Its Core Investment Story?",
+          "content": "WEX is focusing on embedded business-to-business (B2B) payments amidst a shift towards value-oriented financial stocks, with this technology expected to gain significant momentum. This strategic pivot, including integration with the Tesla Supercharger network, aims to expand WEX's presence beyond traditional fuel cards into diversified digital payment flows. While this move reinforces WEX's growth catalysts in Corporate Payments and Mobility, intensified competition in digital finance could stil",
+          "url": "https://simplywall.st/stocks/us/diversified-financials/nyse-wex/wex/news/does-wexs-wex-embedded-b2b-payments-push-mark-a-shift-in-its",
+          "sentiment_score": 0.119905,
+          "sentiment_label": "Neutral",
+          "relevance": 0.640645
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "XPeng (XPEV) Valuation Check As AI Robotaxis And Humanoid Robots Expand Its Auto Tech Ambitions",
+          "content": "XPeng (XPEV) recently reported strong December and full-year 2025 deliveries, with fresh attention also drawn to its \"physical AI\" expansion into robotaxis and humanoid robots. Despite a mixed short-term stock performance, a 1-year total shareholder return of 63.83% indicates positive momentum. Analysts currently view XPEV as undervalued at US$28.24 per share, significantly above its last close of US$20.02, though some market ratios suggest expectations might already be high.",
+          "url": "https://simplywall.st/stocks/us/automobiles/nyse-xpev/xpeng/news/xpeng-xpev-valuation-check-as-ai-robotaxis-and-humanoid-robo",
+          "sentiment_score": 0.003661,
+          "sentiment_label": "Neutral",
+          "relevance": 0.580924
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Analog Devices Inc. Is Quietly Eating Chip Rivals Alive – Is This Stock Your Next Power Play?",
+          "content": "Analog Devices Inc. (ADI) is presented as a strong, mature chip giant that powers essential technologies like EVs, 5G, and industrial systems. The article argues that ADI is an underrated \"deep-cut pick\" for investors, offering stable growth and long-term potential compared to more volatile, hyped AI chip stocks. It suggests ADI is a \"must-have compounder\" for those seeking exposure to the infrastructure backbone of tech, rather than short-term speculative plays.",
+          "url": "https://www.ad-hoc-news.de/boerse/ueberblick/analog-devices-inc-is-quietly-eating-chip-rivals-alive-is-this-stock/68479636",
+          "sentiment_score": -0.109977,
+          "sentiment_label": "Neutral",
+          "relevance": 0.566063
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Comparative Study: Tesla And Industry Competitors In Automobiles Industry",
+          "content": "This article provides an in-depth comparative analysis of Tesla (NASDAQ: TSLA) against its key competitors in the Automobiles industry. It examines Tesla's financial metrics, market position, and growth potential, highlighting its high valuation ratios (P/E, P/B, P/S) compared to industry averages, efficient use of equity (ROE), and robust revenue growth. The study also notes Tesla's lower EBITDA and gross profit, along with a favorable debt-to-equity ratio, indicating a strong financial positio",
+          "url": "https://www.benzinga.com/insights/news/26/01/49833586/comparative-study-tesla-and-industry-competitors-in-automobiles-industry",
+          "sentiment_score": 0.119833,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        }
+      ],
+      "count": 20,
+      "avg_sentiment": -0.04365664999999999
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Is the Vanguard 500 Index Fund ETF a Buy Now?",
+          "content": "The article discusses the Vanguard S&P 500 ETF (VOO), highlighting its benefits such as easy access to the S&P 500, a strong track record of returns (322% in the past decade), and a very low expense ratio of 0.03%. It suggests that investors should focus on long-term investing and avoid market timing, despite current high valuations and concerns about an AI bubble. The ETF is presented as one of the best available investment options due to its diversified exposure to the U.S. economy.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/MSFT/pressreleases/36997599/is-the-vanguard-500-index-fund-etf-a-buy-now/",
+          "sentiment_score": 0.292687,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.619237
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple and Google confirm multiyear deal for AI technology, Siri",
+          "content": "Google has confirmed a multiyear agreement with Apple to supply AI technology for the iPhone maker, including the Siri voice assistant. Apple will maintain its privacy standards by running AI services on devices or through Private Cloud Compute, while Google's technology will support a new version of Siri launching this year. The financial terms were not disclosed, though earlier reports suggested Apple might pay around $1 billion annually.",
+          "url": "https://www.cnbctv18.com/market/apple-and-google-confirm-multiyear-deal-for-ai-technology-siri-19819549.htm",
+          "sentiment_score": 0.224942,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple device security firm Jamf hires new chief to lead global sales",
+          "content": "Jamf (NASDAQ: JAMF), a company specializing in Apple device management and security, has appointed David Helfer as its new Chief Revenue Officer. Helfer brings extensive experience in scaling go-to-market teams and working with channel partners, having previously held senior leadership roles at Mimecast, GitLab, and F5. He will be responsible for leading Jamf's sales organization and driving the company's growth strategy.",
+          "url": "https://www.stocktitan.net/news/JAMF/jamf-names-david-helfer-as-chief-revenue-x5f4ozy94mxp.html",
+          "sentiment_score": 0.300346,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.728105
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Google stock (GOOG) pops on Apple’s Gemini-powered Siri deal as Alphabet brushes $4 trillion",
+          "content": "Alphabet's non-voting Class C shares (GOOG) climbed by 1.1% in late trading after Apple announced a multi-year deal to integrate Google's Gemini models into Siri. This agreement positions Gemini as the default AI layer for Apple's ecosystem, enhancing Alphabet's reach and pushing its market value briefly to $4 trillion. Investors are now looking to Alphabet's upcoming Feb. 4 earnings report for clarity on AI spending and revenue generation from these investments, alongside potential regulatory s",
+          "url": "https://ts2.tech/en/google-stock-goog-pops-on-apples-gemini-powered-siri-deal-as-alphabet-brushes-4-trillion/",
+          "sentiment_score": 0.317516,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.932198
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple and Google Announce Multiyear AI Technology Partnership for Enhanced Siri Integration",
+          "content": "Google and Apple have announced a multiyear AI partnership to integrate Google's AI technology, specifically Gemini models, into Apple's systems to enhance Siri and Apple Foundation Models. This collaboration aims to deliver innovative user experiences while upholding Apple's privacy standards through on-device processing and Private Cloud Compute. The market reacted positively to the announcement, with Alphabet shares rising 1.70% and Apple's stock seeing more modest gains.",
+          "url": "https://scanx.trade/stock-market-news/global/apple-and-google-announce-multiyear-ai-technology-partnership-for-enhanced-siri-integration/29787099",
+          "sentiment_score": 0.42051,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple will use Google’s Gemini models to power new Siri release",
+          "content": "Apple Inc. has announced a multi-year partnership with Google LLC to integrate Google's Gemini series of large language models into its Siri voice assistant. The upgraded Siri, part of Apple's new AI suite called Apple Intelligence, is expected to provide more personalized responses and handle multi-step tasks across various apps, rolling out later this year. This collaboration has also reportedly pushed Alphabet Inc.'s market capitalization above $4 trillion, making it the fourth company to rea",
+          "url": "https://siliconangle.com/2026/01/12/apple-will-use-googles-gemini-models-power-new-siri-release/",
+          "sentiment_score": 0.28421,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Adobe Firefly gets GPT-Image 1.5 support, limited-time free images",
+          "content": "Adobe Firefly now supports OpenAI’s GPT-Image 1.5 model, allowing Firefly Pro and Premium subscribers to generate unlimited images with this model until January 15. This integration is part of Adobe's broader strategy to incorporate AI-based features across its products, including Photoshop, Illustrator, and Adobe Express. Firefly offers various subscription plans based on generative credits, which are used for generating high-quality image, vector, video, and audio outputs.",
+          "url": "https://9to5mac.com/2026/01/12/adobe-firefly-gets-gpt-image-1-5-support-and-temporary-unlimited-image-generation/",
+          "sentiment_score": 0.218454,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.581375
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple Teams Up With Google for A.I. in Its Products",
+          "content": "Apple announced a partnership with Google to base its upcoming Apple Intelligence models on Google's Gemini A.I. models and cloud computing services. This move comes after Apple faced increasing scrutiny for its slower adoption of artificial intelligence compared to other tech giants. The collaboration will power Apple's Siri and other A.I. features, though the deal's financial terms were not disclosed, and the partnership is not exclusive.",
+          "url": "https://www.nytimes.com/2026/01/12/technology/apple-google-ai-partnership.html",
+          "sentiment_score": 0.25568,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Qualcomm (QCOM) Stock Trades Down, Here Is Why",
+          "content": "Shares of Qualcomm (QCOM) fell 3.4% after Mizuho Securities downgraded the stock from Outperform to Neutral and lowered its price target to $175 from $200. This downgrade was largely due to concerns over potential market share losses as key customer Apple is reportedly developing its own modems, creating \"handset headwinds\" for Qualcomm. Despite the drop, the stock had previously gained on broader market optimism in AI and big tech.",
+          "url": "https://finviz.com/news/274080/qualcomm-qcom-stock-trades-down-here-is-why",
+          "sentiment_score": -0.239061,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.723347
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple's Siri will be powered by Google's Gemini AI in new partnership",
+          "content": "Apple and Google have announced a multi-year partnership where Google's Gemini AI technology will power Apple's Intelligence and Siri, with Apple's \"Foundation Model\" based on Gemini models and cloud technology. This collaboration follows speculation and marks a significant step for Apple in the AI race, though details on the financial terms and the impact on Apple's existing agreement with OpenAI remain unclear. Google's recent growth, partly due to its advancements in AI, positions it as a lea",
+          "url": "https://www.usatoday.com/story/news/california/2026/01/12/apple-google-deal-gemini-ai-siri-california-artificial-intelligence/88144909007/",
+          "sentiment_score": 0.431877,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple calls on Google to help smarten up Siri and bring other AI features to the iPhone",
+          "content": "Apple is partnering with Google to integrate Google's Gemini AI technology into its \"Apple Intelligence\" suite for the iPhone and other products. This collaboration aims to enhance Siri and other AI features, addressing Apple's previous delays in the AI race. The deal is seen as a significant validation for Google, whose parent company, Alphabet, recently surpassed Apple in market value, driven by its AI advancements.",
+          "url": "https://www.nbcbayarea.com/news/local/apple-google-siri-ai-features-iphone/4012500/",
+          "sentiment_score": 0.228546,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple Taps Google AI for Siri in Landmark Multiyear Technology Deal",
+          "content": "Apple Inc. has reportedly signed a multiyear agreement with Alphabet Inc.'s Google to integrate Google's advanced AI technology, including for the upcoming version of Siri. This partnership aims to enhance iPhone user experiences while maintaining Apple's commitment to user privacy, either through on-device processing or secure cloud compute. While the terms remain undisclosed, reports suggest an annual cost of approximately $1 billion, causing modest stock gains for both companies.",
+          "url": "https://www.whalesbook.com/news/English/tech/Apple-Taps-Google-AI-for-Siri-in-Landmark-Multiyear-Technology-Deal/6965409248839f428386b0ed",
+          "sentiment_score": 0.294329,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple taps Google AI to power Siri in multi-year deal",
+          "content": "Google has confirmed a multi-year agreement with Apple to power the iPhone-maker's artificial intelligence technology, including its Siri voice assistant. Apple will use Google's Gemini AI model to enhance Siri's capabilities while it develops its own AI systems. Wedbush analysts view this as a significant milestone, validating Google's AI and providing Apple with a crucial stepping stone for its AI strategy, potentially generating new subscription-based revenue.",
+          "url": "https://www.proactiveinvestors.com/companies/news/1085507/apple-taps-google-ai-to-power-siri-in-multi-year-deal-1085507.html",
+          "sentiment_score": 0.382445,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Spotify stock slips as Wall Street digests Fed pressure — CPI and earnings ahead for SPOT",
+          "content": "Spotify's stock dipped on Monday due to renewed pressure on the Federal Reserve and a proposal to cap credit-card interest rates, leading investors to adopt a defensive stance. The market is now looking ahead to Tuesday's CPI data for macroeconomic clues and Spotify's quarterly report on February 10th for insights into pricing and ad demand. Despite plans for a U.S. subscription fee hike, the company faces challenges with potential user churn and rising licensing fees.",
+          "url": "https://ts2.tech/en/spotify-stock-slips-as-wall-street-digests-fed-pressure-cpi-and-earnings-ahead-for-spot/",
+          "sentiment_score": 0.124363,
+          "sentiment_label": "Neutral",
+          "relevance": 0.615501
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Gold price breaks $4,600 record; GLD ETF and gold stocks jump on Powell probe",
+          "content": "Gold prices surged past $4,600 an ounce, setting a new record and causing gold-backed assets like the GLD ETF to jump. This rally is attributed to investor uncertainty surrounding Federal Reserve policy and a probe into Chairman Powell, alongside a weakening dollar. While the rally has boosted gold-linked stocks and silver, significant risks remain, particularly regarding potential U.S. inflation and rising input costs for miners, with upcoming consumer price data and Fed meetings acting as crit",
+          "url": "https://ts2.tech/en/gold-price-breaks-4600-record-gld-etf-and-gold-stocks-jump-on-powell-probe/",
+          "sentiment_score": -0.107029,
+          "sentiment_label": "Neutral",
+          "relevance": 0.617246
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Why Alphabet (GOOGL) stock is up today: Google shares jump over 1% as Alphabet becomes the fourth company",
+          "content": "Alphabet (GOOGL) shares surged over 1% on January 12, 2026, pushing its market capitalization beyond $4 trillion for the first time, making it the fourth company to reach this milestone. This rally is primarily driven by a multi-year AI partnership with Apple, making Google's Gemini the AI backbone for Siri, along with strong Google Cloud growth and successful Gemini 3 model rollout. The company has also surpassed Apple in total market value for the first time since 2019, reflecting renewed inve",
+          "url": "https://m.economictimes.com/news/international/us/why-alphabet-googl-stock-is-up-today-google-shares-jump-over-1-as-alphabet-becomes-the-fourth-company-to-cross-the-4-trillion-market-cap-milestone/articleshow/126489623.cms",
+          "sentiment_score": 0.314208,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.740665
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet Inc. (Class C): The Quiet Engine Powering Google’s Next Decade",
+          "content": "Alphabet Inc. (Class C) (GOOG) is highlighted as a critical investment vehicle for global exposure to Google's AI, cloud, and advertising empire. This non-voting share class offers pure economic exposure to Alphabet's diversified engines, including Google Search, YouTube, Google Cloud, and AI initiatives, without diluting founder control. The article underscores Class C's competitive advantages in data scale, integrated AI infrastructure, and multiple monetization streams compared to rivals like",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/alphabet-inc-class-c-the-quiet-engine-powering-google-s-next-decade/68481179",
+          "sentiment_score": 0.143957,
+          "sentiment_label": "Neutral",
+          "relevance": 0.59247
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet hits $4 trillion valuation as AI refocus lifts sentiment",
+          "content": "Alphabet achieved a $4 trillion market valuation, driven by its intensified focus on artificial intelligence, following a deal for Apple's AI models to be based on Google's Gemini. The company's stock has surged about 65% in 2025, outperforming peers, and it has also seen significant growth in its Google Cloud unit and a stable advertising business. This milestone makes Alphabet the fourth company to reach this valuation, reflecting a significant shift in investor sentiment.",
+          "url": "https://www.reuters.com/business/alphabet-hits-4-trillion-valuation-ai-refocus-lifts-sentiment-2026-01-12/",
+          "sentiment_score": 0.459692,
+          "sentiment_label": "Bullish",
+          "relevance": 0.74862
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Google-Parent Alphabet Becomes Newest $4 Trillion Company, Joining Nvidia",
+          "content": "Alphabet's market capitalization briefly surpassed $4 trillion, making it the latest tech company to hit this valuation, driven by optimism over its AI advancements. This surge follows the successful launch of its Gemini 3 model and Apple's decision to integrate Gemini into Siri. Alphabet joins Nvidia above the $4 trillion mark, while Apple and Microsoft have fallen slightly below it.",
+          "url": "https://www.wsj.com/tech/ai/google-4-trillion-valuation-0a022302?gaa_at=eafs&gaa_n=AWEtsqe7PXfAgObG4dXsyE5-MR97TfRu1kLzDNslg9SBLD1n0kwDfr2Tk0wW&gaa_ts=696538f5&gaa_sig=n4tu01RJzMeK9kwl3Dz28m5u0rkE5s5v1wXpvZcpTFUABJIl16187NwBqQZHpCKxAm1TRvT3eJZpIA7M77cedA%3D%3D",
+          "sentiment_score": 0.31532,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.909522
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet hits $4-trillion valuation as AI refocus lifts sentiment",
+          "content": "Alphabet briefly reached a $4 trillion market valuation, driven by its intensified focus on artificial intelligence. This surge, which saw its class-A shares hit a record high, reflects growing investor confidence and follows the company surpassing Apple in market capitalization for the first time since 2019. The company's AI efforts, including its Google Cloud unit and the Gemini models, have contributed significantly to its strong performance and market leadership.",
+          "url": "https://www.gmanetwork.com/news/money/companies/972586/alphabet-hits-4-trillion-valuation-as-ai-refocus-lifts-sentiment/story/",
+          "sentiment_score": 0.231645,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.746587
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple Inc. (AAPL) Wedbush Stays Bullish with $350 Target Update",
+          "content": "Wedbush reiterated its \"Outperform\" rating for Apple Inc. (AAPL) and maintained a 12-month price target of $350.00 per share. The firm's bullish outlook is driven by Apple's services ecosystem, strong iPhone demand, and potential benefits from AI adoption and hardware refresh cycles. Despite macroeconomic factors, Wedbush believes Apple's brand strength and financial flexibility position it for long-term outperformance.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/AAPL/pressreleases/37001311/apple-inc-aapl-wedbush-stays-bullish-with-350-target-update/",
+          "sentiment_score": 0.806891,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple’s TSMC Dominance Wanes as AI Demand from Nvidia, AMD Drives Revenue Surge",
+          "content": "Apple's long-standing dominance over TSMC is diminishing as the surging demand for AI chips from companies like Nvidia and AMD reshapes the semiconductor manufacturing landscape. TSMC's Q4 2025 revenue growth, driven primarily by AI processor orders, indicates a significant power shift. While Apple continues to reserve advanced nodes and ramp up its own AI efforts, the diversification of TSMC's client base means less leverage for Apple and a more competitive environment for cutting-edge technolo",
+          "url": "https://www.webpronews.com/apples-tsmc-dominance-wanes-as-ai-demand-from-nvidia-amd-drives-revenue-surge/",
+          "sentiment_score": 0.108396,
+          "sentiment_label": "Neutral",
+          "relevance": 0.827348
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Google Confirms Multiyear AI Deal to Power Apple Models, Siri",
+          "content": "Google has confirmed a multiyear agreement with Apple to provide AI technology for Apple's models and Siri. This partnership comes after Apple's evaluation determined Google's AI offers the most capable foundation for its Apple Foundation Models, promising new innovative experiences for users. The specific terms of this deal have not been revealed.",
+          "url": "https://www.bloomberg.com/news/articles/2026-01-12/google-confirms-multiyear-ai-deal-to-power-apple-models-siri?srnd=phx-technology",
+          "sentiment_score": 0.414089,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet Becomes Newest $4 Trillion Company, Joining Nvidia and Apple",
+          "content": "Alphabet's market capitalization surpassed $4 trillion in intraday trading, making it the latest tech giant to reach this milestone. This achievement is attributed to investor optimism surrounding its growing artificial intelligence business and the recent launch of its Gemini 3 AI model. Shares of Alphabet rose to a record $334.04 on Monday morning, reflecting strong growth of 65.4% last year.",
+          "url": "https://www.wsj.com/tech/ai/google-4-trillion-valuation-0a022302?gaa_at=eafs&gaa_n=AWEtsqdxUf1Fzt04XX4EcA64qa_fn2kJatexmSN0F7FcJkP_ONAcSC8ipbbB&gaa_ts=696523f3&gaa_sig=Kun6ikeZi4-va0eAzTUvLFe711jkLxsd-OBwpEoUV_0m8-Zo2BJfR1Q-Gp1DM_6nzaBrDVS0TbN9gyk4YwFX4g%3D%3D",
+          "sentiment_score": 0.318562,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.725054
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Netflix had a huge night at the 2026 Golden Globes with 7 wins",
+          "content": "Netflix dominated the 2026 Golden Globes with seven wins, significantly ahead of other streaming platforms. Their hit series \"Adolescence\" secured four awards, and \"KPop Demon Hunters\" won best animated feature and best original song. This success comes as Netflix prepares for its acquisition of Warner Bros., highlighting its growing industry dominance.",
+          "url": "https://techcrunch.com/2026/01/12/netflix-had-a-huge-night-at-the-2026-golden-globes-with-7-wins/",
+          "sentiment_score": 0.172457,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.70538
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Astronics Corporation stock hits all-time high of 67.59 USD By Investing.com",
+          "content": "Astronics Corporation (ATRO) stock has reached an all-time high of $67.59, driven by strong performance and investor confidence in the aerospace sector. Although the stock is trading just below its 52-week high, InvestingPro analysis suggests it may be overvalued and in overbought territory. The company recently reported strong Q3 2025 earnings and received increased price targets from analysts, reflecting positive outlooks for its future growth.",
+          "url": "https://ca.investing.com/news/company-news/astronics-corporation-stock-hits-alltime-high-of-6759-usd-93CH-4397247",
+          "sentiment_score": 0.137147,
+          "sentiment_label": "Neutral",
+          "relevance": 0.591186
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Inside the iOS-powered store of the future at New York's big retail show",
+          "content": "Jamf (NASDAQ: JAMF) has launched its \"Retail Runs On iOS World Tour\" with \"iOS Avenue\" at NRF 2026 in New York. The event showcases how iOS, Jamf, and its partners provide secure and intuitive Apple-based solutions for modern in-store retail operations. Attendees can explore interactive demonstrations covering point of sale, inventory management, employee enablement, and more, highlighting the capabilities of iOS in transforming retail environments.",
+          "url": "https://www.stocktitan.net/news/JAMF/jamf-debuts-retail-runs-oni-os-world-tour-at-nrf-wxlzp2yxikrc.html",
+          "sentiment_score": 0.348712,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.707378
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple Inc. (AAPL) is Attracting Investor Attention: Here is What You Should Know",
+          "content": "This article examines Apple Inc.'s (AAPL) recent stock performance and future prospects, noting its appearance on Zacks.com's most searched stocks list. It delves into key factors such as earnings estimate revisions, projected revenue growth, and valuation, providing an outlook based on Zacks' analytical tools. Despite a recent dip in stock price, the company shows positive earnings and revenue growth predictions, though its valuation is graded 'F' due to trading at a premium.",
+          "url": "https://sg.finance.yahoo.com/news/apple-inc-aapl-attracting-investor-140003012.html",
+          "sentiment_score": 0.039228,
+          "sentiment_label": "Neutral",
+          "relevance": 0.951377
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Skyworks Solutions, Inc. $SWKS Shares Sold by Meeder Asset Management Inc.",
+          "content": "Meeder Asset Management Inc. significantly reduced its stake in Skyworks Solutions (SWKS) by 43.1% in Q3 2025. Despite this, other major institutions like Pzena Investment Management and Norges Bank increased or initiated large positions, indicating varied institutional sentiment. Skyworks Solutions reported strong Q3 earnings, beating EPS estimates, and announced a substantial dividend, but its stock price has been declining in 2025.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-skyworks-solutions-inc-swks-shares-sold-by-meeder-asset-management-inc-2026-01-12/",
+          "sentiment_score": 0.156633,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.735147
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Why the stock market could broaden sustainably beyond U.S. large-cap growth",
+          "content": "The stock market shows signs of broadening beyond U.S. large-cap growth stocks due to factors like increased capital expenditure by mega-caps, converging earnings growth across market segments, and favorable relative valuations. The authors suggest that the AI arms race is making asset-light U.S. mega-caps more capital intensive, potentially dampening their future returns while benefiting other market segments. This scenario, combined with anticipated interest rate cuts and a shift in AI investm",
+          "url": "https://www.troweprice.com/institutional/de/en/insights/articles/2026/q1/why-the-stock-market-could-broaden-sustainably-beyond-us-large-cap-growth.html",
+          "sentiment_score": 0.105596,
+          "sentiment_label": "Neutral",
+          "relevance": 0.641118
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Pan American Silver PAAS stock jumps in premarket as silver smashes records — what to watch next",
+          "content": "Pan American Silver (PAAS) stock rose by 4.5% in premarket trading after silver futures surged 6%, driven by increased investor interest in hard assets due to geopolitical tensions and a criminal probe involving the Federal Reserve Chair. The company's next significant events include upcoming conferences later this month and its Q4 and year-end 2025 financial results on February 18th. Investors are monitoring whether silver prices will maintain their gains, as well as company-specific risks like",
+          "url": "https://ts2.tech/en/pan-american-silver-paas-stock-jumps-in-premarket-as-silver-smashes-records-what-to-watch-next/",
+          "sentiment_score": 0.1064,
+          "sentiment_label": "Neutral",
+          "relevance": 0.716668
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "iShares ETF Has A ‘Set And Forget’ Investment For Retirees You Don’t Need To Overthink",
+          "content": "The iShares Core S&P Total U.S. Stock Market ETF (ITOT) offers a \"set and forget\" investment option for retirees by tracking approximately 3,000 U.S. stocks with a low expense ratio of 0.03%. While it provides broad diversification and strong historical returns, it lacks downside protection and offers a modest dividend yield, making it suitable for retirees using it as an equity core paired with other stabilizing assets. Retirees needing stable, predictable income or those with a short time hori",
+          "url": "https://247wallst.com/investing/2026/01/12/ishares-etf-has-a-set-and-forget-investment-for-retirees-you-dont-need-to-overthink/",
+          "sentiment_score": 0.111706,
+          "sentiment_label": "Neutral",
+          "relevance": 0.64278
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple picks Google's Gemini to run AI-powered Siri coming this year",
+          "content": "Apple is partnering with Google to integrate Google's Gemini models and cloud technology into future Apple foundational AI models, including a significant upgrade to Siri expected later this year. This multi-year deal will see Apple leveraging Gemini for AI features, marking a major step for Apple in the AI space after largely staying out of the recent AI frenzy. The partnership also highlights Google's growing influence in AI and strengthens its existing financial ties with Apple.",
+          "url": "https://www.cnbc.com/2026/01/12/apple-google-ai-siri-gemini.html",
+          "sentiment_score": 0.288691,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Wedbush remains bullish on Apple while highlighting key goals for iPhone maker in 2026",
+          "content": "Wedbush has reiterated its Outperform rating and $350 price target for Apple shares, outlining four key areas for the company to focus on to achieve this target in 2026. These focus areas include the impact of a Google Gemini partnership on Apple's AI strategy, the expected effects of an AI-powered Siri launch, and iPhone 17 and 18 sales trends, particularly in China and with potential foldable device launches. The analysts believe a successful execution in these areas will drive stock performan",
+          "url": "https://seekingalpha.com/news/4538278-wedbush-remains-bullish-on-apple-while-highlighting-key-goals-for-iphone-maker-in-2026",
+          "sentiment_score": 0.000997,
+          "sentiment_label": "Neutral",
+          "relevance": 0.335693
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "204,651 Shares in HP Inc. $HPQ Bought by First Horizon Corp",
+          "content": "First Horizon Corp has acquired a new stake of 204,651 shares in HP Inc. (NYSE:HPQ) during the third quarter, valued at approximately $5.57 million. This purchase occurs amidst mixed insider activity, with significant selling by HP's CEO and other insiders, totaling over $2.78 million in the last three months. HP recently increased its quarterly dividend to $0.30 and reported Q3 earnings that surpassed analyst expectations.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-204651-shares-in-hp-inc-hpq-bought-by-first-horizon-corp-2026-01-12/",
+          "sentiment_score": 0.113292,
+          "sentiment_label": "Neutral",
+          "relevance": 0.626225
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Google confirms multiyear AI deal to power Apple models, Siri",
+          "content": "Alphabet Inc.'s Google has confirmed a multiyear agreement with Apple Inc. to power the iPhone maker's artificial intelligence technology, including the Siri voice assistant. Google stated that Apple chose its AI technology for its capabilities, despite earlier reports of Apple planning to pay around $1 billion annually for such a deal. The partnership is expected to enhance a new version of Siri due this year, with Google assuring Apple's privacy standards will be maintained.",
+          "url": "https://www.siliconvalley.com/2026/01/12/google-confirms-multiyear-ai-deal-to-power-apple-models-siri/",
+          "sentiment_score": 0.424762,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple Inc. $AAPL Position Boosted by Ethic Inc.",
+          "content": "Ethic Inc. increased its stake in Apple Inc. (NASDAQ:AAPL) by 0.8% in the third quarter, making it their second-largest holding, valued at $357.6 million. Other major institutions like Vanguard and State Street also boosted their positions, while Norges Bank opened a substantial new stake. Despite some insider selling, analysts maintain a \"Moderate Buy\" rating for Apple, with several firms raising price targets after the company surpassed quarterly earnings and revenue expectations.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-apple-inc-aapl-position-boosted-by-ethic-inc-2026-01-12/",
+          "sentiment_score": 0.315393,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Austin Private Wealth LLC Cuts Stake in Apple Inc. $AAPL",
+          "content": "Austin Private Wealth LLC reduced its stake in Apple Inc. by 10.2% in the third quarter of 2025, selling 7,734 shares and ending with 68,001 shares valued at $17.315 million. This reduction, along with notable insider selling, comes amidst a \"Moderate Buy\" consensus rating for Apple and an average price target of $284.07, balancing strong iPhone demand and new Apple Card issuer with regulatory and AI competition concerns. Despite institutional selling by some, other major investors like Kingston",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-austin-private-wealth-llc-cuts-stake-in-apple-inc-aapl-2026-01-12/",
+          "sentiment_score": 0.070796,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Annex Advisory Services LLC Cuts Holdings in Apple Inc. $AAPL",
+          "content": "Annex Advisory Services LLC decreased its stake in Apple Inc. by 2.9% in the third quarter, while several other institutional investors significantly increased their holdings. Two insiders, CFO Kevan Parekh and Chris Kondo, also sold a substantial number of shares, reducing their ownership. Despite these sales, analysts maintain a \"Moderate Buy\" consensus rating with an average target price of $284.07, and Apple recently announced a quarterly dividend.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-annex-advisory-services-llc-cuts-holdings-in-apple-inc-aapl-2026-01-12/",
+          "sentiment_score": 0.060468,
+          "sentiment_label": "Neutral",
+          "relevance": 0.98336
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Jim Cramer Says Goldman Sachs (GS) is a Major Position In His Trust",
+          "content": "Jim Cramer has stated that Goldman Sachs (GS) is the largest position in his trust, attributing its strong performance to price appreciation. He noted the bank's undervaluation during the Biden era despite its growth potential, particularly in M&A activity and IPOs. Cramer believes the market misjudged Goldman Sachs's unique franchise and praised CEO David Solomon's efforts to return the firm to its core strengths.",
+          "url": "https://finviz.com/news/273067/jim-cramer-says-goldman-sachs-gs-is-a-major-position-in-his-trust",
+          "sentiment_score": 0.114751,
+          "sentiment_label": "Neutral",
+          "relevance": 0.59451
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple To Use Google’s Gemini AI For Siri Overhaul: Report",
+          "content": "Apple Inc. has reportedly confirmed a multi-year collaboration with Alphabet Inc.'s Google to enhance its artificial intelligence capabilities, including an overhaul of its Siri voice assistant in late 2026. This partnership will leverage Google's cloud services and Gemini AI models as the foundation for Apple's future AI systems. Apple stated that Google's technology provides the most capable foundation for its foundational AI models, indicating a strategic shift towards external AI infrastruct",
+          "url": "https://stocktwits.com/news-articles/markets/equity/apple-to-use-google-s-gemini-ai-for-siri-overhaul-report/cmUa2VCR4E0",
+          "sentiment_score": 0.134664,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Dow, S&P 500 Notch Record Closes After Market Rebound",
+          "content": "The Dow and S&P 500 achieved record closes despite market jitters stemming from a criminal investigation into Fed Chair Jerome Powell. This rebound occurred after an initial deficit for the Dow and healthy gains for the Nasdaq. Key events included bank struggles due to President Trump's call for a credit card rate cap and Alphabet hitting a $4 trillion market cap following an AI partnership with Apple.",
+          "url": "https://finviz.com/news/274196/dow-sp-500-notch-record-closes-after-market-rebound",
+          "sentiment_score": 0.313908,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.74441
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Concentrix (CNXC) Q4 Earnings Report Preview: What To Look For",
+          "content": "Concentrix (CNXC) is set to report its Q4 earnings this Tuesday, with analysts expecting a 3.6% revenue growth year-on-year to $2.53 billion and adjusted earnings of $2.91 per share. The company has a history of surpassing revenue estimates, and its stock has seen positive investor sentiment, outperforming peers in recent months. Investors will be looking for insights into how the professional services sector is performing, as Concentrix is among the first to report this earnings season.",
+          "url": "https://finviz.com/news/273036/concentrix-cnxc-q4-earnings-report-preview-what-to-look-for",
+          "sentiment_score": 0.328613,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.601212
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "AAPL - Apple Inc. (AAPL) — Durable Compounder With Services-Led Earnings Upside",
+          "content": "This article analyzes Apple Inc. (AAPL) as a durable compounder, highlighted by its services-led earnings upside despite mature hardware markets. The author's valuation suggests Apple trades near fair value, emphasizing the strength of its integrated ecosystem, pricing power, and aggressive capital allocation strategy. Key growth drivers are identified as high-margin Services, premium pricing for iPhones, and share repurchases, while regulatory pressures and China demand pose risks.",
+          "url": "https://simplywall.st/community/narratives/us/tech/nasdaq-aapl/apple/gd4p2s5a-apple-inc-aapl-durable-compounder-with-services-led-earnings-upside",
+          "sentiment_score": 0.421033,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        }
+      ],
+      "count": 44,
+      "avg_sentiment": 0.23426868181818178
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Is the Vanguard 500 Index Fund ETF a Buy Now?",
+          "content": "The article discusses the Vanguard S&P 500 ETF (VOO), highlighting its benefits such as easy access to the S&P 500, a strong track record of returns (322% in the past decade), and a very low expense ratio of 0.03%. It suggests that investors should focus on long-term investing and avoid market timing, despite current high valuations and concerns about an AI bubble. The ETF is presented as one of the best available investment options due to its diversified exposure to the U.S. economy.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/MSFT/pressreleases/36997599/is-the-vanguard-500-index-fund-etf-a-buy-now/",
+          "sentiment_score": 0.270727,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.620835
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "News | From Ralph Lauren to Walmart, retailers at conference focus on uses for AI",
+          "content": "Retailers like Ralph Lauren, LVMH, and Walmart are increasingly integrating AI into their operations, as highlighted at the National Retail Federation's annual conference. Ralph Lauren has launched an AI-powered shopping assistant \"Ask Ralph,\" while LVMH uses AI for creative exploration in product development. Walmart and Google announced a partnership to make Walmart and Sam's Club products available through Google's Gemini AI, demonstrating a broader industry trend towards leveraging AI for en",
+          "url": "https://www.costar.com/article/785742518/from-ralph-lauren-to-walmart-retailers-at-conference-focus-on-uses-for-ai",
+          "sentiment_score": 0.314443,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.714285
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Tevogen Demonstrates Platform Scalability and Multi-Indication T Cell Pipeline Expansion in 2025",
+          "content": "Tevogen Bio Holdings Inc. (Nasdaq: TVGN) reported significant scientific and operational achievements in 2025, highlighting the scalability of its ExacTcell™ platform and expanded pipeline of cytotoxic T lymphocyte (CTL) therapies. The company advanced its in-house GMP cell therapy manufacturing capabilities and identified new targets for treating various viral and oncology indications, including Epstein-Barr virus, chronic hepatitis B, and HPV-related cancers. These milestones position Tevogen ",
+          "url": "https://www.globenewswire.com/news-release/2026/01/12/3216996/0/en/Tevogen-Demonstrates-Platform-Scalability-and-Multi-Indication-T-Cell-Pipeline-Expansion-in-2025.html",
+          "sentiment_score": 0.246724,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.601228
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Walmart Expands AI Push With Google Gemini Shopping Integration",
+          "content": "Walmart is partnering with Alphabet Inc.'s Google Gemini to integrate shopping experiences for its stores and Sam's Club, marking a significant push into AI-driven retail. This initiative, announced at the National Retail Federation's Big Show, will initially launch in the U.S. and follows Walmart's previous collaboration with OpenAI's ChatGPT for \"Instant Checkout.\" The move highlights the growing influence of AI in retail, aimed at streamlining shopping and enhancing customer engagement, with ",
+          "url": "https://www.sahmcapital.com/news/content/walmart-expands-ai-push-with-google-gemini-shopping-integration-2026-01-12",
+          "sentiment_score": 0.339346,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.629111
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alaska Air undertakes tech upgrades after painful outages",
+          "content": "Alaska Air Group Inc. is undertaking significant technology upgrades to address past operational outages and strengthen its position as a global carrier. The revamp includes evaluating cloud migration for operational, back-office systems, and data center operations, with Amazon Web Services and Microsoft's Azure being considered.",
+          "url": "https://cargofacts.com/future/technology/alaska-air-undertakes-tech-upgrades-after-painful-outages/",
+          "sentiment_score": 0.131689,
+          "sentiment_label": "Neutral",
+          "relevance": 0.601805
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Microsoft, Oracle and ServiceNow could be the top stocks to play a software comeback",
+          "content": "Analysts from Goldman Sachs and Deutsche Bank suggest that infrastructure software companies, specifically Microsoft, Oracle, and ServiceNow, are poised for significant gains in 2026. This sector is expected to benefit greatly from the increasing adoption of AI, as these companies manage the hardware and data essential for AI infrastructure. Goldman Sachs projects that AI could expand the total addressable market for the software sector by 30% by 2037.",
+          "url": "https://www.marketwatch.com/story/microsoft-oracle-and-servicenow-could-be-the-top-stocks-to-play-a-software-comeback-eec473e0?gaa_at=eafs&gaa_n=AWEtsqc4JMUS-X71rdZ1qM8LvI_fXo2MOLsKHjJqMJlGcmpp4wxGURbdtc04&gaa_ts=69658649&gaa_sig=g896tRavfiCXtH46SvrxGaQMQZTd0Riq0QBidSjByv_ansWXIioLDq73yADtCunGesS3ErWv1Mo4bYTz7dPKAA%3D%3D",
+          "sentiment_score": 0.542469,
+          "sentiment_label": "Bullish",
+          "relevance": 0.902674
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Google stock (GOOG) pops on Apple’s Gemini-powered Siri deal as Alphabet brushes $4 trillion",
+          "content": "Alphabet's non-voting Class C shares (GOOG) climbed by 1.1% in late trading after Apple announced a multi-year deal to integrate Google's Gemini models into Siri. This agreement positions Gemini as the default AI layer for Apple's ecosystem, enhancing Alphabet's reach and pushing its market value briefly to $4 trillion. Investors are now looking to Alphabet's upcoming Feb. 4 earnings report for clarity on AI spending and revenue generation from these investments, alongside potential regulatory s",
+          "url": "https://ts2.tech/en/google-stock-goog-pops-on-apples-gemini-powered-siri-deal-as-alphabet-brushes-4-trillion/",
+          "sentiment_score": -0.202504,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.617146
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "The future of work: Key UCaaS trends for IT leaders in 2026",
+          "content": "This article forecasts five key Unified Communications as a Service (UCaaS) trends for IT leaders in 2026, emphasizing the transformative role of AI. It discusses the expansion of AI copilots, the shift towards outcome-oriented meetings, UCaaS becoming a centralized work hub, increasingly strict compliance requirements, and the integration of employee experience into workplace productivity. The author provides a checklist for IT leaders to navigate these changes, focusing on AI capabilities, str",
+          "url": "https://www.techtarget.com/searchunifiedcommunications/tip/The-future-of-work-Key-UCaaS-trends-for-IT-leaders",
+          "sentiment_score": 0.326591,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.711969
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Behind the Scenes at CES 2026: Intelligent Product Lifecycle with PTC",
+          "content": "This article discusses how PTC, a software company specializing in product lifecycle management, is leveraging AI to transform product development and manufacturing. Steve Dertien of PTC highlights how AI can free engineers from time-consuming change management tasks to focus on innovation, optimize supply chains, and accelerate time to market. The piece emphasizes the importance of data quality, process reevaluation, and organizational change for companies adopting AI in their product developme",
+          "url": "https://www.bbntimes.com/technology/behind-the-scenes-at-ces-2026-intelligent-product-lifecycle-with-ptc",
+          "sentiment_score": 0.517374,
+          "sentiment_label": "Bullish",
+          "relevance": 0.602798
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Top Stock Reports for Microsoft, Eli Lilly & Lam Research",
+          "content": "This article highlights top stock reports from Zacks Research Daily, focusing on Microsoft Corp. (MSFT), Eli Lilly and Co. (LLY), and Lam Research Corp. (LRCX). It details their financial performance, market positions, key growth drivers, and challenges. The report also includes analysis of micro-cap Ampco-Pittsburgh Corp. (AP) and mentions other companies like Marsh & McLennan, Ross Stores, and Cardinal Health.",
+          "url": "https://sg.finance.yahoo.com/news/top-stock-reports-microsoft-eli-211600623.html",
+          "sentiment_score": 0.282983,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.818087
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple will use Google’s Gemini models to power new Siri release",
+          "content": "Apple Inc. has announced a multi-year partnership with Google LLC to integrate Google's Gemini series of large language models into its Siri voice assistant. The upgraded Siri, part of Apple's new AI suite called Apple Intelligence, is expected to provide more personalized responses and handle multi-step tasks across various apps, rolling out later this year. This collaboration has also reportedly pushed Alphabet Inc.'s market capitalization above $4 trillion, making it the fourth company to rea",
+          "url": "https://siliconangle.com/2026/01/12/apple-will-use-googles-gemini-models-power-new-siri-release/",
+          "sentiment_score": 0.190768,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.619077
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Microsoft expands its presence at UC",
+          "content": "Microsoft has significantly expanded its presence at the University of Cincinnati's 1819 Innovation Hub, more than doubling its space to nearly 3,700 square feet. This investment highlights Microsoft's commitment to Southwest Ohio and leveraging UC's student talent for AI training, workshops, and fostering innovation. The expansion aims to strengthen ties with Bearcat talent and local businesses, contributing to the region's entrepreneurial and innovation ecosystems.",
+          "url": "https://www.uc.edu/news/articles/2025/12/n21378779.html",
+          "sentiment_score": 0.415506,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Adobe Firefly gets GPT-Image 1.5 support, limited-time free images",
+          "content": "Adobe Firefly now supports OpenAI’s GPT-Image 1.5 model, allowing Firefly Pro and Premium subscribers to generate unlimited images with this model until January 15. This integration is part of Adobe's broader strategy to incorporate AI-based features across its products, including Photoshop, Illustrator, and Adobe Express. Firefly offers various subscription plans based on generative credits, which are used for generating high-quality image, vector, video, and audio outputs.",
+          "url": "https://9to5mac.com/2026/01/12/adobe-firefly-gets-gpt-image-1-5-support-and-temporary-unlimited-image-generation/",
+          "sentiment_score": 0.242217,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.622752
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple Teams Up With Google for A.I. in Its Products",
+          "content": "Apple announced a partnership with Google to base its upcoming Apple Intelligence models on Google's Gemini A.I. models and cloud computing services. This move comes after Apple faced increasing scrutiny for its slower adoption of artificial intelligence compared to other tech giants. The collaboration will power Apple's Siri and other A.I. features, though the deal's financial terms were not disclosed, and the partnership is not exclusive.",
+          "url": "https://www.nytimes.com/2026/01/12/technology/apple-google-ai-partnership.html",
+          "sentiment_score": 0.149569,
+          "sentiment_label": "Neutral",
+          "relevance": 0.641772
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Key facts: Goldman Sachs raises Microsoft target; Bank of America sees $300B bonds; Microsoft upgrades Foundry",
+          "content": "Goldman Sachs has increased its price target for Microsoft (MSFT) to $655, maintaining a Buy rating, citing AI sector strength. Bank of America projects that Microsoft and other major tech companies will issue between $140 billion and $300 billion in corporate bonds annually for the next three years to fund AI investments. Microsoft has also enhanced its Foundry platform with Claude integration, specifically benefiting healthcare and life sciences clients.",
+          "url": "https://www.tradingview.com/news/tradingview:d68d3fca1ef16:0-key-facts-goldman-sachs-raises-microsoft-target-bank-of-america-sees-300b-bonds-microsoft-upgrades-foundry/",
+          "sentiment_score": 0.491982,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Equinix Inc.: The Quiet Super?Infrastructure Powering the Cloud Wars",
+          "content": "Equinix Inc. has evolved beyond a traditional data center operator to become a critical software-defined backbone for the internet and multi-cloud environments. The company's strategy focuses on neutrality, interconnection services, and a global, consistent platform to cater to growing demands from AI, cloud, and data-intensive applications. This positioning allows Equinix to maintain a premium valuation as a growth-oriented digital infrastructure asset in a competitive market.",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/equinix-inc-the-quiet-super-infrastructure-powering-the-cloud-wars/68481343",
+          "sentiment_score": 0.3047,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.606724
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Apple calls on Google to help smarten up Siri and bring other AI features to the iPhone",
+          "content": "Apple is partnering with Google to integrate Google's Gemini AI technology into its \"Apple Intelligence\" suite for the iPhone and other products. This collaboration aims to enhance Siri and other AI features, addressing Apple's previous delays in the AI race. The deal is seen as a significant validation for Google, whose parent company, Alphabet, recently surpassed Apple in market value, driven by its AI advancements.",
+          "url": "https://www.nbcbayarea.com/news/local/apple-google-siri-ai-features-iphone/4012500/",
+          "sentiment_score": -0.105956,
+          "sentiment_label": "Neutral",
+          "relevance": 0.639959
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "ServiceNow stock steadies after Goldman’s fresh “Buy” call as earnings near",
+          "content": "ServiceNow shares slightly increased after Goldman Sachs initiated coverage with a \"Buy\" rating and a $205 price target, providing a lift following a two-day drop. Investors are now closely watching the company's Q4 and full-year 2025 earnings report on January 28, especially for signs that AI hype is translating into actual bookings and renewals. Despite a positive analyst call, concerns remain about federal business flatlining and potentially uneven AI adoption impacting near-term performance.",
+          "url": "https://ts2.tech/en/servicenow-stock-steadies-after-goldmans-fresh-buy-call-as-earnings-near/",
+          "sentiment_score": 0.368762,
+          "sentiment_label": "Bullish",
+          "relevance": 0.626041
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Gartner lista as empresas que são referências na corrida dos fornecedores de IA",
+          "content": "Gartner identificou as \"Companies to Beat\" em cerca de 30 categorias de IA, baseando-se em critérios como recursos técnicos, implementações de clientes, modelo de negócios e parcerias. O relatório destaca Google pela IA agêntica, Palo Alto Networks para segurança de IA e Microsoft para IA corporativa. A competição no mercado de IA está se intensificando, com o Gartner prevendo que essas avaliações evoluirão conforme o setor amadurece.",
+          "url": "https://tiinside.com.br/12/01/2026/gartner-lista-as-empresas-que-sao-referencias-na-corrida-dos-fornecedores-de-ia/",
+          "sentiment_score": 0.305271,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.602077
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Sizing Up Whether The Global Select Equity ETF Is A Buy Right Now",
+          "content": "The JPMorgan Global Select Equity ETF (JGLO) launched in September 2023 with $7.1 billion in assets and a 0.47% expense ratio. The ETF, which has gained 15% over the past year, is heavily concentrated in six mega-cap tech stocks, holding over a quarter of its assets in NVIDIA, Microsoft, Apple, Amazon, Alphabet, and Meta. This concentration creates vulnerability if global equity returns broaden beyond U.S. mega-caps, exemplified by its underperformance against the iShares MSCI ACWI ETF in early ",
+          "url": "https://247wallst.com/investing/2026/01/12/sizing-up-whether-the-global-select-equity-etf-is-a-buy-right-now/",
+          "sentiment_score": -0.116023,
+          "sentiment_label": "Neutral",
+          "relevance": 0.612766
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Commonwealth Fusion Systems Appoints Stephane Bancel To Board",
+          "content": "Commonwealth Fusion Systems (CFS), a leading private fusion company, announced that Stephane Bancel, Moderna Inc.'s CEO, has joined its Board of Directors as an Independent Member. Bancel, known for leading Moderna's COVID-19 vaccine development, brings expertise in scaling innovative technologies. He was also an early investor in CFS and aims to help commercialize fusion energy for global power demand.",
+          "url": "https://www.citybiz.co/article/792124/commonwealth-fusion-systems-appoints-stephane-bancel-to-board/",
+          "sentiment_score": 0.131522,
+          "sentiment_label": "Neutral",
+          "relevance": 0.604993
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Microsoft Stock Can Grow 37%, Goldman Sachs Says. It Has Many Paths to AI Profit.",
+          "content": "Goldman Sachs believes Microsoft stock could surge by 37% due to its diversified investments in artificial intelligence. The report highlights Microsoft's historical success in benefiting from major technological shifts, positioning it strongly for the AI era.",
+          "url": "https://www.barrons.com/articles/microsoft-stock-ai-strategy-goldman-c57678e4?gaa_at=eafs&gaa_n=AWEtsqe56teC1eTEDPvxVuE5kwOMS-i1AnbAoBV--Ms_UqlPQ4szKi8gooQH&gaa_ts=69657134&gaa_sig=QsUVycwWWSkBxA9lXXRS-KjIFiIxlV4J0tfNUxK6JLBZfexTYrJs7zTaeViqjAO8xYYbc3dmXImoQ7KVnI4whA%3D%3D",
+          "sentiment_score": 0.630776,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Why Alphabet (GOOGL) stock is up today: Google shares jump over 1% as Alphabet becomes the fourth company",
+          "content": "Alphabet (GOOGL) shares surged over 1% on January 12, 2026, pushing its market capitalization beyond $4 trillion for the first time, making it the fourth company to reach this milestone. This rally is primarily driven by a multi-year AI partnership with Apple, making Google's Gemini the AI backbone for Siri, along with strong Google Cloud growth and successful Gemini 3 model rollout. The company has also surpassed Apple in total market value for the first time since 2019, reflecting renewed inve",
+          "url": "https://m.economictimes.com/news/international/us/why-alphabet-googl-stock-is-up-today-google-shares-jump-over-1-as-alphabet-becomes-the-fourth-company-to-cross-the-4-trillion-market-cap-milestone/articleshow/126489623.cms",
+          "sentiment_score": 0.343164,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.556275
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet Inc. (Class C): The Quiet Engine Powering Google’s Next Decade",
+          "content": "Alphabet Inc. (Class C) (GOOG) is highlighted as a critical investment vehicle for global exposure to Google's AI, cloud, and advertising empire. This non-voting share class offers pure economic exposure to Alphabet's diversified engines, including Google Search, YouTube, Google Cloud, and AI initiatives, without diluting founder control. The article underscores Class C's competitive advantages in data scale, integrated AI infrastructure, and multiple monetization streams compared to rivals like",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/alphabet-inc-class-c-the-quiet-engine-powering-google-s-next-decade/68481179",
+          "sentiment_score": 0.281025,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.659736
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "PayPal's Agentic Commerce Expansion: Will it Boost Top-Line Growth?",
+          "content": "PayPal recently announced a strategic partnership with Microsoft to integrate Copilot Checkout into Copilot, enabling seamless shopping experiences. This is part of PayPal's broader push into \"agentic commerce\" through collaborations with various platforms like OpenAI, Perplexity, Wix, and Shopify, aiming to leverage AI for enhanced discovery and checkout processes. Despite these initiatives, PayPal's shares have declined 22% in the last six months, though the stock appears undervalued with a Va",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/MA/pressreleases/37002326/paypals-agentic-commerce-expansion-will-it-boost-top-line-growth/",
+          "sentiment_score": 0.220346,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.74995
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "PayPal's Agentic Commerce Expansion: Will it Boost Top-Line Growth?",
+          "content": "PayPal is expanding its agentic commerce initiatives through strategic partnerships with Microsoft, OpenAI, and Perplexity, integrating its payment services into AI-driven platforms. These collaborations aim to enable seamless shopping experiences within AI interfaces, allowing merchants to convert product catalogs into purchasable items. Despite these efforts, PayPal's stock has underperformed, though its valuation appears attractive, with analysts expecting future EPS growth.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/PYPL/pressreleases/37002326/paypals-agentic-commerce-expansion-will-it-boost-top-line-growth/",
+          "sentiment_score": 0.227926,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.811982
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Microsoft Pulls The Plug On Lens, Shifts Mobile Scanning To OneDrive",
+          "content": "Microsoft is discontinuing its standalone Lens app and integrating its mobile scanning capabilities into OneDrive. This move is part of a larger strategy to consolidate productivity tools under the Microsoft 365 Copilot umbrella. The Lens app, which had a loyal following, will be removed from app stores on February 9, 2026, with scanning functionality ceasing a month later.",
+          "url": "https://www.rttnews.com/3609761/microsoft-pulls-the-plug-on-lens-shifts-mobile-scanning-to-onedrive.aspx",
+          "sentiment_score": 0.012138,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet hits $4 trillion valuation as AI refocus lifts sentiment",
+          "content": "Alphabet achieved a $4 trillion market valuation, driven by its intensified focus on artificial intelligence, following a deal for Apple's AI models to be based on Google's Gemini. The company's stock has surged about 65% in 2025, outperforming peers, and it has also seen significant growth in its Google Cloud unit and a stable advertising business. This milestone makes Alphabet the fourth company to reach this valuation, reflecting a significant shift in investor sentiment.",
+          "url": "https://www.reuters.com/business/alphabet-hits-4-trillion-valuation-ai-refocus-lifts-sentiment-2026-01-12/",
+          "sentiment_score": 0.321439,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.550179
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Microsoft plans to clarify confusing Windows 11 driver names",
+          "content": "Microsoft is addressing criticism regarding the unclear naming of Windows 11 drivers, which often lack details about the device or purpose. The company plans to provide more descriptive metadata for drivers in future updates. However, logistical challenges with partners mean that clearer driver names may take some time to implement without a confirmed timeline.",
+          "url": "https://www.pcworld.com/article/3029763/microsoft-plans-to-clarify-confusing-windows-11-driver-names.html",
+          "sentiment_score": 0.1355,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Google-Parent Alphabet Becomes Newest $4 Trillion Company, Joining Nvidia",
+          "content": "Alphabet's market capitalization briefly surpassed $4 trillion, making it the latest tech company to hit this valuation, driven by optimism over its AI advancements. This surge follows the successful launch of its Gemini 3 model and Apple's decision to integrate Gemini into Siri. Alphabet joins Nvidia above the $4 trillion mark, while Apple and Microsoft have fallen slightly below it.",
+          "url": "https://www.wsj.com/tech/ai/google-4-trillion-valuation-0a022302?gaa_at=eafs&gaa_n=AWEtsqe7PXfAgObG4dXsyE5-MR97TfRu1kLzDNslg9SBLD1n0kwDfr2Tk0wW&gaa_ts=696538f5&gaa_sig=n4tu01RJzMeK9kwl3Dz28m5u0rkE5s5v1wXpvZcpTFUABJIl16187NwBqQZHpCKxAm1TRvT3eJZpIA7M77cedA%3D%3D",
+          "sentiment_score": 0.13642,
+          "sentiment_label": "Neutral",
+          "relevance": 0.619932
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Smart Data-Driven Pest Control",
+          "content": "Rentokil Initial plc has developed a \"Smart Data-Driven Pest Control\" system utilizing IoT, sensor networks, and cloud-based analytics for real-time monitoring and predictive pest management. This approach aims to improve responsiveness and resource allocation by shifting from scheduled visits to condition-based service delivery, reducing chemical use and operational disruption. The system provides prioritized work orders for technicians and dashboards for compliance, informing site design and s",
+          "url": "https://www.trendhunter.com/amp/trends/rentokil-initial-plc",
+          "sentiment_score": 0.342664,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.612518
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Alphabet hits $4-trillion valuation as AI refocus lifts sentiment",
+          "content": "Alphabet briefly reached a $4 trillion market valuation, driven by its intensified focus on artificial intelligence. This surge, which saw its class-A shares hit a record high, reflects growing investor confidence and follows the company surpassing Apple in market capitalization for the first time since 2019. The company's AI efforts, including its Google Cloud unit and the Gemini models, have contributed significantly to its strong performance and market leadership.",
+          "url": "https://www.gmanetwork.com/news/money/companies/972586/alphabet-hits-4-trillion-valuation-as-ai-refocus-lifts-sentiment/story/",
+          "sentiment_score": 0.325232,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.629124
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "'Big Short' Investor Michael Burry Bets Against Oracle—Here's His Advice",
+          "content": "Michael Burry, known for his \"Big Short\" bet against the 2008 housing market, has disclosed he owns put options on Oracle Corporation (NYSE:ORCL) and has previously shorted the stock. Burry believes Oracle's significant debt from expanding into cloud computing services presents a strategic vulnerability. Despite his bearish stance on Oracle, he remains hesitant to short larger tech companies like Meta, Alphabet, and Microsoft, believing their diverse businesses will weather potential challenges.",
+          "url": "https://www.benzinga.com/markets/guidance/26/01/49832199/big-short-investor-michael-burry-bets-against-oracle-heres-his-advice",
+          "sentiment_score": 0.129256,
+          "sentiment_label": "Neutral",
+          "relevance": 0.715908
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Accelsius Closes $65 Million Series B Funding Led by Johnson Controls; Legrand Joining Round to Scale Liquid Cooling for Gigawatt-Class AI Factories – Company Announcement - FT.com",
+          "content": "Accelsius, a leader in two-phase, direct-to-chip liquid cooling for AI and high-performance computing, has closed a $65 million Series B funding round. The round was led by Johnson Controls, with strategic investment from Legrand, to scale liquid cooling solutions for AI factories. This investment will accelerate Accelsius' expansion, global reach, and the deployment of its proprietary NeuCool® technology, crucial for managing the extreme thermal demands of next-generation AI and HPC chips.",
+          "url": "https://markets.ft.com/data/announce/detail?dockey=600-202601121100BIZWIRE_USPRX____20260112_BW588650-1",
+          "sentiment_score": 0.328336,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.609948
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "The Bull Case For IonQ (IONQ) Could Change Following Rapid Sales Growth And New Quantum Milestones - Learn Why",
+          "content": "IonQ recently reported significant year-on-year sales growth and achieved world-record quantum gate fidelity, alongside early completion of its Tempo system milestones and new international deployments. While the company is still experiencing widening losses due to heavy R&D investment, these achievements strengthen the case for its trapped-ion technology moving towards commercial viability. However, investors should remain aware of execution risks such as widening losses, ongoing dilution, vola",
+          "url": "https://simplywall.st/stocks/us/tech/nyse-ionq/ionq/news/the-bull-case-for-ionq-ionq-could-change-following-rapid-sal",
+          "sentiment_score": 0.041687,
+          "sentiment_label": "Neutral",
+          "relevance": 0.573981
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Tenable Is a Gartner® Peer Insights™ Customers’ Choice for Cloud-Native Application Protection Platforms",
+          "content": "Tenable has been recognized as a Gartner® Peer Insights™ Customers’ Choice for Cloud-Native Application Protection Platforms (CNAPP), a distinction based entirely on customer feedback. This recognition highlights Tenable Cloud Security CNAPP's value in helping organizations manage multi-cloud risk and compliance as an integral part of the Tenable One Exposure Management Platform. Customers specifically praise Tenable's deep visibility, intuitive interface, strong support, and effective prioritiz",
+          "url": "https://securityboulevard.com/2026/01/tenable-is-a-gartner-peer-insights-customers-choice-for-cloud-native-application-protection-platforms/",
+          "sentiment_score": 0.274826,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.604515
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "AlphaTON Capital Closes $46M AI Infrastructure Expansion to Address Significant Market Demands for Confidential Compute",
+          "content": "AlphaTON Capital (NASDAQ: ATON) announced the closing of a $46 million AI compute infrastructure deal to expand its deployment of Telegram's Cocoon AI confidential compute, adding 576 NVIDIA B300 chips. This expansion aims to meet the demand for privacy-preserving, decentralized AI infrastructure, particularly for workloads that cannot run on Big Tech platforms due to privacy and data sovereignty concerns. The deal is projected to deliver a 27% IRR and 3.82x equity multiple, with deployment sche",
+          "url": "https://www.sahmcapital.com/news/content/alphaton-capital-closes-46m-ai-infrastructure-expansion-to-address-significant-market-demands-for-confidential-compute-2026-01-12",
+          "sentiment_score": 0.146267,
+          "sentiment_label": "Neutral",
+          "relevance": 0.565892
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "AlphaTON Capital Closes $46M AI Infrastructure Expansion to",
+          "content": "AlphaTON Capital has announced a $46 million AI infrastructure expansion to address the demand for confidential compute, involving the deployment of 576 NVIDIA B300 chips. This deal is projected to deliver a 27% IRR and 3.82x equity multiple, focusing on privacy-preserving, decentralized AI infrastructure through its integration with Telegram's ecosystem and Cocoon AI. The company aims to provide alternatives to Big Tech infrastructure for AI workloads requiring data sovereignty and privacy.",
+          "url": "https://www.globenewswire.com/news-release/2026/01/12/3217111/0/en/AlphaTON-Capital-Closes-46M-AI-Infrastructure-Expansion-to-Address-Significant-Market-Demands-for-Confidential-Compute.html",
+          "sentiment_score": 0.236687,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.564707
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Investimentos em data centers devem atingir US$ 3 trilhões nos próximos cinco anos, diz Moody’s",
+          "content": "Moody's Ratings expects investments in data centers to reach $3 trillion over the next five years, driven by the boom in artificial intelligence and cloud computing. Major technology companies, including six American hyperscalers, are set to lead this surge, investing heavily in servers, computing equipment, and new energy capacity. The report also highlights that while banks remain key financiers, other institutional investors will increasingly participate due to the substantial capital require",
+          "url": "https://br.investing.com/news/stock-market-news/investimentos-em-data-centers-devem-atingir-us-3-trilhoes-nos-proximos-cinco-anos-diz-moodys-1796623",
+          "sentiment_score": 0.415474,
+          "sentiment_label": "Bullish",
+          "relevance": 0.895493
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "SocGen Turns to Microsoft’s Copilot After Scrapping Own AI Tool",
+          "content": "Societe Generale SA is replacing its internally developed AI tool, SoGPT, with Microsoft Corp.'s Copilot solution. The French lender made this decision after employees found SoGPT to be outdated and its performance lagged behind other available tools. This move highlights the significant challenges and costs even large financial institutions face in developing and maintaining their own competitive AI technology.",
+          "url": "https://www.bloomberg.com/news/articles/2026-01-12/socgen-turns-to-microsoft-s-copilot-after-scrapping-own-ai-tool",
+          "sentiment_score": 0.403603,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "SKYX Technologies to Supply Smart Home Solutions for Lake Shore Reserve Community in Granite Falls, NC",
+          "content": "SKYX Platforms Corp. announced a partnership with 1Majestic Development Co. to supply smart home technologies for the new Lake Shore Reserve luxury community in Granite Falls, NC. The development will feature 140 single-family homes equipped with SKYX's all-in-one platform hub and over 10,000 smart products, including an NVIDIA AI ecosystem. This collaboration aims to provide enhanced safety and modern living experiences, capitalizing on the growing smart home market and potentially generating r",
+          "url": "https://www.quiverquant.com/news/SKYX+Technologies+to+Supply+Smart+Home+Solutions+for+Lake+Shore+Reserve+Community+in+Granite+Falls%2C+NC",
+          "sentiment_score": 0.226025,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.646907
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "SKYX Announces it Will Supply its Technologies to Enable a New Luxury Waterfront Smart Home Community Development in North Carolina as it Continues to Grow its Market Penetration",
+          "content": "SKYX Platforms Corp. announced it will supply its smart home platform technologies to a new luxury waterfront smart home community, Lake Shore Reserve, in Granite Falls, North Carolina. The development will feature 140 luxury single-family homes equipped with SKYX's NVIDIA AI-integrated platform, including over 10,000 smart plug-and-play units for lighting and other smart products. This partnership with 1Majestic Development Co. aims to enhance safety, convenience, and design, and opens opportun",
+          "url": "https://www.globenewswire.com/news-release/2026/01/12/3217032/0/en/SKYX-Announces-it-will-Supply-its-Technologies-to-Enable-a-New-Luxury-Waterfront-Smart-Home-Community-Development-in-North-Carolina-as-it-Continues-to-Grow-its-Market-Penetration.html",
+          "sentiment_score": 0.2374,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.614132
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "’Big Short’ investor Burry opens put position against Oracle By Investing.com",
+          "content": "Michael Burry, known for \"The Big Short,\" has opened a put option position against Oracle Corp. He criticized Oracle's recent strategy and also shorted the company directly. Burry has previously taken bearish stances on Nvidia and Palantir due to AI concentration.",
+          "url": "https://in.investing.com/news/stock-market-news/big-short-investor-burry-opens-put-position-against-oracle-5183093",
+          "sentiment_score": -0.129566,
+          "sentiment_label": "Neutral",
+          "relevance": 0.57915
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "AMETEK, Inc. $AME Shares Purchased by Tokio Marine Asset Management Co. Ltd.",
+          "content": "Tokio Marine Asset Management Co. Ltd. increased its stake in AMETEK, Inc. by 9.9% to 59,049 shares, now valued at $11.10 million. This comes as AMETEK exceeded Q3 earnings and revenue estimates, with strong guidance for Q4 2025 and FY2025, leading several analysts to raise price targets. Institutional investors currently own 87.43% of the company's stock, despite recent insider share sales.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-ametek-inc-ame-shares-purchased-by-tokio-marine-asset-management-co-ltd-2026-01-12/",
+          "sentiment_score": 0.104461,
+          "sentiment_label": "Neutral",
+          "relevance": 0.601189
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Why the stock market could broaden sustainably beyond U.S. large-cap growth",
+          "content": "The stock market shows signs of broadening beyond U.S. large-cap growth stocks due to factors like increased capital expenditure by mega-caps, converging earnings growth across market segments, and favorable relative valuations. The authors suggest that the AI arms race is making asset-light U.S. mega-caps more capital intensive, potentially dampening their future returns while benefiting other market segments. This scenario, combined with anticipated interest rate cuts and a shift in AI investm",
+          "url": "https://www.troweprice.com/institutional/de/en/insights/articles/2026/q1/why-the-stock-market-could-broaden-sustainably-beyond-us-large-cap-growth.html",
+          "sentiment_score": 0.142484,
+          "sentiment_label": "Neutral",
+          "relevance": 0.630194
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Radware Uncovers ZombieAgent, a Zero-Click AI Vulnerability in OpenAI Agents",
+          "content": "Radware has discovered \"ZombieAgent,\" a zero-click indirect prompt injection vulnerability affecting OpenAI's Deep Research agent. This vulnerability allows for invisible data theft, persistent agent hijacking, and service-side execution that bypasses traditional security controls, operating entirely within OpenAI's cloud infrastructure. ZombieAgent can remain persistent by implanting malicious rules in an agent's long-term memory and can autonomously propagate across an organization.",
+          "url": "https://www.thefastmode.com/technology-solutions/46638-radware-uncovers-zombieagent-a-zero-click-ai-vulnerability-in-openai-agents",
+          "sentiment_score": -0.129015,
+          "sentiment_label": "Neutral",
+          "relevance": 0.643821
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "6 predictions for the AI economy: 2026’s new rules of cybersecurity",
+          "content": "This article outlines six cybersecurity predictions for 2026, marking a shift to an \"AI-native\" economy where autonomous AI agents redefine threats and security needs. Key predictions include identity as the primary battleground, AI agents becoming the new insider threat, the emergence of data poisoning, increased executive accountability for AI risks, the imperative for post-quantum cryptography, and the browser evolving into a critical workspace. The author emphasizes that reactive security is",
+          "url": "https://www.techzine.eu/experts/security/137831/6-predictions-for-the-ai-economy-2026s-new-rules-of-cybersecurity/",
+          "sentiment_score": 0.279062,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.647181
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "TD Cowen Adjusts Price Target on Fiserv to $77 From $80, Maintains Hold Rating",
+          "content": "TD Cowen has adjusted its price target for Fiserv (FISV) to $77 from $80 while maintaining a Hold rating. This news was published on January 12, 2026, at 07:10 AM EST by MT Newswires. Fiserv specializes in IT solutions for the financial and insurance sectors, with its primary revenue coming from online banking and investment support.",
+          "url": "https://www.marketscreener.com/news/td-cowen-adjusts-price-target-on-fiserv-to-77-from-80-maintains-hold-rating-ce7e58dadd80f022",
+          "sentiment_score": 0.20649,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.645941
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Did Shopify's AI Push Into Gemini and Copilot Just Shift Shopify's (SHOP) Investment Narrative?",
+          "content": "Shopify has expanded its AI capabilities by enabling direct product purchases through Google Gemini and Microsoft Copilot and rolling out tools like Sidekick AI and Agentic Storefronts. While these initiatives strengthen Shopify's position as a core infrastructure provider for online commerce and support an AI-driven merchant tool catalyst, the article highlights that the company's rich valuation remains a significant risk. Investors are encouraged to consider multiple perspectives on Shopify's ",
+          "url": "https://www.sahmcapital.com/news/content/did-shopifys-ai-push-into-gemini-and-copilot-just-shift-shopifys-shop-investment-narrative-2026-01-12",
+          "sentiment_score": 0.125211,
+          "sentiment_label": "Neutral",
+          "relevance": 0.62715
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-01-12",
+          "title": "Data center investments to hit $3 trillion over next five years, says Moody’s",
+          "content": "Moody's Ratings predicts that data center investments will reach $3 trillion over the next five years, driven by the growth of artificial intelligence and cloud computing. Major tech companies, including six US hyperscalers, are expected to lead this surge, investing specifically $500 billion in data centers this year. The increased capital requirements will involve more institutional investors alongside banks and a rise in asset-backed securities and other private credit markets for financing.",
+          "url": "https://www.streetinsider.com/Investing/Data+center+investments+to+hit+%243+trillion+over+next+five+years%2C+says+Moody%E2%80%99s/25833592.html",
+          "sentiment_score": 0.234848,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.826628
+        }
+      ],
+      "count": 50,
+      "avg_sentiment": 0.22796651999999995
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-01-12",
+          "title": "[] ['DELCATH SYSTEMS, INC.  (DCTH)  (CIK 0000872912)']",
+          "content": "2026-01-12",
+          "url": "https://www.sec.gov2026-01-12",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-01-12",
+          "title": "[] ['Next Bridge Hydrocarbons, Inc.  (CIK 0001936756)']",
+          "content": "2026-01-12",
+          "url": "https://www.sec.gov2026-01-12",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-01-12",
+          "title": "[] ['Sonos Inc  (SONO)  (CIK 0001314727)']",
+          "content": "2026-01-12",
+          "url": "https://www.sec.gov2026-01-12",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-01-12",
+          "title": "[] ['IDEAYA Biosciences, Inc.  (IDYA)  (CIK 0001676725)']",
+          "content": "2026-01-12",
+          "url": "https://www.sec.gov2026-01-12",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-01-12",
+          "title": "[] ['Axogen, Inc.  (AXGN)  (CIK 0000805928)']",
+          "content": "2026-01-12",
+          "url": "https://www.sec.gov2026-01-12",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-21T00:26:08.883014"
+}

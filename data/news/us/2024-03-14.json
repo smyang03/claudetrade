@@ -1,0 +1,101 @@
+{
+  "date": "2024-03-14",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-14",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2024-03-14",
+          "url": "https://www.sec.gov2024-03-14",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-14",
+          "title": "[] ['Corner Growth Acquisition Corp.  (CIK 0001829953)']",
+          "content": "2024-03-14",
+          "url": "https://www.sec.gov2024-03-14",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-14",
+          "title": "[] ['ENTRAVISION COMMUNICATIONS CORP  (EVC)  (CIK 0001109116)']",
+          "content": "2024-03-14",
+          "url": "https://www.sec.gov2024-03-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-14",
+          "title": "[] ['Mondee Holdings, Inc.  (MOND)  (CIK 0001828852)']",
+          "content": "2024-03-14",
+          "url": "https://www.sec.gov2024-03-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-14",
+          "title": "[] ['VISTA GOLD CORP  (VGZ)  (CIK 0000783324)']",
+          "content": "2024-03-14",
+          "url": "https://www.sec.gov2024-03-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-14",
+          "title": "[] ['VISTA GOLD CORP  (VGZ)  (CIK 0000783324)']",
+          "content": "2024-03-14",
+          "url": "https://www.sec.gov2024-03-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-14",
+          "title": "[] ['KOPIN CORP  (KOPN)  (CIK 0000771266)']",
+          "content": "2024-03-14",
+          "url": "https://www.sec.gov2024-03-14",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T11:13:27.085973"
+}

@@ -1,0 +1,93 @@
+{
+  "date": "2025-12-08",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-12-08",
+          "title": "[] ['ANTERO RESOURCES Corp  (AR)  (CIK 0001433270)']",
+          "content": "2025-12-08",
+          "url": "https://www.sec.gov2025-12-08",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-12-08",
+          "title": "[] ['NORTHERN OIL & GAS, INC.  (NOG)  (CIK 0001104485)']",
+          "content": "2025-12-08",
+          "url": "https://www.sec.gov2025-12-08",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-12-08",
+          "title": "[] ['INFINITY NATURAL RESOURCES, INC.  (INR)  (CIK 0002029118)']",
+          "content": "2025-12-08",
+          "url": "https://www.sec.gov2025-12-08",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-12-08",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2025-12-08",
+          "url": "https://www.sec.gov2025-12-08",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-12-08",
+          "title": "[] ['Blackstone Real Estate Income Trust, Inc.  (BSTT)  (CIK 0001662972)']",
+          "content": "2025-12-08",
+          "url": "https://www.sec.gov2025-12-08",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-12-08",
+          "title": "[] ['RECURSION PHARMACEUTICALS, INC.  (RXRX)  (CIK 0001601830)']",
+          "content": "2025-12-08",
+          "url": "https://www.sec.gov2025-12-08",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T22:57:37.381232"
+}

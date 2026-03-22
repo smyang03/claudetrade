@@ -1,0 +1,100 @@
+{
+  "date": "2023-10-02",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-02",
+          "title": "[] ['Tesla, Inc.  (TSLA)  (CIK 0001318605)']",
+          "content": "2023-10-02",
+          "url": "https://www.sec.gov2023-10-02",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-02",
+          "title": "[] ['Tesla, Inc.  (TSLA)  (CIK 0001318605)']",
+          "content": "2023-10-02",
+          "url": "https://www.sec.gov2023-10-02",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-02",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2023-10-02",
+          "url": "https://www.sec.gov2023-10-02",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-02",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2023-10-02",
+          "url": "https://www.sec.gov2023-10-02",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-02",
+          "title": "[] ['APPlife Digital Solutions Inc  (ALDS)  (CIK 0001755101)']",
+          "content": "2023-10-02",
+          "url": "https://www.sec.gov2023-10-02",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-02",
+          "title": "[] ['WK Kellogg Co  (KLG)  (CIK 0001959348)']",
+          "content": "2023-10-02",
+          "url": "https://www.sec.gov2023-10-02",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-02",
+          "title": "[] ['KELLANOVA  (K)  (CIK 0000055067)']",
+          "content": "2023-10-02",
+          "url": "https://www.sec.gov2023-10-02",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T03:45:04.012303"
+}

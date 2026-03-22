@@ -1,0 +1,127 @@
+{
+  "date": "2025-11-03",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": true,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['CANADIAN DERIVATIVES CLEARING CORP  (CIK 0000319643)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['CANADIAN DERIVATIVES CLEARING CORP  (CIK 0000319643)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['CANADIAN DERIVATIVES CLEARING CORP  (CIK 0000319643)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['Sable Offshore Corp.  (SOC)  (CIK 0001831481)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['CANADIAN DERIVATIVES CLEARING CORP  (CIK 0000319643)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['Meta Platforms, Inc.  (META)  (CIK 0001326801)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['Meta Platforms, Inc.  (META)  (CIK 0001326801)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['Meta Platforms, Inc.  (META)  (CIK 0001326801)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['CANADIAN DERIVATIVES CLEARING CORP  (CIK 0000319643)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-03",
+          "title": "[] ['Meta Platforms, Inc.  (META)  (CIK 0001326801)']",
+          "content": "2025-11-03",
+          "url": "https://www.sec.gov2025-11-03",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T21:22:39.238097"
+}

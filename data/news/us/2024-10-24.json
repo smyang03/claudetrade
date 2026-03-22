@@ -1,0 +1,108 @@
+{
+  "date": "2024-10-24",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-24",
+          "title": "[] ['Tesla, Inc.  (TSLA)  (CIK 0001318605)']",
+          "content": "2024-10-24",
+          "url": "https://www.sec.gov2024-10-24",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-24",
+          "title": "[] ['Tesla, Inc.  (TSLA)  (CIK 0001318605)']",
+          "content": "2024-10-24",
+          "url": "https://www.sec.gov2024-10-24",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-24",
+          "title": "[] ['Tesla, Inc.  (TSLA)  (CIK 0001318605)']",
+          "content": "2024-10-24",
+          "url": "https://www.sec.gov2024-10-24",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-24",
+          "title": "[] ['Tesla, Inc.  (TSLA)  (CIK 0001318605)']",
+          "content": "2024-10-24",
+          "url": "https://www.sec.gov2024-10-24",
+          "form_type": ""
+        }
+      ],
+      "count": 4,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-24",
+          "title": "[] ['NETWORK-1 TECHNOLOGIES, INC.  (NTIP)  (CIK 0001065078)']",
+          "content": "2024-10-24",
+          "url": "https://www.sec.gov2024-10-24",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-24",
+          "title": "[] ['COUSINS PROPERTIES INC  (CUZ)  (CIK 0000025232)']",
+          "content": "2024-10-24",
+          "url": "https://www.sec.gov2024-10-24",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-24",
+          "title": "[] ['DIGITAL REALTY TRUST, INC.  (DLR, DLR-PJ, DLR-PK, DLR-PL)  (CIK 0001297996)']",
+          "content": "2024-10-24",
+          "url": "https://www.sec.gov2024-10-24",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-10-24",
+          "title": "[] ['DOVER Corp  (DOV)  (CIK 0000029905)']",
+          "content": "2024-10-24",
+          "url": "https://www.sec.gov2024-10-24",
+          "form_type": ""
+        }
+      ],
+      "count": 4,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T04:25:32.243117"
+}

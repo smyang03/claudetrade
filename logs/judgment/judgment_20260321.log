@@ -1,0 +1,42 @@
+2026-03-21 00:27:18 [INFO    ] get_three_judgments:75 | [judgments] Bull:NEUTRAL Bear:NEUTRAL Neutral:NEUTRAL
+2026-03-21 00:27:18 [INFO    ] session_open:413 | [open 2026-03-21 US] consensus=NEUTRAL size=40%
+2026-03-21 00:27:18 [INFO    ] session_open:444 | [select 2026-03-21 US] ['LBGJ', 'MOBX', 'TZA']
+2026-03-21 00:28:24 [INFO    ] get_three_judgments:75 | [judgments] Bull:NEUTRAL Bear:NEUTRAL Neutral:NEUTRAL
+2026-03-21 00:28:24 [INFO    ] session_open:413 | [open 2026-03-21 US] consensus=NEUTRAL size=40%
+2026-03-21 00:28:25 [INFO    ] session_open:444 | [select 2026-03-21 US] ['NVDA', 'TSLA', 'AAPL']
+2026-03-21 00:53:39 [INFO    ] get_three_judgments:75 | [judgments] Bull:MILD_BULL Bear:CAUTIOUS_BEAR Neutral:MILD_BEAR
+2026-03-21 00:53:39 [INFO    ] session_open:413 | [open 2026-03-21 US] consensus=DEFENSIVE size=10%
+2026-03-21 00:53:45 [INFO    ] session_open:444 | [select 2026-03-21 US] ['NVDA', 'TSLA', 'AAPL']
+2026-03-21 00:56:03 [INFO    ] get_three_judgments:75 | [judgments] Bull:MILD_BEAR Bear:NEUTRAL Neutral:MILD_BEAR
+2026-03-21 00:56:03 [INFO    ] session_open:413 | [open 2026-03-21 US] consensus=CAUTIOUS_BEAR size=20%
+2026-03-21 00:56:10 [INFO    ] session_open:444 | [select 2026-03-21 US] ['NVDA', 'TSLA', 'AAPL']
+2026-03-21 00:58:35 [INFO    ] get_three_judgments:75 | [judgments] Bull:MILD_BULL Bear:CAUTIOUS_BEAR Neutral:MILD_BEAR
+2026-03-21 00:58:35 [INFO    ] session_open:413 | [open 2026-03-21 US] consensus=DEFENSIVE size=10%
+2026-03-21 00:58:42 [INFO    ] session_open:444 | [select 2026-03-21 US] ['NVDA', 'TSLA', 'AAPL']
+2026-03-21 01:13:36 [INFO    ] get_three_judgments:77 | [judgments] Bull:MILD_BEAR Bear:CAUTIOUS_BEAR Neutral:MILD_BEAR
+2026-03-21 01:13:36 [INFO    ] session_open:413 | [open 2026-03-21 US] consensus=HALT size=0%
+2026-03-21 01:13:43 [INFO    ] session_open:444 | [select 2026-03-21 US] ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-21 01:21:54 [INFO    ] get_three_judgments:77 | [judgments] Bull:MILD_BEAR Bear:CAUTIOUS_BEAR Neutral:MILD_BEAR
+2026-03-21 01:21:54 [INFO    ] session_open:413 | [open 2026-03-21 US] consensus=HALT size=0%
+2026-03-21 01:22:00 [INFO    ] session_open:444 | [select 2026-03-21 US] ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-21 01:28:34 [INFO    ] get_three_judgments:77 | [judgments] Bull:MILD_BEAR Bear:CAUTIOUS_BEAR Neutral:MILD_BEAR
+2026-03-21 01:28:34 [INFO    ] session_open:413 | [open 2026-03-21 US] consensus=HALT size=0%
+2026-03-21 01:28:41 [INFO    ] session_open:444 | [select 2026-03-21 US] ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-21 01:52:43 [INFO    ] get_three_judgments:77 | [judgments] Bull:MILD_BEAR Bear:CAUTIOUS_BEAR Neutral:MILD_BEAR
+2026-03-21 01:52:43 [INFO    ] session_open:417 | [open 2026-03-21 US] consensus=HALT size=0%
+2026-03-21 01:52:50 [INFO    ] session_open:448 | [select 2026-03-21 US] ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-21 05:00:10 [INFO    ] run:106 | [postmortem 2026-03-21 US] Bull:MISS Bear:HIT Neutral:PARTIAL
+2026-03-21 05:00:10 [INFO    ] session_close:845 | [close 2026-03-21 US] pnl=+0.00% mode=HALT
+2026-03-21 08:50:47 [INFO    ] get_three_judgments:77 | [judgments] Bull:MODERATE_BULL Bear:MILD_BEAR Neutral:NEUTRAL
+2026-03-21 08:50:47 [INFO    ] session_open:417 | [open 2026-03-21 KR] consensus=NEUTRAL size=40%
+2026-03-21 08:50:57 [INFO    ] session_open:448 | [select 2026-03-21 KR] ['069540', '046120', '078590', '002780', '261780']
+2026-03-21 16:00:12 [INFO    ] run:106 | [postmortem 2026-03-21 KR] Bull:MISS Bear:HIT Neutral:PARTIAL
+2026-03-21 16:00:12 [INFO    ] session_close:845 | [close 2026-03-21 KR] pnl=+0.00% mode=NEUTRAL
+2026-03-21 22:20:35 [INFO    ] get_three_judgments:77 | [judgments] Bull:CAUTIOUS_BEAR Bear:DEFENSIVE Neutral:DEFENSIVE
+2026-03-21 22:20:35 [INFO    ] session_open:417 | [open 2026-03-21 US] consensus=HALT size=0%
+2026-03-21 22:20:41 [INFO    ] session_open:448 | [select 2026-03-21 US] ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+2026-03-22 05:00:12 [INFO    ] run:106 | [postmortem 2026-03-22 US] Bull:MISS Bear:HIT Neutral:PARTIAL
+2026-03-22 05:00:12 [INFO    ] session_close:845 | [close 2026-03-22 US] pnl=+0.00% mode=HALT
+2026-03-22 08:50:35 [INFO    ] get_three_judgments:77 | [judgments] Bull:MODERATE_BULL Bear:CAUTIOUS_BEAR Neutral:NEUTRAL
+2026-03-22 08:50:35 [INFO    ] session_open:417 | [open 2026-03-22 KR] consensus=NEUTRAL size=40%
+2026-03-22 08:50:42 [INFO    ] session_open:448 | [select 2026-03-22 KR] ['114800', '252670', '069540', '046120', '002780']

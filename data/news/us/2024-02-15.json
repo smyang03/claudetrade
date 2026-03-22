@@ -1,0 +1,83 @@
+{
+  "date": "2024-02-15",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-15",
+          "title": "[] ['GARTNER INC  (IT)  (CIK 0000749251)']",
+          "content": "2024-02-15",
+          "url": "https://www.sec.gov2024-02-15",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-15",
+          "title": "[] ['ALBEMARLE CORP  (ALB, ALB-PA)  (CIK 0000915913)']",
+          "content": "2024-02-15",
+          "url": "https://www.sec.gov2024-02-15",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-15",
+          "title": "[] ['DIGITAL REALTY TRUST, INC.  (DLR, DLR-PJ, DLR-PK, DLR-PL)  (CIK 0001297996)']",
+          "content": "2024-02-15",
+          "url": "https://www.sec.gov2024-02-15",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-15",
+          "title": "[] ['NU SKIN ENTERPRISES, INC.  (NUS)  (CIK 0001021561)']",
+          "content": "2024-02-15",
+          "url": "https://www.sec.gov2024-02-15",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-15",
+          "title": "[] ['MEDICINOVA INC  (MNOV)  (CIK 0001226616)']",
+          "content": "2024-02-15",
+          "url": "https://www.sec.gov2024-02-15",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T09:57:31.777197"
+}

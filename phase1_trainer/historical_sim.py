@@ -48,14 +48,16 @@ CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # ── 합의 룰 ───────────────────────────────────────────────────────────────────
 
-def get_consensus(bull_stance: str, bear_stance: str, neut_stance: str) -> dict:
+def get_consensus(bull_stance: str, bear_stance: str, neut_stance: str,
+                  market: str = "KR") -> dict:
     return runtime_build_consensus(
         {
-            "bull": {"stance": bull_stance, "confidence": 0.0, "key_reason": ""},
-            "bear": {"stance": bear_stance, "confidence": 0.0, "key_reason": ""},
-            "neutral": {"stance": neut_stance, "confidence": 0.0, "key_reason": ""},
+            "bull":    {"stance": bull_stance,  "confidence": 0.5, "key_reason": ""},
+            "bear":    {"stance": bear_stance,  "confidence": 0.5, "key_reason": ""},
+            "neutral": {"stance": neut_stance,  "confidence": 0.5, "key_reason": ""},
         },
         check_minority=False,
+        market=market,
     )
 
 
@@ -217,13 +219,27 @@ def calc_actual_result(market: str, target_date: str, mode: str) -> dict:
     tickers = KR_TICKERS if market == "KR" else US_TICKERS
     changes = []
 
-    for ticker in tickers:
+    for ticker in (tickers.keys() if isinstance(tickers, dict) else tickers):
         df = load_price_with_cache(market, ticker)
         if df.empty:
             continue
-        row = df[df["date"] == pd.Timestamp(target_date)]
+        # date 컬럼이 Timestamp이면 Timestamp, string이면 string으로 비교
+        target_ts = pd.Timestamp(target_date)
+        if pd.api.types.is_datetime64_any_dtype(df["date"]):
+            row = df[df["date"] == target_ts]
+        else:
+            row = df[df["date"] == target_date]
         if not row.empty:
-            changes.append(float(row.iloc[0].get("change_pct", 0)))
+            r = row.iloc[0]
+            # change_pct 컬럼 우선, 없으면 change(절대값)로 계산
+            if "change_pct" in r.index and pd.notna(r["change_pct"]):
+                chg = float(r["change_pct"])
+            elif "change" in r.index and pd.notna(r["change"]) and r["close"] != r["change"]:
+                prev_close = r["close"] - r["change"]
+                chg = float(r["change"] / prev_close * 100) if prev_close != 0 else 0.0
+            else:
+                continue
+            changes.append(chg)
 
     if not changes:
         log.warning(f"실제 결과 데이터 없음: {market} {target_date}")
@@ -407,11 +423,22 @@ def run_simulation(
     end_dt   = datetime.strptime(end,   "%Y-%m-%d").date()
     current  = start_dt
 
-    biz_days = []
-    while current <= end_dt:
-        if current.weekday() < 5:
-            biz_days.append(current.strftime("%Y-%m-%d"))
-        current += timedelta(days=1)
+    # 거래소 캘린더 기반 영업일 필터 (주말 + 공휴일 제외)
+    try:
+        import exchange_calendars as ec
+        cal = ec.get_calendar("XKRX" if market == "KR" else "XNYS")
+        biz_days = [
+            d.strftime("%Y-%m-%d")
+            for d in pd.date_range(start_dt, end_dt, freq="B")
+            if cal.is_session(d.strftime("%Y-%m-%d"))
+        ]
+    except Exception:
+        log.warning("exchange_calendars 없음 — weekday 기반 필터 사용")
+        biz_days = []
+        while current <= end_dt:
+            if current.weekday() < 5:
+                biz_days.append(current.strftime("%Y-%m-%d"))
+            current += timedelta(days=1)
 
     # API 비용 예상
     cost_per_day = 5 * 0.003  # 5회 호출 × $0.003

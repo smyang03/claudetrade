@@ -1,0 +1,101 @@
+{
+  "date": "2023-11-03",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-03",
+          "title": "[] ['Arcimoto Inc  (FUVV)  (CIK 0001558583)']",
+          "content": "2023-11-03",
+          "url": "https://www.sec.gov2023-11-03",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-03",
+          "title": "[] ['Apple Inc.  (AAPL)  (CIK 0000320193)']",
+          "content": "2023-11-03",
+          "url": "https://www.sec.gov2023-11-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-03",
+          "title": "[] ['Apple Inc.  (AAPL)  (CIK 0000320193)']",
+          "content": "2023-11-03",
+          "url": "https://www.sec.gov2023-11-03",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-03",
+          "title": "[] ['BuzzFeed, Inc.  (BZFD, BZFDW)  (CIK 0001828972)']",
+          "content": "2023-11-03",
+          "url": "https://www.sec.gov2023-11-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-03",
+          "title": "[] ['DROPBOX, INC.  (DBX)  (CIK 0001467623)']",
+          "content": "2023-11-03",
+          "url": "https://www.sec.gov2023-11-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-03",
+          "title": "[] ['AMC Networks Inc.  (AMCX)  (CIK 0001514991)']",
+          "content": "2023-11-03",
+          "url": "https://www.sec.gov2023-11-03",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-11-03",
+          "title": "[] ['GoDaddy Inc.  (GDDY)  (CIK 0001609711)']",
+          "content": "2023-11-03",
+          "url": "https://www.sec.gov2023-11-03",
+          "form_type": ""
+        }
+      ],
+      "count": 4,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T05:15:57.195977"
+}

@@ -1,0 +1,84 @@
+{
+  "date": "2025-08-14",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-14",
+          "title": "[] ['Circle Energy, Inc./NV  (CRCE)  (CIK 0001911467)']",
+          "content": "2025-08-14",
+          "url": "https://www.sec.gov2025-08-14",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-14",
+          "title": "[] ['Venus Concept Inc.  (VERO)  (CIK 0001409269)']",
+          "content": "2025-08-14",
+          "url": "https://www.sec.gov2025-08-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-14",
+          "title": "[] ['LSEB Creative Corp.  (LSEB)  (CIK 0001888740)']",
+          "content": "2025-08-14",
+          "url": "https://www.sec.gov2025-08-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-14",
+          "title": "[] ['Super League Enterprise, Inc.  (SLE)  (CIK 0001621672)']",
+          "content": "2025-08-14",
+          "url": "https://www.sec.gov2025-08-14",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-14",
+          "title": "[] ['Eledon Pharmaceuticals, Inc.  (ELDN)  (CIK 0001404281)']",
+          "content": "2025-08-14",
+          "url": "https://www.sec.gov2025-08-14",
+          "form_type": ""
+        }
+      ],
+      "count": 4,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T17:44:29.300027"
+}

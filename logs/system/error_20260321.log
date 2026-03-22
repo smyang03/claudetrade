@@ -1,0 +1,1251 @@
+2026-03-21 00:25:02 [ERROR   ] trainer_phase1 | wrapper:255
+  ❌ build_us_digest() 오류 (0.03초): Incompatible checksums (82904607 vs 0xd555cb8 = (_dtype, _ndarray))
+Traceback (most recent call last):
+  File "E:\code\claudetrade\logger.py", line 246, in wrapper
+    result = func(*args, **kwargs)
+  File "E:\code\claudetrade\phase1_trainer\digest_builder.py", line 336, in build_us_digest
+    df = load_price_with_cache("US", ticker)
+  File "E:\code\claudetrade\phase1_trainer\digest_builder.py", line 90, in load_price_with_cache
+    return pd.read_pickle(cache_path)
+  File "C:\Users\Unknown\anaconda3\lib\site-packages\pandas\io\pickle.py", line 205, in read_pickle
+    return pickle.load(handles.handle)
+  File "stringsource", line 6, in pandas._libs.arrays.__pyx_unpickle_NDArrayBacked
+_pickle.PickleError: Incompatible checksums (82904607 vs 0xd555cb8 = (_dtype, _ndarray))
+
+
+2026-03-21 00:27:14 [ERROR   ] minority_system | call_analyst:61
+  [bull] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZrvBFt9FvJZ5TwPq4g'}
+
+2026-03-21 00:27:16 [ERROR   ] minority_system | call_analyst:61
+  [bear] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZs3fTUdVzvFf6xZkmx'}
+
+2026-03-21 00:27:18 [ERROR   ] minority_system | call_analyst:61
+  [neutral] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZsB7gRoQvAZUU2BmwD'}
+
+2026-03-21 00:27:18 [ERROR   ] minority_system | select_tickers:161
+  [종목선택 오류] Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZsDJtig3NLoik8xxxA'} → 기본값 사용
+
+2026-03-21 00:28:21 [ERROR   ] minority_system | call_analyst:61
+  [bull] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZwqEEwDjk7Pth43rGB'}
+
+2026-03-21 00:28:23 [ERROR   ] minority_system | call_analyst:61
+  [bear] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZwxdyb1W7vgi9NLTkY'}
+
+2026-03-21 00:28:24 [ERROR   ] minority_system | call_analyst:61
+  [neutral] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZx6G7g5FpsRQnmonsD'}
+
+2026-03-21 00:28:25 [ERROR   ] minority_system | select_tickers:161
+  [종목선택 오류] Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CZEZx9AVXvUVssYtQSEe7'} → 기본값 사용
+
+2026-03-21 00:53:45 [ERROR   ] minority_system | select_tickers:161
+  [종목선택 오류] Unterminated string starting at: line 1 column 317 (char 316) → 기본값 사용
+
+2026-03-21 00:55:52 [ERROR   ] minority_system | call_analyst:61
+  [bear] 오류: Unterminated string starting at: line 8 column 5 (char 540)
+
+2026-03-21 00:56:10 [ERROR   ] minority_system | select_tickers:161
+  [종목선택 오류] Unterminated string starting at: line 1 column 285 (char 284) → 기본값 사용
+
+2026-03-21 00:58:42 [ERROR   ] minority_system | select_tickers:161
+  [종목선택 오류] Unterminated string starting at: line 1 column 293 (char 292) → 기본값 사용
+
+2026-03-21 05:00:10 [ERROR   ] minority_system | run:62
+  postmortem 오류: Unterminated string starting at: line 15 column 19 (char 761)
+
+2026-03-21 08:30:07 [ERROR   ] trading_system | run_kr_update:44
+  주가 최신화 실패: No module named 'dotenv'
+
+2026-03-21 08:30:07 [ERROR   ] trading_system | run_kr_update:52
+  KR 뉴스 수집 실패: No module named 'dotenv'
+
+2026-03-21 08:30:07 [ERROR   ] trading_system | run_kr_update:61
+  KR supplement 실패: No module named 'dotenv'
+
+2026-03-21 08:52:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 08:52:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 08:52:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 08:57:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 08:57:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 08:57:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:02:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 09:02:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:02:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:07:58 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): Read timed out. (read timeout=10)
+
+2026-03-21 09:07:59 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:07:59 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:13:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 09:13:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:13:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:18:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 09:18:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:18:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:23:01 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 09:23:01 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:23:01 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:28:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:33:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 09:33:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:33:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:38:03 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:38:03 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:43:03 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 09:43:03 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:43:03 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:48:04 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 09:48:04 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:48:04 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:52:41 [ERROR   ] minority_system | tune:53
+  튜닝 오류: Error code: 529 - {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}, 'request_id': 'req_011CZFJyPCdLitWFLaAybyAA'}
+
+2026-03-21 09:53:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:53:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 09:58:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 09:58:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 09:58:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:03:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 10:03:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:03:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:08:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 10:08:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:08:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:13:07 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:13:07 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:18:07 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 10:18:07 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:18:07 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:23:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:28:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 10:28:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:28:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:33:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:33:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:38:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 10:38:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:38:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:43:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 10:43:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:43:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:48:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 10:48:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:48:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:53:11 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 10:53:11 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:53:11 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 10:58:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 10:58:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 10:58:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:03:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:03:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:03:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:08:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:08:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:08:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:13:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:13:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:13:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:18:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:18:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:18:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:23:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:23:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:23:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:28:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:28:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:33:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:33:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:38:17 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:38:17 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:43:17 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:43:17 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:43:17 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:48:18 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:48:18 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:48:18 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:53:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:53:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:53:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 11:58:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 11:58:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 11:58:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:03:20 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 12:03:20 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:03:20 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:08:20 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 12:08:20 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:08:20 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:13:21 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 12:13:21 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:13:21 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:18:21 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 12:18:21 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:18:21 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:23:23 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:28:23 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 12:28:23 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:28:23 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:33:24 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:33:24 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:38:24 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 12:38:24 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:38:24 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:43:25 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:43:25 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:48:25 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 12:48:25 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:48:25 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 12:53:25 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 12:58:26 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 12:58:26 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 12:58:26 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 13:03:26 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:03:27 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 13:08:27 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:08:27 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:08:27 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 13:13:28 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:13:28 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:13:28 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 13:18:28 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:18:28 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:18:28 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 13:23:29 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:23:29 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:28:30 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:28:30 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:28:30 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 13:33:30 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:33:30 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:38:31 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:38:31 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:38:31 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 13:43:31 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:48:32 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:48:32 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:48:32 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 13:53:33 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 13:53:33 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 13:53:33 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 13:58:33 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:03:34 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:03:34 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:03:34 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 14:08:34 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 14:13:35 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:13:35 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:13:35 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 14:18:36 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:18:36 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 14:23:37 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:23:37 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:23:37 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 14:28:37 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:28:37 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:33:38 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:33:38 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:33:38 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 14:38:38 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:38:38 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:43:39 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:43:39 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:43:39 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 14:48:39 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:53:40 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:53:41 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 14:58:41 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 14:58:41 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 14:58:41 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:03:41 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:03:42 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:08:42 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:08:42 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:08:42 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:13:43 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:13:43 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:13:43 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:18:43 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:18:43 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:18:43 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:23:44 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:23:45 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:28:45 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:28:45 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:28:45 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:33:45 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:33:45 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:33:46 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:38:46 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:38:46 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:38:46 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:43:46 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:43:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:43:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:48:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:48:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:48:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:53:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:53:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:53:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 15:58:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [078590]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=078590
+
+2026-03-21 15:58:49 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-21 15:58:49 [ERROR   ] trading_system | run_cycle:696
+  cycle error [261780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=261780
+
+2026-03-21 16:00:12 [ERROR   ] minority_system | run:62
+  postmortem 오류: Unterminated string starting at: line 15 column 19 (char 777)
+
+2026-03-21 22:00:06 [ERROR   ] trading_system | run_us_update:79
+  US 주가 최신화 실패: No module named 'dotenv'
+
+2026-03-21 22:00:06 [ERROR   ] trading_system | run_us_update:87
+  US 뉴스 수집 실패: No module named 'dotenv'
+
+2026-03-21 22:00:06 [ERROR   ] trading_system | run_us_update:96
+  US supplement 실패: No module named 'dotenv'
+
+2026-03-22 05:00:12 [ERROR   ] minority_system | run:62
+  postmortem 오류: Unterminated string starting at: line 18 column 3 (char 889)
+
+2026-03-22 08:50:44 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 08:55:46 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 09:00:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 09:00:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:00:47 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:05:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:10:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 09:10:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:10:48 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:15:49 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:15:49 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:20:49 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 09:20:49 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:20:49 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:25:50 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 09:25:50 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:25:50 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:30:51 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:35:51 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 09:35:51 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:35:51 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:40:52 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:40:52 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:45:52 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 09:45:52 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:45:52 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:50:53 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:50:53 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 09:55:53 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 09:55:53 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 09:55:53 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:00:54 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:00:54 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:00:54 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:05:54 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:05:54 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:05:54 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:10:55 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:10:55 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:10:55 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:15:55 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:15:55 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:15:55 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:20:56 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:20:56 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:20:56 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:25:57 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:25:57 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:25:57 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:30:58 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:35:58 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:35:58 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:35:58 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:40:59 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:40:59 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:40:59 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:45:59 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:45:59 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:45:59 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:51:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:51:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:51:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 10:56:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 10:56:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 10:56:00 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 11:01:01 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:01:01 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:01:01 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 11:06:01 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:06:01 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:06:01 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 11:11:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:11:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:11:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 11:16:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:16:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:16:02 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 11:21:03 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:21:03 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:21:03 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 11:26:04 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:26:04 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:26:04 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 11:31:04 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:31:04 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:36:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:36:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:36:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 11:41:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:41:05 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:46:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:46:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:46:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 11:51:06 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:56:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 11:56:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 11:56:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:01:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:01:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:01:08 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:06:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:06:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:06:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:11:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:11:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:11:09 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:16:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:16:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:16:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:21:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:21:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:21:10 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:26:11 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:26:11 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:26:11 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:31:11 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:31:11 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:31:11 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:36:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:36:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:36:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:41:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:41:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:41:12 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:46:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:46:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:46:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:51:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:51:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:51:13 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 12:56:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 12:56:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 12:56:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:01:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:01:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:01:14 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:06:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:06:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:06:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:11:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:11:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:11:15 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:16:16 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:16:16 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:16:16 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:21:16 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:21:16 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:26:17 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:26:17 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:26:17 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:31:17 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:36:18 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:36:18 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:36:18 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:41:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:46:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:46:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:46:19 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:51:20 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:51:20 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:51:20 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 13:56:21 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 13:56:21 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+
+2026-03-22 13:56:21 [ERROR   ] trading_system | run_cycle:696
+  cycle error [002780]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002780
+
+2026-03-22 14:01:22 [ERROR   ] trading_system | run_cycle:696
+  cycle error [069540]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=069540
+
+2026-03-22 14:01:22 [ERROR   ] trading_system | run_cycle:696
+  cycle error [046120]: 500 Server Error: Internal Server Error for url: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=046120
+

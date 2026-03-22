@@ -21,6 +21,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trainer_logger, log_call
 from runtime_paths import get_runtime_path
 
+try:
+    import yfinance as yf
+    _YF_OK = True
+except ImportError:
+    _YF_OK = False
+
 log = get_trainer_logger()
 
 BASE_DIR    = Path(__file__).parent.parent
@@ -64,9 +70,10 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     d["bb_upper"] = d["ma20"] + 2 * std
     d["bb_lower"] = d["ma20"] - 2 * std
     d["bb_pct"]   = (d["close"] - d["bb_lower"]) / (d["bb_upper"] - d["bb_lower"]) * 100
-    d["high52"]   = d["high"].rolling(252).max()
-    d["low52"]    = d["low"].rolling(252).min()
-    d["pos52"]    = (d["close"] - d["low52"]) / (d["high52"] - d["low52"]) * 100
+    win52 = min(252, max(20, len(d)))
+    d["high52"]   = d["high"].rolling(win52, min_periods=5).max()
+    d["low52"]    = d["low"].rolling(win52, min_periods=5).min()
+    d["pos52"]    = (d["close"] - d["low52"]) / (d["high52"] - d["low52"]).replace(0, np.nan) * 100
     d["gap"]      = (d["open"] - d["close"].shift(1)) / d["close"].shift(1) * 100
     d["vol_ratio"]= d["volume"] / d["vol_avg"]
     d["change_pct"]= d["close"].pct_change() * 100
@@ -141,6 +148,58 @@ def filter_top_news(news_items: list, top_n: int = 3) -> list:
 
 # ── 보조 데이터 로드 ──────────────────────────────────────────────────────────
 
+def _yf_change(symbol: str, period: str = "5d") -> float:
+    """yfinance로 전일 대비 등락률 계산"""
+    if not _YF_OK:
+        return 0.0
+    try:
+        df = yf.Ticker(symbol).history(period=period)
+        if len(df) < 2:
+            return 0.0
+        prev = float(df["Close"].iloc[-2])
+        last = float(df["Close"].iloc[-1])
+        return round((last - prev) / prev * 100, 2) if prev else 0.0
+    except Exception:
+        return 0.0
+
+
+def _yf_last(symbol: str, period: str = "5d") -> float:
+    """yfinance로 최근 종가"""
+    if not _YF_OK:
+        return 0.0
+    try:
+        df = yf.Ticker(symbol).history(period=period)
+        return round(float(df["Close"].iloc[-1]), 2) if not df.empty else 0.0
+    except Exception:
+        return 0.0
+
+
+def fetch_live_context_us() -> dict:
+    """supplement 파일 없을 때 yfinance로 실시간 시장 지표 수집"""
+    if not _YF_OK:
+        return {}
+    log.info("  [live context] yfinance로 US 시장 지표 수집 중...")
+    return {
+        "sp500":   {"change_pct": _yf_change("^GSPC")},
+        "nasdaq":  {"change_pct": _yf_change("^IXIC")},
+        "vix":     _yf_last("^VIX"),
+        "dxy":     _yf_last("DX-Y.NYB"),
+        "oil_wti": _yf_last("CL=F"),
+    }
+
+
+def fetch_live_context_kr() -> dict:
+    """supplement 파일 없을 때 yfinance로 실시간 KR 시장 지표 수집"""
+    if not _YF_OK:
+        return {}
+    log.info("  [live context] yfinance로 KR 시장 지표 수집 중...")
+    return {
+        "kospi":   {"change_pct": _yf_change("^KS11")},
+        "usd_krw": _yf_last("KRW=X"),
+        "vkospi":  _yf_last("^KS200VOL") or _yf_last("^VKOSPI") or 0,
+    }
+
+
 def load_supplement(market: str, target_date: str) -> dict:
     """외국인/기관 수급, VIX, 환율 등"""
     path = SUPP_DIR / market.lower() / f"{target_date}.json"
@@ -193,6 +252,11 @@ def build_kr_digest(target_date: str) -> dict:
     supp  = load_supplement("KR", target_date)
     news  = load_news_day("KR", target_date)
     prev  = load_prev_result("KR", target_date)
+
+    # supplement 없으면 live yfinance fallback
+    if not supp.get("kospi"):
+        live = fetch_live_context_kr()
+        supp = {**live, **supp}  # supp 기존값 우선
 
     # ── Layer A: 시장 컨텍스트 (~150 토큰) ───────────────────────────────────
     layer_a = {
@@ -310,6 +374,11 @@ def build_us_digest(target_date: str) -> dict:
     supp = load_supplement("US", target_date)
     news = load_news_day("US", target_date)
     prev = load_prev_result("US", target_date)
+
+    # supplement 없으면 live yfinance fallback
+    if not supp.get("sp500"):
+        live = fetch_live_context_us()
+        supp = {**live, **supp}  # supp 기존값 우선
 
     is_fomc      = target_date in FOMC_DATES
     is_fomc_week = any(

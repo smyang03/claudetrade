@@ -1,0 +1,33 @@
+{
+  "date": "2024-01-03",
+  "market_news": [],
+  "corp_news": {
+    "005930": {
+      "name": "삼성전자",
+      "items": [],
+      "count": 0
+    },
+    "000660": {
+      "name": "SK하이닉스",
+      "items": [],
+      "count": 0
+    },
+    "035420": {
+      "name": "NAVER",
+      "items": [],
+      "count": 0
+    },
+    "005380": {
+      "name": "현대차",
+      "items": [],
+      "count": 0
+    },
+    "051910": {
+      "name": "LG화학",
+      "items": [],
+      "count": 0
+    }
+  },
+  "disclosures": {},
+  "collected_at": "2026-03-20T02:57:13.563856"
+}

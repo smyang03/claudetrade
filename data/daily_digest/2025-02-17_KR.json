@@ -1,0 +1,23 @@
+{
+  "date": "2025-02-17",
+  "market": "KR",
+  "context": {
+    "kospi": {},
+    "usd_krw": 0,
+    "vkospi": 0,
+    "foreign_futures": 0,
+    "us_prev": {},
+    "fomc": false,
+    "options_expiry": false
+  },
+  "technicals": {},
+  "top_news": [],
+  "disclosures": [],
+  "prev_result": {
+    "date": "2025-02-14",
+    "mode": "NEUTRAL",
+    "pnl_pct": 0,
+    "win": false
+  },
+  "built_at": "2026-03-20T23:40:52.631655"
+}

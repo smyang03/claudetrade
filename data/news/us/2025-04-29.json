@@ -1,0 +1,100 @@
+{
+  "date": "2025-04-29",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-29",
+          "title": "[] ['SHOPIFY INC.  (SHOP)  (CIK 0001594805)']",
+          "content": "2025-04-29",
+          "url": "https://www.sec.gov2025-04-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-29",
+          "title": "[] ['SHOPIFY INC.  (SHOP)  (CIK 0001594805)']",
+          "content": "2025-04-29",
+          "url": "https://www.sec.gov2025-04-29",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-29",
+          "title": "[] ['TRAVELZOO  (TZOO)  (CIK 0001133311)']",
+          "content": "2025-04-29",
+          "url": "https://www.sec.gov2025-04-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-29",
+          "title": "[] ['LABCORP HOLDINGS INC.  (LH)  (CIK 0000920148)']",
+          "content": "2025-04-29",
+          "url": "https://www.sec.gov2025-04-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-29",
+          "title": "[] ['TRAVELZOO  (TZOO)  (CIK 0001133311)']",
+          "content": "2025-04-29",
+          "url": "https://www.sec.gov2025-04-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-29",
+          "title": "[] ['Orchestra BioMed Holdings, Inc.  (OBIO)  (CIK 0001814114)']",
+          "content": "2025-04-29",
+          "url": "https://www.sec.gov2025-04-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-29",
+          "title": "[] ['SONIM TECHNOLOGIES INC  (SONM)  (CIK 0001178697)']",
+          "content": "2025-04-29",
+          "url": "https://www.sec.gov2025-04-29",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T12:51:28.385572"
+}

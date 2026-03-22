@@ -1,0 +1,83 @@
+{
+  "date": "2025-03-13",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-13",
+          "title": "[] ['Vuzix Corp  (VUZI)  (CIK 0001463972)']",
+          "content": "2025-03-13",
+          "url": "https://www.sec.gov2025-03-13",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-13",
+          "title": "[] ['MeiraGTx Holdings plc  (MGTX)  (CIK 0001735438)']",
+          "content": "2025-03-13",
+          "url": "https://www.sec.gov2025-03-13",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-13",
+          "title": "[] ['INTEST CORP  (INTT)  (CIK 0001036262)']",
+          "content": "2025-03-13",
+          "url": "https://www.sec.gov2025-03-13",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-13",
+          "title": "[] ['Brilliant Earth Group, Inc.  (BRLT)  (CIK 0001866757)']",
+          "content": "2025-03-13",
+          "url": "https://www.sec.gov2025-03-13",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-13",
+          "title": "[] ['PSQ Holdings, Inc.  (PSQH, PSQH-WT)  (CIK 0001847064)']",
+          "content": "2025-03-13",
+          "url": "https://www.sec.gov2025-03-13",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:45:49.748712"
+}

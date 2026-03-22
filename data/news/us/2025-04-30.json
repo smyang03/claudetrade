@@ -1,0 +1,142 @@
+{
+  "date": "2025-04-30",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['Tesla, Inc.  (TSLA)  (CIK 0001318605)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['Owlet, Inc.  (OWLT, OWLTW)  (CIK 0001816708)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['Meta Platforms, Inc.  (META)  (CIK 0001326801)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['Meta Platforms, Inc.  (META)  (CIK 0001326801)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['HOUSTON AMERICAN ENERGY CORP  (HUSA)  (CIK 0001156041)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['EBAY INC  (EBAY)  (CIK 0001065088)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-04-30",
+          "title": "[] ['EBAY INC  (EBAY)  (CIK 0001065088)']",
+          "content": "2025-04-30",
+          "url": "https://www.sec.gov2025-04-30",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T12:55:18.049953"
+}

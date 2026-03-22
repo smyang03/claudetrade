@@ -1,0 +1,83 @@
+{
+  "date": "2024-03-05",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-05",
+          "title": "[] ['ENTRAVISION COMMUNICATIONS CORP  (EVC)  (CIK 0001109116)']",
+          "content": "2024-03-05",
+          "url": "https://www.sec.gov2024-03-05",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-05",
+          "title": "[] ['ENTRAVISION COMMUNICATIONS CORP  (EVC)  (CIK 0001109116)']",
+          "content": "2024-03-05",
+          "url": "https://www.sec.gov2024-03-05",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-05",
+          "title": "[] ['Axogen, Inc.  (AXGN)  (CIK 0000805928)']",
+          "content": "2024-03-05",
+          "url": "https://www.sec.gov2024-03-05",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-05",
+          "title": "[] ['WhiteHorse Finance, Inc.  (WHF, WHFCL)  (CIK 0001552198)']",
+          "content": "2024-03-05",
+          "url": "https://www.sec.gov2024-03-05",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-03-05",
+          "title": "[] ['Akari Therapeutics Plc  (AKTX)  (CIK 0001541157)']",
+          "content": "2024-03-05",
+          "url": "https://www.sec.gov2024-03-05",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:46:57.160796"
+}

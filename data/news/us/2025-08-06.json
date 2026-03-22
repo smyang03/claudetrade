@@ -1,0 +1,83 @@
+{
+  "date": "2025-08-06",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-06",
+          "title": "[] ['SHOPIFY INC.  (SHOP)  (CIK 0001594805)']",
+          "content": "2025-08-06",
+          "url": "https://www.sec.gov2025-08-06",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-06",
+          "title": "[] ['Amrize Ltd  (AMRZ)  (CIK 0002035989)']",
+          "content": "2025-08-06",
+          "url": "https://www.sec.gov2025-08-06",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-06",
+          "title": "[] ['Verb Technology Company, Inc.  (VERB)  (CIK 0001566610)']",
+          "content": "2025-08-06",
+          "url": "https://www.sec.gov2025-08-06",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-06",
+          "title": "[] ['Venus Concept Inc.  (VERO)  (CIK 0001409269)']",
+          "content": "2025-08-06",
+          "url": "https://www.sec.gov2025-08-06",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-06",
+          "title": "[] ['Snap Inc  (SNAP)  (CIK 0001564408)']",
+          "content": "2025-08-06",
+          "url": "https://www.sec.gov2025-08-06",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T17:21:45.251100"
+}

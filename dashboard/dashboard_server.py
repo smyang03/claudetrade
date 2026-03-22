@@ -13,13 +13,23 @@ Flask 기반 트레이딩 대시보드 서버
   - 판단 패턴 분석
 """
 
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time as dt_time
 import json, sys, os
-from runtime_paths import get_runtime_path
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from datetime import timezone, timedelta as _td
+    class ZoneInfo:
+        def __new__(cls, _): return timezone(_td(hours=9))
+
+KST = ZoneInfo("Asia/Seoul")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from runtime_paths import get_runtime_path
+from credit_tracker import summary as credit_summary
 
 app = Flask(__name__)
 
@@ -30,15 +40,43 @@ BRAIN_PATH  = get_runtime_path("state", "brain.json")
 
 # ── 데이터 로더 ────────────────────────────────────────────────────────────────
 
+def current_market() -> str:
+    """KST 현재 시간 기반 활성 마켓 반환 (US 새벽, KR 오전~오후)"""
+    now = datetime.now(KST).time()
+    # US: 22:20 ~ 05:00 KST
+    if now >= dt_time(22, 20) or now < dt_time(5, 0):
+        return "US"
+    return "KR"
+
+
+def best_market_with_data() -> str:
+    """오늘 파일이 있는 마켓 우선 반환 (없으면 시간 기반)"""
+    today = date.today().strftime("%Y%m%d")
+    for mkt in ("US", "KR"):
+        p = LOG_DIR / f"{today}_{mkt}.json"
+        if p.exists():
+            try:
+                d = json.load(open(p, encoding="utf-8"))
+                if d.get("mode") != "historical_sim":
+                    return mkt
+            except Exception:
+                pass
+    return current_market()
+
+
 def load_records(days: int = 60, market: str = "KR") -> list[dict]:
     records = []
-    for path in sorted(LOG_DIR.glob(f"*_{market}.json"))[-days:]:
+    for path in sorted(LOG_DIR.glob(f"*_{market}.json")):
         try:
             with open(path, encoding="utf-8") as f:
-                records.append(json.load(f))
+                rec = json.load(f)
+            # historical_sim 데이터는 대시보드에서 제외
+            if rec.get("mode") == "historical_sim":
+                continue
+            records.append(rec)
         except Exception:
             pass
-    return records
+    return records[-days:]
 
 def load_brain() -> dict:
     source = BRAIN_PATH if BRAIN_PATH.exists() else (BASE_DIR / "claude_memory" / "brain.json")
@@ -52,12 +90,18 @@ def load_today(market: str = "KR") -> dict:
     path  = LOG_DIR / f"{today}_{market}.json"
     if path.exists():
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    # 없으면 가장 최근 날짜 반환
-    files = sorted(LOG_DIR.glob(f"*_{market}.json"))
-    if files:
-        with open(files[-1], encoding="utf-8") as f:
-            return json.load(f)
+            rec = json.load(f)
+        if rec.get("mode") != "historical_sim":
+            return rec
+    # 없으면 historical_sim 제외하고 가장 최근 날짜 반환
+    for path in reversed(sorted(LOG_DIR.glob(f"*_{market}.json"))):
+        try:
+            with open(path, encoding="utf-8") as f:
+                rec = json.load(f)
+            if rec.get("mode") != "historical_sim":
+                return rec
+        except Exception:
+            pass
     return {}
 
 
@@ -66,11 +110,19 @@ def load_today(market: str = "KR") -> dict:
 @app.route("/api/summary")
 def api_summary():
     """오늘 + 누적 요약"""
-    records = load_records(60)
+    market  = request.args.get("market", best_market_with_data())
+    records = load_records(60, market)
+    if not records:
+        # 반대 마켓도 시도
+        other = "US" if market == "KR" else "KR"
+        records = load_records(60, other)
+        if records:
+            market = other
+
     if not records:
         return jsonify({})
 
-    today_rec = load_today()
+    today_rec = load_today(market)
     result    = today_rec.get("actual_result", {})
 
     # 누적 성과
@@ -99,7 +151,7 @@ def api_summary():
             "win":      result.get("win", False),
             "trades":   result.get("trades", 0),
             "mode":     today_rec.get("consensus", {}).get("mode", "-"),
-            "cumulative": result.get("cumulative", 10_000_000),
+            "cumulative": result.get("cumulative", 30_000_000),
         },
         "period": {
             "days":      len(records),
@@ -116,7 +168,8 @@ def api_summary():
 @app.route("/api/judgments")
 def api_judgments():
     """오늘 3명 판단 상세"""
-    rec = load_today()
+    market = request.args.get("market", best_market_with_data())
+    rec = load_today(market)
     if not rec:
         return jsonify({})
 
@@ -142,13 +195,14 @@ def api_judgments():
 @app.route("/api/chart/equity")
 def api_equity_chart():
     """누적 자산 곡선 데이터"""
-    records = load_records(60)
+    market  = request.args.get("market", best_market_with_data())
+    records = load_records(60, market)
     labels, values, pnls, wins = [], [], [], []
 
     for r in records:
         result = r.get("actual_result", {})
         labels.append(r.get("date", "")[-5:])   # MM-DD
-        values.append(result.get("cumulative", 0))
+        values.append(result.get("cumulative", 30_000_000))
         pnls.append(result.get("pnl_pct", 0))
         wins.append(result.get("win", False))
 
@@ -159,7 +213,8 @@ def api_equity_chart():
 @app.route("/api/chart/analyst")
 def api_analyst_chart():
     """분석가별 적중률 추이 (최근 30일)"""
-    records = load_records(30)
+    market  = request.args.get("market", best_market_with_data())
+    records = load_records(30, market)
     labels  = []
     bull_hits, bear_hits, neut_hits = [], [], []
 
@@ -185,7 +240,8 @@ def api_analyst_chart():
 @app.route("/api/trades")
 def api_trades():
     """최근 매매 내역"""
-    records = load_records(30)
+    market  = request.args.get("market", best_market_with_data())
+    records = load_records(30, market)
     trades  = []
     for r in records:
         for t in r.get("trades", []):
@@ -204,7 +260,8 @@ def api_trades():
 @app.route("/api/patterns")
 def api_patterns():
     """판단 패턴 분석 - 왜 맞았나/왜 틀렸나"""
-    records = load_records(60)
+    market  = request.args.get("market", best_market_with_data())
+    records = load_records(60, market)
     lessons = {}
     modes   = {}
 
@@ -236,6 +293,16 @@ def api_patterns():
         "lessons": [{"text": k, "count": v} for k, v in top_lessons],
         "modes":   modes,
     })
+
+
+@app.route("/api/credits")
+def api_credits():
+    """Anthropic API 크레딧 사용량"""
+    try:
+        usd_krw = float(os.getenv("USD_KRW_RATE", "1350"))
+        return jsonify(credit_summary(usd_krw))
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 
 @app.route("/api/brain")
@@ -319,6 +386,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   /* 레이아웃 */
   main { padding: 20px 24px; max-width: 1600px; margin: 0 auto; }
 
+  .grid-5 {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px; margin-bottom: 20px;
+  }
   .grid-4 {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -543,6 +615,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="logo">TRADING<span>BRAIN</span></div>
   <div style="display:flex; align-items:center; gap:16px;">
     <span><span class="status-dot"></span><span style="font-size:12px;color:var(--muted)">LIVE</span></span>
+    <div style="display:flex;gap:6px">
+      <button class="refresh-btn" id="btn-kr" onclick="setMarket('KR')">🇰🇷 KR</button>
+      <button class="refresh-btn" id="btn-us" onclick="setMarket('US')">🇺🇸 US</button>
+    </div>
     <span id="clock"></span>
     <button class="refresh-btn" onclick="loadAll()">↺ 새로고침</button>
   </div>
@@ -551,7 +627,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <main>
 
   <!-- 상단 요약 카드 -->
-  <div class="grid-4" id="summary-cards">
+  <div class="grid-5" id="summary-cards">
     <div class="card cyan">
       <div class="card-label">오늘 손익</div>
       <div class="card-value" id="today-pnl">--</div>
@@ -571,6 +647,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="card-label">연속 기록</div>
       <div class="card-value" id="streak-val">--</div>
       <div class="card-sub" id="total-pnl">누적 수익: --%</div>
+    </div>
+    <div class="card purple">
+      <div class="card-label">AI 크레딧 (오늘)</div>
+      <div class="card-value" id="credit-today">--</div>
+      <div class="card-sub" id="credit-total">누적: --</div>
+      <div class="card-sub" id="credit-calls" style="margin-top:4px">호출: --회</div>
     </div>
   </div>
 
@@ -593,6 +675,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="chart-container">
         <canvas id="analystChart"></canvas>
       </div>
+    </div>
+  </div>
+
+  <!-- 크레딧 7일 바 차트 -->
+  <div class="card purple" style="margin-bottom:20px">
+    <div class="section-title">AI 크레딧 사용량 (최근 7일)</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:center">
+      <div class="chart-container" style="height:160px">
+        <canvas id="creditChart"></canvas>
+      </div>
+      <div id="credit-detail" style="font-family:var(--mono);font-size:13px;line-height:2"></div>
     </div>
   </div>
 
@@ -630,6 +723,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <script>
 let charts = {};
+let MARKET = 'AUTO';  // 'AUTO' | 'KR' | 'US'
+
+function setMarket(m) {
+  MARKET = m;
+  document.getElementById('btn-kr').style.opacity = m === 'KR' ? '1' : '0.4';
+  document.getElementById('btn-us').style.opacity = m === 'US' ? '1' : '0.4';
+  loadAll();
+}
+
+function marketParam() {
+  return MARKET === 'AUTO' ? '' : `?market=${MARKET}`;
+}
 
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
 const fmt = {
@@ -655,7 +760,7 @@ setInterval(updateClock, 1000); updateClock();
 
 // ── 요약 로드 ─────────────────────────────────────────────────────────────────
 async function loadSummary() {
-  const d = await fetch('/api/summary').then(r => r.json());
+  const d = await fetch('/api/summary' + marketParam()).then(r => r.json());
   if (!d.today) return;
 
   const t = d.today, p = d.period;
@@ -710,7 +815,7 @@ function analystCard(key, data, label, iconClass, stanceClass) {
 }
 
 async function loadJudgments() {
-  const d = await fetch('/api/judgments').then(r => r.json());
+  const d = await fetch('/api/judgments' + marketParam()).then(r => r.json());
   if (!d.bull) return;
 
   document.getElementById('analyst-section').innerHTML =
@@ -726,7 +831,7 @@ async function loadJudgments() {
 
 // ── 차트 ─────────────────────────────────────────────────────────────────────
 async function loadEquityChart() {
-  const d = await fetch('/api/chart/equity').then(r => r.json());
+  const d = await fetch('/api/chart/equity' + marketParam()).then(r => r.json());
 
   const colors = d.wins.map(w => w ?
     'rgba(16,185,129,0.8)' : 'rgba(239,68,68,0.8)');
@@ -768,7 +873,7 @@ async function loadEquityChart() {
              grid: { color: 'rgba(31,41,55,0.5)' } },
         y1: { position: 'left',
               ticks: { color: '#06b6d4', font: { size: 10 },
-                       callback: v => (v/10000000*100-100).toFixed(1)+'%' },
+                       callback: v => (v/30000000*100-100).toFixed(1)+'%' },
               grid: { color: 'rgba(31,41,55,0.3)' } },
         y2: { position: 'right',
               ticks: { color: '#64748b', font: { size: 10 },
@@ -780,7 +885,7 @@ async function loadEquityChart() {
 }
 
 async function loadAnalystChart() {
-  const d = await fetch('/api/chart/analyst').then(r => r.json());
+  const d = await fetch('/api/chart/analyst' + marketParam()).then(r => r.json());
 
   if (charts.analyst) charts.analyst.destroy();
   charts.analyst = new Chart(
@@ -817,7 +922,7 @@ async function loadAnalystChart() {
 
 // ── 매매 내역 ─────────────────────────────────────────────────────────────────
 async function loadTrades() {
-  const trades = await fetch('/api/trades').then(r => r.json());
+  const trades = await fetch('/api/trades' + marketParam()).then(r => r.json());
   const tbody  = document.getElementById('trades-tbody');
   tbody.innerHTML = trades.map(t => `
     <tr>
@@ -834,7 +939,7 @@ async function loadTrades() {
 
 // ── 패턴 + 모드 + Brain ───────────────────────────────────────────────────────
 async function loadPatterns() {
-  const d = await fetch('/api/patterns').then(r => r.json());
+  const d = await fetch('/api/patterns' + marketParam()).then(r => r.json());
 
   // 교훈
   document.getElementById('lessons-list').innerHTML =
@@ -891,12 +996,79 @@ async function loadBrain() {
   `;
 }
 
+// ── 크레딧 ───────────────────────────────────────────────────────────────────
+async function loadCredits() {
+  const d = await fetch('/api/credits').then(r => r.json());
+  if (d.error || !d.today) return;
+
+  const td  = d.today;
+  const tot = d.total;
+
+  document.getElementById('credit-today').textContent =
+    `$${td.cost_usd.toFixed(3)}`;
+  document.getElementById('credit-today').style.color = 'var(--purple)';
+  document.getElementById('credit-total').textContent =
+    `누적: $${tot.cost_usd.toFixed(3)} (${tot.cost_krw.toLocaleString()}원)`;
+  document.getElementById('credit-calls').textContent =
+    `오늘 호출: ${td.calls}회  (${td.cost_krw.toLocaleString()}원)`;
+
+  // 상세 패널
+  document.getElementById('credit-detail').innerHTML = `
+    <div><span style="color:var(--muted)">오늘 입력토큰</span>  ${td.input.toLocaleString()}</div>
+    <div><span style="color:var(--muted)">오늘 출력토큰</span>  ${td.output.toLocaleString()}</div>
+    <div><span style="color:var(--muted)">오늘 비용</span>      <span style="color:var(--purple)">$${td.cost_usd.toFixed(4)} ≈ ${td.cost_krw.toLocaleString()}원</span></div>
+    <div style="border-top:1px solid var(--border);margin:6px 0"></div>
+    <div><span style="color:var(--muted)">누적 비용</span>      <span style="color:var(--cyan)">$${tot.cost_usd.toFixed(4)} ≈ ${tot.cost_krw.toLocaleString()}원</span></div>
+    <div><span style="color:var(--muted)">누적 입력</span>      ${tot.input.toLocaleString()} tok</div>
+    <div><span style="color:var(--muted)">누적 출력</span>      ${tot.output.toLocaleString()} tok</div>
+  `;
+
+  // 7일 바 차트
+  const days   = d.daily_7 || [];
+  const labels = days.map(x => x.date.slice(5));
+  const costs  = days.map(x => x.cost_usd);
+
+  if (charts.credit) charts.credit.destroy();
+  charts.credit = new Chart(
+    document.getElementById('creditChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: '일별 비용 ($)',
+        data: costs,
+        backgroundColor: 'rgba(139,92,246,0.6)',
+        borderColor: 'rgba(139,92,246,1)',
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          label: ctx => `$${ctx.raw.toFixed(4)}`
+        }}
+      },
+      scales: {
+        x: { ticks: { color: '#64748b', font: { size: 10 } },
+             grid: { color: 'rgba(31,41,55,0.5)' } },
+        y: { ticks: { color: '#64748b', font: { size: 10 },
+                      callback: v => '$'+v.toFixed(3) },
+             grid: { color: 'rgba(31,41,55,0.3)' } },
+      }
+    }
+  });
+}
+
 // ── 전체 로드 ─────────────────────────────────────────────────────────────────
 async function loadAll() {
   await Promise.all([
     loadSummary(), loadJudgments(),
     loadEquityChart(), loadAnalystChart(),
-    loadTrades(), loadPatterns(), loadBrain()
+    loadTrades(), loadPatterns(), loadBrain(),
+    loadCredits()
   ]);
 }
 

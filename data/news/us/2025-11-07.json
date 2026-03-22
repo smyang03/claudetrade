@@ -1,0 +1,101 @@
+{
+  "date": "2025-11-07",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": true,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-07",
+          "title": "[] ['Tesla, Inc.  (TSLA)  (CIK 0001318605)']",
+          "content": "2025-11-07",
+          "url": "https://www.sec.gov2025-11-07",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-07",
+          "title": "[] ['MP Materials Corp. / DE  (MP)  (CIK 0001801368)']",
+          "content": "2025-11-07",
+          "url": "https://www.sec.gov2025-11-07",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-07",
+          "title": "[] ['DoubleVerify Holdings, Inc.  (DV)  (CIK 0001819928)']",
+          "content": "2025-11-07",
+          "url": "https://www.sec.gov2025-11-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-07",
+          "title": "[] ['VIEMED HEALTHCARE, INC.  (VMD)  (CIK 0001729149)']",
+          "content": "2025-11-07",
+          "url": "https://www.sec.gov2025-11-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-07",
+          "title": "[] ['WEC ENERGY GROUP, INC.  (WEC)  (CIK 0000783325)']",
+          "content": "2025-11-07",
+          "url": "https://www.sec.gov2025-11-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-07",
+          "title": "[] ['ENBRIDGE INC  (ENB, EBBGF, EBBNF, EBGEF, EBRGF, EBRZF, ENBFF, ENBGF, ENBHF, ENBMF, ENBNF, ENBOF, ENBRF, ENBSF)  (CIK 0000895728)']",
+          "content": "2025-11-07",
+          "url": "https://www.sec.gov2025-11-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-07",
+          "title": "[] ['Constellation Energy Corp  (CEG)  (CIK 0001868275)', 'CONSTELLATION ENERGY GENERATION LLC  (CIK 0001168165)']",
+          "content": "2025-11-07",
+          "url": "https://www.sec.gov2025-11-07",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T21:37:47.063044"
+}

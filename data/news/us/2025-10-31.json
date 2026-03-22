@@ -1,0 +1,100 @@
+{
+  "date": "2025-10-31",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-10-31",
+          "title": "[] ['Apple Inc.  (AAPL)  (CIK 0000320193)']",
+          "content": "2025-10-31",
+          "url": "https://www.sec.gov2025-10-31",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-10-31",
+          "title": "[] ['Apple Inc.  (AAPL)  (CIK 0000320193)']",
+          "content": "2025-10-31",
+          "url": "https://www.sec.gov2025-10-31",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-10-31",
+          "title": "[] ['LABCORP HOLDINGS INC.  (LH)  (CIK 0000920148)']",
+          "content": "2025-10-31",
+          "url": "https://www.sec.gov2025-10-31",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-10-31",
+          "title": "[] ['TXNM ENERGY INC  (TXNM)  (CIK 0001108426)', 'TEXAS NEW MEXICO POWER CO  (CIK 0000022767)', 'PUBLIC SERVICE CO OF NEW MEXICO  (CIK 0000081023)']",
+          "content": "2025-10-31",
+          "url": "https://www.sec.gov2025-10-31",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-10-31",
+          "title": "[] ['Reddit, Inc.  (RDDT)  (CIK 0001713445)']",
+          "content": "2025-10-31",
+          "url": "https://www.sec.gov2025-10-31",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-10-31",
+          "title": "[] ['ENTERGY CORP /DE/  (ETR)  (CIK 0000065984)', 'ENTERGY MISSISSIPPI, LLC  (CIK 0000066901)', 'ENTERGY TEXAS, INC.  (CIK 0001427437)', 'SYSTEM ENERGY RESOURCES, INC  (CIK 0000202584)', 'ENTERGY LOUISIANA, LLC  (CIK 0001348952)', 'ENTERGY ARKANSAS, LLC  (CIK 0000007323)', 'ENTERGY NEW ORLEANS, LLC  (CIK 0000071508)']",
+          "content": "2025-10-31",
+          "url": "https://www.sec.gov2025-10-31",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-10-31",
+          "title": "[] ['GoDaddy Inc.  (GDDY)  (CIK 0001609711)']",
+          "content": "2025-10-31",
+          "url": "https://www.sec.gov2025-10-31",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T21:18:53.211488"
+}

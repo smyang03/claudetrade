@@ -1,0 +1,108 @@
+{
+  "date": "2025-11-19",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-19",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-11-19",
+          "url": "https://www.sec.gov2025-11-19",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-19",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-11-19",
+          "url": "https://www.sec.gov2025-11-19",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-19",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-11-19",
+          "url": "https://www.sec.gov2025-11-19",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-19",
+          "title": "[] ['Super League Enterprise, Inc.  (SLE)  (CIK 0001621672)']",
+          "content": "2025-11-19",
+          "url": "https://www.sec.gov2025-11-19",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-19",
+          "title": "[] ['CONSUMER PORTFOLIO SERVICES, INC.  (CPSS)  (CIK 0000889609)']",
+          "content": "2025-11-19",
+          "url": "https://www.sec.gov2025-11-19",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-19",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-11-19",
+          "url": "https://www.sec.gov2025-11-19",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-19",
+          "title": "[] ['LSEB Creative Corp.  (LSEB)  (CIK 0001888740)']",
+          "content": "2025-11-19",
+          "url": "https://www.sec.gov2025-11-19",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-11-19",
+          "title": "[] ['Blue Acquisition Corp/Cayman  (BACC, BACCR, BACCU)  (CIK 0002059654)']",
+          "content": "2025-11-19",
+          "url": "https://www.sec.gov2025-11-19",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T22:08:10.131372"
+}

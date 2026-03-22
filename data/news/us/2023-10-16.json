@@ -1,0 +1,108 @@
+{
+  "date": "2023-10-16",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-16",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2023-10-16",
+          "url": "https://www.sec.gov2023-10-16",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-16",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2023-10-16",
+          "url": "https://www.sec.gov2023-10-16",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-16",
+          "title": "[] ['Activision Blizzard, Inc.  (CIK 0000718877)']",
+          "content": "2023-10-16",
+          "url": "https://www.sec.gov2023-10-16",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-16",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2023-10-16",
+          "url": "https://www.sec.gov2023-10-16",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-16",
+          "title": "[] ['META MATERIALS INC.  (MMATQ)  (CIK 0001431959)']",
+          "content": "2023-10-16",
+          "url": "https://www.sec.gov2023-10-16",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-16",
+          "title": "[] ['Tonix Pharmaceuticals Holding Corp.  (TNXP)  (CIK 0001430306)']",
+          "content": "2023-10-16",
+          "url": "https://www.sec.gov2023-10-16",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-16",
+          "title": "[] ['Tonix Pharmaceuticals Holding Corp.  (TNXP)  (CIK 0001430306)']",
+          "content": "2023-10-16",
+          "url": "https://www.sec.gov2023-10-16",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-16",
+          "title": "[] ['PORTSMOUTH SQUARE INC  (PRSI)  (CIK 0000079661)']",
+          "content": "2023-10-16",
+          "url": "https://www.sec.gov2023-10-16",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T04:22:50.156392"
+}

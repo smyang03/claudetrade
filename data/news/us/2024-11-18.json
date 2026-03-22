@@ -1,0 +1,76 @@
+{
+  "date": "2024-11-18",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-18",
+          "title": "[] ['Sable Offshore Corp.  (SOC)  (CIK 0001831481)']",
+          "content": "2024-11-18",
+          "url": "https://www.sec.gov2024-11-18",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-18",
+          "title": "[] ['WISA TECHNOLOGIES, INC.  (WISA)  (CIK 0001682149)']",
+          "content": "2024-11-18",
+          "url": "https://www.sec.gov2024-11-18",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-18",
+          "title": "[] ['Adverum Biotechnologies, Inc.  (ADVM)  (CIK 0001501756)']",
+          "content": "2024-11-18",
+          "url": "https://www.sec.gov2024-11-18",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-11-18",
+          "title": "[] ['MID AMERICA APARTMENT COMMUNITIES INC.  (MAA, MAA-PI)  (CIK 0000912595)', 'Mid-America Apartments, L.P.  (CIK 0001581776)']",
+          "content": "2024-11-18",
+          "url": "https://www.sec.gov2024-11-18",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T05:30:02.736467"
+}

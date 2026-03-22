@@ -1,0 +1,100 @@
+{
+  "date": "2023-10-30",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-30",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2023-10-30",
+          "url": "https://www.sec.gov2023-10-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-30",
+          "title": "[] ['MICROSOFT CORP  (MSFT)  (CIK 0000789019)']",
+          "content": "2023-10-30",
+          "url": "https://www.sec.gov2023-10-30",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-30",
+          "title": "[] ['MAIA Biotechnology, Inc.  (MAIA)  (CIK 0001878313)']",
+          "content": "2023-10-30",
+          "url": "https://www.sec.gov2023-10-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-30",
+          "title": "[] ['LABORATORY CORP OF AMERICA HOLDINGS  (LH)  (CIK 0000920148)']",
+          "content": "2023-10-30",
+          "url": "https://www.sec.gov2023-10-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-30",
+          "title": "[] ['Rise Gold Corp.  (RYES)  (CIK 0001424864)']",
+          "content": "2023-10-30",
+          "url": "https://www.sec.gov2023-10-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-30",
+          "title": "[] ['VORNADO REALTY TRUST  (VNO, VNORP, VNO-PL, VNO-PM, VNO-PN, VNO-PO)  (CIK 0000899689)', 'VORNADO REALTY LP  (CIK 0001040765)']",
+          "content": "2023-10-30",
+          "url": "https://www.sec.gov2023-10-30",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-10-30",
+          "title": "[] ['Zedge, Inc.  (ZDGE)  (CIK 0001667313)']",
+          "content": "2023-10-30",
+          "url": "https://www.sec.gov2023-10-30",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T05:00:45.859543"
+}

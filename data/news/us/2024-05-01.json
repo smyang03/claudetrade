@@ -1,0 +1,83 @@
+{
+  "date": "2024-05-01",
+  "macro_events": {
+    "fomc": true,
+    "fomc_week": true,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-01",
+          "title": "[] ['CARVANA CO.  (CVNA)  (CIK 0001690820)']",
+          "content": "2024-05-01",
+          "url": "https://www.sec.gov2024-05-01",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-01",
+          "title": "[] ['Motorsport Games Inc.  (MSGM)  (CIK 0001821175)']",
+          "content": "2024-05-01",
+          "url": "https://www.sec.gov2024-05-01",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-01",
+          "title": "[] ['Summit Hotel Properties, Inc.  (INN, INN-PE, INN-PF)  (CIK 0001497645)']",
+          "content": "2024-05-01",
+          "url": "https://www.sec.gov2024-05-01",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-01",
+          "title": "[] ['UPWORK, INC  (UPWK)  (CIK 0001627475)']",
+          "content": "2024-05-01",
+          "url": "https://www.sec.gov2024-05-01",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-01",
+          "title": "[] ['AMARIN CORP PLC\\\\UK  (AMRN)  (CIK 0000897448)']",
+          "content": "2024-05-01",
+          "url": "https://www.sec.gov2024-05-01",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T13:23:16.307779"
+}

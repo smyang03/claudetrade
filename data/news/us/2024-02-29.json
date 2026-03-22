@@ -1,0 +1,92 @@
+{
+  "date": "2024-02-29",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-29",
+          "title": "[] ['Innovid Corp.  (CTV, CTV-WT)  (CIK 0001835378)']",
+          "content": "2024-02-29",
+          "url": "https://www.sec.gov2024-02-29",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-29",
+          "title": "[] ['Summit Hotel Properties, Inc.  (INN, INN-PE, INN-PF)  (CIK 0001497645)']",
+          "content": "2024-02-29",
+          "url": "https://www.sec.gov2024-02-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-29",
+          "title": "[] ['Humacyte, Inc.  (HUMA, HUMAW)  (CIK 0001818382)']",
+          "content": "2024-02-29",
+          "url": "https://www.sec.gov2024-02-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-29",
+          "title": "[] ['WhiteHorse Finance, Inc.  (WHF, WHFCL)  (CIK 0001552198)']",
+          "content": "2024-02-29",
+          "url": "https://www.sec.gov2024-02-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-29",
+          "title": "[] ['PNM RESOURCES INC  (TXNM)  (CIK 0001108426)', 'TEXAS NEW MEXICO POWER CO  (CIK 0000022767)', 'PUBLIC SERVICE CO OF NEW MEXICO  (PNMXO)  (CIK 0000081023)']",
+          "content": "2024-02-29",
+          "url": "https://www.sec.gov2024-02-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-29",
+          "title": "[] ['PTC THERAPEUTICS, INC.  (PTCT)  (CIK 0001070081)']",
+          "content": "2024-02-29",
+          "url": "https://www.sec.gov2024-02-29",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:35:27.785353"
+}

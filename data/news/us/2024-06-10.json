@@ -1,0 +1,59 @@
+{
+  "date": "2024-06-10",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": true,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-06-10",
+          "title": "[] ['PATHWARD FINANCIAL, INC.  (CASH)  (CIK 0000907471)']",
+          "content": "2024-06-10",
+          "url": "https://www.sec.gov2024-06-10",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-06-10",
+          "title": "[] ['23andMe Holding Co.  (ME)  (CIK 0001804591)']",
+          "content": "2024-06-10",
+          "url": "https://www.sec.gov2024-06-10",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T15:09:51.368025"
+}

@@ -1,0 +1,93 @@
+{
+  "date": "2025-03-20",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": true,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-20",
+          "title": "[] ['Soluna Holdings, Inc  (SLNH, SLNHP)  (CIK 0000064463)']",
+          "content": "2025-03-20",
+          "url": "https://www.sec.gov2025-03-20",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-20",
+          "title": "[] ['Accenture plc  (ACN)  (CIK 0001467373)']",
+          "content": "2025-03-20",
+          "url": "https://www.sec.gov2025-03-20",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-20",
+          "title": "[] ['Accenture plc  (ACN)  (CIK 0001467373)']",
+          "content": "2025-03-20",
+          "url": "https://www.sec.gov2025-03-20",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-20",
+          "title": "[] ['Premium Resources Ltd.  (PRMLF)  (CIK 0000795800)']",
+          "content": "2025-03-20",
+          "url": "https://www.sec.gov2025-03-20",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-20",
+          "title": "[] ['ARS Pharmaceuticals, Inc.  (SPRY)  (CIK 0001671858)']",
+          "content": "2025-03-20",
+          "url": "https://www.sec.gov2025-03-20",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-03-20",
+          "title": "[] ['Eledon Pharmaceuticals, Inc.  (ELDN)  (CIK 0001404281)']",
+          "content": "2025-03-20",
+          "url": "https://www.sec.gov2025-03-20",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T11:04:43.946423"
+}

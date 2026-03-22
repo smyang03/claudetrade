@@ -1,0 +1,67 @@
+{
+  "date": "2025-08-29",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-29",
+          "title": "[] ['RED RIVER BANCSHARES INC  (RRBI)  (CIK 0001071236)']",
+          "content": "2025-08-29",
+          "url": "https://www.sec.gov2025-08-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-29",
+          "title": "[] ['Spring Valley Acquisition Corp. II  (SVII, SVIIR, SVIIU, SVIIW)  (CIK 0001843477)']",
+          "content": "2025-08-29",
+          "url": "https://www.sec.gov2025-08-29",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-08-29",
+          "title": "[] ['PATHWARD FINANCIAL, INC.  (CASH)  (CIK 0000907471)']",
+          "content": "2025-08-29",
+          "url": "https://www.sec.gov2025-08-29",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T18:26:05.911157"
+}

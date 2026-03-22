@@ -1,0 +1,109 @@
+{
+  "date": "2024-05-15",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-15",
+          "title": "[] ['Serve Robotics Inc. /DE/  (SERV)  (CIK 0001832483)']",
+          "content": "2024-05-15",
+          "url": "https://www.sec.gov2024-05-15",
+          "form_type": ""
+        }
+      ],
+      "count": 1,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-15",
+          "title": "[] ['Sable Offshore Corp.  (SOC, SOC-WT)  (CIK 0001831481)']",
+          "content": "2024-05-15",
+          "url": "https://www.sec.gov2024-05-15",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-15",
+          "title": "[] ['Circle Energy, Inc./NV  (CRCE)  (CIK 0001911467)']",
+          "content": "2024-05-15",
+          "url": "https://www.sec.gov2024-05-15",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-15",
+          "title": "[] ['HOUSTON AMERICAN ENERGY CORP  (HUSA)  (CIK 0001156041)']",
+          "content": "2024-05-15",
+          "url": "https://www.sec.gov2024-05-15",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-15",
+          "title": "[] ['TRAVELZOO  (TZOO)  (CIK 0001133311)']",
+          "content": "2024-05-15",
+          "url": "https://www.sec.gov2024-05-15",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-15",
+          "title": "[] ['INTEGRATED VENTURES, INC.  (INTV)  (CIK 0001520118)']",
+          "content": "2024-05-15",
+          "url": "https://www.sec.gov2024-05-15",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-15",
+          "title": "[] ['APPlife Digital Solutions Inc  (ALDS)  (CIK 0001755101)']",
+          "content": "2024-05-15",
+          "url": "https://www.sec.gov2024-05-15",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-05-15",
+          "title": "[] ['BTC Digital Ltd.  (BTCT, BTCTW)  (CIK 0001796514)']",
+          "content": "2024-05-15",
+          "url": "https://www.sec.gov2024-05-15",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T14:01:13.822989"
+}

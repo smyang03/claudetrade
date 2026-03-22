@@ -1,0 +1,92 @@
+{
+  "date": "2026-03-21",
+  "market": "KR",
+  "judgments": {
+    "bull": {
+      "stance": "MODERATE_BULL",
+      "confidence": 0.62,
+      "key_reason": "삼성전자·SK하이닉스·NAVER 모두 MACD 골든크로스 신호가 동시 출현하며 반등 모멘텀이 형성되고 있습니다.",
+      "full_reasoning": "코스피가 +0.31% 소폭 상승하는 가운데 반도체 대형주 두 종목이 MACD 골든크로스를 기록해 단기 추세 전환 시그널이 확인됩니다. 특히 NAVER는 RSI 31.7로 과매도 영역에 근접하고 52주 최저 부근(17%)에 위치해 평균회귀 반등 기대감이 높습니다. 다만 반도체 두 종목의 거래량이 평균 이하(0.7~1.0배)로 매수 주체가 충분히 확인되지 않아 상승 지속성 점검이 필요합니다.",
+      "top_risks": [
+        "USD/KRW 1,504 고환율 유지로 외국인 수급 개선이 제한될 가능성",
+        "거래량 미확인 골든크로스로 인한 허위 신호(false breakout) 위험"
+      ],
+      "suggested_strategy": "평균회귀"
+    },
+    "bear": {
+      "stance": "MILD_BEAR",
+      "confidence": 0.62,
+      "key_reason": "반도체 양대 주축 동반 하락 및 저거래량 속 골든크로스는 신뢰도 낮은 기술적 신호로, 실질적 매수 동력 부재 확인",
+      "full_reasoning": "삼성전자·SK하이닉스 모두 음봉 마감에 거래량이 평균 이하(0.7~1.0배)로 골든크로스 신호의 신뢰성이 현저히 낮다. NAVER는 RSI 31.7로 과매도 구간 진입하였으나 52주 최저 근방(17%)에 위치해 추가 하방 압력 가능성이 상존하며, USD/KRW 1,504원대 고환율 지속은 외국인 수급 이탈 리스크를 지속 가중시킨다. VKOSPI 데이터 미수신으로 변동성 실측이 불가한 상황에서 불확실성 프리미엄을 추가 반영할 필요가 있다.",
+      "top_risks": [
+        "USD/KRW 1,504원대 고환율 지속으로 외국인 순매도 압력 심화 가능",
+        "반도체 저거래량 골든크로스: 수급 뒷받침 없는 기술적 허상으로 되돌림(데드크로스 전환) 위험"
+      ],
+      "suggested_strategy": "관망"
+    },
+    "neutral": {
+      "stance": "NEUTRAL",
+      "confidence": 0.52,
+      "key_reason": "MACD 골든크로스로 단기 반등 신호가 있으나 RSI 미약·거래량 부진·원화 약세(1,504원)가 상승 탄력을 제한",
+      "full_reasoning": "삼성전자·SK하이닉스 모두 MACD 골든크로스가 형성되어 기술적 반등 모멘텀은 존재하나, RSI가 각각 43.8·46.5로 중립 하단에 머물고 거래량이 평균 대비 0.7~1.0배 수준이어서 추세 강도가 약함. NAVER는 RSI 31.7로 과매도 근접 구간이나 52주 최저 17% 위치라는 점이 하방 압력 지속 가능성을 시사함. USD/KRW 1,504원의 고환율은 외국인 수급에 부담으로 작용하며 VKOSPI 데이터 부재로 변동성 판단에 불확실성이 존재함.",
+      "top_risks": [
+        "원화 약세 지속(1,504원) 시 외국인 순매도 재개 및 반도체 수출 환헤지 비용 증가",
+        "거래량 뒷받침 없는 골든크로스는 데드캣 바운스 가능성 존재"
+      ],
+      "suggested_strategy": "평균회귀"
+    }
+  },
+  "consensus": {
+    "mode": "NEUTRAL",
+    "size": 40,
+    "tp_mult": 1.0,
+    "minority_triggered": false,
+    "vote": [
+      "bull",
+      "bear",
+      "neutral"
+    ]
+  },
+  "digest_prompt": "[2026-03-21 KR 시장 데이터]\n\n▶ 시장 컨텍스트\n  코스피 +0.31% | USD/KRW 1,504.83 | VKOSPI 0.0\n\n▶ 종목 기술 지표\n  [삼성전자] 199,400 -0.55% | RSI 43.8 | MACD 골든크로스 | BB 중간 | 거래량 1.0배 | 52주위치 77%\n  [SK하이닉스] 1,007,000 -0.59% | RSI 46.5 | MACD 골든크로스 | BB 중간 | 거래량 0.7배 | 52주위치 80%\n  [NAVER] 221,500 +0.45% | RSI 31.7 | MACD 골든크로스 | BB 중간 | 거래량 0.7배 | 52주위치 17%",
+  "tickers": [
+    "069540",
+    "046120",
+    "078590",
+    "002780",
+    "261780"
+  ],
+  "actual_result": {
+    "market_change": 0.3119780226762941,
+    "pnl_pct": 0.0,
+    "pnl_krw": 0,
+    "win": false,
+    "trades": 0,
+    "cumulative": 30000000
+  },
+  "postmortem": {
+    "bull_result": "MISS",
+    "bear_result": "HIT",
+    "neutral_result": "PARTIAL",
+    "bull_why": "자동",
+    "bear_why": "자동",
+    "neutral_why": "자동",
+    "key_lesson": "오류로 자동 판정",
+    "issue_type": "미분류",
+    "issue_desc": "",
+    "pattern_id": null,
+    "brain_updates": {
+      "bull_reliability_change": "stable",
+      "bear_reliability_change": "stable",
+      "new_lesson": null,
+      "market_regime": "unknown"
+    },
+    "correction_guide": {
+      "bull_adjustments": [],
+      "bear_adjustments": [],
+      "tuning_rules": [],
+      "today_notes": ""
+    }
+  },
+  "trades": [],
+  "mode": "paper"
+}

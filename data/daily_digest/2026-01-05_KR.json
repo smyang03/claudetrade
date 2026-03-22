@@ -1,0 +1,78 @@
+{
+  "date": "2026-01-05",
+  "market": "KR",
+  "context": {
+    "kospi": {},
+    "usd_krw": 0,
+    "vkospi": 0,
+    "foreign_futures": 0,
+    "us_prev": {},
+    "fomc": false,
+    "options_expiry": false
+  },
+  "technicals": {
+    "005930": {
+      "name": "삼성전자",
+      "close": 138100,
+      "change_pct": 7.47,
+      "rsi": NaN,
+      "macd": "골든크로스",
+      "bb_pos": "중간",
+      "bb_pct": NaN,
+      "ma_align": "혼재",
+      "vol_ratio": NaN,
+      "vol_signal": "감소",
+      "pos_52w": NaN,
+      "gap_pct": 4.75,
+      "foreign_flow": 0,
+      "inst_flow": 0,
+      "short_ratio": 0,
+      "disclosure": false
+    },
+    "000660": {
+      "name": "SK하이닉스",
+      "close": 696000,
+      "change_pct": 2.81,
+      "rsi": NaN,
+      "macd": "골든크로스",
+      "bb_pos": "중간",
+      "bb_pct": NaN,
+      "ma_align": "혼재",
+      "vol_ratio": NaN,
+      "vol_signal": "감소",
+      "pos_52w": NaN,
+      "gap_pct": 3.1,
+      "foreign_flow": 0,
+      "inst_flow": 0,
+      "short_ratio": 0,
+      "disclosure": false
+    },
+    "035420": {
+      "name": "NAVER",
+      "close": 249500,
+      "change_pct": 1.01,
+      "rsi": NaN,
+      "macd": "골든크로스",
+      "bb_pos": "중간",
+      "bb_pct": NaN,
+      "ma_align": "혼재",
+      "vol_ratio": NaN,
+      "vol_signal": "감소",
+      "pos_52w": NaN,
+      "gap_pct": 0.61,
+      "foreign_flow": 0,
+      "inst_flow": 0,
+      "short_ratio": 0,
+      "disclosure": false
+    }
+  },
+  "top_news": [],
+  "disclosures": [],
+  "prev_result": {
+    "date": "2026-01-01",
+    "mode": "NEUTRAL",
+    "pnl_pct": 0,
+    "win": false
+  },
+  "built_at": "2026-03-21T00:05:09.023280"
+}

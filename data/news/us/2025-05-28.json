@@ -1,0 +1,92 @@
+{
+  "date": "2025-05-28",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-28",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-05-28",
+          "url": "https://www.sec.gov2025-05-28",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-28",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-05-28",
+          "url": "https://www.sec.gov2025-05-28",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-28",
+          "title": "[] ['NVIDIA CORP  (NVDA)  (CIK 0001045810)']",
+          "content": "2025-05-28",
+          "url": "https://www.sec.gov2025-05-28",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-28",
+          "title": "[] ['Roth CH Acquisition Co.  (USCTF, USTWF)  (CIK 0001860514)']",
+          "content": "2025-05-28",
+          "url": "https://www.sec.gov2025-05-28",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-28",
+          "title": "[] ['American Resources Corp  (AREC)  (CIK 0001590715)']",
+          "content": "2025-05-28",
+          "url": "https://www.sec.gov2025-05-28",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-28",
+          "title": "[] ['Reservoir Media, Inc.  (RSVR, RSVRW)  (CIK 0001824403)']",
+          "content": "2025-05-28",
+          "url": "https://www.sec.gov2025-05-28",
+          "form_type": ""
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T14:11:23.625942"
+}

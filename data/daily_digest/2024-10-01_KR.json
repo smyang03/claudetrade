@@ -1,0 +1,18 @@
+{
+  "date": "2024-10-01",
+  "market": "KR",
+  "context": {
+    "kospi": {},
+    "usd_krw": 0,
+    "vkospi": 0,
+    "foreign_futures": 0,
+    "us_prev": {},
+    "fomc": false,
+    "options_expiry": false
+  },
+  "technicals": {},
+  "top_news": [],
+  "disclosures": [],
+  "prev_result": {},
+  "built_at": "2026-03-20T23:30:25.597867"
+}

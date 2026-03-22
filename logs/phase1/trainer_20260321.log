@@ -1,0 +1,83 @@
+2026-03-21 00:18:20 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 00:18:20 [INFO    ] build_us_digest:309 | [미국 digest] 2026-03-21
+2026-03-21 00:18:20 [DEBUG   ] load_price_with_cache:97 | 지표 캐시 갱신: NVDA
+2026-03-21 00:18:20 [DEBUG   ] load_price_with_cache:97 | 지표 캐시 갱신: TSLA
+2026-03-21 00:18:20 [DEBUG   ] load_price_with_cache:97 | 지표 캐시 갱신: AAPL
+2026-03-21 00:18:20 [INFO    ] build_us_digest:396 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 00:18:20 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.09초)
+2026-03-21 00:25:02 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 00:25:02 [INFO    ] build_us_digest:309 | [미국 digest] 2026-03-21
+2026-03-21 00:25:02 [ERROR   ] wrapper:255 | ❌ build_us_digest() 오류 (0.03초): Incompatible checksums (82904607 vs 0xd555cb8 = (_dtype, _ndarray))
+Traceback (most recent call last):
+  File "E:\code\claudetrade\logger.py", line 246, in wrapper
+    result = func(*args, **kwargs)
+  File "E:\code\claudetrade\phase1_trainer\digest_builder.py", line 336, in build_us_digest
+    df = load_price_with_cache("US", ticker)
+  File "E:\code\claudetrade\phase1_trainer\digest_builder.py", line 90, in load_price_with_cache
+    return pd.read_pickle(cache_path)
+  File "C:\Users\Unknown\anaconda3\lib\site-packages\pandas\io\pickle.py", line 205, in read_pickle
+    return pickle.load(handles.handle)
+  File "stringsource", line 6, in pandas._libs.arrays.__pyx_unpickle_NDArrayBacked
+_pickle.PickleError: Incompatible checksums (82904607 vs 0xd555cb8 = (_dtype, _ndarray))
+
+2026-03-21 00:27:14 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 00:27:14 [INFO    ] build_us_digest:309 | [미국 digest] 2026-03-21
+2026-03-21 00:27:14 [DEBUG   ] load_price_with_cache:97 | 지표 캐시 갱신: NVDA
+2026-03-21 00:27:14 [DEBUG   ] load_price_with_cache:97 | 지표 캐시 갱신: TSLA
+2026-03-21 00:27:14 [DEBUG   ] load_price_with_cache:97 | 지표 캐시 갱신: AAPL
+2026-03-21 00:27:14 [INFO    ] build_us_digest:396 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 00:27:14 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.03초)
+2026-03-21 00:28:20 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 00:28:20 [INFO    ] build_us_digest:309 | [미국 digest] 2026-03-21
+2026-03-21 00:28:20 [INFO    ] build_us_digest:396 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 00:28:20 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.03초)
+2026-03-21 00:53:06 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 00:53:06 [INFO    ] build_us_digest:309 | [미국 digest] 2026-03-21
+2026-03-21 00:53:06 [INFO    ] build_us_digest:396 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 00:53:06 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.01초)
+2026-03-21 00:55:31 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 00:55:31 [INFO    ] build_us_digest:309 | [미국 digest] 2026-03-21
+2026-03-21 00:55:31 [INFO    ] build_us_digest:396 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 00:55:31 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.01초)
+2026-03-21 00:58:03 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 00:58:03 [INFO    ] build_us_digest:309 | [미국 digest] 2026-03-21
+2026-03-21 00:58:03 [INFO    ] build_us_digest:396 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 00:58:03 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.01초)
+2026-03-21 01:13:01 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 01:13:01 [INFO    ] build_us_digest:309 | [미국 digest] 2026-03-21
+2026-03-21 01:13:02 [INFO    ] build_us_digest:396 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 01:13:02 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.01초)
+2026-03-21 01:21:24 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 01:21:24 [INFO    ] build_us_digest:309 | [미국 digest] 2026-03-21
+2026-03-21 01:21:24 [INFO    ] build_us_digest:396 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 01:21:24 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.01초)
+2026-03-21 01:26:39 [INFO    ] fetch_live_context_us:181 |   [live context] yfinance로 US 시장 지표 수집 중...
+2026-03-21 01:26:41 [INFO    ] fetch_live_context_kr:195 |   [live context] yfinance로 KR 시장 지표 수집 중...
+2026-03-21 01:28:01 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 01:28:01 [INFO    ] build_us_digest:373 | [미국 digest] 2026-03-21
+2026-03-21 01:28:01 [INFO    ] fetch_live_context_us:181 |   [live context] yfinance로 US 시장 지표 수집 중...
+2026-03-21 01:28:01 [INFO    ] build_us_digest:465 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 01:28:01 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.66초)
+2026-03-21 01:52:08 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 01:52:08 [INFO    ] build_us_digest:373 | [미국 digest] 2026-03-21
+2026-03-21 01:52:08 [INFO    ] fetch_live_context_us:181 |   [live context] yfinance로 US 시장 지표 수집 중...
+2026-03-21 01:52:09 [INFO    ] build_us_digest:465 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 01:52:09 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (0.67초)
+2026-03-21 08:50:00 [INFO    ] wrapper:239 | ▶ build_kr_digest() 시작
+2026-03-21 08:50:00 [INFO    ] build_kr_digest:251 | [국내 digest] 2026-03-21
+2026-03-21 08:50:00 [INFO    ] fetch_live_context_kr:195 |   [live context] yfinance로 KR 시장 지표 수집 중...
+2026-03-21 08:50:05 [DEBUG   ] load_price_with_cache:104 | 지표 캐시 갱신: 005930
+2026-03-21 08:50:05 [DEBUG   ] load_price_with_cache:104 | 지표 캐시 갱신: 000660
+2026-03-21 08:50:05 [DEBUG   ] load_price_with_cache:104 | 지표 캐시 갱신: 035420
+2026-03-21 08:50:05 [INFO    ] build_kr_digest:364 |   ✅ KR digest 저장: 2026-03-21_KR.json (뉴스 0건, 공시 0건, 종목 3개)
+2026-03-21 08:50:05 [INFO    ] wrapper:248 | ✅ build_kr_digest() 완료 (5.08초)
+2026-03-21 22:20:00 [INFO    ] wrapper:239 | ▶ build_us_digest() 시작
+2026-03-21 22:20:00 [INFO    ] build_us_digest:373 | [미국 digest] 2026-03-21
+2026-03-21 22:20:00 [INFO    ] fetch_live_context_us:181 |   [live context] yfinance로 US 시장 지표 수집 중...
+2026-03-21 22:20:01 [INFO    ] build_us_digest:465 |   ✅ US digest 저장: 2026-03-21_US.json
+2026-03-21 22:20:01 [INFO    ] wrapper:248 | ✅ build_us_digest() 완료 (1.05초)
+2026-03-22 08:50:01 [INFO    ] wrapper:239 | ▶ build_kr_digest() 시작
+2026-03-22 08:50:01 [INFO    ] build_kr_digest:251 | [국내 digest] 2026-03-22
+2026-03-22 08:50:01 [INFO    ] fetch_live_context_kr:195 |   [live context] yfinance로 KR 시장 지표 수집 중...
+2026-03-22 08:50:02 [INFO    ] build_kr_digest:364 |   ✅ KR digest 저장: 2026-03-22_KR.json (뉴스 0건, 공시 0건, 종목 3개)
+2026-03-22 08:50:02 [INFO    ] wrapper:248 | ✅ build_kr_digest() 완료 (1.77초)

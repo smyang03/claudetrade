@@ -1,0 +1,75 @@
+{
+  "date": "2023-12-07",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-12-07",
+          "title": "[] ['CalEthos, Inc.  (GEDC)  (CIK 0001174891)']",
+          "content": "2023-12-07",
+          "url": "https://www.sec.gov2023-12-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-12-07",
+          "title": "[] ['Braze, Inc.  (BRZE)  (CIK 0001676238)']",
+          "content": "2023-12-07",
+          "url": "https://www.sec.gov2023-12-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-12-07",
+          "title": "[] ['Virpax Pharmaceuticals, Inc.  (VRPX)  (CIK 0001708331)']",
+          "content": "2023-12-07",
+          "url": "https://www.sec.gov2023-12-07",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2023-12-07",
+          "title": "[] ['BiomX Inc.  (PHGE, PHGEW, PHGE-UN)  (CIK 0001739174)']",
+          "content": "2023-12-07",
+          "url": "https://www.sec.gov2023-12-07",
+          "form_type": ""
+        }
+      ],
+      "count": 4,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T06:47:09.328281"
+}

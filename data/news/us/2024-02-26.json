@@ -1,0 +1,83 @@
+{
+  "date": "2024-02-26",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-26",
+          "title": "[] ['Shutterstock, Inc.  (SSTK)  (CIK 0001549346)']",
+          "content": "2024-02-26",
+          "url": "https://www.sec.gov2024-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-26",
+          "title": "[] ['Unity Software Inc.  (U)  (CIK 0001810806)']",
+          "content": "2024-02-26",
+          "url": "https://www.sec.gov2024-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-26",
+          "title": "[] ['LABORATORY CORP OF AMERICA HOLDINGS  (LH)  (CIK 0000920148)']",
+          "content": "2024-02-26",
+          "url": "https://www.sec.gov2024-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-26",
+          "title": "[] ['Playtika Holding Corp.  (PLTK)  (CIK 0001828016)']",
+          "content": "2024-02-26",
+          "url": "https://www.sec.gov2024-02-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2024-02-26",
+          "title": "[] ['ZIFF DAVIS, INC.  (ZD)  (CIK 0001084048)']",
+          "content": "2024-02-26",
+          "url": "https://www.sec.gov2024-02-26",
+          "form_type": ""
+        }
+      ],
+      "count": 5,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T10:24:07.869800"
+}

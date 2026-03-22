@@ -1,0 +1,59 @@
+{
+  "date": "2025-05-13",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [],
+      "count": 0,
+      "avg_sentiment": 0.0
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-13",
+          "title": "[] ['TRAVELZOO  (TZOO)  (CIK 0001133311)']",
+          "content": "2025-05-13",
+          "url": "https://www.sec.gov2025-05-13",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2025-05-13",
+          "title": "[] ['Verb Technology Company, Inc.  (VERB)  (CIK 0001566610)']",
+          "content": "2025-05-13",
+          "url": "https://www.sec.gov2025-05-13",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.0
+    }
+  },
+  "collected_at": "2026-03-20T13:29:36.512453"
+}
