@@ -61,6 +61,8 @@ def _cat(stance: str) -> str:
         return "bear"
     return "neutral"
 
+TRIGGER_WORDS_KR = ["공시", "급락", "세력", "서킷", "이탈", "장중 -"]
+TRIGGER_WORDS_US = ["halt", "circuit", "crash", "sec", "fraud", "bankrupt", "plunge"]
 
 def _get_weights(market: str) -> dict:
     """
@@ -118,10 +120,10 @@ def build_consensus(judgments: dict, check_minority: bool = True,
     if check_minority:
         bear_reason = bear.get("key_reason", "").lower()
         bear_conf   = bear.get("confidence", 0)
-        trigger_words = ["공시", "급락", "세력", "서킷", "이탈", "장중 -"]
+        trigger_words = TRIGGER_WORDS_US if market == "US" else TRIGGER_WORDS_KR
         if any(w in bear_reason for w in trigger_words) and bear_conf > 0.7:
             minority_triggered = True
-            log.warning(f"⚠️ 마이너리티 룰 발동: {bear_reason[:60]}")
+            log.warning(f"⚠️ 마이너리티 룰 발동 [{market}]: {bear_reason[:60]}")
 
     # ── 가중 점수 계산 ─────────────────────────────────────────────────────────
     # stance_score만으로 방향 결정 (confidence는 size 보정에만 사용)

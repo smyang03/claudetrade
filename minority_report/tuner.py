@@ -10,7 +10,7 @@ from credit_tracker import record as credit_record
 
 log    = get_minority_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
-MODEL  = "claude-sonnet-4-6"
+MODEL  = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 def tune(market: str, elapsed_min: int, current_state: dict,
          morning_judgment: dict, brain_summary: str) -> dict:

@@ -37,14 +37,17 @@ def calc_all(df: pd.DataFrame) -> pd.DataFrame:
     # 52주 고저
     d["high52"] = d["high"].rolling(252).max()
     d["low52"]  = d["low"].rolling(252).min()
-    d["pos52"]  = (d["close"]-d["low52"])/(d["high52"]-d["low52"].replace(0,np.nan))*100
+    denom52 = (d["high52"] - d["low52"]).replace(0, np.nan)   # high==low 구간은 NaN 처리
+    d["pos52"]  = (d["close"] - d["low52"]) / denom52 * 100
     # 갭, 수익률
     d["gap_pct"]    = (d["open"]-d["close"].shift())/d["close"].shift()*100
     d["change_pct"] = d["close"].pct_change()*100
     # 신호 생성
+    valid_ma = d["ma5"].notna() & d["ma20"].notna() & d["ma60"].notna()
     d["ma_align"] = np.where(
-        (d["ma5"]>d["ma20"]) & (d["ma20"]>d["ma60"]), "정배열",
-        np.where((d["ma5"]<d["ma20"]) & (d["ma20"]<d["ma60"]), "역배열", "혼재"))
+        ~valid_ma, "혼재",
+        np.where((d["ma5"]>d["ma20"]) & (d["ma20"]>d["ma60"]), "정배열",
+        np.where((d["ma5"]<d["ma20"]) & (d["ma20"]<d["ma60"]), "역배열", "혼재")))
     d["macd_cross"] = np.where(
         (d["macd"]>d["macd_signal"]) & (d["macd"].shift()<=d["macd_signal"].shift()),
         "골든크로스",

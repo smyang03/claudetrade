@@ -33,6 +33,12 @@ from phase1_trainer.digest_builder import (
     load_digest, digest_to_prompt
 )
 from runtime_paths import get_runtime_path
+from universe_manager import (
+    UniverseConfig,
+    build_universe_from_price_history,
+    load_universe_snapshot,
+    save_universe_snapshot,
+)
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "claude_memory"))
 import brain as BrainDB
@@ -45,6 +51,26 @@ JUDGMENT_DIR= get_runtime_path("logs", "daily_judgment", make_parents=False)
 JUDGMENT_DIR.mkdir(parents=True, exist_ok=True)
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _available_tickers_from_price_dir(market: str) -> list[str]:
+    root = PRICE_DIR / market.lower()
+    if not root.exists():
+        return []
+    prefix = f"{market.lower()}_"
+    tickers = []
+    for p in root.glob(f"{prefix}*.csv"):
+        stem = p.stem
+        if stem.startswith(prefix):
+            tickers.append(stem[len(prefix):].upper())
+    return sorted(set(tickers))
 
 # ── 합의 룰 ───────────────────────────────────────────────────────────────────
 
@@ -209,14 +235,15 @@ def call_claude_postmortem(
 
 # ── 실제 결과 계산 ────────────────────────────────────────────────────────────
 
-def calc_actual_result(market: str, target_date: str, mode: str) -> dict:
+def calc_actual_result(market: str, target_date: str, mode: str, tickers: list[str] | None = None) -> dict:
     """
     해당 날짜의 실제 시장 결과 계산
     주가 데이터에서 당일 등락률 추출
     """
     from phase1_trainer.digest_builder import KR_TICKERS, US_TICKERS, load_price_with_cache
 
-    tickers = KR_TICKERS if market == "KR" else US_TICKERS
+    if not tickers:
+        tickers = list((KR_TICKERS if market == "KR" else US_TICKERS).keys())
     changes = []
 
     for ticker in (tickers.keys() if isinstance(tickers, dict) else tickers):
@@ -284,13 +311,33 @@ def simulate_day(market: str, target_date: str, cumulative: float) -> dict:
     7. brain 업데이트
     8. 판단 기록 저장
     """
+    dynamic_universe_on = _env_bool("ENABLE_DYNAMIC_UNIVERSE", False)
+    top_n = int(os.getenv("DYNAMIC_UNIVERSE_TOP_N", "20"))
+    universe_tickers: list[str] = []
+    if dynamic_universe_on:
+        snap = load_universe_snapshot(market, target_date)
+        if not snap:
+            avail = _available_tickers_from_price_dir(market)
+            if avail:
+                snap = build_universe_from_price_history(
+                    market=market,
+                    target_date=target_date,
+                    tickers=avail,
+                    load_price_fn=load_price_with_cache,
+                    config=UniverseConfig(top_n=max(3, top_n)),
+                )
+                save_universe_snapshot(snap)
+        universe_tickers = list(snap.get("tickers", [])) if snap else []
+
     # 1. Digest
     digest = load_digest(market, target_date)
     if not digest:
         if market == "KR":
-            digest = build_kr_digest(target_date)
+            digest = build_kr_digest(target_date, universe_tickers=universe_tickers or None)
         else:
-            digest = build_us_digest(target_date)
+            digest = build_us_digest(target_date, universe_tickers=universe_tickers or None)
+    elif dynamic_universe_on and digest.get("universe_tickers"):
+        universe_tickers = list(digest.get("universe_tickers", []))
 
     digest_prompt = digest_to_prompt(digest)
 
@@ -319,7 +366,12 @@ def simulate_day(market: str, target_date: str, cumulative: float) -> dict:
     )
 
     # 5. 실제 결과
-    actual = calc_actual_result(market, target_date, consensus["mode"])
+    actual = calc_actual_result(
+        market,
+        target_date,
+        consensus["mode"],
+        tickers=universe_tickers or None,
+    )
     cumulative *= (1 + actual["pnl_pct"] / 100)
     actual["cumulative"] = round(cumulative)
 
@@ -377,6 +429,7 @@ def simulate_day(market: str, target_date: str, cumulative: float) -> dict:
         "date":        target_date,
         "market":      market,
         "mode":        "historical_sim",
+        "universe_tickers": universe_tickers,
         "judgments":   {"bull": bull, "bear": bear, "neutral": neut},
         "consensus":   consensus,
         "actual_result": actual,

@@ -16,9 +16,49 @@ log          = get_minority_logger()
 analysis_log = get_analysis_logger()
 judgment_log = get_judgment_logger()
 client       = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-MODEL        = "claude-sonnet-4-6"
-
+MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 STANCES = "AGGRESSIVE|MODERATE_BULL|MILD_BULL|NEUTRAL|MILD_BEAR|CAUTIOUS_BEAR|DEFENSIVE|HALT"
+ALLOWED_STANCES = set(STANCES.split("|"))
+ALLOWED_STRATEGIES = {"모멘텀", "평균회귀", "갭풀백", "변동성돌파", "관망"}
+
+
+def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
+    stance = str(result.get("stance", "NEUTRAL")).strip().upper()
+    if stance not in ALLOWED_STANCES:
+        log.warning(f"[{analyst_type}] invalid stance={stance} -> NEUTRAL")
+        stance = "NEUTRAL"
+    try:
+        confidence = float(result.get("confidence", 0.3))
+    except Exception:
+        confidence = 0.3
+    confidence = max(0.0, min(1.0, confidence))
+    top_risks = result.get("top_risks", [])
+    if not isinstance(top_risks, list):
+        top_risks = []
+    top_risks = [str(x) for x in top_risks[:5]]
+    suggested_strategy = str(result.get("suggested_strategy", "관망")).strip()
+    if suggested_strategy not in ALLOWED_STRATEGIES:
+        suggested_strategy = "관망"
+    return {
+        "stance": stance,
+        "confidence": confidence,
+        "key_reason": str(result.get("key_reason", ""))[:500],
+        "full_reasoning": str(result.get("full_reasoning", ""))[:2000],
+        "top_risks": top_risks,
+        "suggested_strategy": suggested_strategy,
+    }
+
+
+def _fallback_result(error: Exception) -> dict:
+    return {
+        "stance": "NEUTRAL",
+        "confidence": 0.3,
+        "key_reason": f"오류:{str(error)[:60]}",
+        "full_reasoning": "",
+        "top_risks": [],
+        "suggested_strategy": "관망",
+    }
+
 
 # ── 강화된 페르소나 ────────────────────────────────────────────────────────────
 PERSONAS = {
@@ -113,7 +153,7 @@ JSON으로만 응답 (다른 텍스트 없이):
         raw = resp.content[0].text.strip()
         if "```" in raw:
             raw = raw.split("```")[1].replace("json", "").strip()
-        result = json.loads(raw)
+        result = _sanitize_analyst_result(json.loads(raw), analyst_type)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
                       f"analyst_{analyst_type}_r1")
         log.info(f"[{analyst_type} R1] {result.get('stance','-')} "
@@ -134,10 +174,7 @@ JSON으로만 응답 (다른 텍스트 없이):
         return result
     except Exception as e:
         log.error(f"[{analyst_type} R1] 오류: {e}")
-        return {"stance": "NEUTRAL", "confidence": 0.3,
-                "key_reason": f"오류:{str(e)[:40]}",
-                "full_reasoning": "", "top_risks": [],
-                "suggested_strategy": "관망"}
+        return _fallback_result(e)
 
 
 # ── 2라운드: 토론 후 최종 판단 ────────────────────────────────────────────────
@@ -289,47 +326,40 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
             "_debate": {"r1": r1, "changes": changes}}
 
 
-def select_tickers(market: str, digest_prompt: str,
-                   consensus_mode: str, candidates: list) -> list:
+def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list) -> list:
     """
     오늘 집중 모니터링할 종목을 Claude가 선택 (3~5개)
     candidates: screen_market_kr/us 결과
     """
     if not candidates:
         log.warning("[종목선택] 후보 없음 → 기본값 사용")
-        defaults = {"KR": ["005930", "000660", "035420"],
-                    "US": ["NVDA", "TSLA", "AAPL"]}
+        defaults = {"KR": ["005930", "000660", "035420"], "US": ["NVDA", "TSLA", "AAPL"]}
         return defaults.get(market, [])
 
     cand_lines = []
     for c in candidates[:40]:
-        rate_str = f"{c['change_rate']:+.2f}%" if c.get("change_rate") else ""
-        vol_str  = f"거래량{c['vol_ratio']:.1f}배" if c.get("vol_ratio", 0) > 0 else ""
-        cand_lines.append(f"  {c['ticker']} {c['name']} {rate_str} {vol_str}".strip())
+        rate_str = f"{float(c.get('change_rate', 0.0)):+.2f}%"
+        vr = float(c.get("vol_ratio", 0.0))
+        vol_str  = f"거래량{vr:.1f}배" if vr > 0 else ""
+        cand_lines.append(f"  {c.get('ticker')} {c.get('name','')} {rate_str} {vol_str}".strip())
     cand_text = "\n".join(cand_lines)
 
-    prompt = f"""주식 트레이딩 AI입니다. 오늘 {market} 장 매매 후보 종목을 선택하세요.
-
-현재 합의 모드: {consensus_mode}
-
-오늘 시장에서 활발한 종목 (스크리너 결과):
+    prompt = f"""Pick 3-5 tickers for today's {market} session.
+Consensus mode: {consensus_mode}
+Candidates:
 {cand_text}
 
-시장 컨텍스트:
+Context:
 {digest_prompt[:400]}
 
-규칙:
-- 반드시 3~5개 선택
-- {consensus_mode} 모드에 적합한 종목 우선
-- HALT/DEFENSIVE: 저변동·방어주 위주, 급등락 종목 제외
-- AGGRESSIVE/MODERATE_BULL: 모멘텀·거래량 강한 종목 우선
-- 후보 목록에 없는 종목은 선택 불가
+Rules:
+- Pick only from candidates.
+- Return JSON only.
 
-JSON으로만:
-{{"tickers":["코드1","코드2","코드3"],"reasons":{{"코드1":"이유 한 문장"}}}}"""
+{{"tickers":["code1","code2","code3"],"reasons":{{"code1":"short reason"}}}}"""
 
-    valid    = {c["ticker"] for c in candidates}
-    fallback = [c["ticker"] for c in candidates[:3]]
+    valid    = {c["ticker"] for c in candidates if c.get("ticker")}
+    fallback = [c["ticker"] for c in candidates[:3] if c.get("ticker")]
 
     try:
         resp = client.messages.create(model=MODEL, max_tokens=512,
@@ -341,22 +371,22 @@ JSON으로만:
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers")
         tickers = [t for t in result.get("tickers", []) if t in valid][:5]
         if not tickers:
-            raise ValueError("유효 종목 없음")
-        log.info(f"[종목선택] {market} → {tickers}")
+            raise ValueError("no valid tickers")
+        log.info(f"[ticker-selection] {market} -> {tickers}")
         analysis_log.info(
             f"[selection] {market} {tickers}",
-            extra={"extra": {
-                "event": "ticker_selection",
-                "market": market,
-                "consensus_mode": consensus_mode,
-                "selected": tickers,
-                "candidate_count": len(candidates),
-                "reasons": result.get("reasons", {}),
-            }},
+            extra={
+                "extra": {
+                    "event": "ticker_selection",
+                    "market": market,
+                    "consensus_mode": consensus_mode,
+                    "selected": tickers,
+                    "candidate_count": len(candidates),
+                    "reasons": result.get("reasons", {}),
+                }
+            },
         )
-        for t, r in result.get("reasons", {}).items():
-            log.info(f"  {t}: {r[:60]}")
         return tickers
     except Exception as e:
-        log.error(f"[종목선택 오류] {e} → 기본값 사용")
+        log.error(f"[ticker-selection] error: {e} -> fallback")
         return fallback

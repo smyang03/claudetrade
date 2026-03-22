@@ -39,6 +39,13 @@ CACHE_DIR   = BASE_DIR / "data" / "cache"
 for d in [DIGEST_DIR, CACHE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+
+def _ticker_map(market: str, universe_tickers: list[str] | None = None) -> dict:
+    base = KR_TICKERS if market == "KR" else US_TICKERS
+    if not universe_tickers:
+        return dict(base)
+    return {t: base.get(t, t) for t in universe_tickers}
+
 KR_TICKERS = {"005930":"삼성전자","000660":"SK하이닉스","035420":"NAVER"}
 US_TICKERS = {"NVDA":"엔비디아","TSLA":"테슬라","AAPL":"애플"}
 
@@ -73,7 +80,8 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     win52 = min(252, max(20, len(d)))
     d["high52"]   = d["high"].rolling(win52, min_periods=5).max()
     d["low52"]    = d["low"].rolling(win52, min_periods=5).min()
-    d["pos52"]    = (d["close"] - d["low52"]) / (d["high52"] - d["low52"]).replace(0, np.nan) * 100
+    denom52 = (d["high52"] - d["low52"]).replace(0, float("nan"))
+    d["pos52"]    = (d["close"] - d["low52"]) / denom52 * 100
     d["gap"]      = (d["open"] - d["close"].shift(1)) / d["close"].shift(1) * 100
     d["vol_ratio"]= d["volume"] / d["vol_avg"]
     d["change_pct"]= d["close"].pct_change() * 100
@@ -94,7 +102,10 @@ def load_price_with_cache(market: str, ticker: str) -> pd.DataFrame:
                    cache_path.stat().st_mtime > raw_mtime)
 
     if cache_valid:
-        return pd.read_pickle(cache_path)
+        try:
+            return pd.read_pickle(cache_path)
+        except Exception:
+            cache_path.unlink(missing_ok=True)
 
     df = pd.read_csv(raw_path, parse_dates=["date"])
     df.columns = [c.lower() for c in df.columns]
@@ -243,7 +254,7 @@ def load_prev_result(market: str, target_date: str) -> dict:
 # ── 핵심 digest 생성 ──────────────────────────────────────────────────────────
 
 @log_call(logger=log, level="INFO")
-def build_kr_digest(target_date: str) -> dict:
+def build_kr_digest(target_date: str, universe_tickers: list[str] | None = None) -> dict:
     """
     국내 daily_digest 생성
     목표: ~800 토큰
@@ -270,8 +281,9 @@ def build_kr_digest(target_date: str) -> dict:
     }
 
     # ── Layer B: 종목 핵심 지표 (~300 토큰) ──────────────────────────────────
+    ticker_map = _ticker_map("KR", universe_tickers)
     layer_b = {}
-    for ticker, name in KR_TICKERS.items():
+    for ticker, name in ticker_map.items():
         df = load_price_with_cache("KR", ticker)
         if df.empty:
             log.warning(f"주가 데이터 없음: {ticker}")
@@ -326,7 +338,7 @@ def build_kr_digest(target_date: str) -> dict:
     # ── Layer C: 뉴스 선별 (~200 토큰) ───────────────────────────────────────
     # 전체 뉴스 수집
     all_news = list(news.get("market_news", []))
-    for code in KR_TICKERS:
+    for code in ticker_map:
         corp = news.get("corp_news", {}).get(code, {})
         all_news.extend(corp.get("items", []))
 
@@ -341,13 +353,14 @@ def build_kr_digest(target_date: str) -> dict:
     # 공시 별도 (중요도 최상)
     disclosures = []
     for code, items in news.get("disclosures", {}).items():
-        name = KR_TICKERS.get(code, code)
+        name = ticker_map.get(code, code)
         for d in items[:2]:
             disclosures.append(f"[{name}] {d.get('title','')}")
 
     digest = {
         "date":        target_date,
         "market":      "KR",
+        "universe_tickers": list(ticker_map.keys()),
         "context":     layer_a,
         "technicals":  layer_b,
         "top_news":    layer_c,
@@ -368,7 +381,7 @@ def build_kr_digest(target_date: str) -> dict:
 
 
 @log_call(logger=log, level="INFO")
-def build_us_digest(target_date: str) -> dict:
+def build_us_digest(target_date: str, universe_tickers: list[str] | None = None) -> dict:
     """미국 daily_digest 생성"""
     log.info(f"[미국 digest] {target_date}")
     supp = load_supplement("US", target_date)
@@ -400,8 +413,9 @@ def build_us_digest(target_date: str) -> dict:
         "premarket":  supp.get("premarket", {}),
     }
 
+    ticker_map = _ticker_map("US", universe_tickers)
     layer_b = {}
-    for ticker, name in US_TICKERS.items():
+    for ticker, name in ticker_map.items():
         df = load_price_with_cache("US", ticker)
         if df.empty:
             continue
@@ -442,7 +456,7 @@ def build_us_digest(target_date: str) -> dict:
         }
 
     all_news = list(news.get("market_news", []))
-    for t in US_TICKERS:
+    for t in ticker_map:
         items = news.get("corp_news", {}).get(t, {}).get("items", [])
         all_news.extend(items)
     top_news = filter_top_news(all_news, top_n=5)
@@ -451,6 +465,7 @@ def build_us_digest(target_date: str) -> dict:
     digest = {
         "date":        target_date,
         "market":      "US",
+        "universe_tickers": list(ticker_map.keys()),
         "context":     layer_a,
         "technicals":  layer_b,
         "top_news":    layer_c,

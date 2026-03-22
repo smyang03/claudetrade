@@ -60,10 +60,10 @@ def run(market: str, date: str, today_judgment: dict,
                 없으면 빈 리스트로 처리
     """
     trade_log = trade_log or []
-
     judgments      = today_judgment.get("judgments", {})
     consensus      = today_judgment.get("consensus", {})
     consensus_mode = consensus.get("mode", "CAUTIOUS")
+    trade_log      = trade_log or []
 
     # ── HALT 또는 판단 없는 날 스킵 ──────────────────────────────────────────
     if not judgments or consensus_mode == "HALT":
@@ -94,62 +94,72 @@ def run(market: str, date: str, today_judgment: dict,
     worst_s = (f"{worst['ticker']} {worst['pnl']:+,}원 ({worst.get('strategy','-')})"
                if worst else "없음")
 
-    prompt = f"""트레이딩 AI 사후 분석가입니다. 오늘 아침 판단과 실제 매매 결과를 분석하세요.
+    wins   = [t for t in trade_log if t.get("side") == "sell" and t.get("pnl", 0) > 0]
+    losses = [t for t in trade_log if t.get("side") == "sell" and t.get("pnl", 0) <= 0]
 
-[아침 판단]
+    prompt = f"""당신은 트레이딩 AI의 사후 분석가입니다.
+오늘 거래와 아침 판단을 비교해 솔직하게 복기하세요.
+
+━━━ 아침 판단 ━━━
   Bull:    {judgments.get('bull',{}).get('stance','-')} / {judgments.get('bull',{}).get('key_reason','-')}
   Bear:    {judgments.get('bear',{}).get('stance','-')} / {judgments.get('bear',{}).get('key_reason','-')}
   Neutral: {judgments.get('neutral',{}).get('stance','-')} / {judgments.get('neutral',{}).get('key_reason','-')}
-  합의:    {consensus_mode}
+  합의 모드: {consensus_mode} (size={consensus.get('size','-')}%)
 
-[실제 결과]
-  시장 등락: {actual_result.get('market_change', 0):+.2f}%
-  봇 손익:   {actual_result.get('pnl_pct', 0):+.2f}%  {'승' if actual_result.get('win') else '패'}
-  거래 수:   {len(trade_log)}건 (체결 {actual_result.get('trades', 0)}건)
-
-[오늘 체결 내역]
+━━━ 오늘 체결 내역 ({len(trade_log)}건) ━━━
 {trade_section}
   최고 거래: {best_s}
   최악 거래: {worst_s}
 
-[시장 데이터]
+━━━ 실제 결과 ━━━
+  시장 변동: {actual_result.get('market_change', 0):+.2f}%
+  내 손익:   {actual_result.get('pnl_pct', 0):+.2f}%  {'✅ 승' if actual_result.get('win') else '❌ 패'}
+  수익 청산: {len(wins)}건 / 손실 청산: {len(losses)}건
+
+━━━ 시장 컨텍스트 ━━━
 {digest_prompt[:350]}
 
-[누적 학습]
-{brain_summary[:200]}
+━━━ 누적 학습 현황 ━━━
+{brain_summary[:300]}
 
-JSON으로만 응답 (설명 없이):
+━━━ 분석 지침 ━━━
+1. 아침 Bull/Bear/Neutral 판단이 실제로 맞았는지 평가하세요.
+2. 어떤 거래가 왜 좋았고 왜 나빴는지 구체적으로 설명하세요.
+3. 손실 거래가 있다면 반드시 원인을 분석하세요.
+4. 같은 상황이 반복된다면 내일 어떻게 다르게 할지 제안하세요.
+
+아래 JSON으로만 응답하세요:
 {{
   "bull_result":   "HIT|MISS|PARTIAL",
   "bear_result":   "HIT|MISS|PARTIAL",
   "neutral_result":"HIT|MISS|PARTIAL",
-  "bull_why":      "한 문장",
-  "bear_why":      "한 문장",
-  "neutral_why":   "한 문장",
-  "key_lesson":    "오늘 핵심 교훈 (다음날 반영)",
-  "best_trade":    "최고 거래 요인 한 문장 또는 null",
-  "worst_trade":   "최악 거래 요인 한 문장 또는 null",
-  "worst_trade_reason": "최악 거래의 근본 원인",
-  "issue_type":    "이슈 유형",
-  "issue_desc":    "한 문장",
-  "pattern_id":    "기존ID 또는 null",
+  "bull_why":      "한 문장으로 왜 맞았/틀렸는지",
+  "bear_why":      "한 문장으로 왜 맞았/틀렸는지",
+  "neutral_why":   "한 문장으로 왜 맞았/틀렸는지",
+  "best_trade":    "가장 잘된 거래 ticker 또는 null",
+  "worst_trade":   "가장 아쉬운 거래 ticker 또는 null",
+  "worst_trade_reason": "손실/아쉬운 이유 한 문장",
+  "key_lesson":    "오늘 핵심 교훈 (내일 행동에 반영할 것)",
+  "issue_type":    "이슈 유형 (개별기업_호재/지수급락/변동성확대 등)",
+  "issue_desc":    "이슈 한 문장 요약",
+  "pattern_id":    "기존 패턴 ID 또는 null",
   "brain_updates": {{
     "bull_reliability_change": "up|down|stable",
     "bear_reliability_change": "up|down|stable",
-    "new_lesson":    "brain에 추가할 교훈 또는 null",
-    "market_regime": "강세장|약세장|횡보|변동성장"
+    "new_lesson":    "교훈 문장 또는 null",
+    "market_regime": "현재 장세 한 단어"
   }},
   "correction_guide": {{
-    "bull_adjustments":  [],
-    "bear_adjustments":  [],
-    "tuning_rules":      [],
-    "today_notes":       ""
+    "bull_adjustments":  ["내일 Bull 판단 시 주의사항"],
+    "bear_adjustments":  ["내일 Bear 판단 시 주의사항"],
+    "tuning_rules":      ["장중 튜닝 규칙"],
+    "today_notes":       "내일 특별 주의사항"
   }}
 }}"""
 
     try:
         resp = client.messages.create(
-            model=MODEL, max_tokens=700,
+            model=MODEL, max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = resp.content[0].text.strip()
@@ -164,7 +174,7 @@ JSON으로만 응답 (설명 없이):
             "bull_result": "HIT" if win else "MISS",
             "bear_result": "MISS" if win else "HIT",
             "neutral_result": "PARTIAL",
-            "bull_why": "자동", "bear_why": "자동", "neutral_why": "자동",
+            "bull_why": "자동 판정", "bear_why": "자동 판정", "neutral_why": "자동 판정",
             "key_lesson": "오류로 자동 판정",
             "best_trade": None, "worst_trade": None, "worst_trade_reason": "",
             "issue_type": "미분류", "issue_desc": "", "pattern_id": None,
@@ -176,8 +186,7 @@ JSON으로만 응답 (설명 없이):
         }
 
     # ── brain 업데이트 ────────────────────────────────────────────────────────
-    brain      = BrainDB.load()
-    recent     = brain["markets"][market].get("recent_days", [])
+    recent = BrainDB.load()["markets"][market].get("recent_days", [])
 
     BrainDB.update_analyst(market, "bull",    pm["bull_result"]    == "HIT", recent)
     BrainDB.update_analyst(market, "bear",    pm["bear_result"]    == "HIT", recent)
@@ -186,6 +195,7 @@ JSON으로만 응답 (설명 없이):
         market, consensus_mode,
         actual_result.get("pnl_pct", 0), actual_result.get("win", False)
     )
+
 
     bu = pm.get("brain_updates", {})
     if bu.get("new_lesson"):
@@ -210,6 +220,10 @@ JSON으로만 응답 (설명 없이):
         "bull_result":    pm["bull_result"],
         "bear_result":    pm["bear_result"],
         "neutral_result": pm["neutral_result"],
+        "key_lesson":     pm.get("key_lesson", ""),
+        "best_trade":     pm.get("best_trade"),
+        "worst_trade":    pm.get("worst_trade"),
+        "trades":         len(trade_log),
     })
 
     # ── 전략별 성과 자동 업데이트 ─────────────────────────────────────────────
@@ -230,8 +244,12 @@ JSON으로만 응답 (설명 없이):
 
     log.info(
         f"[postmortem {date}] Bull:{pm['bull_result']} Bear:{pm['bear_result']} "
-        f"Neut:{pm['neutral_result']} | {pm['key_lesson'][:60]}"
+        f"Neut:{pm['neutral_result']} | {pm.get('key_lesson','')[:60]}"
     )
+    if pm.get("worst_trade"):
+        log.warning(
+            f"[worst_trade] {pm['worst_trade']} — {pm.get('worst_trade_reason','')}"
+        )
 
     # ── JSONL 학습 로그 저장 (프롬프트 + 응답 + 거래 원본) ───────────────────
     judgment_log.info(
