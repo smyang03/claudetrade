@@ -66,3 +66,11 @@
 2026-03-22 12:45:43 [DEBUG   ] _get_weights:90 | 가중치: 데이터 부족 → 균등 (1:1:1)
 2026-03-22 12:45:43 [INFO    ] build_consensus:167 | 합의: DEFENSIVE size=47% score=+0.900 weights=B1.00/Be1.00/N1.00 minority=True
 2026-03-22 13:40:18 [INFO    ] run:70 | [postmortem skip] 2026-03-22 KR — HALT 또는 판단 없음
+2026-03-22 14:29:58 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 14:29:58 [INFO    ] build_consensus:169 | 합의: CAUTIOUS size=52% score=+0.100 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 14:29:58 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 14:29:58 [INFO    ] build_consensus:169 | 합의: MODERATE_BULL size=72% score=+0.700 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-22 14:29:58 [WARNING ] build_consensus:126 | ⚠️ 마이너리티 룰 발동 [KR]: 서킷 브레이커 공시 발동
+2026-03-22 14:29:58 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-22 14:29:58 [INFO    ] build_consensus:169 | 합의: DEFENSIVE size=18% score=-0.067 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-22 14:30:13 [INFO    ] run:70 | [postmortem skip] 2026-03-22 KR — HALT 또는 판단 없음

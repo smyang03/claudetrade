@@ -19,7 +19,7 @@ HARD_RULES = {
 
 
 class RiskManager:
-    def __init__(self, init_cash: float = 10_000_000, max_order_krw: float | None = None):
+    def __init__(self, init_cash: float = 10_000_000, max_order_krw: Optional[float] = None):
         self.init_cash = init_cash
         self.cash = init_cash
         self.max_order_krw = max_order_krw if max_order_krw is not None else HARD_RULES["max_order_krw"]
@@ -78,7 +78,7 @@ class RiskManager:
         price: float,
         mode_size_pct: int = 70,
         sl_pct: float = 0.03,
-        atr_pct: float | None = None,
+        atr_pct: Optional[float] = None,
         atr_target_pct: float = 0.015,
     ) -> int:
         if price <= 0:
@@ -138,7 +138,7 @@ class RiskManager:
             if pos["ticker"] in prices:
                 pos["current_price"] = prices[pos["ticker"]]
 
-    def increment_holding_days(self, today_iso: str | None = None):
+    def increment_holding_days(self, today_iso: Optional[str] = None):
         if today_iso is None:
             today_iso = date.today().isoformat()
         for pos in self.positions:

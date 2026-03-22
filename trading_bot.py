@@ -91,7 +91,7 @@ _EXCHANGE_MAP = {"KR": "XKRX", "US": "XNYS"}
 _ec_cache: dict = {}  # 캘린더 객체 캐시
 
 
-def _is_trading_day(market: str, check_date: date | None = None) -> bool:
+def _is_trading_day(market: str, check_date=None) -> bool:
     """오늘이 해당 시장의 정규 거래일인지 확인 (주말·공휴일 모두 처리)"""
     check_date = check_date or date.today()
     exchange = _EXCHANGE_MAP.get(market, "XNYS")

@@ -164,3 +164,5 @@
 2026-03-22 12:24:46 [INFO    ] tune:44 | [튜닝 240분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 유효하며, MACD 골든크로스 진행 중인 상황에서 
 2026-03-22 12:54:52 [INFO    ] tune:44 | [튜닝 270분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 대비 지수 +0.31% 소폭 상승으로 방향성 일치하나 270분 경과 시점에 이상 신
 2026-03-22 13:24:57 [INFO    ] tune:44 | [튜닝 300분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단이 유효하며, MACD 골든크로스 진행 중인 3종목의
+2026-03-22 13:55:02 [INFO    ] tune:44 | [튜닝 330분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 대비 지수 +0.31% 소폭 상승으로 방향성 미확인, 보유 포지션 없어 조정 불필요
+2026-03-22 14:25:07 [INFO    ] tune:44 | [튜닝 360분] MAINTAIN → NEUTRAL | 지수 +0.31% 소폭 상승으로 아침 NEUTRAL 판단 유효하며, MACD 골든크로스 진행 중인 방향성과 

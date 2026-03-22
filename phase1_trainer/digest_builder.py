@@ -10,6 +10,7 @@ Claude 입력 토큰: ~1,300 토큰/일 목표
 승률 기여도 높은 데이터 우선 포함
 """
 
+from typing import Optional, List
 import json
 import sys
 import pandas as pd
@@ -40,7 +41,7 @@ for d in [DIGEST_DIR, CACHE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 
-def _ticker_map(market: str, universe_tickers: list[str] | None = None) -> dict:
+def _ticker_map(market: str, universe_tickers: Optional[List[str]] = None) -> dict:
     base = KR_TICKERS if market == "KR" else US_TICKERS
     if not universe_tickers:
         return dict(base)
@@ -254,7 +255,7 @@ def load_prev_result(market: str, target_date: str) -> dict:
 # ── 핵심 digest 생성 ──────────────────────────────────────────────────────────
 
 @log_call(logger=log, level="INFO")
-def build_kr_digest(target_date: str, universe_tickers: list[str] | None = None) -> dict:
+def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = None) -> dict:
     """
     국내 daily_digest 생성
     목표: ~800 토큰
@@ -381,7 +382,7 @@ def build_kr_digest(target_date: str, universe_tickers: list[str] | None = None)
 
 
 @log_call(logger=log, level="INFO")
-def build_us_digest(target_date: str, universe_tickers: list[str] | None = None) -> dict:
+def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = None) -> dict:
     """미국 daily_digest 생성"""
     log.info(f"[미국 digest] {target_date}")
     supp = load_supplement("US", target_date)

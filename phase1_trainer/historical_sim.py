@@ -15,6 +15,7 @@ historical_sim.py - Phase 1 역사 데이터 학습 엔진
   python historical_sim.py --market ALL  (국내+미국 전체)
 """
 
+from typing import Optional, List
 import os, sys, json, time, argparse
 import pandas as pd
 import numpy as np
@@ -235,7 +236,7 @@ def call_claude_postmortem(
 
 # ── 실제 결과 계산 ────────────────────────────────────────────────────────────
 
-def calc_actual_result(market: str, target_date: str, mode: str, tickers: list[str] | None = None) -> dict:
+def calc_actual_result(market: str, target_date: str, mode: str, tickers: Optional[List[str]] = None) -> dict:
     """
     해당 날짜의 실제 시장 결과 계산
     주가 데이터에서 당일 등락률 추출

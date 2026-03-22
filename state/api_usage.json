@@ -1,8 +1,8 @@
 {
   "total": {
-    "input_tokens": 47505,
-    "output_tokens": 19370,
-    "cost_usd": 0.433065
+    "input_tokens": 48018,
+    "output_tokens": 19548,
+    "cost_usd": 0.437274
   },
   "daily": {
     "2026-03-21": {
@@ -12,10 +12,10 @@
       "calls": 48
     },
     "2026-03-22": {
-      "input_tokens": 20812,
-      "output_tokens": 5272,
-      "cost_usd": 0.141516,
-      "calls": 25
+      "input_tokens": 21325,
+      "output_tokens": 5450,
+      "cost_usd": 0.145725,
+      "calls": 26
     }
   },
   "sessions": [
@@ -602,6 +602,14 @@
       "input_tokens": 513,
       "output_tokens": 197,
       "cost_usd": 0.004494
+    },
+    {
+      "ts": "14:25:07",
+      "date": "2026-03-22",
+      "label": "tune_360min",
+      "input_tokens": 513,
+      "output_tokens": 178,
+      "cost_usd": 0.004209
     }
   ]
 }
