@@ -623,3 +623,61 @@ brain.json에 `hold_advisor_performance` 키로 성과 누적:
 
 *Last updated: 2026-03-22*
 *Context session: 트레일링 스탑 + hold_advisor + 텔레그램 UI 개선 + 버그 8개 수정 + 모의투자 사전 검증*
+
+---
+
+## [2026-03-22] 웹 대시보드 4페이지 개편 (dashboard/dashboard_server.py)
+
+### 배경
+
+기존 단일 페이지 대시보드에 기간별 승률, 날짜 범위 매매 내역, 수익 곡선 차트, 국장/미장 분리 기능 추가 요청.
+
+### 페이지 구조
+
+| URL | 페이지 | 주요 내용 |
+|-----|--------|-----------|
+| `/` | 오늘 현황 | 요약 카드 5개, 분석가 판단 3명, 누적 자산 곡선, 크레딧 차트 |
+| `/history` | 기간별 성과 | 기간 승률 카드, 수익 곡선, 월별 손익 바 차트, 월별 상세 테이블 |
+| `/trades` | 매매 원장 | 날짜/종목/전략/매수-매도 필터, 날짜 그룹 테이블 |
+| `/analytics` | 분석 | 분석가 적중률 추이, 모드별 성과, 전략별 성과, 교훈 패턴, Brain 상태 |
+
+### 신규 Python 헬퍼
+
+- `_parse_date(s)` — ISO 날짜 안전 파싱
+- `load_records_filtered(market, period, start, end)` — week/month/3month/all/custom 기간 필터
+- `group_by_month(records)` — `{YYYY-MM: [records]}` 그룹화
+- `PAPER_CASH` 환경변수 기반 기준 자산
+
+### 신규 API 엔드포인트
+
+| 엔드포인트 | 설명 |
+|-----------|------|
+| `GET /api/stats/period` | 기간별 승률/손익/거래수 집계 |
+| `GET /api/history/monthly` | 월별 그룹 요약 (최고/최악일 포함) |
+| `GET /api/history/equity` | 기간 필터 적용 수익 곡선 |
+| `GET /api/trades/list` | 날짜범위/종목/전략/매수-매도 필터 원장 |
+
+기존 `/api/chart/equity`도 `period/start/end` 파라미터 추가.
+
+### 공통 UI
+
+- 헤더: 로고 + 네비게이션 + KR/US 마켓 토글 (localStorage 유지)
+- 기간 필터 바: 이번주/이번달/3개월/전체 + 날짜 직접입력
+- KST 실시간 시계, 30초 자동 새로고침
+- Chart.js 4.4.0, JetBrains Mono + Noto Sans KR
+
+### 버그 수정 2건
+
+**BUG-A**: 오늘 현황 누적 자산 곡선이 `period=all` 기본값으로 전체 기간 로드 → `period=3month` 고정으로 수정.
+
+**BUG-B (Critical)**: `COMMON_JS_BLOCK`(MARKET 초기화)이 페이지별 JS(loadAll 호출) **뒤**에 배치됨 → `loadAll()` 실행 시 `MARKET=undefined` → 모든 API가 `?market=undefined`로 호출 → 분석가 판단, 요약 카드 등 전체 미표시.
+
+```
+수정 전: _head + _header + PAGE_HTML(loadAll 호출) + COMMON_JS(MARKET 정의)
+수정 후: _head + _header + COMMON_JS(MARKET 정의) + PAGE_HTML(loadAll 호출)
+```
+
+4개 라우트 전부 순서 변경 후 검증 통과 (MARKET 정의 위치 < loadAll 호출 위치 확인).
+
+*Last updated: 2026-03-22*
+*Context session: 웹 대시보드 4페이지 개편 + MARKET 초기화 버그 수정*

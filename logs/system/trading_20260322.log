@@ -222,3 +222,49 @@
 2026-03-22 21:48:50 [INFO    ] open_position:162 | [BUY] 035420 1@180,000 TP=189000 SL=174600
 2026-03-22 21:48:50 [INFO    ] activate_trailing:217 | [TRAILING] 005930 trail_sl=71,974 (3.0%)
 2026-03-22 21:48:50 [INFO    ] close_position:255 | [trail_stop] 005930 +10,669 (+5.08%)
+2026-03-22 21:59:08 [INFO    ] __init__:128 | 모의투자 | 가상자금 30,000,000원 | 최대주문 3,000,000원
+2026-03-22 21:59:08 [INFO    ] __init__:148 | 공유 풀 | 총자금 30,000,000원 (KR/US 공용)
+2026-03-22 21:59:11 [INFO    ] _startup_health_check:271 | ─── API Health Check ───────────────────────────────
+2026-03-22 21:59:11 [INFO    ] _startup_health_check:274 |   ✓ KIS 토큰: OK
+2026-03-22 21:59:11 [INFO    ] _startup_health_check:274 |   ✓ KIS 시세 (005930): OK (0원)
+2026-03-22 21:59:11 [INFO    ] _startup_health_check:274 |   ✓ Alpha Vantage (NVDA): OK (5일 캔들)
+2026-03-22 21:59:11 [INFO    ] _startup_health_check:274 |   ✓ Telegram: OK (@smyang03bot)
+2026-03-22 21:59:11 [INFO    ] _startup_health_check:274 |   – DART API: SKIP - DART_API_KEY 없음
+2026-03-22 21:59:11 [INFO    ] _startup_health_check:275 | ────────────────────── OK=4 / FAIL=0 ──
+2026-03-22 21:59:12 [INFO    ] __init__:202 | init | paper
+2026-03-22 21:59:12 [INFO    ] main:1394 | === Trading Bot Start ===
+2026-03-22 21:59:12 [INFO    ] start:563 | [TelegramCommander] 명령어 수신 시작
+2026-03-22 21:59:12 [INFO    ] main:1422 | schedules registered
+2026-03-22 21:59:29 [INFO    ] _poll_loop:587 | [commander] 명령 수신: ?
+2026-03-22 22:00:00 [INFO    ] run_us_update:72 | === US 데이터 최신화 시작 ===
+2026-03-22 22:00:00 [INFO    ] run_us_update:75 | [1/3] US 주가 최신화
+2026-03-22 22:00:02 [INFO    ] run_us_update:72 | === US 데이터 최신화 시작 ===
+2026-03-22 22:00:02 [INFO    ] run_us_update:75 | [1/3] US 주가 최신화
+2026-03-22 22:00:06 [ERROR   ] run_us_update:83 | US 주가 최신화 실패: No module named 'dotenv'
+2026-03-22 22:00:06 [INFO    ] run_us_update:86 | [2/3] US 뉴스 수집
+2026-03-22 22:00:06 [ERROR   ] run_us_update:91 | US 뉴스 수집 실패: No module named 'dotenv'
+2026-03-22 22:00:06 [INFO    ] run_us_update:94 | [3/3] US supplement
+2026-03-22 22:00:06 [ERROR   ] run_us_update:100 | US supplement 실패: No module named 'dotenv'
+2026-03-22 22:00:06 [INFO    ] run_us_update:102 | === US 데이터 최신화 완료 ===
+2026-03-22 22:00:11 [INFO    ] run_us_update:86 | [2/3] US 뉴스 수집
+2026-03-22 22:00:11 [INFO    ] run_us_update:94 | [3/3] US supplement
+2026-03-22 22:00:24 [INFO    ] run_us_update:102 | === US 데이터 최신화 완료 ===
+2026-03-22 22:20:00 [INFO    ] session_open:592 | ==================================================
+2026-03-22 22:20:00 [INFO    ] session_open:593 | [US] session_open
+2026-03-22 22:20:01 [INFO    ] session_open:597 | [US] 휴장일 — 세션 스킵
+2026-03-22 23:32:04 [INFO    ] __init__:128 | 모의투자 | 가상자금 30,000,000원 | 최대주문 3,000,000원
+2026-03-22 23:32:04 [INFO    ] __init__:148 | 공유 풀 | 총자금 30,000,000원 (KR/US 공용)
+2026-03-22 23:32:06 [INFO    ] _startup_health_check:271 | ─── API Health Check ───────────────────────────────
+2026-03-22 23:32:06 [INFO    ] _startup_health_check:274 |   ✓ KIS 토큰: OK
+2026-03-22 23:32:06 [INFO    ] _startup_health_check:274 |   ✓ KIS 시세 (005930): OK (0원)
+2026-03-22 23:32:06 [INFO    ] _startup_health_check:274 |   ✓ Alpha Vantage (NVDA): OK (5일 캔들)
+2026-03-22 23:32:06 [INFO    ] _startup_health_check:274 |   ✓ Telegram: OK (@smyang03bot)
+2026-03-22 23:32:06 [INFO    ] _startup_health_check:274 |   – DART API: SKIP - DART_API_KEY 없음
+2026-03-22 23:32:06 [INFO    ] _startup_health_check:275 | ────────────────────── OK=4 / FAIL=0 ──
+2026-03-22 23:32:07 [INFO    ] __init__:202 | init | paper
+2026-03-22 23:32:07 [INFO    ] main:1394 | === Trading Bot Start ===
+2026-03-22 23:32:07 [INFO    ] start:563 | [TelegramCommander] 명령어 수신 시작
+2026-03-22 23:32:08 [INFO    ] main:1422 | schedules registered
+2026-03-22 23:32:08 [INFO    ] main:1437 | [startup] US 세션 진행 중 — session_open 즉시 실행
+2026-03-22 23:32:08 [INFO    ] session_open:592 | ==================================================
+2026-03-22 23:32:08 [INFO    ] session_open:593 | [US] session_open
