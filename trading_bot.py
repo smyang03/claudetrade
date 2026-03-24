@@ -202,6 +202,35 @@ class TradingBot:
 
         log.info(f"init | {'paper' if is_paper else 'live'}")
 
+    def _persist_live_judgment(self, market: str):
+        """장중 판단 변경을 즉시 저장해 재시작/대시보드가 최신 상태를 보게 한다."""
+        if not self.today_judgment or self.today_judgment.get("market") != market:
+            return
+        live_path = JUDGMENT_DIR / f"{date.today().strftime('%Y%m%d')}_{market}.json"
+        try:
+            with open(live_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    **self.today_judgment,
+                    "mode": "paper" if self.is_paper else "live",
+                }, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            log.warning(f"판단 임시저장 실패: {e}")
+
+    def _log_screen_candidates(self, market: str, candidates: list, source: str):
+        """대시보드가 최신 후보 집합을 알 수 있도록 재스크리닝도 analysis 로그에 남긴다."""
+        today = date.today().isoformat()
+        analysis_log.info(
+            f"[screen {today} {market}] source={source} candidates={len(candidates)}",
+            extra={"extra": {
+                "event": "screen_candidates",
+                "date": today,
+                "market": market,
+                "source": source,
+                "count": len(candidates),
+                "tickers": [c.get("ticker") for c in candidates if c.get("ticker")][:20],
+            }},
+        )
+
     # ── API 헬스체크 ───────────────────────────────────────────────────────────
 
     def _startup_health_check(self):
@@ -734,16 +763,7 @@ class TradingBot:
                 candidates = screen_market_kr(self.token)
             else:
                 candidates = screen_market_us()
-            analysis_log.info(
-                f"[screen {today} {market}] candidates={len(candidates)}",
-                extra={"extra": {
-                    "event": "screen_candidates",
-                    "date": today,
-                    "market": market,
-                    "count": len(candidates),
-                    "tickers": [c.get("ticker") for c in candidates[:20]],
-                }},
-            )
+            self._log_screen_candidates(market, candidates, "session_open")
             log.info(f"[스크리너] {market} 후보 {len(candidates)}개 → Claude 선택 중...")
             selected = select_tickers(market, digest_prompt, consensus["mode"], candidates)
             self.today_tickers[market] = selected
@@ -781,6 +801,7 @@ class TradingBot:
             else:
                 fresh_candidates = screen_market_us()
             if fresh_candidates:
+                self._log_screen_candidates(market, fresh_candidates, "session_reuse_rescreen")
                 fresh_selected = select_tickers(market, digest_prompt, consensus["mode"], fresh_candidates)
                 self.today_tickers[market] = fresh_selected
                 self.today_judgment["tickers"] = fresh_selected
@@ -802,14 +823,7 @@ class TradingBot:
                 log.warning(f"[종목 재스크리닝] 후보 없음 → 기존 종목 유지: {self.today_tickers.get(market, [])}")
 
         # 대시보드가 장 중에도 오늘 판단을 볼 수 있도록 session_open 직후 즉시 기록
-        try:
-            with open(live_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    **self.today_judgment,
-                    "mode": "paper" if self.is_paper else "live",
-                }, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            log.warning(f"판단 임시저장 실패: {e}")
+        self._persist_live_judgment(market)
 
         selected = self.today_tickers.get(market, [])
         try:
@@ -1129,10 +1143,14 @@ class TradingBot:
                     else:
                         tune_cands = screen_market_us()
                     if tune_cands:
+                        self._log_screen_candidates(market, tune_cands, "tuning_rescreen")
                         digest_p = self.today_judgment.get("digest_prompt", "")
                         tune_tickers = select_tickers(market, digest_p, new_mode, tune_cands)
                         self.today_tickers[market] = tune_tickers
                         self.today_judgment["tickers"] = tune_tickers
+                        self.today_judgment["universe_tickers"] = [
+                            c.get("ticker") for c in tune_cands if c.get("ticker")
+                        ]
                         log.info(f"[튜너 종목갱신 완료] {market}: {tune_tickers}")
                 except Exception as te:
                     log.warning(f"[튜너 종목갱신 실패] {te}")
@@ -1156,6 +1174,7 @@ class TradingBot:
                         pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "tuner_reverse")
                         trade_alert("sell", ex["ticker"], ex["qty"], int(cp),
                                     ex["strategy"], 0, 0, reason="tuner_reverse", market=market)
+            self._persist_live_judgment(market)
 
         # 모드가 바뀐 경우만 tuning_report 전송, 유지면 스킵
         if action != "MAINTAIN":
@@ -1229,6 +1248,8 @@ class TradingBot:
 
             self.today_judgment["judgments"] = new_judgments
             self.today_judgment["consensus"] = new_consensus
+            self.today_judgment["round1_judgments"] = debate_meta.get("r1", {})
+            self.today_judgment["debate_changes"] = debate_meta.get("changes", [])
             self._last_reinvoke_tuning = self.tuning_count
 
             judgment_log.info(
@@ -1272,11 +1293,15 @@ class TradingBot:
                     else:
                         reinvoke_cands = screen_market_us()
                     if reinvoke_cands:
+                        self._log_screen_candidates(market, reinvoke_cands, "analyst_reinvoke_rescreen")
                         digest_p = self.today_judgment.get("digest_prompt", "")
                         new_tickers = select_tickers(market, digest_p,
                                                      new_consensus["mode"], reinvoke_cands)
                         self.today_tickers[market] = new_tickers
                         self.today_judgment["tickers"] = new_tickers
+                        self.today_judgment["universe_tickers"] = [
+                            c.get("ticker") for c in reinvoke_cands if c.get("ticker")
+                        ]
                         log.info(f"[종목 재선택 완료] {market}: {new_tickers}")
                         # 다음 run_cycle부터 새 종목 사용 (WS는 다음 재시작 시 갱신)
                 except Exception as te:
@@ -1288,6 +1313,7 @@ class TradingBot:
                 round1_judgments=debate_meta.get("r1", {}),
                 debate_changes=debate_meta.get("changes", []),
             )
+            self._persist_live_judgment(market)
             self._maybe_push_dashboard(force=True)
 
         except Exception as e:

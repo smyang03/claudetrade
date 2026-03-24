@@ -8,14 +8,14 @@
   ],
   "context": {
     "sp500": {
-      "change_pct": 0.1
+      "change_pct": -0.13
     },
     "nasdaq": {
-      "change_pct": -0.31
+      "change_pct": -0.63
     },
-    "vix": 25.79,
-    "dxy": 99.33,
-    "oil_wti": 91.54,
+    "vix": 26.16,
+    "dxy": 99.37,
+    "oil_wti": 92.24,
     "fomc": false,
     "fomc_week": false,
     "cpi_day": false,
@@ -70,5 +70,5 @@
     "pnl_pct": 0,
     "win": false
   },
-  "built_at": "2026-03-25T00:43:29.154477"
+  "built_at": "2026-03-25T01:42:36.227884"
 }

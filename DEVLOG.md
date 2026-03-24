@@ -997,3 +997,193 @@ KR 스크리너는 KIS API `거래량 순위` (FID_VOL_CNT=100000 이상 필터,
 
 *Last updated: 2026-03-25*
 *Context session: US 스크리너 후보 선정 기준 조사 + AV API 캐싱(BUG-16) + 선택 이유 대시보드 표시*
+## [2026-03-25] 장중 live judgment 동기화 + 재스크리닝 후보 로그 보강
+
+### 배경
+코드 리뷰에서 다음 두 문제가 확인됨.
+
+- `run_tuning()` / `_reinvoke_analysts()`가 장중 모드·종목을 바꿔도 `logs/daily_judgment/YYYYMMDD_{market}.json`을 다시 쓰지 않음
+- 장중 재스크리닝이 발생해도 `analysis` 로그에 새 `screen_candidates` 이벤트가 남지 않아 대시보드 후보 목록이 아침 스캔 기준으로 고정됨
+
+이 상태에서는 프로세스 재시작 시 `session_open()`이 아침 판단을 다시 재사용하고, `/api/judgments` 및 `/api/tickers/today`도 종가 전까지 최신 장중 상태를 반영하지 못함.
+
+### 수정 내용
+
+#### 1. `trading_bot.py` 공통 헬퍼 추가
+- `TradingBot._persist_live_judgment(market)`
+  - 현재 `self.today_judgment`를 즉시 `logs/daily_judgment/YYYYMMDD_{market}.json`에 다시 저장
+  - 장중 모드/종목 변경 후 재시작해도 최신 판단이 유지되도록 보장
+- `TradingBot._log_screen_candidates(market, candidates, source)`
+  - 재스크리닝 결과를 `analysis` 로그의 `screen_candidates` 이벤트로 기록
+  - `source` 필드로 `session_open`, `session_reuse_rescreen`, `tuning_rescreen`, `analyst_reinvoke_rescreen` 구분 가능
+
+#### 2. `run_tuning()` 장중 변경 즉시 영속화
+- 튜너가 `MAINTAIN`이 아닌 결정을 내리면:
+  - 모드 변경 시 재스크리닝 후보를 `screen_candidates`로 기록
+  - 새 종목을 뽑으면 `tickers`, `universe_tickers`를 함께 갱신
+  - 처리 종료 전에 live judgment 파일을 다시 저장
+
+#### 3. `_reinvoke_analysts()` 재판단 결과 완전 반영
+- 긴급 재판단 후:
+  - `judgments`, `consensus`뿐 아니라 `round1_judgments`, `debate_changes`도 `self.today_judgment`에 반영
+  - 모드 변경으로 재스크리닝하면 최신 후보 집합을 `screen_candidates`로 기록
+  - 새 `tickers`, `universe_tickers`를 저장 후 live judgment 파일을 다시 저장
+
+#### 4. `session_open()` 재사용 분기 보강
+- 재시작 후 `reused=True` 경로에서도 종목을 새로 스캔할 때 최신 `screen_candidates` 이벤트를 남기도록 변경
+- 이제 대시보드는 "현재 세션에서 마지막으로 수행한 후보 스캔"을 기준으로 `candidates` / `not_selected`를 계산함
+
+### 영향
+- 장중 모드 변경 후 프로세스가 재시작돼도 최신 판단이 유지됨
+- `/api/judgments`가 장중 재판단의 최신 합의/토론 메타데이터를 즉시 보여줌
+- `/api/tickers/today`가 최신 재스크리닝 후보 집합과 제외 종목 목록을 보여줌
+
+### 검증
+- `python -m py_compile trading_bot.py dashboard/dashboard_server.py`
+
+*Last updated: 2026-03-25*
+*Context session: review 지적사항 반영 - 장중 live judgment 재저장 + 대시보드 후보 로그 동기화*
+
+## [2026-03-25] US API 마이그레이션 회귀 수정
+
+### 배경
+리뷰에서 US API 전환 이후 다음 회귀 2건이 확인됨.
+
+- `get_daily_ohlcv(..., market="US")`가 yfinance 예외 발생 시 Alpha Vantage 폴백까지 도달하지 못함
+- FMP 스크리너 후보가 `volume: 0`으로 저장되어 `ENABLE_DYNAMIC_UNIVERSE` 경로에서 US 유니버스가 전부 필터링됨
+
+### 수정 내용
+
+#### 1. US OHLCV 폴백 체인 복구
+- `kis_api._daily_ohlcv_us_yf()`에서 yfinance `history()` 예외를 빈 DataFrame으로 정규화
+- `kis_api.get_daily_ohlcv()`에서도 yfinance 호출을 한 번 더 감싸 예외가 나더라도 AV 폴백으로 이어지게 보강
+- 결과적으로 우선순위는 `yfinance -> Alpha Vantage`를 유지하면서, yfinance transient error 시에도 US 세션 시작/지표 계산이 계속 진행됨
+
+#### 2. FMP 거래량 파싱 보강
+- `kis_api._safe_int()` 추가: 콤마 포함 문자열/숫자형 거래량을 안전하게 정수 변환
+- `kis_api._extract_us_volume()` 추가: `volume`, `avgVolume`, `avgVolume3m`, `averageVolume`, `volumeAverage`, `sharesVolume` 순으로 거래량 추출
+- FMP/AV 스크리너 모두 이 공통 헬퍼를 사용하도록 변경
+
+#### 3. 잘못 생성된 FMP zero-volume 캐시 자동 무효화
+- `screen_market_us()`가 당일 캐시를 읽을 때:
+  - `source == "fmp"` 이고
+  - 모든 후보 거래량이 0이면
+  - 기존 캐시를 그대로 쓰지 않고 즉시 재조회
+- 이 보강으로 오늘 이미 생성된 잘못된 `us_screen_cache.json`도 다음 호출에서 자동 복구 가능
+
+### 영향
+- US 일봉 조회가 yfinance 일시 오류에도 더 이상 바로 실패하지 않음
+- US 동적 유니버스가 zero-volume 후보 때문에 비어 버리는 회귀가 해소됨
+- 잘못된 FMP 캐시가 남아 있어도 런타임에서 자동으로 재조회함
+
+### 검증
+- `python -m py_compile kis_api.py trading_bot.py dashboard/dashboard_server.py universe_manager.py`
+- inline 검증:
+  - yfinance 예외 시 `get_daily_ohlcv(..., market='US')`가 AV 폴백을 호출하는지 확인
+  - 거래량 추출 헬퍼가 `volume`/`avgVolume`/`sharesVolume`를 정상 파싱하는지 확인
+  - zero-volume FMP 캐시가 있을 때 `screen_market_us()`가 캐시를 무시하고 재조회하는지 확인
+
+*Last updated: 2026-03-25*
+*Context session: review 지적사항 반영 - US OHLCV 폴백 복구 + FMP 거래량 파싱/캐시 보강*
+
+---
+
+## [2026-03-25] US API 전면 전환 — Finnhub + FMP + yfinance (BUG-16 근본 수정)
+
+### 배경
+
+Alpha Vantage 무료 25회/일 한도가 실제 봇 운영 시 필요 호출 수(하루 240+회)에 턱없이 부족.
+캐싱으로 1차 대응했으나 가격 조회(`_get_price_us_alpha`)도 AV를 사용 중이라 근본 해결 필요.
+
+**1일 AV 호출 분석**:
+| 호출처 | 빈도 | 건수/일 |
+|--------|------|---------|
+| `get_price()` US | 매 사이클(5분) × 3종목 | ~240회 |
+| `get_daily_ohlcv()` US | 세션 초반 | ~3회 |
+| `screen_market_us()` | 1회 (캐시 없을 때) | 1회 |
+| `get_usd_krw()` | 세션당 1회 | 1회 |
+| **합계** | | **~245회** (한도 25회의 10배) |
+
+### 신규 API 스택
+
+| 역할 | API | 무료 한도 | 비고 |
+|------|-----|-----------|------|
+| US 현재가 | **Finnhub** `/quote` | 60회/분, 일 한도 없음 | 주력 |
+| US OHLCV | **yfinance** | 무제한 | 주력 |
+| US 스크리너 | **FMP** `/stable/biggest-gainers` 등 | 250회/일 | 주력 |
+| USD/KRW 환율 | **yfinance** `USDKRW=X` | 무제한 | 기존 1차 유지 |
+| 위 모두 실패 시 | **Alpha Vantage** (KEY-1 → KEY-2 자동 전환) | 25회/일 × 2키 | 최후 폴백 |
+
+### 수정 내용 (`kis_api.py`)
+
+#### 환경변수 추가
+```python
+FINNHUB_KEY = os.getenv("FINNHUB_API_KEY", "")
+FMP_KEY     = os.getenv("FMP_API_KEY", "").strip()
+AV_KEY_2    = os.getenv("ALPHA_VANTAGE_KEY_2", "")  # AV 2번째 키
+```
+
+#### `_get_price_us_finnhub()` 신규
+- Finnhub `/quote` 엔드포인트 호출
+- 실패 시 상위에서 yfinance → AV 순으로 폴백
+
+#### `get_price()` US 분기 변경
+```
+Finnhub → yfinance → Alpha Vantage (레거시 최후 폴백)
+```
+
+#### `get_daily_ohlcv()` US 분기 변경
+```
+yfinance (무제한) → Alpha Vantage (레거시 폴백)
+```
+
+#### `_fmp_screen_candidates()` 신규
+- FMP `/stable/biggest-gainers`, `/stable/most-actives`, `/stable/biggest-losers` 3개 엔드포인트 호출
+- 섹션 합쳐서 중복 제거 후 후보 반환
+
+#### `screen_market_us()` 완전 재작성
+```
+FMP (3개 엔드포인트) → Alpha Vantage (KEY-1→KEY-2 자동 전환) → 하드코딩 폴백
+```
+- 당일 캐시 파일 `state/us_screen_cache.json` 유지 (기존 `av_screen_cache.json`과 동일 경로)
+- `source` 필드 추가 (`"fmp"` / `"av"`)
+
+#### `get_usd_krw()` 간소화
+- AV 2차 폴백 제거 (yfinance가 안정적이므로 불필요)
+```
+yfinance → .env USD_KRW_RATE 기본값
+```
+
+#### `_av_get()` 헬퍼 신규 — AV 이중 키 자동 전환
+```python
+def _av_get(params: dict, timeout: int = 15) -> dict:
+    # KEY-1 호출 → Information/Note(한도초과) 감지 → KEY-2 재시도
+    # 두 키 모두 한도 초과 시 RuntimeError
+```
+- 기존 AV 호출 3곳(`_get_price_us_alpha`, `_daily_ohlcv_us_alpha`, `screen_market_us`)이 모두 이 헬퍼 사용
+
+### .env 변경
+```
+FINNHUB_API_KEY=...         # 신규 추가
+FMP_API_KEY=...             # 신규 추가
+ALPHA_VANTAGE_KEY=...       # 기존 유지 (KEY-1)
+ALPHA_VANTAGE_KEY_2=...     # 신규 추가 (KEY-2 자동 전환)
+```
+
+### 실제 테스트 결과
+| 테스트 | 결과 |
+|--------|------|
+| Finnhub TSLA quote | ✅ `$382.96` |
+| FMP screen_market_us top-5 | ✅ 5개 후보 반환 |
+| yfinance USD/KRW | ✅ `1500.19` |
+| yfinance TSLA OHLCV 200일 | ✅ 정상 |
+| py_compile | ✅ |
+
+### 현재 AV 상태
+- KEY-1 (`6Q9MBA3E...`): 오늘 한도 소진
+- KEY-2 (`9f6eS3D9...`): 오늘 한도 소진 (신규 발급 직후 테스트로 소진)
+- 내일부터 두 키 모두 초기화되어 자동 전환 로직 정상 동작 예정
+- 실운영 중에는 Finnhub/FMP/yfinance가 먼저 처리하므로 AV는 거의 호출되지 않음
+
+*Last updated: 2026-03-25*
+*Context session: US API Finnhub+FMP+yfinance 전환 + AV 이중 키 자동 전환*

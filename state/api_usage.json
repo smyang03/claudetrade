@@ -1,8 +1,8 @@
 {
   "total": {
-    "input_tokens": 343531,
-    "output_tokens": 64418,
-    "cost_usd": 1.996863
+    "input_tokens": 345409,
+    "output_tokens": 64900,
+    "cost_usd": 2.009727
   },
   "daily": {
     "2026-03-21": {
@@ -30,37 +30,13 @@
       "calls": 74
     },
     "2026-03-25": {
-      "input_tokens": 16240,
-      "output_tokens": 2492,
-      "cost_usd": 0.0861,
-      "calls": 9
+      "input_tokens": 18118,
+      "output_tokens": 2974,
+      "cost_usd": 0.098964,
+      "calls": 12
     }
   },
   "sessions": [
-    {
-      "ts": "15:09:38",
-      "date": "2026-03-23",
-      "label": "tune_390min",
-      "input_tokens": 561,
-      "output_tokens": 245,
-      "cost_usd": 0.005358
-    },
-    {
-      "ts": "15:39:47",
-      "date": "2026-03-23",
-      "label": "tune_420min",
-      "input_tokens": 564,
-      "output_tokens": 242,
-      "cost_usd": 0.005322
-    },
-    {
-      "ts": "15:40:01",
-      "date": "2026-03-23",
-      "label": "analyst_bull_r1",
-      "input_tokens": 3633,
-      "output_tokens": 565,
-      "cost_usd": 0.019374
-    },
     {
       "ts": "15:40:14",
       "date": "2026-03-23",
@@ -836,6 +812,30 @@
       "input_tokens": 520,
       "output_tokens": 209,
       "cost_usd": 0.004695
+    },
+    {
+      "ts": "01:24:50",
+      "date": "2026-03-25",
+      "label": "select_tickers",
+      "input_tokens": 679,
+      "output_tokens": 136,
+      "cost_usd": 0.004077
+    },
+    {
+      "ts": "01:42:40",
+      "date": "2026-03-25",
+      "label": "select_tickers",
+      "input_tokens": 679,
+      "output_tokens": 143,
+      "cost_usd": 0.004182
+    },
+    {
+      "ts": "02:12:40",
+      "date": "2026-03-25",
+      "label": "tune_30min",
+      "input_tokens": 520,
+      "output_tokens": 203,
+      "cost_usd": 0.004605
     }
   ]
 }

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "version": 161,
+    "version": 162,
     "created": "2026-03-19",
     "last_updated": "2026-03-25",
     "trained_days_kr": 3,
@@ -1099,10 +1099,10 @@
           "insight": "FOMC 발표일 HALT 효과"
         },
         "30min_tune": {
-          "count": 5,
+          "count": 6,
           "correct": 0,
           "rate": 0.0,
-          "insight": "30분 경과 후 지수 -0.10% 소폭 하락에 거래량 정상 수준으로 아침 MILD_BEAR 판단이 유효하며, 애플 RSI 반등 신호는 개별 종목 신호로 전체 시장 모드 전환 근거 불충분"
+          "insight": "30분 경과 후 지수 -0.37% 하락 및 거래량 정상 수준으로 아침 Bull 반등 신호 미실현, 분석가 누적 Bear 신뢰도 100% 우세하여 MILD_BEAR 유지"
         },
         "60min_tune": {
           "count": 4,

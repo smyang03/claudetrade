@@ -1,6 +1,6 @@
 ﻿"""
 kis_api.py
-KIS API (KR) + AlphaVantage fallback (US quote/candles).
+KIS API (KR) + Finnhub/FMP/yfinance (US quote/candles/screener).
 """
 
 import os
@@ -19,7 +19,10 @@ APP_KEY = os.getenv("KIS_APP_KEY", "")
 APP_SECRET = os.getenv("KIS_APP_SECRET", "")
 ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")
 IS_PAPER = os.getenv("KIS_IS_PAPER", "true").lower() == "true"
-AV_KEY = os.getenv("ALPHA_VANTAGE_KEY", "")
+AV_KEY       = os.getenv("ALPHA_VANTAGE_KEY", "")
+AV_KEY_2     = os.getenv("ALPHA_VANTAGE_KEY_2", "")
+FINNHUB_KEY  = os.getenv("FINNHUB_API_KEY", "")
+FMP_KEY      = os.getenv("FMP_API_KEY", "").strip()
 
 # 계좌번호 포맷 검증: "XXXXXXXXXX-XX" 형태여야 함
 if ACCOUNT_NO and "-" not in ACCOUNT_NO:
@@ -138,17 +141,41 @@ def _get_price_kr(ticker, token):
     }
 
 
+def _get_price_us_finnhub(ticker: str) -> dict:
+    """Finnhub /quote — 무료 60회/분 (일 한도 없음)"""
+    if not FINNHUB_KEY:
+        raise RuntimeError("FINNHUB_API_KEY 없음")
+    resp = requests.get(
+        "https://finnhub.io/api/v1/quote",
+        params={"symbol": ticker, "token": FINNHUB_KEY},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    q = resp.json()
+    price = float(q.get("c", 0))
+    if not price:
+        raise ValueError(f"Finnhub: {ticker} 가격 없음")
+    prev = float(q.get("pc", price))
+    change = price - prev
+    return {
+        "ticker": ticker, "name": ticker,
+        "price": round(price, 4),
+        "change": round(change, 4),
+        "change_rate": round(change / prev * 100 if prev else 0, 2),
+        "volume": 0,
+        "open": round(float(q.get("o", price)), 4),
+        "high": round(float(q.get("h", price)), 4),
+        "low": round(float(q.get("l", price)), 4),
+    }
+
+
 def _get_price_us_alpha(ticker):
-    if not AV_KEY:
+    """Alpha Vantage GLOBAL_QUOTE — 레거시 폴백 (KEY_1 소진 시 KEY_2 자동 전환)"""
+    if not AV_KEY and not AV_KEY_2:
         return _get_price_us_yf(ticker)
     try:
-        resp = requests.get(
-            "https://www.alphavantage.co/query",
-            params={"function": "GLOBAL_QUOTE", "symbol": ticker, "apikey": AV_KEY},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        q = resp.json().get("Global Quote", {})
+        data = _av_get({"function": "GLOBAL_QUOTE", "symbol": ticker})
+        q = data.get("Global Quote", {})
         if not q or not q.get("05. price"):
             raise ValueError("빈 응답")
         return {
@@ -193,6 +220,17 @@ def _get_price_kr_yf(ticker: str) -> dict:
 
 def get_price(ticker, token, market="KR"):
     if market == "US":
+        # 1차: Finnhub (무료 무제한)
+        try:
+            return _get_price_us_finnhub(ticker)
+        except Exception:
+            pass
+        # 2차: yfinance
+        try:
+            return _get_price_us_yf(ticker)
+        except Exception:
+            pass
+        # 3차: Alpha Vantage (레거시 최후 폴백)
         return _get_price_us_alpha(ticker)
     try:
         return _get_price_kr(ticker, token)
@@ -246,8 +284,11 @@ def _daily_ohlcv_us_yf(ticker: str, lookback_days: int = 200) -> pd.DataFrame:
         import yfinance as yf
     except ImportError:
         return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
-    start = (datetime.now() - timedelta(days=lookback_days * 2)).strftime("%Y-%m-%d")
-    df = yf.Ticker(ticker).history(start=start, auto_adjust=True)
+    try:
+        start = (datetime.now() - timedelta(days=lookback_days * 2)).strftime("%Y-%m-%d")
+        df = yf.Ticker(ticker).history(start=start, auto_adjust=True)
+    except Exception:
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
     if df.empty:
         return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
     df = df.reset_index()
@@ -283,18 +324,13 @@ def _get_price_us_yf(ticker: str) -> dict:
 
 
 def _daily_ohlcv_us_alpha(ticker, lookback_days=200):
-    if not AV_KEY:
+    if not AV_KEY and not AV_KEY_2:
         return _daily_ohlcv_us_yf(ticker, lookback_days)
     try:
         outputsize = "full" if lookback_days > 100 else "compact"
-        resp = requests.get(
-            "https://www.alphavantage.co/query",
-            params={"function": "TIME_SERIES_DAILY", "symbol": ticker,
-                    "outputsize": outputsize, "apikey": AV_KEY},
-            timeout=20,
-        )
-        resp.raise_for_status()
-        ts = resp.json().get("Time Series (Daily)", {})
+        data = _av_get({"function": "TIME_SERIES_DAILY", "symbol": ticker,
+                        "outputsize": outputsize}, timeout=20)
+        ts = data.get("Time Series (Daily)", {})
         if not ts:
             raise ValueError("빈 응답")
         rows = [
@@ -316,6 +352,13 @@ def _daily_ohlcv_us_alpha(ticker, lookback_days=200):
 
 def get_daily_ohlcv(ticker, token, lookback_days=200, market="KR"):
     if market == "US":
+        # yfinance 우선 (무제한) → AV 레거시 폴백
+        try:
+            df = _daily_ohlcv_us_yf(ticker, lookback_days=lookback_days)
+        except Exception:
+            df = pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+        if not df.empty:
+            return df
         return _daily_ohlcv_us_alpha(ticker, lookback_days=lookback_days)
     return _daily_ohlcv_kr(ticker, token, lookback_days=lookback_days)
 
@@ -335,8 +378,31 @@ def get_index_change(market: str) -> float:
         return 0.0
 
 
+def _av_get(params: dict, timeout: int = 15) -> dict:
+    """
+    Alpha Vantage GET 헬퍼 — KEY_1 한도 소진 시 KEY_2로 자동 전환.
+    Information/Note 감지 시 RuntimeError 발생 (한도 초과).
+    """
+    import logging as _log
+    _logger = _log.getLogger("trading_system")
+    keys = [k for k in (AV_KEY, AV_KEY_2) if k]
+    if not keys:
+        raise RuntimeError("ALPHA_VANTAGE_KEY 없음")
+    for i, key in enumerate(keys, 1):
+        p = {**params, "apikey": key}
+        resp = requests.get("https://www.alphavantage.co/query", params=p, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        if "Information" in data or "Note" in data:
+            msg = (data.get("Information") or data.get("Note", ""))[:80]
+            _logger.warning(f"[AV KEY-{i} 한도 초과] {msg}")
+            continue   # 다음 키로 시도
+        return data
+    raise RuntimeError("AV 모든 키 한도 초과")
+
+
 def get_usd_krw() -> float:
-    """실시간 USD/KRW 환율 조회 (yfinance 우선 → AlphaVantage → .env 기본값)"""
+    """실시간 USD/KRW 환율 조회 (yfinance → .env 기본값)"""
     # 1차: yfinance (무료, 실시간)
     try:
         import yfinance as yf
@@ -346,25 +412,7 @@ def get_usd_krw() -> float:
     except Exception:
         pass
 
-    # 2차: AlphaVantage FX (API 키 있을 때)
-    if AV_KEY:
-        try:
-            resp = requests.get(
-                "https://www.alphavantage.co/query",
-                params={"function": "CURRENCY_EXCHANGE_RATE",
-                        "from_currency": "USD", "to_currency": "KRW",
-                        "apikey": AV_KEY},
-                timeout=10,
-            )
-            rate = float(resp.json()
-                         .get("Realtime Currency Exchange Rate", {})
-                         .get("5. Exchange Rate", 0))
-            if rate > 100:
-                return round(rate, 2)
-        except Exception:
-            pass
-
-    # 3차: .env 기본값
+    # 2차: .env 기본값
     return float(os.getenv("USD_KRW_RATE", "1350"))
 
 
@@ -511,79 +559,147 @@ def screen_market_kr(token: str, top_n: int = 30) -> list:
         return []
 
 
-_AV_CACHE_PATH = get_runtime_path("state", "av_screen_cache.json")
+_US_SCREEN_CACHE_PATH = get_runtime_path("state", "us_screen_cache.json")
 
-def screen_market_us(top_n: int = 30) -> list:
-    """
-    US 시장 스크리닝 — Alpha Vantage TOP_GAINERS_LOSERS
-    - 당일 캐시 파일이 있으면 API 호출 없이 재사용 (AV 무료 25회/일 제한 대응)
-    - 실패 시 폴백 유니버스 반환
-    반환: [{ticker, name, price, change_rate, volume, vol_ratio}]
-    """
-    today = datetime.now().strftime("%Y-%m-%d")
+# 레거시 캐시 경로 (이전 버전 호환)
+_AV_CACHE_PATH = _US_SCREEN_CACHE_PATH
 
-    # ── 캐시 확인 ─────────────────────────────────────────────────────────────
-    if _AV_CACHE_PATH.exists():
-        try:
-            cached = json.loads(_AV_CACHE_PATH.read_text(encoding="utf-8"))
-            if cached.get("date") == today and cached.get("candidates"):
-                return cached["candidates"][:top_n]
-        except Exception:
-            pass
 
-    # ── AV API 호출 ───────────────────────────────────────────────────────────
-    if AV_KEY:
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def _extract_us_volume(item: dict) -> int:
+    """US 스크리너 원본마다 volume 필드명이 달라 보수적으로 여러 키를 시도한다."""
+    for key in ("volume", "avgVolume", "avgVolume3m", "averageVolume", "volumeAverage", "sharesVolume"):
+        vol = _safe_int(item.get(key), 0)
+        if vol > 0:
+            return vol
+    return 0
+
+
+def _has_meaningful_candidate_volume(candidates: list) -> bool:
+    return any(_safe_int(c.get("volume"), 0) > 0 for c in candidates)
+
+
+def _fmp_screen_candidates() -> list:
+    """FMP stable 엔드포인트로 US 스크리너 후보 수집 (250회/일 무료)"""
+    if not FMP_KEY:
+        raise RuntimeError("FMP_API_KEY 없음")
+    base = "https://financialmodelingprep.com/stable"
+    endpoints = ["biggest-gainers", "most-actives", "biggest-losers"]
+    candidates = []
+    seen: set = set()
+    for ep in endpoints:
         try:
             resp = requests.get(
-                "https://www.alphavantage.co/query",
-                params={"function": "TOP_GAINERS_LOSERS", "apikey": AV_KEY},
+                f"{base}/{ep}",
+                params={"apikey": FMP_KEY},
                 timeout=15,
             )
             resp.raise_for_status()
-            data = resp.json()
-            # 요청 한도 초과 메시지 감지
-            if "Information" in data or "Note" in data:
-                msg = data.get("Information") or data.get("Note", "")
-                import logging as _log
-                _log.getLogger("trading_system").warning(f"[AV API 한도] {msg[:80]}")
-            else:
-                candidates = []
-                seen: set = set()
-                for section in ("most_actively_traded", "top_gainers", "top_losers"):
-                    for item in data.get(section, []):
-                        ticker = item.get("ticker", "").strip()
-                        # ETF/지수/워런트 제외 (알파벳만)
-                        if not ticker or ticker in seen or not ticker.isalpha():
-                            continue
-                        seen.add(ticker)
-                        try:
-                            candidates.append({
-                                "ticker": ticker,
-                                "name": ticker,
-                                "price": float(item.get("price", 0)),
-                                "change_rate": float(
-                                    str(item.get("change_percentage", "0")).replace("%", "")
-                                ),
-                                "volume": int(item.get("volume", 0)),
-                                "vol_ratio": 1.0,
-                            })
-                        except (ValueError, TypeError):
-                            continue
-                if candidates:
-                    # 당일 캐시 저장
-                    try:
-                        _AV_CACHE_PATH.write_text(
-                            json.dumps({"date": today, "candidates": candidates},
-                                       ensure_ascii=False),
-                            encoding="utf-8"
-                        )
-                    except Exception:
-                        pass
+            items = resp.json()
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                ticker = str(item.get("symbol", "")).strip()
+                if not ticker or ticker in seen or not ticker.isalpha():
+                    continue
+                seen.add(ticker)
+                try:
+                    candidates.append({
+                        "ticker": ticker,
+                        "name": item.get("name", ticker),
+                        "price": float(item.get("price", 0)),
+                        "change_rate": float(item.get("changesPercentage", 0)),
+                        "volume": _extract_us_volume(item),
+                        "vol_ratio": 1.0,
+                    })
+                except (ValueError, TypeError):
+                    continue
+        except Exception:
+            continue
+    return candidates
+
+
+def screen_market_us(top_n: int = 30) -> list:
+    """
+    US 시장 스크리닝 — FMP biggest-gainers/most-actives/biggest-losers (우선)
+    - 당일 캐시 파일이 있으면 API 호출 없이 재사용
+    - FMP 실패 시 AV 레거시 폴백 → 하드코딩 유니버스 최후 폴백
+    반환: [{ticker, name, price, change_rate, volume, vol_ratio}]
+    """
+    import logging as _log
+    _logger = _log.getLogger("trading_system")
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # ── 당일 캐시 확인 ────────────────────────────────────────────────────────
+    if _US_SCREEN_CACHE_PATH.exists():
+        try:
+            cached = json.loads(_US_SCREEN_CACHE_PATH.read_text(encoding="utf-8"))
+            if cached.get("date") == today and cached.get("candidates"):
+                candidates = cached["candidates"]
+                if cached.get("source") != "fmp" or _has_meaningful_candidate_volume(candidates):
                     return candidates[:top_n]
+                _logger.warning("[US 스크리너] zero-volume FMP cache 무시 후 재조회")
         except Exception:
             pass
 
-    # AV 실패 또는 키 없음 → 폴백 유니버스
+    # ── 1차: FMP ─────────────────────────────────────────────────────────────
+    try:
+        candidates = _fmp_screen_candidates()
+        if candidates:
+            _US_SCREEN_CACHE_PATH.write_text(
+                json.dumps({"date": today, "candidates": candidates, "source": "fmp"},
+                           ensure_ascii=False),
+                encoding="utf-8",
+            )
+            return candidates[:top_n]
+    except Exception as e:
+        _logger.warning(f"[FMP 스크리너] 실패: {e}")
+
+    # ── 2차: Alpha Vantage (KEY_1 소진 시 KEY_2 자동 전환) ───────────────────
+    if AV_KEY or AV_KEY_2:
+        try:
+            data = _av_get({"function": "TOP_GAINERS_LOSERS"})
+            candidates = []
+            seen: set = set()
+            for section in ("most_actively_traded", "top_gainers", "top_losers"):
+                for item in data.get(section, []):
+                    ticker = item.get("ticker", "").strip()
+                    if not ticker or ticker in seen or not ticker.isalpha():
+                        continue
+                    seen.add(ticker)
+                    try:
+                        candidates.append({
+                            "ticker": ticker, "name": ticker,
+                            "price": float(item.get("price", 0)),
+                            "change_rate": float(
+                                str(item.get("change_percentage", "0")).replace("%", "")
+                            ),
+                            "volume": _extract_us_volume(item),
+                            "vol_ratio": 1.0,
+                        })
+                    except (ValueError, TypeError):
+                        continue
+            if candidates:
+                _US_SCREEN_CACHE_PATH.write_text(
+                    json.dumps({"date": today, "candidates": candidates, "source": "av"},
+                               ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                return candidates[:top_n]
+        except Exception:
+            pass
+
+    # ── 3차: 하드코딩 폴백 유니버스 ──────────────────────────────────────────
     return [
         {"ticker": t, "name": t, "price": 0.0, "change_rate": 0.0,
          "volume": 0, "vol_ratio": 1.0}
