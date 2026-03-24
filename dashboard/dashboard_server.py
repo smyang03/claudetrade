@@ -17,6 +17,13 @@ from pathlib import Path
 from datetime import datetime, date, timedelta, time as dt_time
 import json, sys, os
 
+# .env 로드 (trading_bot과 동일한 환경변수 사용)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass
+
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -209,19 +216,25 @@ def api_judgments():
         return jsonify({})
     judgments  = rec.get("judgments", {})
     postmortem = rec.get("postmortem", {})
+    r1 = rec.get("round1_judgments", {})
+    changes = rec.get("debate_changes", [])
     return jsonify({
         "date":     rec.get("date", ""),
         "bull":     {**judgments.get("bull", {}),
                      "result": postmortem.get("bull_result", ""),
-                     "why":    postmortem.get("bull_why", "")},
+                     "why":    postmortem.get("bull_why", ""),
+                     "r1_stance": r1.get("bull", {}).get("stance", "")},
         "bear":     {**judgments.get("bear", {}),
                      "result": postmortem.get("bear_result", ""),
-                     "why":    postmortem.get("bear_why", "")},
+                     "why":    postmortem.get("bear_why", ""),
+                     "r1_stance": r1.get("bear", {}).get("stance", "")},
         "neutral":  {**judgments.get("neutral", {}),
                      "result": postmortem.get("neutral_result", ""),
-                     "why":    postmortem.get("neutral_why", "")},
-        "consensus": rec.get("consensus", {}),
-        "lesson":   postmortem.get("key_lesson", ""),
+                     "why":    postmortem.get("neutral_why", ""),
+                     "r1_stance": r1.get("neutral", {}).get("stance", "")},
+        "consensus":    rec.get("consensus", {}),
+        "lesson":       postmortem.get("key_lesson", ""),
+        "debate_changes": changes,
     })
 
 
@@ -450,6 +463,125 @@ def api_trades_list():
 
     trades.sort(key=lambda x: (x["date"], x["side"]), reverse=True)
     return jsonify(trades[:limit])
+
+
+@app.route("/api/signals/recent")
+def api_signals_recent():
+    """최근 신호 이벤트 목록 (analysis JSONL에서 읽기)"""
+    market = request.args.get("market", "KR")
+    n      = min(int(request.args.get("n", "60")), 200)
+    today  = datetime.now().strftime("%Y%m%d")
+    log_path = BASE_DIR / "logs" / "analysis" / f"analysis_{today}.jsonl"
+    events: list[dict] = []
+    if log_path.exists():
+        try:
+            lines = log_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            lines = []
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            # extra 중첩 구조 처리: {"extra": {"extra": {...}}} 또는 {"extra": {...}}
+            extra = rec.get("extra", {})
+            if "extra" in extra:
+                extra = extra["extra"]
+            ev = extra.get("event", "")
+            if ev not in ("signal_check", "entry_signal", "entry_skip", "signal_blocked"):
+                continue
+            ev_market = extra.get("market", "")
+            if market and ev_market and ev_market != market:
+                continue
+            # signal_check에서 signal=none인 경우만 포함 (신호 없음)
+            if ev == "signal_check" and extra.get("signal", "") != "none":
+                continue
+            events.append({
+                "timestamp": rec.get("timestamp", ""),
+                "event":     ev,
+                "market":    ev_market,
+                "ticker":    extra.get("ticker", ""),
+                "reason":    extra.get("reason", extra.get("signal", "")),
+                "price":     extra.get("price", 0),
+                "mode":      extra.get("mode", ""),
+            })
+    # 최신순으로 n개
+    events.reverse()
+    return jsonify(events[:n])
+
+
+@app.route("/api/tickers/today")
+def api_tickers_today():
+    """오늘 Claude가 선택한 모니터링 종목 + 최근 신호 요약"""
+    market = request.args.get("market", best_market_with_data())
+    rec    = load_today(market)
+    tickers  = rec.get("tickers", [])
+    universe = rec.get("universe_tickers", [])
+    consensus = rec.get("consensus", {})
+
+    # 오늘 analysis 로그에서 종목별 최근 이벤트 + 선택 이유 집계
+    today_str = datetime.now().strftime("%Y%m%d")
+    log_path  = BASE_DIR / "logs" / "analysis" / f"analysis_{today_str}.jsonl"
+    ticker_last: dict[str, dict] = {}
+    ticker_sig_count: dict[str, int] = {}
+    selection_reasons: dict[str, str] = {}
+    candidates_list: list[str] = []
+    if log_path.exists():
+        try:
+            lines = log_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            lines = []
+        for line in lines:
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            extra = r.get("extra", {})
+            if "extra" in extra:
+                extra = extra["extra"]
+            ev   = extra.get("event", "")
+            mkt  = extra.get("market", "")
+            if mkt and mkt != market:
+                continue
+            # 선택 이유 수집 (ticker_selection / ticker_rescreen)
+            if ev in ("ticker_selection", "ticker_rescreen"):
+                reasons = extra.get("reasons", {})
+                if reasons:
+                    selection_reasons.update(reasons)
+            # 스크리너 후보 수집
+            if ev == "screen_candidates":
+                candidates_list = extra.get("tickers", [])
+            t = extra.get("ticker", "")
+            if not t:
+                continue
+            ticker_last[t] = {"event": ev, "ts": r.get("timestamp", ""),
+                               "price": extra.get("price", 0),
+                               "reason": extra.get("reason", "")}
+            if ev == "entry_signal":
+                ticker_sig_count[t] = ticker_sig_count.get(t, 0) + 1
+
+    result = []
+    for t in tickers:
+        last = ticker_last.get(t, {})
+        result.append({
+            "ticker":          t,
+            "last_event":      last.get("event", "waiting"),
+            "last_ts":         last.get("ts", "")[-8:-3] if last.get("ts") else "--:--",
+            "last_price":      last.get("price", 0),
+            "last_reason":     last.get("reason", ""),
+            "sig_count":       ticker_sig_count.get(t, 0),
+            "select_reason":   selection_reasons.get(t, ""),  # Claude의 선택 이유
+        })
+    # 선택되지 않은 후보 목록 (축약)
+    not_selected = [t for t in candidates_list if t not in tickers]
+    return jsonify({
+        "market":         market,
+        "mode":           consensus.get("mode", ""),
+        "tickers":        result,
+        "universe_count": len(universe) or len(candidates_list),
+        "candidates":     candidates_list,
+        "not_selected":   not_selected,
+    })
 
 
 # ── HTML 헬퍼 ─────────────────────────────────────────────────────────────────
@@ -933,6 +1065,26 @@ PAGE_TODAY_HTML = """
   </div>
 </div>
 
+<!-- 현재 모니터링 종목 -->
+<div class="section-title" style="margin-top:24px">
+  오늘 모니터링 종목
+  <span id="ticker-mode-badge" style="margin-left:10px"></span>
+  <span id="ticker-ts" style="font-size:11px;color:var(--text-dim);margin-left:8px;font-weight:400"></span>
+</div>
+<div id="ticker-board" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px"></div>
+
+<!-- 신호 실시간 피드 -->
+<div class="section-title" style="margin-top:4px">
+  실시간 신호 피드
+  <span id="signal-ts" style="font-size:11px;color:var(--text-dim);margin-left:12px;font-weight:400"></span>
+</div>
+<div class="card" style="padding:0;overflow:hidden">
+  <div style="display:flex;gap:12px;padding:10px 16px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:11px;color:var(--text-dim);font-family:var(--mono)">
+    <span>🟢 진입신호</span><span>⬜ 신호없음</span><span>🔴 가격오류</span><span>🟠 예산/차단</span><span>🔵 보유중</span>
+  </div>
+  <div id="signal-feed" style="max-height:320px;overflow-y:auto;font-family:var(--mono);font-size:12px"></div>
+</div>
+
 </main>
 
 <script>
@@ -971,6 +1123,11 @@ async function loadJudgments() {
     const res  = info.result || '';
     const rb   = res === 'HIT' ? 'hit' : res === 'MISS' ? 'miss' : 'partial';
     const barC = iconClass === 'bull' ? 'var(--green)' : iconClass === 'bear' ? 'var(--red)' : 'var(--yellow)';
+    // 1라운드→2라운드 의견 변경 표시
+    const r1stance = info.r1_stance || '';
+    const debateHtml = (r1stance && r1stance !== info.stance)
+      ? `<div style="font-size:11px;color:#f59e0b;margin-top:4px">💬 토론 변경: ${r1stance} → <b>${info.stance}</b></div>`
+      : (r1stance ? `<div style="font-size:11px;color:#475569;margin-top:4px">💬 토론 유지: ${info.stance}</div>` : '');
     return `
     <div class="analyst-card">
       <div class="analyst-header">
@@ -984,6 +1141,7 @@ async function loadJudgments() {
       <div class="analyst-confidence">신뢰도 ${conf}%</div>
       <div class="conf-bar"><div class="conf-bar-fill" style="width:${conf}%;background:${barC}"></div></div>
       <div class="analyst-reason">📋 ${info.key_reason || '-'}</div>
+      ${debateHtml}
       ${info.why ? `<div class="postmortem">→ ${info.why}</div>` : ''}
     </div>`;
   }
@@ -1084,11 +1242,116 @@ async function loadCredits() {
   });
 }
 
+async function loadMonitorTickers() {
+  const board = document.getElementById('ticker-board');
+  if (!board) return;
+  const d = await fetch('/api/tickers/today?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const tickers = d.tickers || [];
+  if (tickers.length === 0) {
+    board.innerHTML = '<span style="color:var(--text-dim);font-size:13px">종목 데이터 없음</span>';
+    return;
+  }
+
+  // 모드 배지
+  const modeEl = document.getElementById('ticker-mode-badge');
+  if (modeEl && d.mode) {
+    modeEl.innerHTML = `<span class="mode-badge mode-${d.mode}">${d.mode}</span>`;
+  }
+  const total = d.universe_count || 0;
+  document.getElementById('ticker-ts').textContent =
+    `후보 ${total}개 중 ${tickers.length}개 선택 · 갱신: ${new Date().toLocaleTimeString()}`;
+
+  const EVENT_MAP = {
+    'entry_signal':  { icon: '🟢', label: '진입신호', color: '#10b981' },
+    'signal_blocked':{ icon: '🚫', label: '모드차단', color: '#f59e0b' },
+    'entry_skip':    { icon: '🟠', label: '스킵',     color: '#f59e0b' },
+    'signal_check':  { icon: '⬜', label: '신호없음', color: '#64748b' },
+    'waiting':       { icon: '⏳', label: '대기중',   color: '#64748b' },
+  };
+
+  board.innerHTML = tickers.map(t => {
+    const ev = EVENT_MAP[t.last_event] || EVENT_MAP['waiting'];
+    const priceStr = t.last_price > 0
+      ? (MARKET === 'KR' ? Math.round(t.last_price).toLocaleString() + '원' : '$' + t.last_price.toFixed(2))
+      : '--';
+    const sigBadge = t.sig_count > 0
+      ? `<span style="background:#10b981;color:#000;border-radius:3px;padding:1px 5px;font-size:10px;margin-left:4px">신호 ${t.sig_count}회</span>`
+      : '';
+    const reasonHtml = t.select_reason
+      ? `<div style="font-size:10px;color:#64748b;margin-top:5px;line-height:1.4;border-top:1px solid var(--border);padding-top:5px">${t.select_reason}</div>`
+      : '';
+    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:160px;max-width:280px;cursor:default">
+      <div style="font-family:var(--mono);font-weight:700;font-size:14px;color:#e2e8f0">${t.ticker}${sigBadge}</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${priceStr}</div>
+      <div style="margin-top:6px;font-size:12px;color:${ev.color}">${ev.icon} ${ev.label}</div>
+      <div style="font-size:10px;color:#475569;margin-top:2px">${t.last_ts}${t.last_reason ? ' · ' + t.last_reason : ''}</div>
+      ${reasonHtml}
+    </div>`;
+  }).join('');
+
+  // 선택 안 된 후보 목록 (접힌 형태)
+  const notSel = d.not_selected || [];
+  if (notSel.length > 0) {
+    const notSelDiv = document.createElement('div');
+    notSelDiv.style.cssText = 'width:100%;margin-top:8px;font-size:11px;color:#475569;font-family:var(--mono)';
+    notSelDiv.innerHTML = `<span style="color:#374151">제외된 후보:</span> ${notSel.join(', ')}`;
+    board.appendChild(notSelDiv);
+  }
+}
+
+async function loadSignalFeed() {
+  const feed = document.getElementById('signal-feed');
+  if (!feed) return;
+  const d = await fetch('/api/signals/recent?market=' + MARKET + '&n=60').then(r => r.json()).catch(() => []);
+  if (!Array.isArray(d) || d.length === 0) {
+    feed.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">신호 데이터 없음</div>';
+    return;
+  }
+  const rows = d.map(ev => {
+    const event  = ev.event  || '';
+    const reason = ev.reason || '';
+    const ticker = ev.ticker || '';
+    const market = ev.market || '';
+    const price  = ev.price  || 0;
+    const mode   = ev.mode   || '';
+    const ts     = ev.timestamp ? ev.timestamp.substring(11,19) : '';
+
+    let icon = '⬜', bg = 'transparent', textColor = '#64748b';
+    if (event === 'entry_signal') {
+      icon = '🟢'; bg = 'rgba(16,185,129,0.08)'; textColor = '#10b981';
+    } else if (event === 'entry_skip') {
+      if (reason === 'invalid_price') { icon = '🔴'; bg = 'rgba(239,68,68,0.08)'; textColor = '#ef4444'; }
+      else if (reason === 'already_holding') { icon = '🔵'; bg = 'rgba(59,130,246,0.08)'; textColor = '#3b82f6'; }
+      else { icon = '🟠'; bg = 'rgba(245,158,11,0.08)'; textColor = '#f59e0b'; }
+    } else if (event === 'signal_blocked') {
+      icon = '🚫'; bg = 'rgba(245,158,11,0.08)'; textColor = '#f59e0b';
+    }
+
+    const priceStr = price > 0 ? (market === 'KR' ? Math.round(price).toLocaleString() + '원' : '$' + price.toFixed(2)) : '';
+    const detail   = reason ? reason : (mode ? 'mode:' + mode : '');
+
+    return `<div style="display:flex;align-items:center;gap:10px;padding:6px 16px;background:${bg};border-bottom:1px solid rgba(31,41,55,0.4)">
+      <span style="color:var(--text-dim);min-width:56px">${ts}</span>
+      <span>${icon}</span>
+      <span style="min-width:36px;color:#94a3b8">${market}</span>
+      <span style="min-width:80px;color:${textColor};font-weight:600">${ticker}</span>
+      <span style="min-width:72px;color:var(--text-dim)">${priceStr}</span>
+      <span style="color:var(--text-dim)">${detail}</span>
+    </div>`;
+  }).join('');
+  feed.innerHTML = rows;
+  document.getElementById('signal-ts').textContent = '갱신: ' + new Date().toLocaleTimeString();
+}
+
 async function loadAll() {
   await Promise.all([loadSummary(), loadJudgments(), loadEquityChart(), loadCredits()]);
+  loadMonitorTickers();
+  loadSignalFeed();
 }
 
 loadAll();
+setInterval(loadMonitorTickers, 15000);
+setInterval(loadSignalFeed, 10000);
 </script>
 """
 

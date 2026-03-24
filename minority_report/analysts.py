@@ -361,6 +361,10 @@ Rules:
     valid    = {c["ticker"] for c in candidates if c.get("ticker")}
     fallback = [c["ticker"] for c in candidates[:3] if c.get("ticker")]
 
+    # US DEFENSIVE/HALT 모드 시 인버스 ETF만 남지 않도록 안정 종목 보호 목록
+    US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
+    US_STABLE_ANCHORS = ["T", "VZ", "XLU", "KO", "JNJ", "PG", "O", "VYM", "SCHD"]
+
     try:
         resp = client.messages.create(model=MODEL, max_tokens=512,
                                       messages=[{"role": "user", "content": prompt}])
@@ -372,6 +376,18 @@ Rules:
         tickers = [t for t in result.get("tickers", []) if t in valid][:5]
         if not tickers:
             raise ValueError("no valid tickers")
+
+        # US DEFENSIVE/HALT 모드: 인버스 ETF만 선택된 경우 안정 종목 보완
+        if market == "US" and consensus_mode in ("DEFENSIVE", "HALT"):
+            non_inverse = [t for t in tickers if t not in US_INVERSE_ETFS]
+            if not non_inverse:
+                # 후보에서 안정 종목 찾기
+                stable_in_candidates = [t for t in US_STABLE_ANCHORS if t in valid]
+                if stable_in_candidates:
+                    # 인버스 1개 유지, 나머지를 안정 종목으로 교체
+                    tickers = tickers[:1] + stable_in_candidates[:4]
+                    log.info(f"[ticker-selection] DEFENSIVE/HALT — 안정 종목 보완: {tickers}")
+
         log.info(f"[ticker-selection] {market} -> {tickers}")
         analysis_log.info(
             f"[selection] {market} {tickers}",

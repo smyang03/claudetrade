@@ -35,11 +35,17 @@ JSON으로만:
   "size_adj":0,"sl_adj":0.0,"reason":"조정 이유 한 문장",
   "warning":"주의사항 또는 null"}}"""
     try:
-        resp = client.messages.create(model=MODEL, max_tokens=256,
+        resp = client.messages.create(model=MODEL, max_tokens=400,
             messages=[{"role":"user","content":prompt}])
         raw = resp.content[0].text.strip()
         if "```" in raw: raw = raw.split("```")[1].replace("json","").strip()
         result = json.loads(raw)
+        VALID_MODES = {
+            "AGGRESSIVE","MODERATE_BULL","MILD_BULL","CAUTIOUS",
+            "NEUTRAL","MILD_BEAR","CAUTIOUS_BEAR","DEFENSIVE","HALT"
+        }
+        if result.get("mode") not in VALID_MODES:
+            result["mode"] = prev_mode
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, f"tune_{elapsed_min}min")
         log.info(f"[튜닝 {elapsed_min}분] {result.get('action','-')} "
                  f"→ {result.get('mode','-')} | {result.get('reason','')[:60]}")

@@ -116,7 +116,7 @@ def get_hashkey(body, token):
 
 def _get_price_kr(ticker, token):
     url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price"
-    tr_id = "VTTC8434R" if IS_PAPER else "FHKST01010100"
+    tr_id = "FHKST01010100"  # 시세 조회는 모의/실거래 공통 TR
     resp = requests.get(
         url,
         headers=_headers(token, tr_id),
@@ -511,12 +511,27 @@ def screen_market_kr(token: str, top_n: int = 30) -> list:
         return []
 
 
+_AV_CACHE_PATH = get_runtime_path("state", "av_screen_cache.json")
+
 def screen_market_us(top_n: int = 30) -> list:
     """
     US 시장 스크리닝 — Alpha Vantage TOP_GAINERS_LOSERS
-    실패 시 폴백 유니버스 반환
+    - 당일 캐시 파일이 있으면 API 호출 없이 재사용 (AV 무료 25회/일 제한 대응)
+    - 실패 시 폴백 유니버스 반환
     반환: [{ticker, name, price, change_rate, volume, vol_ratio}]
     """
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # ── 캐시 확인 ─────────────────────────────────────────────────────────────
+    if _AV_CACHE_PATH.exists():
+        try:
+            cached = json.loads(_AV_CACHE_PATH.read_text(encoding="utf-8"))
+            if cached.get("date") == today and cached.get("candidates"):
+                return cached["candidates"][:top_n]
+        except Exception:
+            pass
+
+    # ── AV API 호출 ───────────────────────────────────────────────────────────
     if AV_KEY:
         try:
             resp = requests.get(
@@ -526,30 +541,45 @@ def screen_market_us(top_n: int = 30) -> list:
             )
             resp.raise_for_status()
             data = resp.json()
-            candidates = []
-            seen: set = set()
-            for section in ("most_actively_traded", "top_gainers", "top_losers"):
-                for item in data.get(section, []):
-                    ticker = item.get("ticker", "").strip()
-                    # ETF/지수/워런트 제외 (알파벳만)
-                    if not ticker or ticker in seen or not ticker.isalpha():
-                        continue
-                    seen.add(ticker)
+            # 요청 한도 초과 메시지 감지
+            if "Information" in data or "Note" in data:
+                msg = data.get("Information") or data.get("Note", "")
+                import logging as _log
+                _log.getLogger("trading_system").warning(f"[AV API 한도] {msg[:80]}")
+            else:
+                candidates = []
+                seen: set = set()
+                for section in ("most_actively_traded", "top_gainers", "top_losers"):
+                    for item in data.get(section, []):
+                        ticker = item.get("ticker", "").strip()
+                        # ETF/지수/워런트 제외 (알파벳만)
+                        if not ticker or ticker in seen or not ticker.isalpha():
+                            continue
+                        seen.add(ticker)
+                        try:
+                            candidates.append({
+                                "ticker": ticker,
+                                "name": ticker,
+                                "price": float(item.get("price", 0)),
+                                "change_rate": float(
+                                    str(item.get("change_percentage", "0")).replace("%", "")
+                                ),
+                                "volume": int(item.get("volume", 0)),
+                                "vol_ratio": 1.0,
+                            })
+                        except (ValueError, TypeError):
+                            continue
+                if candidates:
+                    # 당일 캐시 저장
                     try:
-                        candidates.append({
-                            "ticker": ticker,
-                            "name": ticker,
-                            "price": float(item.get("price", 0)),
-                            "change_rate": float(
-                                str(item.get("change_percentage", "0")).replace("%", "")
-                            ),
-                            "volume": int(item.get("volume", 0)),
-                            "vol_ratio": 1.0,
-                        })
-                    except (ValueError, TypeError):
-                        continue
-            if candidates:
-                return candidates[:top_n]
+                        _AV_CACHE_PATH.write_text(
+                            json.dumps({"date": today, "candidates": candidates},
+                                       ensure_ascii=False),
+                            encoding="utf-8"
+                        )
+                    except Exception:
+                        pass
+                    return candidates[:top_n]
         except Exception:
             pass
 

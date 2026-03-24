@@ -268,3 +268,686 @@
 2026-03-22 23:32:08 [INFO    ] main:1437 | [startup] US 세션 진행 중 — session_open 즉시 실행
 2026-03-22 23:32:08 [INFO    ] session_open:592 | ==================================================
 2026-03-22 23:32:08 [INFO    ] session_open:593 | [US] session_open
+2026-03-22 23:32:08 [INFO    ] session_open:597 | [US] 휴장일 — 세션 스킵
+2026-03-23 00:13:32 [INFO    ] _poll_loop:587 | [commander] 명령 수신: ?
+2026-03-23 00:13:42 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /brain
+2026-03-23 00:13:56 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /credit
+2026-03-23 04:21:03 [WARNING ] _poll_loop:591 | [commander] 폴링 오류: HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=35)
+2026-03-23 04:21:44 [WARNING ] _poll_loop:591 | [commander] 폴링 오류: HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=35)
+2026-03-23 04:55:10 [WARNING ] _poll_loop:591 | [commander] 폴링 오류: HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=35)
+2026-03-23 05:00:00 [INFO    ] session_close:1265 | [US] session_close
+2026-03-23 08:50:00 [INFO    ] session_open:592 | ==================================================
+2026-03-23 08:50:00 [INFO    ] session_open:593 | [KR] session_open
+2026-03-23 08:50:04 [INFO    ] session_open:623 | [환율 갱신] USD/KRW 1,350 → 1,504.17원
+2026-03-23 08:51:04 [INFO    ] session_open:731 | [스크리너] KR 시장 스캔 중...
+2026-03-23 08:51:04 [INFO    ] session_open:746 | [스크리너] KR 후보 1개 → Claude 선택 중...
+2026-03-23 08:51:08 [INFO    ] session_open:749 | [종목선택 확정] KR: ['252670']
+2026-03-23 08:51:09 [INFO    ] session_open:797 | consensus: NEUTRAL size=36%
+2026-03-23 08:52:25 [INFO    ] run_cycle:837 | [KR 사이클 08:52] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 08:52:25 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 08:57:26 [INFO    ] run_cycle:837 | [KR 사이클 08:57] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 08:57:26 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:02:29 [INFO    ] run_tuning:1110 | [튜닝 30분] MAINTAIN — 텔레그램 스킵
+2026-03-23 09:02:30 [INFO    ] run_cycle:837 | [KR 사이클 09:02] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:02:30 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:07:30 [INFO    ] run_cycle:837 | [KR 사이클 09:07] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:07:30 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:12:30 [INFO    ] run_cycle:837 | [KR 사이클 09:12] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:12:31 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:17:31 [INFO    ] run_cycle:837 | [KR 사이클 09:17] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:17:31 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:22:31 [INFO    ] run_cycle:837 | [KR 사이클 09:22] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:22:32 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:23:29 [INFO    ] _poll_loop:587 | [commander] 명령 수신: ?
+2026-03-23 09:23:53 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /p
+2026-03-23 09:23:59 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /s
+2026-03-23 09:24:04 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /mode
+2026-03-23 09:24:16 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /brain
+2026-03-23 09:24:46 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /judge
+2026-03-23 09:27:32 [INFO    ] run_cycle:837 | [KR 사이클 09:27] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:27:32 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:32:14 [INFO    ] _heartbeat:1261 | [Heartbeat 09:32] KR | 모드:NEUTRAL | 포지션:없음
+2026-03-23 09:32:36 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: REVERSE 권고: 아침 MILD_BULL 판단 후 60분 내 지수 -4.78% 급락으로 기술적 반등 신호 완전 무효화, 보유 
+2026-03-23 09:33:28 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] STRONG_BEAR → NEUTRAL size=36%
+2026-03-23 09:33:31 [INFO    ] run_cycle:837 | [KR 사이클 09:33] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:33:31 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:38:10 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /pnl
+2026-03-23 09:38:14 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /trades
+2026-03-23 09:38:31 [INFO    ] run_cycle:837 | [KR 사이클 09:38] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:38:32 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:43:32 [INFO    ] run_cycle:837 | [KR 사이클 09:43] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:43:33 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:48:33 [INFO    ] run_cycle:837 | [KR 사이클 09:48] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:48:34 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:53:34 [INFO    ] run_cycle:837 | [KR 사이클 09:53] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:53:35 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 09:58:35 [INFO    ] run_cycle:837 | [KR 사이클 09:58] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 09:58:35 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:03:37 [INFO    ] run_tuning:1110 | [튜닝 90분] MAINTAIN — 텔레그램 스킵
+2026-03-23 10:03:38 [INFO    ] run_cycle:837 | [KR 사이클 10:03] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:03:38 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:08:38 [INFO    ] run_cycle:837 | [KR 사이클 10:08] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:08:39 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:13:39 [INFO    ] run_cycle:837 | [KR 사이클 10:13] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:13:40 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:18:40 [INFO    ] run_cycle:837 | [KR 사이클 10:18] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:18:41 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:23:41 [INFO    ] run_cycle:837 | [KR 사이클 10:23] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:23:41 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:28:41 [INFO    ] run_cycle:837 | [KR 사이클 10:28] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:28:41 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:32:00 [INFO    ] _poll_loop:587 | [commander] 명령 수신: ?
+2026-03-23 10:32:08 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /status
+2026-03-23 10:32:13 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /brain
+2026-03-23 10:32:15 [INFO    ] _heartbeat:1261 | [Heartbeat 10:32] KR | 모드:NEUTRAL | 포지션:없음
+2026-03-23 10:32:22 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /mode
+2026-03-23 10:33:44 [INFO    ] run_tuning:1110 | [튜닝 120분] MAINTAIN — 텔레그램 스킵
+2026-03-23 10:33:44 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: 지수 급락 -5.64%
+2026-03-23 10:34:33 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] NEUTRAL → NEUTRAL size=36%
+2026-03-23 10:34:35 [INFO    ] run_cycle:837 | [KR 사이클 10:34] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:34:36 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:39:36 [INFO    ] run_cycle:837 | [KR 사이클 10:39] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:39:36 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:44:36 [INFO    ] run_cycle:837 | [KR 사이클 10:44] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:44:36 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:49:36 [INFO    ] run_cycle:837 | [KR 사이클 10:49] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:49:37 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:54:37 [INFO    ] run_cycle:837 | [KR 사이클 10:54] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:54:37 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 10:59:37 [INFO    ] run_cycle:837 | [KR 사이클 10:59] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 10:59:38 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:04:44 [INFO    ] run_cycle:837 | [KR 사이클 11:04] 모드:BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:04:44 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:09:44 [INFO    ] run_cycle:837 | [KR 사이클 11:09] 모드:BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:09:44 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:14:45 [INFO    ] run_cycle:837 | [KR 사이클 11:14] 모드:BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:14:45 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:19:45 [INFO    ] run_cycle:837 | [KR 사이클 11:19] 모드:BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:19:46 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:24:46 [INFO    ] run_cycle:837 | [KR 사이클 11:24] 모드:BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:24:46 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:29:47 [INFO    ] run_cycle:837 | [KR 사이클 11:29] 모드:BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:29:47 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:32:17 [INFO    ] _heartbeat:1261 | [Heartbeat 11:32] KR | 모드:BEAR | 포지션:없음
+2026-03-23 11:34:52 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: REVERSE 권고: 아침 MILD_BULL 판단 대비 180분 내 -5.14% 급락으로 기술적 골든크로스 신호가 완전히 무력화되
+2026-03-23 11:35:45 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] STRONG_BEAR → NEUTRAL size=36%
+2026-03-23 11:35:47 [INFO    ] run_cycle:837 | [KR 사이클 11:35] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:35:48 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:40:48 [INFO    ] run_cycle:837 | [KR 사이클 11:40] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:40:48 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:45:48 [INFO    ] run_cycle:837 | [KR 사이클 11:45] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:45:48 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:50:49 [INFO    ] run_cycle:837 | [KR 사이클 11:50] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:50:49 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 11:55:49 [INFO    ] run_cycle:837 | [KR 사이클 11:55] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 11:55:50 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:00:51 [INFO    ] run_cycle:837 | [KR 사이클 12:00] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:00:51 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:05:56 [INFO    ] run_cycle:837 | [KR 사이클 12:05] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:05:56 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:10:56 [INFO    ] run_cycle:837 | [KR 사이클 12:10] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:10:57 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:15:57 [INFO    ] run_cycle:837 | [KR 사이클 12:15] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:15:57 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:20:57 [INFO    ] run_cycle:837 | [KR 사이클 12:20] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:20:57 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:25:57 [INFO    ] run_cycle:837 | [KR 사이클 12:25] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:25:58 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:30:58 [INFO    ] run_cycle:837 | [KR 사이클 12:30] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:30:58 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:32:18 [INFO    ] _heartbeat:1261 | [Heartbeat 12:32] KR | 모드:STRONG_BEAR | 포지션:없음
+2026-03-23 12:36:04 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: REVERSE 권고: 아침 MILD_BULL 판단 대비 240분 경과 후 지수 -5.82% 급락으로 기술적 반등 신호(SK하이닉스
+2026-03-23 12:36:59 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] STRONG_BEAR → NEUTRAL size=36%
+2026-03-23 12:37:02 [INFO    ] run_cycle:837 | [KR 사이클 12:37] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:37:03 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:42:03 [INFO    ] run_cycle:837 | [KR 사이클 12:42] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:42:04 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:47:05 [INFO    ] run_cycle:837 | [KR 사이클 12:47] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:47:06 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:52:06 [INFO    ] run_cycle:837 | [KR 사이클 12:52] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:52:07 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 12:57:07 [INFO    ] run_cycle:837 | [KR 사이클 12:57] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 12:57:09 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:02:09 [INFO    ] run_cycle:837 | [KR 사이클 13:02] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:02:10 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:07:11 [INFO    ] run_cycle:837 | [KR 사이클 13:07] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:07:12 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:12:12 [INFO    ] run_cycle:837 | [KR 사이클 13:12] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:12:12 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:17:12 [INFO    ] run_cycle:837 | [KR 사이클 13:17] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:17:14 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:22:14 [INFO    ] run_cycle:837 | [KR 사이클 13:22] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:22:14 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:27:14 [INFO    ] run_cycle:837 | [KR 사이클 13:27] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:27:14 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:32:14 [INFO    ] run_cycle:837 | [KR 사이클 13:32] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:32:15 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:32:20 [INFO    ] _heartbeat:1261 | [Heartbeat 13:32] KR | 모드:STRONG_BEAR | 포지션:없음
+2026-03-23 13:37:19 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: REVERSE 권고: 아침 MODERATE_BULL 판단과 달리 300분 경과 후 지수 -5.79% 급락으로 Bear 신호가 압도
+2026-03-23 13:38:13 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] STRONG_BEAR → NEUTRAL size=36%
+2026-03-23 13:38:15 [INFO    ] run_cycle:837 | [KR 사이클 13:38] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:38:16 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:43:16 [INFO    ] run_cycle:837 | [KR 사이클 13:43] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:43:17 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:48:17 [INFO    ] run_cycle:837 | [KR 사이클 13:48] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:48:18 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:53:18 [INFO    ] run_cycle:837 | [KR 사이클 13:53] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:53:19 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 13:58:19 [INFO    ] run_cycle:837 | [KR 사이클 13:58] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 13:58:20 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:03:20 [INFO    ] run_cycle:837 | [KR 사이클 14:03] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:03:21 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:06:10 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /pnl
+2026-03-23 14:06:14 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /trades
+2026-03-23 14:08:24 [INFO    ] run_cycle:837 | [KR 사이클 14:08] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:08:24 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:13:24 [INFO    ] run_cycle:837 | [KR 사이클 14:13] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:13:25 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:18:25 [INFO    ] run_cycle:837 | [KR 사이클 14:18] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:18:25 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:23:25 [INFO    ] run_cycle:837 | [KR 사이클 14:23] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:23:25 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:28:26 [INFO    ] run_cycle:837 | [KR 사이클 14:28] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:28:26 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:32:21 [INFO    ] _heartbeat:1261 | [Heartbeat 14:32] KR | 모드:STRONG_BEAR | 포지션:없음
+2026-03-23 14:33:26 [INFO    ] run_cycle:837 | [KR 사이클 14:33] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:33:26 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:38:31 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: REVERSE 권고: 아침 MILD_BULL 기술 신호(SK하이닉스·NAVER MACD 골든크로스 등)에도 불구하고 360분 경과
+2026-03-23 14:39:28 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] STRONG_BEAR → NEUTRAL size=36%
+2026-03-23 14:39:31 [INFO    ] run_cycle:837 | [KR 사이클 14:39] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:39:31 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:44:31 [INFO    ] run_cycle:837 | [KR 사이클 14:44] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:44:32 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:49:32 [INFO    ] run_cycle:837 | [KR 사이클 14:49] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:49:32 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:54:32 [INFO    ] run_cycle:837 | [KR 사이클 14:54] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:54:32 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 14:59:33 [INFO    ] run_cycle:837 | [KR 사이클 14:59] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 14:59:33 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:04:33 [INFO    ] run_cycle:837 | [KR 사이클 15:04] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:04:33 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:09:41 [INFO    ] run_cycle:837 | [KR 사이클 15:09] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:09:41 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:14:41 [INFO    ] run_cycle:837 | [KR 사이클 15:14] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:14:42 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:19:42 [INFO    ] run_cycle:837 | [KR 사이클 15:19] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:19:42 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:24:43 [INFO    ] run_cycle:837 | [KR 사이클 15:24] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:24:43 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:29:43 [INFO    ] run_cycle:837 | [KR 사이클 15:29] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:29:43 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:32:22 [INFO    ] _heartbeat:1261 | [Heartbeat 15:32] KR | 모드:STRONG_BEAR | 포지션:없음
+2026-03-23 15:34:43 [INFO    ] run_cycle:837 | [KR 사이클 15:34] 모드:STRONG_BEAR size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:34:43 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:39:49 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: REVERSE 권고: 아침 MILD_BULL 판단 대비 420분간 -6.56% 급락으로 기술적 반등 신호(SK하이닉스·NAVER 
+2026-03-23 15:40:43 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] STRONG_BEAR → NEUTRAL size=36%
+2026-03-23 15:40:46 [INFO    ] run_cycle:837 | [KR 사이클 15:40] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:40:46 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:45:46 [INFO    ] run_cycle:837 | [KR 사이클 15:45] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:45:46 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:50:46 [INFO    ] run_cycle:837 | [KR 사이클 15:50] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:50:46 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 15:55:46 [INFO    ] run_cycle:837 | [KR 사이클 15:55] 모드:NEUTRAL size:36% | 종목:['252670'] | 포지션:0개
+2026-03-23 15:55:47 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 16:00:00 [INFO    ] session_close:1265 | [KR] session_close
+2026-03-23 16:00:16 [INFO    ] session_close:1357 | [training record 저장] 20260323_KR.json | events=21
+2026-03-23 16:00:17 [INFO    ] session_close:1379 | [KR] summary | +0.00% | +0
+2026-03-23 22:20:00 [INFO    ] session_open:592 | ==================================================
+2026-03-23 22:20:00 [INFO    ] session_open:593 | [US] session_open
+2026-03-23 22:20:00 [INFO    ] session_open:623 | [환율 갱신] USD/KRW 1,504 → 1,491.58원
+2026-03-23 22:20:54 [INFO    ] session_open:731 | [스크리너] US 시장 스캔 중...
+2026-03-23 22:20:54 [INFO    ] session_open:746 | [스크리너] US 후보 30개 → Claude 선택 중...
+2026-03-23 22:21:01 [INFO    ] session_open:749 | [종목선택 확정] US: ['TZA', 'SPDN', 'NVD', 'T']
+2026-03-23 22:21:02 [INFO    ] session_open:797 | consensus: DEFENSIVE size=13%
+2026-03-23 22:21:03 [INFO    ] run_cycle:837 | [US 사이클 22:21] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 22:21:05 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 22:26:06 [INFO    ] run_cycle:837 | [US 사이클 22:26] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 22:26:08 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 22:30:01 [WARNING ] _poll_loop:591 | [commander] 폴링 오류: HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=35)
+2026-03-23 22:31:09 [INFO    ] run_cycle:837 | [US 사이클 22:31] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 22:31:11 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 22:32:28 [INFO    ] _heartbeat:1261 | [Heartbeat 22:32] US | 모드:DEFENSIVE | 포지션:없음
+2026-03-23 22:36:11 [INFO    ] run_cycle:837 | [US 사이클 22:36] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 22:36:13 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 22:41:04 [INFO    ] run_tuning:1110 | [튜닝 30분] MAINTAIN — 텔레그램 스킵
+2026-03-23 22:41:14 [INFO    ] run_cycle:837 | [US 사이클 22:41] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 22:41:18 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 22:46:18 [INFO    ] run_cycle:837 | [US 사이클 22:46] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 22:46:20 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 22:50:55 [WARNING ] _poll_loop:591 | [commander] 폴링 오류: HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=35)
+2026-03-23 22:51:21 [INFO    ] run_cycle:837 | [US 사이클 22:51] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 22:51:23 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 22:56:23 [INFO    ] run_cycle:837 | [US 사이클 22:56] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 22:56:25 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:01:25 [INFO    ] run_cycle:837 | [US 사이클 23:01] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:01:27 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:06:27 [INFO    ] run_cycle:837 | [US 사이클 23:06] 모드:DEFENSIVE size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:06:29 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:11:11 [INFO    ] run_tuning:1089 | SL adjusted: -0.100
+2026-03-23 23:11:30 [INFO    ] run_cycle:837 | [US 사이클 23:11] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:11:32 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:16:32 [INFO    ] run_cycle:837 | [US 사이클 23:16] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:16:34 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:21:34 [INFO    ] run_cycle:837 | [US 사이클 23:21] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:21:36 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:26:36 [INFO    ] run_cycle:837 | [US 사이클 23:26] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:26:38 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:31:39 [INFO    ] run_cycle:837 | [US 사이클 23:31] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:31:41 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:32:29 [INFO    ] _heartbeat:1261 | [Heartbeat 23:32] US | 모드:AGGRESSIVE_BULL | 포지션:없음
+2026-03-23 23:36:41 [INFO    ] run_cycle:837 | [US 사이클 23:36] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:36:43 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:41:20 [INFO    ] run_tuning:1110 | [튜닝 90분] MAINTAIN — 텔레그램 스킵
+2026-03-23 23:41:44 [INFO    ] run_cycle:837 | [US 사이클 23:41] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:41:48 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:46:49 [INFO    ] run_cycle:837 | [US 사이클 23:46] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:46:51 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:51:51 [INFO    ] run_cycle:837 | [US 사이클 23:51] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:51:53 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-23 23:56:53 [INFO    ] run_cycle:837 | [US 사이클 23:56] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-23 23:56:56 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:01:56 [INFO    ] run_cycle:837 | [US 사이클 00:01] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:01:58 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:06:59 [INFO    ] run_cycle:837 | [US 사이클 00:06] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:07:01 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:11:26 [INFO    ] run_tuning:1110 | [튜닝 120분] MAINTAIN — 텔레그램 스킵
+2026-03-24 00:12:01 [INFO    ] run_cycle:837 | [US 사이클 00:12] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:12:04 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:17:04 [INFO    ] run_cycle:837 | [US 사이클 00:17] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:17:06 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:22:07 [INFO    ] run_cycle:837 | [US 사이클 00:22] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:22:09 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:27:09 [INFO    ] run_cycle:837 | [US 사이클 00:27] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:27:12 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:32:12 [INFO    ] run_cycle:837 | [US 사이클 00:32] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:32:14 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:32:30 [INFO    ] _heartbeat:1261 | [Heartbeat 00:32] US | 모드:AGGRESSIVE_BULL | 포지션:없음
+2026-03-24 00:37:14 [INFO    ] run_cycle:837 | [US 사이클 00:37] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:37:17 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:41:33 [INFO    ] run_tuning:1110 | [튜닝 150분] MAINTAIN — 텔레그램 스킵
+2026-03-24 00:42:17 [INFO    ] run_cycle:837 | [US 사이클 00:42] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:42:22 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:47:22 [INFO    ] run_cycle:837 | [US 사이클 00:47] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:47:24 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:52:24 [INFO    ] run_cycle:837 | [US 사이클 00:52] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:52:27 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 00:57:27 [INFO    ] run_cycle:837 | [US 사이클 00:57] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 00:57:29 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:02:29 [INFO    ] run_cycle:837 | [US 사이클 01:02] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:02:31 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:07:32 [INFO    ] run_cycle:837 | [US 사이클 01:07] 모드:AGGRESSIVE_BULL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:07:34 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:12:34 [INFO    ] run_cycle:837 | [US 사이클 01:12] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:12:37 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:17:37 [INFO    ] run_cycle:837 | [US 사이클 01:17] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:17:39 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:22:39 [INFO    ] run_cycle:837 | [US 사이클 01:22] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:22:42 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:24:17 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /pnl
+2026-03-24 01:27:42 [INFO    ] run_cycle:837 | [US 사이클 01:27] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:27:45 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:32:32 [INFO    ] _heartbeat:1261 | [Heartbeat 01:32] US | 모드:NEUTRAL | 포지션:없음
+2026-03-24 01:32:45 [INFO    ] run_cycle:837 | [US 사이클 01:32] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:32:47 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:37:47 [INFO    ] run_cycle:837 | [US 사이클 01:37] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:37:50 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:41:48 [INFO    ] run_tuning:1110 | [튜닝 210분] MAINTAIN — 텔레그램 스킵
+2026-03-24 01:42:50 [INFO    ] run_cycle:837 | [US 사이클 01:42] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:42:55 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:47:55 [INFO    ] run_cycle:837 | [US 사이클 01:47] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:47:58 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:52:58 [INFO    ] run_cycle:837 | [US 사이클 01:52] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:53:00 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 01:58:01 [INFO    ] run_cycle:837 | [US 사이클 01:58] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 01:58:04 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:03:04 [INFO    ] run_cycle:837 | [US 사이클 02:03] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:03:06 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:08:07 [INFO    ] run_cycle:837 | [US 사이클 02:08] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:08:09 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:11:54 [INFO    ] run_tuning:1110 | [튜닝 240분] MAINTAIN — 텔레그램 스킵
+2026-03-24 02:13:10 [INFO    ] run_cycle:837 | [US 사이클 02:13] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:13:12 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:18:12 [INFO    ] run_cycle:837 | [US 사이클 02:18] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:18:14 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:19:42 [WARNING ] _poll_loop:591 | [commander] 폴링 오류: HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=35)
+2026-03-24 02:23:14 [INFO    ] run_cycle:837 | [US 사이클 02:23] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:23:16 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:28:16 [INFO    ] run_cycle:837 | [US 사이클 02:28] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:28:19 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:32:33 [INFO    ] _heartbeat:1261 | [Heartbeat 02:32] US | 모드:NEUTRAL | 포지션:없음
+2026-03-24 02:33:19 [INFO    ] run_cycle:837 | [US 사이클 02:33] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:33:21 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:38:22 [INFO    ] run_cycle:837 | [US 사이클 02:38] 모드:NEUTRAL size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:38:24 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:42:00 [INFO    ] run_tuning:1089 | SL adjusted: -0.100
+2026-03-24 02:43:25 [INFO    ] run_cycle:837 | [US 사이클 02:43] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:43:29 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:48:30 [INFO    ] run_cycle:837 | [US 사이클 02:48] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:48:32 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:53:32 [INFO    ] run_cycle:837 | [US 사이클 02:53] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:53:34 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 02:58:34 [INFO    ] run_cycle:837 | [US 사이클 02:58] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 02:58:37 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:03:37 [INFO    ] run_cycle:837 | [US 사이클 03:03] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:03:39 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:08:39 [INFO    ] run_cycle:837 | [US 사이클 03:08] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:08:41 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:12:08 [INFO    ] run_tuning:1110 | [튜닝 300분] MAINTAIN — 텔레그램 스킵
+2026-03-24 03:13:42 [INFO    ] run_cycle:837 | [US 사이클 03:13] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:13:45 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:18:45 [INFO    ] run_cycle:837 | [US 사이클 03:18] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:18:48 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:23:48 [INFO    ] run_cycle:837 | [US 사이클 03:23] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:23:50 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:28:50 [INFO    ] run_cycle:837 | [US 사이클 03:28] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:28:52 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:32:34 [INFO    ] _heartbeat:1261 | [Heartbeat 03:32] US | 모드:Bull | 포지션:없음
+2026-03-24 03:33:52 [INFO    ] run_cycle:837 | [US 사이클 03:33] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:33:55 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:38:55 [INFO    ] run_cycle:837 | [US 사이클 03:38] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:38:58 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:42:14 [INFO    ] run_tuning:1110 | [튜닝 330분] MAINTAIN — 텔레그램 스킵
+2026-03-24 03:43:58 [INFO    ] run_cycle:837 | [US 사이클 03:43] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:44:03 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:49:03 [INFO    ] run_cycle:837 | [US 사이클 03:49] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:49:06 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:54:06 [INFO    ] run_cycle:837 | [US 사이클 03:54] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:54:08 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 03:59:08 [INFO    ] run_cycle:837 | [US 사이클 03:59] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 03:59:11 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:04:11 [INFO    ] run_cycle:837 | [US 사이클 04:04] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:04:14 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:09:14 [INFO    ] run_cycle:837 | [US 사이클 04:09] 모드:Bull size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:09:16 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:12:21 [INFO    ] run_tuning:1089 | SL adjusted: -0.100
+2026-03-24 04:14:17 [INFO    ] run_cycle:837 | [US 사이클 04:14] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:14:19 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:19:19 [INFO    ] run_cycle:837 | [US 사이클 04:19] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:19:21 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:24:21 [INFO    ] run_cycle:837 | [US 사이클 04:24] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:24:24 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:29:24 [INFO    ] run_cycle:837 | [US 사이클 04:29] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:29:26 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:32:35 [INFO    ] _heartbeat:1261 | [Heartbeat 04:32] US | 모드:Bull_Confirmed | 포지션:없음
+2026-03-24 04:34:26 [INFO    ] run_cycle:837 | [US 사이클 04:34] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:34:29 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:39:29 [INFO    ] run_cycle:837 | [US 사이클 04:39] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:39:32 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:42:28 [INFO    ] run_tuning:1110 | [튜닝 390분] MAINTAIN — 텔레그램 스킵
+2026-03-24 04:44:32 [INFO    ] run_cycle:837 | [US 사이클 04:44] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:44:37 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:49:37 [INFO    ] run_cycle:837 | [US 사이클 04:49] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:49:39 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:54:39 [INFO    ] run_cycle:837 | [US 사이클 04:54] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:54:41 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 04:59:41 [INFO    ] run_cycle:837 | [US 사이클 04:59] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 04:59:44 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 05:00:00 [INFO    ] session_close:1265 | [US] session_close
+2026-03-24 05:00:17 [INFO    ] session_close:1357 | [training record 저장] 20260324_US.json | events=13
+2026-03-24 05:00:18 [INFO    ] session_close:1379 | [US] summary | +0.00% | +0
+2026-03-24 08:50:00 [INFO    ] session_open:592 | ==================================================
+2026-03-24 08:50:00 [INFO    ] session_open:593 | [KR] session_open
+2026-03-24 08:50:00 [INFO    ] session_open:623 | [환율 갱신] USD/KRW 1,492 → 1,486.30원
+2026-03-24 08:50:58 [INFO    ] session_open:731 | [스크리너] KR 시장 스캔 중...
+2026-03-24 08:50:58 [INFO    ] session_open:746 | [스크리너] KR 후보 1개 → Claude 선택 중...
+2026-03-24 08:51:02 [INFO    ] session_open:749 | [종목선택 확정] KR: ['038110']
+2026-03-24 08:51:03 [INFO    ] session_open:797 | consensus: DEFENSIVE size=10%
+2026-03-24 08:52:38 [INFO    ] run_cycle:837 | [KR 사이클 08:52] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 08:52:38 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 08:57:39 [INFO    ] run_cycle:837 | [KR 사이클 08:57] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 08:57:39 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:01:14 [INFO    ] _poll_loop:587 | [commander] 명령 수신: ?
+2026-03-24 09:01:29 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /claude
+2026-03-24 09:01:30 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: 수동 명령: /claude
+2026-03-24 09:02:23 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] DEFENSIVE → DEFENSIVE size=10%
+2026-03-24 09:02:39 [INFO    ] run_cycle:837 | [KR 사이클 09:02] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:02:40 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:07:40 [INFO    ] run_cycle:837 | [KR 사이클 09:07] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:07:40 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:11:12 [INFO    ] run_tuning:1110 | [튜닝 30분] MAINTAIN — 텔레그램 스킵
+2026-03-24 09:12:40 [INFO    ] run_cycle:837 | [KR 사이클 09:12] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:12:41 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:17:41 [INFO    ] run_cycle:837 | [KR 사이클 09:17] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:17:41 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:22:41 [INFO    ] run_cycle:837 | [KR 사이클 09:22] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:22:42 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:27:42 [INFO    ] run_cycle:837 | [KR 사이클 09:27] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:27:44 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:29:31 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /trades
+2026-03-24 09:29:33 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /pnl
+2026-03-24 09:32:40 [INFO    ] _heartbeat:1261 | [Heartbeat 09:32] KR | 모드:DEFENSIVE | 포지션:없음
+2026-03-24 09:32:44 [INFO    ] run_cycle:837 | [KR 사이클 09:32] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:32:44 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:37:44 [INFO    ] run_cycle:837 | [KR 사이클 09:37] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:37:44 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:41:16 [INFO    ] run_tuning:1110 | [튜닝 60분] MAINTAIN — 텔레그램 스킵
+2026-03-24 09:42:44 [INFO    ] run_cycle:837 | [KR 사이클 09:42] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:42:45 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:47:45 [INFO    ] run_cycle:837 | [KR 사이클 09:47] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:47:45 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:52:45 [INFO    ] run_cycle:837 | [KR 사이클 09:52] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:52:45 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 09:57:45 [INFO    ] run_cycle:837 | [KR 사이클 09:57] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 09:57:46 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:02:46 [INFO    ] run_cycle:837 | [KR 사이클 10:02] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:02:46 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:07:46 [INFO    ] run_cycle:837 | [KR 사이클 10:07] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:07:46 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:11:22 [INFO    ] run_tuning:1110 | [튜닝 90분] MAINTAIN — 텔레그램 스킵
+2026-03-24 10:12:46 [INFO    ] run_cycle:837 | [KR 사이클 10:12] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:12:47 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:17:47 [INFO    ] run_cycle:837 | [KR 사이클 10:17] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:17:47 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:22:47 [INFO    ] run_cycle:837 | [KR 사이클 10:22] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:22:47 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:23:33 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /trades
+2026-03-24 10:27:47 [INFO    ] run_cycle:837 | [KR 사이클 10:27] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:27:47 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:32:42 [INFO    ] _heartbeat:1261 | [Heartbeat 10:32] KR | 모드:DEFENSIVE | 포지션:없음
+2026-03-24 10:32:47 [INFO    ] run_cycle:837 | [KR 사이클 10:32] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:32:48 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:37:48 [INFO    ] run_cycle:837 | [KR 사이클 10:37] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:37:48 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:41:32 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: REVERSE 권고: 아침 DEFENSIVE/Bear 판단 대비 120분 내 +1.68% 반등 발생으로 추가 하락 압력 예상이 빗
+2026-03-24 10:42:26 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] NEUTRAL → DEFENSIVE size=10%
+2026-03-24 10:42:49 [INFO    ] run_cycle:837 | [KR 사이클 10:42] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:42:49 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:47:49 [INFO    ] run_cycle:837 | [KR 사이클 10:47] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:47:49 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:52:49 [INFO    ] run_cycle:837 | [KR 사이클 10:52] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:52:49 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 10:57:50 [INFO    ] run_cycle:837 | [KR 사이클 10:57] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 10:57:50 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:02:50 [INFO    ] run_cycle:837 | [KR 사이클 11:02] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:02:50 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:07:50 [INFO    ] run_cycle:837 | [KR 사이클 11:07] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:07:50 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:12:33 [INFO    ] run_tuning:1110 | [튜닝 150분] MAINTAIN — 텔레그램 스킵
+2026-03-24 11:12:50 [INFO    ] run_cycle:837 | [KR 사이클 11:12] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:12:51 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:17:51 [INFO    ] run_cycle:837 | [KR 사이클 11:17] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:17:51 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:22:51 [INFO    ] run_cycle:837 | [KR 사이클 11:22] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:22:51 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:27:51 [INFO    ] run_cycle:837 | [KR 사이클 11:27] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:27:52 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:32:43 [INFO    ] _heartbeat:1261 | [Heartbeat 11:32] KR | 모드:DEFENSIVE | 포지션:없음
+2026-03-24 11:32:52 [INFO    ] run_cycle:837 | [KR 사이클 11:32] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:32:52 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:37:52 [INFO    ] run_cycle:837 | [KR 사이클 11:37] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:37:52 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:42:40 [INFO    ] run_tuning:1110 | [튜닝 180분] MAINTAIN — 텔레그램 스킵
+2026-03-24 11:42:52 [INFO    ] run_cycle:837 | [KR 사이클 11:42] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:42:53 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:47:53 [INFO    ] run_cycle:837 | [KR 사이클 11:47] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:47:53 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:52:53 [INFO    ] run_cycle:837 | [KR 사이클 11:52] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:52:53 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 11:57:53 [INFO    ] run_cycle:837 | [KR 사이클 11:57] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 11:57:54 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:02:54 [INFO    ] run_cycle:837 | [KR 사이클 12:02] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:02:54 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:07:54 [INFO    ] run_cycle:837 | [KR 사이클 12:07] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:07:54 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:12:47 [INFO    ] run_tuning:1110 | [튜닝 210분] MAINTAIN — 텔레그램 스킵
+2026-03-24 12:12:55 [INFO    ] run_cycle:837 | [KR 사이클 12:12] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:12:55 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:17:55 [INFO    ] run_cycle:837 | [KR 사이클 12:17] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:17:55 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:22:55 [INFO    ] run_cycle:837 | [KR 사이클 12:22] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:22:55 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:27:56 [INFO    ] run_cycle:837 | [KR 사이클 12:27] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:27:56 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:32:44 [INFO    ] _heartbeat:1261 | [Heartbeat 12:32] KR | 모드:DEFENSIVE | 포지션:없음
+2026-03-24 12:32:56 [INFO    ] run_cycle:837 | [KR 사이클 12:32] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:32:56 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:37:56 [INFO    ] run_cycle:837 | [KR 사이클 12:37] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:37:56 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:42:55 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: REVERSE 권고: 아침 DEFENSIVE 판단 이후 240분간 지수 +2.02% 반등으로 MACD 데드크로스 및 추가 하락 시
+2026-03-24 12:43:47 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] NEUTRAL → DEFENSIVE size=9%
+2026-03-24 12:43:50 [INFO    ] run_cycle:837 | [KR 사이클 12:43] 모드:DEFENSIVE size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:43:51 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:48:51 [INFO    ] run_cycle:837 | [KR 사이클 12:48] 모드:DEFENSIVE size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:48:51 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:53:51 [INFO    ] run_cycle:837 | [KR 사이클 12:53] 모드:DEFENSIVE size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:53:51 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 12:58:51 [INFO    ] run_cycle:837 | [KR 사이클 12:58] 모드:DEFENSIVE size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 12:58:51 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:03:52 [INFO    ] run_cycle:837 | [KR 사이클 13:03] 모드:DEFENSIVE size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:03:52 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:08:52 [INFO    ] run_cycle:837 | [KR 사이클 13:08] 모드:DEFENSIVE size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:08:52 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:13:59 [INFO    ] run_cycle:837 | [KR 사이클 13:13] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:13:59 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:18:59 [INFO    ] run_cycle:837 | [KR 사이클 13:18] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:19:00 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:24:00 [INFO    ] run_cycle:837 | [KR 사이클 13:24] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:24:01 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:29:01 [INFO    ] run_cycle:837 | [KR 사이클 13:29] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:29:01 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:32:45 [INFO    ] _heartbeat:1261 | [Heartbeat 13:32] KR | 모드:NEUTRAL | 포지션:없음
+2026-03-24 13:34:01 [INFO    ] run_cycle:837 | [KR 사이클 13:34] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:34:02 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:39:02 [INFO    ] run_cycle:837 | [KR 사이클 13:39] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:39:02 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:44:04 [INFO    ] run_tuning:1110 | [튜닝 300분] MAINTAIN — 텔레그램 스킵
+2026-03-24 13:44:05 [INFO    ] run_cycle:837 | [KR 사이클 13:44] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:44:05 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:49:05 [INFO    ] run_cycle:837 | [KR 사이클 13:49] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:49:05 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:54:06 [INFO    ] run_cycle:837 | [KR 사이클 13:54] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:54:06 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:58:05 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /trades
+2026-03-24 13:58:16 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /claude
+2026-03-24 13:58:17 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: 수동 명령: /claude
+2026-03-24 13:59:06 [INFO    ] run_cycle:837 | [KR 사이클 13:59] 모드:NEUTRAL size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 13:59:06 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 13:59:08 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] NEUTRAL → DEFENSIVE size=10%
+2026-03-24 14:04:07 [INFO    ] run_cycle:837 | [KR 사이클 14:04] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:04:07 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:09:07 [INFO    ] run_cycle:837 | [KR 사이클 14:09] 모드:DEFENSIVE size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:09:07 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:14:14 [INFO    ] run_cycle:837 | [KR 사이클 14:14] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:14:14 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:19:15 [INFO    ] run_cycle:837 | [KR 사이클 14:19] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:19:15 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:24:15 [INFO    ] run_cycle:837 | [KR 사이클 14:24] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:24:16 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:29:16 [INFO    ] run_cycle:837 | [KR 사이클 14:29] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:29:16 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:32:46 [INFO    ] _heartbeat:1261 | [Heartbeat 14:32] KR | 모드:NEUTRAL | 포지션:없음
+2026-03-24 14:34:16 [INFO    ] run_cycle:837 | [KR 사이클 14:34] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:34:16 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:39:17 [INFO    ] run_cycle:837 | [KR 사이클 14:39] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:39:17 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:44:21 [INFO    ] run_tuning:1110 | [튜닝 360분] MAINTAIN — 텔레그램 스킵
+2026-03-24 14:44:22 [INFO    ] run_cycle:837 | [KR 사이클 14:44] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:44:22 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:49:22 [INFO    ] run_cycle:837 | [KR 사이클 14:49] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:49:22 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:54:22 [INFO    ] run_cycle:837 | [KR 사이클 14:54] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:54:23 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 14:59:23 [INFO    ] run_cycle:837 | [KR 사이클 14:59] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 14:59:23 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:04:23 [INFO    ] run_cycle:837 | [KR 사이클 15:04] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:04:23 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:09:24 [INFO    ] run_cycle:837 | [KR 사이클 15:09] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:09:24 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:14:28 [INFO    ] run_tuning:1110 | [튜닝 390분] MAINTAIN — 텔레그램 스킵
+2026-03-24 15:14:29 [INFO    ] run_cycle:837 | [KR 사이클 15:14] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:14:29 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:19:29 [INFO    ] run_cycle:837 | [KR 사이클 15:19] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:19:29 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:24:29 [INFO    ] run_cycle:837 | [KR 사이클 15:24] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:24:29 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:29:29 [INFO    ] run_cycle:837 | [KR 사이클 15:29] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:29:30 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:32:48 [INFO    ] _heartbeat:1261 | [Heartbeat 15:32] KR | 모드:NEUTRAL | 포지션:없음
+2026-03-24 15:34:30 [INFO    ] run_cycle:837 | [KR 사이클 15:34] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:34:30 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:39:30 [INFO    ] run_cycle:837 | [KR 사이클 15:39] 모드:NEUTRAL size:10% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:39:30 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:44:37 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] KR | 트리거: REVERSE 권고: 아침 NEUTRAL 판단 당시 MACD 데드크로스·급락 하락 모멘텀을 근거로 했으나, 장 중 420분 경과 
+2026-03-24 15:45:28 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] BULL → DEFENSIVE size=9%
+2026-03-24 15:45:31 [INFO    ] run_cycle:837 | [KR 사이클 15:45] 모드:DEFENSIVE size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:45:31 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:50:31 [INFO    ] run_cycle:837 | [KR 사이클 15:50] 모드:DEFENSIVE size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:50:31 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 15:55:31 [INFO    ] run_cycle:837 | [KR 사이클 15:55] 모드:DEFENSIVE size:9% | 종목:['038110'] | 포지션:0개
+2026-03-24 15:55:31 [INFO    ] run_cycle:1049 | [KR 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 16:00:00 [INFO    ] session_close:1265 | [KR] session_close
+2026-03-24 16:00:15 [INFO    ] session_close:1357 | [training record 저장] 20260324_KR.json | events=19
+2026-03-24 16:00:16 [INFO    ] session_close:1379 | [KR] summary | +0.00% | +0
+2026-03-24 17:23:32 [WARNING ] _poll_loop:591 | [commander] 폴링 오류: HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=35)
+2026-03-24 19:18:29 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /pnl
+2026-03-24 22:20:00 [INFO    ] session_open:592 | ==================================================
+2026-03-24 22:20:00 [INFO    ] session_open:593 | [US] session_open
+2026-03-24 22:20:01 [INFO    ] session_open:623 | [환율 갱신] USD/KRW 1,486 → 1,498.76원
+2026-03-24 22:20:02 [INFO    ] session_open:705 | [재시작 판단 재사용] 2026-03-24 US consensus=Bull_Confirmed
+2026-03-24 22:20:02 [INFO    ] session_open:796 | [재시작] 브리핑 스킵 (당일 판단 재사용) consensus=Bull_Confirmed
+2026-03-24 22:20:02 [INFO    ] session_open:797 | consensus: Bull_Confirmed size=13%
+2026-03-24 22:20:44 [INFO    ] run_cycle:837 | [US 사이클 22:20] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 22:20:46 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 22:25:47 [INFO    ] run_cycle:837 | [US 사이클 22:25] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 22:25:49 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 22:30:49 [INFO    ] run_cycle:837 | [US 사이클 22:30] 모드:Bull_Confirmed size:13% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 22:30:51 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 22:32:53 [INFO    ] _heartbeat:1261 | [Heartbeat 22:32] US | 모드:Bull_Confirmed | 포지션:없음
+2026-03-24 22:34:32 [INFO    ] _poll_loop:587 | [commander] 명령 수신: ?
+2026-03-24 22:34:38 [INFO    ] _poll_loop:587 | [commander] 명령 수신: /claude
+2026-03-24 22:34:39 [WARNING ] _reinvoke_analysts:1157 | [긴급 재판단 시작] US | 트리거: 수동 명령: /claude
+2026-03-24 22:35:31 [WARNING ] _reinvoke_analysts:1191 | [긴급 재판단 완료] Bull_Confirmed → NEUTRAL size=35%
+2026-03-24 22:35:51 [INFO    ] run_cycle:837 | [US 사이클 22:35] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 22:35:53 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 22:40:53 [INFO    ] run_cycle:837 | [US 사이클 22:40] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 22:40:57 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 22:45:49 [INFO    ] run_tuning:1110 | [튜닝 30분] MAINTAIN — 텔레그램 스킵
+2026-03-24 22:45:58 [INFO    ] run_cycle:837 | [US 사이클 22:45] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 22:46:01 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 22:51:02 [INFO    ] run_cycle:837 | [US 사이클 22:51] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 22:51:04 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 22:56:04 [INFO    ] run_cycle:837 | [US 사이클 22:56] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 22:56:07 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:01:07 [INFO    ] run_cycle:837 | [US 사이클 23:01] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:01:09 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:06:10 [INFO    ] run_cycle:837 | [US 사이클 23:06] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:06:12 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:11:12 [INFO    ] run_cycle:837 | [US 사이클 23:11] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:11:15 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:15:55 [INFO    ] run_tuning:1110 | [튜닝 60분] MAINTAIN — 텔레그램 스킵
+2026-03-24 23:16:15 [INFO    ] run_cycle:837 | [US 사이클 23:16] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:16:18 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:21:18 [INFO    ] run_cycle:837 | [US 사이클 23:21] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:21:21 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:26:21 [INFO    ] run_cycle:837 | [US 사이클 23:26] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:26:24 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:31:24 [INFO    ] run_cycle:837 | [US 사이클 23:31] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:31:26 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:32:54 [INFO    ] _heartbeat:1261 | [Heartbeat 23:32] US | 모드:NEUTRAL | 포지션:없음
+2026-03-24 23:36:26 [INFO    ] run_cycle:837 | [US 사이클 23:36] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:36:30 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:41:30 [INFO    ] run_cycle:837 | [US 사이클 23:41] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:41:35 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원
+2026-03-24 23:46:01 [INFO    ] run_tuning:1110 | [튜닝 90분] MAINTAIN — 텔레그램 스킵
+2026-03-24 23:46:35 [INFO    ] run_cycle:837 | [US 사이클 23:46] 모드:NEUTRAL size:35% | 종목:['TZA', 'SPDN', 'NVD', 'T'] | 포지션:0개
+2026-03-24 23:46:37 [INFO    ] run_cycle:1049 | [US 사이클 완료] 포지션:0개 | 현금:30,000,000원

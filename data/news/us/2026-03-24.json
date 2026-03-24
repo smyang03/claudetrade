@@ -1,0 +1,576 @@
+{
+  "date": "2026-03-24",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [
+    {
+      "source": "AlphaVantage",
+      "date": "2026-03-24",
+      "title": "SPDR S&P 500 ETF Trust (SPY) Global S&P Futures lower in premarket",
+      "content": "The SPDR S&P 500 ETF Trust (SPY) is experiencing lower global S&P Futures in premarket trading. The report also notes mixed performance for the Nikkei and DAX, with WTI Crude oil at $91, natural gas up 1.5%, and gold at $4408. The overall analyst rating for SPY is currently a \"SELL.\"",
+      "url": "https://www.streetinsider.com/Options/SPDR+S%26P+500+ETF+Trust+%28SPY%29+Global+S%26P+Futures+lower+in+premarket/26205619.html",
+      "sentiment_score": -0.279149,
+      "sentiment_label": "Somewhat-Bearish",
+      "relevance": 1.0
+    }
+  ],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "BNP Paribas Adjusts Eaton Price Target to $460 From $440, Maintains Outperform Rating",
+          "content": "BNP Paribas has increased its price target for Eaton Corporation to $460 from $440, while maintaining an Outperform rating on the stock. This adjustment reflects the firm's positive outlook on Eaton's potential, despite the specific reasons for the target raise not being detailed in this brief report. The article also mentions Eaton's collaboration with Nvidia on the Eaton Beam Rubin DSX platform for the data center market.",
+          "url": "https://www.marketscreener.com/news/bnp-paribas-adjusts-eaton-price-target-to-460-from-440-maintains-outperform-rating-ce7e5eddd08cf220",
+          "sentiment_score": 0.349202,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.645106
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Triumph Capital Management Has $293,000 Stock Holdings in International Business Machines Corporation $IBM",
+          "content": "Triumph Capital Management significantly reduced its stake in IBM by 78.4% in Q3, now holding 1,039 shares valued at $293,000. Despite this, major institutions like Vanguard and State Street remain heavily invested, contributing to IBM's 58.96% institutional ownership. Wall Street analysts generally maintain a \"Moderate Buy\" rating with a consensus target of $314.60, as IBM continues to report strong earnings and positive developments in AI, indicated by recent partnerships and its presence at t",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-triumph-capital-management-has-293000-stock-holdings-in-international-business-machines-corporation-ibm-2026-03-24/",
+          "sentiment_score": 0.10049,
+          "sentiment_label": "Neutral",
+          "relevance": 0.649047
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "MFG Wealth Management Inc. Has $3.39 Million Stake in NVIDIA Corporation $NVDA",
+          "content": "MFG Wealth Management Inc. reduced its stake in NVIDIA Corporation by 15.6% during Q4, now owning 18,195 shares valued at $3.39 million, making it their 8th largest holding. Despite this, NVIDIA continues to show strong financial performance with Q4 EPS of $1.62 and revenue of $68.13 billion, prompting a \"Buy\" consensus from Wall Street and an average target price of $275.95. However, the article notes near-term risks including insider selling, regulatory scrutiny, and technical downside warning",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-mfg-wealth-management-inc-has-339-million-stake-in-nvidia-corporation-nvda-2026-03-24/",
+          "sentiment_score": 0.239293,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Penbrook Management LLC Sells 1,555 Shares of Microsoft Corporation $MSFT",
+          "content": "Penbrook Management LLC decreased its stake in Microsoft Corporation by 6.4% in the fourth quarter, selling 1,555 shares and now owning 22,750 shares valued at $11 million. Microsoft, which accounts for 7.6% of Penbrook's holdings, recently reported strong quarterly earnings, beating analyst estimates with $4.14 EPS and $81.27 billion in revenue, and declared a $0.91 quarterly dividend. The stock has a \"Moderate Buy\" consensus rating among analysts with a price target of $591.87, while instituti",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-penbrook-management-llc-sells-1555-shares-of-microsoft-corporation-msft-2026-03-24/",
+          "sentiment_score": -0.205404,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.609907
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "QP Wealth Management LLC Purchases Shares of 9,468 Microsoft Corporation $MSFT",
+          "content": "QP Wealth Management LLC recently acquired 9,468 shares of Microsoft Corporation (NASDAQ:MSFT), valued at approximately $4.58 million, making it their sixth-largest holding. Microsoft reported strong Q4 results, surpassing revenue and EPS estimates, and declared a quarterly dividend of $0.91. The article also discusses recent insider trades, positive and negative analyst sentiments regarding Microsoft's AI strategies, and new price targets from various brokerages.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-qp-wealth-management-llc-purchases-shares-of-9468-microsoft-corporation-msft-2026-03-24/",
+          "sentiment_score": -0.314652,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.630501
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Clear Trail Advisors LLC Invests $2.92 Million in NextEra Energy, Inc. $NEE",
+          "content": "Clear Trail Advisors LLC recently acquired a new position in NextEra Energy, Inc. (NYSE:NEE) during the fourth quarter, purchasing 36,353 shares valued at approximately $2.92 million. This investment comes amidst significant institutional interest, with hedge funds and other institutional investors owning 78.72% of NextEra Energy's stock. The article highlights both positive and neutral sentiments surrounding NextEra Energy, including securing land for a gas-fired plant in Texas to power data ce",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-clear-trail-advisors-llc-invests-292-million-in-nextera-energy-inc-nee-2026-03-24/",
+          "sentiment_score": 0.349378,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.618766
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Capital Asset Advisory Services LLC Has $5.36 Million Stock Holdings in Caterpillar Inc. $CAT",
+          "content": "Capital Asset Advisory Services LLC reduced its stake in Caterpillar Inc. by 17.2% in the fourth quarter, holding 8,600 shares worth $5.358 million. Despite this, other institutional investors have recently increased their positions in CAT. Analysts have a \"Moderate Buy\" rating on Caterpillar, with an average target price of $730.50, and the company recently beat earnings expectations with increased revenue.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-capital-asset-advisory-services-llc-has-536-million-stock-holdings-in-caterpillar-inc-cat-2026-03-24/",
+          "sentiment_score": 0.139633,
+          "sentiment_label": "Neutral",
+          "relevance": 0.622667
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Clear Trail Advisors LLC Takes $4.65 Million Position in Analog Devices, Inc. $ADI",
+          "content": "Clear Trail Advisors LLC recently acquired a new position in Analog Devices, Inc. (NASDAQ:ADI) by purchasing 17,137 shares valued at approximately $4.65 million during the fourth quarter. This makes Analog Devices its 26th largest holding. The article also details other institutional investor activities, Analog Devices' recent financial performance, dividend increase, and analyst ratings.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-clear-trail-advisors-llc-takes-465-million-position-in-analog-devices-inc-adi-2026-03-24/",
+          "sentiment_score": 0.334801,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.620782
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Corsicana & Co. Reduces Position in NVIDIA Corporation $NVDA",
+          "content": "Corsicana & Co. reduced its stake in NVIDIA Corporation by 5.9% in Q4 2025, selling 3,565 shares and retaining 56,540 shares valued at $10.545 million, making NVIDIA its third-largest holding. Despite significant insider selling totaling approximately $215 million over the past 90 days, NVIDIA reported strong Q4 earnings, beating EPS estimates and showing a 73.2% year-over-year revenue increase with analysts generally maintaining bullish ratings and an average target price of $275.95.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-corsicana-co-reduces-position-in-nvidia-corporation-nvda-2026-03-24/",
+          "sentiment_score": 0.103077,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Everhart Financial Group Inc. Grows Stake in Microsoft Corporation $MSFT",
+          "content": "Everhart Financial Group Inc. increased its stake in Microsoft Corporation by 2.5% in Q4, bringing its total holdings to 57,545 shares valued at approximately $27.83 million, making Microsoft its eighth-largest holding. Despite mixed sentiment due to AI investments and Copilot reorganization, Microsoft exceeded Q4 earnings estimates with strong revenue growth and healthy margins. Analysts currently rate the stock a \"Moderate Buy\" with an average price target of $591.87.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-everhart-financial-group-inc-grows-stake-in-microsoft-corporation-msft-2026-03-24/",
+          "sentiment_score": 0.03534,
+          "sentiment_label": "Neutral",
+          "relevance": 0.64796
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Broadcom exec says Taiwan Semiconductor is reaching capacity limits - report",
+          "content": "A Broadcom executive reported that Taiwan Semiconductor (TSM), their manufacturing partner, is reaching its production capacity limits. This issue is attributed to broader supply chain constraints within the industry, driven by the escalating demand for AI chips. The statement highlights a potential bottleneck in the production of crucial components for artificial intelligence.",
+          "url": "https://seekingalpha.com/news/4567653-broadcom-exec-taiwan-semiconductor-ai-chip-supply",
+          "sentiment_score": 0.214084,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.742073
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Global X Semiconductor ETF Guide (ASX: SEMI): What Is It All About?",
+          "content": "The Global X Semiconductor ETF (ASX: SEMI) offers Australian investors concentrated exposure to global semiconductor companies, tracking the Solactive Global Semiconductor 30 Index. While it provides a direct way to invest in this critical sector and is easy to buy on the ASX, it is unhedged against currency fluctuations and represents a high-conviction, concentrated thematic holding rather than a diversified core portfolio component. Investors should consider its cyclical nature and focus on a ",
+          "url": "https://thebull.com.au/etfs/semi-etf-guide-global-x-semiconductor/",
+          "sentiment_score": 0.517588,
+          "sentiment_label": "Bullish",
+          "relevance": 0.832434
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Armstrong Henry H Associates Inc. Sells 11,860 Shares of Microsoft Corporation $MSFT",
+          "content": "Armstrong Henry H Associates Inc. reduced its stake in Microsoft Corporation (NASDAQ:MSFT) by 1.8% in the fourth quarter, selling 11,860 shares and holding 634,137 shares worth $306.68 million. Microsoft remains the fund's second-largest position, accounting for 28.5% of its portfolio. Various other institutional investors also adjusted their holdings, while analyst sentiment is mixed, with some highlighting AI-related upsides and others cautioning about Copilot reorganization risks for Microsof",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-armstrong-henry-h-associates-inc-sells-11860-shares-of-microsoft-corporation-msft-2026-03-24/",
+          "sentiment_score": -0.105515,
+          "sentiment_label": "Neutral",
+          "relevance": 0.635447
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Intel Corporation (NASDAQ:INTC) Given Average Rating of \"Reduce\" by Analysts",
+          "content": "Intel Corporation (NASDAQ:INTC) has received an average \"Reduce\" rating from analysts, with six recommending a sell, twenty-six a hold, and five a buy, leading to an average one-year price target of $45.74. Despite beating quarterly earnings and revenue estimates, the company reported a negative net margin and provided flat Q1 guidance, with analysts projecting a negative EPS for the fiscal year. While new Core Ultra chips and potential AI-driven CPU demand offer tailwinds, a broader sector sell",
+          "url": "https://www.marketbeat.com/instant-alerts/intel-corporation-nasdaqintc-given-average-rating-of-reduce-by-analysts-2026-03-24/",
+          "sentiment_score": 0.141265,
+          "sentiment_label": "Neutral",
+          "relevance": 0.635956
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "How Investors Are Reacting To F5 (FFIV) AI-Driven Platform Upgrades And NVIDIA Partnership",
+          "content": "F5 (FFIV) recently introduced AI-focused enhancements and partnerships, including deeper NVIDIA integration and new security and observability features, aiming to position itself as a core infrastructure provider for enterprise AI. These updates reinforce F5's strategy to shift towards higher-margin software and SaaS, although the company still faces risks related to hardware-centric buying patterns and longer sales cycles. Investors are evaluating whether F5's AI push can offset the potential f",
+          "url": "https://simplywall.st/stocks/us/tech/nasdaq-ffiv/f5/news/how-investors-are-reacting-to-f5-ffiv-ai-driven-platform-upg",
+          "sentiment_score": 0.223539,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.624097
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Corning Inc Stock Surges on Analyst Upgrade and AI Optical Tech Advances",
+          "content": "Corning Inc. (GLW) shares surged over 5% on the NYSE following a Bank of America Securities analyst upgrade that raised its price target to $155, citing strong demand for optical connectivity in AI data centers. The company also announced new high-density optical solutions for next-gen AI networks, bolstering its position in the rapidly expanding AI infrastructure market. Despite some risks like insider selling and elevated P/E ratios, analysts see significant upside due to Corning's critical ro",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/corning-inc-stock-surges-on-analyst-upgrade-and-ai-optical-tech-advances/68972290",
+          "sentiment_score": -0.247671,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.586788
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "OpenAI flags Microsoft dependence as key business risk ahead of expected IPO - report",
+          "content": "OpenAI has reportedly identified its significant dependence on Microsoft as a key business risk in a document resembling an IPO prospectus. The company stated that Microsoft provides a substantial portion of its financing and computing resources. OpenAI warned that any alteration or termination of this partnership, or its inability to diversify partners, could negatively impact its business, financial condition, and operating results.",
+          "url": "https://seekingalpha.com/news/4567631-openai-flags-microsoft-dependence-as-key-business-risk-ahead-of-expected-ipo---report",
+          "sentiment_score": -0.110705,
+          "sentiment_label": "Neutral",
+          "relevance": 0.643402
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Astera Labs Conference: AI Infrastructure Shift Boosts Scorpio Switches, Taurus Cables and Retimers",
+          "content": "Astera Labs highlights how the evolving AI infrastructure, with its demand for higher speeds and larger cluster sizes, is increasing the need for its connectivity solutions. The company's Scorpio PCIe switches, Taurus active electrical cables, and Aries retimers are experiencing boosted demand as AI systems scale, addressing critical speed and distance bottlenecks. Astera Labs is also expanding its product footprint into optical solutions and NVLink Fusion, anticipating further growth in these a",
+          "url": "https://finance.yahoo.com/sectors/technology/articles/astera-labs-conference-ai-infrastructure-193935937.html",
+          "sentiment_score": 0.311771,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.726143
+        }
+      ],
+      "count": 18,
+      "avg_sentiment": 0.11530633333333332
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "How Ford is using AI to power its next-gen ambitions",
+          "content": "Ford Motor is aggressively integrating artificial intelligence across its engineering, software, and enterprise systems to transform into a software-led mobility company. This initiative, driven by its EPEO organization, aims to accelerate processes like engineering simulations and enhance productivity, with India serving as a growing hub for strategic AI and platform development. The move is crucial for Ford as it navigates rising EV losses and aims to compete with new electric vehicle entrants",
+          "url": "https://www.livemint.com/companies/ford-ai-strategy-software-defined-vehicles-india-tech-hub-11774320523828.html",
+          "sentiment_score": 0.185658,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.657073
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "MFG Wealth Management Inc. Has $3.39 Million Stake in NVIDIA Corporation $NVDA",
+          "content": "MFG Wealth Management Inc. reduced its stake in NVIDIA Corporation by 15.6% during Q4, now owning 18,195 shares valued at $3.39 million, making it their 8th largest holding. Despite this, NVIDIA continues to show strong financial performance with Q4 EPS of $1.62 and revenue of $68.13 billion, prompting a \"Buy\" consensus from Wall Street and an average target price of $275.95. However, the article notes near-term risks including insider selling, regulatory scrutiny, and technical downside warning",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-mfg-wealth-management-inc-has-339-million-stake-in-nvidia-corporation-nvda-2026-03-24/",
+          "sentiment_score": 0.147173,
+          "sentiment_label": "Neutral",
+          "relevance": 0.641926
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.1664155
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Apple Maps To Get Ads Soon",
+          "content": "Apple is reportedly planning to introduce local advertising within its Apple Maps app, potentially as soon as this month, to generate more revenue from its services. Similar to Google Maps, this system would allow advertisers to bid for ad slots based on search queries, with the highest-paying local businesses being displayed first. This move is expected to operate similarly to Apple's App Store ads.",
+          "url": "https://www.seroundtable.com/apple-maps-ads-41102.html",
+          "sentiment_score": 0.298613,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Domino's® Updates Its Iconic, Industry-First Tracker for an Even Better Customer Experience",
+          "content": "Domino's has updated its iconic, industry-first Tracker with new enhancements aimed at improving the customer experience. The updated Tracker features a more precise ready time using AI technology, Live Activities for iOS users, and a redesigned interface with clearer, more detailed progress views. These changes aim to make order tracking easier, faster, and more intuitive for customers from placement to the first bite.",
+          "url": "https://www.prnewswire.com/news-releases/dominos-updates-its-iconic-industry-first-tracker-for-an-even-better-customer-experience-302722163.html",
+          "sentiment_score": 0.100733,
+          "sentiment_label": "Neutral",
+          "relevance": 0.623591
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "QP Wealth Management LLC Invests $6.59 Million in Apple Inc.",
+          "content": "QP Wealth Management LLC has invested $6.59 million in Apple Inc. by purchasing 24,237 shares of the tech giant's stock during the fourth quarter of 2025. This move makes Apple the second-largest holding in the firm's portfolio, reflecting confidence in Apple's long-term prospects despite recent challenges. The investment highlights continued institutional interest in Apple's diversified product portfolio and dominant market position.",
+          "url": "https://nationaltoday.com/us/ca/cupertino/news/2026/03/24/qp-wealth-management-llc-invests-6-59-million-in-apple-inc/",
+          "sentiment_score": 0.445863,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "General Partner Inc. Has $16.50 Million Stake in Apple Inc. $AAPL",
+          "content": "General Partner Inc. recently reduced its stake in Apple Inc. by 5.3% in the fourth quarter, selling 3,400 shares but still holding 60,680 shares valued at $16.50 million, making Apple its second-largest holding. Apple surpassed quarterly earnings expectations with $2.84 EPS and $143.76 billion in revenue. The company maintains a \"Moderate Buy\" consensus rating from analysts, with a target price of $297.58, supported by positive catalysts like a favorable Apple Watch ruling, AI teasers, and pote",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-general-partner-inc-has-1650-million-stake-in-apple-inc-aapl-2026-03-24/",
+          "sentiment_score": 0.441695,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Apple Inc. $AAPL Position Lifted by Fulcrum Equity Management",
+          "content": "Fulcrum Equity Management significantly increased its stake in Apple Inc. (NASDAQ:AAPL) by 93.9% in Q4 2025, making it the sixth-largest holding in their portfolio. This move comes as Apple reported strong quarterly earnings, surpassing expectations, and faces both positive catalysts like a favorable Apple Watch ruling and upcoming AI teasers at WWDC, alongside risks such as rising memory costs and EU regulatory scrutiny. Institutional investors collectively own 67.73% of the company's stock, wi",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-apple-inc-aapl-position-lifted-by-fulcrum-equity-management-2026-03-24/",
+          "sentiment_score": 0.336948,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "OMC Financial Services LTD Sells 5,780 Shares of Apple Inc. $AAPL",
+          "content": "OMC Financial Services LTD reduced its stake in Apple Inc. by 4.8%, selling 5,780 shares and now holding 115,013 shares valued at approximately $31.27 million, making it their second-largest holding. Despite this reduction, institutional ownership of Apple remains high at 67.73%, with other major investors increasing their positions. Analysts maintain a \"Moderate Buy\" rating for Apple, with the company recently outperforming EPS estimates and experiencing significant year-over-year revenue growt",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-omc-financial-services-ltd-sells-5780-shares-of-apple-inc-aapl-2026-03-24/",
+          "sentiment_score": 0.230373,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "E. Ohman J or Asset Management AB Sells 56,161 Shares of Bank of America Corporation $BAC",
+          "content": "E. Ohman J or Asset Management AB reduced its stake in Bank of America by 18.6%, selling 56,161 shares and holding 246,388 shares worth $13.55 million. Meanwhile, other institutional investors have both increased and decreased their positions in BAC. Bank of America recently reported an EPS beat, announced a dividend of $0.28 per share, and has seen mixed sentiment from analysts and insider selling activity.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-e-ohman-j-or-asset-management-ab-sells-56161-shares-of-bank-of-america-corporation-bac-2026-03-24/",
+          "sentiment_score": 0.027192,
+          "sentiment_label": "Neutral",
+          "relevance": 0.590593
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Johnson & Johnson Stock Hands $160 Bil Back – Worth a Look?",
+          "content": "Johnson & Johnson (JNJ) has returned $160 billion to shareholders over the last decade through dividends and buybacks, making it the 8th highest in history for shareholder returns. While these returns signify financial health, the article questions if high capital returns might sometimes sacrifice growth, comparing JNJ's conservative growth with faster-growing tech companies. Despite solid fundamentals, JNJ stock is not immune to significant market downturns.",
+          "url": "https://www.trefis.com/stock/jnj/articles2/594504/johnson-johnson-stock-hands-160-bil-back-worth-a-look/2026-03-24",
+          "sentiment_score": 0.326224,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.704572
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Steve Wozniak Talks Apple @50, AI, and Big Tech",
+          "content": "Apple co-founder Steve Wozniak discussed Apple's 50th anniversary, the growth of AI, and concerns about Big Tech's increasing influence during an appearance on 'The Claman Countdown'. Wozniak's insights cover the historical milestone of Apple and his perspectives on current technological trends and corporate power.",
+          "url": "https://www.realclearmarkets.com/2026/03/24/steve_wozniak_talks_apple_50_ai_and_big_tech_1172227.html",
+          "sentiment_score": 0.11994,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Apple Inc. $AAPL is Avior Wealth Management LLC's 10th Largest Position",
+          "content": "Avior Wealth Management LLC decreased its stake in Apple Inc. (NASDAQ:AAPL) by 4.2% during the fourth quarter, selling 8,089 shares. Despite this reduction, Apple remains Avior's 10th largest position, accounting for about 1.5% of its total holdings. This highlights Avior's investment strategy adjustments while maintaining Apple as a significant part of its portfolio.",
+          "url": "https://nationaltoday.com/us/ca/cupertino/news/2026/03/24/apple-inc-aapl-is-avior-wealth-management-llcs-10th-largest-position/",
+          "sentiment_score": 0.045876,
+          "sentiment_label": "Neutral",
+          "relevance": 0.337662
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Broadcom exec says Taiwan Semiconductor is reaching capacity limits - report",
+          "content": "A Broadcom executive reported that Taiwan Semiconductor (TSM), their manufacturing partner, is reaching its production capacity limits. This issue is attributed to broader supply chain constraints within the industry, driven by the escalating demand for AI chips. The statement highlights a potential bottleneck in the production of crucial components for artificial intelligence.",
+          "url": "https://seekingalpha.com/news/4567653-broadcom-exec-taiwan-semiconductor-ai-chip-supply",
+          "sentiment_score": 0.210572,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.71466
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Apple Inc. $AAPL Shares Sold by Clark Financial Services Group Inc. BD",
+          "content": "Clark Financial Services Group Inc. BD reduced its stake in Apple Inc. ($AAPL) by 7.7% in the fourth quarter, selling 2,485 shares but still holding 29,959 shares valued at $8.01 million. Analysts maintain a \"Moderate Buy\" rating with an average price target of $297.58, following Apple's recent strong quarterly earnings report which beat analyst expectations. The article also details recent analyst upgrades, other institutional investor activities, and positive and negative news impacting Apple'",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-apple-inc-aapl-shares-sold-by-clark-financial-services-group-inc-bd-2026-03-24/",
+          "sentiment_score": 0.3395,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.967971
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "AFG Fiduciary Services Limited Partnership Acquires 4,636,438 Shares of Apple Inc. $AAPL",
+          "content": "AFG Fiduciary Services Limited Partnership significantly increased its stake in Apple Inc. (NASDAQ:AAPL) during Q4, purchasing an additional 4,636,438 shares, bringing their total holdings to 4,642,260 shares valued at approximately $1.262 billion. This makes Apple their largest position, representing 65.3% of their portfolio. The acquisition comes amidst positive news for Apple, including favorable trade rulings, upcoming AI advancements at WWDC, new advertising potentials in Apple Maps, and an",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-afg-fiduciary-services-limited-partnership-acquires-4636438-shares-of-apple-inc-aapl-2026-03-24/",
+          "sentiment_score": 0.510578,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Rep. Thomas R. Suozzi Sells United Rentals, Inc. (NYSE:URI) Stock",
+          "content": "Representative Thomas R. Suozzi sold between $15,001 and $50,000 worth of United Rentals (NYSE:URI) stock on February 18th. This news follows a recent earnings report where United Rentals missed EPS estimates and slightly missed revenue forecasts, despite the company's board approving a $5.00 billion share repurchase program and raising its quarterly dividend, signaling that they view the stock as undervalued. Analysts currently maintain a \"Moderate Buy\" consensus on URI with an average price ta",
+          "url": "https://www.marketbeat.com/instant-alerts/rep-thomas-r-suozzi-sells-united-rentals-inc-nyseuri-stock-2026-03-24/",
+          "sentiment_score": -0.123543,
+          "sentiment_label": "Neutral",
+          "relevance": 0.617123
+        }
+      ],
+      "count": 14,
+      "avg_sentiment": 0.23646885714285712
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Akamai Technologies Inc. stock hits new 52-week high on NASDAQ amid cybersecurity surge",
+          "content": "Akamai Technologies Inc. (AKAM) shares reached a new 52-week high of $114.95 on NASDAQ, driven by strong investor confidence in its cybersecurity and content delivery solutions. The surge is attributed to growing demand for edge computing amid escalating cyber threats and AI adoption, positioning Akamai as a leader benefiting from rising cybersecurity budgets and partnerships with hyperscalers. Analysts rate AKAM as Outperform, with a consensus price target suggesting modest upside, while its sh",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/akamai-technologies-inc-stock-hits-new-52-week-high-on-nasdaq-amid/68974645",
+          "sentiment_score": 0.2871,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.638691
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Here Are Tuesday’s Top Wall Street Analyst Research Calls: Alaska Airlines, ConocoPhillips, Commvault Systems, CoreWeave, Diamondback Energy, JFrog Ltd, Microsoft, and More",
+          "content": "This article summarizes top Wall Street analyst upgrades, downgrades, and initiations for Tuesday, March 24, 2026. It also reviews the market's performance, including a rebound on Monday due to news of a potential diplomatic breakthrough with Iran, and the current status of oil, gold, and cryptocurrency markets. Key company mentions include upgrades for CoreWeave, Ecolab, JFrog Ltd., Jinko Solar, and Ralph Lauren, and initiations for Alaska Airlines, Commvault Systems, ConocoPhillips, Diamondbac",
+          "url": "https://247wallst.com/investing/2026/03/24/here-are-tuesdays-top-wall-street-analyst-research-calls-alaska-airlines-conocophillips-commvault-systems-coreweave-diamondback-energy-jfrog-ltd-microsoft-and-more/",
+          "sentiment_score": 0.414547,
+          "sentiment_label": "Bullish",
+          "relevance": 0.835434
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Microsoft in focus as BofA reinstates coverage with Buy rating (MSFT:NASDAQ)",
+          "content": "Bank of America has reinstated coverage of Microsoft (MSFT) with a Buy rating and a $500 price target. This re-initiation of coverage puts Microsoft in focus, highlighting BofA's positive outlook on the tech giant.",
+          "url": "https://seekingalpha.com/news/4567733-microsoft-in-focus-as-bofa-reinstates-coverage-with-buy-rating?source=feed_tag_us",
+          "sentiment_score": 0.430442,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "SG Americas Securities LLC Has $92.03 Million Holdings in Hilton Worldwide Holdings Inc. $HLT",
+          "content": "SG Americas Securities LLC significantly increased its stake in Hilton Worldwide Holdings Inc. by 255% in Q4, now holding 320,375 shares valued at approximately $92.03 million. Despite a recent insider sale by CEO Christopher J. Nassetta, analysts maintain a \"Moderate Buy\" rating with an average price target of $326.18 for HLT. The company also announced a quarterly dividend of $0.15 per share.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-sg-americas-securities-llc-has-9203-million-holdings-in-hilton-worldwide-holdings-inc-hlt-2026-03-24/",
+          "sentiment_score": 0.334228,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.557682
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Cintas Corp. (CTAS) call put ratio 1.5 calls to 1 put into quarter results",
+          "content": "Cintas Corp. (CTAS) shows a call-put ratio of 1.5 calls to 1 put as it approaches its quarter results release on March 25. The March 27 weekly 180 straddle is priced for a 6% move. The stock's current price is $181.21 with an overall analyst rating of SELL.",
+          "url": "https://www.streetinsider.com/Options/Cintas+Corp.+%28CTAS%29+call+put+ratio+1.5+calls+to+1+put+into+quarter+results/26205610.html",
+          "sentiment_score": 0.135215,
+          "sentiment_label": "Neutral",
+          "relevance": 0.64913
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Penbrook Management LLC Sells 1,555 Shares of Microsoft Corporation $MSFT",
+          "content": "Penbrook Management LLC decreased its stake in Microsoft Corporation by 6.4% in the fourth quarter, selling 1,555 shares and now owning 22,750 shares valued at $11 million. Microsoft, which accounts for 7.6% of Penbrook's holdings, recently reported strong quarterly earnings, beating analyst estimates with $4.14 EPS and $81.27 billion in revenue, and declared a $0.91 quarterly dividend. The stock has a \"Moderate Buy\" consensus rating among analysts with a price target of $591.87, while instituti",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-penbrook-management-llc-sells-1555-shares-of-microsoft-corporation-msft-2026-03-24/",
+          "sentiment_score": 0.080626,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "QP Wealth Management LLC Purchases Shares of 9,468 Microsoft Corporation $MSFT",
+          "content": "QP Wealth Management LLC recently acquired 9,468 shares of Microsoft Corporation (NASDAQ:MSFT), valued at approximately $4.58 million, making it their sixth-largest holding. Microsoft reported strong Q4 results, surpassing revenue and EPS estimates, and declared a quarterly dividend of $0.91. The article also discusses recent insider trades, positive and negative analyst sentiments regarding Microsoft's AI strategies, and new price targets from various brokerages.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-qp-wealth-management-llc-purchases-shares-of-9468-microsoft-corporation-msft-2026-03-24/",
+          "sentiment_score": 0.317684,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "QP Wealth Management Buys 9,468 Microsoft Shares",
+          "content": "QP Wealth Management LLC recently acquired 9,468 shares of Microsoft Corporation during the fourth quarter of 2025, valuing the new stake at approximately $4.58 million. This purchase establishes Microsoft as one of the firm's top six holdings, reflecting confidence in the technology giant's continued growth and market dominance. The investment represents about 4% of QP Wealth Management's total portfolio.",
+          "url": "https://nationaltoday.com/us/wa/redmond/news/2026/03/24/qp-wealth-management-buys-9-468-microsoft-shares/",
+          "sentiment_score": 0.414549,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Johnson & Johnson Stock Hands $160 Bil Back – Worth a Look?",
+          "content": "Johnson & Johnson (JNJ) has returned $160 billion to shareholders over the last decade through dividends and buybacks, making it the 8th highest in history for shareholder returns. While these returns signify financial health, the article questions if high capital returns might sometimes sacrifice growth, comparing JNJ's conservative growth with faster-growing tech companies. Despite solid fundamentals, JNJ stock is not immune to significant market downturns.",
+          "url": "https://www.trefis.com/stock/jnj/articles2/594504/johnson-johnson-stock-hands-160-bil-back-worth-a-look/2026-03-24",
+          "sentiment_score": 0.232948,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.608325
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Avior Wealth Management Trims Microsoft Stake",
+          "content": "Avior Wealth Management LLC reduced its stake in Microsoft Corporation by 2.5% during the fourth quarter of 2025, selling 1,396 shares. The firm now holds 53,865 shares valued at $26,050,000. This trimming of shares by a significant investment firm may indicate shifts in investor sentiment or the firm's investment strategy regarding the influential tech giant.",
+          "url": "https://nationaltoday.com/us/wa/redmond/news/2026/03/24/avior-wealth-management-trims-microsoft-stake/",
+          "sentiment_score": -0.227192,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Everhart Financial Group Inc. Grows Stake in Microsoft Corporation $MSFT",
+          "content": "Everhart Financial Group Inc. increased its stake in Microsoft Corporation by 2.5% in Q4, bringing its total holdings to 57,545 shares valued at approximately $27.83 million, making Microsoft its eighth-largest holding. Despite mixed sentiment due to AI investments and Copilot reorganization, Microsoft exceeded Q4 earnings estimates with strong revenue growth and healthy margins. Analysts currently rate the stock a \"Moderate Buy\" with an average price target of $591.87.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-everhart-financial-group-inc-grows-stake-in-microsoft-corporation-msft-2026-03-24/",
+          "sentiment_score": 0.29507,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Armstrong Henry H Associates Inc. Sells 11,860 Shares of Microsoft Corporation $MSFT",
+          "content": "Armstrong Henry H Associates Inc. reduced its stake in Microsoft Corporation (NASDAQ:MSFT) by 1.8% in the fourth quarter, selling 11,860 shares and holding 634,137 shares worth $306.68 million. Microsoft remains the fund's second-largest position, accounting for 28.5% of its portfolio. Various other institutional investors also adjusted their holdings, while analyst sentiment is mixed, with some highlighting AI-related upsides and others cautioning about Copilot reorganization risks for Microsof",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-armstrong-henry-h-associates-inc-sells-11860-shares-of-microsoft-corporation-msft-2026-03-24/",
+          "sentiment_score": 0.130277,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Oracle Expands AI Agent Studio for Fusion Applications with Agentic Applications Builder and New Intelligent Workflow Tools – Company Announcement - FT.com",
+          "content": "Oracle has announced significant updates to its AI Agent Studio for Fusion Applications, introducing an Agentic Applications Builder and new intelligent workflow tools. These enhancements aim to help organizations scale the adoption of outcome-driven AI, build AI automations and agentic applications using natural language, and measure the value delivered by AI initiatives through new monitoring and ROI measurement capabilities. The expanded studio supports the growing Fusion Applications AI ecos",
+          "url": "https://markets.ft.com/data/announce/detail?dockey=600-202603240303PR_NEWS_USPRX____SF17433-1",
+          "sentiment_score": 0.21892,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.576435
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Western Digital Corp stock faces AI-driven demand surge amid NAND flash pricing volatility",
+          "content": "Western Digital Corp reported strong Q2 2026 results with 15% revenue growth driven by AI data center demand for NAND and HDD storage, beating analyst expectations. However, investors face concerns about NAND pricing volatility due to industry oversupply, even as the company pivots to AI-optimized storage and projects significant AI-related revenue growth. The stock's performance reflects the sector's sensitivity to hyperscaler spending and cyclical risks in NAND pricing.",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/western-digital-corp-stock-faces-ai-driven-demand-surge-amid-nand-flash/68972582",
+          "sentiment_score": 0.217907,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.638201
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "OpenAI flags Microsoft dependence as key business risk ahead of expected IPO - report",
+          "content": "OpenAI has reportedly identified its significant dependence on Microsoft as a key business risk in a document resembling an IPO prospectus. The company stated that Microsoft provides a substantial portion of its financing and computing resources. OpenAI warned that any alteration or termination of this partnership, or its inability to diversify partners, could negatively impact its business, financial condition, and operating results.",
+          "url": "https://seekingalpha.com/news/4567631-openai-flags-microsoft-dependence-as-key-business-risk-ahead-of-expected-ipo---report",
+          "sentiment_score": -0.240207,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Palo Alto updates security platform to discover AI agents",
+          "content": "Palo Alto Networks has updated its Prisma AIRS security platform and enterprise browser to detect and manage AI agents, models, and connections across IT environments. This update includes vulnerability scanning, red team testing simulation, and, following planned acquisitions, will offer an AI Agent Gateway for runtime and identity security. Additionally, the company announced Next Generation Trust Security (NGTS) for managing digital certificate lifecycles, aimed at addressing the increasing c",
+          "url": "https://www.csoonline.com/article/4148974/palo-alto-updates-security-platform-to-discover-ai-agents.html",
+          "sentiment_score": 0.229755,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.61395
+        }
+      ],
+      "count": 16,
+      "avg_sentiment": 0.2044918125
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-24",
+          "title": "Corning Inc Stock Surges on Analyst Upgrade and AI Optical Tech Advances",
+          "content": "Corning Inc. (GLW) shares surged over 5% on the NYSE following a Bank of America Securities analyst upgrade that raised its price target to $155, citing strong demand for optical connectivity in AI data centers. The company also announced new high-density optical solutions for next-gen AI networks, bolstering its position in the rapidly expanding AI infrastructure market. Despite some risks like insider selling and elevated P/E ratios, analysts see significant upside due to Corning's critical ro",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/corning-inc-stock-surges-on-analyst-upgrade-and-ai-optical-tech-advances/68972290",
+          "sentiment_score": 0.314524,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.622684
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-03-24",
+          "title": "[] ['Amylyx Pharmaceuticals, Inc.  (AMLX)  (CIK 0001658551)']",
+          "content": "2026-03-24",
+          "url": "https://www.sec.gov2026-03-24",
+          "form_type": ""
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.157262
+    }
+  },
+  "collected_at": "2026-03-24T22:00:03.104307"
+}

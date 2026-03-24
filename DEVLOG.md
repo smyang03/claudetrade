@@ -679,5 +679,321 @@ brain.json에 `hold_advisor_performance` 키로 성과 누적:
 
 4개 라우트 전부 순서 변경 후 검증 통과 (MARKET 정의 위치 < loadAll 호출 위치 확인).
 
+**BUG-C**: 대시보드 누적 자산이 10,000,000으로 표시되고 실제 설정값 30,000,000이 반영 안 됨.
+- **원인**: `dashboard_server.py`가 별도 프로세스로 실행될 때 `.env` 미로드 → `PAPER_CASH` 기본값 10,000,000 사용
+- **수정**: 파일 상단에 `load_dotenv(Path(__file__).parent.parent / ".env")` 추가
+
+```python
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass
+PAPER_CASH = float(os.getenv("PAPER_CASH", "10000000"))
+```
+
 *Last updated: 2026-03-22*
-*Context session: 웹 대시보드 4페이지 개편 + MARKET 초기화 버그 수정*
+*Context session: 웹 대시보드 4페이지 개편 + MARKET 초기화 버그 수정 + PAPER_CASH .env 로드 버그 수정*
+
+---
+
+## [2026-03-22] 판단 기록 파이프라인 점검
+
+### 점검 배경
+
+모의투자 시작 후 `logs/daily_judgment/` paper 파일 4개 실제 내용 검토. "분석·판단·로직이 잘 기록되고 있는지" 확인 요청.
+
+### 점검 결과
+
+| 필드 | 상태 | 비고 |
+|------|------|------|
+| `digest_prompt` | ✅ 정상 | 330~360자 시장 데이터 요약 기록됨 |
+| `round1_judgments` | ⚠️ 레거시 파일 공백 | 코드 정상, 기존 파일 레거시 문제 (아래 참조) |
+| `debate_changes` | ⚠️ 레거시 파일 0건 | 동일 이유 |
+| `judgments` (R2 최종) | ✅ 정상 | bull/bear/neutral stance+confidence+key_reason 기록 |
+| `consensus` | ✅ 정상 | mode/size/weighted_score 포함 |
+| `tickers` | ✅ 정상 | 4~5종목 기록됨 |
+| `actual_result` | ✅ 정상 | pnl/trades 기록, cumulative 일부 0 (초기 세션 정상) |
+| `trades` | ✅ 정상 | 휴장일 0건 (정상) |
+| `session_events` | ✅ 정상 | 휴장일 스킵으로 이벤트 없음 (정상) |
+| `postmortem` | ✅ 정상 | 세션 종료 후 기록됨 |
+| `brain.json` 토론 기록 | ✅ 정상 | `save_debate_result()` 로 `debate_history` 별도 저장 |
+| `judgment_log` JSONL | ✅ 정상 | R1/R2 raw 데이터 `logs/judgment/` 에 별도 보존 |
+
+### round1_judgments 공백 원인 분석
+
+**결론: 코드 버그 아님. 레거시 파일 문제.**
+
+`get_three_judgments()` (`analysts.py:325`) 는 항상 `"_debate": {"r1": {...}, "changes": [...]}` 를 반환하고, `trading_bot.py:762` 에서 올바르게 분리해 `round1_judgments` 에 저장함.
+
+**실제 원인**:
+1. 점검한 4개 파일은 `round1_judgments` 기능 추가 **이전**에 생성됨
+2. 봇 재시작 시 `reused=True` 경로에서 `saved.get("round1_judgments", {})` → 구 파일엔 없으므로 `{}`
+3. 재저장 시 `{}` 유지 → 순환
+
+**자동 복구 조건**: 해당 날짜 파일 없이 새로 `session_open()` 이 실행되면 정상 기록됨. 다음 영업일부터 신규 생성 파일에는 정상 포함.
+
+### 판단 기록 전체 흐름 확인
+
+```
+analysts.py get_three_judgments()
+    └─ R1 독립 판단 → r1 dict
+    └─ R2 토론 판단 → r2 dict
+    └─ brain.save_debate_result(r1, r2) → state/brain.json debate_history
+    └─ judgment_log JSONL (round1, round2, changes 원본)
+    └─ return {bull/bear/neutral: r2, "_debate": {r1, changes}}
+
+trading_bot.py session_open()
+    └─ debate_meta = judgments.pop("_debate", {})
+    └─ today_judgment["round1_judgments"] = debate_meta["r1"]
+    └─ today_judgment["debate_changes"]   = debate_meta["changes"]
+    └─ live_path 즉시 저장 (대시보드용)
+
+trading_bot.py session_close()
+    └─ {**today_judgment, actual_result, postmortem, trades, session_events}
+    └─ data/daily_judgments/YYYYMMDD_{market}.json 저장 (training record)
+```
+
+**결론**: 파이프라인 전체 정상. 신규 세션부터 13개 필드 완전 기록 확인.
+
+*Last updated: 2026-03-22*
+*Context session: 판단 기록 파이프라인 점검 + round1_judgments 레거시 원인 분석*
+
+---
+
+## [2026-03-24] 매매 0건 원인 분석 + 버그 5개 수정
+
+### 배경
+
+모의투자 3일 동안 매수/매도 0건. 로그 전수 분석을 통해 원인 파악 및 수정 완료.
+
+### 근본 원인: 매수 파이프라인 전면 차단
+
+**KR**: `get_price()` 가 모든 티커에서 `price=0` 반환 → `can_open()` `invalid price` → 전 종목 스킵
+**US**: HALT/DEFENSIVE 모드로 진입 코드 차단 + 인버스 ETF `vol_ratio > 2.0` 조건 미충족 → 신호 zero
+
+### 수정 내역
+
+#### BUG-09 (Critical): KR 현재가 TR 코드 오류
+
+- **파일**: `kis_api.py:119`
+- **원인**: `VTTC8434R`은 모의투자 체결조회 TR, 시세조회 TR이 아님 → API `output: {}` → `price=0`
+- **수정**: `tr_id = "FHKST01010100"` 단일값으로 변경 (시세조회는 모의/실거래 공통 TR)
+
+```python
+# 수정 전
+tr_id = "VTTC8434R" if IS_PAPER else "FHKST01010100"
+# 수정 후
+tr_id = "FHKST01010100"  # 시세 조회는 모의/실거래 공통 TR
+```
+
+#### BUG-10 (High): python-dotenv 스케줄러 Python 미설치
+
+- **증거**: `update_data` 매일 08:30, 22:00 `No module named 'dotenv'` → 가격 데이터 3일 미갱신
+- **수정**: `py -3 -m pip install python-dotenv` → `python-dotenv 1.2.2` 설치
+
+#### BUG-11 (High): tuner max_tokens=256 부족 → JSON 파싱 오류 + 임의 모드명 저장
+
+- **파일**: `minority_report/tuner.py:38`
+- **증거**: 3일 연속 `Unterminated string` 오류, 3/24 US 판단파일에 `mode=Bull_Confirmed` 비정상값 저장
+- **수정 1**: `max_tokens=256` → `max_tokens=400`
+- **수정 2**: `json.loads(raw)` 이후 `VALID_MODES` 검증 추가 → 유효하지 않은 mode는 `prev_mode`로 대체
+
+```python
+VALID_MODES = {
+    "AGGRESSIVE","MODERATE_BULL","MILD_BULL","CAUTIOUS",
+    "NEUTRAL","MILD_BEAR","CAUTIOUS_BEAR","DEFENSIVE","HALT"
+}
+if result.get("mode") not in VALID_MODES:
+    result["mode"] = prev_mode
+```
+
+#### BUG-12 (Medium): US DEFENSIVE/HALT 모드에서 인버스 ETF만 선택 → vb_sig 신호 불발
+
+- **파일**: `minority_report/analysts.py` `select_tickers()`
+- **원인**: DEFENSIVE 모드에서 Claude가 TZA, SPDN, NVD 같은 인버스 ETF만 선택 → `vol_ratio > 2.0` 조건 미충족 → 신호 never fire
+- **수정**: US DEFENSIVE/HALT 모드에서 인버스 ETF만 선택된 경우 안정 종목(T, VZ, KO 등) 자동 보완
+
+```python
+US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
+US_STABLE_ANCHORS = ["T", "VZ", "XLU", "KO", "JNJ", "PG", "O", "VYM", "SCHD"]
+# 인버스만 선택된 경우: 인버스 1개 + 안정 종목으로 보완
+```
+
+#### BUG-13 (확인): postmortem max_tokens — 이미 800, 수정 불필요
+
+- `minority_report/postmortem.py:162` — `max_tokens=800` 이미 올바름
+
+### 검증 결과
+
+| 검증 항목 | 결과 |
+|-----------|------|
+| `VTTC8434R` 제거, `FHKST01010100` 단일값 | ✅ |
+| python-dotenv `from dotenv import load_dotenv` | ✅ |
+| tuner `max_tokens=400`, `VALID_MODES` 검증 존재 | ✅ |
+| analysts.py `US_INVERSE_ETFS` 보완 로직 | ✅ |
+| 4개 파일 py_compile 통과 | ✅ |
+| 전체 import 테스트 통과 | ✅ |
+
+*Last updated: 2026-03-24*
+*Context session: 매매 0건 원인 분석(KR TR코드 버그 + US 인버스ETF + tuner JSON 오류) + 버그 5개 수정*
+
+---
+
+## [2026-03-25] 실시간 신호 피드 + 모니터링 종목 대시보드 + 텔레그램 신호 알림
+
+### 목적
+"봇이 뭘 보고 있는지, 신호가 났는지 안 났는지 모르겠다"는 문제 해결.
+신호 발생/차단 시 텔레그램 즉시 알림 + 대시보드에 종목별 상태 실시간 표시.
+
+### 2차 판단 버그 조사 결과
+로그 3/24 `judgment_20260324.jsonl` 직접 확인 → **버그 아님**.
+```
+R1: Bull=MILD_BULL(62%) Bear=DEFENSIVE(82%) Neut=MILD_BEAR(62%)
+R2: Bull=MILD_BULL(62%) Bear=DEFENSIVE(85%) Neut=MILD_BEAR(62%)
+changes=0 (전원 의견 유지, Bear 확신도만 82→85% 소폭 강화)
+```
+3/21 이전 로그에 round1/round2 데이터가 없는 건 당시 코드가 해당 필드를 저장하지 않았기 때문 (레거시).
+3/24부터 정상 기록됨.
+
+### 변경 파일
+
+#### `telegram_reporter.py` — `signal_alert()` 신규 추가
+- **진입신호** (`entry_signal`): 🟢 종목/전략/가격/주문금액 전송
+- **신호차단** (`signal_blocked`): 🚫 종목/전략/모드 전송 (HALT/DEFENSIVE 억제 시)
+- **보유중 스킵** (`entry_skip` + `already_holding`): 🔵 중복진입 차단 알림
+- 기타 skip(예산부족, 슬리피지 등)은 알림 제외 (노이즈)
+
+#### `trading_bot.py` — signal_alert 호출 3곳 추가
+| 위치 | 이벤트 | 조건 |
+|------|--------|------|
+| `signal_blocked` 직후 | signal_blocked | HALT/DEFENSIVE 모드 |
+| `entry_signal` 직후 | entry_signal | 신호 발생 + 주문 실행 전 |
+| `can_open()` 실패 직후 | entry_skip(already_holding) | 보유중 중복진입 시만 |
+
+#### `dashboard/dashboard_server.py` — 3개 기능 추가
+
+**1. `/api/tickers/today` 엔드포인트**
+- `logs/daily_judgment/YYYYMMDD_KR.json`에서 `tickers` 필드 읽기
+- 오늘 analysis 로그 집계: 종목별 최근 이벤트/가격/신호횟수
+- 반환: `{market, mode, tickers:[{ticker, last_event, last_ts, last_price, sig_count}], universe_count}`
+
+**2. "오늘 모니터링 종목" UI 섹션 (15초 갱신)**
+- 카드형 표시: 종목코드 + 마지막 이벤트(⏳대기중/🟢진입신호/🚫차단/🟠스킵/⬜신호없음)
+- 신호 발생 횟수 배지 표시
+- 후보 총 N개 중 선택 표시
+
+**3. `/api/signals/recent` + 신호 피드 UI (10초 갱신)**
+- analysis JSONL에서 entry_signal/entry_skip/signal_blocked/signal_check(none) 읽기
+- 이벤트별 색상: 🟢초록/⬜회색/🔴빨강/🟠주황/🔵파랑
+
+**4. `/api/judgments` — round1 비교 데이터 추가**
+- `r1_stance` 필드 추가 → 판단 카드에 "💬 토론 변경/유지" 표시
+- `debate_changes` 배열 반환
+
+### 검증
+| 항목 | 결과 |
+|------|------|
+| py_compile 3파일 | ✅ |
+| signal_alert import/callable | ✅ |
+| /api/signals/recent HTTP 200 | ✅ |
+| /api/tickers/today HTTP 200 | ✅ (tickers/mode 정상 반환) |
+
+---
+
+## [2026-03-25] 모니터링 종목 고정 버그 수정 (BUG-14 ~ BUG-15)
+
+### 증상
+대시보드에서 TZA, SPDN, 038110이 계속 동일하게 표시됨. 장세/모드가 바뀌어도 종목이 고정.
+
+### 원인 분석
+**BUG-14 (High): reused=True 시 tickers 고정**
+- `session_open()`에서 당일 판단 파일이 존재하면 `reused=True`로 판단을 재사용
+- 이때 `tickers`도 저장된 것을 그대로 복원 (`saved.get("tickers", [])`)
+- 봇이 하루 중 여러 번 재시작되어도 아침에 선택된 종목이 하루 종일 고정됨
+- 3/23 DEFENSIVE 모드로 선택된 TZA/SPDN이 3/24 재시작 후에도 계속 사용됨
+
+**BUG-15 (Medium): 튜너 모드 변경 후 종목 미갱신**
+- 튜너가 DEFENSIVE→MODERATE_BULL 등으로 모드를 바꿔도 `today_tickers`가 그대로 유지됨
+- 모드와 종목이 불일치: BULL 모드인데 인버스 ETF(TZA)를 보고 있는 상태 발생
+
+### 수정 (`trading_bot.py`)
+
+**BUG-14 수정**: `session_open()` else 분기 추가
+```
+reused=True → 판단(get_three_judgments) 재사용 유지 (크레딧 절약)
+             + 종목(screen + select_tickers)은 항상 새로 실행
+```
+- `ticker_rescreen` 이벤트로 judgment 로그에 기록됨
+
+**BUG-15 수정**: `run_tuning()`에서 모드 변경 시 종목 재선택
+- `old_mode != new_mode and action != "REVERSE"` → screener + select_tickers 재실행
+
+**BUG-15 수정 2**: `_reinvoke_analysts()`에서 모드 플립 시 종목 재선택
+- BEAR→BULL or BULL→BEAR 방향 전환 시 즉시 종목 갱신
+
+### 검증
+| 항목 | 결과 |
+|------|------|
+| py_compile | ✅ |
+| 키 코드 패턴 확인 (종목 재스크리닝/튜너 종목갱신/신호 알림) | ✅ |
+
+*Last updated: 2026-03-25*
+*Context session: 신호 피드 대시보드 + 텔레그램 신호 알림 + 모니터링 종목 표시 + 2차 판단 버그 조사 + 종목 고정 버그 수정*
+
+---
+
+## [2026-03-25] US 스크리너 후보 선정 기준 + AV API 캐싱 (BUG-16)
+
+### 배경
+대시보드에서 TSLA/NVDA/AAPL이 매일 동일하게 나와 하드코딩 의심 → 실제로는 AV API 실패 후 폴백 사용 중이었음.
+
+### US 스크리너 정상 동작 기준
+`screen_market_us()` — Alpha Vantage `TOP_GAINERS_LOSERS` API
+| 섹션 | 의미 |
+|------|------|
+| `most_actively_traded` | 당일 거래량 상위 종목 |
+| `top_gainers` | 당일 상승률 상위 종목 |
+| `top_losers` | 당일 하락률 상위 종목 |
+
+세 섹션 합쳐서 최대 30개 후보 → Claude가 consensus_mode + RSI/MACD/BB 근거로 3~5개 선택 후 이유 반환.
+
+KR 스크리너는 KIS API `거래량 순위` (FID_VOL_CNT=100000 이상 필터, 상위 30개).
+
+### BUG-16 원인 (High): AV API 무료 25회/일 한도 초과
+- 봇 재시작 + `reused=True` 재스크리닝 + 튜너 모드 변경 재선택이 모두 AV API를 개별 호출
+- 하루 25회 금방 소진 → `Information` 메시지 반환 → 빈 결과 → 폴백 유니버스 사용
+- 폴백 = `_US_FALLBACK_UNIVERSE` (하드코딩 15개, 가격/거래량 0) → Claude가 선택 근거 없음
+
+### BUG-16 수정 (`kis_api.py`)
+- `state/av_screen_cache.json`에 당일 AV API 결과 캐시
+- 동일 날짜 캐시 존재 시 API 호출 없이 재사용 → 하루 1회만 소진
+- `Information`/`Note` 메시지 감지 시 `[AV API 한도]` 경고 로그 출력
+- 폴백 유니버스는 여전히 유지 (AV 전면 장애 또는 키 없을 때)
+
+### 선택 이유 대시보드 표시
+- `select_tickers()` 응답의 `reasons` 필드가 이미 analysis 로그에 기록됨 (기존 코드)
+- `/api/tickers/today` — `select_reason` 필드 추가, `candidates`/`not_selected` 목록 반환
+- 대시보드 종목 카드에 Claude 선택 이유 표시
+- "후보 N개 중 M개 선택 · 제외된 후보: ..." 표시
+
+### 검증
+| 항목 | 결과 |
+|------|------|
+| py_compile kis_api.py | ✅ |
+| AV 한도 초과 메시지 감지 | ✅ (로그 출력 확인) |
+| 캐시 파일 생성 로직 | ✅ |
+| /api/tickers/today select_reason 반환 | ✅ |
+
+### 현재 시스템 상태 (2026-03-25 기준)
+| 구분 | 상태 |
+|------|------|
+| KR 스크리너 | 정상 (KIS 거래량 순위 API) |
+| US 스크리너 | 오늘 AV 한도 소진 → 폴백 사용 중 / 내일부터 캐싱으로 정상화 |
+| 신호 피드 대시보드 | 신규 추가 완료 |
+| 텔레그램 신호 알림 | 신규 추가 완료 (entry_signal / signal_blocked / already_holding) |
+| 종목 고정 버그 | BUG-14/15 수정 완료 |
+| 2차 판단 | 정상 동작 확인 (버그 아님) |
+
+*Last updated: 2026-03-25*
+*Context session: US 스크리너 후보 선정 기준 조사 + AV API 캐싱(BUG-16) + 선택 이유 대시보드 표시*

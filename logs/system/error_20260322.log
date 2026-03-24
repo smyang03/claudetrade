@@ -16,3 +16,21 @@
 2026-03-22 22:00:06 [ERROR   ] trading_system | run_us_update:100
   US supplement 실패: No module named 'dotenv'
 
+2026-03-23 16:00:15 [ERROR   ] minority_system | run:171
+  postmortem 오류: Unterminated string starting at: line 23 column 7 (char 1128)
+
+2026-03-23 22:41:04 [ERROR   ] minority_system | tune:53
+  튜닝 오류: Unterminated string starting at: line 1 column 242 (char 241)
+
+2026-03-24 05:00:17 [ERROR   ] minority_system | run:171
+  postmortem 오류: Expecting property name enclosed in double quotes: line 20 column 5 (char 1122)
+
+2026-03-24 14:44:21 [ERROR   ] minority_system | tune:53
+  튜닝 오류: Unterminated string starting at: line 1 column 249 (char 248)
+
+2026-03-24 15:14:28 [ERROR   ] minority_system | tune:53
+  튜닝 오류: Unterminated string starting at: line 1 column 247 (char 246)
+
+2026-03-24 16:00:15 [ERROR   ] minority_system | run:171
+  postmortem 오류: Unterminated string starting at: line 23 column 7 (char 1120)
+

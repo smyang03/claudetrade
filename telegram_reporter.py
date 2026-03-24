@@ -319,6 +319,48 @@ def analyst_reinvoke_alert(market: str, trigger: str, old_mode: str, new_mode: s
     return text
 
 
+def signal_alert(event: str, market: str, ticker: str,
+                 strategy: str = "", price: float = 0,
+                 reason: str = "", mode: str = "",
+                 qty: int = 0, order_cost_krw: int = 0) -> str:
+    """
+    신호 발생/차단 시 텔레그램 전송.
+    event: entry_signal | signal_blocked | entry_skip(already_holding)
+    """
+    now = datetime.now(KST).strftime("%H:%M:%S")
+    mkt_icon = "🌅" if market == "KR" else "🌙"
+    price_str = (
+        f"{int(price):,}원" if market == "KR" and price > 0
+        else f"${price:.2f}" if market == "US" and price > 0
+        else ""
+    )
+
+    if event == "entry_signal":
+        cost_str = f"  주문금액≈{order_cost_krw:,}원" if order_cost_krw else ""
+        text = (
+            f"🟢 <b>[진입신호] {ticker}</b>  {mkt_icon}{market} {now}\n"
+            f"전략: {strategy}  가격: {price_str}{cost_str}\n"
+            f"모드: {mode}"
+        )
+    elif event == "signal_blocked":
+        text = (
+            f"🚫 <b>[신호차단] {ticker}</b>  {mkt_icon}{market} {now}\n"
+            f"전략: {strategy}  가격: {price_str}\n"
+            f"모드: <b>{mode}</b> → 진입 억제"
+        )
+    elif event == "entry_skip" and reason == "already_holding":
+        text = (
+            f"🔵 <b>[보유중 스킵] {ticker}</b>  {mkt_icon}{market} {now}\n"
+            f"신호: {strategy}  가격: {price_str}\n"
+            f"이미 보유 중 → 중복 진입 차단"
+        )
+    else:
+        return ""  # 기타 skip은 알림 불필요
+
+    send(text)
+    return text
+
+
 def daily_summary(date: str, market: str, pnl_pct: float, pnl_krw: int,
                   trades: int, win_rate: float, cumulative: float,
                   judgments: dict, postmortem: dict) -> str:

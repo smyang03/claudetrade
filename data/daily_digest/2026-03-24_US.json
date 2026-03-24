@@ -1,0 +1,95 @@
+{
+  "date": "2026-03-24",
+  "market": "US",
+  "universe_tickers": [
+    "NVDA",
+    "TSLA",
+    "AAPL"
+  ],
+  "context": {
+    "sp500": {
+      "change_pct": -0.35
+    },
+    "nasdaq": {
+      "change_pct": -0.69
+    },
+    "vix": 26.53,
+    "dxy": 99.33,
+    "oil_wti": 92.08,
+    "fomc": false,
+    "fomc_week": false,
+    "cpi_day": false,
+    "nfp_day": false,
+    "premarket": {}
+  },
+  "technicals": {
+    "NVDA": {
+      "name": "엔비디아",
+      "close": 172.7,
+      "change_pct": -3.09,
+      "rsi": 37.4,
+      "macd": "데드크로스",
+      "bb_pct": 2.0,
+      "vol_ratio": 1.08,
+      "pos_52w": 68.6,
+      "vb_target": 180.94,
+      "news_sentiment": 0.115,
+      "sec_filing": false
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "close": 367.96,
+      "change_pct": -3.73,
+      "rsi": 32.4,
+      "macd": "데드크로스",
+      "bb_pct": -21.8,
+      "vol_ratio": 1.27,
+      "pos_52w": 54.0,
+      "vb_target": 386.33,
+      "news_sentiment": 0.166,
+      "sec_filing": false
+    },
+    "AAPL": {
+      "name": "애플",
+      "close": 247.99,
+      "change_pct": -0.17,
+      "rsi": 23.6,
+      "macd": "데드크로스",
+      "bb_pct": 12.4,
+      "vol_ratio": 2.18,
+      "pos_52w": 66.3,
+      "vb_target": 249.55,
+      "news_sentiment": 0.236,
+      "sec_filing": false
+    }
+  },
+  "top_news": [
+    {
+      "title": "Corsicana & Co. Reduces Position in NVIDIA Corporation $NVDA",
+      "ticker": ""
+    },
+    {
+      "title": "Intel Corporation (NASDAQ:INTC) Given Average Rating of \"Reduce\" by Analysts",
+      "ticker": ""
+    },
+    {
+      "title": "Penbrook Management LLC Sells 1,555 Shares of Microsoft Corporation $MSFT",
+      "ticker": ""
+    },
+    {
+      "title": "Capital Asset Advisory Services LLC Has $5.36 Million Stock Holdings in Caterpillar Inc. $CAT",
+      "ticker": ""
+    },
+    {
+      "title": "Everhart Financial Group Inc. Grows Stake in Microsoft Corporation $MSFT",
+      "ticker": ""
+    }
+  ],
+  "prev_result": {
+    "date": "2026-03-23",
+    "mode": "DEFENSIVE",
+    "pnl_pct": 0,
+    "win": false
+  },
+  "built_at": "2026-03-24T23:49:30.241011"
+}

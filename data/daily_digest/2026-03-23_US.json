@@ -1,0 +1,95 @@
+{
+  "date": "2026-03-23",
+  "market": "US",
+  "universe_tickers": [
+    "NVDA",
+    "TSLA",
+    "AAPL"
+  ],
+  "context": {
+    "sp500": {
+      "change_pct": -1.51
+    },
+    "nasdaq": {
+      "change_pct": -2.01
+    },
+    "vix": 23.82,
+    "dxy": 99.25,
+    "oil_wti": 89.26,
+    "fomc": false,
+    "fomc_week": false,
+    "cpi_day": false,
+    "nfp_day": false,
+    "premarket": {}
+  },
+  "technicals": {
+    "NVDA": {
+      "name": "엔비디아",
+      "close": 172.7,
+      "change_pct": -3.09,
+      "rsi": 37.4,
+      "macd": "데드크로스",
+      "bb_pct": 2.0,
+      "vol_ratio": 1.08,
+      "pos_52w": 68.6,
+      "vb_target": 180.94,
+      "news_sentiment": 0.271,
+      "sec_filing": false
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "close": 367.96,
+      "change_pct": -3.73,
+      "rsi": 32.4,
+      "macd": "데드크로스",
+      "bb_pct": -21.8,
+      "vol_ratio": 1.27,
+      "pos_52w": 54.0,
+      "vb_target": 386.33,
+      "news_sentiment": 0.01,
+      "sec_filing": false
+    },
+    "AAPL": {
+      "name": "애플",
+      "close": 247.99,
+      "change_pct": -0.17,
+      "rsi": 23.6,
+      "macd": "데드크로스",
+      "bb_pct": 12.4,
+      "vol_ratio": 2.18,
+      "pos_52w": 66.3,
+      "vb_target": 249.55,
+      "news_sentiment": 0.175,
+      "sec_filing": false
+    }
+  },
+  "top_news": [
+    {
+      "title": "Procyon Advisors LLC Raises Holdings in Advanced Micro Devices, Inc. $AMD",
+      "ticker": ""
+    },
+    {
+      "title": "Leibman Financial Services Inc. Sells 4,005 Shares of Apple Inc. $AAPL",
+      "ticker": ""
+    },
+    {
+      "title": "Argent Capital Management LLC Sells 10,076 Shares of Apple Inc. $AAPL",
+      "ticker": ""
+    },
+    {
+      "title": "Procyon Advisors LLC Buys 5,101 Shares of Micron Technology, Inc. $MU",
+      "ticker": ""
+    },
+    {
+      "title": "Cambria Investment Management L.P. Boosts Stake in Apple Inc. $AAPL",
+      "ticker": ""
+    }
+  ],
+  "prev_result": {
+    "date": "2026-03-21",
+    "mode": "HALT",
+    "pnl_pct": 0.0,
+    "win": false
+  },
+  "built_at": "2026-03-23T22:20:01.862716"
+}

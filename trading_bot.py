@@ -51,6 +51,7 @@ from telegram_reporter import (
     status_report,
     dashboard_push,
     analyst_reinvoke_alert,
+    signal_alert,
 )
 from telegram_commander import commander as tg_commander
 from minority_report.analysts import get_three_judgments, select_tickers
@@ -771,6 +772,34 @@ class TradingBot:
                 "round1_judgments": debate_meta.get("r1", {}),
                 "debate_changes":   debate_meta.get("changes", []),
             }
+        else:
+            # 판단은 재사용하되 종목은 항상 새로 스크리닝
+            # (reused=True 시 전날 저장된 종목이 그대로 고정되는 문제 방지)
+            log.info(f"[종목 재스크리닝] {market} 판단 재사용 + 종목만 새로 선택 (mode={consensus['mode']})")
+            if market == "KR":
+                fresh_candidates = screen_market_kr(self.token)
+            else:
+                fresh_candidates = screen_market_us()
+            if fresh_candidates:
+                fresh_selected = select_tickers(market, digest_prompt, consensus["mode"], fresh_candidates)
+                self.today_tickers[market] = fresh_selected
+                self.today_judgment["tickers"] = fresh_selected
+                self.today_judgment["universe_tickers"] = [
+                    c.get("ticker") for c in fresh_candidates if c.get("ticker")
+                ]
+                log.info(f"[종목 재선택 완료] {market}: {fresh_selected}")
+                judgment_log.info(
+                    f"[rescreen {today} {market}] {fresh_selected}",
+                    extra={"extra": {
+                        "event": "ticker_rescreen",
+                        "date": today,
+                        "market": market,
+                        "selected": fresh_selected,
+                        "consensus_mode": consensus["mode"],
+                    }},
+                )
+            else:
+                log.warning(f"[종목 재스크리닝] 후보 없음 → 기존 종목 유지: {self.today_tickers.get(market, [])}")
 
         # 대시보드가 장 중에도 오늘 판단을 볼 수 있도록 session_open 직후 즉시 기록
         try:
@@ -889,6 +918,10 @@ class TradingBot:
                             "mode": mode,
                         }},
                     )
+                    if reason == "already_holding":
+                        signal_alert("entry_skip", market, ticker,
+                                     strategy=strategy_name, price=float(price),
+                                     reason=reason, mode=mode)
                     log.debug(f"  [{ticker}] 진입불가: {reason}")
                     continue
 
@@ -973,6 +1006,8 @@ class TradingBot:
                             "mode": mode,
                         }},
                     )
+                    signal_alert("signal_blocked", market, ticker,
+                                 strategy=strategy_name, price=float(price), mode=mode)
                     log.debug(f"  [{ticker}] {strategy_name} 신호 — {mode} 모드 진입 억제")
                     continue
 
@@ -1026,6 +1061,9 @@ class TradingBot:
                         "sl_pct": sl_pct,
                     }},
                 )
+                signal_alert("entry_signal", market, ticker,
+                             strategy=strategy_name, price=float(price),
+                             mode=mode, qty=qty, order_cost_krw=int(order_cost))
                 if self.is_paper:
                     log.info(f"[PAPER BUY] {ticker} {qty}@{price:,} | {strategy_name}")
                 else:
@@ -1080,7 +1118,24 @@ class TradingBot:
         action = result.get("action", "MAINTAIN")
         if action != "MAINTAIN":
             old_mode = self.today_judgment["consensus"]["mode"]
-            self.today_judgment["consensus"]["mode"] = result.get("mode", old_mode)
+            new_mode = result.get("mode", old_mode)
+            self.today_judgment["consensus"]["mode"] = new_mode
+            # 모드 변경 시 종목 재선택 (단, REVERSE는 _reinvoke에서 처리)
+            if old_mode != new_mode and action != "REVERSE":
+                try:
+                    log.info(f"[튜너 종목갱신] {old_mode}→{new_mode} 모드 변경 → 종목 재선택")
+                    if market == "KR":
+                        tune_cands = screen_market_kr(self.token)
+                    else:
+                        tune_cands = screen_market_us()
+                    if tune_cands:
+                        digest_p = self.today_judgment.get("digest_prompt", "")
+                        tune_tickers = select_tickers(market, digest_p, new_mode, tune_cands)
+                        self.today_tickers[market] = tune_tickers
+                        self.today_judgment["tickers"] = tune_tickers
+                        log.info(f"[튜너 종목갱신 완료] {market}: {tune_tickers}")
+                except Exception as te:
+                    log.warning(f"[튜너 종목갱신 실패] {te}")
             sl_adj = result.get("sl_adj", 0)
             if sl_adj != 0:
                 adj_clamped = max(-0.10, min(0.10, float(sl_adj)))  # ±10% 이내로 제한
@@ -1203,6 +1258,29 @@ class TradingBot:
                 "new_judgments": new_judgments,
                 "debate_meta":   debate_meta,
             })
+
+            # 모드가 바뀌면 종목도 재선택 (예: DEFENSIVE→MODERATE_BULL 시 인버스 ETF 제거)
+            BEAR_MODES  = {"HALT", "DEFENSIVE", "CAUTIOUS_BEAR", "MILD_BEAR"}
+            BULL_MODES  = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL"}
+            mode_flip = (old_mode in BEAR_MODES and new_consensus["mode"] in BULL_MODES) or \
+                        (old_mode in BULL_MODES and new_consensus["mode"] in BEAR_MODES)
+            if mode_flip or old_mode != new_consensus["mode"]:
+                try:
+                    log.info(f"[종목 재선택] 모드 변경({old_mode}→{new_consensus['mode']}) → 종목 갱신 시작")
+                    if market == "KR":
+                        reinvoke_cands = screen_market_kr(self.token)
+                    else:
+                        reinvoke_cands = screen_market_us()
+                    if reinvoke_cands:
+                        digest_p = self.today_judgment.get("digest_prompt", "")
+                        new_tickers = select_tickers(market, digest_p,
+                                                     new_consensus["mode"], reinvoke_cands)
+                        self.today_tickers[market] = new_tickers
+                        self.today_judgment["tickers"] = new_tickers
+                        log.info(f"[종목 재선택 완료] {market}: {new_tickers}")
+                        # 다음 run_cycle부터 새 종목 사용 (WS는 다음 재시작 시 갱신)
+                except Exception as te:
+                    log.error(f"[종목 재선택 실패] {te}")
 
             analyst_reinvoke_alert(
                 market, trigger, old_mode, new_consensus["mode"],

@@ -74,3 +74,319 @@
 2026-03-22 14:29:58 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
 2026-03-22 14:29:58 [INFO    ] build_consensus:169 | 합의: DEFENSIVE size=18% score=-0.067 weights=B1.00/Be1.00/N1.00 minority=True
 2026-03-22 14:30:13 [INFO    ] run:70 | [postmortem skip] 2026-03-22 KR — HALT 또는 판단 없음
+2026-03-23 08:50:12 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-23 08:50:21 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | SK하이닉스 MACD 골든크로스(52주 90% 위치)와 NAVER RSI 39.9 과매도 근접 + MACD 
+2026-03-23 08:50:35 [INFO    ] call_analyst:159 | [bear R1] DEFENSIVE conf=0.92 | USD/KRW 1,504.17로 1,450원 임계치를 크게 상회하며 판단 기준상 기본값 DEFENSIVE 적
+2026-03-23 08:50:48 [INFO    ] call_analyst:159 | [neutral R1] NEUTRAL conf=0.52 | 삼성전자 MACD 데드크로스(하락신호) vs SK하이닉스·NAVER MACD 골든크로스(상승신호)로 2:1 
+2026-03-23 08:50:50 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 08:50:50 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-23 08:50:52 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.62 | SK하이닉스 MACD 골든크로스(52주 90% 위치) + NAVER RSI 39.9 과매도 근접 및 MACD
+2026-03-23 08:50:58 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.92 | USD/KRW 1,504.17로 1,450원 임계치를 54원 상회하며 판단 기준상 기본값 DEFENSIVE 
+2026-03-23 08:51:03 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.52 | 거래량 0.0배 데이터 누락으로 신뢰도가 근본적으로 훼손된 상태에서 MACD 신호 2:1 상승우위(SK하이닉
+2026-03-23 08:51:04 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 08:51:04 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-23 08:51:04 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: DEFENSIVE
+2026-03-23 08:51:04 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: NEUTRAL
+2026-03-23 08:51:04 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-23 KR 변경=0건
+2026-03-23 08:51:04 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-23 08:51:04 [INFO    ] build_consensus:169 | 합의: NEUTRAL size=36% score=-0.167 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-23 08:51:08 [INFO    ] select_tickers:375 | [ticker-selection] KR -> ['252670']
+2026-03-23 09:02:29 [INFO    ] tune:44 | [튜닝 30분] MAINTAIN → NEUTRAL | 30분 경과 후 지수 변동 0%, 거래량 정상, 이상 신호 없음으로 아침 NEUTRAL 판단 유지하되 Bul
+2026-03-23 09:32:34 [INFO    ] tune:44 | [튜닝 60분] REVERSE → STRONG_BEAR | 아침 MILD_BULL 판단 후 60분 내 지수 -4.78% 급락으로 기술적 반등 신호 완전 무효화, 보유 
+2026-03-23 09:32:36 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-23 09:32:44 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | SK하이닉스 MACD 골든크로스(52주위치 90%) + NAVER RSI 39.9 과매도 근접 및 MACD 
+2026-03-23 09:32:58 [INFO    ] call_analyst:159 | [bear R1] DEFENSIVE conf=0.92 | USD/KRW 1,504.17로 1,450원 임계값을 54원 초과하여 판단 기준상 기본값 DEFENSIVE 
+2026-03-23 09:33:12 [INFO    ] call_analyst:159 | [neutral R1] NEUTRAL conf=0.52 | 코스피 +0.31% 소폭 상승 속 SK하이닉스·NAVER MACD 골든크로스(Bull 2) vs 삼성전자 M
+2026-03-23 09:33:14 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 09:33:14 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-23 09:33:16 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.62 | SK하이닉스 MACD 골든크로스(52주위치 90%) + NAVER RSI 39.9 과매도 근접 및 MACD 
+2026-03-23 09:33:21 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.92 | USD/KRW 1,504.17로 1,450원 임계값을 54원 초과—판단 기준상 DEFENSIVE 기본값 적용
+2026-03-23 09:33:26 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.52 | BULL 신호(SK하이닉스·NAVER MACD 골든크로스 2개) vs BEAR 신호(USD/KRW 1,504
+2026-03-23 09:33:28 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 09:33:28 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-23 09:33:28 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: DEFENSIVE
+2026-03-23 09:33:28 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: NEUTRAL
+2026-03-23 09:33:28 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-23 KR 변경=0건
+2026-03-23 09:33:28 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-23 09:33:28 [INFO    ] build_consensus:169 | 합의: NEUTRAL size=36% score=-0.167 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-23 10:03:37 [INFO    ] tune:44 | [튜닝 90분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 유지 — 보유 포지션 없어 조정 불필요하나, 지수 -5.29% 급락은 아침 Bull
+2026-03-23 10:33:44 [INFO    ] tune:44 | [튜닝 120분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 유지 — 보유 포지션 없어 -5.64% 낙폭 직접 손실 없으나, 낙폭이 기술적 반등
+2026-03-23 10:33:44 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-23 10:33:53 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | SK하이닉스 MACD 골든크로스(52주 고점 90% 근접)와 NAVER MACD 골든크로스(RSI 39.9 
+2026-03-23 10:34:05 [INFO    ] call_analyst:159 | [bear R1] DEFENSIVE conf=0.85 | USD/KRW 1,504.17로 1,450원 임계값 대폭 초과, 판단 기준상 기본값 DEFENSIVE 적용
+2026-03-23 10:34:17 [INFO    ] call_analyst:159 | [neutral R1] NEUTRAL conf=0.52 | 코스피 +0.31% 소폭 상승, SK하이닉스·NAVER MACD 골든크로스(Bull 2) vs 삼성전자 MA
+2026-03-23 10:34:19 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 10:34:19 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-23 10:34:21 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.62 | SK하이닉스 MACD 골든크로스(52주 고점 90% 근접)·NAVER MACD 골든크로스(RSI 39.9 과
+2026-03-23 10:34:26 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.88 | USD/KRW 1,504.17로 판단기준 임계값(1,450원) 대비 54원 초과, 기본값 DEFENSIVE 
+2026-03-23 10:34:31 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.52 | SK하이닉스·NAVER MACD 골든크로스(Bull 2) vs 삼성전자 MACD 데드크로스·NAVER RSI
+2026-03-23 10:34:33 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 10:34:33 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-23 10:34:33 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: DEFENSIVE
+2026-03-23 10:34:33 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: NEUTRAL
+2026-03-23 10:34:33 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-23 KR 변경=0건
+2026-03-23 10:34:33 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-23 10:34:33 [INFO    ] build_consensus:169 | 합의: NEUTRAL size=36% score=-0.167 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-23 11:04:41 [INFO    ] tune:44 | [튜닝 150분] REVERSE → BEAR | 아침 MILD_BULL 판단 대비 150분 내 -4.60% 급락으로 기술적 골든크로스 신호가 완전히 무효화되
+2026-03-23 11:34:50 [INFO    ] tune:44 | [튜닝 180분] REVERSE → STRONG_BEAR | 아침 MILD_BULL 판단 대비 180분 내 -5.14% 급락으로 기술적 골든크로스 신호가 완전히 무력화되
+2026-03-23 11:34:52 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-23 11:35:00 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | SK하이닉스 MACD 골든크로스(52주 90% 위치) + NAVER RSI 39.9 과매도 근접 + MACD
+2026-03-23 11:35:15 [INFO    ] call_analyst:159 | [bear R1] DEFENSIVE conf=0.88 | USD/KRW 1,504.17로 1,450원 임계값 대폭 초과, VKOSPI 데이터 부재 속 환율 단독으로도
+2026-03-23 11:35:28 [INFO    ] call_analyst:159 | [neutral R1] NEUTRAL conf=0.52 | 코스피 +0.31% 소폭 상승 속 SK하이닉스·NAVER MACD 골든크로스(상승 2) vs 삼성전자 MAC
+2026-03-23 11:35:29 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 11:35:29 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-23 11:35:32 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.62 | SK하이닉스 MACD 골든크로스(52주 90% 위치) + NAVER RSI 39.9 과매도 근접 및 MACD
+2026-03-23 11:35:38 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.88 | USD/KRW 1,504.17로 1,450원 임계값을 54원 초과하여 판단 기준상 DEFENSIVE 기본값 
+2026-03-23 11:35:43 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.54 | BULL의 기술적 신호(SK하이닉스·NAVER MACD 골든크로스 2건) vs BEAR의 USD/KRW 1,
+2026-03-23 11:35:45 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 11:35:45 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-23 11:35:45 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: DEFENSIVE
+2026-03-23 11:35:45 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: NEUTRAL
+2026-03-23 11:35:45 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-23 KR 변경=0건
+2026-03-23 11:35:45 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-23 11:35:45 [INFO    ] build_consensus:169 | 합의: NEUTRAL size=36% score=-0.167 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-23 12:05:53 [INFO    ] tune:44 | [튜닝 210분] REVERSE → STRONG_BEAR | 아침 MILD_BULL 판단 대비 210분 경과 후 지수 -5.52% 급락으로 기술적 신호(MACD 골든크로
+2026-03-23 12:36:02 [INFO    ] tune:44 | [튜닝 240분] REVERSE → STRONG_BEAR | 아침 MILD_BULL 판단 대비 240분 경과 후 지수 -5.82% 급락으로 기술적 반등 신호(SK하이닉스
+2026-03-23 12:36:04 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-23 12:36:16 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | SK하이닉스 MACD 골든크로스(52주위치 90%) + NAVER MACD 골든크로스(RSI 39.9 과매도
+2026-03-23 12:36:30 [INFO    ] call_analyst:159 | [bear R1] DEFENSIVE conf=0.88 | USD/KRW 1,504.17로 1,450원 기준선을 크게 초과하여 판단 기준상 기본값 DEFENSIVE 적
+2026-03-23 12:36:43 [INFO    ] call_analyst:159 | [neutral R1] NEUTRAL conf=0.52 | 코스피 +0.31% 소폭 상승, SK하이닉스·NAVER MACD 골든크로스(Bull) vs 삼성전자 MACD
+2026-03-23 12:36:45 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 12:36:45 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-23 12:36:48 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.62 | SK하이닉스 MACD 골든크로스(52주위치 90%) + NAVER MACD 골든크로스(RSI 39.9 과매도
+2026-03-23 12:36:53 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.88 | USD/KRW 1,504.17로 판단 기준상 명시된 1,450원 임계값을 54원 초과—단일 위험 신호만으로도
+2026-03-23 12:36:58 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.52 | 거래량 0.0배 데이터 신뢰도 결여 상태에서 MACD 골든크로스(SK하이닉스·NAVER) vs 데드크로스(삼
+2026-03-23 12:36:59 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 12:36:59 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-23 12:36:59 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: DEFENSIVE
+2026-03-23 12:36:59 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: NEUTRAL
+2026-03-23 12:36:59 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-23 KR 변경=0건
+2026-03-23 12:36:59 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-23 12:36:59 [INFO    ] build_consensus:169 | 합의: NEUTRAL size=36% score=-0.167 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-23 13:07:09 [INFO    ] tune:44 | [튜닝 270분] REVERSE → STRONG_BEAR | 아침 MODERATE_BULL 판단 이후 270분간 지수 -5.67% 급락으로 기술적 골든크로스 신호가 완전
+2026-03-23 13:37:17 [INFO    ] tune:44 | [튜닝 300분] REVERSE → STRONG_BEAR | 아침 MODERATE_BULL 판단과 달리 300분 경과 후 지수 -5.79% 급락으로 Bear 신호가 압도
+2026-03-23 13:37:19 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-23 13:37:31 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | SK하이닉스 MACD 골든크로스(52주 90% 위치)·NAVER MACD 골든크로스+RSI 39.9 과매도 
+2026-03-23 13:37:44 [INFO    ] call_analyst:159 | [bear R1] DEFENSIVE conf=0.88 | USD/KRW 1,504.17로 1,450 기준선을 크게 상회하며 판단 기준상 기본값 DEFENSIVE 적용
+2026-03-23 13:37:56 [INFO    ] call_analyst:159 | [neutral R1] NEUTRAL conf=0.52 | 코스피 +0.31% 소폭 상승, SK하이닉스·NAVER MACD 골든크로스(Bull) vs 삼성전자 MACD
+2026-03-23 13:37:57 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 13:37:57 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-23 13:38:00 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.62 | SK하이닉스 MACD 골든크로스(52주 90% 위치) + NAVER MACD 골든크로스·RSI 39.9 과매
+2026-03-23 13:38:06 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.88 | USD/KRW 1,504.17로 판단 기준상 1,450 초과 시 기본값 DEFENSIVE 적용 필수이며, 거
+2026-03-23 13:38:11 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.52 | 거래량 0.0배 데이터 신뢰도 저하 + 삼성전자 MACD 데드크로스 vs SK하이닉스·NAVER MACD 골
+2026-03-23 13:38:13 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 13:38:13 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-23 13:38:13 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: DEFENSIVE
+2026-03-23 13:38:13 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: NEUTRAL
+2026-03-23 13:38:13 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-23 KR 변경=0건
+2026-03-23 13:38:13 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-23 13:38:13 [INFO    ] build_consensus:169 | 합의: NEUTRAL size=36% score=-0.167 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-23 14:08:20 [INFO    ] tune:44 | [튜닝 330분] REVERSE → STRONG_BEAR | 아침 NEUTRAL 판단 대비 330분 경과 후 지수 -5.89% 급락으로 기술적 강세 신호 완전 무력화, 
+2026-03-23 14:38:30 [INFO    ] tune:44 | [튜닝 360분] REVERSE → STRONG_BEAR | 아침 MILD_BULL 기술 신호(SK하이닉스·NAVER MACD 골든크로스 등)에도 불구하고 360분 경과
+2026-03-23 14:38:31 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-23 14:38:43 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | SK하이닉스 MACD 골든크로스(52주 90% 위치)·NAVER MACD 골든크로스 + RSI 39.9 과매
+2026-03-23 14:38:56 [INFO    ] call_analyst:159 | [bear R1] DEFENSIVE conf=0.88 | USD/KRW 1,504.17로 1,450원 임계치를 대폭 초과하여 판단 기준상 기본값 DEFENSIVE가 
+2026-03-23 14:39:10 [INFO    ] call_analyst:159 | [neutral R1] NEUTRAL conf=0.52 | 코스피 +0.31% 소폭 상승 속 SK하이닉스·NAVER MACD 골든크로스(Bull 2개) vs 삼성전자 
+2026-03-23 14:39:12 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 14:39:12 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-23 14:39:15 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.62 | SK하이닉스 MACD 골든크로스(52주 90% 위치) + NAVER MACD 골든크로스로 기술적 반등 신호 
+2026-03-23 14:39:21 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.88 | USD/KRW 1,504.17로 판단 기준상 1,450원 초과 시 기본값 DEFENSIVE가 명확히 적용되며
+2026-03-23 14:39:27 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.52 | Bull 신호(SK하이닉스·NAVER MACD 골든크로스 2개) vs Bear 신호(삼성전자 데드크로스·NA
+2026-03-23 14:39:28 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 14:39:28 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-23 14:39:28 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: DEFENSIVE
+2026-03-23 14:39:28 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: NEUTRAL
+2026-03-23 14:39:28 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-23 KR 변경=0건
+2026-03-23 14:39:28 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-23 14:39:28 [INFO    ] build_consensus:169 | 합의: NEUTRAL size=36% score=-0.167 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-23 15:09:38 [INFO    ] tune:44 | [튜닝 390분] REVERSE → STRONG_BEAR | 아침 MILD_BULL 판단 대비 390분 경과 후 지수 -6.40% 급락으로 기술적 반등 신호(SK하이닉스
+2026-03-23 15:39:47 [INFO    ] tune:44 | [튜닝 420분] REVERSE → STRONG_BEAR | 아침 MILD_BULL 판단 대비 420분간 -6.56% 급락으로 기술적 반등 신호(SK하이닉스·NAVER 
+2026-03-23 15:39:49 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-23 15:40:01 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | SK하이닉스 MACD 골든크로스(52주 고점 90%) + NAVER MACD 골든크로스(RSI 39.9 과매
+2026-03-23 15:40:14 [INFO    ] call_analyst:159 | [bear R1] DEFENSIVE conf=0.88 | USD/KRW 1,504.17로 판단 기준선(1,450) 대폭 초과, VKOSPI 데이터 미확인이나 환율 단
+2026-03-23 15:40:28 [INFO    ] call_analyst:159 | [neutral R1] NEUTRAL conf=0.52 | 코스피 +0.31% 소폭 상승, SK하이닉스·NAVER MACD 골든크로스(Bull) vs 삼성전자 MACD
+2026-03-23 15:40:29 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 15:40:29 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-23 15:40:32 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.62 | SK하이닉스 MACD 골든크로스(52주 고점 90%) + NAVER MACD 골든크로스(RSI 39.9 과매
+2026-03-23 15:40:37 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.88 | USD/KRW 1,504.17로 판단 기준선(1,450) 대폭 초과 — 단독으로도 DEFENSIVE 기본값 
+2026-03-23 15:40:41 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.52 | MACD 골든크로스(SK하이닉스·NAVER) 2개 Bull 신호 vs 삼성전자 MACD 데드크로스·USD/K
+2026-03-23 15:40:43 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-23 15:40:43 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-23 15:40:43 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: DEFENSIVE
+2026-03-23 15:40:43 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: NEUTRAL
+2026-03-23 15:40:43 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-23 KR 변경=0건
+2026-03-23 15:40:43 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-23 15:40:43 [INFO    ] build_consensus:169 | 합의: NEUTRAL size=36% score=-0.167 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-23 16:00:15 [ERROR   ] run:171 | postmortem 오류: Unterminated string starting at: line 23 column 7 (char 1128)
+2026-03-23 16:00:16 [INFO    ] run:245 | [postmortem 2026-03-23] Bull:MISS Bear:HIT Neut:PARTIAL | 오류로 자동 판정
+2026-03-23 22:20:01 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-23 22:20:11 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | 애플 RSI 23.6 극단적 과매도 + 거래량 2.2배 급증으로 평균회귀 반등 신호 2개 동시 발생
+2026-03-23 22:20:25 [INFO    ] call_analyst:159 | [bear R1] HALT conf=0.85 | VIX 23.8로 위험 임계치(20) 상회 중이며 S&P500 -1.51%, 나스닥 -2.01% 하락에 주요
+2026-03-23 22:20:38 [INFO    ] call_analyst:159 | [neutral R1] MILD_BEAR conf=0.62 | S&P500 -1.51%, 나스닥 -2.01%, VIX 23.8 고조 상태에서 3개 종목 모두 MACD 데드
+2026-03-23 22:20:40 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:HALT Neut:MILD_BEAR
+2026-03-23 22:20:40 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-23 22:20:42 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.58 | 애플 RSI 23.6 극단적 과매도 + 거래량 2.2배 급증으로 평균회귀 반등 신호 2개 동시 발생, 기술적
+2026-03-23 22:20:47 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.85 | VIX 23.8로 위험 임계치 상회, S&P500·나스닥 동반 하락(-1.51%/-2.01%), 3개 종목 
+2026-03-23 22:20:52 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.62 | MACD 데드크로스 3종목 전체 유지 + VIX 23.8 + S&P500·나스닥 동반 하락으로 하락 신호가 
+2026-03-23 22:20:54 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:HALT Neut:MILD_BEAR
+2026-03-23 22:20:54 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-23 22:20:54 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: HALT
+2026-03-23 22:20:54 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: MILD_BEAR
+2026-03-23 22:20:54 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-23 US 변경=0건
+2026-03-23 22:20:54 [WARNING ] build_consensus:126 | ⚠️ 마이너리티 룰 발동 [US]: vix 23.8로 위험 임계치 상회, s&p500·나스닥 동반 하락(-1.51%/-2.01%), 3개 종목 
+2026-03-23 22:20:54 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-23 22:20:54 [INFO    ] build_consensus:169 | 합의: DEFENSIVE size=13% score=-0.333 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-23 22:21:01 [INFO    ] select_tickers:375 | [ticker-selection] US -> ['TZA', 'SPDN', 'NVD', 'T']
+2026-03-23 22:41:04 [ERROR   ] tune:53 | 튜닝 오류: Unterminated string starting at: line 1 column 242 (char 241)
+2026-03-23 23:11:11 [INFO    ] tune:44 | [튜닝 60분] REVERSE → AGGRESSIVE_BULL | 아침 DEFENSIVE 판단 당시 RSI 23.6 극단적 과매도 + 거래량 2.2배 신호가 유효했으나 포지션
+2026-03-23 23:41:20 [INFO    ] tune:44 | [튜닝 90분] MAINTAIN → AGGRESSIVE_BULL | 아침 판단 이후 90분간 지수 +1.88% 상승으로 극단적 과매도 평균회귀 반등 시나리오가 실현 중이며, 보
+2026-03-24 00:11:26 [INFO    ] tune:44 | [튜닝 120분] MAINTAIN → AGGRESSIVE_BULL | 아침 판단 이후 120분간 지수 +2.19% 상승으로 RSI 과매도 평균회귀 반등 시나리오가 실현되는 중이나
+2026-03-24 00:41:33 [INFO    ] tune:44 | [튜닝 150분] MAINTAIN → AGGRESSIVE_BULL | 아침 판단 이후 150분간 지수 +1.71% 상승으로 극단적 과매도 평균회귀 반등 시나리오가 정확히 실현되고
+2026-03-24 01:11:40 [INFO    ] tune:44 | [튜닝 180분] REVERSE → NEUTRAL | 아침 AGGRESSIVE_BULL 판단 대비 180분 경과 후 지수 변동 데이터 부재(nan%)와 누적 신뢰
+2026-03-24 01:41:48 [INFO    ] tune:44 | [튜닝 210분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 이후 210분간 +1.17% 상승으로 Bull 신호 일부 실현되었으나, 보유 포지션
+2026-03-24 02:11:54 [INFO    ] tune:44 | [튜닝 240분] MAINTAIN → NEUTRAL | 240분 경과 후 지수 변동 데이터 미확인(nan%) 및 보유 포지션 없음으로 아침 NEUTRAL 판단 유지
+2026-03-24 02:42:00 [INFO    ] tune:44 | [튜닝 270분] REVERSE → Bull | 아침 NEUTRAL 판단 이후 270분간 +1.43% 상승 확인으로 애플 RSI 23.6 과매도 반등 신호가
+2026-03-24 03:12:08 [INFO    ] tune:44 | [튜닝 300분] MAINTAIN → Bull | 아침 판단 Bull 방향 적중 — 300분 경과 후 +1.52% 상승으로 RSI 과매도 평균회귀 반등 시나리
+2026-03-24 03:42:14 [INFO    ] tune:44 | [튜닝 330분] MAINTAIN → Bull | 아침 Bull 판단 후 330분 경과, 지수 +1.63% 상승으로 평균회귀 반등 시나리오 진행 중이나 보유 
+2026-03-24 04:12:21 [INFO    ] tune:44 | [튜닝 360분] REVERSE → Bull_Confirmed | 아침 Bull 판단 정확히 적중 — RSI 과매도 반등 신호 후 360분간 +1.59% 상승 실현, 기술적 
+2026-03-24 04:42:28 [INFO    ] tune:44 | [튜닝 390분] MAINTAIN → Bull_Confirmed | 390분 경과 후 지수 변동 데이터 미수신(nan%)으로 포지션 미보유 상태이며, 아침 Bull 신호(RSI
+2026-03-24 05:00:17 [ERROR   ] run:171 | postmortem 오류: Expecting property name enclosed in double quotes: line 20 column 5 (char 1122)
+2026-03-24 05:00:17 [INFO    ] run:245 | [postmortem 2026-03-24] Bull:MISS Bear:HIT Neut:PARTIAL | 오류로 자동 판정
+2026-03-24 08:50:04 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-24 08:50:16 [INFO    ] call_analyst:159 | [bull R1] DEFENSIVE conf=0.72 | 코스피 -6.49% 급락 속 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 확인, RSI는 과
+2026-03-24 08:50:28 [INFO    ] call_analyst:159 | [bear R1] HALT conf=0.95 | 코스피 -6.49% 급락, USD/KRW 1,486.3원(1,450 임계선 초과), 전 종목 MACD 데드크
+2026-03-24 08:50:42 [INFO    ] call_analyst:159 | [neutral R1] MILD_BEAR conf=0.65 | 코스피 -6.49% 급락, 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 및 5~7%대 하락으
+2026-03-24 08:50:43 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:DEFENSIVE Bear:HALT Neut:MILD_BEAR
+2026-03-24 08:50:43 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-24 08:50:47 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.75 | 전 종목 MACD 데드크로스 동시 발생 + 코스피 -6.49% 급락이 핵심 하락 신호이나, RSI 50~57
+2026-03-24 08:50:51 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.95 | USD/KRW 1,486.3원(1,450 임계선 +36원 초과), 코스피 -6.49% 급락, 전 종목 MAC
+2026-03-24 08:50:56 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.65 | 코스피 -6.49% 급락·전 종목 MACD 데드크로스·USD/KRW 1,486원으로 하락 신호 3:0 우세하
+2026-03-24 08:50:58 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:DEFENSIVE Bear:HALT Neut:MILD_BEAR
+2026-03-24 08:50:58 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: DEFENSIVE
+2026-03-24 08:50:58 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: HALT
+2026-03-24 08:50:58 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: MILD_BEAR
+2026-03-24 08:50:58 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-24 KR 변경=0건
+2026-03-24 08:50:58 [WARNING ] build_consensus:126 | ⚠️ 마이너리티 룰 발동 [KR]: usd/krw 1,486.3원(1,450 임계선 +36원 초과), 코스피 -6.49% 급락, 전 종목 mac
+2026-03-24 08:50:58 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-24 08:50:58 [INFO    ] build_consensus:169 | 합의: DEFENSIVE size=10% score=-0.767 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-24 08:51:02 [INFO    ] select_tickers:375 | [ticker-selection] KR -> ['038110']
+2026-03-24 09:01:30 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-24 09:01:41 [INFO    ] call_analyst:159 | [bull R1] DEFENSIVE conf=0.72 | 코스피 -6.49% 급락 속 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 확인, RSI 과매
+2026-03-24 09:01:54 [INFO    ] call_analyst:159 | [bear R1] HALT conf=0.95 | 코스피 -6.49% 급락, USD/KRW 1,486.3원(1,450 초과), VKOSPI 급등, 전 종목 M
+2026-03-24 09:02:06 [INFO    ] call_analyst:159 | [neutral R1] MILD_BEAR conf=0.62 | 코스피 -6.49% 급락, 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 동시 발생 및 RSI
+2026-03-24 09:02:08 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:DEFENSIVE Bear:HALT Neut:MILD_BEAR
+2026-03-24 09:02:08 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-24 09:02:10 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.75 | 전 종목 MACD 데드크로스 동시 발생 및 코스피 -6.49% 급락 속 RSI 과매도 미도달(50~57권)로
+2026-03-24 09:02:15 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.95 | USD/KRW 1,486.3원(1,450 초과), 코스피 -6.49% 급락, 전 종목 MACD 데드크로스 동
+2026-03-24 09:02:21 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.63 | 코스피 -6.49% 급락·전 종목 MACD 데드크로스·USD/KRW 1,486원 동시 발생으로 하락 신호 우
+2026-03-24 09:02:23 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:DEFENSIVE Bear:HALT Neut:MILD_BEAR
+2026-03-24 09:02:23 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: DEFENSIVE
+2026-03-24 09:02:23 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: HALT
+2026-03-24 09:02:23 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: MILD_BEAR
+2026-03-24 09:02:23 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-24 KR 변경=0건
+2026-03-24 09:02:23 [WARNING ] build_consensus:126 | ⚠️ 마이너리티 룰 발동 [KR]: usd/krw 1,486.3원(1,450 초과), 코스피 -6.49% 급락, 전 종목 macd 데드크로스 동
+2026-03-24 09:02:23 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-24 09:02:23 [INFO    ] build_consensus:169 | 합의: DEFENSIVE size=10% score=-0.767 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-24 09:11:12 [INFO    ] tune:44 | [튜닝 30분] MAINTAIN → DEFENSIVE | 30분 경과 후 지수 변동 없고 이상 신호 부재로 아침 DEFENSIVE 판단 유지, MACD 데드크로스 및
+2026-03-24 09:41:16 [INFO    ] tune:44 | [튜닝 60분] MAINTAIN → DEFENSIVE | 60분 경과 후 지수 변동 +0.00%로 방향성 미확인, MACD 데드크로스 및 RSI 과매도 미도달 상태 
+2026-03-24 10:11:22 [INFO    ] tune:44 | [튜닝 90분] MAINTAIN → DEFENSIVE | 90분 경과 후 지수 변동 0%, 거래량 정상, 이상 신호 없음으로 아침 DEFENSIVE 판단 유지 — M
+2026-03-24 10:41:30 [INFO    ] tune:44 | [튜닝 120분] REVERSE → NEUTRAL | 아침 DEFENSIVE/Bear 판단 대비 120분 내 +1.68% 반등 발생으로 추가 하락 압력 예상이 빗
+2026-03-24 10:41:32 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-24 10:41:44 [INFO    ] call_analyst:159 | [bull R1] DEFENSIVE conf=0.72 | 코스피 -6.49% 급락 속 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 확인, RSI는 과
+2026-03-24 10:41:56 [INFO    ] call_analyst:159 | [bear R1] HALT conf=0.95 | 코스피 -6.49% 급락, USD/KRW 1,486.3원(1,450 이상 기준 초과), VKOSPI 급등 등
+2026-03-24 10:42:08 [INFO    ] call_analyst:159 | [neutral R1] MILD_BEAR conf=0.62 | 코스피 -6.49% 급락 속 삼성전자·SK하이닉스·NAVER 전종목 MACD 데드크로스 확인, RSI는 50
+2026-03-24 10:42:09 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:DEFENSIVE Bear:HALT Neut:MILD_BEAR
+2026-03-24 10:42:09 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-24 10:42:13 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.75 | 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 확인, RSI 50~57로 과매도 미도달(추가 
+2026-03-24 10:42:18 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.95 | USD/KRW 1,486.3원(기준선 1,450원 대비 +36원 초과), 코스피 -6.49% 단일일 급락, 
+2026-03-24 10:42:24 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.62 | 전 종목 MACD 데드크로스·코스피 -6.49% 급락·USD/KRW 1,486 고환율 등 하락 신호 우세하나
+2026-03-24 10:42:26 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:DEFENSIVE Bear:HALT Neut:MILD_BEAR
+2026-03-24 10:42:26 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: DEFENSIVE
+2026-03-24 10:42:26 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: HALT
+2026-03-24 10:42:26 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: MILD_BEAR
+2026-03-24 10:42:26 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-24 KR 변경=0건
+2026-03-24 10:42:26 [WARNING ] build_consensus:126 | ⚠️ 마이너리티 룰 발동 [KR]: usd/krw 1,486.3원(기준선 1,450원 대비 +36원 초과), 코스피 -6.49% 단일일 급락, 
+2026-03-24 10:42:26 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-24 10:42:26 [INFO    ] build_consensus:169 | 합의: DEFENSIVE size=10% score=-0.767 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-24 11:12:33 [INFO    ] tune:44 | [튜닝 150분] MAINTAIN → DEFENSIVE | 150분 경과 후 지수 +0.30% 소폭 반등은 MACD 데드크로스·RSI 추가 하락 여지 해소에 불충분하며
+2026-03-24 11:42:40 [INFO    ] tune:44 | [튜닝 180분] MAINTAIN → DEFENSIVE | 아침 MACD 데드크로스·RSI 추가 하락 여지 판단 유효, +1.06% 반등은 무포지션 상태에서 손익 미발
+2026-03-24 12:12:47 [INFO    ] tune:44 | [튜닝 210분] MAINTAIN → DEFENSIVE | 아침 MACD 데드크로스·추가하락 여지 판단 유효하며, 210분 경과 후 +1.40% 반등은 거래량 norm
+2026-03-24 12:42:53 [INFO    ] tune:44 | [튜닝 240분] REVERSE → NEUTRAL | 아침 DEFENSIVE 판단 이후 240분간 지수 +2.02% 반등으로 MACD 데드크로스 및 추가 하락 시
+2026-03-24 12:42:55 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-24 12:43:04 [INFO    ] call_analyst:159 | [bull R1] DEFENSIVE conf=0.75 | 코스피 -6.49% 급락 속 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 확인, RSI는 과
+2026-03-24 12:43:16 [INFO    ] call_analyst:159 | [bear R1] HALT conf=0.95 | 코스피 -6.49% 급락, USD/KRW 1,486.3원(1,450원 상회), 삼성전자·SK하이닉스·NAVE
+2026-03-24 12:43:29 [INFO    ] call_analyst:159 | [neutral R1] DEFENSIVE conf=0.68 | 코스피 -6.49% 급락 속 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 동시 발생 및 거래
+2026-03-24 12:43:31 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:DEFENSIVE Bear:HALT Neut:DEFENSIVE
+2026-03-24 12:43:31 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-24 12:43:35 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.75 | 전 종목 MACD 데드크로스 동시 발생 + 코스피 -6.49% 급락으로 하락 추세 명확하나, RSI 50~5
+2026-03-24 12:43:40 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.95 | USD/KRW 1,486.3원(1,450원 상회), 코스피 -6.49% 급락, 전 종목 MACD 데드크로스 
+2026-03-24 12:43:46 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.68 | 코스피 -6.49% 급락·전 종목 MACD 데드크로스 동시 발생·USD/KRW 1,486원 고환율의 복합 하
+2026-03-24 12:43:47 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:DEFENSIVE Bear:HALT Neut:DEFENSIVE
+2026-03-24 12:43:47 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: DEFENSIVE
+2026-03-24 12:43:47 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: HALT
+2026-03-24 12:43:47 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: DEFENSIVE
+2026-03-24 12:43:47 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-24 KR 변경=0건
+2026-03-24 12:43:47 [WARNING ] build_consensus:126 | ⚠️ 마이너리티 룰 발동 [KR]: usd/krw 1,486.3원(1,450원 상회), 코스피 -6.49% 급락, 전 종목 macd 데드크로스 
+2026-03-24 12:43:47 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-24 12:43:47 [INFO    ] build_consensus:169 | 합의: DEFENSIVE size=9% score=-0.933 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-24 13:13:56 [INFO    ] tune:44 | [튜닝 270분] REVERSE → NEUTRAL | 아침 DEFENSIVE/Bear 판단 대비 270분 경과 후 +2.10% 반등 확인으로 하락 추세 논거 약화
+2026-03-24 13:44:04 [INFO    ] tune:44 | [튜닝 300분] MAINTAIN → NEUTRAL | 아침 MACD 데드크로스·급락 하락 추세 판단 유효하나 300분 경과 후 +2.10% 반등은 RSI 과매도 
+2026-03-24 13:58:17 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-24 13:58:27 [INFO    ] call_analyst:159 | [bull R1] DEFENSIVE conf=0.75 | 코스피 -6.49% 급락 속 삼성전자·SK하이닉스·NAVER 전종목 MACD 데드크로스 확인, RSI는 과매
+2026-03-24 13:58:40 [INFO    ] call_analyst:159 | [bear R1] HALT conf=0.95 | 코스피 -6.49% 급락, USD/KRW 1,486.3원(1,450 임계값 초과), 전 종목 MACD 데드크
+2026-03-24 13:58:51 [INFO    ] call_analyst:159 | [neutral R1] MILD_BEAR conf=0.62 | 코스피 -6.49% 급락, 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 및 5~7%대 동반 
+2026-03-24 13:58:52 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:DEFENSIVE Bear:HALT Neut:MILD_BEAR
+2026-03-24 13:58:52 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-24 13:58:57 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.75 | 전 종목 MACD 데드크로스 동시 확인 + 코스피 -6.49% 급락으로 하락 모멘텀 명확하나, RSI 50~
+2026-03-24 13:59:01 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.95 | USD/KRW 1,486.3원(1,450 임계값 +36.3원 초과), 코스피 -6.49% 급락, 전 종목 M
+2026-03-24 13:59:06 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.62 | 코스피 -6.49% 급락·전 종목 MACD 데드크로스·USD/KRW 1,486원으로 하락 신호 우세하나 RS
+2026-03-24 13:59:08 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:DEFENSIVE Bear:HALT Neut:MILD_BEAR
+2026-03-24 13:59:08 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: DEFENSIVE
+2026-03-24 13:59:08 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: HALT
+2026-03-24 13:59:08 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: MILD_BEAR
+2026-03-24 13:59:08 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-24 KR 변경=0건
+2026-03-24 13:59:08 [WARNING ] build_consensus:126 | ⚠️ 마이너리티 룰 발동 [KR]: usd/krw 1,486.3원(1,450 임계값 +36.3원 초과), 코스피 -6.49% 급락, 전 종목 m
+2026-03-24 13:59:08 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-24 13:59:08 [INFO    ] build_consensus:169 | 합의: DEFENSIVE size=10% score=-0.767 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-24 14:14:11 [INFO    ] tune:44 | [튜닝 330분] REVERSE → NEUTRAL | 아침 DEFENSIVE/Bear 판단 이후 330분간 +2.73% 반등 — MACD 데드크로스·급락 모멘텀 
+2026-03-24 14:44:21 [ERROR   ] tune:53 | 튜닝 오류: Unterminated string starting at: line 1 column 249 (char 248)
+2026-03-24 15:14:28 [ERROR   ] tune:53 | 튜닝 오류: Unterminated string starting at: line 1 column 247 (char 246)
+2026-03-24 15:44:35 [INFO    ] tune:44 | [튜닝 420분] REVERSE → BULL | 아침 NEUTRAL 판단 당시 MACD 데드크로스·급락 하락 모멘텀을 근거로 했으나, 장 중 420분 경과 
+2026-03-24 15:44:37 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-24 15:44:47 [INFO    ] call_analyst:159 | [bull R1] DEFENSIVE conf=0.72 | 코스피 -6.49% 급락 속 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 확인, RSI는 과
+2026-03-24 15:45:00 [INFO    ] call_analyst:159 | [bear R1] HALT conf=0.95 | 코스피 -6.49% 급락, USD/KRW 1,486.3원(1,450원 임계치 대폭 초과), 전 종목 MACD
+2026-03-24 15:45:11 [INFO    ] call_analyst:159 | [neutral R1] DEFENSIVE conf=0.65 | 코스피 -6.49% 급락, 삼성전자·SK하이닉스·NAVER 전 종목 MACD 데드크로스 및 5~7%대 하락으
+2026-03-24 15:45:13 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:DEFENSIVE Bear:HALT Neut:DEFENSIVE
+2026-03-24 15:45:13 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-24 15:45:17 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.75 | 전 종목 MACD 데드크로스 동시 발생 + 코스피 -6.49% 급락 확인, RSI는 50~57로 과매도 미도
+2026-03-24 15:45:21 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.95 | USD/KRW 1,486.3원(임계치 1,450원 대폭 초과), 코스피 -6.49% 급락, 전 종목 MACD
+2026-03-24 15:45:26 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.65 | 코스피 -6.49% 급락·전 종목 MACD 데드크로스·USD/KRW 1,486.3원으로 하락 신호 3:0 우
+2026-03-24 15:45:28 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:DEFENSIVE Bear:HALT Neut:DEFENSIVE
+2026-03-24 15:45:28 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: DEFENSIVE
+2026-03-24 15:45:28 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: HALT
+2026-03-24 15:45:28 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: DEFENSIVE
+2026-03-24 15:45:28 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-24 KR 변경=0건
+2026-03-24 15:45:28 [WARNING ] build_consensus:126 | ⚠️ 마이너리티 룰 발동 [KR]: usd/krw 1,486.3원(임계치 1,450원 대폭 초과), 코스피 -6.49% 급락, 전 종목 macd
+2026-03-24 15:45:28 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-24 15:45:28 [INFO    ] build_consensus:169 | 합의: DEFENSIVE size=9% score=-0.933 weights=B1.00/Be1.00/N1.00 minority=True
+2026-03-24 16:00:15 [ERROR   ] run:171 | postmortem 오류: Unterminated string starting at: line 23 column 7 (char 1120)
+2026-03-24 16:00:15 [INFO    ] run:245 | [postmortem 2026-03-24] Bull:MISS Bear:HIT Neut:PARTIAL | 오류로 자동 판정
+2026-03-24 22:34:39 [INFO    ] get_three_judgments:256 | ━━ Round 1: 독립 판단 ━━
+2026-03-24 22:34:50 [INFO    ] call_analyst:159 | [bull R1] MILD_BULL conf=0.62 | 애플 RSI 23.6 극단적 과매도 + 거래량 2.2배 급증으로 핵심 2개 기술 신호 동시 충족, 평균회귀 
+2026-03-24 22:35:02 [INFO    ] call_analyst:159 | [bear R1] DEFENSIVE conf=0.82 | VIX 23.8로 위험 임계값(20) 상회, S&P500 -1.51%·나스닥 -2.01% 하락, 주요 3종목
+2026-03-24 22:35:15 [INFO    ] call_analyst:159 | [neutral R1] NEUTRAL conf=0.52 | 애플 RSI 23.6 극단적 과매도+거래량 2.2배로 평균회귀 Bull 신호 존재하나, S&P500 -1.5
+2026-03-24 22:35:17 [INFO    ] get_three_judgments:267 | R1 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-24 22:35:17 [INFO    ] get_three_judgments:271 | ━━ Round 2: 토론 ━━
+2026-03-24 22:35:20 [INFO    ] call_analyst_debate:234 | [bull R2] 유지 conf=0.62 | 애플 RSI 23.6 극단적 과매도(30 이하) + 거래량 2.2배 급증으로 핵심 기술 신호 2개 동시 충족
+2026-03-24 22:35:25 [INFO    ] call_analyst_debate:234 | [bear R2] 유지 conf=0.85 | VIX 23.8로 위험 임계값 상회 + S&P500·나스닥 동반 급락 + 주요 3종목 전원 MACD 데드크로
+2026-03-24 22:35:30 [INFO    ] call_analyst_debate:234 | [neutral R2] 유지 conf=0.52 | 애플 RSI 23.6+거래량 2.2배 과매도 반등 신호 vs S&P500 -1.51%·나스닥 -2.01%·V
+2026-03-24 22:35:31 [INFO    ] get_three_judgments:284 | R2 완료 | Bull:MILD_BULL Bear:DEFENSIVE Neut:NEUTRAL
+2026-03-24 22:35:31 [INFO    ] get_three_judgments:301 |   [bull] 의견 유지: MILD_BULL
+2026-03-24 22:35:31 [INFO    ] get_three_judgments:301 |   [bear] 의견 유지: DEFENSIVE
+2026-03-24 22:35:31 [INFO    ] get_three_judgments:301 |   [neutral] 의견 유지: NEUTRAL
+2026-03-24 22:35:31 [INFO    ] get_three_judgments:308 | [토론 기록 저장] 2026-03-24 US 변경=0건
+2026-03-24 22:35:31 [DEBUG   ] _get_weights:92 | 가중치: 데이터 부족 → 균등 (1:1:1)
+2026-03-24 22:35:31 [INFO    ] build_consensus:169 | 합의: NEUTRAL size=35% score=-0.167 weights=B1.00/Be1.00/N1.00 minority=False
+2026-03-24 22:45:49 [INFO    ] tune:44 | [튜닝 30분] MAINTAIN → NEUTRAL | 아침 NEUTRAL 판단 유지 — 30분간 -0.68% 하락은 Bear 신호이나 거래량 정상·이상 신호 없음
+2026-03-24 23:15:55 [INFO    ] tune:44 | [튜닝 60분] MAINTAIN → NEUTRAL | 60분 경과 후 지수 변동 데이터 미확인(nan%) 및 이상 신호 없음으로 아침 NEUTRAL 판단 유지, 
+2026-03-24 23:46:01 [INFO    ] tune:44 | [튜닝 90분] MAINTAIN → NEUTRAL | 90분 경과 후 지수 변동 데이터 미확인(nan%) 및 이상 신호 없음으로 아침 NEUTRAL 판단 유지하되

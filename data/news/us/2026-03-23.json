@@ -1,0 +1,812 @@
+{
+  "date": "2026-03-23",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [
+    {
+      "source": "AlphaVantage",
+      "date": "2026-03-23",
+      "title": "Should you consider purchasing the Invesco QQQ ETF amid the current stock market downturn? Historical trends provide a definitive perspective.",
+      "content": "The article examines whether the current stock market dip presents a good opportunity to invest in the Invesco QQQ ETF, which tracks the Nasdaq-100 index. It highlights the ETF's heavy concentration in technology stocks, their historical growth, and the consistent returns QQQ has provided despite market volatility. While acknowledging the tech-heavy index's susceptibility to larger price swings, the article suggests that long-term investment in QQQ, driven by continued innovation in AI and other",
+      "url": "https://www.bitget.com/amp/news/detail/12560605293170",
+      "sentiment_score": 0.431865,
+      "sentiment_label": "Bullish",
+      "relevance": 1.0
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-03-23",
+      "title": "Should You Buy the Invesco QQQ ETF During the Stock Market Sell-Off? History Offers a Clear Answer.",
+      "content": "This article examines whether the current stock market sell-off presents a good buying opportunity for the Invesco QQQ Trust (QQQ) ETF, which tracks the Nasdaq-100. It highlights that the Nasdaq-100, heavily weighted in technology stocks, has historically delivered strong returns despite volatility and bear markets. The author concludes that based on past performance and the continued growth of sectors like AI, investing in QQQ during downturns has proven beneficial.",
+      "url": "https://www.theglobeandmail.com/investing/markets/stocks/AAPL-Q/pressreleases/892869/should-you-buy-the-invesco-qqq-etf-during-the-stock-market-sell-off-history-offers-a-clear-answer/",
+      "sentiment_score": 0.402753,
+      "sentiment_label": "Bullish",
+      "relevance": 1.0
+    },
+    {
+      "source": "AlphaVantage",
+      "date": "2026-03-23",
+      "title": "Should You Buy the Invesco QQQ ETF During the Stock Market Sell-Off? History Offers a Clear Answer.",
+      "content": "The article discusses the Invesco QQQ ETF, which tracks the Nasdaq-100 index, composed of the 100 most valuable nonfinancial companies on the Nasdaq, with a significant allocation to technology stocks. Despite recent volatility and the Nasdaq-100 being down almost 7% from its peak, history suggests that investing in the QQQ ETF, even during sell-offs, tends to be beneficial in the long term. The fund has delivered strong compound annual returns since 1999, driven by high-growth tech companies an",
+      "url": "https://www.theglobeandmail.com/investing/markets/stocks/MSFT/pressreleases/892869/should-you-buy-the-invesco-qqq-etf-during-the-stock-market-sell-off-history-offers-a-clear-answer/",
+      "sentiment_score": 0.427864,
+      "sentiment_label": "Bullish",
+      "relevance": 1.0
+    }
+  ],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "ProShares S&P 500 Ex-Financials ETF (SPXN) Stock Price, Holdings, Dividend Yield",
+          "content": "This article provides a detailed overview of the ProShares S&P 500 Ex-Financials ETF (SPXN), including its current stock price, key statistics like PE and PB ratios, dividend yield, and top holdings as of its latest N-PORT filing. It highlights the ETF's performance metrics and lists its largest current stock positions, which prominently feature major technology companies. The report also details new stock additions and various historical data points for analysis.",
+          "url": "https://www.gurufocus.com/etf/SPXN/summary",
+          "sentiment_score": 0.12728,
+          "sentiment_label": "Neutral",
+          "relevance": 0.892714
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "85% test AI agents, but only 5% use them; Cisco adds security",
+          "content": "Cisco (NASDAQ: CSCO) has introduced a new suite of security innovations designed to secure the emerging \"agentic AI\" workforce, where software agents perform actions rather than just answer questions. While a recent Cisco survey shows 85% of enterprises are experimenting with AI agents, only 5% have moved them into production, highlighting a gap in trust and security. Cisco's new offerings include Zero Trust Access for AI agents, the AI Defense: Explorer Edition for self-service red teaming, the",
+          "url": "https://www.stocktitan.net/news/CSCO/cisco-reimagines-security-for-the-agentic-wd5jq0y667av.html",
+          "sentiment_score": 0.339851,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.739211
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "BlackRock CEO Fink backs staying invested amid volatility, flags AI shift",
+          "content": "BlackRock CEO Larry Fink is advising investors to remain in the market despite current volatility, citing geopolitical conflicts, economic shifts, and the transformative impact of artificial intelligence. He highlighted AI's role in reshaping industries and creating significant economic value, emphasizing that staying invested over the long term has historically outweighed attempts at market timing. Fink's annual letter to shareholders discussed how events that once defined decades are now routi",
+          "url": "https://finance.yahoo.com/sectors/technology/articles/blackrock-ceo-fink-backs-staying-115903674.html",
+          "sentiment_score": 0.101729,
+          "sentiment_label": "Neutral",
+          "relevance": 0.618208
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "NVIDIA and Emerald AI Join Leading Energy Companies to Pioneer Flexible AI Factories as Grid Assets",
+          "content": "NVIDIA and Emerald AI announced a collaboration with major energy companies such as AES, Constellation, and NextEra Energy to establish \"flexible AI factories.\" These AI factories will leverage NVIDIA's Vera Rubin DSX AI Factory reference design and DSX Flex software, along with Emerald AI’s Conductor platform, to connect to the grid faster, generate AI tokens, and operate as flexible energy assets supporting grid reliability. This initiative aims to accelerate AI innovation in the U.S. while bu",
+          "url": "https://nvidianews.nvidia.com/news/nvidia-and-emerald-ai-join-leading-energy-companies-to-pioneer-flexible-ai-factories-as-grid-assets",
+          "sentiment_score": 0.408141,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Gradient Investments LLC Sells 176,748 Shares of NextEra Energy, Inc. $NEE",
+          "content": "Gradient Investments LLC significantly reduced its stake in NextEra Energy (NYSE:NEE) by selling 176,748 shares, decreasing its holdings by 39.9%. Despite this institutional selling and recent insider sales totaling over $17 million, NextEra received federal approval for new natural gas generation projects and increased its quarterly dividend to $0.6232, demonstrating continued growth and investor returns. Analysts maintain a \"Moderate Buy\" rating with an average target price of $94.44, balancin",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-gradient-investments-llc-sells-176748-shares-of-nextera-energy-inc-nee-2026-03-23/",
+          "sentiment_score": 0.311886,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.521361
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "F5 Partners NVIDIA To Scale AI Inference Platforms",
+          "content": "F5 has expanded its collaboration with NVIDIA to enhance AI inference platforms by integrating F5 BIG-IP Next for Kubernetes with NVIDIA BlueField-3 DPUs. This partnership aims to improve token throughput, reduce latency, and enable secure multi-tenant AI platforms at scale. The joint solution has shown significant performance gains in testing, including up to a 40% increase in token throughput and a 61% faster time to first token, positioning BIG-IP Next for Kubernetes as a crucial control plan",
+          "url": "https://smestreet.in/technology/f5-partners-nvidia-to-scale-ai-inference-platforms-11255764",
+          "sentiment_score": 0.429907,
+          "sentiment_label": "Bullish",
+          "relevance": 0.886548
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Industry Comparison: Evaluating Analog Devices Against Competitors In Semiconductors & Semiconductor Equipment Industry - Analog Devices (NASDAQ:ADI)",
+          "content": "This article provides an industry comparison of Analog Devices (NASDAQ: ADI) against its competitors in the Semiconductors & Semiconductor Equipment industry, analyzing key financial metrics and market position. It highlights that Analog Devices has a stronger financial position due to a lower debt-to-equity ratio compared to peers. However, it also points out potential undervaluation based on PE and PB ratios, while indicating possible overvaluation by the PS ratio and underperformance in ROE, ",
+          "url": "https://www.benzinga.com/insights/news/26/03/51399706/industry-comparison-evaluating-analog-devices-against-competitors-in-semiconductors-amp-semiconduct",
+          "sentiment_score": 0.322093,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.638971
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Procyon Advisors LLC Buys 5,101 Shares of Micron Technology, Inc. $MU",
+          "content": "Procyon Advisors LLC significantly increased its stake in Micron Technology by 392.7%, acquiring an additional 5,101 shares to hold a total of 6,400 shares valued at $1.83 million. This increase follows Micron's strong quarterly results, driven by AI memory demand, which exceeded revenue and EPS expectations. Despite positive analyst ratings and increased dividends, the stock has experienced some profit-taking and investor concern over rising capital expenditure plans.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-procyon-advisors-llc-buys-5101-shares-of-micron-technology-inc-mu-2026-03-23/",
+          "sentiment_score": 0.310747,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.634007
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Should you consider purchasing the Invesco QQQ ETF amid the current stock market downturn? Historical trends provide a definitive perspective.",
+          "content": "The article examines whether the current stock market dip presents a good opportunity to invest in the Invesco QQQ ETF, which tracks the Nasdaq-100 index. It highlights the ETF's heavy concentration in technology stocks, their historical growth, and the consistent returns QQQ has provided despite market volatility. While acknowledging the tech-heavy index's susceptibility to larger price swings, the article suggests that long-term investment in QQQ, driven by continued innovation in AI and other",
+          "url": "https://www.bitget.com/amp/news/detail/12560605293170",
+          "sentiment_score": 0.437746,
+          "sentiment_label": "Bullish",
+          "relevance": 0.836515
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Qualcomm Inc Stock Bolstered by $20 Billion Buyback Amid Semiconductor Volatility",
+          "content": "Qualcomm Inc. has announced a significant $20 billion share buyback program and a 3.4% dividend hike to $0.89 per share to counteract a 24% stock decline in early 2026. These strategic financial moves, supported by strong Q1 2026 results and diversification into AI, automotive, and IoT segments, aim to stabilize the stock and reward shareholders. The company views its stock as undervalued and positions itself for growth despite semiconductor market volatility and geopolitical risks.",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/qualcomm-inc-stock-bolstered-by-20-billion-buyback-amid-semiconductor/68966222",
+          "sentiment_score": 0.117964,
+          "sentiment_label": "Neutral",
+          "relevance": 0.601299
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Procyon Advisors LLC Raises Holdings in Advanced Micro Devices, Inc. $AMD",
+          "content": "Procyon Advisors LLC significantly increased its stake in Advanced Micro Devices (AMD) by 186.7% in Q4, acquiring an additional 8,459 shares to bring its total to 12,991 shares valued at approximately $2.78 million. This increase comes alongside strong quarterly earnings for AMD, which surpassed analyst expectations in both EPS and revenue, contributing to a \"Moderate Buy\" consensus rating from analysts with an average price target of $290.53. However, significant insider selling, including CEO ",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-procyon-advisors-llc-raises-holdings-in-advanced-micro-devices-inc-amd-2026-03-23/",
+          "sentiment_score": -0.125116,
+          "sentiment_label": "Neutral",
+          "relevance": 0.644405
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Upstage Talks Put AMD MI355 In Focus For Asian AI Growth",
+          "content": "South Korean AI startup Upstage is in advanced talks to purchase 10,000 AMD MI355 AI accelerators, indicating growing demand for AMD's offerings beyond Nvidia in the Asian AI market. This potential deal would bolster AMD's presence in South Korea and serve as an important reference point for future AI build-outs in the region. For investors, it highlights AMD's progress in becoming a system-level AI supplier and the diversification of its AI revenue base, though execution risks for new products ",
+          "url": "https://simplywall.st/stocks/us/semiconductors/nasdaq-amd/advanced-micro-devices/news/upstage-talks-put-amd-mi355-in-focus-for-asian-ai-growth",
+          "sentiment_score": 0.211321,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.747737
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "F5 and NVIDIA expand integration to improve AI inference efficiency",
+          "content": "F5 and NVIDIA have deepened their technical integration, combining F5's BIG-IP Next for Kubernetes with NVIDIA's BlueField-3 DPUs to enhance AI inference efficiency. This collaboration aims to offload networking and traffic management tasks from GPUs, allowing them to focus solely on AI model execution. The solution also supports multi-tenant GPU environments and integrates with NVIDIA's DOCA Platform Framework.",
+          "url": "https://www.techcircle.in/2026/03/23/f5-and-nvidia-expand-integration-to-improve-ai-inference-efficiency",
+          "sentiment_score": 0.477476,
+          "sentiment_label": "Bullish",
+          "relevance": 0.943707
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "2 Consumer Stocks with Solid Fundamentals and 1 We Ignore",
+          "content": "This article identifies two consumer staple stocks, Colgate-Palmolive (CL) and Keurig Dr Pepper (KDP), as strong investment opportunities due to their solid fundamentals, including large revenue bases, high margins, and impressive free cash flow. Conversely, Freshpet (FRPT) is flagged as a stock to avoid due to its modest revenue, lack of free cash flow, and low return on capital. The piece emphasizes the importance of selecting resilient companies within the consumer staples sector, particularl",
+          "url": "https://stockstory.org/us/stocks/nyse/cl/news/buy-or-sell/2-consumer-stocks-with-solid-fundamentals-and-1-we-ignore",
+          "sentiment_score": 0.539447,
+          "sentiment_label": "Bullish",
+          "relevance": 0.645708
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "3 High-Flying Stocks That Concern Us",
+          "content": "This article identifies three \"high-flying\" stocks—nLIGHT (LASR), Clean Harbors (CLH), and Sunrun (RUN)—that the author believes are overvalued or have concerning business fundamentals despite their high valuations. The article provides specific reasons for concern for each company, such as unexciting sales growth, cash-burning history, or suboptimal cost structures, and suggests readers analyze these further. It also promotes other potentially high-quality or momentum stocks.",
+          "url": "https://stockstory.org/us/stocks/nasdaq/lasr/news/buy-or-sell/3-high-flying-stocks-that-concern-us",
+          "sentiment_score": 0.220791,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.625089
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Should You Buy the Invesco QQQ ETF During the Stock Market Sell-Off? History Offers a Clear Answer.",
+          "content": "This article examines whether the current stock market sell-off presents a good buying opportunity for the Invesco QQQ Trust (QQQ) ETF, which tracks the Nasdaq-100. It highlights that the Nasdaq-100, heavily weighted in technology stocks, has historically delivered strong returns despite volatility and bear markets. The author concludes that based on past performance and the continued growth of sectors like AI, investing in QQQ during downturns has proven beneficial.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/AAPL-Q/pressreleases/892869/should-you-buy-the-invesco-qqq-etf-during-the-stock-market-sell-off-history-offers-a-clear-answer/",
+          "sentiment_score": 0.41757,
+          "sentiment_label": "Bullish",
+          "relevance": 0.741406
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Should You Buy the Invesco QQQ ETF During the Stock Market Sell-Off? History Offers a Clear Answer.",
+          "content": "The article discusses the Invesco QQQ ETF, which tracks the Nasdaq-100 index, composed of the 100 most valuable nonfinancial companies on the Nasdaq, with a significant allocation to technology stocks. Despite recent volatility and the Nasdaq-100 being down almost 7% from its peak, history suggests that investing in the QQQ ETF, even during sell-offs, tends to be beneficial in the long term. The fund has delivered strong compound annual returns since 1999, driven by high-growth tech companies an",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/MSFT/pressreleases/892869/should-you-buy-the-invesco-qqq-etf-during-the-stock-market-sell-off-history-offers-a-clear-answer/",
+          "sentiment_score": 0.325095,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.647381
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Ecolab Inc. stock faces headwinds after $4.75B CoolIT acquisition amid AI cooling push",
+          "content": "Ecolab Inc. has acquired CoolIT Systems for $4.75 billion to strategically position itself in the AI data center liquid cooling market, aiming to leverage its water management expertise. Despite concerns about the hefty price tag and potential integration challenges leading to a stock pullback, the acquisition is expected to drive long-term growth by tapping into the booming AI sector. The deal diversifies Ecolab's portfolio and aligns with growing demand for efficient, sustainable cooling solut",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/ecolab-inc-stock-faces-headwinds-after-4-75b-coolit-acquisition-amid-ai/68965526",
+          "sentiment_score": 0.335889,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.61392
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "NVIDIA Corporation $NVDA Shares Purchased by Eagle Wealth Strategies LLC",
+          "content": "Eagle Wealth Strategies LLC increased its stake in NVIDIA Corporation by 25.8% in Q4, holding 14,677 shares valued at $2.74 million. This move comes amidst NVIDIA's strong financial performance driven by AI chip demand, including a major deal with Amazon Web Services. However, the article also notes recent insider selling and regulatory scrutiny, while market analysts largely maintain a \"Buy\" rating for NVDA with an average target price of $275.40.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-nvidia-corporation-nvda-shares-purchased-by-eagle-wealth-strategies-llc-2026-03-23/",
+          "sentiment_score": 0.405334,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "SK Telecom is speeding up its transition to an artificial intelligence (AI) company by promoting its..",
+          "content": "SK Telecom is accelerating its transformation into an AI company by implementing an \"AI native\" strategy. This involves redesigning its entire communication service infrastructure with AI at the core, establishing itself as a major player in the domestic AI industry through significant investments in AI infrastructure, and expanding its own foundational AI models. The company aims to provide ultra-personalized services, enhance information protection, and develop AI-driven network operations.",
+          "url": "https://www.mk.co.kr/en/special-edition/11995752",
+          "sentiment_score": 0.308387,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.624938
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Activist Elliott takes multibillion-dollar stake in Synopsys, source says",
+          "content": "Activist investor Elliott Investment Management has acquired a multibillion-dollar stake in Synopsys, an electronic design automation company, aiming to push for increased sales and improved margins. Synopsys, valued at over $80 billion, is a crucial supplier of software for chip design, and Elliott believes there's a strong opportunity for its financial performance to better reflect its value, especially with AI driving increased chip complexity. The hedge fund plans to engage with Synopsys to ",
+          "url": "https://www.marketscreener.com/quote/stock/SYNOPSYS-INC-4908/news/Activist-Elliott-takes-multibillion-dollar-stake-in-Synopsys-source-says-52762430/",
+          "sentiment_score": 0.204279,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.84417
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Is Marvell’s New AI Connectivity Push And Dividend Policy Altering The Investment Case For MRVL?",
+          "content": "Marvell Technology, Inc. recently expanded its AI data center connectivity lineup with new PCIe 6.0 and CXL 3.0 switches and declared a quarterly dividend. While these advancements strengthen Marvell's position in high-bandwidth, low-latency AI infrastructure, the company's revenue remains highly sensitive to a few large cloud and AI customers. Investors need to weigh the compelling AI story against the risks of concentrated hyperscaler spending and potential capex slowdowns.",
+          "url": "https://simplywall.st/stocks/us/semiconductors/nasdaq-mrvl/marvell-technology/news/is-marvells-new-ai-connectivity-push-and-dividend-policy-alt",
+          "sentiment_score": 0.139209,
+          "sentiment_label": "Neutral",
+          "relevance": 0.631335
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Akamai Launches 'AI Grid Intelligent Orchestration,' Claims First Commercial Global AI Grid",
+          "content": "Akamai Technologies has launched an \"AI Grid Intelligent Orchestration\" built on Nvidia's AI Grid Reference Design, claiming it's the first commercial global AI grid. This initiative transforms Akamai's content delivery network (CDN) into an AI edge inference network, utilizing over 4,400 global edge locations to process AI workloads closer to end-users. The company aims to reduce latency and costs for enterprise AI, leveraging Nvidia AI infrastructure and thousands of Nvidia RTX Pro 6000 Blackw",
+          "url": "https://www.thelec.net/news/articleView.html?idxno=5967",
+          "sentiment_score": 0.334642,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.884637
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Navigating Tech Volatility: The Income-Focused Approach of the Global X QRMI ETF ()",
+          "content": "The Global X NASDAQ 100® Risk Managed Income ETF (QRMI) is designed for investors seeking exposure to the technology sector while mitigating volatility and generating income. It achieves this by holding Nasdaq 100 stocks and employing a net-credit options collar strategy, involving the purchase of put options for downside protection and the sale of call options for income generation. The fund offers monthly distributions, a notable yield of 12.03% as of March 2026, and a total expense ratio of 0",
+          "url": "https://www.aktiencheck.de/news/Artikel-Navigating_Tech_Volatility_The_Income_Focused_Approach_of_the_Global_X_QRMI_ETF-19585927",
+          "sentiment_score": 0.31974,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.624356
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Invesco's S&P 500 Top 50 ETF Announces Lower Quarterly Payout",
+          "content": "The Invesco S&P 500 Top 50 ETF (XLG) has declared a reduced quarterly dividend of $0.0939 per share, down from $0.0968, reflecting a shift in cash allocation by its major technology holdings. Invesco has also removed XLG from its model portfolios to mitigate concentration risk, given the ETF's heavy weighting towards top tech companies like Nvidia, Apple, and Microsoft. The fund is currently in a consolidation phase, and investors are watching for upcoming rebalancing to see if its tech-heavy pr",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/invesco-s-s-and-p-500-top-50-etf-announces-lower-quarterly-payout/68962847",
+          "sentiment_score": -0.140783,
+          "sentiment_label": "Neutral",
+          "relevance": 0.637333
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Tech Sector ETFs Navigate a Turbulent Market Landscape",
+          "content": "The technology sector has experienced significant volatility in 2026, with the iShares Expanded Tech Sector ETF declining 4.39% due to geopolitical tensions and interest rate uncertainties. Despite this, companies focused on AI infrastructure are seen as key growth drivers. Investors are advised to consider fee structures, diversification strategies, and the impact of central bank policies on the sector.",
+          "url": "https://www.aktiencheck.de/analysen/Artikel-Tech_Sector_ETFs_Navigate_a_Turbulent_Market_Landscape-19585933",
+          "sentiment_score": 0.32052,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.614293
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Activist Elliott takes multibillion-dollar stake in Synopsys, WSJ reports",
+          "content": "Activist investor Elliott Investment Management has reportedly acquired a multibillion-dollar stake in Synopsys. Elliott plans to engage with Synopsys to enhance its financial performance, particularly by increasing revenue and improving margins from its software and services, which it believes can be more aligned with its closest rival, Cadence Design Systems. Synopsys acknowledges shareholder input and sees the company as uniquely positioned to benefit from increased chip complexity driven by ",
+          "url": "https://wmbdradio.com/2026/03/22/activist-elliott-takes-multibillion-dollar-stake-in-synopsys-wsj-reports/",
+          "sentiment_score": 0.115212,
+          "sentiment_label": "Neutral",
+          "relevance": 0.603658
+        }
+      ],
+      "count": 27,
+      "avg_sentiment": 0.27097618518518524
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Automotive News explores repair costs of megacasting as Ford plans use in future EV",
+          "content": "Ford plans to incorporate megacasting into its future mid-sized electric pickup trucks aiming to lower both manufacturing and repair costs. While initial concerns about higher repair expenses due to large, single-piece components were raised, research from Thatcham Research on the Tesla Model Y suggests that properly implemented megacasting can lead to lower repair costs and improved sustainability. The article highlights that design for repairability from the outset and specialized training for",
+          "url": "https://www.repairerdrivennews.com/2026/03/23/automotive-news-explores-repair-costs-of-megacasting-as-ford-plans-use-in-future-ev/",
+          "sentiment_score": 0.336682,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.717401
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Tesla, SMCI, Synopsys, Lumentum, and More Stock Market Movers",
+          "content": "Stock futures were down on Monday following President Donald Trump's threat to \"hit and obliterate\" Iranian power plants if the Strait of Hormuz was not reopened within 48 hours. This article lists several stock market movers for the day, including Tesla, SMCI, Synopsys, Lumentum, NEM, and FCX against the backdrop of this geopolitical tension.",
+          "url": "https://www.barrons.com/articles/stock-movers-285ff4c1?gaa_at=eafs&gaa_n=AWEtsqdL0lWhKOQkmiQDgM4ipIZEyK7gb5ydVvVNsg0Y_KzzvDRARSqyaN08&gaa_ts=69c122a3&gaa_sig=_OC6b--EFj9N6LzslnrLMJvysaIleJgPnNz_sR-Q3mRlMD5mFzv3zni5mMgqrLB9U9VgenMfu7tR5J8KhjKMEQ%3D%3D",
+          "sentiment_score": -0.131113,
+          "sentiment_label": "Neutral",
+          "relevance": 0.802669
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Barclays reiterates Tesla stock Equalweight rating at $360 target",
+          "content": "Barclays has maintained an Equalweight rating on Tesla (NASDAQ:TSLA) with a $360 price target, despite the stock trading slightly higher at $367.96. The firm's analyst indicated that Tesla's capital expenditures are expected to significantly exceed earlier estimates, potentially going \"many multiples higher\" than the $50 billion bull case for Terafab. Tesla also faces increased scrutiny from the U.S. National Highway Traffic Safety Administration regarding its driver assistance system, leading G",
+          "url": "https://www.investing.com/news/analyst-ratings/barclays-reiterates-tesla-stock-equalweight-rating-at-360-target-93CH-4574477",
+          "sentiment_score": -0.174452,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 1.0
+        }
+      ],
+      "count": 3,
+      "avg_sentiment": 0.010372333333333325
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "ProShares S&P 500 Ex-Financials ETF (SPXN) Stock Price, Holdings, Dividend Yield",
+          "content": "This article provides a detailed overview of the ProShares S&P 500 Ex-Financials ETF (SPXN), including its current stock price, key statistics like PE and PB ratios, dividend yield, and top holdings as of its latest N-PORT filing. It highlights the ETF's performance metrics and lists its largest current stock positions, which prominently feature major technology companies. The report also details new stock additions and various historical data points for analysis.",
+          "url": "https://www.gurufocus.com/etf/SPXN/summary",
+          "sentiment_score": 0.120819,
+          "sentiment_label": "Neutral",
+          "relevance": 0.761386
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "China's industry minister met top global CEOs including Apple, Qualcomm, VW, ministry says",
+          "content": "China's industry minister met with top global CEOs from companies including Apple, Qualcomm, and Volkswagen. This meeting highlights ongoing engagement between Chinese officials and major international corporations. The article was published on MarketScreener and also references Apple's stock performance and company profile.",
+          "url": "https://www.marketscreener.com/news/china-s-industry-minister-met-top-global-ceos-including-apple-qualcomm-vw-ministry-says-ce7e5edcde8afe20",
+          "sentiment_score": 0.139604,
+          "sentiment_label": "Neutral",
+          "relevance": 0.718819
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "With the MacBook Neo, Apple Made the Perfect AI Computer",
+          "content": "Apple's new MacBook Neo, priced under $600, is being highlighted as an ideal AI computer despite its compromises. The article argues that because most AI computing happens in the cloud, the Neo's A18 Pro chip, 8GB memory, and SSD are perfectly adequate for running AI tools like ChatGPT or Gemini. This makes the affordable MacBook Neo a highly accessible AI-first computer, redefining what specifications are crucial for modern computing.",
+          "url": "https://www.inc.com/jason-aten/with-the-macbook-neo-apple-made-the-perfect-ai-computer/91320593",
+          "sentiment_score": 0.348318,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.995459
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Should you consider purchasing the Invesco QQQ ETF amid the current stock market downturn? Historical trends provide a definitive perspective.",
+          "content": "The article examines whether the current stock market dip presents a good opportunity to invest in the Invesco QQQ ETF, which tracks the Nasdaq-100 index. It highlights the ETF's heavy concentration in technology stocks, their historical growth, and the consistent returns QQQ has provided despite market volatility. While acknowledging the tech-heavy index's susceptibility to larger price swings, the article suggests that long-term investment in QQQ, driven by continued innovation in AI and other",
+          "url": "https://www.bitget.com/amp/news/detail/12560605293170",
+          "sentiment_score": 0.338992,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.70519
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Was Warren Buffett’s Coca-Cola Investment a Mistake?",
+          "content": "Warren Buffett's investment in Coca-Cola, initiated in 1988, has yielded superior total returns compared to PepsiCo over various timeframes, demonstrating it was not a mistake. Coca-Cola's status as a Dividend King with over a century of uninterrupted payouts contributed to its outperformance. The article highlights that while entry dates can affect comparative returns, Buffett's timely decision to invest in Coca-Cola was a strategic move that reflects patience and effective brand investing.",
+          "url": "https://247wallst.com/investing/2026/03/23/was-warren-buffetts-coca-cola-investment-a-mistake/",
+          "sentiment_score": -0.1368,
+          "sentiment_label": "Neutral",
+          "relevance": 0.568979
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Qualcomm Inc Stock Bolstered by $20 Billion Buyback Amid Semiconductor Volatility",
+          "content": "Qualcomm Inc. has announced a significant $20 billion share buyback program and a 3.4% dividend hike to $0.89 per share to counteract a 24% stock decline in early 2026. These strategic financial moves, supported by strong Q1 2026 results and diversification into AI, automotive, and IoT segments, aim to stabilize the stock and reward shareholders. The company views its stock as undervalued and positions itself for growth despite semiconductor market volatility and geopolitical risks.",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/qualcomm-inc-stock-bolstered-by-20-billion-buyback-amid-semiconductor/68966222",
+          "sentiment_score": -0.194516,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.573671
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Apple Inc. $AAPL Shares Sold by Neville Rodie & Shaw Inc.",
+          "content": "Neville Rodie & Shaw Inc. reduced its stake in Apple Inc. ($AAPL) by 1.6% in the fourth quarter, selling 7,197 shares, though Apple remains its largest holding. Apple reported strong quarterly earnings, beating expectations, with a MarketBeat consensus rating of \"Moderate Buy\" and a $297.58 target price. Recent positive catalysts include strong iPhone sales in China and record Mac launch demand, while risks involve a newly reported iOS exploit and mixed market sentiment.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-apple-inc-aapl-shares-sold-by-neville-rodie-shaw-inc-2026-03-23/",
+          "sentiment_score": 0.297369,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.954105
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Leibman Financial Services Inc. Sells 4,005 Shares of Apple Inc. $AAPL",
+          "content": "Leibman Financial Services Inc. has reduced its stake in Apple Inc. (NASDAQ:AAPL) by 24.4%, selling 4,005 shares and now holding 12,396 shares valued at $3.37 million. This move comes as Apple reported strong Q1 earnings, beating expectations with impressive revenue growth, and faces various market catalysts including a surge in China iPhone sales and growing AI/App Store monetization, offset by security concerns and mixed analyst sentiment. Several other institutional investors have adjusted th",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-leibman-financial-services-inc-sells-4005-shares-of-apple-inc-aapl-2026-03-23/",
+          "sentiment_score": 0.26628,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.976193
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Should You Buy the Invesco QQQ ETF During the Stock Market Sell-Off? History Offers a Clear Answer.",
+          "content": "This article examines whether the current stock market sell-off presents a good buying opportunity for the Invesco QQQ Trust (QQQ) ETF, which tracks the Nasdaq-100. It highlights that the Nasdaq-100, heavily weighted in technology stocks, has historically delivered strong returns despite volatility and bear markets. The author concludes that based on past performance and the continued growth of sectors like AI, investing in QQQ during downturns has proven beneficial.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/AAPL-Q/pressreleases/892869/should-you-buy-the-invesco-qqq-etf-during-the-stock-market-sell-off-history-offers-a-clear-answer/",
+          "sentiment_score": 0.347379,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.669602
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Should You Buy the Invesco QQQ ETF During the Stock Market Sell-Off? History Offers a Clear Answer.",
+          "content": "The article discusses the Invesco QQQ ETF, which tracks the Nasdaq-100 index, composed of the 100 most valuable nonfinancial companies on the Nasdaq, with a significant allocation to technology stocks. Despite recent volatility and the Nasdaq-100 being down almost 7% from its peak, history suggests that investing in the QQQ ETF, even during sell-offs, tends to be beneficial in the long term. The fund has delivered strong compound annual returns since 1999, driven by high-growth tech companies an",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/MSFT/pressreleases/892869/should-you-buy-the-invesco-qqq-etf-during-the-stock-market-sell-off-history-offers-a-clear-answer/",
+          "sentiment_score": 0.305824,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.617231
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Commons Capital LLC Boosts Apple Inc. Stake by 10.3%",
+          "content": "Commons Capital LLC increased its stake in Apple Inc. (NASDAQ:AAPL) by 10.3% in Q4 2025, adding 3,184 shares to now own 34,208 shares valued at approximately $9.3 million. This move suggests the investment firm is bullish on Apple's long-term prospects, indicating stability and confidence for existing investors. Apple holdings now constitute about 6.2% of Commons Capital LLC's portfolio, making it their third-largest holding.",
+          "url": "https://nationaltoday.com/us/ca/cupertino/news/2026/03/23/commons-capital-llc-boosts-apple-inc-stake-by-10-3/",
+          "sentiment_score": 0.498881,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Argent Capital Management LLC Sells 10,076 Shares of Apple Inc. $AAPL",
+          "content": "Argent Capital Management LLC reduced its stake in Apple by 2.7% during Q4, selling 10,076 shares but still holding 369,057 shares worth $100.3 million, making Apple its ninth-largest holding. Despite this reduction, institutional interest remains strong with many other funds increasing positions, and Apple recently surpassed quarterly earnings and revenue expectations. Analysts currently rate Apple as a \"Moderate Buy\" with an average target price of $297.58.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-argent-capital-management-llc-sells-10076-shares-of-apple-inc-aapl-2026-03-23/",
+          "sentiment_score": 0.207961,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Cambria Investment Management L.P. Boosts Stake in Apple Inc. $AAPL",
+          "content": "Cambria Investment Management L.P. significantly increased its stake in Apple Inc. in Q3, adding 21,928 shares to own a total of 36,540 shares valued at $9.304 million. Apple recently surpassed quarterly earnings and revenue estimates, driven by strong iPhone sales in China, a successful Mac launch, and growing App Store AI monetization. The company maintains a \"Moderate Buy\" consensus rating with an average price target of $297.58, despite some mixed sentiment regarding market positioning and s",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-cambria-investment-management-lp-boosts-stake-in-apple-inc-aapl-2026-03-23/",
+          "sentiment_score": 0.316825,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "First Internet Bancorp Stock Live Price, Chart, Analysis, News & Forecast – Buy, Sell & Trade US Equities Today",
+          "content": "This article provides current and historical financial data for First Internet Bancorp (INBK), including its stock price, market capitalization, revenue, and analyst ratings. It also summarizes the company's performance over various periods and offers information on how to invest in US stocks.",
+          "url": "https://www.livemint.com/market/market-stats/us-stocks-first-internet-bancorp-share-price-inbk",
+          "sentiment_score": 0.130134,
+          "sentiment_label": "Neutral",
+          "relevance": 0.625088
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Apple Inc. Trade Ideas — BCS:AAPLCL",
+          "content": "This article compiles several trade ideas and technical analyses for Apple Inc. (AAPL) from various contributors on TradingView. The analyses offer both bullish and bearish perspectives, with specific price targets, support/resistance levels, and indicators for potential entry and exit points, including forecasts up to August 2026 and discussions around an upcoming \"Special Apple Experience\" event.",
+          "url": "https://www.tradingview.com/symbols/BCS-AAPLCL/ideas//page-4/",
+          "sentiment_score": -0.206828,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Navigating Tech Volatility: The Income-Focused Approach of the Global X QRMI ETF ()",
+          "content": "The Global X NASDAQ 100® Risk Managed Income ETF (QRMI) is designed for investors seeking exposure to the technology sector while mitigating volatility and generating income. It achieves this by holding Nasdaq 100 stocks and employing a net-credit options collar strategy, involving the purchase of put options for downside protection and the sale of call options for income generation. The fund offers monthly distributions, a notable yield of 12.03% as of March 2026, and a total expense ratio of 0",
+          "url": "https://www.aktiencheck.de/news/Artikel-Navigating_Tech_Volatility_The_Income_Focused_Approach_of_the_Global_X_QRMI_ETF-19585927",
+          "sentiment_score": 0.31122,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.611719
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Invesco's S&P 500 Top 50 ETF Announces Lower Quarterly Payout",
+          "content": "The Invesco S&P 500 Top 50 ETF (XLG) has declared a reduced quarterly dividend of $0.0939 per share, down from $0.0968, reflecting a shift in cash allocation by its major technology holdings. Invesco has also removed XLG from its model portfolios to mitigate concentration risk, given the ETF's heavy weighting towards top tech companies like Nvidia, Apple, and Microsoft. The fund is currently in a consolidation phase, and investors are watching for upcoming rebalancing to see if its tech-heavy pr",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/invesco-s-s-and-p-500-top-50-etf-announces-lower-quarterly-payout/68962847",
+          "sentiment_score": -0.108624,
+          "sentiment_label": "Neutral",
+          "relevance": 0.612232
+        }
+      ],
+      "count": 17,
+      "avg_sentiment": 0.1754610588235294
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "ProShares S&P 500 Ex-Financials ETF (SPXN) Stock Price, Holdings, Dividend Yield",
+          "content": "This article provides a detailed overview of the ProShares S&P 500 Ex-Financials ETF (SPXN), including its current stock price, key statistics like PE and PB ratios, dividend yield, and top holdings as of its latest N-PORT filing. It highlights the ETF's performance metrics and lists its largest current stock positions, which prominently feature major technology companies. The report also details new stock additions and various historical data points for analysis.",
+          "url": "https://www.gurufocus.com/etf/SPXN/summary",
+          "sentiment_score": 0.116108,
+          "sentiment_label": "Neutral",
+          "relevance": 0.744546
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Stifel reiterates Snowflake stock rating on product expansion",
+          "content": "Stifel reiterated a Buy rating and a $205.00 price target for Snowflake Inc. (NYSE:SNOW), citing the company's expanded product set covering the entire data lifecycle, particularly new AI and machine learning products. These innovations are expected to increase consumption among existing customers and attract non-technical business users, sustaining revenue growth of at least 25%. While Snowflake has demonstrated strong revenue growth and gross profit margins, analysts maintain varied price targ",
+          "url": "https://www.investing.com/news/analyst-ratings/stifel-reiterates-snowflake-stock-rating-on-product-expansion-93CH-4575038",
+          "sentiment_score": 0.135511,
+          "sentiment_label": "Neutral",
+          "relevance": 0.624318
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "XBOW Embeds Continuous, AI-Driven Penetration Testing in the Microsoft Security Ecosystem",
+          "content": "XBOW has announced a new collaboration with Microsoft, integrating its continuous penetration testing platform into Microsoft Security Copilot and Microsoft Sentinel data lake. This integration, available as a public preview at RSAC™ 2026, allows global enterprises to discover, validate, and prioritize vulnerabilities directly within their Microsoft consoles, fundamentally changing how security operations teams detect real-world risk. By linking offensive insights directly into defensive workflo",
+          "url": "https://www.businesswire.com/news/home/20260323693144/en/XBOW-Embeds-Continuous-AI-Driven-Penetration-Testing-in-the-Microsoft-Security-Ecosystem",
+          "sentiment_score": 0.442188,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "BlackRock CEO Fink backs staying invested amid volatility, flags AI shift",
+          "content": "BlackRock CEO Larry Fink is advising investors to remain in the market despite current volatility, citing geopolitical conflicts, economic shifts, and the transformative impact of artificial intelligence. He highlighted AI's role in reshaping industries and creating significant economic value, emphasizing that staying invested over the long term has historically outweighed attempts at market timing. Fink's annual letter to shareholders discussed how events that once defined decades are now routi",
+          "url": "https://finance.yahoo.com/sectors/technology/articles/blackrock-ceo-fink-backs-staying-115903674.html",
+          "sentiment_score": 0.121665,
+          "sentiment_label": "Neutral",
+          "relevance": 0.637984
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "The Zacks Analyst Blog Highlights Microsoft and Adobe",
+          "content": "This Zacks Analyst Blog compares Microsoft (MSFT) and Adobe (ADBE), two major software companies leveraging generative AI. It delves into their financial performance, AI integration, and market challenges to determine which one presents a better investment opportunity, ultimately favoring Microsoft due to its stronger growth in cloud services and AI monetization.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/MSFT/pressreleases/894470/the-zacks-analyst-blog-highlights-microsoft-and-adobe/",
+          "sentiment_score": 0.291279,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.937475
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "The Zacks Analyst Blog Highlights Microsoft and Adobe",
+          "content": "This Zacks Analyst Blog compares Microsoft (MSFT) and Adobe (ADBE), two software giants aggressively integrating generative AI into their ecosystems. It evaluates their financial performance, AI strategies, and market valuations to determine which offers better upside potential for investors in 2026. Microsoft is favored due to its superior revenue scale, diversified business model, and strong Azure and Copilot monetization, while Adobe faces headwinds from slowing ARR momentum and leadership un",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/ADBE/pressreleases/894470/the-zacks-analyst-blog-highlights-microsoft-and-adobe/",
+          "sentiment_score": 0.295023,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.937032
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Gartner: AI to Power Half of All Cyber Incident Response by 2028",
+          "content": "Gartner predicts that by 2028, 50% of all enterprise cybersecurity incident response will be dedicated to custom-built AI applications, largely due to their complexity and current lack of clear incident resolution processes. To mitigate risks, Gartner advises security leaders to engage early in AI application projects, plan resources, and implement adequate security controls. The report also highlights the increasing adoption of AI security platforms, the critical need for AI compliance to avoid",
+          "url": "https://cxotoday.com/ai/gartner-ai-to-power-half-of-all-cyber-incident-response-by-2028/",
+          "sentiment_score": 0.135666,
+          "sentiment_label": "Neutral",
+          "relevance": 0.635649
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "PPHC is buying a £2.45M UK consultancy to add economics capability",
+          "content": "Public Policy Holding Company (PPHC) has announced its acquisition of Westminster Policy Partners Limited (WPI Strategy), a UK public affairs and economics consultancy, for approximately £2.45 million. The deal, expected to close around April 1, 2026, is projected to be immediately earnings accretive, add 14 professionals, and expand PPHC's economics-led advisory services in the UK and Europe. WPI Strategy will integrate into PPHC's Pagefield Group, enhancing cross-selling opportunities across a",
+          "url": "https://www.stocktitan.net/news/PPHC/pphc-announces-acquisition-of-wpi-g2s0xy8z8brs.html",
+          "sentiment_score": 0.216924,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.64327
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "The Zacks Analyst Blog Highlights Microsoft and Adobe",
+          "content": "This Zacks Analyst Blog compares Microsoft (MSFT) and Adobe (ADBE), two major software companies leveraging generative AI. It delves into their financial performance, AI integration, and market valuation to determine which offers better upside potential, concluding that Microsoft has a clearer advantage due to its diversified business, strong Azure growth, and consistent AI-driven earnings.",
+          "url": "https://sg.finance.yahoo.com/news/zacks-analyst-blog-highlights-microsoft-100100406.html",
+          "sentiment_score": 0.46237,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Should you consider purchasing the Invesco QQQ ETF amid the current stock market downturn? Historical trends provide a definitive perspective.",
+          "content": "The article examines whether the current stock market dip presents a good opportunity to invest in the Invesco QQQ ETF, which tracks the Nasdaq-100 index. It highlights the ETF's heavy concentration in technology stocks, their historical growth, and the consistent returns QQQ has provided despite market volatility. While acknowledging the tech-heavy index's susceptibility to larger price swings, the article suggests that long-term investment in QQQ, driven by continued innovation in AI and other",
+          "url": "https://www.bitget.com/amp/news/detail/12560605293170",
+          "sentiment_score": 0.311618,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.631986
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Park National Corp OH Increases Stock Holdings in Microsoft Corporation $MSFT",
+          "content": "Park National Corp OH significantly increased its stake in Microsoft Corporation, now holding 245,208 shares worth $118.59 million, making it their 6th largest holding. This comes as Microsoft reported strong quarterly earnings, beating expectations with $4.14 EPS and $81.27 billion in revenue, and declared a quarterly dividend of $0.91. Despite some negative sentiment regarding competition and operational costs, analysts largely maintain a \"Moderate Buy\" rating with a consensus price target of ",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-park-national-corp-oh-increases-stock-holdings-in-microsoft-corporation-msft-2026-03-23/",
+          "sentiment_score": 0.297741,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.974115
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Leibman Financial Services Inc. Decreases Stock Position in Microsoft Corporation $MSFT",
+          "content": "Leibman Financial Services Inc. significantly reduced its stake in Microsoft Corporation (MSFT) by 85.2% in the fourth quarter, selling 2,584 shares and retaining 449 shares valued at $217,000. Despite this decrease, institutional investors collectively own about 71.13% of MSFT, and analysts maintain a \"Moderate Buy\" rating with a consensus price target of $591.87. The article highlights both positive factors like Microsoft's OpenAI partnership and Azure growth, and negative aspects such as pote",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-leibman-financial-services-inc-decreases-stock-position-in-microsoft-corporation-msft-2026-03-23/",
+          "sentiment_score": 0.024728,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Biden officials who backed Microsoft software breached by China now work for Microsoft",
+          "content": "Two former high-level Biden administration officials, Melinda Rogers and Lisa Monaco, who were involved in the Department of Justice's evaluation and adoption of Microsoft's GCC cloud services, have now taken senior positions at Microsoft. This comes after Chinese hackers breached the GCC system, and despite federal auditors raising security concerns and potential conflicts of interest regarding Microsoft's ability to prove the security of its cloud products. The article highlights the officials",
+          "url": "https://www.washingtonexaminer.com/news/investigations/4497975/biden-officials-software-breached-china-microsoft/",
+          "sentiment_score": -0.403346,
+          "sentiment_label": "Bearish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Should You Buy the Invesco QQQ ETF During the Stock Market Sell-Off? History Offers a Clear Answer.",
+          "content": "This article examines whether the current stock market sell-off presents a good buying opportunity for the Invesco QQQ Trust (QQQ) ETF, which tracks the Nasdaq-100. It highlights that the Nasdaq-100, heavily weighted in technology stocks, has historically delivered strong returns despite volatility and bear markets. The author concludes that based on past performance and the continued growth of sectors like AI, investing in QQQ during downturns has proven beneficial.",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/AAPL-Q/pressreleases/892869/should-you-buy-the-invesco-qqq-etf-during-the-stock-market-sell-off-history-offers-a-clear-answer/",
+          "sentiment_score": 0.334911,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.612976
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Should You Buy the Invesco QQQ ETF During the Stock Market Sell-Off? History Offers a Clear Answer.",
+          "content": "The article discusses the Invesco QQQ ETF, which tracks the Nasdaq-100 index, composed of the 100 most valuable nonfinancial companies on the Nasdaq, with a significant allocation to technology stocks. Despite recent volatility and the Nasdaq-100 being down almost 7% from its peak, history suggests that investing in the QQQ ETF, even during sell-offs, tends to be beneficial in the long term. The fund has delivered strong compound annual returns since 1999, driven by high-growth tech companies an",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/MSFT/pressreleases/892869/should-you-buy-the-invesco-qqq-etf-during-the-stock-market-sell-off-history-offers-a-clear-answer/",
+          "sentiment_score": 0.344109,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.60065
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Holos Integrated Wealth LLC Invests $774,000 in Microsoft Corporation $MSFT",
+          "content": "Holos Integrated Wealth LLC recently acquired a new stake of 1,637 shares in Microsoft Corporation, valued at approximately $774,000. Institutional investors now own about 71.13% of MSFT, despite recent price target trims by analysts, who maintain a \"Moderate Buy\" consensus due to AI-driven Azure demand and the OpenAI partnership. Insider activity shows EVP Kathleen Hogan selling shares while Director John W. Stanton bought shares, and Microsoft announced a quarterly dividend of $0.91 per share.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-holos-integrated-wealth-llc-invests-774000-in-microsoft-corporation-msft-2026-03-23/",
+          "sentiment_score": 0.238747,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Doliver Advisors LP Has $3.30 Million Holdings in Microsoft Corporation $MSFT",
+          "content": "Doliver Advisors LP increased its stake in Microsoft Corporation by 30.8% in the fourth quarter, bringing its total holdings to 6,815 shares valued at $3.30 million. This makes Microsoft the 16th largest holding for the institutional investor. The article also details other institutional investor activity, Microsoft's stock performance, recent earnings, announced dividends, analyst ratings, and insider transactions.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-doliver-advisors-lp-has-330-million-holdings-in-microsoft-corporation-msft-2026-03-23/",
+          "sentiment_score": 0.308781,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.955042
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Microsoft Corporation $MSFT Stock Position Lowered by Argent Capital Management LLC",
+          "content": "Argent Capital Management LLC reduced its stake in Microsoft Corporation by 2.8% in Q4, selling 13,459 shares but still holding 472,969 shares valued at $228.74 million. Despite insider selling by an EVP, a director acquired shares, and analysts largely maintain a \"Moderate Buy\" rating with a target price of $591.87 following strong quarterly results. However, the stock faces challenges from OpenAI partnership uncertainties, security incidents, and rising AI compute costs, leading to a recent tr",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-microsoft-corporation-msft-stock-position-lowered-by-argent-capital-management-llc-2026-03-23/",
+          "sentiment_score": 0.042488,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Anderson Hoagland & Co. Reduces Stake in Microsoft Corporation $MSFT",
+          "content": "Anderson Hoagland & Co. reduced its stake in Microsoft Corporation by 2.0% in the fourth quarter, selling 2,182 shares but still holding 106,355 shares valued at $51.435 million, making it their second-largest position. Microsoft reported strong quarterly earnings, beating estimates with $4.14 EPS and $81.27 billion in revenue, and declared a $0.91 quarterly dividend. Institutional ownership remains high, analysts maintain a \"Moderate Buy\" rating with an average target price of $591.87, while in",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-anderson-hoagland-co-reduces-stake-in-microsoft-corporation-msft-2026-03-23/",
+          "sentiment_score": 0.018177,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Navigating Tech Volatility: The Income-Focused Approach of the Global X QRMI ETF ()",
+          "content": "The Global X NASDAQ 100® Risk Managed Income ETF (QRMI) is designed for investors seeking exposure to the technology sector while mitigating volatility and generating income. It achieves this by holding Nasdaq 100 stocks and employing a net-credit options collar strategy, involving the purchase of put options for downside protection and the sale of call options for income generation. The fund offers monthly distributions, a notable yield of 12.03% as of March 2026, and a total expense ratio of 0",
+          "url": "https://www.aktiencheck.de/news/Artikel-Navigating_Tech_Volatility_The_Income_Focused_Approach_of_the_Global_X_QRMI_ETF-19585927",
+          "sentiment_score": 0.31145,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.638901
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Invesco's S&P 500 Top 50 ETF Announces Lower Quarterly Payout",
+          "content": "The Invesco S&P 500 Top 50 ETF (XLG) has declared a reduced quarterly dividend of $0.0939 per share, down from $0.0968, reflecting a shift in cash allocation by its major technology holdings. Invesco has also removed XLG from its model portfolios to mitigate concentration risk, given the ETF's heavy weighting towards top tech companies like Nvidia, Apple, and Microsoft. The fund is currently in a consolidation phase, and investors are watching for upcoming rebalancing to see if its tech-heavy pr",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/invesco-s-s-and-p-500-top-50-etf-announces-lower-quarterly-payout/68962847",
+          "sentiment_score": -0.118454,
+          "sentiment_label": "Neutral",
+          "relevance": 0.601229
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Tech Sector ETFs Navigate a Turbulent Market Landscape",
+          "content": "The technology sector has experienced significant volatility in 2026, with the iShares Expanded Tech Sector ETF declining 4.39% due to geopolitical tensions and interest rate uncertainties. Despite this, companies focused on AI infrastructure are seen as key growth drivers. Investors are advised to consider fee structures, diversification strategies, and the impact of central bank policies on the sector.",
+          "url": "https://www.aktiencheck.de/analysen/Artikel-Tech_Sector_ETFs_Navigate_a_Turbulent_Market_Landscape-19585933",
+          "sentiment_score": 0.316396,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.623074
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-03-23",
+          "title": "[] ['TripAdvisor, Inc.  (TRIP)  (CIK 0001526520)']",
+          "content": "2026-03-23",
+          "url": "https://www.sec.gov2026-03-23",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-03-23",
+          "title": "[] ['TripAdvisor, Inc.  (TRIP)  (CIK 0001526520)']",
+          "content": "2026-03-23",
+          "url": "https://www.sec.gov2026-03-23",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-03-23",
+          "title": "[] ['TripAdvisor, Inc.  (TRIP)  (CIK 0001526520)']",
+          "content": "2026-03-23",
+          "url": "https://www.sec.gov2026-03-23",
+          "form_type": ""
+        }
+      ],
+      "count": 25,
+      "avg_sentiment": 0.16976320000000006
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "Alphabet (GOOGL) Stock Drops 13% From All-Time High — Time to Buy the Dip?",
+          "content": "Alphabet (GOOGL) stock has fallen 13% from its all-time high, trading below $300 amidst a global market sell-off driven by Middle East tensions. Despite strong Q4 2025 earnings and revenue exceeding $400 billion for the first time, investor sentiment is impacted by the company's substantial 2026 capital expenditure plans for AI infrastructure. Analysts maintain a \"Strong Buy\" consensus with an average 12-month price target of $351.82, suggesting potential for significant upside.",
+          "url": "https://coincentral.com/alphabet-googl-stock-drops-13-from-all-time-high-time-to-buy-the-dip/",
+          "sentiment_score": 0.149877,
+          "sentiment_label": "Neutral",
+          "relevance": 0.565599
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-23",
+          "title": "NextEra gets federal approval to build 10GW of natural gas power in Texas and Pennsylvania for data centers",
+          "content": "NextEra Energy has received federal approval to develop 10GW of natural gas power generation facilities in Texas and Pennsylvania to meet the growing demand from data centers. This development is linked to Japan's recent $550 billion investment commitment to the US market, with the projects to be jointly owned by both countries. NextEra plans to build and operate these plants, which include a 4.3GW facility in Southwest Pennsylvania and a 5.2GW facility in Anderson County, Texas, alongside inves",
+          "url": "https://www.datacenterdynamics.com/en/news/nextera-gets-federal-approval-to-build-10gw-of-natural-gas-power-in-texas-and-pennsylvania-for-data-centers/",
+          "sentiment_score": 0.349828,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.600289
+        }
+      ],
+      "count": 2,
+      "avg_sentiment": 0.24985249999999998
+    }
+  },
+  "collected_at": "2026-03-23T22:00:02.974134"
+}
