@@ -1086,6 +1086,36 @@ KR 스크리너는 KIS API `거래량 순위` (FID_VOL_CNT=100000 이상 필터,
 *Last updated: 2026-03-25*
 *Context session: review 지적사항 반영 - US OHLCV 폴백 복구 + FMP 거래량 파싱/캐시 보강*
 
+## [2026-03-25] entry_failed 현금부족 분류 보정
+
+### 배경
+리뷰에서 `open_position()` 실패 시 사유 분류가 실제 `RiskManager.open_position()` 판정과 어긋나는 문제가 확인됨.
+
+- 기존 로직은 `self.risk.cash < risk_price`만 비교해서 `현금부족` / `내부오류`를 분기
+- 하지만 실제 주문 거절 조건은 `price * qty + buy_fee > cash`
+- 따라서 잔액이 주가 자체는 감당하지만 매수 수수료까지 포함한 총 주문비용은 못 감당하는 경우가 정상적인 잔고 부족임에도 `내부오류`로 기록됨
+
+### 수정 내용
+- `trading_bot.py`의 `open_position()` 실패 후처리를 다음 기준으로 변경
+  - `required_cash = (risk_price * qty) + self.risk._fee("buy", risk_price * qty)`
+  - `cash < required_cash` 이면 `현금부족`
+  - 그 외만 `내부오류`
+- 실패 메시지에 `필요 금액`과 `잔액`을 함께 기록
+  - 예: `현금부족(필요:1,000.15원,잔액:1,000.00원)`
+
+### 영향
+- 수수료 포함 주문 총액 부족이 더 이상 내부 오류로 오분류되지 않음
+- 대시보드/분석 로그의 `entry_failed` 사유가 실제 거래 거절 원인과 일치함
+
+### 검증
+- `python -m py_compile trading_bot.py risk_manager.py`
+- inline 검증:
+  - KR 수수료율 기준으로 `cash=1000`, `price=1000`, `qty=1`일 때
+  - `현금부족(필요:1,000.15원,잔액:1,000.00원)`으로 분류되는지 확인
+
+*Last updated: 2026-03-25*
+*Context session: review 지적사항 반영 - entry_failed 수수료 포함 현금부족 분류 보정*
+
 ---
 
 ## [2026-03-25] US API 전면 전환 — Finnhub + FMP + yfinance (BUG-16 근본 수정)
@@ -1187,3 +1217,1048 @@ ALPHA_VANTAGE_KEY_2=...     # 신규 추가 (KEY-2 자동 전환)
 
 *Last updated: 2026-03-25*
 *Context session: US API Finnhub+FMP+yfinance 전환 + AV 이중 키 자동 전환*
+
+---
+
+## [2026-03-25] 미체결 이유 대시보드 표시 + 라이브 손익 실시간 반영
+
+### 배경
+- 진입신호(🟢)가 찍혔는데 실제 매수가 안 된 이유를 대시보드에서 알 수 없었음
+- 누적 자산 / 오늘 손익이 `session_close()` 이후에만 갱신되어 장 중에는 항상 초기값(30,000,000원)으로 고정
+
+### 1. `entry_failed` 이벤트 신규 추가 (`trading_bot.py`)
+
+`open_position()` 실패 시 기존엔 `log.error`만 찍고 끝났음. 이제 JSONL에 기록:
+
+```python
+{
+  "event": "entry_failed",
+  "ticker": "GOCO",
+  "reason": "현금부족(필요:800,000원,잔액:712,000원)",
+  "strategy": "volatility_breakout",
+  "mode": "MILD_BEAR"
+}
+```
+
+실패 사유 분류 기준:
+- `required_cash = risk_price × qty + buy_fee`
+- `cash < required_cash` → `현금부족(필요:N원,잔액:M원)`
+- 그 외 → `내부오류`
+
+### 2. 미체결 이유 누적 표시 (`dashboard_server.py`)
+
+종목 카드에 오늘 발생한 모든 미체결 이유를 누적 표시:
+
+```
+GOCO  [신호 1회]
+$2.09
+🟢 진입신호
+⚠ 미체결: 예산 소진 / 이미 보유중
+```
+
+- `entry_skip` / `signal_blocked` / `entry_failed` 이유를 종목별로 리스트로 집계
+- 마지막 이벤트가 `entry_signal`로 덮어써져도 이유가 사라지지 않음
+- 한글 변환: `already_holding`→이미 보유중, `budget_exhausted`→예산 소진, `HALT`→HALT 모드 등
+- EVENT_MAP에 `entry_failed` (❌ 주문실패) 추가
+
+### 3. `select_tickers` 종목 선택 이유 한글화 (`minority_report/analysts.py`)
+
+```python
+# 변경 전
+"rules: Return JSON only. reasons: short reason in English"
+
+# 변경 후
+"규칙: reasons는 반드시 한국어로 작성 (30자 이내)"
+```
+
+### 4. 라이브 상태 파일 (`trading_bot.py` + `dashboard_server.py`)
+
+**문제**: 대시보드 손익/자산이 EOD 파일 기준 → 장 중 항상 초기값
+
+**수정**:
+
+`_write_live_status(market)` 신규 — `run_cycle()` 완료 후 매 5분마다 저장:
+```json
+// state/live_status_US.json
+{
+  "market": "US",
+  "updated_at": "03:41:50",
+  "trading_date": "2026-03-25",
+  "mode": "MILD_BEAR",
+  "daily_pnl": -1250.0,
+  "daily_pnl_pct": -0.42,
+  "cash": 29197355.0,
+  "total_equity": 29732000.0,
+  "positions": [
+    {"ticker": "CVV", "qty": 105, "avg_price": 7643, "pnl_pct": -0.32, "strategy": "volatility_breakout"}
+  ],
+  "position_count": 1
+}
+```
+
+`_load_live_status(market)` — 대시보드 `/api/summary`에서 라이브 파일 우선 읽기:
+- `session_active == true` 이고 `trading_date == today_rec.date` 일 때만 라이브 값 반영
+- 조건 불일치 시: 기존 EOD 판단 파일 기준으로 즉시 폴백
+- 파일 없으면: 기존 EOD 판단 파일 기준 유지 (하위 호환)
+
+**반영 항목**:
+| 항목 | 이전 | 이후 |
+|------|------|------|
+| 오늘 손익 | session_close 후에만 | 매 5분 실시간 |
+| 누적 자산 | 30,000,000 고정 | 현금 + 포지션 평가액 |
+| 모드 | EOD 파일 | 현재 운영 모드 |
+| 보유 포지션 | 없음 | positions 배열 추가 |
+
+### 검증
+| 항목 | 결과 |
+|------|------|
+| py_compile 2파일 | ✅ |
+| CVV 실제 매수 체결 확인 (첫 US 매수) | ✅ `105@$5.09 volatility_breakout` |
+
+*Last updated: 2026-03-25*
+*Context session: 미체결 이유 대시보드 표시 + select_tickers 한글화 + 라이브 손익 실시간 반영*
+
+---
+
+## [2026-03-25] 라이브 상태 파일 버그 수정 — positions 타입 오류
+
+### 증상
+봇 재시작 후 대시보드 누적 자산이 여전히 30,000,000원 고정. `state/live_status_US.json` 파일이 생성되지 않음.
+
+### 원인
+`_write_live_status()` 에서 `self.risk.positions`를 딕셔너리로 가정해 `.items()` 호출:
+```python
+# 잘못된 코드
+for ticker, pos in self.risk.positions.items():
+```
+
+그러나 `risk_manager.py:36`에서 `self.positions = []` — **리스트** 자료구조.
+
+`.items()` 호출 시 `AttributeError` 발생 → `except` 블록에서 `log.debug`로 묻혀 로그에 보이지 않음.
+
+### 수정 (`trading_bot.py`)
+```python
+# 수정 후
+positions = [
+    {
+        "ticker":        pos.get("ticker", ""),
+        "qty":           pos.get("qty", 0),
+        ...
+    }
+    for pos in self.risk.positions   # list 순회
+]
+# total_equity 계산도 동일하게 수정
+```
+
+- `log.debug` → `log.warning` 으로 격상 (이후 저장 실패 시 로그에 표시됨)
+
+### 교훈
+`positions` 구조를 딕셔너리로 잘못 가정. `risk_manager.py`의 실제 타입(`list[dict]`)과 불일치. 향후 `positions` 접근 시 리스트 순회 방식으로 일관되게 사용.
+
+---
+
+## [2026-03-25] 라이브 상태 회귀 수정 — PnL 퍼센트/세션 신선도 검증
+
+### 증상
+- `live_status_{market}.json` 의 `daily_pnl_pct` 가 항상 `0`으로 기록되어 대시보드 장중 수익률이 0%로 고정됨
+- 날짜가 바뀌었거나 재시작 직후 새 사이클이 돌기 전에도 이전 세션 라이브 상태가 `/api/summary`에 반영될 수 있음
+
+### 원인
+- `RiskManager.get_status()` 는 퍼센트 손익을 `daily_return` 으로 제공하는데 `_write_live_status()` 는 존재하지 않는 `daily_pnl_pct` 키를 읽고 있었음
+- 라이브 상태 파일에는 `updated_at` 만 `HH:MM:SS` 형식으로 기록되고, 대시보드는 `session_active` 나 거래일 일치 여부를 확인하지 않고 파일 존재만으로 우선 적용했음
+
+### 수정
+- `trading_bot.py`
+- `daily_pnl_pct` 기록 소스를 `status["daily_return"]` 으로 변경
+- `updated_at` 을 KST 기준으로 기록하고, 같은 기준의 `trading_date(YYYY-MM-DD)` 필드 추가
+- `dashboard/dashboard_server.py`
+- `_is_fresh_live_status()` 추가
+- `session_active == true` 이고 `live.trading_date == today_rec.date` 일 때만 라이브 상태로 오늘 요약 덮어쓰기
+- 조건 불일치 시 `today_rec.actual_result` 로 폴백
+
+### 검증
+| 항목 | 결과 |
+|------|------|
+| `python -m py_compile trading_bot.py dashboard/dashboard_server.py` | ✅ |
+| `daily_pnl_pct` 기록 키 확인 (`daily_return`) | ✅ |
+| stale live status 차단 조건 추가 (`session_active`, `trading_date`) | ✅ |
+
+*Last updated: 2026-03-25*
+*Context session: live_status 회귀 수정 (daily_pnl_pct 키/세션 신선도 검증)*
+
+---
+
+## [2026-03-25] 대시보드 시장 컨텍스트 차트 추가
+
+### 요청
+- 메인 대시보드에서 한국/미국 장의 대표 지수 흐름을 일별 그래프로 보고 싶음
+- 환율(`USD/KRW`)과 리스크 지표(`VKOSPI` / `VIX`)도 함께 확인하고 싶음
+
+### 구현
+- `dashboard/dashboard_server.py`
+- `/api/chart/market-context` 신규 추가
+- 메인 대시보드에 차트 2개 추가
+- `시장 지수 일별 흐름`
+- `환율 / 리스크 지표`
+
+### 데이터 소스
+- `data/daily_digest/*_{market}.json` 를 읽어 기간별 시계열 구성
+- KR:
+- `KOSPI`, `KOSDAQ`, `USD/KRW`, `VKOSPI`
+- US:
+- `S&P500`, `NASDAQ`, `USD/KRW`, `VIX`
+
+### digest 확장
+- `phase1_trainer/digest_builder.py`
+- KR live context 에 `kosdaq` 추가
+- US live context 에 `usd_krw` 추가
+- KR/US 주요 지수에 `close` 필드도 함께 저장하도록 확장
+
+### 참고
+- 기존 과거 digest 에는 `kosdaq` 또는 US 쪽 `usd_krw` 가 없을 수 있어 일부 과거 구간은 차트가 비어 보일 수 있음
+- 최근 digest 부터는 새 필드가 채워짐
+
+### 검증
+| 항목 | 결과 |
+|------|------|
+| `python -m py_compile dashboard/dashboard_server.py phase1_trainer/digest_builder.py` | ✅ |
+| `/api/chart/market-context` 추가 | ✅ |
+| 메인 대시보드 차트 2종 추가 | ✅ |
+
+*Last updated: 2026-03-25*
+*Context session: 대시보드 시장 컨텍스트 차트 추가 (KR/US 지수 + USD/KRW + VIX/VKOSPI)*
+
+---
+
+## [2026-03-26] 매수가 표시 정합성 수정 — 텔레그램 / 웹 대시보드 / live_status
+
+### 점검 결과
+- 텔레그램 매수 체결 알림이 실제 포지션 진입가(`entry`)와 다른 가격을 표시할 수 있었음
+- `live_status_{market}.json` 는 포지션 원본 구조가 `entry` 를 쓰는데 `avg_price` 를 읽고 있어 매수가가 `0`으로 저장될 수 있었음
+- 텔레그램 상태 보고 / 대시보드 푸시는 현재가와 수익률만 보여주고 매수가는 표시하지 않았음
+- 웹 대시보드도 보유 포지션 카드가 없거나, 있더라도 잘못된 `avg_price` 값에 의존할 여지가 있었음
+
+### 원인
+- `trade_alert("buy")` 호출 시 실제 포지션 저장가 `risk_price` 대신 `price` 를 전달
+- `_write_live_status()` 가 `pos["entry"]` 대신 `pos.get("avg_price", 0)` 를 기록
+- 텔레그램/웹 표시 로직이 `entry` 기준 진입가 표시를 일관되게 사용하지 않음
+
+### 수정
+- `trading_bot.py`
+- 매수 알림 가격, TP/SL 계산 기준을 `risk_price` 로 통일
+- `live_status` 포지션 직렬화 시 `avg_price = entry` 로 저장
+- `telegram_reporter.py`
+- `status_report()` / `dashboard_push()` 를 `entry` 기준 `매수가 / 현재가 / 수익률` 표시로 재정의
+- `dashboard/dashboard_server.py`
+- 오늘 화면 `loadSummary()` 에서 보유 포지션 카드를 `매수가 / 현재가 / 수익률` 기준으로 렌더링
+- 보유 포지션 개수와 live 업데이트 시각도 함께 표시
+
+### 효과
+- 텔레그램 체결 알림과 시스템 내부 포지션 진입가가 동일한 기준을 사용
+- 웹 대시보드가 보유 종목별 매수가를 정상 표시
+- 다음 라이브 상태 저장 사이클부터 `state/live_status_{market}.json` 의 `avg_price` 가 정상값으로 갱신
+
+### 검증
+| 항목 | 결과 |
+|------|------|
+| `python -m py_compile trading_bot.py telegram_reporter.py dashboard/dashboard_server.py` | ✅ |
+| `trade_alert("buy")` 가격 기준 `risk_price` 로 통일 | ✅ |
+| `live_status` 의 `avg_price` 를 `entry` 기준으로 저장 | ✅ |
+| 텔레그램 상태/대시보드에 `매수가` 표시 추가 | ✅ |
+| 웹 대시보드 보유 포지션 카드에 `매수가 / 현재가 / 수익률` 표시 | ✅ |
+
+*Last updated: 2026-03-26*
+*Context session: 매수가 표시 정합성 수정 (텔레그램 + 웹 대시보드 + live_status)*
+
+---
+
+## [2026-03-25] 이슈 2건 수정 — Bear DEFENSIVE 고착 + KR 후보 부족
+
+### 이슈 1: Bear 항상 DEFENSIVE (`minority_report/analysts.py:95`)
+
+**증상**: Bear 분석가가 시장과 무관하게 항상 DEFENSIVE 판단 → consensus에서 DEFENSIVE 우세
+
+**원인**: `환율 1,450 이상 → 기본값 DEFENSIVE` 하드코딩. 2025~2026년 상시 환율(1,480~1,510원)이 임계값을 항시 초과 → Bear가 매일 DEFENSIVE 고착.
+
+**수정**:
+```python
+# 수정 전
+• VIX 25 이상 or 환율 1,450 이상 → 기본값 DEFENSIVE
+
+# 수정 후
+• VIX 25 이상 or 환율 당일 ±1.5% 이상 급변 → 기본값 DEFENSIVE
+```
+
+**임계값 근거**: USD/KRW 평상시 일중 변동폭 0.5~1%, 1.5% 이상은 실제 이벤트성 급변 수준 (위기 시 3%+). 1%는 평상시와 구분이 안 되어 1.5%로 설정.
+
+---
+
+### 이슈 2: KR 후보 1개 고착 (`kis_api.py`)
+
+**증상**: `session_open(08:50)` 실행 시 KR 스크리너가 1개 종목만 반환 → 하루 종일 해당 종목만 모니터링
+
+**원인**: KR 장 개시(09:00) 전에 `screen_market_kr()` 호출 → `FID_VOL_CNT=100000` 필터 통과 종목 거의 없음 → 1~2개만 반환. MAINTAIN 튜너는 재스크리닝 안 하므로 하루 내내 고착.
+
+**수정**: `kis_api.py`에 KR 블루칩 폴백 유니버스 추가
+
+```python
+_KR_FALLBACK_UNIVERSE = [
+    "005930",  # 삼성전자
+    "000660",  # SK하이닉스
+    "035420",  # NAVER
+    "005380",  # 현대차
+    "051910",  # LG화학
+    "035720",  # 카카오
+    "000270",  # 기아
+    "068270",  # 셀트리온
+    "105560",  # KB금융
+    "055550",  # 신한지주
+]
+```
+
+`screen_market_kr()` 로직:
+- API 결과 < 5개 → 폴백 종목으로 10개까지 보완
+- API 자체 실패 → 전체 폴백 10종목 반환 (기존: 빈 리스트)
+
+---
+
+### 모의투자 구조 확인 (현황)
+
+**현재 봇은 한투 API가 아닌 자체 내부 시뮬레이션으로 모의투자 중.**
+
+| 항목 | 상태 |
+|------|------|
+| `KIS_IS_PAPER` | `true` |
+| 매수/매도 실행 | 내부 메모리(`self.risk.positions`) + `open_positions.json`만 기록, 한투 서버에 주문 전송 없음 |
+| 한투 앱 | 변동 없음 (정상) |
+| 한투 모의투자 서버 | 미사용 |
+
+**대시보드 손익 0% 원인**: `_write_live_status()` 에서 `live_status 저장 실패: 'TradingBot' object has no attribute 'mode'` 에러가 하루 종일 발생 → `live_status_KR.json` / `live_status_US.json` 파일이 비어 있음 (0 bytes). 봇 재시작 후 해소 예정 (코드는 이미 수정됨).
+
+*Last updated: 2026-03-25*
+*Context session: Bear DEFENSIVE 고착 수정 + KR 후보 부족 폴백 추가 + 모의투자 구조 분석*
+
+---
+
+## [2026-03-26] KIS API 전면 정비 + 텔레그램 watchlist 알림
+
+### 1. KIS API 실거래 정합성 수정 (`kis_api.py`)
+
+#### 해외주식 주문 — `ORD_SVR_DVSN_CD: "0"` 필드 추가
+- **문제**: US 모의투자 주문 시 `IGW00036` 에러 발생
+- **원인**: 공식 문서 필수 파라미터 `ORD_SVR_DVSN_CD` 누락
+- **수정**: `_place_order_us()` body에 `"ORD_SVR_DVSN_CD": "0"` 추가
+- **결과**: NVDA 주문 `order_no: 0000033495` 성공 확인
+
+#### 국내주식 주문 — 구TR → 신TR 교체
+- **변경 전**: `VTTC0802U` / `VTTC0801U` (구TR)
+- **변경 후**: `VTTC0012U` (매수) / `VTTC0011U` (매도)
+- **실거래**: `TTTC0012U` / `TTTC0011U`
+- **왜**: KIS 문서에서 신TR 확인 후 교체. 구TR은 deprecated 가능성.
+
+#### `_get_ovrs_excg_cd` ValueError 제거
+- **변경 전**: 거래소 맵에 없는 종목(SRPT/CORT 등) → `ValueError` 발생 → 주문 실패
+- **변경 후**: 맵에 없으면 `"NASD"` 기본값 반환
+```python
+def _get_ovrs_excg_cd(ticker: str) -> str:
+    for exch, tickers in _US_EXCHANGE_MAP.items():
+        if ticker.upper() in tickers:
+            return exch
+    return "NASD"   # 기본값: 나스닥
+```
+
+#### 해외주식 잔고 조회 — 문서 기반 재구현 (`VTTS3012R`)
+- 공식 문서 파라미터 기준으로 `_get_balance_us()` 구현
+- `get_balance(market="US")` → `_get_balance_us()` 호출
+
+### 2. 가짜 시뮬 포지션 초기화 + `_verify_live_positions` KR+US 동시 검증 (`trading_bot.py`)
+- SRPT/PAYS/CDLX 포지션이 내부에만 존재(한투 서버에 없음) → max_positions 한도 채워 모든 신규 매수 차단
+- `_verify_live_positions()` 를 KR + US 동시 검증으로 개선
+  - `get_balance(market="KR")` + `get_balance(market="US")` 각각 호출
+  - 브로커 잔고에 없는 포지션 자동 제거
+
+### 3. ENV 변수 분리 (`.env` / `risk_manager.py` / `consensus.py`)
+```env
+MAX_POSITIONS=10
+MAX_PYRAMID=8
+SIZE_AGGRESSIVE=100
+SIZE_CAUTIOUS_BULL=60
+SIZE_NEUTRAL=40
+SIZE_CAUTIOUS_BEAR=20
+SIZE_DEFENSIVE=10
+```
+- `risk_manager.py`: `HARD_RULES["max_positions"]`, `["max_pyramid"]` → env 읽기
+- `consensus.py`: `_e()` 헬퍼로 모드별 size env 읽기, `CONSENSUS_MAP` 전체 env 반영
+
+### 4. 분석가 포트폴리오 현황 인지 + `suggested_size_pct` (`analysts.py` / `consensus.py`)
+- `call_analyst()` / `get_three_judgments()`에 `portfolio_info` 파라미터 추가
+- 분석가 프롬프트에 잔고/맥스 주문 규모 컨텍스트 제공
+- 분석가 JSON 응답에 `suggested_size_pct` 필드 추가
+- `build_consensus()` 에서 분석가 제안 size와 룰 기반 size를 50:50 혼합
+
+### 5. 대시보드 스테일 데이터 제거 (`dashboard_server.py` / `trading_bot.py`)
+- **문제**: 봇 재시작 후에도 이전 세션 rejection 이유("max positions 3" 등)가 대시보드에 남음
+- **수정**:
+  - `main()` 기동 시 `session_start` 이벤트를 KR/US 각각 analysis_log에 기록
+  - `dashboard_server.py`에서 `session_start` 이벤트 감지 시 모든 누적 데이터 초기화
+    - `ticker_last`, `ticker_sig_count`, `ticker_skip_reasons`, `selection_reasons`, `candidates_list` 전부 clear
+
+### 6. 텔레그램 watchlist 알림 (`telegram_reporter.py` / `trading_bot.py`)
+- `watchlist_alert()` 함수 신규 추가
+  - trigger: `session_open` | `rescreen` | `reuse`
+  - 선택 종목 + 제외 종목 + 선택 이유(reasons dict) 포함
+- `select_tickers()` 반환값 `list` → `(tickers, reasons)` 튜플로 변경
+- `trading_bot.py` 4개 호출부 전부 튜플 언패킹 + `watchlist_alert` 호출로 업데이트
+  | 경로 | trigger |
+  |------|---------|
+  | session_open 신규 판단 | `session_open` |
+  | 재스크리닝 (판단 재사용) | `rescreen` |
+  | 튜너 모드 변경 | `rescreen` |
+  | analyst_reinvoke 재선택 | `rescreen` |
+
+---
+
+*Last updated: 2026-03-26*
+*Context session: KIS API 정합성 수정 + ENV 분리 + 분석가 포트폴리오 인지 + watchlist 텔레그램 알림*
+---
+
+## [2026-03-26] KIS 브로커 포지션 기준 대시보드 반영 + 미국 주문 경로 재점검
+
+### 1. 대시보드 보유 포지션을 `live_status` 대신 KIS 직접조회 우선으로 변경
+- 문제:
+  - 대시보드 `/api/summary` 가 `state/live_status_{market}.json` 의 `positions` 를 그대로 표시
+  - 코드 밖에서 테스트 주문을 넣거나 내부 포지션과 브로커 잔고가 어긋나면 실제 한투 앱과 다른 포지션이 노출됨
+- 수정:
+  - `dashboard/dashboard_server.py`
+  - `_load_broker_positions(market)` 추가
+  - `get_access_token()` + `get_balance(market)` 로 브로커 `stocks` 를 직접 읽어 `positions` 로 변환
+  - 브로커 조회 성공 시 `today.positions` / `position_count` 는 KIS 잔고 기준
+  - 조회 실패 시에만 기존 `live_status.positions` 로 폴백
+- 검증:
+  - `/api/summary?market=US` 실조회 결과 `position_count: 0`, `positions: []` 확인
+
+### 2. 미국 모의주문 매수/매도 실제 테스트로 문서 기준 재검증
+- 테스트 결과:
+  - `NVDA` 1주 모의 매수 성공
+  - `NVDA` 1주 모의 매도도 문서 기준 조합으로 성공
+- 핵심 정정:
+  - 모의 미국 매수 TR ID: `VTTT1002U`
+  - 모의 미국 매도 TR ID: `VTTT1001U`
+  - 실전 미국 매도 TR ID: `TTTT1006U`
+- 추가 반영:
+  - 해외 주문 body 에 `CTAC_TLNO`, `MGCO_APTM_ODNO` 추가
+  - `SLL_TYPE` 는 매수 `""`, 매도 `"00"` 유지
+- 결론:
+  - 기존 `500` 일부는 잘못된 바디 조합 영향이 있었고
+  - 문서 기준 조합으로는 미국 모의 매도도 정상 응답 확인
+
+### 3. 국내 주문 바디를 문서 기준으로 보강
+- `kis_api.py` `order-cash`
+- 매도 주문 시 `SLL_TYPE: "01"` 명시
+- 국내 주문 TR 은 이미 신TR 기준 유지
+  - 모의 매수 `VTTC0012U`
+  - 모의 매도 `VTTC0011U`
+  - 실전 매수 `TTTC0012U`
+  - 실전 매도 `TTTC0011U`
+
+### 4. 미국 거래소 코드 자동 판별 추가
+- 문제:
+  - `SRPT/CORT/PAYS/BRZE/ARM` 등 스크리닝 후보가 `_US_EXCHANGE_MAP` 에 없으면 `ValueError`
+  - KIS 미국 현재가/기간시세/주문이 모두 거래소 미정의로 막힘
+- 수정:
+  - `_US_QUOTE_CODE_MAP`, `_US_EXCHANGE_CACHE` 추가
+  - `_probe_us_exchange_code(ticker, token)` 추가
+  - KIS 해외 현재가 API를 `NAS/NYS/AMS` 순으로 호출해 가격이 뜨는 거래소를 자동 판별
+  - `_get_ovrs_excg_cd(ticker, token=None)` 가 캐시/하드코딩/자동판별 순으로 동작
+  - `_get_price_us_kis`, `_daily_ohlcv_us_kis`, `_place_order_us` 모두 token 기반 자동 판별 사용
+  - 즉시 매핑에도 `SRPT/CORT/PAYS/BRZE/ARM` 를 `NASD` 로 추가
+- 실확인:
+  - `SRPT NASD`, `CORT NASD`, `PAYS NASD`, `BRZE NASD`, `ARM NASD` 해석 성공
+
+### 5. 미국 VTS 종목별 주문 실패 캐시 추가
+- 문제:
+  - 같은 미국 종목이 VTS `500` 을 내도 세션 동안 매 사이클 재시도
+  - 로그 오염 + 불필요한 주문 재시도 반복
+- 수정:
+  - `trading_bot.py`
+  - `_us_order_supported`, `_us_order_blocked` 세션 캐시 추가
+  - US 세션 시작 시 캐시 초기화
+  - 미국 모의 신규 매수에서 주문 예외/거절 발생 시 해당 티커를 당일 차단
+  - 같은 세션에서는 `entry_skip` (`us_order_blocked`) 로 바로 건너뜀
+  - 성공 티커는 지원 캐시로 기록
+- 범위:
+  - 신규 진입만 차단
+  - 기존 보유 포지션 청산 경로는 막지 않음
+
+### 6. 미국 종목 실주문 가능 여부 확인
+- `BRZE`: 모의 매수 성공
+- `PAYS`: VTS 주문 `500`
+- `CORT`: VTS 주문 `500`
+- 해석:
+  - 거래소 미정의 문제는 해결됨
+  - 다만 문서 경고대로 VTS 는 일부 미국 종목만 매매 가능
+  - 따라서 종목별 주문 가능 여부 캐시가 필요했고, 위 5번으로 반영
+
+### 7. 미국 현재가 OHLC 보정 유지
+- KIS 미국 현재가 응답에서 `open/high/low` 가 비정상(`price` 와 동일)인 경우
+- 당일 `dailyprice` 마지막 행으로 O/H/L 보정
+- 일부 종목은 VTS `dailyprice` 가 `500` 을 내므로 보정 실패 로그만 남기고 현재가 자체는 유지
+
+### 검증 요약
+- `python -m py_compile E:\code\claudetrade\dashboard\dashboard_server.py E:\code\claudetrade\kis_api.py E:\code\claudetrade\trading_bot.py`
+- 미국 모의 주문 실테스트:
+  - `NVDA` 매수 성공
+  - `NVDA` 매도 성공
+  - `BRZE` 매수 성공
+  - `PAYS`, `CORT` 는 VTS `500` 재현
+---
+
+## [2026-03-27] 주문체결조회 기반 가격 정합성 보강
+
+### 1. 보유 포지션 표시 가격을 브로커 기준으로 통일
+- `trading_bot.py`
+- 장중 브로커 동기화 시 내부 포지션의 표시용 가격을 `display_avg_price`, `display_current_price`, `display_currency`로 별도 유지
+- `price_source`를 넣어 `broker_balance` / `order_fill` 출처를 구분
+- `live_status_{market}.json`도 표시용 가격과 통화 정보를 같이 기록
+- 효과:
+  - 대시보드와 텔레그램이 예전 내부 원화 진입가 대신 브로커 잔고 기준 가격을 우선 표시
+  - US는 달러, KR은 원화로 분리 표시
+
+### 2. pending 주문 체결 확인 시 매수 원장 buy leg 복구
+- `trading_bot.py`
+- pending 주문이 잔고로 확인되면 `risk.trade_log` / `all_trade_log`에 `buy` 이벤트를 다시 기록
+- 기록 필드:
+  - `order_no`
+  - `price_source`
+  - `currency`
+  - `display_price`
+  - `fill_time`
+- 효과:
+  - 매매원장에 매수 leg가 다시 나타남
+  - 매수 가격의 출처를 후속 분석에서 추적 가능
+
+### 3. 국내 주문체결조회 연결
+- `kis_api.py`
+- 추가 함수:
+  - `inquire_daily_ccld_kr()`
+  - `get_order_fill_kr()`
+- 사용 API:
+  - `/uapi/domestic-stock/v1/trading/inquire-daily-ccld`
+  - TR ID: `VTTC8001R` / `TTTC8001R`
+- pending 주문이 잔고로 확인될 때 `order_no` 기준으로 같은 날 체결내역을 다시 조회
+- 체결가가 있으면:
+  - 포지션 진입가
+  - 매매원장 매수가
+  - 텔레그램 체결 확인 메시지
+  에 `filled_price_native`를 우선 반영
+
+### 4. 해외 주문체결조회 연결
+- `kis_api.py`
+- 추가 함수:
+  - `inquire_ccnl_us()`
+  - `get_order_fill_us()`
+- 사용 API:
+  - `/uapi/overseas-stock/v1/trading/inquire-ccnl`
+  - TR ID: `VTTS3035R` / `TTTS3035R`
+- 모의투자는 주문번호 직접 조건 제한이 있어 날짜 구간 조회 후 `order_no/ticker` 후처리 매칭
+- pending US 주문도 체결단가/체결시각이 확인되면 `filled_price_native`, `fill_time`으로 보존
+
+### 5. 화면 반영
+- `dashboard/dashboard_server.py`
+- 매매원장 가격은 `display_price` 우선 사용
+- 메타 표시 추가:
+  - `브로커평균단가`
+  - `체결조회단가`
+  - `주문번호`
+  - `체결시각`
+- `telegram_reporter.py`
+- 최신 `status_report()` / `dashboard_push()`를 파일 하단에서 재정의
+- 보유 포지션 가격을 KR=원화, US=달러로 표시
+
+### 6. 현재 상태
+- KR:
+  - 주문번호 기준 체결조회 연결됨
+  - 체결조회가 성공하면 `price_source=order_fill`
+- US:
+  - 주문체결조회 경로 연결됨
+  - 모의투자 제약 때문에 일부 종목/일자에서는 후처리 매칭에 의존
+- 공통:
+  - 미체결 주문은 주문단가
+  - 보유 포지션은 브로커 확인 가격
+  - 체결조회 성공 건은 체결단가를 우선 유지
+
+### 7. 검증
+- `python -m py_compile E:\code\claudetrade\kis_api.py E:\code\claudetrade\trading_bot.py E:\code\claudetrade\dashboard\dashboard_server.py E:\code\claudetrade\telegram_reporter.py`
+
+### 8. 남은 점
+- 해외 체결조회는 공식 스펙상 모의투자 검색 조건 제약이 있어, 실운영 로그에서 `order_fill`로 안정적으로 매칭되는지 계속 확인 필요
+- 장기적으로는 KIS 주문체결조회 응답 원문을 별도 디버그 로그로 1회 남겨 필드명을 더 좁히는 것이 좋음
+
+### 9. 미체결 주문 중복 적재 방지
+- 증상:
+  - 대시보드 `미체결 주문`에 `OLPX`, `NAVN` 같은 동일 티커가 여러 주문번호로 반복 노출
+  - 실제 원인은 같은 티커가 아직 `pending_orders`에 남아 있는데 다음 사이클에서 다시 주문되던 구조
+- 원인:
+  - `risk.can_open()`은 보유 포지션만 보고 `pending_orders`는 검사하지 않음
+  - 따라서 미체결 상태에서는 `already_holding`에 걸리지 않아 재주문 가능
+- 수정:
+  - `trading_bot.py`
+  - `_has_pending_order(ticker, market)` 추가
+  - 진입 직전 같은 시장/같은 티커의 미체결 주문이 있으면 `entry_skip(reason="pending_order")`
+  - `_normalize_pending_orders()` 추가
+    - 전일 pending 제거
+    - 동일 시장/동일 티커 pending은 최신 1건만 유지
+  - `_save_pending_orders()` / `_restore_pending_orders()`에서 정규화 실행
+  - `_add_pending_order()`도 동일 티커 기존 pending을 교체 후 최신 주문만 유지
+- 추가 정리:
+  - `state/pending_orders.json`에 남아 있던 전일 KR stale pending (`038110`) 3건 제거
+- 기대 효과:
+  - 같은 종목이 미체결 상태로 대시보드에 줄줄이 쌓이는 문제 방지
+  - `미체결 주문` 패널이 현재 유효 주문만 보여줌
+
+### 10. 재시작 직후 중복매수 / 0가 청산 / 잔고없는 매도 반복 방지
+- 증상:
+  - 재시작 후 `US` 세션이 `포지션:0개`로 시작하면서 브로커에 이미 있던 보유 종목을 다시 매수
+  - 예:
+    - `OLPX 140주 -> 1540주 -> 1680주 -> 1820주`
+    - `NDLS 30주 -> 205주 -> 264주 -> 294주`
+  - `SLND 169@0` 같은 0가 내부 청산 발생
+  - `LOVE`에 대해 `모의투자 잔고내역이 없습니다` 매도 실패 반복
+- 원인:
+  - `session_open()`에서 `session_open_reset`으로 당일 pending 주문을 먼저 정리
+  - 재시작 직후 브로커 실제 보유는 있었지만 내부 런타임 포지션이 비어 있는 상태로 시작
+  - `_sync_runtime_with_broker()`는 기존 포지션 보정은 했지만, 브로커에만 있고 내부에 없는 포지션을 새로 주입하지 못함
+  - 매도 경로는 `exit_price` 또는 `raw_price`가 0이어도 내부 청산이 진행될 수 있었음
+- 수정:
+  - `trading_bot.py`
+  - `session_open()`에서 더 이상 같은 날 pending 주문을 `session_open_reset`으로 삭제하지 않음
+  - 대신 pending 정규화만 수행
+  - `_sync_runtime_with_broker()`에 브로커 보유 포지션 주입 로직 추가
+    - `KR`/`US` 모두 내부에 없는 브로커 보유를 런타임 포지션으로 생성
+    - pending/order_fill 메타가 있으면 같이 이어받음
+  - `_execute_sell()`에서
+    - `exit_price <= 0` 또는 `raw_price <= 0` 이면 매도 자체 스킵
+    - `잔고내역이 없습니다` 실패 시 내부 포지션 제거 + 저장/라이브상태 갱신
+- 기대 효과:
+  - 재시작 직후 브로커 기존 보유를 먼저 인식하므로 같은 종목 재매수 방지
+  - `0원 청산 -> -100%` 같은 내부 손익 오염 방지
+  - 브로커 미보유 종목에 대한 매도 실패 반복 감소
+
+### 11. 오늘 손익 퍼센트/원화 불일치 보정
+- 증상:
+  - 대시보드 `오늘 손익`이 `+55.77% / -1,716,210원`처럼 서로 양립할 수 없는 값으로 표시
+  - `live_status_US.json`에는 동일 티커가 중복으로 들어가 있었음
+    - `NDLS` 2개
+    - `OLPX` 2개
+    - `KOD` 2개
+- 원인:
+  - `daily_pnl_pct`는 `risk.equity()` 기반 `daily_return()`을 사용
+  - 오늘 새벽 중복 포지션/재매수/0가 청산 영향으로 `equity()`가 오염됨
+  - 반면 `daily_pnl`은 매도 이벤트 기반 누적이라 음수로 남아 `%`와 원화가 서로 다른 경로로 틀어짐
+  - `live_status` 저장 시점에도 중복 포지션이 그대로 기록되어 대시보드 표시를 추가로 왜곡
+- 수정:
+  - `trading_bot.py`
+  - `_daily_pnl_pct()` 추가
+    - `daily_pnl / session_start_equity * 100` 기준으로 퍼센트 계산
+  - `_sync_runtime_with_broker()` 결과를 티커별 1건으로 병합
+    - 중복 포지션 발견 시 `중복 포지션 병합` 로그 기록
+  - `_write_live_status()`에서도 저장 전에 티커별 dedupe 수행
+  - `position_count`도 dedupe 이후 개수 기준으로 저장
+- 수동 정리:
+  - `state/live_status_US.json`
+  - `daily_pnl_pct`를 `+55.7697%` → `-3.6432%`로 교정
+  - `positions`를 중복 8건 → 고유 5건으로 정리
+- 결과:
+  - `%` 손익과 원화 손익이 최소한 같은 방향으로 맞춰짐
+  - 대시보드 포지션 카드도 고유 종목 기준으로 보이게 수정
+- 주의:
+  - 오늘 새벽 오염된 거래 흐름 자체가 있었기 때문에 `2026-03-27` 원화 손익값은 여전히 완전한 진실값으로 단정하기 어려움
+  - 이번 수정은 “표시값이 명백히 충돌하는 상태”를 우선 해소한 것
+
+---
+
+## [2026-03-27] brain.json 학습 루프 복구
+
+### 배경
+봇 운영 6일차에도 `brain.json`의 `learned_lessons = []`, `correction_guide = {}` — postmortem이 매번 `except`로 빠져 학습이 전혀 안 되고 있었음.
+
+### 원인 분석 (3중 버그)
+
+| # | 원인 | 증상 |
+|---|------|------|
+| 1 | `max_tokens=800` 부족 | 한국어 응답이 길어 JSON이 중간에 잘림 → 파싱 실패 |
+| 2 | JSON 파싱 로직 취약 | `split("```")[1]` → 중첩 `{}` 있으면 첫 `}`에서 잘림 |
+| 3 | 거래 없는 날 프롬프트 과중 | 빈 거래 내역에도 15개 필드 요구 → 응답 길어짐 |
+
+### 수정 내용 (`minority_report/postmortem.py`)
+
+#### 1. `_extract_json()` 함수 신규 추가 (취약 파싱 대체)
+```python
+def _extract_json(text: str) -> dict:
+    def _fix(s): return re.sub(r",(\s*[}\]])", r"\1", s)  # trailing comma 제거
+    # 1) ```json...``` 블록 (탐욕적 매칭으로 중첩 {} 포함)
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+    if m: return json.loads(_fix(m.group(1)))
+    # 2) 첫 { 부터 마지막 } 까지 직접 추출
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        return json.loads(_fix(text[start:end+1]))
+    raise ValueError(...)
+```
+- 동일 함수를 `analysts.py` 3개 파싱 위치에도 적용
+
+#### 2. `max_tokens` 증가
+- `800` → `2500` (한국어 응답 토큰 여유 확보)
+
+#### 3. 거래 없는 날 간소 프롬프트 분기
+```python
+if not sells:   # 매도 체결 없는 날
+    prompt = ...  # 판단 적중 + 보정 지침만 (필드 간소화)
+else:
+    prompt = ...  # 거래 있는 날 전체 분석
+```
+- 모든 문자열 값 "20~30자 이내" 지시 추가
+
+#### 4. `new_lesson` fallback 저장
+```python
+lesson_to_save = bu.get("new_lesson") or pm.get("key_lesson")
+if lesson_to_save not in ("오류로 자동 판정", "HALT 세션 — 거래 없음"):
+    BrainDB.update_beliefs(market, {"new_lesson": lesson_to_save})
+```
+
+#### 5. `brain_summary[:300]` 잘림 제거
+- postmortem Claude가 과거 교훈 없이 판단하던 문제 해결
+
+### `brain_backfill.py` 신규 생성
+기존 `logs/daily_judgment/202603*.json` 파일로 brain 소급 갱신 스크립트.
+
+```
+python brain_backfill.py           # 실행
+python brain_backfill.py --dry-run # 대상 확인만
+```
+
+### 검증 결과 (`state/brain.json`)
+```
+KR learned_lessons (6개):
+  - 저거래량 골든크로스 과신 금지
+  - USD/KRW 1450 초과시 Bear단독 거부권 부여
+  - 코스피-6%급락익일반등확률높음
+  - 환율1500근접시도반등장존재
+  - 하락장에서변동성돌파매도전략은수익가능
+  - 시장-3%에서도 변동성돌파매도로+수익 가능
+
+market_regime: 변동성장
+correction_guide: MACD데드크로스+환율1500초과시 Bull신호 완전무시 (내일 분석가에게 전달됨)
+analyst_performance: Bull 16% / Bear 70% / Neutral 5% (37일)
+```
+
+### 미해결 — US session_close 미실행
+- US `logs/daily_judgment/202603*_US.json` 전부 `actual_result` 없음
+- 봇이 US 장 종료(05:00) 전에 재시작되어 `session_close`가 호출 안 됨
+- 다음 확인 필요: 봇 재시작 시 이전 세션 session_close 트리거 여부
+
+---
+
+## [2026-03-27] 중복 매수 버그 수정 — `_verify_live_positions` / `_sync_runtime_with_broker`
+
+### 증상
+- OLPX 140주 → 1820주, NDLS 30주 → 294주 (봇 재시작마다 재매수 반복)
+- pending_orders 초기화로 US 포지션 추적 불가
+
+### 근본 원인
+`_verify_live_positions`와 `_sync_runtime_with_broker` 두 곳 모두 동일한 버그:
+
+```python
+# 버그: US API 실패 시 broker_us = {} → 모든 US 포지션이 "브로커에 없음"으로 제거됨
+broker_us = {}
+try:
+    ...
+except:
+    pass  # us_ok 플래그 없음
+
+for pos in self.risk.positions:
+    broker_pos = broker_us.get(key)  # 항상 None
+    if not broker_pos:
+        removed.append(ticker)  # US 포지션 전부 삭제
+```
+
+### 수정 (`trading_bot.py`)
+
+**① `_verify_live_positions`** — `kr_ok` / `us_ok` 플래그 추가
+```python
+kr_ok = False
+us_ok = False
+try:
+    ...
+    kr_ok = True
+except: ...
+
+try:
+    ...
+    us_ok = True
+except: ...
+
+# 해당 마켓 조회 실패 시 포지션 제거 금지
+if market == "US" and not us_ok:
+    verified.append(pos)
+    continue
+if market == "KR" and not kr_ok:
+    verified.append(pos)
+    continue
+```
+
+**② `_sync_runtime_with_broker`** — 동일 패턴으로 `us_ok` 추가
+```python
+broker_us: dict = {}
+us_ok = False
+try:
+    ...
+    us_ok = True
+except: ...
+
+# 루프 내
+if market == "US" and not us_ok:
+    synced_positions[(market, key)] = pos  # 그대로 유지
+    continue
+```
+
+### 사용자가 이미 추가한 부분 (이번 세션 검토 완료)
+- `pending_orders.json` 영속성: `_restore_pending_orders()` + `_save_pending_orders()`
+- `_normalize_pending_orders()`: 전날 주문 폐기, 종목별 최신 1건 유지
+- `_has_pending_order()` 매수 전 중복 체크 (이미 존재)
+- `_reconcile_pending_orders()`: `broker_pos = None`이면 `remaining`으로 유지 (안전)
+
+### 남은 미해결 이슈
+- **현금 47M 고정**: KIS 모의투자가 US 매수 후 KR 현금 즉시 반영 안 함 → KIS API 한계
+- **LOVE 매도 실패**: `모의투자 잔고내역이 없습니다.` → KIS에 해당 종목 없음, 수동 정리 필요
+- **US session_close 미실행**: 봇 재시작으로 session_close 미호출 → US brain 학습 누락
+
+---
+
+*Last updated: 2026-03-27*
+*Context session: 중복 매수 버그 루트 코즈 분석 + _verify_live_positions / _sync_runtime_with_broker 수정*
+
+---
+
+## [2026-03-27] CRITICAL BUG FIX — SLND price=0 강제 stop_loss
+
+### 증상 (2026-03-27 01:06, 01:32 로그)
+- `[PAPER SELL] SLND 169@0` → `-415,882 (-100.00%)`
+- `[PAPER SELL] SLND 511@0` → `-1,259,794 (-100.00%)`
+- HALT 발동: `daily loss limit reached (-32.49%)`
+
+### 근본 원인
+`run_cycle`에서 `get_price(SLND)` 가 `price=0`을 반환하거나 실패했을 때,
+`price_cache_raw["SLND"] = 0`과 `price_cache["SLND"] = 0`이 그대로 기록됨.
+이후 `risk.update_prices()` → `pos["current_price"] = 0` → `0 <= pos["sl"]` → `reason="stop_loss"`.
+`_execute_sell` 호출 → 0원에 전량 매도.
+
+### 수정 (trading_bot.py)
+
+**1. `run_cycle` 가격 업데이트 (lines ~1518)**
+```python
+# 수정 전
+self.price_cache_raw[ticker] = price
+self.price_cache[ticker] = risk_price
+self.risk.update_prices(self.price_cache)
+self._process_exit_candidates()
+
+# 수정 후
+if price <= 0:
+    log.warning(f"[skip {market}] {ticker} invalid price={price} — price_cache 업데이트 생략")
+    continue
+self.price_cache_raw[ticker] = price
+self.price_cache[ticker] = risk_price
+self.risk.update_prices(self.price_cache)
+self._process_exit_candidates()
+```
+
+**2. `_on_tick` WebSocket 핸들러 (lines ~1441)**
+```python
+# 수정 후
+if not raw_price or raw_price <= 0:
+    log.warning(f"[WS tick] {ticker} invalid price={raw_price} — 무시")
+    return
+```
+
+**3. `_process_exit_candidates` 2중 방어 (lines ~1004)**
+```python
+# 수정 후 — 첫 번째 체크
+for cand in candidates:
+    if float(cand.get("exit_price") or 0) <= 0:
+        log.error(f"[exit skip] {cand['ticker']} exit_price={cand.get('exit_price')} <= 0 — 매도 차단")
+        continue
+```
+
+### 방어 레이어 (3중)
+1. `run_cycle`: `price<=0`이면 `price_cache` 업데이트 자체를 건너뜀
+2. `_on_tick`: WS 틱에서 `price<=0`이면 즉시 return
+3. `_process_exit_candidates`: `exit_price<=0`이면 매도 시도 자체를 차단
+4. `_execute_sell`: `exit_price<=0` 또는 `raw_px<=0`이면 return (기존 코드 유지)
+## [2026-03-27] 대시보드 기간별 성과 / 매매원장 복구
+
+### 문제
+- `기간별 성과`는 숫자가 비거나 과거 오염된 `actual_result`를 그대로 읽고 있었음
+- `매매원장`은 `daily_judgment.trades`가 KR/US 혼입으로 깨진 날짜에서 아무 행도 안 나왔음
+- 전일 `live_status`가 오늘 요약 카드까지 덮어쓰는 경우가 있었음
+
+### 수정 (`dashboard/dashboard_server.py`)
+- `_parse_trade_log_lines()` 추가
+  - `logs/system/trading_YYYYMMDD.log`에서
+  - `[PAPER BUY]`
+  - `[PAPER SELL]`
+  - 뒤이은 `close_position` 손익 로그
+  를 읽어 보조 원장 행으로 복구
+- `_trades_for_record()` 추가
+  - 정상 `daily_judgment.trades`가 있으면 우선 사용
+  - 비어 있거나 시장 필터 후 남는 게 없으면 시스템 로그 복구행 사용
+- `_record_metrics()` 추가
+  - 로그 복구된 `sell` 행 기준으로 일자별 `trades / pnl_krw / pnl_pct / win` 재계산
+  - `api/stats/period`, `api/history/monthly`, `api/history/equity`, summary period 집계가 이 메트릭을 사용하도록 변경
+- `0원 매도`는 로그 복구 대상에서 제외
+  - 예전 `SLND 0가 청산` 같은 손상 행을 대시보드 원장에 다시 노출하지 않도록 방어
+- `_is_fresh_live_status()` 강화
+  - `trading_date == today_rec.date == 오늘 날짜`일 때만 live status를 요약 카드에 반영
+
+### 확인 결과
+- `KR 매매원장` 복구
+  - `038110` 3건 표시
+- `KR 기간별 성과` 복구
+  - `/api/stats/period?market=KR&period=all` 기준 `trades=3`, `total_pnl=0.44`
+- `US 기간별 성과`도 로그 기준 재집계
+  - `/api/stats/period?market=US&period=all` 기준 `trades=19`, `total_pnl=1.6`
+- 전일 `live_status_KR.json`이 오늘 카드에 덮어쓰는 현상 제거
+
+### 한계
+- 이 단계는 `대시보드 복구` 중심
+- 손상된 `daily_judgment/*.json` 원본 자체를 재작성한 것은 아님
+- 따라서 장기적으로는 손상일자 원본 로그 재생성 또는 저장 단계 추가 보정이 여전히 필요
+
+## [2026-03-27] KIS 주문 사전체크 / 전역 레이트리밋 / 주문 응답 정규화
+
+### 배경
+- `kis-agent` 참고 포인트를 검토하던 중, 지금 코드에는
+  - 주문 전 사전체크
+  - 전역 KIS 요청 속도 제어
+  - KR/US 주문 응답의 공통 정규화
+  가 부족하다고 판단
+- 특히 주문 실패를 API 응답 이후에만 처리하고 있었고, KIS 호출도 함수별로 흩어져 있었음
+
+### 수정 (`kis_api.py`, `trading_bot.py`)
+- `_rate_limit_wait()`, `_kis_get()`, `_kis_post()` 추가
+  - `KIS_RATE_RPS` 환경변수 기준으로 KIS REST 호출 간 최소 간격 강제
+  - 토큰/시세/잔고/주문 등 KIS 경로가 전역 래퍼를 타도록 정리 시작
+- `precheck_order()` 추가
+  - `KR 매수`: 현금 기준 가용 수량/주문 가능 여부 확인
+  - `KR 매도`: 보유 수량 기준 주문 가능 여부 확인
+  - `US 매도`: 해외 잔고 기준 보유 수량 확인
+  - `US 매수`: 통합계좌 구조를 감안해 KR 원화 가용현금 기준 1차 방어
+- `_normalize_order_result()` 추가
+  - KR/US 주문 응답을 공통 포맷으로 반환
+  - `success`, `msg`, `order_no`, `market`, `side`, `ticker`, `qty`, `price`, `price_type`, `raw`
+- `trading_bot.py` 매수/매도 경로에 `precheck_order()` 연결
+  - 사전체크 실패 시 주문 API 호출 전에 스킵
+  - 매도 사전체크에서 `insufficient_holding`이면 내부 stale 포지션 정리까지 수행
+
+### 효과
+- 주문 불가 케이스를 KIS 주문 API 호출 전에 더 일찍 차단
+- KR/US 주문 결과 형식이 통일돼 후속 처리와 로그 해석이 쉬워짐
+- KIS REST 호출이 전역 속도 제어를 타기 시작해서 급격한 연속 호출 리스크 완화
+
+### 확인
+- `python -m py_compile E:\\code\\claudetrade\\kis_api.py E:\\code\\claudetrade\\trading_bot.py E:\\code\\claudetrade\\dashboard\\dashboard_server.py` 통과
+
+### 아직 안 한 것
+- 국내 `주식정정취소가능주문조회`
+- 국내/해외 정정·취소 주문 API
+- 주문 가능/정정 가능 수량을 이용한 자동 정정·취소 루프
+
+### 메모
+- 현재 텔레그램/대시보드의 값은 `전부 KIS만` 보는 구조는 아님
+- 보유 포지션은 KIS 잔고 직접조회 우선
+- 총자산은 KIS 동기화값 사용
+- 현금/일부 라이브 상태는 아직 런타임 값이 섞여 있음
+
+## [2026-03-27] stale 잔고 캐시로 인한 매도 precheck 오판 방어
+
+### 문제
+- 매수 직후 짧은 시간 안에 TP/SL이 발동하면 `sell precheck`가 `get_balance()` 캐시를 탈 수 있음
+- `KIS_CACHE_TTL_SEC=120` 구간에서 아직 매수 전 잔고가 남아 있으면
+  - `held_qty=0`
+  - `insufficient_holding`
+  으로 잘못 판단 가능
+- 기존 코드는 이 경우 내부 포지션을 즉시 제거하고 있었음
+
+### 수정 (`kis_api.py`, `trading_bot.py`)
+- `get_balance(..., force_refresh=False)` 추가
+  - `force_refresh=True`면 `_BALANCE_CACHE`를 무효화하고 KIS 잔고를 재조회
+- `precheck_order(..., force_refresh=False)` 추가
+  - 매도 사전체크에서 강제 재조회 경로 사용 가능
+- `_execute_sell()` 보강
+  - `insufficient_holding`이면 바로 내부 포지션 삭제하지 않음
+  - 같은 티커 `pending buy`가 없을 때만 `force_refresh=True`로 잔고 재조회 1회
+  - 재조회 후에도 여전히 보유수량 부족일 때만 stale 포지션 정리
+  - 같은 티커 `pending buy`가 있으면 브로커 미반영 가능성을 감안해 내부 포지션 제거를 보류
+
+### 효과
+- stale 잔고 캐시 한 번 때문에 내부 포지션이 잘못 삭제되는 위험 완화
+- 방금 체결 중인 종목을 `보유 없음`으로 오인해서 정리하는 케이스 차단
+
+### 확인
+- `python -m py_compile E:\\code\\claudetrade\\kis_api.py E:\\code\\claudetrade\\trading_bot.py` 통과
+
+## [2026-03-28] 대시보드 총자산/크레딧/Claude 타임라인 UI 보강
+
+### 배경
+- 오늘 페이지에서 `누적 자산 곡선` 마지막 점이 실시간 브로커 총자산과 어긋날 수 있었음
+- `AI 크레딧`은 누적 사용량만 보이고, 사용자가 원하는 `Claude 잔여 크레딧` 관점이 없음
+- `Claude 판단 타임라인`이 계속 쌓이면 페이지가 과도하게 길어질 위험이 있었음
+
+### 수정
+- `dashboard/dashboard_server.py`
+  - `/api/history/equity`에서 오늘 장중 `live_status`가 신선하면 마지막 equity 점을 `KR + US 평가환산` 브로커 총자산으로 보정
+  - 오늘 페이지 `Claude 판단 타임라인` 카드를 내부 스크롤 방식으로 변경
+  - `AI 크레딧` 카드에 `예산 기준 잔여` 행 추가
+  - `/api/credits` 응답의 `budget` 필드를 읽어 일/월 잔여 예산 표시
+- `credit_tracker.py`
+  - `CLAUDE_DAILY_BUDGET_USD`
+  - `CLAUDE_MONTHLY_BUDGET_USD`
+  설정값이 있으면 `daily_remaining_usd`, `monthly_remaining_usd` 계산
+
+### 효과
+- 누적 자산 곡선의 마지막 점이 오늘 실시간 총자산과 더 가깝게 맞음
+- Claude 비용은 단순 사용량뿐 아니라 `설정 예산 대비 잔여` 관점으로도 확인 가능
+- Claude 판단 타임라인이 길어져도 오늘 페이지 전체 길이를 과도하게 늘리지 않음
+
+### 참고
+- Anthropic 계정의 실제 `남은 크레딧`을 직접 조회하는 API는 현재 프로젝트에 없음
+- 따라서 대시보드에 표시하는 잔여값은 `실제 계정 잔액`이 아니라 `.env` 예산 설정 기준 잔여량임
+
+### 확인
+- `python -m py_compile E:\\code\\claudetrade\\dashboard\\dashboard_server.py E:\\code\\claudetrade\\credit_tracker.py` 통과
+
+## [2026-03-29] KR Core 유니버스 재편 — SK하이닉스 → 셀트리온
+
+### 배경
+- SK하이닉스(000660) Win Rate 43% — KR Core 6종목 중 최저
+- 셀트리온(068270) Sharpe 7.08, Win Rate 75% — 동기간 비교우위 명확
+- IT 반도체 집중도 완화 + 헬스케어 섹터 다변화 목적
+
+### 변경 파일
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `phase1_trainer/digest_builder.py` | KR_TICKERS `000660 SK하이닉스` → `068270 셀트리온` |
+| `phase1_trainer/kr_news_collector.py` | TARGET_CORPS 동일 교체 |
+| `trading_bot.py` | `_DEFAULT_KR_TICKERS` 동일 교체 |
+
+### 비변경 파일
+- `phase1_trainer/price_collector.py` — 이미 068270 포함된 넓은 수집 풀 (변경 불필요)
+- `phase1_trainer/supplement_collector.py` — KR_FLOW_TICKERS 12종목 풀, 000660 유지 (투자자 흐름 참고용)
+- `data/price/kr/kr_068270.csv` — 이미 존재 (2024-11-14 ~ 2026-03-27, 331행)
+
+### 확인
+- digest_builder KR_TICKERS: 068270 셀트리온 ✓
+- kr_news_collector TARGET_CORPS: 068270 셀트리온 ✓
+- trading_bot _DEFAULT_KR_TICKERS: 068270 ✓
+- 000660 핵심 3파일에서 완전 제거 ✓

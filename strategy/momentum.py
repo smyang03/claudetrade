@@ -13,12 +13,16 @@ def signal(df: pd.DataFrame, i: int, params: dict) -> bool:
     vol     = float(row.get("volume", 0))
     high20  = float(row.get("high20", 0))
     close   = float(row.get("close", 0))
+    vol_mult = params.get("vol_mult", 1.5)   # 기본 1.5× (이전 2.0× 너무 엄격)
     ma_ok   = ma5 > ma20 > ma60
     macd_ok = macd > sig
-    vol_ok  = vol > vol_avg * 2.0
+    vol_ok  = vol > vol_avg * vol_mult
     high_ok = close > high20 if high20 > 0 else False
     return ma_ok and macd_ok and vol_ok and high_ok
 
 def params(brain_mode: str) -> dict:
     size = {"AGGRESSIVE":1.0,"MODERATE_BULL":0.7,"CAUTIOUS":0.4}.get(brain_mode,0.5)
-    return {"tp_pct": 0.060, "sl_pct": 0.030, "max_hold": 5, "size_mult": size}
+    # vol_mult: AGGRESSIVE는 더 느슨하게, 방어적 모드는 더 엄격하게
+    vol_mult = {"AGGRESSIVE": 1.2, "MODERATE_BULL": 1.5, "MILD_BULL": 1.5}.get(brain_mode, 1.8)
+    return {"tp_pct": 0.060, "sl_pct": 0.030, "max_hold": 5,
+            "size_mult": size, "vol_mult": vol_mult}

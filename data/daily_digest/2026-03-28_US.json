@@ -1,0 +1,180 @@
+{
+  "date": "2026-03-28",
+  "market": "US",
+  "universe_tickers": [
+    "NVDA",
+    "TSLA",
+    "AAPL",
+    "MSFT",
+    "META",
+    "AMZN",
+    "GOOGL"
+  ],
+  "context": {
+    "sp500": {},
+    "nasdaq": {},
+    "vix": 0,
+    "dxy": 0,
+    "usd_krw": 0,
+    "oil_wti": 0,
+    "tnx": 0,
+    "hyg": {},
+    "sectors": {},
+    "regime": "ranging",
+    "fomc": false,
+    "fomc_week": false,
+    "cpi_day": false,
+    "nfp_day": false,
+    "premarket": {}
+  },
+  "technicals": {
+    "NVDA": {
+      "name": "엔비디아",
+      "close": 175.2,
+      "change_pct": -0.25,
+      "rsi": 39.3,
+      "macd": "데드크로스",
+      "bb_pct": 18.1,
+      "vol_ratio": 0.73,
+      "pos_52w": 70.6,
+      "vb_target": 175.77,
+      "atr_pct": 2.7,
+      "trend_5d": -0.718,
+      "premarket_pct": 0.0,
+      "earnings_date": "",
+      "news_sentiment": 0.208,
+      "sec_filing": false
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "close": 383.03,
+      "change_pct": 0.57,
+      "rsi": 37.5,
+      "macd": "데드크로스",
+      "bb_pct": 21.0,
+      "vol_ratio": 1.01,
+      "pos_52w": 59.3,
+      "vb_target": 381.72,
+      "atr_pct": 2.91,
+      "trend_5d": -0.532,
+      "premarket_pct": 0.0,
+      "earnings_date": "",
+      "news_sentiment": 0.305,
+      "sec_filing": false
+    },
+    "AAPL": {
+      "name": "애플",
+      "close": 251.64,
+      "change_pct": 0.06,
+      "rsi": 33.6,
+      "macd": "데드크로스",
+      "bb_pct": 28.4,
+      "vol_ratio": 0.7,
+      "pos_52w": 69.4,
+      "vb_target": 252.86,
+      "atr_pct": 1.88,
+      "trend_5d": 0.259,
+      "premarket_pct": 0.0,
+      "earnings_date": "",
+      "news_sentiment": 0.115,
+      "sec_filing": false
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "close": 372.74,
+      "change_pct": -2.68,
+      "rsi": 20.7,
+      "macd": "데드크로스",
+      "bb_pct": -12.4,
+      "vol_ratio": 1.22,
+      "pos_52w": 14.6,
+      "vb_target": 387.19,
+      "atr_pct": 1.82,
+      "trend_5d": -1.12,
+      "premarket_pct": 0.0,
+      "earnings_date": "",
+      "news_sentiment": 0.162,
+      "sec_filing": false
+    },
+    "META": {
+      "name": "메타",
+      "close": 592.92,
+      "change_pct": -1.84,
+      "rsi": 23.9,
+      "macd": "데드크로스",
+      "bb_pct": 5.2,
+      "vol_ratio": 0.86,
+      "pos_52w": 36.3,
+      "vb_target": 603.6,
+      "atr_pct": 2.31,
+      "trend_5d": -0.779,
+      "premarket_pct": 0.0,
+      "earnings_date": "",
+      "news_sentiment": -0.102,
+      "sec_filing": true
+    },
+    "AMZN": {
+      "name": "아마존",
+      "close": 207.24,
+      "change_pct": -1.38,
+      "rsi": 38.2,
+      "macd": "골든크로스",
+      "bb_pct": 23.6,
+      "vol_ratio": 0.78,
+      "pos_52w": 47.2,
+      "vb_target": 209.1,
+      "atr_pct": 2.08,
+      "trend_5d": -0.122,
+      "premarket_pct": 0.0,
+      "earnings_date": "",
+      "news_sentiment": 0.0,
+      "sec_filing": false
+    },
+    "GOOGL": {
+      "name": "알파벳",
+      "close": 290.44,
+      "change_pct": -3.85,
+      "rsi": 38.2,
+      "macd": "데드크로스",
+      "bb_pct": -20.6,
+      "vol_ratio": 1.25,
+      "pos_52w": 72.1,
+      "vb_target": 303.42,
+      "atr_pct": 2.19,
+      "trend_5d": -1.243,
+      "premarket_pct": 0.0,
+      "earnings_date": "",
+      "news_sentiment": 0.0,
+      "sec_filing": false
+    }
+  },
+  "top_news": [
+    {
+      "title": "Skyworks Solutions, Inc. (NASDAQ:SWKS) Given Average Rating of \"Hold\" by Analysts",
+      "ticker": "AAPL"
+    },
+    {
+      "title": "Assessing F5 (FFIV) Valuation After Q1 Beat Guidance Raise And New Forcepoint AI Security Alliance",
+      "ticker": "NVDA"
+    },
+    {
+      "title": "17 Education Earnings Call: AI Growth Amid Losses",
+      "ticker": "META"
+    },
+    {
+      "title": "KORE Group (KORE) Expected to Announce Quarterly Earnings on Tuesday",
+      "ticker": "MSFT"
+    },
+    {
+      "title": "Masimo Corporation (NASDAQ:MASI) Receives Average Recommendation of \"Hold\" from Brokerages",
+      "ticker": "AAPL"
+    }
+  ],
+  "prev_result": {
+    "date": "2026-03-27",
+    "mode": "CAUTIOUS_BEAR",
+    "pnl_pct": 0,
+    "win": false
+  },
+  "built_at": "2026-03-28T18:23:44.560938"
+}

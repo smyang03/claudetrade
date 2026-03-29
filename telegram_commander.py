@@ -152,7 +152,7 @@ def _handle(text: str, bot) -> str:
 
 # ── 명령어 핸들러 구현 ────────────────────────────────────────────────────────
 
-def _cmd_status(bot) -> str:
+def _legacy_cmd_status(bot) -> str:
     now = datetime.now(KST).strftime("%H:%M")
     lines = [f"⏱ <b>[현재 상태 {now}]</b>"]
 
@@ -189,6 +189,83 @@ def _cmd_status(bot) -> str:
     lines.append(f"\n⚙️ 최대주문: {int(bot.risk.max_order_krw):,}원  수수료: {int(bot.risk.total_fee):,}원")
 
     return "\n".join(lines)
+
+
+def _fmt_price_for_market(value: float, market: str) -> str:
+    if market == "US":
+        return f"${float(value):.4f}"
+    return f"{int(round(float(value))):,}원"
+
+
+def _status_positions(bot) -> list[str]:
+    lines = []
+    for p in bot.risk.positions:
+        market = "US" if str(p.get("ticker", "")).replace(".", "").isalpha() else "KR"
+        entry = float(p.get("display_avg_price", p.get("avg_price", p.get("entry", 0))) or 0)
+        current = float(p.get("display_current_price", p.get("current_price", entry)) or 0)
+        pnl = (current / entry - 1) * 100 if entry > 0 and current > 0 else 0.0
+        icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
+        lines.append(
+            f"{icon} {p.get('ticker','-')} {int(p.get('qty', 0) or 0)}주"
+            f" | 매수가 {_fmt_price_for_market(entry, market)}"
+            f" | 현재가 {_fmt_price_for_market(current, market)}"
+            f" | {pnl:+.2f}%"
+        )
+    return lines
+
+
+def _cmd_status(bot) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    total_equity = float(bot._kis_total_equity_krw())
+    cash = float(bot.risk.cash)
+    stock_value = max(total_equity - cash, 0.0)
+    mode = "-"
+    market = bot.current_market or (bot.today_judgment.get("market") if bot.today_judgment else "KR")
+    if bot.today_judgment:
+        mode = bot.today_judgment.get("consensus", {}).get("mode", "-")
+    pnl_krw = int(getattr(bot.risk, "daily_pnl", 0) or 0)
+    base_equity = max(float(getattr(bot.risk, "session_start_equity", 0) or 0), 1.0)
+    pnl_pct = pnl_krw / base_equity * 100.0
+    session_label = "진행중" if bot.session_active else "대기"
+    pos_lines = _status_positions(bot)
+    body = "\n".join(pos_lines) if pos_lines else "보유 포지션 없음"
+    return (
+        f"📊 <b>[현재 상태 {now}]</b>\n"
+        f"시장: <b>{market}</b> | 세션: {session_label}\n"
+        f"모드: <b>{mode}</b>\n"
+        f"오늘 손익: {pnl_pct:+.2f}%  {pnl_krw:+,}원\n"
+        f"현금: {cash:,.0f}원\n"
+        f"주식평가: {stock_value:,.0f}원\n"
+        f"총자산: {total_equity:,.0f}원\n"
+        f"주문한도: {int(bot.risk.max_order_krw):,}원 | 누적 수수료: {int(bot.risk.total_fee):,}원\n\n"
+        f"보유 포지션\n{body}"
+    )
+
+
+def _cmd_credit(bot_dummy=None) -> str:
+    try:
+        from credit_tracker import summary as credit_summary
+        cr = credit_summary()
+        td = cr["today"]
+        tot = cr["total"]
+        budget = cr.get("budget", {}) or {}
+        remain = []
+        if budget.get("daily_remaining_usd") is not None:
+            remain.append(f"일간예산 잔여 ${float(budget['daily_remaining_usd']):.3f}")
+        if budget.get("monthly_remaining_usd") is not None:
+            remain.append(f"월간예산 잔여 ${float(budget['monthly_remaining_usd']):.3f}")
+        remain_line = f"\n{' | '.join(remain)}" if remain else ""
+        return (
+            f"🧾 <b>AI 크레딧 사용량</b>\n"
+            f"────────\n"
+            f"오늘: ${td['cost_usd']:.4f}  (₩{td['cost_krw']:,})\n"
+            f"  입력 {td['input']:,}tok  출력 {td['output']:,}tok  {td['calls']}회\n"
+            f"누적: ${tot['cost_usd']:.4f}  (₩{tot['cost_krw']:,})"
+            f"{remain_line}\n"
+            f"※ 실제 Claude 계정 잔액이 아니라 사용량/예산 기준입니다."
+        )
+    except Exception as e:
+        return f"❌ 크레딧 조회 오류: {e}"
 
 
 def _cmd_pnl(bot) -> str:
@@ -320,7 +397,7 @@ def _cmd_brain(bot) -> str:
         return f"❌ 학습 요약 오류: {e}"
 
 
-def _cmd_credit() -> str:
+def _legacy_cmd_credit_runtime() -> str:
     try:
         from credit_tracker import summary as credit_summary
         cr  = credit_summary()
@@ -359,6 +436,8 @@ def _cmd_judge(bot) -> str:
 
 
 def _cmd_reinvoke(bot) -> str:
+    if hasattr(bot, "is_claude_reinvoke_enabled") and not bot.is_claude_reinvoke_enabled():
+        return "Claude 재판단 기능이 현재 OFF 상태입니다."
     if not bot.session_active:
         return "❌ 세션이 활성화되어 있지 않습니다."
     market = bot.today_judgment.get("market") if bot.today_judgment else None
@@ -380,14 +459,21 @@ def _cmd_close(bot, ticker: str) -> str:
     try:
         from kis_api import place_order, get_price
         price_info = get_price(ticker, bot.token, market=market)
-        cur_price  = price_info.get("price", 0)
-        result = place_order(ticker, pos["qty"], cur_price, "sell", bot.token, market=market)
+        raw_price = price_info.get("price", 0)
+        close_price = bot._price_to_krw(raw_price, market)
+        result = place_order(ticker, pos["qty"], raw_price, "sell", bot.token, market=market)
         if result.get("success"):
-            pnl = (cur_price - pos["entry"]) * pos["qty"]
+            ex = bot.risk.close_position(ticker, close_price, "manual_close")
+            if not ex:
+                return f"❌ 내부 포지션 정리 실패: {ticker}"
+            bot._save_positions()
+            bot._write_live_status(market)
+            bot._maybe_push_dashboard(force=True)
+            pnl = ex["pnl"]
             icon = "🟢" if pnl > 0 else "🔴"
             return (
                 f"{icon} <b>[수동 청산]</b> {ticker}\n"
-                f"  {pos['qty']}주 @{cur_price:,}원\n"
+                f"  {pos['qty']}주 @{raw_price:,}{'원' if market == 'KR' else '$'}\n"
                 f"  P&L: {pnl:+,}원"
             )
         else:
@@ -606,3 +692,47 @@ class TelegramCommander:
 
 # 전역 싱글톤
 commander = TelegramCommander()
+
+
+def _legacy_cmd_status_runtime(bot) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    total_equity = float(bot._kis_total_equity_krw())
+    cash = float(bot.risk.cash)
+    stock_value = max(total_equity - cash, 0.0)
+    lines = [f"📋<b>[현재 상태 {now}]</b>"]
+
+    for market in ("KR", "US"):
+        if not bot.session_active:
+            lines.append(f"\n{market}: 세션 없음")
+            continue
+        j = bot.today_judgment
+        if j.get("market") != market:
+            continue
+        mode = j.get("consensus", {}).get("mode", "-")
+        pnl_pct = bot.risk.daily_pnl / max(bot.risk.session_start_equity, 1) * 100
+        pnl_krw = int(bot.risk.daily_pnl)
+        pnl_icon = "📈" if pnl_pct > 0 else "📉" if pnl_pct < 0 else "➖"
+        lines.append(
+            f"\n<b>{market}</b>  모드: {mode}\n"
+            f"{pnl_icon} 오늘 P&L: {pnl_pct:+.2f}%  {pnl_krw:+,}원"
+        )
+
+    pos = bot.risk.positions
+    if pos:
+        lines.append("\n💦 <b>보유 포지션</b>")
+        for p in pos:
+            entry = p.get("entry", 0)
+            cur = p.get("current_price", entry)
+            pnl = (cur / entry - 1) * 100 if entry else 0
+            icon = "📈" if pnl > 0 else "📉"
+            lines.append(f"  {icon} {p['ticker']} {p['qty']}주 | {cur:,.0f}원 | {pnl:+.2f}%")
+    else:
+        lines.append("\n💦 보유 포지션 없음")
+
+    lines.append(
+        f"\n현금: {cash:,.0f}원 | 주식평가: {stock_value:,.0f}원 | 총자산: {total_equity:,.0f}원"
+    )
+    lines.append(
+        f"주문한도: {int(bot.risk.max_order_krw):,}원 | 수수료: {int(bot.risk.total_fee):,}원"
+    )
+    return "\n".join(lines)

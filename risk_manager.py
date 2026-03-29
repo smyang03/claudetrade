@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 from datetime import date
+from dotenv import load_dotenv
 from logger import get_trading_logger
 
+load_dotenv()
 log = get_trading_logger()
 
 # 수수료율 (근사값)
@@ -17,7 +20,8 @@ HARD_RULES = {
     "max_daily_loss_pct": -3.0,
     "max_single_loss_pct": -3.0,
     "take_profit_pct": 6.0,
-    "max_positions": 3,
+    "max_positions":     int(os.getenv("MAX_POSITIONS",  "3")),   # 동시 보유 최대 종목 수
+    "max_pyramid":       int(os.getenv("MAX_PYRAMID",    "2")),   # 동일 종목 최대 추가매수 횟수
     "max_position_pct": 0.20,
     "max_order_krw": 500_000,
     "no_new_entry_min": 10,
@@ -70,16 +74,34 @@ class RiskManager:
             self.halted = True
         return self.halted
 
-    def can_open(self, ticker: str, price: float, mode_size_pct: int = 70):
+    def can_open(self, ticker: str, price: float, mode_size_pct: int = 70, market: str = ""):
         if self.halted:
             return False, "daily loss limit"
-        if len(self.positions) >= HARD_RULES["max_positions"]:
-            return False, f"max positions {HARD_RULES['max_positions']}"
-        if any(p["ticker"] == ticker for p in self.positions):
+        # 마켓별 포지션 수 제한 (market 지정 시 해당 마켓만, 미지정 시 전체)
+        if market:
+            def _is_same_market(p: dict) -> bool:
+                tk = p.get("ticker", "")
+                pos_mkt = "US" if tk.replace(".", "").isalpha() else "KR"
+                return pos_mkt == market
+            mkt_count = sum(1 for p in self.positions if _is_same_market(p))
+        else:
+            mkt_count = len(self.positions)
+        if mkt_count >= HARD_RULES["max_positions"]:
+            return False, f"max positions {HARD_RULES['max_positions']} ({market or 'total'})"
+        # 동일 티커 피라미딩 제한 — market 구분 (KR/US 간 티커명 충돌 방지)
+        def _ticker_mkt(tk: str) -> str:
+            return "US" if tk.replace(".", "").isalpha() else "KR"
+        same = sum(
+            1 for p in self.positions
+            if p["ticker"] == ticker
+            and (not market or _ticker_mkt(p["ticker"]) == market)
+        )
+        if same >= HARD_RULES["max_pyramid"]:
             return False, "already holding"
         if price <= 0:
             return False, "invalid price"
-        if self.cash < price:
+        # 수수료 포함 최소 필요 현금 체크 (1주 기준)
+        if self.cash < price + self._fee("buy", price):
             return False, "insufficient cash"
         return True, "OK"
 
@@ -223,10 +245,11 @@ class RiskManager:
             if pos["ticker"] != ticker:
                 continue
 
-            gross_pnl = (exit_price - pos["entry"]) * pos["qty"]
-            sell_fee  = self._fee("sell", exit_price * pos["qty"])
-            pnl       = gross_pnl - sell_fee
-            pnl_pct   = pnl / (pos["entry"] * pos["qty"]) * 100
+            gross_pnl  = (exit_price - pos["entry"]) * pos["qty"]
+            sell_fee   = self._fee("sell", exit_price * pos["qty"])
+            pnl        = gross_pnl - sell_fee
+            cost_basis = pos["entry"] * pos["qty"]
+            pnl_pct    = (pnl / cost_basis * 100) if cost_basis else 0.0
             self.cash += exit_price * pos["qty"] - sell_fee
             self.total_fee += sell_fee
             self.daily_pnl += gross_pnl - sell_fee

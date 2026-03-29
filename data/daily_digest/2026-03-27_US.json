@@ -1,0 +1,98 @@
+{
+  "date": "2026-03-27",
+  "market": "US",
+  "universe_tickers": [
+    "NVDA",
+    "TSLA",
+    "AAPL"
+  ],
+  "context": {
+    "sp500": {
+      "change_pct": -0.89,
+      "close": 6419.69
+    },
+    "nasdaq": {
+      "change_pct": -1.32,
+      "close": 21124.44
+    },
+    "vix": 29.84,
+    "dxy": 99.92,
+    "usd_krw": 1510.94,
+    "oil_wti": 96.95,
+    "fomc": false,
+    "fomc_week": false,
+    "cpi_day": false,
+    "nfp_day": false,
+    "premarket": {}
+  },
+  "technicals": {
+    "NVDA": {
+      "name": "엔비디아",
+      "close": 175.2,
+      "change_pct": -0.25,
+      "rsi": 39.3,
+      "macd": "데드크로스",
+      "bb_pct": 18.1,
+      "vol_ratio": 0.73,
+      "pos_52w": 70.6,
+      "vb_target": 175.77,
+      "news_sentiment": 0.208,
+      "sec_filing": false
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "close": 383.03,
+      "change_pct": 0.57,
+      "rsi": 37.5,
+      "macd": "데드크로스",
+      "bb_pct": 21.0,
+      "vol_ratio": 1.01,
+      "pos_52w": 59.3,
+      "vb_target": 381.72,
+      "news_sentiment": 0.305,
+      "sec_filing": false
+    },
+    "AAPL": {
+      "name": "애플",
+      "close": 251.64,
+      "change_pct": 0.06,
+      "rsi": 33.6,
+      "macd": "데드크로스",
+      "bb_pct": 28.4,
+      "vol_ratio": 0.7,
+      "pos_52w": 69.4,
+      "vb_target": 252.86,
+      "news_sentiment": 0.115,
+      "sec_filing": false
+    }
+  },
+  "top_news": [
+    {
+      "title": "Marvell’s AI Edge: 30% Growth at 26x Earnings",
+      "ticker": ""
+    },
+    {
+      "title": "Skyworks Solutions, Inc. (NASDAQ:SWKS) Given Average Rating of \"Hold\" by Analysts",
+      "ticker": ""
+    },
+    {
+      "title": "How Investors Are Reacting To Procore Technologies (PCOR) Powering NVIDIA’s AI Factory Digital Twin Platform",
+      "ticker": ""
+    },
+    {
+      "title": "Caterpillar Inc. $CAT Stake Increased by Triangle Securities Wealth Management",
+      "ticker": ""
+    },
+    {
+      "title": "Synergy Asset Management LLC Increases Holdings in AT&T Inc. $T",
+      "ticker": ""
+    }
+  ],
+  "prev_result": {
+    "date": "2026-03-26",
+    "mode": "CAUTIOUS_BEAR",
+    "pnl_pct": 0,
+    "win": false
+  },
+  "built_at": "2026-03-27T23:27:30.541990"
+}

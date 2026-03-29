@@ -1,0 +1,90 @@
+{
+  "date": "2026-03-26",
+  "market": "KR",
+  "universe_tickers": [
+    "005930",
+    "000660",
+    "035420"
+  ],
+  "context": {
+    "kospi": {
+      "change_pct": 1.59,
+      "close": 5642.21
+    },
+    "kosdaq": {
+      "change_pct": 3.4,
+      "close": 1159.55
+    },
+    "usd_krw": 1501.99,
+    "vkospi": 0,
+    "foreign_futures": 0,
+    "us_prev": {},
+    "fomc": false,
+    "options_expiry": false
+  },
+  "technicals": {
+    "005930": {
+      "name": "삼성전자",
+      "close": 189000,
+      "change_pct": -0.37,
+      "rsi": 50.4,
+      "macd": "데드크로스",
+      "bb_pos": "중간",
+      "bb_pct": 41.5,
+      "ma_align": "혼재",
+      "vol_ratio": 0.0,
+      "vol_signal": "감소",
+      "pos_52w": 80.0,
+      "gap_pct": -0.37,
+      "foreign_flow": 0,
+      "inst_flow": 0,
+      "short_ratio": 0,
+      "disclosure": false
+    },
+    "000660": {
+      "name": "SK하이닉스",
+      "close": 995000,
+      "change_pct": 0.91,
+      "rsi": 56.0,
+      "macd": "데드크로스",
+      "bb_pos": "중간",
+      "bb_pct": 61.0,
+      "ma_align": "정배열",
+      "vol_ratio": 0.0,
+      "vol_signal": "감소",
+      "pos_52w": 88.9,
+      "gap_pct": 0.91,
+      "foreign_flow": 0,
+      "inst_flow": 0,
+      "short_ratio": 0,
+      "disclosure": false
+    },
+    "035420": {
+      "name": "NAVER",
+      "close": 215500,
+      "change_pct": 0.94,
+      "rsi": 42.7,
+      "macd": "데드크로스",
+      "bb_pos": "중간",
+      "bb_pct": 33.9,
+      "ma_align": "역배열",
+      "vol_ratio": 0.0,
+      "vol_signal": "감소",
+      "pos_52w": 33.1,
+      "gap_pct": 0.94,
+      "foreign_flow": 0,
+      "inst_flow": 0,
+      "short_ratio": 0,
+      "disclosure": false
+    }
+  },
+  "top_news": [],
+  "disclosures": [],
+  "prev_result": {
+    "date": "2026-03-25",
+    "mode": "NEUTRAL",
+    "pnl_pct": 0.0,
+    "win": false
+  },
+  "built_at": "2026-03-26T08:50:17.245539"
+}

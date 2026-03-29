@@ -6,14 +6,17 @@ KIS API (KR) + Finnhub/FMP/yfinance (US quote/candles/screener).
 import os
 import json
 import time
+import logging
 import requests
 import threading
 import pandas as pd
 from datetime import datetime, timedelta
+from typing import Optional
 from dotenv import load_dotenv
 from runtime_paths import get_runtime_path
 
 load_dotenv()
+log = logging.getLogger("trading")
 
 APP_KEY = os.getenv("KIS_APP_KEY", "")
 APP_SECRET = os.getenv("KIS_APP_SECRET", "")
@@ -46,6 +49,69 @@ WS_URL = (
 TOKEN_FILE = get_runtime_path("state", "kis_token.json")
 KIS_HTTP_TIMEOUT = float(os.getenv("KIS_HTTP_TIMEOUT", "10"))
 KIS_TOKEN_RETRY = int(os.getenv("KIS_TOKEN_RETRY", "3"))
+KIS_QUERY_RETRY = int(os.getenv("KIS_QUERY_RETRY", "3"))
+KIS_CACHE_TTL_SEC = int(os.getenv("KIS_CACHE_TTL_SEC", "120"))
+KIS_RATE_RPS = float(os.getenv("KIS_RATE_RPS", "12"))
+
+_BALANCE_CACHE = {}
+_PRICE_CACHE = {}
+_OHLCV_CACHE = {}
+_KIS_HTTP_LOCK = threading.Lock()
+_KIS_LAST_CALL_TS = 0.0
+
+
+def _cache_get(cache: dict, key):
+    item = cache.get(key)
+    if not item:
+        return None
+    if (datetime.now() - item["ts"]).total_seconds() > KIS_CACHE_TTL_SEC:
+        return None
+    return item["value"]
+
+
+def _cache_set(cache: dict, key, value):
+    cache[key] = {"value": value, "ts": datetime.now()}
+    return value
+
+
+def _cache_invalidate(cache: dict, key):
+    cache.pop(key, None)
+
+
+def _retry_kis(label: str, fn, retries: int = None, delay_sec: float = 0.6):
+    attempts = max(1, retries or KIS_QUERY_RETRY)
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last_error = e
+            if attempt < attempts:
+                time.sleep(delay_sec * attempt)
+    raise last_error
+
+
+def _rate_limit_wait():
+    global _KIS_LAST_CALL_TS
+    min_gap = 1.0 / max(KIS_RATE_RPS, 1.0)
+    with _KIS_HTTP_LOCK:
+        now = time.monotonic()
+        wait_sec = min_gap - (now - _KIS_LAST_CALL_TS)
+        if wait_sec > 0:
+            time.sleep(wait_sec)
+        _KIS_LAST_CALL_TS = time.monotonic()
+
+
+def _kis_get(url: str, **kwargs):
+    _rate_limit_wait()
+    timeout = kwargs.pop("timeout", KIS_HTTP_TIMEOUT)
+    return requests.get(url, timeout=timeout, **kwargs)
+
+
+def _kis_post(url: str, **kwargs):
+    _rate_limit_wait()
+    timeout = kwargs.pop("timeout", KIS_HTTP_TIMEOUT)
+    return requests.post(url, timeout=timeout, **kwargs)
 
 
 def load_token():
@@ -74,10 +140,9 @@ def get_access_token():
     last_error = None
     for attempt in range(1, max(1, KIS_TOKEN_RETRY) + 1):
         try:
-            resp = requests.post(
+            resp = _kis_post(
                 f"{BASE_URL}/oauth2/tokenP",
                 json={"grant_type": "client_credentials", "appkey": APP_KEY, "appsecret": APP_SECRET},
-                timeout=KIS_HTTP_TIMEOUT,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -112,32 +177,174 @@ def _headers(token, tr_id=""):
 
 
 def get_hashkey(body, token):
-    resp = requests.post(f"{BASE_URL}/uapi/hashkey", headers=_headers(token), json=body, timeout=10)
+    resp = _kis_post(f"{BASE_URL}/uapi/hashkey", headers=_headers(token), json=body, timeout=10)
     resp.raise_for_status()
     return resp.json()["HASH"]
 
 
 def _get_price_kr(ticker, token):
-    url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price"
-    tr_id = "FHKST01010100"  # 시세 조회는 모의/실거래 공통 TR
-    resp = requests.get(
-        url,
-        headers=_headers(token, tr_id),
-        params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+    cache_key = ("KR", ticker)
+
+    def _fetch():
+        url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price"
+        tr_id = "FHKST01010100"  # 시세 조회는 모의/실거래 공통 TR
+        resp = _kis_get(
+            url,
+            headers=_headers(token, tr_id),
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        o = resp.json().get("output", {})
+        return {
+            "ticker": ticker,
+            "name": o.get("hts_kor_isnm", ""),
+            "price": int(o.get("stck_prpr", 0)),
+            "change": int(o.get("prdy_vrss", 0)),
+            "change_rate": float(o.get("prdy_ctrt", 0)),
+            "volume": int(o.get("acml_vol", 0)),
+            "open": int(o.get("stck_oprc", 0)),
+            "high": int(o.get("stck_hgpr", 0)),
+            "low": int(o.get("stck_lwpr", 0)),
+        }
+
+    try:
+        return _cache_set(_PRICE_CACHE, cache_key, _retry_kis(f"KR price [{ticker}]", _fetch))
+    except Exception:
+        cached = _cache_get(_PRICE_CACHE, cache_key)
+        if cached is not None:
+            log.warning(f"KIS KR 현재가 캐시 사용 [{ticker}]")
+            return cached
+        raise
+
+
+def _pick_first(mapping: dict, keys, default=None):
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+_US_QUOTE_CODE_MAP = {
+    "NASD": "NAS",
+    "NYSE": "NYS",
+    "AMEX": "AMS",
+}
+
+_US_EXCHANGE_CACHE = {}
+_US_DAILYPRICE_FALLBACK = set()
+
+
+def _probe_us_exchange_code(ticker: str, token: str):
+    normalized = ticker.upper()
+    for order_exch, quote_exch in _US_QUOTE_CODE_MAP.items():
+        try:
+            resp = _kis_get(
+                f"{BASE_URL}/uapi/overseas-price/v1/quotations/price",
+                headers=_headers(token, "HHDFS00000300"),
+                params={"AUTH": "", "EXCD": quote_exch, "SYMB": normalized},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("rt_cd") != "0":
+                continue
+            out = data.get("output", {})
+            price = _to_float(_pick_first(out, ["last", "ovrs_nmix_prpr", "stck_prpr", "clos"]), 0)
+            if price > 0:
+                _US_EXCHANGE_CACHE[normalized] = order_exch
+                return order_exch
+        except Exception:
+            continue
+    raise ValueError(
+        f"미국 거래소 코드 미정의 티커: {normalized}. "
+        "KIS 시세 조회로도 거래소 판별 실패"
+    )
+
+
+def _get_ovrs_excg_cd(ticker: str, token: str = None) -> str:
+    normalized = ticker.upper()
+    if normalized in _US_EXCHANGE_CACHE:
+        return _US_EXCHANGE_CACHE[normalized]
+    for exch, tickers in _US_EXCHANGE_MAP.items():
+        if normalized in tickers:
+            _US_EXCHANGE_CACHE[normalized] = exch
+            return exch
+    if token:
+        try:
+            return _probe_us_exchange_code(normalized, token)
+        except Exception:
+            pass  # probe 실패 시 NASD 기본값으로 fallback
+    _US_EXCHANGE_CACHE[normalized] = "NASD"
+    return "NASD"
+
+
+def _get_us_quote_codes(ticker: str, token: str) -> tuple[str, str]:
+    order_exch = _get_ovrs_excg_cd(ticker, token=token)
+    return order_exch, _US_QUOTE_CODE_MAP[order_exch]
+
+
+def _get_price_us_kis(ticker: str, token: str) -> dict:
+    _, quote_exch = _get_us_quote_codes(ticker, token)
+    resp = _kis_get(
+        f"{BASE_URL}/uapi/overseas-price/v1/quotations/price",
+        headers=_headers(token, "HHDFS00000300"),
+        params={
+            "AUTH": "",
+            "EXCD": quote_exch,
+            "SYMB": ticker.upper(),
+        },
         timeout=10,
     )
     resp.raise_for_status()
-    o = resp.json().get("output", {})
+    data = resp.json()
+    _require_kis_success(data, f"해외현재가 조회 [{ticker}]")
+    out = data.get("output", {})
+
+    price = _to_float(_pick_first(out, ["last", "ovrs_nmix_prpr", "stck_prpr", "clos"]), 0)
+    prev_close = _to_float(_pick_first(out, ["base", "prev", "prdy_vrss_sign", "tomv"]), price)
+    open_price = _to_float(_pick_first(out, ["open", "t_open", "ovrs_oprc"]), price)
+    high_price = _to_float(_pick_first(out, ["high", "t_high", "ovrs_hgpr"]), price)
+    low_price = _to_float(_pick_first(out, ["low", "t_low", "ovrs_lwpr"]), price)
+    change = _to_float(_pick_first(out, ["diff", "t_xdif", "prdy_vrss"]), price - prev_close)
+    change_rate = _to_float(
+        _pick_first(out, ["rate", "t_xrat", "prdy_ctrt"]),
+        (change / prev_close * 100.0) if prev_close else 0.0,
+    )
+    volume = int(_to_float(_pick_first(out, ["tvol", "acml_vol", "volume"]), 0))
+
+    suspicious_ohlc = (
+        price > 0 and (
+            open_price <= 0 or high_price <= 0 or low_price <= 0 or
+            (open_price == high_price == low_price == price)
+        )
+    )
+    if suspicious_ohlc:
+        try:
+            latest = _daily_ohlcv_us_kis(ticker, token, lookback_days=1)
+            if not latest.empty:
+                row = latest.iloc[-1]
+                open_price = _to_float(row.get("open"), open_price)
+                high_price = _to_float(row.get("high"), high_price)
+                low_price = _to_float(row.get("low"), low_price)
+                log.info(
+                    f"KIS US 현재가 OHLC 보정 [{ticker}] "
+                    f"keys={sorted(out.keys())[:12]}"
+                )
+        except Exception as e:
+            log.warning(f"KIS US 현재가 OHLC 보정 실패 [{ticker}]: {e}")
+
     return {
-        "ticker": ticker,
-        "name": o.get("hts_kor_isnm", ""),
-        "price": int(o.get("stck_prpr", 0)),
-        "change": int(o.get("prdy_vrss", 0)),
-        "change_rate": float(o.get("prdy_ctrt", 0)),
-        "volume": int(o.get("acml_vol", 0)),
-        "open": int(o.get("stck_oprc", 0)),
-        "high": int(o.get("stck_hgpr", 0)),
-        "low": int(o.get("stck_lwpr", 0)),
+        "ticker": ticker.upper(),
+        "name": _pick_first(out, ["e_hname", "hts_kor_isnm", "ovrs_item_name"], ticker.upper()),
+        "price": round(price, 4),
+        "change": round(change, 4),
+        "change_rate": round(change_rate, 2),
+        "volume": volume,
+        "open": round(open_price, 4),
+        "high": round(high_price, 4),
+        "low": round(low_price, 4),
     }
 
 
@@ -220,61 +427,131 @@ def _get_price_kr_yf(ticker: str) -> dict:
 
 def get_price(ticker, token, market="KR"):
     if market == "US":
-        # 1차: Finnhub (무료 무제한)
+        # 1차: KIS 해외 시세
         try:
-            return _get_price_us_finnhub(ticker)
-        except Exception:
-            pass
-        # 2차: yfinance
+            result = _get_price_us_kis(ticker, token)
+            log.info(f"KIS US 현재가 성공 [{ticker}]")
+            return result
+        except Exception as e:
+            log.warning(f"KIS US 현재가 실패 [{ticker}] → 폴백 전환: {e}")
+        # 2차: Finnhub (무료 무제한)
         try:
-            return _get_price_us_yf(ticker)
-        except Exception:
-            pass
-        # 3차: Alpha Vantage (레거시 최후 폴백)
-        return _get_price_us_alpha(ticker)
+            result = _get_price_us_finnhub(ticker)
+            log.info(f"US 현재가 Finnhub 폴백 성공 [{ticker}]")
+            return result
+        except Exception as e:
+            log.warning(f"US 현재가 Finnhub 실패 [{ticker}]: {e}")
+        # 3차: yfinance
+        try:
+            result = _get_price_us_yf(ticker)
+            log.info(f"US 현재가 yfinance 폴백 성공 [{ticker}]")
+            return result
+        except Exception as e:
+            log.warning(f"US 현재가 yfinance 실패 [{ticker}]: {e}")
+        # 4차: Alpha Vantage (레거시 최후 폴백)
+        result = _get_price_us_alpha(ticker)
+        log.info(f"US 현재가 Alpha Vantage 폴백 성공 [{ticker}]")
+        return result
     try:
         return _get_price_kr(ticker, token)
     except Exception as e:
-        import logging
-        logging.getLogger("trading").warning(f"KIS 가격 조회 실패 [{ticker}] → yfinance 폴백: {e}")
+        log.warning(f"KIS 가격 조회 실패 [{ticker}] → yfinance 폴백: {e}")
         return _get_price_kr_yf(ticker)
 
 
 def _daily_ohlcv_kr(ticker, token, lookback_days=200):
+    cache_key = ("KR", ticker, int(lookback_days))
+
+    def _fetch():
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(days=max(lookback_days, 30) * 2)
+        url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+        headers = _headers(token, "FHKST03010100")
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": ticker,
+            "FID_INPUT_DATE_1": start_dt.strftime("%Y%m%d"),
+            "FID_INPUT_DATE_2": end_dt.strftime("%Y%m%d"),
+            "FID_PERIOD_DIV_CODE": "D",
+            "FID_ORG_ADJ_PRC": "0",
+        }
+        resp = _kis_get(url, headers=headers, params=params, timeout=15)
+        resp.raise_for_status()
+        rows = resp.json().get("output2", [])
+        if not rows:
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+
+        df = pd.DataFrame(rows).rename(
+            columns={
+                "stck_bsop_date": "date",
+                "stck_oprc": "open",
+                "stck_hgpr": "high",
+                "stck_lwpr": "low",
+                "stck_clpr": "close",
+                "acml_vol": "volume",
+            }
+        )
+        keep = ["date", "open", "high", "low", "close", "volume"]
+        df = df[[c for c in keep if c in df.columns]].copy()
+        for c in ("open", "high", "low", "close", "volume"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
+        df = df.dropna(subset=["date", "open", "high", "low", "close", "volume"])
+        return df.sort_values("date").tail(lookback_days).reset_index(drop=True)
+
+    try:
+        return _cache_set(_OHLCV_CACHE, cache_key, _retry_kis(f"KR daily ohlcv [{ticker}]", _fetch))
+    except Exception:
+        cached = _cache_get(_OHLCV_CACHE, cache_key)
+        if cached is not None:
+            log.warning(f"KIS KR 일봉 캐시 사용 [{ticker}]")
+            return cached
+        raise
+
+
+def _daily_ohlcv_us_kis(ticker: str, token: str, lookback_days: int = 200) -> pd.DataFrame:
+    _, quote_exch = _get_us_quote_codes(ticker, token)
     end_dt = datetime.now()
-    start_dt = end_dt - timedelta(days=max(lookback_days, 30) * 2)
-    url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-    headers = _headers(token, "FHKST03010100")
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_INPUT_ISCD": ticker,
-        "FID_INPUT_DATE_1": start_dt.strftime("%Y%m%d"),
-        "FID_INPUT_DATE_2": end_dt.strftime("%Y%m%d"),
-        "FID_PERIOD_DIV_CODE": "D",
-        "FID_ORG_ADJ_PRC": "0",
-    }
-    resp = requests.get(url, headers=headers, params=params, timeout=15)
+    start_dt = end_dt - timedelta(days=max(lookback_days, 30) * 3)
+    resp = _kis_get(
+        f"{BASE_URL}/uapi/overseas-price/v1/quotations/dailyprice",
+        headers=_headers(token, "HHDFS76240000"),
+        params={
+            "AUTH": "",
+            "EXCD": quote_exch,
+            "SYMB": ticker.upper(),
+            "GUBN": "0",
+            "BYMD": end_dt.strftime("%Y%m%d"),
+            "MODP": "1",
+        },
+        timeout=15,
+    )
     resp.raise_for_status()
-    rows = resp.json().get("output2", [])
+    data = resp.json()
+    _require_kis_success(data, f"해외기간시세 조회 [{ticker}]")
+    rows = data.get("output2", []) or data.get("output", [])
     if not rows:
         return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
 
-    df = pd.DataFrame(rows).rename(
-        columns={
-            "stck_bsop_date": "date",
-            "stck_oprc": "open",
-            "stck_hgpr": "high",
-            "stck_lwpr": "low",
-            "stck_clpr": "close",
-            "acml_vol": "volume",
-        }
-    )
-    keep = ["date", "open", "high", "low", "close", "volume"]
-    df = df[[c for c in keep if c in df.columns]].copy()
-    for c in ("open", "high", "low", "close", "volume"):
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+    normalized = []
+    for row in rows:
+        date_raw = _pick_first(row, ["xymd", "date", "bas_dt"])
+        normalized.append(
+            {
+                "date": date_raw,
+                "open": _to_float(_pick_first(row, ["open", "ovrs_oprc"])),
+                "high": _to_float(_pick_first(row, ["high", "ovrs_hgpr"])),
+                "low": _to_float(_pick_first(row, ["low", "ovrs_lwpr"])),
+                "close": _to_float(_pick_first(row, ["clos", "last", "ovrs_clpr"])),
+                "volume": _to_float(_pick_first(row, ["tvol", "acml_vol", "volume"])),
+            }
+        )
+    df = pd.DataFrame(normalized)
     df["date"] = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
-    df = df.dropna(subset=["date", "open", "high", "low", "close", "volume"])
+    df = df.dropna(subset=["date", "open", "high", "low", "close"])
+    if df.empty:
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+    df = df[df["date"] >= pd.Timestamp(start_dt.date())]
     return df.sort_values("date").tail(lookback_days).reset_index(drop=True)
 
 
@@ -352,14 +629,48 @@ def _daily_ohlcv_us_alpha(ticker, lookback_days=200):
 
 def get_daily_ohlcv(ticker, token, lookback_days=200, market="KR"):
     if market == "US":
-        # yfinance 우선 (무제한) → AV 레거시 폴백
+        normalized = ticker.upper()
+        if normalized in _US_DAILYPRICE_FALLBACK:
+            try:
+                df = _daily_ohlcv_us_yf(ticker, lookback_days=lookback_days)
+                if not df.empty:
+                    log.info(f"US 기간시세 캐시된 외부 폴백 사용 [{ticker}] rows={len(df)}")
+                    return df
+            except Exception:
+                df = pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+            df = _daily_ohlcv_us_alpha(ticker, lookback_days=lookback_days)
+            if not df.empty:
+                log.info(f"US 기간시세 Alpha Vantage 폴백 성공 [{ticker}] rows={len(df)}")
+            else:
+                log.error(f"US 기간시세 모든 소스 실패 [{ticker}]")
+            return df
+        # 1차: KIS 해외 기간시세
         try:
-            df = _daily_ohlcv_us_yf(ticker, lookback_days=lookback_days)
-        except Exception:
+            df = _daily_ohlcv_us_kis(ticker, token, lookback_days=lookback_days)
+            if not df.empty:
+                log.info(f"KIS US 기간시세 성공 [{ticker}] rows={len(df)}")
+        except Exception as e:
             df = pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+            _US_DAILYPRICE_FALLBACK.add(normalized)
+            log.warning(f"KIS US 기간시세 실패 [{ticker}] → 외부 폴백 고정: {e}")
         if not df.empty:
             return df
-        return _daily_ohlcv_us_alpha(ticker, lookback_days=lookback_days)
+        # 2차: yfinance → AV 레거시 폴백
+        try:
+            df = _daily_ohlcv_us_yf(ticker, lookback_days=lookback_days)
+            if not df.empty:
+                log.info(f"US 기간시세 yfinance 폴백 성공 [{ticker}] rows={len(df)}")
+        except Exception:
+            df = pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+            log.warning(f"US 기간시세 yfinance 실패 [{ticker}]")
+        if not df.empty:
+            return df
+        df = _daily_ohlcv_us_alpha(ticker, lookback_days=lookback_days)
+        if not df.empty:
+            log.info(f"US 기간시세 Alpha Vantage 폴백 성공 [{ticker}] rows={len(df)}")
+        else:
+            log.error(f"US 기간시세 모든 소스 실패 [{ticker}]")
+        return df
     return _daily_ohlcv_kr(ticker, token, lookback_days=lookback_days)
 
 
@@ -416,74 +727,511 @@ def get_usd_krw() -> float:
     return float(os.getenv("USD_KRW_RATE", "1350"))
 
 
-def get_balance(token, market="KR"):
+def _to_float(value, default=0.0) -> float:
+    try:
+        if value in (None, ""):
+            return float(default)
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _first_record(value):
+    if isinstance(value, list):
+        return value[0] if value else {}
+    return value if isinstance(value, dict) else {}
+
+
+def _require_kis_success(data: dict, label: str):
+    if data.get("rt_cd") != "0":
+        raise RuntimeError(f"{label} 실패: {data.get('msg1') or data.get('msg_cd') or '응답 오류'}")
+
+
+def _get_balance_us(token, force_refresh: bool = False) -> dict:
+    """해외주식 잔고 조회 (v1_해외주식-006, TR: VTTS3012R/TTTS3012R)
+    NASD로 조회하면 모의투자에서 미국 전체 잔고 반환.
+    외화(USD) 기준 → KRW 환산은 호출자가 처리.
+    """
+    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    tr_id = "VTTS3012R" if IS_PAPER else "TTTS3012R"
+    cache_key = ("US",)
+
+    def _fetch():
+        resp = _kis_get(
+            f"{BASE_URL}/uapi/overseas-stock/v1/trading/inquire-balance",
+            headers=_headers(token, tr_id),
+            params={
+                "CANO":           acnt_no,
+                "ACNT_PRDT_CD":   acnt_prdt,
+                "OVRS_EXCG_CD":   "NASD",   # 모의: NASD/NYSE/AMEX 중 하나, 실전: NASD=미국전체
+                "TR_CRCY_CD":     "USD",
+                "CTX_AREA_FK200": "",
+                "CTX_AREA_NK200": "",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _require_kis_success(data, "해외잔고 조회")
+
+        stocks = [
+            {
+                "ticker":       s["ovrs_pdno"],
+                "name":         s.get("ovrs_item_name", ""),
+                "qty":          int(float(s.get("ovrs_cblc_qty", 0))),
+                "avg_price":    _to_float(s.get("pchs_avg_pric", 0)),
+                "eval_price":   _to_float(s.get("now_pric2", 0)),
+                "eval_profit":  _to_float(s.get("frcr_evlu_pfls_amt", 0)),
+                "profit_rate":  _to_float(s.get("evlu_pfls_rt", 0)),
+            }
+            for s in data.get("output1", [])
+            if int(float(s.get("ovrs_cblc_qty", 0))) > 0
+        ]
+
+        s2 = _first_record(data.get("output2", {}))
+        total_eval_usd = sum(s["qty"] * s["eval_price"] for s in stocks)
+        total_cost_usd = sum(s["qty"] * s["avg_price"] for s in stocks)
+        total_profit = _to_float(s2.get("ovrs_tot_pfls"), sum(s["eval_profit"] for s in stocks))
+        profit_rate = _to_float(
+            s2.get("tot_pftrt"),
+            (total_profit / total_cost_usd * 100.0) if total_cost_usd > 0 else 0.0,
+        )
+
+        return {
+            "stocks":       stocks,
+            "total_eval":   round(total_eval_usd, 2),
+            "cash":         0,
+            "total_profit": round(total_profit, 2),
+            "profit_rate":  profit_rate,
+            "currency":     "USD",
+        }
+
+    if force_refresh:
+        _cache_invalidate(_BALANCE_CACHE, cache_key)
+
+    try:
+        return _cache_set(_BALANCE_CACHE, cache_key, _retry_kis("US balance", _fetch))
+    except Exception:
+        cached = _cache_get(_BALANCE_CACHE, cache_key)
+        if cached is not None:
+            log.warning("KIS US 잔고 캐시 사용")
+            return cached
+        raise
+
+
+def get_balance(token, market="KR", force_refresh: bool = False):
     if market == "US":
-        # US account path is broker-specific; keep this safe fallback for now.
-        return {"stocks": [], "total_eval": 0, "cash": 0, "total_profit": 0, "profit_rate": 0.0}
+        return _get_balance_us(token, force_refresh=force_refresh)
 
     acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
     tr_id = "VTTC8908R" if IS_PAPER else "TTTC8908R"
-    resp = requests.get(
-        f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-balance",
-        headers=_headers(token, tr_id),
-        params={
-            "CANO": acnt_no,
-            "ACNT_PRDT_CD": acnt_prdt,
-            "AFHR_FLPR_YN": "N",
-            "OFL_YN": "",
-            "INQR_DVSN": "02",
-            "UNPR_DVSN": "01",
-            "FUND_STTL_ICLD_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "01",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": "",
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    stocks = [
-        {
-            "ticker": s["pdno"],
-            "name": s["prdt_name"],
-            "qty": int(s["hldg_qty"]),
-            "avg_price": int(float(s["pchs_avg_pric"])),
-            "eval_price": int(s["prpr"]),
-            "eval_profit": int(s["evlu_pfls_amt"]),
+    cache_key = ("KR",)
+
+    def _fetch():
+        resp = _kis_get(
+            f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-balance",
+            headers=_headers(token, tr_id),
+            params={
+                "CANO": acnt_no,
+                "ACNT_PRDT_CD": acnt_prdt,
+                "AFHR_FLPR_YN": "N",
+                "OFL_YN": "",
+                "INQR_DVSN": "02",
+                "UNPR_DVSN": "01",
+                "FUND_STTL_ICLD_YN": "N",
+                "FNCG_AMT_AUTO_RDPT_YN": "N",
+                "PRCS_DVSN": "01",
+                "PDNO": "",
+                "ORD_UNPR": "",
+                "ORD_DVSN": "",
+                "CMA_EVLU_AMT_ICLD_YN": "N",
+                "OVRS_ICLD_YN": "N",
+                "CTX_AREA_FK100": "",
+                "CTX_AREA_NK100": "",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _require_kis_success(data, "국내잔고 조회")
+
+        if "output1" in data or "output2" in data:
+            stocks = [
+                {
+                    "ticker": s["pdno"],
+                    "name": s["prdt_name"],
+                    "qty": int(s["hldg_qty"]),
+                    "avg_price": int(float(s["pchs_avg_pric"])),
+                    "eval_price": int(s["prpr"]),
+                    "eval_profit": int(s["evlu_pfls_amt"]),
+                }
+                for s in data.get("output1", [])
+                if int(s.get("hldg_qty", 0)) > 0
+            ]
+            s2 = _first_record(data.get("output2", {}))
+            return {
+                "stocks": stocks,
+                "total_eval": int(s2.get("scts_evlu_amt", 0)),
+                "cash": int(s2.get("dnca_tot_amt", 0)),
+                "total_profit": int(s2.get("evlu_pfls_smtl_amt", 0)),
+                "profit_rate": float(s2.get("asst_icdc_erng_rt", 0)),
+            }
+
+        out = data.get("output", {})
+        cash = int(out.get("ord_psbl_cash", out.get("nrcvb_buy_amt", 0)))
+        return {
+            "stocks": [],
+            "total_eval": 0,
+            "cash": cash,
+            "total_profit": 0,
+            "profit_rate": 0.0,
         }
-        for s in data.get("output1", [])
-        if int(s.get("hldg_qty", 0)) > 0
-    ]
-    s2 = data.get("output2", [{}])[0]
+
+    if force_refresh:
+        _cache_invalidate(_BALANCE_CACHE, cache_key)
+
+    try:
+        return _cache_set(_BALANCE_CACHE, cache_key, _retry_kis("KR balance", _fetch))
+    except Exception:
+        cached = _cache_get(_BALANCE_CACHE, cache_key)
+        if cached is not None:
+            log.warning("KIS KR 잔고 캐시 사용")
+            return cached
+        raise
+
+
+def _normalize_kr_daily_ccld_row(row: dict) -> dict:
+    order_no = str(_pick_first(row, ["odno", "ODNO", "ord_no"], "") or "").strip()
+    ticker = str(_pick_first(row, ["pdno", "PDNO", "shtn_pdno"], "") or "").strip()
+    side_code = str(_pick_first(row, ["sll_buy_dvsn_cd", "SLL_BUY_DVSN_CD"], "") or "").strip()
+    side = {"01": "sell", "02": "buy"}.get(side_code, "")
+    filled_qty = int(_to_float(_pick_first(row, [
+        "tot_ccld_qty", "ccld_qty", "tot_ccld_qty_sum", "ft_ccld_qty", "exec_qty"
+    ]), 0))
+    order_qty = int(_to_float(_pick_first(row, ["ord_qty", "ORD_QTY"]), 0))
+    fill_price = _to_float(_pick_first(row, [
+        "avg_prvs", "avg_cntr_prc", "avg_ccld_unpr", "tot_ccld_unpr", "ccld_unpr", "ord_unpr"
+    ]), 0)
     return {
-        "stocks": stocks,
-        "total_eval": int(s2.get("scts_evlu_amt", 0)),
-        "cash": int(s2.get("dnca_tot_amt", 0)),
-        "total_profit": int(s2.get("evlu_pfls_smtl_amt", 0)),
-        "profit_rate": float(s2.get("asst_icdc_erng_rt", 0)),
+        "order_no": order_no,
+        "ticker": ticker,
+        "side": side,
+        "filled_qty": filled_qty,
+        "order_qty": order_qty,
+        "fill_price": fill_price,
+        "order_time": str(_pick_first(row, ["ord_tmd", "ORD_TMD"], "") or "").strip(),
+        "raw": row,
+    }
+
+
+def inquire_daily_ccld_kr(token: str,
+                          start_date: str = None,
+                          end_date: str = None,
+                          order_no: str = "",
+                          ticker: str = "",
+                          side_code: str = "00",
+                          filled_code: str = "00") -> list[dict]:
+    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    tr_id = "VTTC8001R" if IS_PAPER else "TTTC8001R"
+    if start_date is None:
+        start_date = datetime.now().strftime("%Y%m%d")
+    if end_date is None:
+        end_date = start_date
+
+    headers = _headers(token, tr_id)
+    headers["custtype"] = "P"
+
+    def _fetch():
+        resp = _kis_get(
+            f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+            headers=headers,
+            params={
+                "CANO": acnt_no,
+                "ACNT_PRDT_CD": acnt_prdt,
+                "INQR_STRT_DT": start_date,
+                "INQR_END_DT": end_date,
+                "SLL_BUY_DVSN_CD": side_code,
+                "INQR_DVSN": "01",
+                "PDNO": ticker,
+                "CCLD_DVSN": filled_code,
+                "ORD_GNO_BRNO": "",
+                "ODNO": order_no,
+                "INQR_DVSN_3": "00",
+                "INQR_DVSN_1": "",
+                "CTX_AREA_FK100": "",
+                "CTX_AREA_NK100": "",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _require_kis_success(data, "국내 주문체결조회")
+        return [_normalize_kr_daily_ccld_row(row) for row in data.get("output1", [])]
+
+    return _retry_kis("KR daily ccld", _fetch)
+
+
+def get_order_fill_kr(token: str, order_no: str, ticker: str = "", trade_date: str = None) -> Optional[dict]:
+    if not order_no:
+        return None
+    query_date = trade_date or datetime.now().strftime("%Y%m%d")
+    rows = inquire_daily_ccld_kr(
+        token,
+        start_date=query_date,
+        end_date=query_date,
+        order_no=str(order_no).strip(),
+        ticker=ticker,
+        filled_code="01",
+    )
+    order_no_s = str(order_no).strip()
+    try:
+        target_int = int(order_no_s) if order_no_s else None
+    except ValueError:
+        target_int = None
+    for row in rows:
+        row_no = str(row.get("order_no", "")).strip()
+        if row_no == order_no_s:
+            return row
+        if target_int is not None and row_no:
+            try:
+                if int(row_no) == target_int:
+                    return row
+            except ValueError:
+                pass
+    return rows[0] if rows else None
+
+
+def _normalize_us_inquire_ccnl_row(row: dict) -> dict:
+    order_no = str(_pick_first(row, ["odno", "ODNO", "ord_no"], "") or "").strip()
+    ticker = str(_pick_first(row, ["pdno", "PDNO", "ovrs_pdno"], "") or "").strip().upper()
+    side_code = str(_pick_first(row, ["sll_buy_dvsn", "SLL_BUY_DVSN", "sll_buy_dvsn_cd"], "") or "").strip()
+    side = {"01": "sell", "02": "buy"}.get(side_code, "")
+    filled_qty = int(_to_float(_pick_first(row, [
+        "ft_ccld_qty", "ccld_qty", "tot_ccld_qty", "tot_ccld_qty_sum", "exec_qty"
+    ]), 0))
+    order_qty = int(_to_float(_pick_first(row, ["ord_qty", "ORD_QTY"]), 0))
+    fill_price = _to_float(_pick_first(row, [
+        "ft_ccld_unpr3", "ft_ccld_unpr", "avg_prvs", "avg_ccld_unpr", "ccld_unpr", "ovrs_ord_unpr"
+    ]), 0)
+    return {
+        "order_no": order_no,
+        "ticker": ticker,
+        "side": side,
+        "filled_qty": filled_qty,
+        "order_qty": order_qty,
+        "fill_price": fill_price,
+        "order_time": str(_pick_first(row, ["ord_tmd", "ORD_TMD", "ord_time"], "") or "").strip(),
+        "raw": row,
+    }
+
+
+def inquire_ccnl_us(token: str,
+                    start_date: str,
+                    end_date: str,
+                    ticker: str = "",
+                    side_code: str = "00",
+                    filled_code: str = "00",
+                    sort_sqn: str = "DS") -> list[dict]:
+    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    tr_id = "VTTS3035R" if IS_PAPER else "TTTS3035R"
+    headers = _headers(token, tr_id)
+    headers["custtype"] = "P"
+    pdno = "" if IS_PAPER else (ticker or "%")
+    ovrs_excg_cd = "" if IS_PAPER else "%"
+    sll_buy_dvsn = "00" if IS_PAPER else side_code
+    ccld_nccs_dvsn = "00" if IS_PAPER else filled_code
+    sort_value = "DS" if IS_PAPER else sort_sqn
+
+    def _fetch():
+        resp = _kis_get(
+            f"{BASE_URL}/uapi/overseas-stock/v1/trading/inquire-ccnl",
+            headers=headers,
+            params={
+                "CANO": acnt_no,
+                "ACNT_PRDT_CD": acnt_prdt,
+                "PDNO": pdno,
+                "ORD_STRT_DT": start_date,
+                "ORD_END_DT": end_date,
+                "SLL_BUY_DVSN": sll_buy_dvsn,
+                "CCLD_NCCS_DVSN": ccld_nccs_dvsn,
+                "OVRS_EXCG_CD": ovrs_excg_cd,
+                "SORT_SQN": sort_value,
+                "ORD_DT": "",
+                "ORD_GNO_BRNO": "",
+                "ODNO": "",
+                "CTX_AREA_NK200": "",
+                "CTX_AREA_FK200": "",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _require_kis_success(data, "해외 주문체결조회")
+        return [_normalize_us_inquire_ccnl_row(row) for row in data.get("output", [])]
+
+    return _retry_kis("US inquire ccnl", _fetch)
+
+
+def get_order_fill_us(token: str, order_no: str, ticker: str = "", created_at: str = "") -> Optional[dict]:
+    if not order_no:
+        return None
+    candidates = []
+    if created_at:
+        try:
+            base_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            candidates.append(base_dt.strftime("%Y%m%d"))
+            candidates.append((base_dt - timedelta(days=1)).strftime("%Y%m%d"))
+        except Exception:
+            pass
+    today = datetime.now().strftime("%Y%m%d")
+    for dt in [today, (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")]:
+        if dt not in candidates:
+            candidates.append(dt)
+
+    seen = set()
+    rows = []
+    for dt in candidates:
+        if dt in seen:
+            continue
+        seen.add(dt)
+        try:
+            rows.extend(inquire_ccnl_us(token, start_date=dt, end_date=dt, ticker=ticker))
+        except Exception:
+            continue
+
+    order_no_s = str(order_no).strip()
+    try:
+        target_int = int(order_no_s) if order_no_s else None
+    except ValueError:
+        target_int = None
+    ticker_u = ticker.upper().strip()
+    exact = []
+    for row in rows:
+        row_no = str(row.get("order_no", "")).strip()
+        if ticker_u and row.get("ticker", "").upper() != ticker_u:
+            continue
+        matched = row_no == order_no_s
+        if not matched and target_int is not None and row_no:
+            try:
+                matched = int(row_no) == target_int
+            except ValueError:
+                pass
+        if matched:
+            exact.append(row)
+    if exact:
+        exact.sort(key=lambda r: (r.get("filled_qty", 0), r.get("order_time", "")), reverse=True)
+        return exact[0]
+
+    if ticker_u:
+        ticker_rows = [r for r in rows if r.get("ticker", "").upper() == ticker_u and r.get("filled_qty", 0) > 0]
+        ticker_rows.sort(key=lambda r: (r.get("filled_qty", 0), r.get("order_time", "")), reverse=True)
+        if ticker_rows:
+            return ticker_rows[0]
+    return None
+
+
+def _normalize_order_result(market: str, side: str, ticker: str, qty: int, native_price: float, data: dict) -> dict:
+    output = _first_record(data.get("output", {}))
+    return {
+        "success": data.get("rt_cd") == "0",
+        "msg": data.get("msg1", "") or data.get("msg_cd", ""),
+        "order_no": str(output.get("ODNO", "") or "").strip(),
+        "market": market,
+        "side": side,
+        "ticker": ticker,
+        "qty": int(qty),
+        "price": float(native_price),
+        "price_type": "market" if float(native_price or 0) == 0 else "limit",
+        "raw": data,
+    }
+
+
+def precheck_order(
+    ticker: str,
+    qty: int,
+    price: float,
+    side: str,
+    token: str,
+    market: str = "KR",
+    force_refresh: bool = False,
+) -> dict:
+    ticker = (ticker or "").strip().upper()
+    qty = int(qty or 0)
+    price = float(price or 0)
+    if qty <= 0:
+        return {"ok": False, "reason": "invalid_qty", "msg": "주문수량이 0 이하입니다.", "allowed_qty": 0}
+
+    if market == "KR":
+        bal = get_balance(token, market="KR", force_refresh=force_refresh)
+        holdings = {str(s.get("ticker", "")).strip().upper(): int(s.get("qty", 0) or 0) for s in bal.get("stocks", [])}
+        if side == "sell":
+            held_qty = holdings.get(ticker, 0)
+            return {
+                "ok": held_qty >= qty,
+                "reason": "ok" if held_qty >= qty else "insufficient_holding",
+                "msg": "주문 가능" if held_qty >= qty else f"보유수량 부족: {held_qty}주",
+                "allowed_qty": held_qty,
+                "cash": float(bal.get("cash", 0) or 0),
+            }
+        order_value = price * qty
+        cash = float(bal.get("cash", 0) or 0)
+        allowed_qty = int(cash // price) if price > 0 else qty
+        return {
+            "ok": price > 0 and cash >= order_value,
+            "reason": "ok" if price > 0 and cash >= order_value else ("invalid_price" if price <= 0 else "insufficient_cash"),
+            "msg": "주문 가능" if price > 0 and cash >= order_value else ("주문단가가 0 이하입니다." if price <= 0 else f"현금 부족: {cash:,.0f}원"),
+            "allowed_qty": allowed_qty,
+            "cash": cash,
+        }
+
+    bal_us = get_balance(token, market="US", force_refresh=force_refresh)
+    holdings_us = {str(s.get("ticker", "")).strip().upper(): int(s.get("qty", 0) or 0) for s in bal_us.get("stocks", [])}
+    if side == "sell":
+        held_qty = holdings_us.get(ticker, 0)
+        return {
+            "ok": held_qty >= qty,
+            "reason": "ok" if held_qty >= qty else "insufficient_holding",
+            "msg": "주문 가능" if held_qty >= qty else f"보유수량 부족: {held_qty}주",
+            "allowed_qty": held_qty,
+            "cash": float(bal_us.get("cash", 0) or 0),
+        }
+
+    # 통합계좌 특성상 US 가용현금은 KR 잔고 총액을 참고해 1차 방어만 수행한다.
+    bal_kr = get_balance(token, market="KR", force_refresh=force_refresh)
+    cash_krw = float(bal_kr.get("cash", 0) or 0)
+    usd_krw = get_usd_krw()
+    order_value_krw = price * qty * usd_krw
+    allowed_qty = int(cash_krw // max(price * usd_krw, 1)) if price > 0 else qty
+    return {
+        "ok": price > 0 and cash_krw >= order_value_krw,
+        "reason": "ok" if price > 0 and cash_krw >= order_value_krw else ("invalid_price" if price <= 0 else "insufficient_cash"),
+        "msg": "주문 가능" if price > 0 and cash_krw >= order_value_krw else ("주문단가가 0 이하입니다." if price <= 0 else f"원화 가용현금 부족: {cash_krw:,.0f}원"),
+        "allowed_qty": allowed_qty,
+        "cash": cash_krw,
     }
 
 
 def _place_order_kr(ticker, qty, price, side, token):
     acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
     tr_map = {
-        ("buy", True): "VTTC0802U",
-        ("sell", True): "VTTC0801U",
-        ("buy", False): "TTTC0802U",
-        ("sell", False): "TTTC0801U",
+        ("buy",  True):  "VTTC0012U",   # 모의투자 매수 (신TR)
+        ("sell", True):  "VTTC0011U",   # 모의투자 매도 (신TR)
+        ("buy",  False): "TTTC0012U",   # 실거래 매수 (신TR)
+        ("sell", False): "TTTC0011U",   # 실거래 매도 (신TR)
     }
     body = {
         "CANO": acnt_no,
         "ACNT_PRDT_CD": acnt_prdt,
         "PDNO": ticker,
+        "SLL_TYPE": "01" if side == "sell" else "",
         "ORD_DVSN": "01" if price == 0 else "00",
         "ORD_QTY": str(qty),
         "ORD_UNPR": str(price),
     }
     headers = _headers(token, tr_map[(side, IS_PAPER)])
+    headers["custtype"] = "P"   # 개인
     headers["hashkey"] = get_hashkey(body, token)
-    resp = requests.post(
+    resp = _kis_post(
         f"{BASE_URL}/uapi/domestic-stock/v1/trading/order-cash",
         headers=headers,
         json=body,
@@ -491,21 +1239,88 @@ def _place_order_kr(ticker, qty, price, side, token):
     )
     resp.raise_for_status()
     r = resp.json()
-    return {"success": r.get("rt_cd") == "0", "msg": r.get("msg1", ""), "order_no": r.get("output", {}).get("ODNO", "")}
+    return _normalize_order_result("KR", side, ticker, qty, price, r)
+
+
+# 미국 거래소 코드 매핑. 미확인 종목을 기본 NASD로 보내지 않고 명시적으로 막는다.
+_US_EXCHANGE_MAP = {
+    "NASD": [
+        "AAPL", "ADBE", "AMD", "AMZN", "AVGO", "COST", "CRM", "CSCO", "GOOG",
+        "GOOGL", "INTC", "META", "MSFT", "NFLX", "NVDA", "ORCL", "PEP", "PLTR",
+        "QCOM", "SBUX", "SMCI", "SNOW", "TSLA", "TXN", "UBER",
+        "ARM", "BRZE", "CORT", "PAYS", "SRPT",
+    ],
+    "NYSE": ["BRK.B","JPM","BAC","WFC","GS","MS","C","USB","BLK","AXP",
+             "XOM","CVX","COP","SLB","WMT","HD","MCD","NKE","PG","KO",
+             "PFE","JNJ","MRK","ABT","UNH","V","MA"],
+    "AMEX": ["SPY","QQQ","IWM","GLD","SLV","USO"],
+}
+
+
+def _place_order_us(ticker, qty, price, side, token):
+    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    tr_map = {
+        ("buy",  True):  "VTTT1002U",
+        ("sell", True):  "VTTT1001U",
+        ("buy",  False): "TTTT1002U",
+        ("sell", False): "TTTT1006U",
+    }
+    body = {
+        "CANO":            acnt_no,
+        "ACNT_PRDT_CD":    acnt_prdt,
+        "OVRS_EXCG_CD":    _get_ovrs_excg_cd(ticker, token=token),
+        "PDNO":            ticker.upper(),
+        "ORD_QTY":         str(qty),
+        "OVRS_ORD_UNPR":   str(price),
+        "CTAC_TLNO":       "",
+        "MGCO_APTM_ODNO":  "",
+        "ORD_SVR_DVSN_CD": "0",
+        "ORD_DVSN":        "00",   # 모의투자는 지정가(00)만 가능
+        "SLL_TYPE":        "" if side == "buy" else "00",
+    }
+    headers = _headers(token, tr_map[(side, IS_PAPER)])
+    headers["custtype"] = "P"
+    headers["hashkey"]  = get_hashkey(body, token)
+    resp = _kis_post(
+        f"{BASE_URL}/uapi/overseas-stock/v1/trading/order",
+        headers=headers,
+        json=body,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    r = resp.json()
+    return _normalize_order_result("US", side, ticker, qty, price, r)
 
 
 def place_order(ticker, qty, price, side, token, market="KR"):
     if market == "US":
-        return {"success": False, "msg": "US live order path is not implemented", "order_no": ""}
+        return _place_order_us(ticker, qty, price, side, token)
     return _place_order_kr(ticker, qty, price, side, token)
 
 
 # ── 시장 스크리너 ──────────────────────────────────────────────────────────────
 
 _US_FALLBACK_UNIVERSE = [
-    "NVDA", "TSLA", "AAPL", "MSFT", "AMZN",
-    "GOOGL", "META", "AMD", "SMCI", "PLTR",
-    "NFLX", "ORCL", "CRM", "SNOW", "UBER",
+    # Core 5
+    "NVDA", "TSLA", "AAPL", "GOOGL", "NFLX",
+    # Tier 2 섹터 후보
+    "JPM", "GS", "XOM", "CVX", "LLY", "ABBV", "CAT", "GE",
+    # 보조
+    "META", "AMZN", "MSFT", "AMD",
+]
+
+# 개장 전 거래량 부족 시 KR 블루칩 폴백
+_KR_FALLBACK_UNIVERSE = [
+    "005930",  # 삼성전자
+    "000660",  # SK하이닉스
+    "035420",  # NAVER
+    "005380",  # 현대차
+    "051910",  # LG화학
+    "035720",  # 카카오
+    "000270",  # 기아
+    "068270",  # 셀트리온
+    "105560",  # KB금융
+    "055550",  # 신한지주
 ]
 
 
@@ -530,7 +1345,7 @@ def screen_market_kr(token: str, top_n: int = 30) -> list:
         "FID_INPUT_DATE_1":       "",
     }
     try:
-        resp = requests.get(
+        resp = _kis_get(
             url,
             headers=_headers(token, "FHPST01710000"),
             params=params,
@@ -554,9 +1369,28 @@ def screen_market_kr(token: str, top_n: int = 30) -> list:
                 })
             except (ValueError, TypeError):
                 continue
+        # 개장 전 거래량 부족으로 후보가 5개 미만이면 블루칩 폴백으로 보완
+        if len(result) < 5:
+            existing = {r["ticker"] for r in result}
+            for ticker in _KR_FALLBACK_UNIVERSE:
+                if ticker not in existing:
+                    result.append({
+                        "ticker": ticker,
+                        "name": ticker,
+                        "price": 0,
+                        "change_rate": 0.0,
+                        "volume": 0,
+                        "vol_ratio": 1.0,
+                    })
+                if len(result) >= 10:
+                    break
         return result
     except Exception as e:
-        return []
+        # API 자체 실패 시 전체 폴백
+        return [
+            {"ticker": t, "name": t, "price": 0, "change_rate": 0.0, "volume": 0, "vol_ratio": 1.0}
+            for t in _KR_FALLBACK_UNIVERSE
+        ]
 
 
 _US_SCREEN_CACHE_PATH = get_runtime_path("state", "us_screen_cache.json")
@@ -590,16 +1424,34 @@ def _has_meaningful_candidate_volume(candidates: list) -> bool:
 
 
 def _fmp_screen_candidates() -> list:
-    """FMP stable 엔드포인트로 US 스크리너 후보 수집 (250회/일 무료)"""
+    """
+    FMP stable 엔드포인트로 US 스크리너 후보 수집 (250회/일 무료)
+
+    품질 필터 (페니스탁/마이크로캡/펌프종목 제거):
+      - 주가 ≥ $5  (penny stock 제거)
+      - 일거래량 ≥ 500,000주  (유동성 최소 기준)
+      - |등락률| ≤ 50%  (펌프·덤프 이상 급등 제거)
+      - 티커 길이 1~5자, 알파벳만  (ODVWZ류 이상 티커 제거)
+      - 특수 티커 접미사 제거 (W=워런트, U=유닛, R=권리주)
+    """
     if not FMP_KEY:
         raise RuntimeError("FMP_API_KEY 없음")
+
+    # 품질 필터 기준값 (환경변수로 조정 가능)
+    MIN_PRICE  = float(os.getenv("SCREEN_MIN_PRICE",  "5.0"))
+    MIN_VOL    = int(os.getenv("SCREEN_MIN_VOLUME",   "500000"))
+    MAX_CHG    = float(os.getenv("SCREEN_MAX_CHG_PCT", "50.0"))
+    _BAD_SFXS  = {"W", "U", "R"}  # 워런트/유닛/권리주
+
     base = "https://financialmodelingprep.com/stable"
     endpoints = ["biggest-gainers", "most-actives", "biggest-losers"]
     candidates = []
     seen: set = set()
+    filtered_out = 0
+
     for ep in endpoints:
         try:
-            resp = requests.get(
+            resp = _kis_get(
                 f"{base}/{ep}",
                 params={"apikey": FMP_KEY},
                 timeout=15,
@@ -610,22 +1462,44 @@ def _fmp_screen_candidates() -> list:
                 continue
             for item in items:
                 ticker = str(item.get("symbol", "")).strip()
-                if not ticker or ticker in seen or not ticker.isalpha():
+                if not ticker or ticker in seen:
+                    continue
+                # 알파벳 1~5자, 특수 접미사 제거
+                if not ticker.isalpha() or len(ticker) > 5:
+                    filtered_out += 1
+                    continue
+                if ticker[-1] in _BAD_SFXS:
+                    filtered_out += 1
                     continue
                 seen.add(ticker)
                 try:
+                    price  = float(item.get("price", 0))
+                    vol    = _extract_us_volume(item)
+                    change = abs(float(item.get("changesPercentage", 0)))
+
+                    # 품질 필터 적용
+                    if price < MIN_PRICE or vol < MIN_VOL or change > MAX_CHG:
+                        filtered_out += 1
+                        continue
+
                     candidates.append({
-                        "ticker": ticker,
-                        "name": item.get("name", ticker),
-                        "price": float(item.get("price", 0)),
+                        "ticker":      ticker,
+                        "name":        item.get("name", ticker),
+                        "price":       price,
                         "change_rate": float(item.get("changesPercentage", 0)),
-                        "volume": _extract_us_volume(item),
-                        "vol_ratio": 1.0,
+                        "volume":      vol,
+                        "vol_ratio":   1.0,
                     })
                 except (ValueError, TypeError):
                     continue
         except Exception:
             continue
+
+    import logging as _log
+    _log.getLogger("trading_system").info(
+        f"[FMP 스크리너] 통과={len(candidates)}종목 | 필터제거={filtered_out}종목 "
+        f"(기준: 가격≥${MIN_PRICE}, 거래량≥{MIN_VOL:,}, 등락≤{MAX_CHG}%)"
+    )
     return candidates
 
 
@@ -671,20 +1545,30 @@ def screen_market_us(top_n: int = 30) -> list:
             data = _av_get({"function": "TOP_GAINERS_LOSERS"})
             candidates = []
             seen: set = set()
+            _MIN_P = float(os.getenv("SCREEN_MIN_PRICE",  "5.0"))
+            _MIN_V = int(os.getenv("SCREEN_MIN_VOLUME",   "500000"))
+            _MAX_C = float(os.getenv("SCREEN_MAX_CHG_PCT", "50.0"))
             for section in ("most_actively_traded", "top_gainers", "top_losers"):
                 for item in data.get(section, []):
                     ticker = item.get("ticker", "").strip()
-                    if not ticker or ticker in seen or not ticker.isalpha():
+                    if not ticker or ticker in seen or not ticker.isalpha() or len(ticker) > 5:
+                        continue
+                    if ticker[-1] in {"W", "U", "R"}:
                         continue
                     seen.add(ticker)
                     try:
+                        price  = float(item.get("price", 0))
+                        vol    = _extract_us_volume(item)
+                        change = abs(float(str(item.get("change_percentage", "0")).replace("%", "")))
+                        if price < _MIN_P or vol < _MIN_V or change > _MAX_C:
+                            continue
                         candidates.append({
                             "ticker": ticker, "name": ticker,
-                            "price": float(item.get("price", 0)),
+                            "price": price,
                             "change_rate": float(
                                 str(item.get("change_percentage", "0")).replace("%", "")
                             ),
-                            "volume": _extract_us_volume(item),
+                            "volume": vol,
                             "vol_ratio": 1.0,
                         })
                     except (ValueError, TypeError):
@@ -717,7 +1601,7 @@ class KISWebSocket:
         self._ws_key = None
 
     def _get_ws_key(self):
-        resp = requests.post(
+        resp = _kis_post(
             f"{BASE_URL}/oauth2/Approval",
             json={"grant_type": "client_credentials", "appkey": APP_KEY, "secretkey": APP_SECRET},
             timeout=10,

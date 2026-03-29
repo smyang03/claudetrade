@@ -173,6 +173,38 @@ def trade_alert(side: str, ticker: str, qty: int, price: int,
     send(text)
     return text
 
+
+def _entry_price(pos: dict) -> float:
+    return float(pos.get("entry", pos.get("avg_price", 0)) or 0)
+
+
+def _display_price(pos: dict, kind: str) -> float:
+    if kind == "entry":
+        return float(pos.get("display_avg_price", pos.get("avg_price", pos.get("entry", 0))) or 0)
+    return float(pos.get("display_current_price", pos.get("current_price", pos.get("eval_price", 0))) or 0)
+
+
+def _display_currency(pos: dict, market: str) -> str:
+    return pos.get("display_currency", pos.get("currency", "USD" if market == "US" else "KRW"))
+
+
+def _format_display_price(value: float, currency: str) -> str:
+    if currency == "USD":
+        return f"${value:.4f}"
+    return f"{value:,.0f}원"
+
+
+def _position_line(pos: dict, market: str) -> str:
+    entry = _display_price(pos, "entry")
+    current = _display_price(pos, "current")
+    currency = _display_currency(pos, market)
+    pnl_pct = (current / entry - 1) * 100 if entry > 0 and current > 0 else 0.0
+    return (
+        f"  {pos['ticker']} {pos['qty']}주 | 매수가 {_format_display_price(entry, currency)} | "
+        f"현재가 {_format_display_price(current, currency)} | "
+        f"PnL {pnl_pct:+.2f}%"
+    )
+
 def pnl_alert(ticker: str, pnl_pct: float, pnl_krw: int, reason: str) -> str:
     icon = "✅" if pnl_krw > 0 else "❌"
     text = (
@@ -187,82 +219,6 @@ def emergency_alert(msg: str) -> str:
 {msg}"""
     send(text)
     return text
-
-def status_report(market: str, mode: str, positions: list,
-                  budget_avail: float, cash: float, tickers: list = None) -> str:
-    now = datetime.now(KST).strftime("%H:%M")
-    if positions:
-        pos_lines = "\n".join(
-            f"  {p['ticker']} {p['qty']}주 | {p['current_price']:,}원 | "
-            f"PnL {(p['current_price'] / p['entry'] - 1) * 100:+.2f}%"
-            for p in positions
-        )
-    else:
-        pos_lines = "  없음"
-    watch = f"\n모니터링: {', '.join(tickers)}" if tickers else ""
-    text = f"""⏱ <b>[상태 보고 {now}] {market}</b>
-모드: <b>{mode}</b>
-보유 포지션:
-{pos_lines}
-예산 잔여: {budget_avail:,.0f}원 | 현금: {cash:,.0f}원{watch}"""
-    send(text)
-    return text
-
-
-def dashboard_push(market: str, mode: str, positions: list,
-                   cash: float, pnl_pct: float, pnl_krw: int,
-                   judgments: dict, tickers: list,
-                   max_order_krw: int = 0, total_fee: int = 0) -> str:
-    """
-    대시보드 상태를 텔레그램으로 전송.
-    변동 없으면 호출 전에 걸러야 함 (이 함수 자체는 항상 전송).
-    """
-    now = datetime.now(KST).strftime("%H:%M")
-    icon = "🌅" if market == "KR" else "🌙"
-
-    # 포지션 라인
-    if positions:
-        pos_lines = "\n".join(
-            f"  {p['ticker']} {p['qty']}주 | {p['current_price']:,} | "
-            f"{(p['current_price']/p['entry']-1)*100:+.2f}%"
-            for p in positions
-        )
-    else:
-        pos_lines = "  없음"
-
-    # 판단 요약
-    bull = judgments.get("bull", {}); bear = judgments.get("bear", {}); neut = judgments.get("neutral", {})
-    j_lines = (
-        f"🟢 Bull {bull.get('stance','-')} {int(bull.get('confidence',0)*100)}%\n"
-        f"🔴 Bear {bear.get('stance','-')} {int(bear.get('confidence',0)*100)}%\n"
-        f"⚪ Neut {neut.get('stance','-')} {int(neut.get('confidence',0)*100)}%"
-    ) if bull else "판단 없음"
-
-    pnl_icon = "🟢" if pnl_pct > 0 else "🔴" if pnl_pct < 0 else "⚪"
-    credit_line = _credit_line()
-    fee_line   = f"수수료(누적): {total_fee:,}원" if total_fee else ""
-    order_line = f"최대주문: {max_order_krw:,}원" if max_order_krw else ""
-    settings_line = "  ".join(filter(None, [order_line, fee_line]))
-
-    text = f"""{icon} <b>[{market} 현황 {now}]</b>
-━━━━━━━━━━━━━━━━
-모드: <b>{mode}</b>
-{pnl_icon} 오늘 순손익(수수료 차감 후): {pnl_pct:+.2f}%  {pnl_krw:+,}원
-💰 현금: {cash:,.0f}원
-{settings_line}
-━━━━━━━━━━━━━━━━
-📌 보유 포지션
-{pos_lines}
-━━━━━━━━━━━━━━━━
-🧠 판단
-{j_lines}
-━━━━━━━━━━━━━━━━
-📋 거래내역: /pnl  전체: /trades
-📌 모니터링: {', '.join(tickers) if tickers else '-'}
-{credit_line}"""
-    send(text)
-    return text
-
 
 def analyst_reinvoke_alert(market: str, trigger: str, old_mode: str, new_mode: str,
                            judgments: dict, consensus: dict,
@@ -361,6 +317,44 @@ def signal_alert(event: str, market: str, ticker: str,
     return text
 
 
+def watchlist_alert(market: str, mode: str, tickers: list,
+                    reasons: dict = None, excluded: list = None,
+                    trigger: str = "session_open") -> str:
+    """
+    세션 시작 / 종목 재선택 시 모니터링 리스트 텔레그램 전송.
+    trigger: session_open | rescreen | reuse
+    """
+    now  = datetime.now(KST).strftime("%H:%M")
+    icon = "🌅" if market == "KR" else "🌙"
+    reasons = reasons or {}
+
+    trigger_label = {
+        "session_open": "📋 오늘의 모니터링 종목",
+        "rescreen":     "🔄 종목 재선택",
+        "reuse":        "♻️ 판단 재사용 — 종목 재스크리닝",
+    }.get(trigger, "📋 모니터링 종목")
+
+    ticker_lines = []
+    for t in tickers:
+        r = reasons.get(t, "")
+        ticker_lines.append(f"  • <b>{t}</b>  {r}" if r else f"  • <b>{t}</b>")
+
+    excl_line = ""
+    if excluded:
+        excl_line = f"\n제외: {', '.join(excluded[:10])}" + ("..." if len(excluded) > 10 else "")
+
+    text = (
+        f"{icon} <b>[{market} {trigger_label}]</b>  {now}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"모드: <b>{mode}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        + "\n".join(ticker_lines)
+        + excl_line
+    )
+    send(text)
+    return text
+
+
 def daily_summary(date: str, market: str, pnl_pct: float, pnl_krw: int,
                   trades: int, win_rate: float, cumulative: float,
                   judgments: dict, postmortem: dict) -> str:
@@ -383,5 +377,446 @@ def daily_summary(date: str, market: str, pnl_pct: float, pnl_krw: int,
 
 {credit_line}
 ━━━━━━━━━━━━━━━━━━━━━━"""
+    send(text)
+    return text
+
+
+def _legacy_status_report_bootstrap(market: str, mode: str, positions: list,
+                  budget_avail: float, cash: float, tickers: list = None) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    if positions:
+        pos_lines = "\n".join(
+            f"  {p['ticker']} {p['qty']}주 | 매수가 {_entry_price(p):,.0f} | "
+            f"현재가 {p['current_price']:,} | "
+            f"PnL {(p['current_price'] / max(_entry_price(p), 1) - 1) * 100:+.2f}%"
+            for p in positions
+        )
+    else:
+        pos_lines = "  없음"
+    watch = f"\n모니터링: {', '.join(tickers)}" if tickers else ""
+    text = f"""📊<b>[상태 보고 {now}] {market}</b>
+모드: <b>{mode}</b>
+보유 포지션
+{pos_lines}
+예산 여유: {budget_avail:,.0f}원 | 현금: {cash:,.0f}원{watch}"""
+    send(text)
+    return text
+
+
+def _legacy_dashboard_push_1(market: str, mode: str, positions: list,
+                   cash: float, pnl_pct: float, pnl_krw: int,
+                   judgments: dict, tickers: list,
+                   max_order_krw: int = 0, total_fee: int = 0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    icon = "🇰🇷" if market == "KR" else "🇺🇸"
+    if positions:
+        pos_lines = "\n".join(
+            f"  {p['ticker']} {p['qty']}주 | 매수가 {_entry_price(p):,.0f} | "
+            f"현재가 {p['current_price']:,} | "
+            f"{(p['current_price'] / max(_entry_price(p), 1) - 1) * 100:+.2f}%"
+            for p in positions
+        )
+    else:
+        pos_lines = "  없음"
+
+    bull = judgments.get("bull", {})
+    bear = judgments.get("bear", {})
+    neut = judgments.get("neutral", {})
+    j_lines = (
+        f"  Bull {bull.get('stance', '-'):<14} ({int((bull.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Bear {bear.get('stance', '-'):<14} ({int((bear.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Neu  {neut.get('stance', '-'):<14} ({int((neut.get('confidence', 0) or 0) * 100):2d}%)"
+    )
+    tickers_txt = ", ".join(tickers) if tickers else "-"
+    text = f"""{icon} <b>[대시보드 {now}] {market}</b>
+모드: <b>{mode}</b>
+손익: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원
+현금: {cash:,.0f}원 | 주문한도: {max_order_krw:,.0f}원 | 수수료누적: {total_fee:,.0f}원
+
+보유 포지션
+{pos_lines}
+
+판단 요약
+{j_lines}
+
+모니터링: {tickers_txt}"""
+    send(text)
+    return text
+
+
+def _legacy_status_report_1(market: str, mode: str, positions: list,
+                  budget_avail: float, cash: float, tickers: list = None,
+                  stock_value_krw: float = 0.0, total_equity_krw: float = 0.0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    if positions:
+        pos_lines = "\n".join(_position_line_v2(p, market) for p in positions)
+    else:
+        pos_lines = "  없음"
+    watch = f"\n모니터링: {', '.join(tickers)}" if tickers else ""
+    asset_line = (
+        f"현금: {cash:,.0f}원 | 주문한도: {budget_avail:,.0f}원 | "
+        f"보유주식: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원"
+    )
+    text = (
+        f"📋<b>[상태 보고 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n"
+        f"{asset_line}"
+        f"{watch}"
+    )
+    send(text)
+    return text
+
+
+def _legacy_dashboard_push_2(market: str, mode: str, positions: list,
+                   cash: float, pnl_pct: float, pnl_krw: int,
+                   judgments: dict, tickers: list,
+                   max_order_krw: int = 0, total_fee: int = 0,
+                   stock_value_krw: float = 0.0, total_equity_krw: float = 0.0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    icon = "🟤" if market == "KR" else "🔉"
+    if positions:
+        pos_lines = "\n".join(_position_line_v2(p, market) for p in positions)
+    else:
+        pos_lines = "  없음"
+
+    bull = judgments.get("bull", {})
+    bear = judgments.get("bear", {})
+    neut = judgments.get("neutral", {})
+    j_lines = (
+        f"  Bull {bull.get('stance', '-'):<14} ({int((bull.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Bear {bear.get('stance', '-'):<14} ({int((bear.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Neu  {neut.get('stance', '-'):<14} ({int((neut.get('confidence', 0) or 0) * 100):2d}%)"
+    )
+    tickers_txt = ", ".join(tickers) if tickers else "-"
+    asset_line = (
+        f"현금: {cash:,.0f}원 | 주문한도: {max_order_krw:,.0f}원 | "
+        f"보유주식: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원 | "
+        f"수수료누적: {total_fee:,.0f}원"
+    )
+    text = (
+        f"{icon} <b>[대시보드 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"손익: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원\n"
+        f"{asset_line}\n\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n\n"
+        f"판단 요약\n"
+        f"{j_lines}\n\n"
+        f"모니터링: {tickers_txt}"
+    )
+    send(text)
+    return text
+
+
+# Final override: keep the latest runtime-compatible signatures here.
+def _legacy_status_report_2(market: str, mode: str, positions: list,
+                  budget_avail: float, cash: float, tickers: list = None,
+                  stock_value_krw: float = 0.0, total_equity_krw: float = 0.0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    if positions:
+        pos_lines = "\n".join(_position_line_v2(p, market) for p in positions)
+    else:
+        pos_lines = "  없음"
+    watch = f"\n모니터링: {', '.join(tickers)}" if tickers else ""
+    asset_line = (
+        f"현금: {cash:,.0f}원 | 주문한도: {budget_avail:,.0f}원 | "
+        f"보유주식: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원"
+    )
+    text = (
+        f"📋<b>[상태 보고 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n"
+        f"{asset_line}"
+        f"{watch}"
+    )
+    send(text)
+    return text
+
+
+def _legacy_dashboard_push_3(market: str, mode: str, positions: list,
+                   cash: float, pnl_pct: float, pnl_krw: int,
+                   judgments: dict, tickers: list,
+                   max_order_krw: int = 0, total_fee: int = 0,
+                   stock_value_krw: float = 0.0, total_equity_krw: float = 0.0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    icon = "🟤" if market == "KR" else "🔉"
+    if positions:
+        pos_lines = "\n".join(_position_line_v2(p, market) for p in positions)
+    else:
+        pos_lines = "  없음"
+
+    bull = judgments.get("bull", {})
+    bear = judgments.get("bear", {})
+    neut = judgments.get("neutral", {})
+    j_lines = (
+        f"  Bull {bull.get('stance', '-'):<14} ({int((bull.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Bear {bear.get('stance', '-'):<14} ({int((bear.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Neu  {neut.get('stance', '-'):<14} ({int((neut.get('confidence', 0) or 0) * 100):2d}%)"
+    )
+    tickers_txt = ", ".join(tickers) if tickers else "-"
+    asset_line = (
+        f"현금: {cash:,.0f}원 | 주문한도: {max_order_krw:,.0f}원 | "
+        f"보유주식: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원 | "
+        f"수수료누적: {total_fee:,.0f}원"
+    )
+    text = (
+        f"{icon} <b>[대시보드 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"손익: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원\n"
+        f"{asset_line}\n\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n\n"
+        f"판단 요약\n"
+        f"{j_lines}\n\n"
+        f"모니터링: {tickers_txt}"
+    )
+    send(text)
+    return text
+
+
+def _legacy_status_report_3(market: str, mode: str, positions: list,
+                  budget_avail: float, cash: float, tickers: list = None,
+                  stock_value_krw: float = 0.0, total_equity_krw: float = 0.0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    pos_lines = "\n".join(_position_line_v2(p, market) for p in positions) if positions else "  없음"
+    watch = f"\n모니터링: {', '.join(tickers)}" if tickers else ""
+    asset_line = (
+        f"\n주식평가: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원"
+        if total_equity_krw > 0 else ""
+    )
+    text = (
+        f"📋<b>[상태 보고 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n"
+        f"예산 여유: {budget_avail:,.0f}원 | 현금: {cash:,.0f}원"
+        f"{asset_line}"
+        f"{watch}"
+    )
+    send(text)
+    return text
+
+
+def _legacy_dashboard_push_4(market: str, mode: str, positions: list,
+                   cash: float, pnl_pct: float, pnl_krw: int,
+                   judgments: dict, tickers: list,
+                   max_order_krw: int = 0, total_fee: int = 0,
+                   stock_value_krw: float = 0.0, total_equity_krw: float = 0.0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    icon = "📤" if market == "KR" else "🌉"
+    pos_lines = "\n".join(_position_line_v2(p, market) for p in positions) if positions else "  없음"
+    bull = judgments.get("bull", {})
+    bear = judgments.get("bear", {})
+    neut = judgments.get("neutral", {})
+    j_lines = (
+        f"  Bull {bull.get('stance', '-'):<14} ({int((bull.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Bear {bear.get('stance', '-'):<14} ({int((bear.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Neu  {neut.get('stance', '-'):<14} ({int((neut.get('confidence', 0) or 0) * 100):2d}%)"
+    )
+    tickers_txt = ", ".join(tickers) if tickers else "-"
+    asset_line = (
+        f"보유주식: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원\n"
+        if total_equity_krw > 0 else ""
+    )
+    text = (
+        f"{icon} <b>[대시보드 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"손익: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원\n"
+        f"현금: {cash:,.0f}원 | 주문한도: {max_order_krw:,.0f}원 | 수수료누적: {total_fee:,.0f}원\n"
+        f"{asset_line}\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n\n"
+        f"판단 요약\n"
+        f"{j_lines}\n\n"
+        f"모니터링: {tickers_txt}"
+    )
+    send(text)
+    return text
+
+
+def decision_event_alert(event: dict) -> str:
+    action = event.get("action", "")
+    ticker = event.get("ticker", "-")
+    qty = int(event.get("qty", 0) or 0)
+    reason = event.get("reason", "") or "-"
+    detail = event.get("detail", "") or ""
+    strategy = event.get("strategy", "") or "-"
+    selected_reason = event.get("selected_reason", "") or ""
+    market = event.get("market", "KR")
+    native = float(event.get("price_native", 0) or 0)
+    pnl_krw = int(event.get("pnl_krw", 0) or 0)
+    pnl_pct = float(event.get("pnl_pct", 0) or 0)
+    price_txt = f"${native:.4f}" if market == "US" and native > 0 else (f"{int(native):,}원" if native > 0 else "-")
+    icon_map = {
+        "buy_order": "🟢",
+        "buy_failed": "🟠",
+        "sell_filled": "🔴",
+        "sell_failed": "⚠️",
+    }
+    title_map = {
+        "buy_order": "매수 판단",
+        "buy_failed": "매수 실패",
+        "sell_filled": "매도 판단",
+        "sell_failed": "매도 실패",
+    }
+    if action not in title_map:
+        return ""
+    lines = [
+        f"{icon_map[action]} <b>[{title_map[action]}]</b> {ticker}",
+        f"수량: {qty}주 | 가격: {price_txt} | 전략: {strategy}",
+        f"이유: {reason}",
+    ]
+    if selected_reason:
+        lines.append(f"선택사유: {selected_reason}")
+    if detail:
+        lines.append(f"상세: {detail}")
+    if action == "sell_filled":
+        lines.append(f"결과: {pnl_krw:+,}원 ({pnl_pct:+.2f}%)")
+    text = "\n".join(lines)
+    send(text)
+    return text
+
+
+def _position_line_v2(pos: dict, market: str) -> str:
+    entry = _display_price(pos, "entry")
+    current = _display_price(pos, "current")
+    currency = _display_currency(pos, market)
+    pnl_pct = (current / entry - 1) * 100 if entry > 0 and current > 0 else 0.0
+    return (
+        f"  {pos.get('ticker', '-')} {pos.get('qty', 0)}주 | "
+        f"매수가 {_format_display_price(entry, currency)} | "
+        f"현재가 {_format_display_price(current, currency)} | "
+        f"PnL {pnl_pct:+.2f}%"
+    )
+
+
+def _legacy_status_report_4(market: str, mode: str, positions: list,
+                  budget_avail: float, cash: float, tickers: list = None) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    if positions:
+        pos_lines = "\n".join(_position_line_v2(p, market) for p in positions)
+    else:
+        pos_lines = "  없음"
+    watch = f"\n모니터링: {', '.join(tickers)}" if tickers else ""
+    text = (
+        f"📤<b>[상태 보고 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n"
+        f"예산 여유: {budget_avail:,.0f}원 | 현금: {cash:,.0f}원"
+        f"{watch}"
+    )
+    send(text)
+    return text
+
+
+def _legacy_dashboard_push_5(market: str, mode: str, positions: list,
+                   cash: float, pnl_pct: float, pnl_krw: int,
+                   judgments: dict, tickers: list,
+                   max_order_krw: int = 0, total_fee: int = 0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    icon = "📊" if market == "KR" else "🌎"
+    if positions:
+        pos_lines = "\n".join(_position_line_v2(p, market) for p in positions)
+    else:
+        pos_lines = "  없음"
+
+    bull = judgments.get("bull", {})
+    bear = judgments.get("bear", {})
+    neut = judgments.get("neutral", {})
+    j_lines = (
+        f"  Bull {bull.get('stance', '-'):<14} ({int((bull.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Bear {bear.get('stance', '-'):<14} ({int((bear.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Neu  {neut.get('stance', '-'):<14} ({int((neut.get('confidence', 0) or 0) * 100):2d}%)"
+    )
+    tickers_txt = ", ".join(tickers) if tickers else "-"
+    text = (
+        f"{icon} <b>[대시보드 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"손익: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원\n"
+        f"현금: {cash:,.0f}원 | 주문한도: {max_order_krw:,.0f}원 | 수수료누적: {total_fee:,.0f}원\n\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n\n"
+        f"판단 요약\n"
+        f"{j_lines}\n\n"
+        f"모니터링: {tickers_txt}"
+    )
+    send(text)
+    return text
+
+
+def _legacy_status_report_0(market: str, mode: str, positions: list,
+                  budget_avail: float, cash: float, tickers: list = None,
+                  stock_value_krw: float = 0.0, total_equity_krw: float = 0.0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    pos_lines = "\n".join(_position_line_v2(p, market) for p in positions) if positions else "  없음"
+    watch = f"\n모니터링: {', '.join(tickers)}" if tickers else ""
+    asset_line = (
+        f"현금: {cash:,.0f}원 | 주문한도: {budget_avail:,.0f}원 | "
+        f"보유주식: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원"
+    )
+    text = (
+        f"📋<b>[상태 보고 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n"
+        f"{asset_line}"
+        f"{watch}"
+    )
+    send(text)
+    return text
+
+
+def status_report(market: str, mode: str, positions: list,
+                  budget_avail: float, cash: float, tickers: list = None,
+                  stock_value_krw: float = 0.0, total_equity_krw: float = 0.0) -> str:
+    return _legacy_status_report_0(
+        market,
+        mode,
+        positions,
+        budget_avail,
+        cash,
+        tickers=tickers,
+        stock_value_krw=stock_value_krw,
+        total_equity_krw=total_equity_krw,
+    )
+
+
+def dashboard_push(market: str, mode: str, positions: list,
+                   cash: float, pnl_pct: float, pnl_krw: int,
+                   judgments: dict, tickers: list,
+                   max_order_krw: int = 0, total_fee: int = 0,
+                   stock_value_krw: float = 0.0, total_equity_krw: float = 0.0) -> str:
+    now = datetime.now(KST).strftime("%H:%M")
+    icon = "📈" if market == "KR" else "🌎"
+    pos_lines = "\n".join(_position_line_v2(p, market) for p in positions) if positions else "  없음"
+    bull = judgments.get("bull", {})
+    bear = judgments.get("bear", {})
+    neut = judgments.get("neutral", {})
+    j_lines = (
+        f"  Bull {bull.get('stance', '-'):<14} ({int((bull.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Bear {bear.get('stance', '-'):<14} ({int((bear.get('confidence', 0) or 0) * 100):2d}%)\n"
+        f"  Neu  {neut.get('stance', '-'):<14} ({int((neut.get('confidence', 0) or 0) * 100):2d}%)"
+    )
+    tickers_txt = ", ".join(tickers) if tickers else "-"
+    asset_line = (
+        f"현금: {cash:,.0f}원 | 주문한도: {max_order_krw:,.0f}원 | "
+        f"보유주식: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원 | "
+        f"수수료누적: {total_fee:,.0f}원"
+    )
+    text = (
+        f"{icon} <b>[대시보드 {now}] {market}</b>\n"
+        f"모드: <b>{mode}</b>\n"
+        f"손익: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원\n"
+        f"{asset_line}\n\n"
+        f"보유 포지션\n"
+        f"{pos_lines}\n\n"
+        f"판단 요약\n"
+        f"{j_lines}\n\n"
+        f"모니터링: {tickers_txt}"
+    )
     send(text)
     return text

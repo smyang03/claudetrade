@@ -1,0 +1,659 @@
+{
+  "date": "2026-03-26",
+  "macro_events": {
+    "fomc": false,
+    "fomc_week": false,
+    "other": []
+  },
+  "market_news": [],
+  "corp_news": {
+    "NVDA": {
+      "name": "엔비디아",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "QTUM ETF Explained: How Investors Are Gaining Exposure to Quantum and AI in One Fund",
+          "content": "The Defiance Quantum ETF (QTUM) provides investors with exposure to companies involved in next-generation technologies like quantum computing, AI, and advanced chips. While its name suggests a pure quantum play, the fund's holdings are primarily in large tech firms and chip leaders, offering a diversified approach to a developing sector. This ETF suits investors looking for growth in future tech without the single-stock risk associated with volatile, early-stage quantum companies.",
+          "url": "https://www.tipranks.com/news/qtum-etf-explained-how-investors-are-gaining-exposure-to-quantum-and-ai-in-one-fund",
+          "sentiment_score": 0.440914,
+          "sentiment_label": "Bullish",
+          "relevance": 0.801741
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "KLA Corporation stock dips 1.44% on Nasdaq amid semiconductor inspection demand pressures and AI cycle shifts",
+          "content": "KLA Corporation's stock dropped 1.44% on Nasdaq to $1,543.68 due to investor concerns over softening demand for wafer inspection tools in the semiconductor industry, stemming from post-AI boom inventory adjustments. Despite a strong year-to-date performance, the dip reflects tactical profit-taking and fears of normalizing demand from hyperscalers. Analysts note KLA's critical role in AI chip yield management, but highlight risks from capex uncertainty and cycle timing.",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/kla-corporation-stock-dips-1-44-percent-on-nasdaq-amid-semiconductor/68993806",
+          "sentiment_score": 0.214061,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.636498
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Best Value Stocks Worth Buying on March 26th",
+          "content": "This article identifies three top-rated value stocks for investment consideration on March 26th: GigaCloud Technology Inc. (GCT), Equinor ASA (EQNR), and National Energy Services Reunited Corp. (NESR). Each company holds a Zacks Rank #1, indicating strong buy recommendations, and exhibits favorable price-to-earnings ratios compared to industry averages and positive analyst sentiment regarding future earnings. The article also highlights an emerging semiconductor company.",
+          "url": "https://www.bitget.com/amp/news/detail/12560605306461",
+          "sentiment_score": 0.135329,
+          "sentiment_label": "Neutral",
+          "relevance": 0.639476
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "SG Americas Securities LLC Raises Stock Position in HP Inc. $HPQ",
+          "content": "SG Americas Securities LLC significantly increased its stake in HP Inc. by 341.1% in Q4 2025, holding nearly 1.8 million shares. This comes as HP focuses on AI integration with new workstations and ecosystems, although one insider recently sold a large portion of their shares. Analysts currently rate HP with a \"Reduce\" consensus, despite recent EPS beats and a strong dividend yield.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-sg-americas-securities-llc-raises-stock-position-in-hp-inc-hpq-2026-03-26/",
+          "sentiment_score": 0.329104,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.636706
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Microsoft Corporation $MSFT Position Raised by New England Research & Management Inc.",
+          "content": "New England Research & Management Inc. significantly increased its holdings in Microsoft Corporation, making it their third-largest holding. Several other institutional investors also adjusted their positions in Microsoft. The article also provides financial details, recent earnings, dividend announcements, insider trading activity, and analyst ratings, noting both positive and negative sentiment drivers for the stock.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-microsoft-corporation-msft-position-raised-by-new-england-research-management-inc-2026-03-26/",
+          "sentiment_score": 0.318916,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.605363
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "NVIDIA Corporation $NVDA Shares Sold by Sarasin & Partners LLP",
+          "content": "Sarasin & Partners LLP reduced its stake in NVIDIA Corporation by 2.0% in Q4 2025, selling 91,713 shares and now holding 4,464,657 shares worth over $832 million. The firm maintains NVIDIA as its second-largest holding, representing 8.6% of its assets. Additionally, significant insider selling was reported, with CFO Colette Kress and director Mark A. Stevens selling millions of dollars worth of shares, bringing total insider sales in the last 90 days to over $253 million.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-nvidia-corporation-nvda-shares-sold-by-sarasin-partners-llp-2026-03-26/",
+          "sentiment_score": 0.033471,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Microsoft Corporation $MSFT is Harbor Investment Advisory LLC's 3rd Largest Position",
+          "content": "Harbor Investment Advisory LLC has increased its stake in Microsoft (MSFT) by 3.3% in the fourth quarter, making it their third-largest holding. Microsoft reported strong Q4 earnings and revenue, exceeding estimates, and holds a significant market capitalization. However, market sentiment is mixed with positive catalysts like an AI partnership with Nvidia and a Buy reinitiation from BofA, offset by concerns including reports of a challenging quarter and analyst price target reductions.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-microsoft-corporation-msft-is-harbor-investment-advisory-llcs-3rd-largest-position-2026-03-26/",
+          "sentiment_score": 0.346423,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.600795
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Cordant Inc. Buys Shares of 4,673 Lumentum Holdings Inc. $LITE",
+          "content": "Cordant Inc. has initiated a new position in Lumentum Holdings Inc. (NASDAQ:LITE), purchasing 4,673 shares valued at approximately $1.72 million, making it their 24th largest holding. Lumentum's stock has seen a significant surge to an all-time high due to analyst price-target increases and its inclusion in the S&P 500, despite a high P/E ratio of 238.40. The company reported strong Q4 earnings with EPS of $1.67, exceeding estimates, and anticipates Q3 2026 EPS guidance between $2.15 and $2.35.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-cordant-inc-buys-shares-of-4673-lumentum-holdings-inc-lite-2026-03-26/",
+          "sentiment_score": 0.318211,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.643784
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Gartner Stock: Strong Cash Flow Poised for a Re-Rating?",
+          "content": "Gartner (IT) stock is presented as a compelling investment opportunity, with strong cash flow and a significant valuation discount despite recent conservative guidance and macroeconomic uncertainties. The company exhibits robust fundamentals including an impressive cash flow yield of 10.9% and growth potential, supported by AI-powered tools and investment-grade financial strength. While risks like market downturns and stock volatility exist, Gartner's strong underlying financial health and attra",
+          "url": "https://www.trefis.com/stock/it/articles2/594871/gartner-stock-strong-cash-flow-poised-for-a-re-rating-2/2026-03-26",
+          "sentiment_score": 0.316659,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.614047
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Better Stock to Buy Right Now: Amazon vs. Costco",
+          "content": "This article compares Amazon and Costco as investment opportunities, noting that while Costco has shown better stock performance in 2026, Amazon's valuation is more attractive. The author highlights Amazon's significant investment in AI infrastructure through AWS as a key growth driver, despite a recent stock pullback due to high capital expenditures. Costco is praised for its consumer defensive qualities and pricing power, but Amazon is ultimately recommended for its lower valuation and AI grow",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/AMZN/pressreleases/970621/better-stock-to-buy-right-now-amazon-vs-costco/",
+          "sentiment_score": 0.11416,
+          "sentiment_label": "Neutral",
+          "relevance": 0.646254
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Czech National Bank Has $46.44 Million Stock Holdings in AT&T Inc. $T",
+          "content": "The Czech National Bank recently increased its stake in AT&T Inc. by 3.0%, now holding 1,869,381 shares valued at approximately $46.44 million. This move is part of broader institutional investor activity, with major firms like Norges Bank and Amundi also adjusting their positions in the technology company. Wall Street analysts maintain a \"Moderate Buy\" consensus for AT&T, with an average price target of $30.72, following the company's strong Q4 earnings beat and positive future guidance.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-czech-national-bank-has-4644-million-stock-holdings-in-att-inc-t-2026-03-26/",
+          "sentiment_score": 0.208988,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.556636
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Czech National Bank Has $70.69 Million Stock Holdings in Caterpillar Inc. $CAT",
+          "content": "The Czech National Bank increased its stake in Caterpillar Inc. by 3.7% in the fourth quarter, bringing its total holdings to 123,400 shares valued at approximately $70.69 million. Caterpillar is benefiting from contracts related to power generation for data centers and AI campuses, a factor contributing to a \"Moderate Buy\" consensus rating from Wall Street analysts. The company's stock is rated by sixteen investment analysts as a Buy, seven as a Hold, and one as a Sell, with a consensus price t",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-czech-national-bank-has-7069-million-stock-holdings-in-caterpillar-inc-cat-2026-03-26/",
+          "sentiment_score": 0.318263,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.601754
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Cullen Investment Group LTD. Purchases 6,233 Shares of Analog Devices, Inc. $ADI",
+          "content": "Cullen Investment Group LTD. increased its stake in Analog Devices, Inc. (NASDAQ:ADI) by 21.5% in the fourth quarter, bringing its total holdings to 35,161 shares valued at $10.58 million. Other institutional investors like Vanguard Group Inc., State Street Corp, and Ameriprise Financial Inc. also significantly boosted their positions in the semiconductor company. Analog Devices recently reported strong quarterly earnings, exceeding analyst expectations, and increased its quarterly dividend.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-cullen-investment-group-ltd-purchases-6233-shares-of-analog-devices-inc-adi-2026-03-26/",
+          "sentiment_score": 0.303715,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.605806
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Cooper Financial Group Acquires 23,705 Shares of NVIDIA Corporation $NVDA",
+          "content": "Cooper Financial Group increased its stake in NVIDIA Corporation by 11.2% in the fourth quarter, purchasing 23,705 additional shares to bring its total holding to 234,824 shares valued at $43.8 million, making NVIDIA its third-largest holding. Despite strong financial performance and a bullish analyst outlook, the company faces risks from significant insider selling and increasing regulatory scrutiny. The article also highlights recent earnings beats, dividend announcements, and key headlines af",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-cooper-financial-group-acquires-23705-shares-of-nvidia-corporation-nvda-2026-03-26/",
+          "sentiment_score": 0.264618,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "CCM Investment Advisers LLC Increases Stock Holdings in Synopsys, Inc. $SNPS",
+          "content": "CCM Investment Advisers LLC has significantly increased its stake in Synopsys, Inc. (NASDAQ:SNPS) by 30.0% in the fourth quarter, now owning 25,128 shares valued at $11.803 million. This increase comes as Synopsys reported strong Q4 results, beating EPS and revenue estimates, and provided positive FY2026 guidance. The company is also benefiting from increased AI and data center growth expectations due to a collaboration with Arm on an AGI data-center CPU and a multibillion-dollar activist stake ",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-ccm-investment-advisers-llc-increases-stock-holdings-in-synopsys-inc-snps-2026-03-26/",
+          "sentiment_score": 0.130287,
+          "sentiment_label": "Neutral",
+          "relevance": 0.603479
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Coherent (COHR): In this round of AI optical interconnects, which deserves more attention, it or LITE?",
+          "content": "This article analyzes Coherent (COHR) in comparison to Lumentum (LITE) in the context of AI optical interconnects, following Nvidia's significant investment in both. It highlights Coherent's vertically integrated business model, its unique advantage in mass-producing 6-inch InP wafers, and its diversified revenue streams from data center interconnects and industrial lasers. The piece suggests that while LITE offers a focused bet on optical chips and CPO demand, COHR presents a longer-term invest",
+          "url": "https://www.tradingkey.com/analysis/stocks/us-stocks/261721318-coherent-6-inch-inp-nvidia-ai-optical-interconnect",
+          "sentiment_score": 0.341911,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.647182
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "NetApp Inc. stock rises amid dividend anticipation and institutional buying as AI storage demand surges",
+          "content": "NetApp Inc. stock climbed 1.14% on Nasdaq, reaching 105.50 USD, driven by an upcoming ex-dividend date of April 2, 2026, and significant institutional interest. Investors are focused on NetApp's critical role in the expanding AI infrastructure market, with the company's hybrid cloud strategy and strong dividend yield making it an attractive play for US investors balancing growth and income. Pension funds and other institutional players are increasing their holdings, validating NetApp's position ",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/netapp-inc-stock-rises-amid-dividend-anticipation-and-institutional/68988793",
+          "sentiment_score": 0.342919,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.640394
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Jabil Inc. stock surges on Q2 fiscal 2026 earnings beat driven by AI and cloud demand",
+          "content": "Jabil Inc. shares surged over 7% on the NYSE following impressive Q2 fiscal 2026 earnings, significantly beating analyst expectations. The stronger-than-anticipated results were driven by robust demand for AI hardware and cloud components, particularly from hyperscalers, positioning Jabil as a key player in the tech supply chain. The company's diversified manufacturing services and strategic focus on US-centric partnerships are highlighted as crucial factors in its continued growth and resilienc",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/jabil-inc-stock-surges-on-q2-fiscal-2026-earnings-beat-driven-by-ai-and/68988483",
+          "sentiment_score": 0.303395,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.625644
+        }
+      ],
+      "count": 18,
+      "avg_sentiment": 0.2656302222222222
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "The SpaceX IPO and the Elon Musk Factor",
+          "content": "The upcoming SpaceX IPO, valued at $1.75 trillion, will be significantly influenced by the \"Musk Effect,\" a phenomenon observed in Tesla's stock where Elon Musk's actions cause extreme market volatility. With a remarkably thin float of 3%-4% of equity, SpaceX is predicted to experience even more pronounced 20%-30% stock swings in response to Musk-driven news, compared to Tesla's 10%-15%. Additionally, investors will have to contend with SpaceX's historical tendency to deliver on targets late, re",
+          "url": "https://www.morningstar.com/markets/spacex-ipo-elon-musk-factor",
+          "sentiment_score": -0.302019,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.874794
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Tesla, Oracle make Fortune list of most innovative companies",
+          "content": "Austin-based Tesla Inc. and Oracle Corp. have been named among Fortune's most innovative companies of 2026, ranking 17th and 10th respectively. Tesla was recognized for product innovation ahead of its anticipated Cybercab launch, while Oracle also received acclaim for its product innovation in cloud technology. Other Texas-based companies and Elon Musk's SpaceX also appeared on the list.",
+          "url": "https://www.expressnews.com/business/article/tesla-oracle-fortune-innovative-22096389.php",
+          "sentiment_score": 0.335293,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.981812
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "SelectQuote receives NYSE notice over stock price compliance",
+          "content": "SelectQuote Inc. (NYSE: SLQT) received a notice from the NYSE due to its common stock trading below $1.00 per share for 30 consecutive trading days. The company has a six-month cure period to regain compliance, needing its stock to close at or above $1.00 with an average closing price of at least $1.00 over the preceding 30 days. Despite the current low stock price and the delisting notice, InvestingPro analysis suggests the stock may be undervalued, and the company recently reported stronger-th",
+          "url": "https://www.investing.com/news/company-news/selectquote-receives-nyse-notice-over-stock-price-compliance-93CH-4580879",
+          "sentiment_score": 0.242709,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.511796
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Is Atmus Filtration Technologies Inc. (ATMU) Surpassing Other Stocks in the Auto-Tires-Trucks Sector This Year?",
+          "content": "Atmus Filtration Technologies Inc. (ATMU) is significantly outperforming its peers in the Auto-Tires-Trucks sector this year, with a 14.2% return compared to the sector's average decline of 10.9%. The company holds a strong Zacks Rank #2 (Buy) and analysts have raised full-year earnings estimates by 4.9%. Another strong performer mentioned is LCI Industries (LCII), also with a Zacks Rank #2 (Buy).",
+          "url": "https://www.bitget.com/amp/news/detail/12560605303918",
+          "sentiment_score": 0.123257,
+          "sentiment_label": "Neutral",
+          "relevance": 0.554952
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "CM SEC Filings - Canadian Imperial Bank of Commerce 10-K, 10-Q, 8-K Forms",
+          "content": "This page provides a comprehensive resource for Canadian Imperial Bank of Commerce (CM) SEC filings, including annual reports (Form 40-F), quarterly earnings, and material event disclosures (Form 6-K). Recent filings detailed include a prospectus supplement, a free writing prospectus for high-yield memory coupon barrier notes linked to AMD, Tesla, and Salesforce, and a routine 6-K focusing on an updated Board Mandate. The page also offers current stock price and market capitalization data for CM",
+          "url": "https://www.stocktitan.net/sec-filings/CM/page-40.html",
+          "sentiment_score": 0.138059,
+          "sentiment_label": "Neutral",
+          "relevance": 0.603006
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-03-26",
+          "title": "[] ['HYPERION DEFI, INC.  (HYPD)  (CIK 0001682639)']",
+          "content": "2026-03-26",
+          "url": "https://www.sec.gov2026-03-26",
+          "form_type": ""
+        }
+      ],
+      "count": 6,
+      "avg_sentiment": 0.08954983333333333
+    },
+    "AAPL": {
+      "name": "애플",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Tudor Investment Corp ET AL Buys New Holdings in Masimo Corporation $MASI",
+          "content": "Tudor Investment Corp ET AL has acquired a new position in Masimo Corporation (NASDAQ:MASI), purchasing 31,641 shares valued at approximately $4.67 million. This makes Tudor Investment Corp ET AL a 0.06% owner of Masimo. Other institutional investors like Vanguard Group Inc., Massachusetts Financial Services Co. MA, State Street Corp, Westfield Capital Management Co. LP, and Alyeska Investment Group L.P. have also increased their holdings in the medical equipment provider during recent quarters.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-tudor-investment-corp-et-al-buys-new-holdings-in-masimo-corporation-masi-2026-03-26/",
+          "sentiment_score": -0.13505,
+          "sentiment_label": "Neutral",
+          "relevance": 0.742506
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Brady Family Wealth LLC Sells 2,321 Shares of Apple Inc. $AAPL",
+          "content": "Brady Family Wealth LLC reduced its stake in Apple Inc. by 2.3% in the fourth quarter, selling 2,321 shares and now holding 100,543 shares valued at $27.334 million, making Apple its largest position at 8.4% of its holdings. Despite this sale, investor sentiment remains largely positive, with 67.73% institutional ownership and a \"Moderate Buy\" consensus from analysts, supported by Apple's initiatives in monetization and AI. However, the company faces near-term challenges from UK regulatory chang",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-brady-family-wealth-llc-sells-2321-shares-of-apple-inc-aapl-2026-03-26/",
+          "sentiment_score": 0.25659,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "LG Display Co Ltd (ADR) stock faces uncertain 2026 amid display panel oversupply and weak OLED deman",
+          "content": "LG Display Co Ltd (ADR) is facing significant challenges in 2026 due to persistent industry oversupply in the display panel market and softening demand for OLED panels in TVs and smartphones. The company is experiencing pricing weakness, particularly for large OLED TV panels and mobile device panels, which is squeezing margins. While LG Display is strategically pivoting towards higher-margin automotive and IT displays, the near-term outlook remains cautious, with US investors closely monitoring ",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/lg-display-co-ltd-adr-stock-faces-uncertain-2026-amid-display-panel/68991190",
+          "sentiment_score": 0.122268,
+          "sentiment_label": "Neutral",
+          "relevance": 0.747389
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Netflix Inc. stock gains momentum on NASDAQ amid analyst upgrade and streaming growth signals",
+          "content": "Netflix Inc. stock rose 1.3% on NASDAQ, reaching 92.11 USD, following an upgrade by Erste Group to 'buy' and optimistic analyst sentiment. The stock's momentum is driven by sustained subscriber growth, a push into live sports, and content innovation, positioning Netflix as a strong performer in the competitive streaming market. Despite being 45.58% below its 52-week peak, the company's focus on profitability and strategic diversification makes it an attractive option for US investors, though ris",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/netflix-inc-stock-gains-momentum-on-nasdaq-amid-analyst-upgrade-and/68990376",
+          "sentiment_score": 0.122463,
+          "sentiment_label": "Neutral",
+          "relevance": 0.510383
+        }
+      ],
+      "count": 4,
+      "avg_sentiment": 0.09156774999999999
+    },
+    "MSFT": {
+      "name": "마이크로소프트",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "The Future of Medical Innovation with AI: Yonsei University Health System Uses AI Agents to Enhance Efficiency and Professionalism in Administrative & Support Processes",
+          "content": "Yonsei University Health System is implementing AI agents, particularly Microsoft Copilot, to improve administrative and support processes and enhance efficiency and professionalism. The Digital Health Strategy Center is building a citizen developer ecosystem where departments can refine their own AI agents, reducing repetitive work and providing faster access to critical information for staff, especially nurses. This strategic approach aims to integrate AI across the hospital, starting with adm",
+          "url": "https://news.microsoft.com/source/asia/features/the-future-of-medical-innovation-with-ai-yonsei-university-health-systems-citizen-developer-vision/?lang=ko",
+          "sentiment_score": 0.410176,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "World Investment Advisors Buys 15,280 Shares of Alphabet Inc. $GOOG",
+          "content": "World Investment Advisors increased its stake in Alphabet (NASDAQ:GOOG) by 8.7% in the fourth quarter, purchasing 15,280 additional shares to bring its total holding to 190,654 shares, valued at nearly $60 million. The information services provider comprises 1% of the firm's portfolio and is its 16th largest position. Analysts maintain a \"Buy\" rating on Alphabet with an average price target of $345.71, citing strong AI momentum despite facing legal and regulatory challenges.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-world-investment-advisors-buys-15280-shares-of-alphabet-inc-goog-2026-03-26/",
+          "sentiment_score": 0.204437,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.576556
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Pacifica Partners Inc. Sells 4,048 Shares of Alphabet Inc. $GOOG",
+          "content": "Pacifica Partners Inc. reduced its stake in Alphabet Inc. (NASDAQ:GOOG) by 7.2% in the fourth quarter, selling 4,048 shares, though Alphabet remains its largest holding. Despite recent insider selling, Alphabet reported strong Q4 earnings, surpassing analyst estimates, and announced a quarterly dividend. The company holds a \"Buy\" consensus rating from analysts with an average target price of $345.71.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-pacifica-partners-inc-sells-4048-shares-of-alphabet-inc-goog-2026-03-26/",
+          "sentiment_score": 0.109985,
+          "sentiment_label": "Neutral",
+          "relevance": 0.642505
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Alphabet Inc. $GOOG Shares Sold by Threadgill Financial LLC",
+          "content": "Threadgill Financial LLC significantly reduced its stake in Alphabet Inc. (NASDAQ:GOOG) by 34.7% in the fourth quarter, selling 6,583 shares and now holding 12,377 shares valued at $3.88 million. Despite this, other major institutional investors like State Street Corp and JPMorgan Chase & Co. increased their holdings in Alphabet. The article also provides a consensus \"Buy\" rating for Alphabet from analysts with an average price target of $345.71, along with details on recent earnings, dividends,",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-alphabet-inc-goog-shares-sold-by-threadgill-financial-llc-2026-03-26/",
+          "sentiment_score": 0.24613,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.584439
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Microsoft Corporation $MSFT Position Raised by New England Research & Management Inc.",
+          "content": "New England Research & Management Inc. significantly increased its holdings in Microsoft Corporation, making it their third-largest holding. Several other institutional investors also adjusted their positions in Microsoft. The article also provides financial details, recent earnings, dividend announcements, insider trading activity, and analyst ratings, noting both positive and negative sentiment drivers for the stock.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-microsoft-corporation-msft-position-raised-by-new-england-research-management-inc-2026-03-26/",
+          "sentiment_score": 0.136811,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "The Reason Walmart’s ChatGPT Experience Flopped, and What It Means for AI Shopping",
+          "content": "Walmart's initial AI-powered shopping experience with ChatGPT saw significantly lower conversion rates than its traditional website, with customers finding it \"unsatisfying.\" Despite this, Walmart is not abandoning AI shopping; it is integrating its own AI assistant, \"Sparky,\" into ChatGPT interactions and also partnering with Google's Gemini. The company views these early results as part of an iterative learning process for the nascent AI shopping industry, aiming to provide a seamless and cons",
+          "url": "https://www.inc.com/chris-morris/why-walmart-chatgpt-shopping-experience-flopped-ai-ecommerce/91322262",
+          "sentiment_score": -0.08754,
+          "sentiment_label": "Neutral",
+          "relevance": 0.555524
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Microsoft Corporation $MSFT is Harbor Investment Advisory LLC's 3rd Largest Position",
+          "content": "Harbor Investment Advisory LLC has increased its stake in Microsoft (MSFT) by 3.3% in the fourth quarter, making it their third-largest holding. Microsoft reported strong Q4 earnings and revenue, exceeding estimates, and holds a significant market capitalization. However, market sentiment is mixed with positive catalysts like an AI partnership with Nvidia and a Buy reinitiation from BofA, offset by concerns including reports of a challenging quarter and analyst price target reductions.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-microsoft-corporation-msft-is-harbor-investment-advisory-llcs-3rd-largest-position-2026-03-26/",
+          "sentiment_score": 0.089988,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "This Decision in 2019 Was Oracle's Smartest Move -- and It May Be the Ticket to Explosive AI Growth.",
+          "content": "Oracle, a long-standing database company, made a pivotal decision in 2019 to embrace a multicloud strategy by interconnecting with Microsoft Azure, and subsequently expanding to AWS and Google Cloud. This move allows clients to utilize Oracle's database services across various cloud providers, catering to existing demand and integrating with AI platforms. The multicloud approach has significantly boosted Oracle's database revenue and positions the company for explosive growth amidst the surging ",
+          "url": "https://www.theglobeandmail.com/investing/markets/stocks/GOOGL-Q/pressreleases/971400/this-decision-in-2019-was-oracle-s-smartest-move-and-it-may-be-the-ticket-to-explosive-ai-growth/",
+          "sentiment_score": 0.291717,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.7223
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "JPMorgan Chase & Co. Has $16.95 Million Stake in Buckle, Inc. (The) $BKE",
+          "content": "JPMorgan Chase & Co. significantly increased its stake in Buckle, Inc. (NYSE:BKE) by 376.3% during the third quarter, now holding 288,920 shares valued at $16.95 million. This move comes as institutional investors collectively own 53.93% of the company's stock, while insiders have recently sold shares totaling approximately $3.99 million. Buckle reported strong Q1 earnings, beating estimates with $1.59 EPS and $399.1M in revenue, and declared a quarterly dividend of $0.35.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-jpmorgan-chase-co-has-1695-million-stake-in-buckle-inc-the-bke-2026-03-26/",
+          "sentiment_score": 0.306176,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.60615
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Czech National Bank Boosts Stock Holdings in The Walt Disney Company $DIS",
+          "content": "The Czech National Bank increased its stake in The Walt Disney Company by 3.1% in Q4 2025, now holding 470,754 shares valued at $53.56 million. Multiple institutional investors also adjusted their holdings. While Disney surpassed Q4 earnings expectations with $1.63 EPS and $25.98 billion in revenue, the company faces strategic risks due to the collapse of its AI tie-up with OpenAI and uncertainty surrounding a $1.5 billion investment in Epic Games.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-czech-national-bank-boosts-stock-holdings-in-the-walt-disney-company-dis-2026-03-26/",
+          "sentiment_score": 0.257014,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.547849
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "First Bank & Trust Purchases 19,889 Shares of Netflix, Inc. $NFLX",
+          "content": "First Bank & Trust significantly increased its stake in Netflix, Inc. (NASDAQ:NFLX) by 925.9% in the 4th quarter, acquiring an additional 19,889 shares to own a total of 22,037 shares valued at $2,066,000. This comes as other institutional investors also adjusted their holdings, with hedge funds and institutions collectively owning 80.93% of the company's stock. Analysts have set an average \"Moderate Buy\" rating for Netflix with a consensus target price of $114.35, reflecting mostly positive sen",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-first-bank-trust-purchases-19889-shares-of-netflix-inc-nflx-2026-03-26/",
+          "sentiment_score": 0.248211,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.581798
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "DAVENPORT & Co LLC Has $26.35 Million Position in Oracle Corporation $ORCL",
+          "content": "DAVENPORT & Co LLC significantly reduced its stake in Oracle Corporation by over 60% in Q4, now holding 135,175 shares valued at $26.35 million. While Oracle faces recent price target trims from some analysts and potential legal issues, it continues to push AI and cloud initiatives, receiving a buy reinstatement from BofA. Institutional investors collectively own 42.44% of Oracle's stock, and the company has a \"Moderate Buy\" consensus rating with a target price of $262.91.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-davenport-co-llc-has-2635-million-position-in-oracle-corporation-orcl-2026-03-26/",
+          "sentiment_score": -0.273541,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.6688
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Rockwell Automation Showcases Autonomous Industrial Operations at Hannover Messe 2026 | Corporate",
+          "content": "Rockwell Automation will showcase its autonomous industrial operations at Hannover Messe 2026, focusing on how manufacturers can accelerate their journey from automation to autonomy using industrial AI, embedded intelligence, and secure architectures. The company will demonstrate practical applications, AI-enabled smart machines, and self-adjusting systems aimed at boosting productivity and improving quality. Rockwell's presentation will highlight its production-ready approach to industrial AI, ",
+          "url": "https://www.eqs-news.com/news/corporate/rockwell-automation-showcases-autonomous-industrial-operations-at-hannover-messe-2026/0403435e-c3b1-4b56-9739-0a2d05a199c4_en",
+          "sentiment_score": 0.262589,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.605715
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Microsoft Corporation $MSFT Stock Position Increased by CWA Asset Management Group LLC",
+          "content": "CWA Asset Management Group LLC has increased its stake in Microsoft Corporation (NASDAQ:MSFT) by 1.0% in the fourth quarter, making it their third-largest holding. Despite strong quarterly earnings that beat expectations and a declared dividend, analyst sentiment is mixed, with some firms cutting price targets due to concerns about cloud and Copilot monetization and recent negative headlines. Institutional investors own 71.13% of the stock, while recent insider transactions show both purchases a",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-microsoft-corporation-msft-stock-position-increased-by-cwa-asset-management-group-llc-2026-03-26/",
+          "sentiment_score": 0.118723,
+          "sentiment_label": "Neutral",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Is ServiceNow (NOW) Quietly Turning Into an AI Voice Workflow Powerhouse with Vonage Integration?",
+          "content": "ServiceNow's recent integration with Vonage Contact Center embeds enterprise-grade voice and real-time AI into its Customer Service Management and IT Service Management workflows, enhancing incident automation and reducing manual agent effort. This development solidifies ServiceNow's position as an AI workflow hub by feeding structured voice data into its AI Platform. While this strengthens ServiceNow's AI-focused investment narrative, the article notes that investors should also consider the co",
+          "url": "https://simplywall.st/stocks/us/software/nyse-now/servicenow/news/is-servicenow-now-quietly-turning-into-an-ai-voice-workflow",
+          "sentiment_score": 0.146318,
+          "sentiment_label": "Neutral",
+          "relevance": 0.641096
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "ING Says Private Credit, Iran War Risk Fueling Funding Cost Jump",
+          "content": "ING Groep NV warns that companies face \"materially more expensive\" funding due to the concentrated exposure of private credit to the software sector and renewed inflation pressures from the Iran war. ING credit strategists predict continued redemption pressure across private credit vehicles, which will slow new financings. This analysis suggests a challenging funding environment for businesses in the near future.",
+          "url": "https://www.bloomberg.com/news/articles/2026-03-26/ing-says-private-credit-iran-war-risk-fueling-funding-cost-jump",
+          "sentiment_score": -0.217642,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.622672
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Wall Street Zen Downgrades Pinnacle Financial Partners (NYSE:PNFP) to Sell",
+          "content": "Wall Street Zen has downgraded Pinnacle Financial Partners (NYSE:PNFP) from \"hold\" to \"sell,\" despite a broader \"Moderate Buy\" consensus among other analysts and an average price target significantly higher than its current trading price. The company's CFO recently purchased 1,000 shares, and institutional ownership remains high at 87.4%, with major firms increasing their positions. PNFP has a market cap of $6.57 billion and a P/E ratio of 10.00.",
+          "url": "https://www.marketbeat.com/instant-alerts/wall-street-zen-downgrades-pinnacle-financial-partners-nysepnfp-to-sell-2026-03-26/",
+          "sentiment_score": 0.216591,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.641495
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Microsoft urges Korea to turn AI adoption into measurable business gains - CHOSUNBIZ",
+          "content": "Microsoft is encouraging South Korea to translate its widespread artificial intelligence adoption into tangible business profits. The tech giant highlights the importance of moving beyond mere AI implementation to realizing measurable financial and operational benefits. This initiative aims to spur Korean businesses to strategically leverage AI for greater economic impact.",
+          "url": "https://biz.chosun.com/en/en-it/2026/03/26/GSMM7DDVNJCAPI6UTB6Y6HKEWU/",
+          "sentiment_score": 0.308086,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Microsoft Positions Korea as a Global AI Hub, Moving Beyond Experimentation to Full Scale Frontier Transformation",
+          "content": "Microsoft held its AI Tour Seoul event, revealing a \"Frontier Success Framework\" to accelerate Korea's Frontier Transformation by expanding access to intelligence and enabling measurable business outcomes through agent-based AI solutions. The company also announced updates to Copilot, including Wave 3 of Microsoft 365 Copilot with personalized agent experiences, and the new Microsoft 365 E7 (Frontier Suite) enterprise plan for secure intelligent agent use. Microsoft is also heavily invested in A",
+          "url": "https://news.microsoft.com/source/asia/2026/03/26/microsoft-positions-korea-as-a-global-ai-hub-moving-beyond-experimentation-to-full-scale-frontier-transformation/?lang=ko",
+          "sentiment_score": 0.405906,
+          "sentiment_label": "Bullish",
+          "relevance": 1.0
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "NetApp Inc. stock rises amid dividend anticipation and institutional buying as AI storage demand surges",
+          "content": "NetApp Inc. stock climbed 1.14% on Nasdaq, reaching 105.50 USD, driven by an upcoming ex-dividend date of April 2, 2026, and significant institutional interest. Investors are focused on NetApp's critical role in the expanding AI infrastructure market, with the company's hybrid cloud strategy and strong dividend yield making it an attractive play for US investors balancing growth and income. Pension funds and other institutional players are increasing their holdings, validating NetApp's position ",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/netapp-inc-stock-rises-amid-dividend-anticipation-and-institutional/68988793",
+          "sentiment_score": 0.326296,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.634818
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Is Atmus Filtration Technologies Inc. (ATMU) Surpassing Other Stocks in the Auto-Tires-Trucks Sector This Year?",
+          "content": "Atmus Filtration Technologies Inc. (ATMU) is significantly outperforming its peers in the Auto-Tires-Trucks sector this year, with a 14.2% return compared to the sector's average decline of 10.9%. The company holds a strong Zacks Rank #2 (Buy) and analysts have raised full-year earnings estimates by 4.9%. Another strong performer mentioned is LCI Industries (LCII), also with a Zacks Rank #2 (Buy).",
+          "url": "https://www.bitget.com/amp/news/detail/12560605303918",
+          "sentiment_score": 0.111393,
+          "sentiment_label": "Neutral",
+          "relevance": 0.575655
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Jabil Inc. stock surges on Q2 fiscal 2026 earnings beat driven by AI and cloud demand",
+          "content": "Jabil Inc. shares surged over 7% on the NYSE following impressive Q2 fiscal 2026 earnings, significantly beating analyst expectations. The stronger-than-anticipated results were driven by robust demand for AI hardware and cloud components, particularly from hyperscalers, positioning Jabil as a key player in the tech supply chain. The company's diversified manufacturing services and strategic focus on US-centric partnerships are highlighted as crucial factors in its continued growth and resilienc",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/jabil-inc-stock-surges-on-q2-fiscal-2026-earnings-beat-driven-by-ai-and/68988483",
+          "sentiment_score": 0.304831,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.572001
+        }
+      ],
+      "count": 22,
+      "avg_sentiment": 0.1783025
+    },
+    "META": {
+      "name": "메타",
+      "items": [
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Why NextEra Stock Is The Energy Transition’s Biggest Winner",
+          "content": "NextEra Energy (NEE) is positioned as a leader in the energy transition due to its focus on the \"Zero-Marginal-Cost Grid,\" which leverages fixed-cost renewable energy rather than variable-cost fossil fuels. The company's dual-engine model, large project backlog, and ability to meet the increasing demand from AI data centers, provide a strong foundation for future growth. Despite currently trading at a premium to the utility sector, the article argues that NextEra's valuation should be compared t",
+          "url": "https://www.trefis.com/stock/nee/articles/594895/why-nextera-stock-is-the-energy-transitions-biggest-winner/2026-03-26",
+          "sentiment_score": 0.300767,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.615992
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Pacifica Partners Inc. Sells 4,048 Shares of Alphabet Inc. $GOOG",
+          "content": "Pacifica Partners Inc. reduced its stake in Alphabet Inc. (NASDAQ:GOOG) by 7.2% in the fourth quarter, selling 4,048 shares, though Alphabet remains its largest holding. Despite recent insider selling, Alphabet reported strong Q4 earnings, surpassing analyst estimates, and announced a quarterly dividend. The company holds a \"Buy\" consensus rating from analysts with an average target price of $345.71.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-pacifica-partners-inc-sells-4048-shares-of-alphabet-inc-goog-2026-03-26/",
+          "sentiment_score": -0.315665,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.619985
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Alphabet Inc. $GOOG Shares Sold by Threadgill Financial LLC",
+          "content": "Threadgill Financial LLC significantly reduced its stake in Alphabet Inc. (NASDAQ:GOOG) by 34.7% in the fourth quarter, selling 6,583 shares and now holding 12,377 shares valued at $3.88 million. Despite this, other major institutional investors like State Street Corp and JPMorgan Chase & Co. increased their holdings in Alphabet. The article also provides a consensus \"Buy\" rating for Alphabet from analysts with an average price target of $345.71, along with details on recent earnings, dividends,",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-alphabet-inc-goog-shares-sold-by-threadgill-financial-llc-2026-03-26/",
+          "sentiment_score": 0.10855,
+          "sentiment_label": "Neutral",
+          "relevance": 0.613812
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Grove Bank & Trust Has $12.67 Million Stock Holdings in Alphabet Inc. $GOOGL",
+          "content": "Grove Bank & Trust significantly increased its stake in Alphabet Inc. by 22.8% in Q4, holding 40,482 shares valued at $12.67 million. Despite substantial insider selling amounting to over $118 million in the last three months, Wall Street analysts largely maintain a \"Moderate Buy\" rating for Alphabet, with a consensus price target of $367.18, driven by strong AI and cloud results. However, the company faces near-term risks including a landmark legal verdict against YouTube and significant capita",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-grove-bank-trust-has-1267-million-stock-holdings-in-alphabet-inc-googl-2026-03-26/",
+          "sentiment_score": -0.301638,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.642546
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Legacy Private Trust Co. Sells 3,617 Shares of Alphabet Inc. $GOOGL",
+          "content": "Legacy Private Trust Co. recently decreased its stake in Alphabet Inc. ($GOOGL) by 2.9%, selling 3,617 shares while retaining a substantial holding valued at $37.8 million. Despite this trimming, Alphabet remains the firm's seventh-largest holding, comprising 2.2% of its portfolio. The article also highlights strong analyst optimism for Alphabet, with a \"Moderate Buy\" consensus and a target price of $367.18, alongside some insider selling and risk factors like legal exposure and high capital exp",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-legacy-private-trust-co-sells-3617-shares-of-alphabet-inc-googl-2026-03-26/",
+          "sentiment_score": -0.403968,
+          "sentiment_label": "Bearish",
+          "relevance": 0.59727
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Is Vistra (VST) Using PJM’s Co‑Location Rules Fight To Sharpen Its Data Center Strategy?",
+          "content": "Vistra Corp. has filed a protest against PJM Interconnection’s co-located facilities plan, arguing that its ambiguities and delays could hinder critical data center and AI infrastructure development. This action aligns with Vistra's strategy to capitalize on growing data center power needs, aiming to convert them into long-term contracted cash flows despite balance sheet pressures from debt-funded growth. The company's stance on these regulations could significantly impact its projected revenue ",
+          "url": "https://simplywall.st/stocks/us/utilities/nyse-vst/vistra/news/is-vistra-vst-using-pjms-colocation-rules-fight-to-sharpen-i",
+          "sentiment_score": 0.348094,
+          "sentiment_label": "Somewhat-Bullish",
+          "relevance": 0.617117
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Assenagon Asset Management S.A. Has $2.11 Billion Position in Alphabet Inc. $GOOG",
+          "content": "Assenagon Asset Management S.A. recently reduced its stake in Alphabet Inc. (NASDAQ:GOOG) by 31.6% in the fourth quarter, yet still holds over 6.7 million shares valued at $2.11 billion, making Alphabet its 5th largest holding. The article also details other institutional investor activity, analyst ratings, performance data, and recent insider transactions for Alphabet. The company's stock has a \"Buy\" consensus rating from analysts, with insider selling noted recently from a director and CEO.",
+          "url": "https://www.marketbeat.com/instant-alerts/filing-assenagon-asset-management-sa-has-211-billion-position-in-alphabet-inc-goog-2026-03-26/",
+          "sentiment_score": -0.340637,
+          "sentiment_label": "Somewhat-Bearish",
+          "relevance": 0.643057
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "Short Interest in Fidelity Metaverse ETF (NASDAQ:FMET) Increases By 143.1%",
+          "content": "Short interest in Fidelity Metaverse ETF (NASDAQ:FMET) significantly increased by 143.1% in March, reaching 615 shares as of March 13th. Major institutional investors like Osaic Holdings Inc., Envestnet Asset Management Inc., High Point Wealth Management LLC, and Jane Street Group LLC have adjusted their positions in the ETF. The company also recently announced a quarterly dividend of $0.056, an increase from its previous dividend.",
+          "url": "https://www.defenseworld.net/2026/03/26/short-interest-in-fidelity-metaverse-etf-nasdaqfmet-increases-by-143-1.html",
+          "sentiment_score": 0.101547,
+          "sentiment_label": "Neutral",
+          "relevance": 0.614333
+        },
+        {
+          "source": "AlphaVantage",
+          "date": "2026-03-26",
+          "title": "LG Display Co Ltd (ADR) stock faces uncertain 2026 amid display panel oversupply and weak OLED deman",
+          "content": "LG Display Co Ltd (ADR) is facing significant challenges in 2026 due to persistent industry oversupply in the display panel market and softening demand for OLED panels in TVs and smartphones. The company is experiencing pricing weakness, particularly for large OLED TV panels and mobile device panels, which is squeezing margins. While LG Display is strategically pivoting towards higher-margin automotive and IT displays, the near-term outlook remains cautious, with US investors closely monitoring ",
+          "url": "https://www.ad-hoc-news.de/boerse/news/ueberblick/lg-display-co-ltd-adr-stock-faces-uncertain-2026-amid-display-panel/68991190",
+          "sentiment_score": 0.050003,
+          "sentiment_label": "Neutral",
+          "relevance": 0.579837
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-03-26",
+          "title": "[] ['Tonix Pharmaceuticals Holding Corp.  (TNXP)  (CIK 0001430306)']",
+          "content": "2026-03-26",
+          "url": "https://www.sec.gov2026-03-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-03-26",
+          "title": "[] ['Dianthus Therapeutics, Inc. /DE/  (DNTH)  (CIK 0001690585)']",
+          "content": "2026-03-26",
+          "url": "https://www.sec.gov2026-03-26",
+          "form_type": ""
+        },
+        {
+          "source": "SEC EDGAR",
+          "date": "2026-03-26",
+          "title": "[] ['MapLight Therapeutics, Inc.  (MPLT)  (CIK 0001770069)']",
+          "content": "2026-03-26",
+          "url": "https://www.sec.gov2026-03-26",
+          "form_type": ""
+        }
+      ],
+      "count": 12,
+      "avg_sentiment": -0.03774558333333333
+    }
+  },
+  "collected_at": "2026-03-26T22:00:06.969995"
+}

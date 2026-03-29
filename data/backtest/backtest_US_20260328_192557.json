@@ -1,0 +1,6765 @@
+{
+  "market": "US",
+  "mode": "MODERATE_BULL",
+  "start_date": "2024-01-01",
+  "end_date": "2026-03-28",
+  "run_at": "2026-03-28T19:25:53.297701",
+  "by_ticker": {
+    "AAPL": {
+      "volatility_breakout": {
+        "ticker": "AAPL",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-06-11",
+            "exit_date": "2024-06-18",
+            "entry_price": 205.5602,
+            "exit_price": 212.6454,
+            "pnl_pct": 3.447,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-09-20",
+            "exit_date": "2024-09-27",
+            "entry_price": 226.7108,
+            "exit_price": 226.3034,
+            "pnl_pct": -0.18,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-12-20",
+            "exit_date": "2024-12-30",
+            "entry_price": 253.1074,
+            "exit_price": 250.8298,
+            "pnl_pct": -0.9,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-04-09",
+            "exit_date": "2025-04-10",
+            "entry_price": 197.9871,
+            "exit_price": 192.0475,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 245.033,
+            "exit_price": 254.974,
+            "pnl_pct": 4.057,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 40.0,
+          "avg_pnl": 0.685,
+          "max_win": 4.057,
+          "max_loss": -3.0,
+          "total_pnl": 3.424,
+          "profit_factor": 1.839,
+          "max_drawdown": -4.08,
+          "sharpe": 1.816
+        }
+      },
+      "momentum": {
+        "ticker": "AAPL",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-12-20",
+            "exit_date": "2024-12-30",
+            "entry_price": 253.1074,
+            "exit_price": 250.8298,
+            "pnl_pct": -0.9,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-08-08",
+            "exit_date": "2025-08-15",
+            "entry_price": 228.6542,
+            "exit_price": 231.1494,
+            "pnl_pct": 1.091,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 245.033,
+            "exit_price": 254.974,
+            "pnl_pct": 4.057,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 66.7,
+          "avg_pnl": 1.416,
+          "max_win": 4.057,
+          "max_loss": -0.9,
+          "total_pnl": 4.248,
+          "profit_factor": 5.72,
+          "max_drawdown": -0.9,
+          "sharpe": 6.372
+        }
+      },
+      "mean_reversion": {
+        "ticker": "AAPL",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-08-05",
+            "exit_date": "2024-08-12",
+            "entry_price": 207.6639,
+            "exit_price": 216.1104,
+            "pnl_pct": 4.067,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-09-16",
+            "exit_date": "2024-09-23",
+            "entry_price": 214.9083,
+            "exit_price": 224.9921,
+            "pnl_pct": 4.692,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-11-04",
+            "exit_date": "2024-11-11",
+            "entry_price": 220.5611,
+            "exit_price": 223.0117,
+            "pnl_pct": 1.111,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-01-13",
+            "exit_date": "2025-01-21",
+            "entry_price": 233.1265,
+            "exit_price": 226.1327,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-08-05",
+            "exit_date": "2025-08-07",
+            "entry_price": 202.3044,
+            "exit_price": 214.4426,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-12-22",
+            "exit_date": "2025-12-30",
+            "entry_price": 270.7167,
+            "exit_price": 272.8247,
+            "pnl_pct": 0.779,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-05",
+            "exit_date": "2026-01-08",
+            "entry_price": 267.26,
+            "exit_price": 259.2422,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2026-01-08",
+            "exit_date": "2026-01-15",
+            "entry_price": 259.04,
+            "exit_price": 258.21,
+            "pnl_pct": -0.32,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-15",
+            "exit_date": "2026-01-20",
+            "entry_price": 258.21,
+            "exit_price": 250.4637,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2026-03-16",
+            "exit_date": "2026-03-23",
+            "entry_price": 252.82,
+            "exit_price": 251.49,
+            "pnl_pct": -0.526,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 10,
+          "win_rate": 50.0,
+          "avg_pnl": 0.68,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 6.803,
+          "profit_factor": 1.691,
+          "max_drawdown": -6.846,
+          "sharpe": 1.085
+        }
+      },
+      "gap_pullback": {
+        "ticker": "AAPL",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-08-06",
+            "exit_date": "2025-08-08",
+            "entry_price": 212.603,
+            "exit_price": 225.3592,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 245.033,
+            "exit_price": 254.974,
+            "pnl_pct": 4.057,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-20",
+            "exit_date": "2025-10-27",
+            "entry_price": 261.7411,
+            "exit_price": 268.2986,
+            "pnl_pct": 2.505,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-02-04",
+            "exit_date": "2026-02-11",
+            "entry_price": 276.49,
+            "exit_price": 275.5,
+            "pnl_pct": -0.358,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 4,
+          "win_rate": 75.0,
+          "avg_pnl": 3.051,
+          "max_win": 6.0,
+          "max_loss": -0.358,
+          "total_pnl": 12.204,
+          "profit_factor": 35.089,
+          "max_drawdown": -0.358,
+          "sharpe": 10.414
+        }
+      }
+    },
+    "ABBV": {
+      "volatility_breakout": {
+        "ticker": "ABBV",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-05-31",
+            "exit_date": "2024-06-07",
+            "entry_price": 151.9291,
+            "exit_price": 159.6367,
+            "pnl_pct": 5.073,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-10-30",
+            "exit_date": "2024-11-06",
+            "entry_price": 193.1385,
+            "exit_price": 192.8509,
+            "pnl_pct": -0.149,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-12-20",
+            "exit_date": "2024-12-30",
+            "entry_price": 168.2941,
+            "exit_price": 168.8884,
+            "pnl_pct": 0.353,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-02-28",
+            "exit_date": "2025-03-07",
+            "entry_price": 202.2454,
+            "exit_price": 207.3347,
+            "pnl_pct": 2.516,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 219.1147,
+            "exit_price": 217.2828,
+            "pnl_pct": -0.836,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-01",
+            "exit_date": "2025-10-02",
+            "entry_price": 240.6943,
+            "exit_price": 233.4735,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-12-19",
+            "exit_date": "2025-12-29",
+            "entry_price": 225.0096,
+            "exit_price": 228.9975,
+            "pnl_pct": 1.772,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 7,
+          "win_rate": 57.1,
+          "avg_pnl": 0.818,
+          "max_win": 5.073,
+          "max_loss": -3.0,
+          "total_pnl": 5.729,
+          "profit_factor": 2.438,
+          "max_drawdown": -3.836,
+          "sharpe": 2.045
+        }
+      },
+      "momentum": {
+        "ticker": "ABBV",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-25",
+            "exit_date": "2024-08-01",
+            "entry_price": 173.2273,
+            "exit_price": 180.3972,
+            "pnl_pct": 4.139,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-02-28",
+            "exit_date": "2025-03-07",
+            "entry_price": 202.2454,
+            "exit_price": 207.3347,
+            "pnl_pct": 2.516,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-11",
+            "exit_date": "2025-09-18",
+            "entry_price": 216.8987,
+            "exit_price": 218.642,
+            "pnl_pct": 0.804,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 219.1147,
+            "exit_price": 217.2828,
+            "pnl_pct": -0.836,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-30",
+            "exit_date": "2025-10-07",
+            "entry_price": 228.0479,
+            "exit_price": 229.3185,
+            "pnl_pct": 0.557,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 80.0,
+          "avg_pnl": 1.436,
+          "max_win": 4.139,
+          "max_loss": -0.836,
+          "total_pnl": 7.18,
+          "profit_factor": 9.589,
+          "max_drawdown": -0.836,
+          "sharpe": 5.924
+        }
+      },
+      "mean_reversion": {
+        "ticker": "ABBV",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-18",
+            "exit_date": "2024-10-25",
+            "entry_price": 181.023,
+            "exit_price": 180.0549,
+            "pnl_pct": -0.535,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-03-25",
+            "exit_date": "2025-04-01",
+            "entry_price": 194.805,
+            "exit_price": 199.575,
+            "pnl_pct": 2.449,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-04-04",
+            "exit_date": "2025-04-08",
+            "entry_price": 180.8918,
+            "exit_price": 175.465,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-10-31",
+            "exit_date": "2025-11-07",
+            "entry_price": 216.2997,
+            "exit_price": 217.4108,
+            "pnl_pct": 0.514,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-12-12",
+            "exit_date": "2025-12-19",
+            "entry_price": 221.5376,
+            "exit_price": 225.0096,
+            "pnl_pct": 1.567,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 60.0,
+          "avg_pnl": 0.199,
+          "max_win": 2.449,
+          "max_loss": -3.0,
+          "total_pnl": 0.995,
+          "profit_factor": 1.281,
+          "max_drawdown": -3.0,
+          "sharpe": 0.749
+        }
+      },
+      "gap_pullback": {
+        "ticker": "ABBV",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [],
+        "stats": {
+          "n_trades": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0,
+          "max_win": 0.0,
+          "max_loss": 0.0,
+          "total_pnl": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 0.0,
+          "sharpe": 0.0
+        }
+      }
+    },
+    "AMD": {
+      "volatility_breakout": {
+        "ticker": "AMD",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-04-09",
+            "exit_date": "2025-04-10",
+            "entry_price": 96.84,
+            "exit_price": 93.9348,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-06-16",
+            "exit_date": "2025-06-24",
+            "entry_price": 126.39,
+            "exit_price": 133.9734,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-29",
+            "exit_date": "2025-08-01",
+            "entry_price": 177.44,
+            "exit_price": 172.1168,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-10-06",
+            "exit_date": "2025-10-08",
+            "entry_price": 203.71,
+            "exit_price": 215.9326,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-10-08",
+            "exit_date": "2025-10-10",
+            "entry_price": 235.56,
+            "exit_price": 228.4932,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2026-01-13",
+            "exit_date": "2026-01-21",
+            "entry_price": 220.97,
+            "exit_price": 234.2282,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 6,
+          "win_rate": 50.0,
+          "avg_pnl": 1.5,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 9.0,
+          "profit_factor": 2.0,
+          "max_drawdown": -3.0,
+          "sharpe": 2.16
+        }
+      },
+      "momentum": {
+        "ticker": "AMD",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-06-16",
+            "exit_date": "2025-06-24",
+            "entry_price": 126.39,
+            "exit_price": 133.9734,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-06-24",
+            "exit_date": "2025-07-01",
+            "entry_price": 138.43,
+            "exit_price": 136.11,
+            "pnl_pct": -1.676,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-15",
+            "exit_date": "2025-07-22",
+            "entry_price": 155.61,
+            "exit_price": 154.72,
+            "pnl_pct": -0.572,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-29",
+            "exit_date": "2025-08-01",
+            "entry_price": 177.44,
+            "exit_price": 172.1168,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-10-08",
+            "exit_date": "2025-10-10",
+            "entry_price": 235.56,
+            "exit_price": 228.4932,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 20.0,
+          "avg_pnl": -0.45,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": -2.248,
+          "profit_factor": 0.727,
+          "max_drawdown": -8.248,
+          "sharpe": -0.953
+        }
+      },
+      "mean_reversion": {
+        "ticker": "AMD",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-09-05",
+            "exit_date": "2025-09-12",
+            "entry_price": 151.14,
+            "exit_price": 158.57,
+            "pnl_pct": 4.916,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-11-20",
+            "exit_date": "2025-11-28",
+            "entry_price": 206.02,
+            "exit_price": 217.53,
+            "pnl_pct": 5.587,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 100.0,
+          "avg_pnl": 5.252,
+          "max_win": 5.587,
+          "max_loss": 4.916,
+          "total_pnl": 10.503,
+          "profit_factor": null,
+          "max_drawdown": 0.0,
+          "sharpe": 175.702
+        }
+      },
+      "gap_pullback": {
+        "ticker": "AMD",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-04-09",
+            "exit_date": "2025-04-10",
+            "entry_price": 96.84,
+            "exit_price": 93.9348,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-06-24",
+            "exit_date": "2025-07-01",
+            "entry_price": 138.43,
+            "exit_price": 136.11,
+            "pnl_pct": -1.676,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-15",
+            "exit_date": "2025-07-22",
+            "entry_price": 155.61,
+            "exit_price": 154.72,
+            "pnl_pct": -0.572,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-08-13",
+            "exit_date": "2025-08-15",
+            "entry_price": 184.42,
+            "exit_price": 178.8874,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-12-19",
+            "exit_date": "2025-12-29",
+            "entry_price": 213.43,
+            "exit_price": 215.61,
+            "pnl_pct": 1.021,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-13",
+            "exit_date": "2026-01-21",
+            "entry_price": 220.97,
+            "exit_price": 234.2282,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-21",
+            "exit_date": "2026-01-28",
+            "entry_price": 249.8,
+            "exit_price": 252.74,
+            "pnl_pct": 1.177,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 7,
+          "win_rate": 42.9,
+          "avg_pnl": -0.007,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": -0.05,
+          "profit_factor": 0.994,
+          "max_drawdown": -8.248,
+          "sharpe": -0.015
+        }
+      }
+    },
+    "AMZN": {
+      "volatility_breakout": {
+        "ticker": "AMZN",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-04-07",
+            "exit_date": "2025-04-09",
+            "entry_price": 175.26,
+            "exit_price": 185.7756,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-06-27",
+            "exit_date": "2025-07-07",
+            "entry_price": 223.3,
+            "exit_price": 223.47,
+            "pnl_pct": 0.076,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-31",
+            "exit_date": "2025-08-01",
+            "entry_price": 234.11,
+            "exit_price": 227.0867,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-10-31",
+            "exit_date": "2025-11-07",
+            "entry_price": 244.22,
+            "exit_price": 244.41,
+            "pnl_pct": 0.078,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 4,
+          "win_rate": 75.0,
+          "avg_pnl": 0.788,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 3.154,
+          "profit_factor": 2.051,
+          "max_drawdown": -3.0,
+          "sharpe": 1.919
+        }
+      },
+      "momentum": {
+        "ticker": "AMZN",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-06-27",
+            "exit_date": "2025-07-07",
+            "entry_price": 223.3,
+            "exit_price": 223.47,
+            "pnl_pct": 0.076,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-04",
+            "exit_date": "2025-09-11",
+            "entry_price": 235.68,
+            "exit_price": 229.95,
+            "pnl_pct": -2.431,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 50.0,
+          "avg_pnl": -1.177,
+          "max_win": 0.076,
+          "max_loss": -2.431,
+          "total_pnl": -2.355,
+          "profit_factor": 0.031,
+          "max_drawdown": -2.431,
+          "sharpe": -10.544
+        }
+      },
+      "mean_reversion": {
+        "ticker": "AMZN",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-09-24",
+            "exit_date": "2025-10-01",
+            "entry_price": 220.21,
+            "exit_price": 220.63,
+            "pnl_pct": 0.191,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-11-20",
+            "exit_date": "2025-11-28",
+            "entry_price": 217.14,
+            "exit_price": 230.1684,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 100.0,
+          "avg_pnl": 3.095,
+          "max_win": 6.0,
+          "max_loss": 0.191,
+          "total_pnl": 6.191,
+          "profit_factor": null,
+          "max_drawdown": 0.0,
+          "sharpe": 11.963
+        }
+      },
+      "gap_pullback": {
+        "ticker": "AMZN",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-09-04",
+            "exit_date": "2025-09-11",
+            "entry_price": 235.68,
+            "exit_price": 229.95,
+            "pnl_pct": -2.431,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 1,
+          "win_rate": 0.0,
+          "avg_pnl": -2.431,
+          "max_win": -2.431,
+          "max_loss": -2.431,
+          "total_pnl": -2.431,
+          "profit_factor": 0.0,
+          "max_drawdown": -2.431,
+          "sharpe": 0.0
+        }
+      }
+    },
+    "CAT": {
+      "volatility_breakout": {
+        "ticker": "CAT",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-06-28",
+            "exit_date": "2024-07-08",
+            "entry_price": 324.8836,
+            "exit_price": 320.9432,
+            "pnl_pct": -1.213,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-08",
+            "entry_price": 409.7197,
+            "exit_price": 397.4281,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-06-20",
+            "exit_date": "2025-06-27",
+            "entry_price": 357.339,
+            "exit_price": 378.7793,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-29",
+            "exit_date": "2025-11-04",
+            "entry_price": 584.1233,
+            "exit_price": 566.5996,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 4
+          }
+        ],
+        "stats": {
+          "n_trades": 4,
+          "win_rate": 25.0,
+          "avg_pnl": -0.303,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": -1.213,
+          "profit_factor": 0.832,
+          "max_drawdown": -4.213,
+          "sharpe": -0.649
+        }
+      },
+      "momentum": {
+        "ticker": "CAT",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-09-19",
+            "exit_date": "2024-09-26",
+            "entry_price": 365.5846,
+            "exit_price": 382.8693,
+            "pnl_pct": 4.728,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-06-24",
+            "exit_date": "2025-07-01",
+            "entry_price": 369.7287,
+            "exit_price": 387.4708,
+            "pnl_pct": 4.799,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-31",
+            "exit_date": "2025-08-07",
+            "entry_price": 435.7456,
+            "exit_price": 422.6733,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-17",
+            "exit_date": "2025-09-24",
+            "entry_price": 448.32,
+            "exit_price": 467.3507,
+            "pnl_pct": 4.245,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-14",
+            "exit_date": "2025-10-21",
+            "entry_price": 524.7311,
+            "exit_price": 523.4254,
+            "pnl_pct": -0.249,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-29",
+            "exit_date": "2025-11-04",
+            "entry_price": 584.1233,
+            "exit_price": 566.5996,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2026-01-29",
+            "exit_date": "2026-02-05",
+            "entry_price": 665.24,
+            "exit_price": 678.31,
+            "pnl_pct": 1.965,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 7,
+          "win_rate": 57.1,
+          "avg_pnl": 1.355,
+          "max_win": 4.799,
+          "max_loss": -3.0,
+          "total_pnl": 9.488,
+          "profit_factor": 2.518,
+          "max_drawdown": -3.249,
+          "sharpe": 2.528
+        }
+      },
+      "mean_reversion": {
+        "ticker": "CAT",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-31",
+            "exit_date": "2024-11-06",
+            "entry_price": 369.7384,
+            "exit_price": 391.9227,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2024-12-16",
+            "exit_date": "2024-12-18",
+            "entry_price": 372.4117,
+            "exit_price": 361.2393,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2026-03-06",
+            "exit_date": "2026-03-13",
+            "entry_price": 680.9,
+            "exit_price": 693.99,
+            "pnl_pct": 1.922,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-03-20",
+            "exit_date": "2026-03-27",
+            "entry_price": 680.88,
+            "exit_price": 695.4,
+            "pnl_pct": 2.133,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 4,
+          "win_rate": 75.0,
+          "avg_pnl": 1.764,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 7.055,
+          "profit_factor": 3.352,
+          "max_drawdown": -3.0,
+          "sharpe": 4.383
+        }
+      },
+      "gap_pullback": {
+        "ticker": "CAT",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-09-19",
+            "exit_date": "2024-09-26",
+            "entry_price": 365.5846,
+            "exit_price": 382.8693,
+            "pnl_pct": 4.728,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-08",
+            "entry_price": 409.7197,
+            "exit_price": 397.4281,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-01-21",
+            "exit_date": "2025-01-28",
+            "entry_price": 392.9531,
+            "exit_price": 384.9926,
+            "pnl_pct": -2.026,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-29",
+            "exit_date": "2025-11-04",
+            "entry_price": 584.1233,
+            "exit_price": 566.5996,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2025-12-19",
+            "exit_date": "2025-12-29",
+            "entry_price": 574.8749,
+            "exit_price": 577.2594,
+            "pnl_pct": 0.415,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 40.0,
+          "avg_pnl": -0.577,
+          "max_win": 4.728,
+          "max_loss": -3.0,
+          "total_pnl": -2.883,
+          "profit_factor": 0.641,
+          "max_drawdown": -8.026,
+          "sharpe": -1.396
+        }
+      }
+    },
+    "CVX": {
+      "volatility_breakout": {
+        "ticker": "CVX",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-03-21",
+            "exit_date": "2025-03-28",
+            "entry_price": 157.6552,
+            "exit_price": 158.9375,
+            "pnl_pct": 0.813,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-05",
+            "exit_date": "2026-01-06",
+            "entry_price": 162.2627,
+            "exit_price": 157.3948,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2026-03-12",
+            "exit_date": "2026-03-19",
+            "entry_price": 196.97,
+            "exit_price": 201.44,
+            "pnl_pct": 2.269,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-03-20",
+            "exit_date": "2026-03-27",
+            "entry_price": 201.73,
+            "exit_price": 211.15,
+            "pnl_pct": 4.67,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 4,
+          "win_rate": 75.0,
+          "avg_pnl": 1.188,
+          "max_win": 4.67,
+          "max_loss": -3.0,
+          "total_pnl": 4.752,
+          "profit_factor": 2.584,
+          "max_drawdown": -3.0,
+          "sharpe": 3.389
+        }
+      },
+      "momentum": {
+        "ticker": "CVX",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-13",
+            "entry_price": 147.7649,
+            "exit_price": 148.7018,
+            "pnl_pct": 0.634,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-30",
+            "exit_date": "2026-02-06",
+            "entry_price": 175.1863,
+            "exit_price": 179.1079,
+            "pnl_pct": 2.239,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-03-12",
+            "exit_date": "2026-03-19",
+            "entry_price": 196.97,
+            "exit_price": 201.44,
+            "pnl_pct": 2.269,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 100.0,
+          "avg_pnl": 1.714,
+          "max_win": 2.269,
+          "max_loss": 0.634,
+          "total_pnl": 5.142,
+          "profit_factor": null,
+          "max_drawdown": 0.0,
+          "sharpe": 20.568
+        }
+      },
+      "mean_reversion": {
+        "ticker": "CVX",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-12-12",
+            "exit_date": "2024-12-16",
+            "entry_price": 146.4235,
+            "exit_price": 142.0308,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2024-12-16",
+            "exit_date": "2024-12-18",
+            "entry_price": 141.36,
+            "exit_price": 137.1192,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-10-10",
+            "exit_date": "2025-10-17",
+            "entry_price": 145.8288,
+            "exit_price": 149.9226,
+            "pnl_pct": 2.807,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 33.3,
+          "avg_pnl": -1.064,
+          "max_win": 2.807,
+          "max_loss": -3.0,
+          "total_pnl": -3.193,
+          "profit_factor": 0.468,
+          "max_drawdown": -6.0,
+          "sharpe": -3.563
+        }
+      },
+      "gap_pullback": {
+        "ticker": "CVX",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-10-31",
+            "exit_date": "2025-11-05",
+            "entry_price": 154.4669,
+            "exit_price": 149.8329,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          }
+        ],
+        "stats": {
+          "n_trades": 1,
+          "win_rate": 0.0,
+          "avg_pnl": -3.0,
+          "max_win": -3.0,
+          "max_loss": -3.0,
+          "total_pnl": -3.0,
+          "profit_factor": 0.0,
+          "max_drawdown": -3.0,
+          "sharpe": 0.0
+        }
+      }
+    },
+    "GE": {
+      "volatility_breakout": {
+        "ticker": "GE",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-05-31",
+            "exit_date": "2024-06-07",
+            "entry_price": 163.1804,
+            "exit_price": 159.9986,
+            "pnl_pct": -1.95,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-07-23",
+            "exit_date": "2024-07-24",
+            "entry_price": 170.2467,
+            "exit_price": 165.1393,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-01-23",
+            "exit_date": "2025-01-27",
+            "entry_price": 199.3718,
+            "exit_price": 193.3907,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-06-27",
+            "exit_date": "2025-07-02",
+            "entry_price": 253.17,
+            "exit_price": 245.5749,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 299.9919,
+            "exit_price": 293.8554,
+            "pnl_pct": -2.046,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 0.0,
+          "avg_pnl": -2.599,
+          "max_win": -1.95,
+          "max_loss": -3.0,
+          "total_pnl": -12.996,
+          "profit_factor": 0.0,
+          "max_drawdown": -12.996,
+          "sharpe": -37.519
+        }
+      },
+      "momentum": {
+        "ticker": "GE",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-09-16",
+            "exit_date": "2024-09-23",
+            "entry_price": 179.5905,
+            "exit_price": 186.7468,
+            "pnl_pct": 3.985,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-01-23",
+            "exit_date": "2025-01-27",
+            "entry_price": 199.3718,
+            "exit_price": 193.3907,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-05-28",
+            "exit_date": "2025-06-04",
+            "entry_price": 242.387,
+            "exit_price": 249.5591,
+            "pnl_pct": 2.959,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-16",
+            "exit_date": "2025-07-23",
+            "entry_price": 265.1652,
+            "exit_price": 262.1766,
+            "pnl_pct": -1.127,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 299.9919,
+            "exit_price": 293.8554,
+            "pnl_pct": -2.046,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 40.0,
+          "avg_pnl": 0.154,
+          "max_win": 3.985,
+          "max_loss": -3.0,
+          "total_pnl": 0.771,
+          "profit_factor": 1.125,
+          "max_drawdown": -3.214,
+          "sharpe": 0.392
+        }
+      },
+      "mean_reversion": {
+        "ticker": "GE",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-06-14",
+            "exit_date": "2024-06-24",
+            "entry_price": 154.0303,
+            "exit_price": 158.635,
+            "pnl_pct": 2.99,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-10-29",
+            "exit_date": "2024-11-05",
+            "entry_price": 172.531,
+            "exit_price": 173.7304,
+            "pnl_pct": 0.695,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-03-10",
+            "exit_date": "2025-03-17",
+            "entry_price": 191.1084,
+            "exit_price": 200.9663,
+            "pnl_pct": 5.158,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-11-18",
+            "exit_date": "2025-11-25",
+            "entry_price": 295.2418,
+            "exit_price": 292.6784,
+            "pnl_pct": -0.868,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-12-01",
+            "exit_date": "2025-12-08",
+            "entry_price": 287.7014,
+            "exit_price": 286.4447,
+            "pnl_pct": -0.437,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-03-12",
+            "exit_date": "2026-03-19",
+            "entry_price": 306.7,
+            "exit_price": 297.499,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 6,
+          "win_rate": 50.0,
+          "avg_pnl": 0.756,
+          "max_win": 5.158,
+          "max_loss": -3.0,
+          "total_pnl": 4.538,
+          "profit_factor": 2.054,
+          "max_drawdown": -4.305,
+          "sharpe": 1.841
+        }
+      },
+      "gap_pullback": {
+        "ticker": "GE",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-23",
+            "exit_date": "2024-10-28",
+            "entry_price": 180.1043,
+            "exit_price": 174.7012,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          }
+        ],
+        "stats": {
+          "n_trades": 1,
+          "win_rate": 0.0,
+          "avg_pnl": -3.0,
+          "max_win": -3.0,
+          "max_loss": -3.0,
+          "total_pnl": -3.0,
+          "profit_factor": 0.0,
+          "max_drawdown": -3.0,
+          "sharpe": 0.0
+        }
+      }
+    },
+    "GOOGL": {
+      "volatility_breakout": {
+        "ticker": "GOOGL",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-06-21",
+            "exit_date": "2024-06-28",
+            "entry_price": 178.362,
+            "exit_price": 180.8642,
+            "pnl_pct": 1.403,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-10-30",
+            "exit_date": "2024-11-06",
+            "entry_price": 173.4584,
+            "exit_price": 175.4966,
+            "pnl_pct": 1.175,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-12-11",
+            "exit_date": "2024-12-18",
+            "entry_price": 194.5008,
+            "exit_price": 188.6658,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-06-27",
+            "exit_date": "2025-07-07",
+            "entry_price": 178.1285,
+            "exit_price": 176.3924,
+            "pnl_pct": -0.975,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-03",
+            "exit_date": "2025-09-10",
+            "entry_price": 230.1413,
+            "exit_price": 238.8455,
+            "pnl_pct": 3.782,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-30",
+            "exit_date": "2025-11-06",
+            "entry_price": 281.0981,
+            "exit_price": 284.3637,
+            "pnl_pct": 1.162,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 6,
+          "win_rate": 66.7,
+          "avg_pnl": 0.591,
+          "max_win": 3.782,
+          "max_loss": -3.0,
+          "total_pnl": 3.547,
+          "profit_factor": 1.892,
+          "max_drawdown": -3.975,
+          "sharpe": 1.811
+        }
+      },
+      "momentum": {
+        "ticker": "GOOGL",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-29",
+            "exit_date": "2024-11-05",
+            "entry_price": 168.7058,
+            "exit_price": 168.7655,
+            "pnl_pct": 0.035,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-12-10",
+            "exit_date": "2024-12-16",
+            "entry_price": 184.3179,
+            "exit_price": 195.3769,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2025-02-04",
+            "exit_date": "2025-02-05",
+            "entry_price": 205.4303,
+            "exit_price": 199.2674,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-09-03",
+            "exit_date": "2025-09-10",
+            "entry_price": 230.1413,
+            "exit_price": 238.8455,
+            "pnl_pct": 3.782,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-15",
+            "exit_date": "2025-09-22",
+            "entry_price": 251.2686,
+            "exit_price": 252.1874,
+            "pnl_pct": 0.366,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-30",
+            "exit_date": "2025-11-06",
+            "entry_price": 281.0981,
+            "exit_price": 284.3637,
+            "pnl_pct": 1.162,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-11-24",
+            "exit_date": "2025-12-02",
+            "entry_price": 318.1478,
+            "exit_price": 315.3815,
+            "pnl_pct": -0.869,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 7,
+          "win_rate": 71.4,
+          "avg_pnl": 1.068,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 7.476,
+          "profit_factor": 2.932,
+          "max_drawdown": -3.0,
+          "sharpe": 2.317
+        }
+      },
+      "mean_reversion": {
+        "ticker": "GOOGL",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-29",
+            "exit_date": "2024-08-05",
+            "entry_price": 168.3333,
+            "exit_price": 163.2833,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-02-21",
+            "exit_date": "2025-02-26",
+            "entry_price": 178.8332,
+            "exit_price": 173.4682,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-10-09",
+            "exit_date": "2025-10-16",
+            "entry_price": 241.2023,
+            "exit_price": 251.1189,
+            "pnl_pct": 4.111,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-12-17",
+            "exit_date": "2025-12-24",
+            "entry_price": 296.5113,
+            "exit_price": 313.869,
+            "pnl_pct": 5.854,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-02-13",
+            "exit_date": "2026-02-23",
+            "entry_price": 305.5049,
+            "exit_price": 311.2709,
+            "pnl_pct": 1.887,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 60.0,
+          "avg_pnl": 1.17,
+          "max_win": 5.854,
+          "max_loss": -3.0,
+          "total_pnl": 5.852,
+          "profit_factor": 1.975,
+          "max_drawdown": -6.0,
+          "sharpe": 2.289
+        }
+      },
+      "gap_pullback": {
+        "ticker": "GOOGL",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-02-04",
+            "exit_date": "2025-02-05",
+            "entry_price": 205.4303,
+            "exit_price": 199.2674,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-09-15",
+            "exit_date": "2025-09-22",
+            "entry_price": 251.2686,
+            "exit_price": 252.1874,
+            "pnl_pct": 0.366,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-11-19",
+            "exit_date": "2025-11-24",
+            "entry_price": 292.4128,
+            "exit_price": 309.9575,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-11-24",
+            "exit_date": "2025-12-02",
+            "entry_price": 318.1478,
+            "exit_price": 315.3815,
+            "pnl_pct": -0.869,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 4,
+          "win_rate": 50.0,
+          "avg_pnl": 0.624,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 2.497,
+          "profit_factor": 1.645,
+          "max_drawdown": -3.0,
+          "sharpe": 1.488
+        }
+      }
+    },
+    "GS": {
+      "volatility_breakout": {
+        "ticker": "GS",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-09",
+            "exit_date": "2024-07-16",
+            "entry_price": 455.9777,
+            "exit_price": 483.3364,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-10-15",
+            "exit_date": "2024-10-22",
+            "entry_price": 506.7419,
+            "exit_price": 502.784,
+            "pnl_pct": -0.781,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-13",
+            "entry_price": 578.1385,
+            "exit_price": 576.4313,
+            "pnl_pct": -0.295,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-01-15",
+            "exit_date": "2025-01-23",
+            "entry_price": 590.6929,
+            "exit_price": 623.429,
+            "pnl_pct": 5.542,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-04-09",
+            "exit_date": "2025-04-10",
+            "entry_price": 506.3794,
+            "exit_price": 491.188,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-06-20",
+            "exit_date": "2025-06-26",
+            "entry_price": 630.9233,
+            "exit_price": 668.7787,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 796.8353,
+            "exit_price": 794.3707,
+            "pnl_pct": -0.309,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-12-19",
+            "exit_date": "2025-12-29",
+            "entry_price": 888.8024,
+            "exit_price": 887.5093,
+            "pnl_pct": -0.145,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 8,
+          "win_rate": 37.5,
+          "avg_pnl": 1.627,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 13.012,
+          "profit_factor": 3.872,
+          "max_drawdown": -3.0,
+          "sharpe": 2.701
+        }
+      },
+      "momentum": {
+        "ticker": "GS",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-15",
+            "exit_date": "2024-07-22",
+            "entry_price": 474.6863,
+            "exit_price": 469.6812,
+            "pnl_pct": -1.054,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-13",
+            "entry_price": 578.1385,
+            "exit_price": 576.4313,
+            "pnl_pct": -0.295,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-01-15",
+            "exit_date": "2025-01-23",
+            "entry_price": 590.6929,
+            "exit_price": 623.429,
+            "pnl_pct": 5.542,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-06-20",
+            "exit_date": "2025-06-26",
+            "entry_price": 630.9233,
+            "exit_price": 668.7787,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2025-06-27",
+            "exit_date": "2025-07-07",
+            "entry_price": 680.1625,
+            "exit_price": 699.9724,
+            "pnl_pct": 2.913,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-09",
+            "exit_date": "2025-09-16",
+            "entry_price": 756.172,
+            "exit_price": 777.5629,
+            "pnl_pct": 2.829,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-05",
+            "exit_date": "2026-01-12",
+            "entry_price": 943.4747,
+            "exit_price": 944.5789,
+            "pnl_pct": 0.117,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-15",
+            "exit_date": "2026-01-20",
+            "entry_price": 970.7512,
+            "exit_price": 941.6286,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 8,
+          "win_rate": 62.5,
+          "avg_pnl": 1.631,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 13.052,
+          "profit_factor": 4.001,
+          "max_drawdown": -3.0,
+          "sharpe": 3.05
+        }
+      },
+      "mean_reversion": {
+        "ticker": "GS",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-06-11",
+            "exit_date": "2024-06-18",
+            "entry_price": 428.4356,
+            "exit_price": 441.1266,
+            "pnl_pct": 2.962,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-08-05",
+            "exit_date": "2024-08-09",
+            "entry_price": 442.6599,
+            "exit_price": 469.2195,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2024-12-17",
+            "exit_date": "2024-12-18",
+            "entry_price": 560.238,
+            "exit_price": 543.4308,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-12-18",
+            "exit_date": "2024-12-26",
+            "entry_price": 536.4219,
+            "exit_price": 566.6234,
+            "pnl_pct": 5.63,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-02-27",
+            "exit_date": "2025-03-04",
+            "entry_price": 592.7206,
+            "exit_price": 574.939,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-03-04",
+            "exit_date": "2025-03-07",
+            "entry_price": 569.3449,
+            "exit_price": 552.2646,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-10-10",
+            "exit_date": "2025-10-17",
+            "entry_price": 756.6075,
+            "exit_price": 743.1554,
+            "pnl_pct": -1.778,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-17",
+            "exit_date": "2025-10-24",
+            "entry_price": 743.1554,
+            "exit_price": 775.9296,
+            "pnl_pct": 4.41,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-02-05",
+            "exit_date": "2026-02-10",
+            "entry_price": 885.7485,
+            "exit_price": 938.8934,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 3
+          }
+        ],
+        "stats": {
+          "n_trades": 9,
+          "win_rate": 55.6,
+          "avg_pnl": 1.58,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 14.224,
+          "profit_factor": 2.32,
+          "max_drawdown": -7.778,
+          "sharpe": 2.123
+        }
+      },
+      "gap_pullback": {
+        "ticker": "GS",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-09-19",
+            "exit_date": "2024-09-26",
+            "entry_price": 488.7472,
+            "exit_price": 482.0441,
+            "pnl_pct": -1.371,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-13",
+            "entry_price": 578.1385,
+            "exit_price": 576.4313,
+            "pnl_pct": -0.295,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-13",
+            "exit_date": "2025-10-16",
+            "entry_price": 778.8002,
+            "exit_price": 755.4362,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 0.0,
+          "avg_pnl": -1.555,
+          "max_win": -0.295,
+          "max_loss": -3.0,
+          "total_pnl": -4.666,
+          "profit_factor": 0.0,
+          "max_drawdown": -4.666,
+          "sharpe": -12.819
+        }
+      }
+    },
+    "JPM": {
+      "volatility_breakout": {
+        "ticker": "JPM",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-11",
+            "exit_date": "2024-10-18",
+            "entry_price": 216.7044,
+            "exit_price": 219.707,
+            "pnl_pct": 1.386,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-07",
+            "entry_price": 240.852,
+            "exit_price": 233.6264,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-12-20",
+            "exit_date": "2024-12-30",
+            "entry_price": 231.6297,
+            "exit_price": 233.3065,
+            "pnl_pct": 0.724,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-06-27",
+            "exit_date": "2025-07-07",
+            "entry_price": 283.0741,
+            "exit_price": 289.2526,
+            "pnl_pct": 2.183,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 311.8503,
+            "exit_price": 313.1184,
+            "pnl_pct": 0.407,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 80.0,
+          "avg_pnl": 0.34,
+          "max_win": 2.183,
+          "max_loss": -3.0,
+          "total_pnl": 1.7,
+          "profit_factor": 1.567,
+          "max_drawdown": -3.0,
+          "sharpe": 1.358
+        }
+      },
+      "momentum": {
+        "ticker": "JPM",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-07",
+            "entry_price": 240.852,
+            "exit_price": 233.6264,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-01-15",
+            "exit_date": "2025-01-23",
+            "entry_price": 247.2796,
+            "exit_price": 260.6064,
+            "pnl_pct": 5.389,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 311.8503,
+            "exit_price": 313.1184,
+            "pnl_pct": 0.407,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 66.7,
+          "avg_pnl": 0.932,
+          "max_win": 5.389,
+          "max_loss": -3.0,
+          "total_pnl": 2.796,
+          "profit_factor": 1.932,
+          "max_drawdown": -3.0,
+          "sharpe": 2.48
+        }
+      },
+      "mean_reversion": {
+        "ticker": "JPM",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-08-05",
+            "exit_date": "2024-08-12",
+            "entry_price": 188.8454,
+            "exit_price": 199.7847,
+            "pnl_pct": 5.793,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-12-13",
+            "exit_date": "2024-12-18",
+            "entry_price": 233.9109,
+            "exit_price": 226.8936,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2024-12-18",
+            "exit_date": "2024-12-26",
+            "entry_price": 224.5814,
+            "exit_price": 237.0305,
+            "pnl_pct": 5.543,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-02-27",
+            "exit_date": "2025-03-04",
+            "entry_price": 253.845,
+            "exit_price": 246.2296,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-03-04",
+            "exit_date": "2025-03-07",
+            "entry_price": 245.2218,
+            "exit_price": 237.8651,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-03-07",
+            "exit_date": "2025-03-10",
+            "entry_price": 237.4119,
+            "exit_price": 230.2896,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-10-10",
+            "exit_date": "2025-10-17",
+            "entry_price": 299.5389,
+            "exit_price": 296.2238,
+            "pnl_pct": -1.107,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-23",
+            "exit_date": "2026-01-30",
+            "entry_price": 297.72,
+            "exit_price": 305.89,
+            "pnl_pct": 2.744,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-03-02",
+            "exit_date": "2026-03-09",
+            "entry_price": 297.56,
+            "exit_price": 289.92,
+            "pnl_pct": -2.568,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 9,
+          "win_rate": 33.3,
+          "avg_pnl": -0.177,
+          "max_win": 5.793,
+          "max_loss": -3.0,
+          "total_pnl": -1.595,
+          "profit_factor": 0.898,
+          "max_drawdown": -10.107,
+          "sharpe": -0.262
+        }
+      },
+      "gap_pullback": {
+        "ticker": "JPM",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-11",
+            "exit_date": "2024-10-18",
+            "entry_price": 216.7044,
+            "exit_price": 219.707,
+            "pnl_pct": 1.386,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-07",
+            "entry_price": 240.852,
+            "exit_price": 233.6264,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 50.0,
+          "avg_pnl": -0.807,
+          "max_win": 1.386,
+          "max_loss": -3.0,
+          "total_pnl": -1.614,
+          "profit_factor": 0.462,
+          "max_drawdown": -3.0,
+          "sharpe": -4.131
+        }
+      }
+    },
+    "LLY": {
+      "volatility_breakout": {
+        "ticker": "LLY",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-08-08",
+            "exit_date": "2024-08-13",
+            "entry_price": 835.1017,
+            "exit_price": 885.2079,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2024-09-20",
+            "exit_date": "2024-09-27",
+            "entry_price": 911.6337,
+            "exit_price": 884.2847,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-04-17",
+            "exit_date": "2025-04-25",
+            "entry_price": 833.7866,
+            "exit_price": 878.0389,
+            "pnl_pct": 5.307,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-01",
+            "exit_date": "2025-10-08",
+            "entry_price": 822.8362,
+            "exit_price": 843.0726,
+            "pnl_pct": 2.459,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-30",
+            "exit_date": "2025-11-03",
+            "entry_price": 841.8565,
+            "exit_price": 892.3679,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-11-05",
+            "exit_date": "2025-11-11",
+            "entry_price": 922.912,
+            "exit_price": 978.2867,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2026-02-04",
+            "exit_date": "2026-02-05",
+            "entry_price": 1105.2753,
+            "exit_price": 1072.117,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          }
+        ],
+        "stats": {
+          "n_trades": 7,
+          "win_rate": 71.4,
+          "avg_pnl": 2.824,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 19.766,
+          "profit_factor": 4.294,
+          "max_drawdown": -3.0,
+          "sharpe": 4.387
+        }
+      },
+      "momentum": {
+        "ticker": "LLY",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-02-06",
+            "exit_date": "2025-02-13",
+            "entry_price": 862.4866,
+            "exit_price": 863.9631,
+            "pnl_pct": 0.171,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-01",
+            "exit_date": "2025-10-08",
+            "entry_price": 822.8362,
+            "exit_price": 843.0726,
+            "pnl_pct": 2.459,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-11-03",
+            "exit_date": "2025-11-10",
+            "entry_price": 893.7237,
+            "exit_price": 947.3471,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 100.0,
+          "avg_pnl": 2.877,
+          "max_win": 6.0,
+          "max_loss": 0.171,
+          "total_pnl": 8.63,
+          "profit_factor": null,
+          "max_drawdown": 0.0,
+          "sharpe": 10.995
+        }
+      },
+      "mean_reversion": {
+        "ticker": "LLY",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-25",
+            "exit_date": "2024-07-30",
+            "entry_price": 811.2729,
+            "exit_price": 786.9348,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2024-09-10",
+            "exit_date": "2024-09-17",
+            "entry_price": 891.6103,
+            "exit_price": 896.4875,
+            "pnl_pct": 0.547,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-28",
+            "exit_date": "2026-02-04",
+            "entry_price": 1022.0941,
+            "exit_price": 1083.4197,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 66.7,
+          "avg_pnl": 1.182,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 3.547,
+          "profit_factor": 2.182,
+          "max_drawdown": -3.0,
+          "sharpe": 2.927
+        }
+      },
+      "gap_pullback": {
+        "ticker": "LLY",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-05-21",
+            "exit_date": "2024-05-29",
+            "entry_price": 793.4706,
+            "exit_price": 801.7297,
+            "pnl_pct": 1.041,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-08-09",
+            "exit_date": "2024-08-16",
+            "entry_price": 880.9118,
+            "exit_price": 912.257,
+            "pnl_pct": 3.558,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-07",
+            "exit_date": "2026-01-09",
+            "entry_price": 1106.2437,
+            "exit_price": 1073.0563,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 66.7,
+          "avg_pnl": 0.533,
+          "max_win": 3.558,
+          "max_loss": -3.0,
+          "total_pnl": 1.599,
+          "profit_factor": 1.533,
+          "max_drawdown": -3.0,
+          "sharpe": 1.808
+        }
+      }
+    },
+    "META": {
+      "volatility_breakout": {
+        "ticker": "META",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-07-31",
+            "exit_date": "2025-08-01",
+            "entry_price": 771.6278,
+            "exit_price": 748.479,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2026-01-29",
+            "exit_date": "2026-02-02",
+            "entry_price": 738.31,
+            "exit_price": 716.1607,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 0.0,
+          "avg_pnl": -3.0,
+          "max_win": -3.0,
+          "max_loss": -3.0,
+          "total_pnl": -6.0,
+          "profit_factor": 0.0,
+          "max_drawdown": -6.0,
+          "sharpe": 0.0
+        }
+      },
+      "momentum": {
+        "ticker": "META",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-07-31",
+            "exit_date": "2025-08-01",
+            "entry_price": 771.6278,
+            "exit_price": 748.479,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2026-01-29",
+            "exit_date": "2026-02-02",
+            "entry_price": 738.31,
+            "exit_price": 716.1607,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 0.0,
+          "avg_pnl": -3.0,
+          "max_win": -3.0,
+          "max_loss": -3.0,
+          "total_pnl": -6.0,
+          "profit_factor": 0.0,
+          "max_drawdown": -6.0,
+          "sharpe": 0.0
+        }
+      },
+      "mean_reversion": {
+        "ticker": "META",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-09-02",
+            "exit_date": "2025-09-09",
+            "entry_price": 733.3876,
+            "exit_price": 763.906,
+            "pnl_pct": 4.161,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-03",
+            "exit_date": "2025-10-10",
+            "entry_price": 709.3736,
+            "exit_price": 704.1224,
+            "pnl_pct": -0.74,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-15",
+            "exit_date": "2026-01-23",
+            "entry_price": 620.8,
+            "exit_price": 658.048,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-02-23",
+            "exit_date": "2026-03-02",
+            "entry_price": 637.25,
+            "exit_price": 653.56,
+            "pnl_pct": 2.559,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 4,
+          "win_rate": 75.0,
+          "avg_pnl": 2.995,
+          "max_win": 6.0,
+          "max_loss": -0.74,
+          "total_pnl": 11.98,
+          "profit_factor": 17.189,
+          "max_drawdown": -0.74,
+          "sharpe": 9.6
+        }
+      },
+      "gap_pullback": {
+        "ticker": "META",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2026-01-22",
+            "exit_date": "2026-01-29",
+            "entry_price": 647.63,
+            "exit_price": 686.4878,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 1,
+          "win_rate": 100.0,
+          "avg_pnl": 6.0,
+          "max_win": 6.0,
+          "max_loss": 6.0,
+          "total_pnl": 6.0,
+          "profit_factor": null,
+          "max_drawdown": 0.0,
+          "sharpe": 0.0
+        }
+      }
+    },
+    "MSFT": {
+      "volatility_breakout": {
+        "ticker": "MSFT",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-05-01",
+            "exit_date": "2025-05-08",
+            "entry_price": 422.1681,
+            "exit_price": 434.841,
+            "pnl_pct": 3.002,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-31",
+            "exit_date": "2025-08-07",
+            "entry_price": 530.4188,
+            "exit_price": 517.8319,
+            "pnl_pct": -2.373,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 515.7852,
+            "exit_price": 509.3419,
+            "pnl_pct": -1.249,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-12-19",
+            "exit_date": "2025-12-29",
+            "entry_price": 484.8134,
+            "exit_price": 485.9908,
+            "pnl_pct": 0.243,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 4,
+          "win_rate": 50.0,
+          "avg_pnl": -0.094,
+          "max_win": 3.002,
+          "max_loss": -2.373,
+          "total_pnl": -0.377,
+          "profit_factor": 0.896,
+          "max_drawdown": -3.622,
+          "sharpe": -0.371
+        }
+      },
+      "momentum": {
+        "ticker": "MSFT",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-07-31",
+            "exit_date": "2025-08-07",
+            "entry_price": 530.4188,
+            "exit_price": 517.8319,
+            "pnl_pct": -2.373,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-28",
+            "exit_date": "2025-10-30",
+            "entry_price": 539.8252,
+            "exit_price": 523.6304,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 0.0,
+          "avg_pnl": -2.687,
+          "max_win": -2.373,
+          "max_loss": -3.0,
+          "total_pnl": -5.373,
+          "profit_factor": 0.0,
+          "max_drawdown": -5.373,
+          "sharpe": -96.191
+        }
+      },
+      "mean_reversion": {
+        "ticker": "MSFT",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-08-20",
+            "exit_date": "2025-08-27",
+            "entry_price": 502.7992,
+            "exit_price": 504.6415,
+            "pnl_pct": 0.366,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-09-05",
+            "exit_date": "2025-09-12",
+            "entry_price": 492.9502,
+            "exit_price": 507.7885,
+            "pnl_pct": 3.01,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-11-18",
+            "exit_date": "2025-11-21",
+            "entry_price": 491.7452,
+            "exit_price": 476.9928,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 66.7,
+          "avg_pnl": 0.125,
+          "max_win": 3.01,
+          "max_loss": -3.0,
+          "total_pnl": 0.376,
+          "profit_factor": 1.125,
+          "max_drawdown": -3.0,
+          "sharpe": 0.467
+        }
+      },
+      "gap_pullback": {
+        "ticker": "MSFT",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [],
+        "stats": {
+          "n_trades": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0,
+          "max_win": 0.0,
+          "max_loss": 0.0,
+          "total_pnl": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 0.0,
+          "sharpe": 0.0
+        }
+      }
+    },
+    "NFLX": {
+      "volatility_breakout": {
+        "ticker": "NFLX",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-18",
+            "exit_date": "2024-10-25",
+            "entry_price": 76.389,
+            "exit_price": 75.468,
+            "pnl_pct": -1.206,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-01-21",
+            "exit_date": "2025-01-22",
+            "entry_price": 86.968,
+            "exit_price": 92.1861,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-01-22",
+            "exit_date": "2025-01-29",
+            "entry_price": 95.399,
+            "exit_price": 97.815,
+            "pnl_pct": 2.533,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-21",
+            "exit_date": "2025-10-22",
+            "entry_price": 124.135,
+            "exit_price": 120.411,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2026-02-27",
+            "exit_date": "2026-03-06",
+            "entry_price": 96.24,
+            "exit_price": 99.02,
+            "pnl_pct": 2.889,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 60.0,
+          "avg_pnl": 1.443,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 7.216,
+          "profit_factor": 2.716,
+          "max_drawdown": -3.0,
+          "sharpe": 3.214
+        }
+      },
+      "momentum": {
+        "ticker": "NFLX",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-21",
+            "exit_date": "2024-10-28",
+            "entry_price": 77.207,
+            "exit_price": 74.912,
+            "pnl_pct": -2.973,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 1,
+          "win_rate": 0.0,
+          "avg_pnl": -2.973,
+          "max_win": -2.973,
+          "max_loss": -2.973,
+          "total_pnl": -2.973,
+          "profit_factor": 0.0,
+          "max_drawdown": -2.973,
+          "sharpe": 0.0
+        }
+      },
+      "mean_reversion": {
+        "ticker": "NFLX",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-12",
+            "exit_date": "2024-07-19",
+            "entry_price": 64.76,
+            "exit_price": 63.334,
+            "pnl_pct": -2.202,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-07-24",
+            "exit_date": "2024-07-31",
+            "entry_price": 63.599,
+            "exit_price": 62.835,
+            "pnl_pct": -1.201,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-01-10",
+            "exit_date": "2025-01-17",
+            "entry_price": 83.769,
+            "exit_price": 85.81,
+            "pnl_pct": 2.436,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-03-06",
+            "exit_date": "2025-03-10",
+            "entry_price": 90.636,
+            "exit_price": 87.9169,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-07-21",
+            "exit_date": "2025-07-22",
+            "entry_price": 123.327,
+            "exit_price": 119.6272,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-07-22",
+            "exit_date": "2025-07-29",
+            "entry_price": 119.008,
+            "exit_price": 116.874,
+            "pnl_pct": -1.793,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-29",
+            "exit_date": "2025-08-05",
+            "entry_price": 116.874,
+            "exit_price": 114.787,
+            "pnl_pct": -1.786,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 7,
+          "win_rate": 14.3,
+          "avg_pnl": -1.507,
+          "max_win": 2.436,
+          "max_loss": -3.0,
+          "total_pnl": -10.546,
+          "profit_factor": 0.188,
+          "max_drawdown": -10.546,
+          "sharpe": -5.251
+        }
+      },
+      "gap_pullback": {
+        "ticker": "NFLX",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-18",
+            "exit_date": "2024-10-25",
+            "entry_price": 76.389,
+            "exit_price": 75.468,
+            "pnl_pct": -1.206,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-04-15",
+            "exit_date": "2025-04-22",
+            "entry_price": 97.628,
+            "exit_price": 103.4857,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2025-04-22",
+            "exit_date": "2025-04-28",
+            "entry_price": 104.034,
+            "exit_price": 110.276,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2025-10-31",
+            "exit_date": "2025-11-07",
+            "entry_price": 111.886,
+            "exit_price": 110.366,
+            "pnl_pct": -1.359,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-02-25",
+            "exit_date": "2026-02-27",
+            "entry_price": 82.7,
+            "exit_price": 87.662,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 60.0,
+          "avg_pnl": 3.087,
+          "max_win": 6.0,
+          "max_loss": -1.359,
+          "total_pnl": 15.435,
+          "profit_factor": 7.018,
+          "max_drawdown": -1.359,
+          "sharpe": 6.142
+        }
+      }
+    },
+    "NVDA": {
+      "volatility_breakout": {
+        "ticker": "NVDA",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-05-23",
+            "exit_date": "2024-05-28",
+            "entry_price": 103.7405,
+            "exit_price": 109.9649,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 1,
+          "win_rate": 100.0,
+          "avg_pnl": 6.0,
+          "max_win": 6.0,
+          "max_loss": 6.0,
+          "total_pnl": 6.0,
+          "profit_factor": null,
+          "max_drawdown": 0.0,
+          "sharpe": 0.0
+        }
+      },
+      "momentum": {
+        "ticker": "NVDA",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-05-29",
+            "exit_date": "2025-06-05",
+            "entry_price": 139.1572,
+            "exit_price": 139.957,
+            "pnl_pct": 0.575,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-28",
+            "exit_date": "2025-11-04",
+            "entry_price": 201.0079,
+            "exit_price": 198.6682,
+            "pnl_pct": -1.164,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 50.0,
+          "avg_pnl": -0.294,
+          "max_win": 0.575,
+          "max_loss": -1.164,
+          "total_pnl": -0.589,
+          "profit_factor": 0.494,
+          "max_drawdown": -1.164,
+          "sharpe": -3.802
+        }
+      },
+      "mean_reversion": {
+        "ticker": "NVDA",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-29",
+            "exit_date": "2024-07-30",
+            "entry_price": 111.5362,
+            "exit_price": 108.1901,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-09-02",
+            "exit_date": "2025-09-09",
+            "entry_price": 170.7516,
+            "exit_price": 170.7316,
+            "pnl_pct": -0.012,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-11-18",
+            "exit_date": "2025-11-25",
+            "entry_price": 181.3401,
+            "exit_price": 177.8005,
+            "pnl_pct": -1.952,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 0.0,
+          "avg_pnl": -1.655,
+          "max_win": -0.012,
+          "max_loss": -3.0,
+          "total_pnl": -4.964,
+          "profit_factor": 0.0,
+          "max_drawdown": -4.964,
+          "sharpe": -12.251
+        }
+      },
+      "gap_pullback": {
+        "ticker": "NVDA",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-05-23",
+            "exit_date": "2024-05-28",
+            "entry_price": 103.7405,
+            "exit_price": 109.9649,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2024-05-28",
+            "exit_date": "2024-05-31",
+            "entry_price": 113.8367,
+            "exit_price": 110.4216,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-12-19",
+            "exit_date": "2025-12-29",
+            "entry_price": 180.9802,
+            "exit_price": 188.2098,
+            "pnl_pct": 3.995,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 66.7,
+          "avg_pnl": 2.332,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 6.995,
+          "profit_factor": 3.332,
+          "max_drawdown": -3.0,
+          "sharpe": 5.539
+        }
+      }
+    },
+    "PLTR": {
+      "volatility_breakout": {
+        "ticker": "PLTR",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-08-05",
+            "exit_date": "2025-08-08",
+            "entry_price": 173.27,
+            "exit_price": 183.6662,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2026-02-03",
+            "exit_date": "2026-02-04",
+            "entry_price": 157.88,
+            "exit_price": 153.1436,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 50.0,
+          "avg_pnl": 1.5,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 3.0,
+          "profit_factor": 2.0,
+          "max_drawdown": -3.0,
+          "sharpe": 3.742
+        }
+      },
+      "momentum": {
+        "ticker": "PLTR",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-08-05",
+            "exit_date": "2025-08-08",
+            "entry_price": 173.27,
+            "exit_price": 183.6662,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-09-19",
+            "exit_date": "2025-09-26",
+            "entry_price": 182.39,
+            "exit_price": 177.57,
+            "pnl_pct": -2.643,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-11-03",
+            "exit_date": "2025-11-04",
+            "entry_price": 207.18,
+            "exit_price": 200.9646,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 33.3,
+          "avg_pnl": 0.119,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 0.357,
+          "profit_factor": 1.063,
+          "max_drawdown": -5.643,
+          "sharpe": 0.262
+        }
+      },
+      "mean_reversion": {
+        "ticker": "PLTR",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [],
+        "stats": {
+          "n_trades": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0,
+          "max_win": 0.0,
+          "max_loss": 0.0,
+          "total_pnl": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 0.0,
+          "sharpe": 0.0
+        }
+      },
+      "gap_pullback": {
+        "ticker": "PLTR",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-11-10",
+            "exit_date": "2025-11-12",
+            "entry_price": 193.61,
+            "exit_price": 187.8017,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 1,
+          "win_rate": 0.0,
+          "avg_pnl": -3.0,
+          "max_win": -3.0,
+          "max_loss": -3.0,
+          "total_pnl": -3.0,
+          "profit_factor": 0.0,
+          "max_drawdown": -3.0,
+          "sharpe": 0.0
+        }
+      }
+    },
+    "SMCI": {
+      "volatility_breakout": {
+        "ticker": "SMCI",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-05-13",
+            "exit_date": "2025-05-14",
+            "entry_price": 38.89,
+            "exit_price": 41.2234,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-05-14",
+            "exit_date": "2025-05-20",
+            "entry_price": 45.0,
+            "exit_price": 43.65,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2025-06-25",
+            "exit_date": "2025-07-02",
+            "entry_price": 46.61,
+            "exit_price": 48.74,
+            "pnl_pct": 4.57,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-07-28",
+            "exit_date": "2025-08-01",
+            "entry_price": 60.05,
+            "exit_price": 58.2485,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 4
+          },
+          {
+            "entry_date": "2026-01-16",
+            "exit_date": "2026-01-20",
+            "entry_price": 32.64,
+            "exit_price": 31.6608,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2026-02-04",
+            "exit_date": "2026-02-05",
+            "entry_price": 33.76,
+            "exit_price": 32.7472,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          }
+        ],
+        "stats": {
+          "n_trades": 6,
+          "win_rate": 33.3,
+          "avg_pnl": -0.238,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": -1.43,
+          "profit_factor": 0.881,
+          "max_drawdown": -9.0,
+          "sharpe": -0.393
+        }
+      },
+      "momentum": {
+        "ticker": "SMCI",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2025-06-26",
+            "exit_date": "2025-06-27",
+            "entry_price": 49.27,
+            "exit_price": 47.7919,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-07-28",
+            "exit_date": "2025-08-01",
+            "entry_price": 60.05,
+            "exit_price": 58.2485,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 4
+          }
+        ],
+        "stats": {
+          "n_trades": 2,
+          "win_rate": 0.0,
+          "avg_pnl": -3.0,
+          "max_win": -3.0,
+          "max_loss": -3.0,
+          "total_pnl": -6.0,
+          "profit_factor": 0.0,
+          "max_drawdown": -6.0,
+          "sharpe": 0.0
+        }
+      },
+      "mean_reversion": {
+        "ticker": "SMCI",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [],
+        "stats": {
+          "n_trades": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0,
+          "max_win": 0.0,
+          "max_loss": 0.0,
+          "total_pnl": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 0.0,
+          "sharpe": 0.0
+        }
+      },
+      "gap_pullback": {
+        "ticker": "SMCI",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2026-01-16",
+            "exit_date": "2026-01-20",
+            "entry_price": 32.64,
+            "exit_price": 31.6608,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          }
+        ],
+        "stats": {
+          "n_trades": 1,
+          "win_rate": 0.0,
+          "avg_pnl": -3.0,
+          "max_win": -3.0,
+          "max_loss": -3.0,
+          "total_pnl": -3.0,
+          "profit_factor": 0.0,
+          "max_drawdown": -3.0,
+          "sharpe": 0.0
+        }
+      }
+    },
+    "TSLA": {
+      "volatility_breakout": {
+        "ticker": "TSLA",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-02",
+            "exit_date": "2024-07-03",
+            "entry_price": 231.26,
+            "exit_price": 245.1356,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-10-24",
+            "exit_date": "2024-10-31",
+            "entry_price": 260.48,
+            "exit_price": 252.6656,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-11-08",
+            "exit_date": "2024-11-11",
+            "entry_price": 321.22,
+            "exit_price": 340.4932,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-11-11",
+            "exit_date": "2024-11-12",
+            "entry_price": 350.0,
+            "exit_price": 339.5,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-09-12",
+            "exit_date": "2025-09-16",
+            "entry_price": 395.94,
+            "exit_price": 419.6964,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 60.0,
+          "avg_pnl": 2.4,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 12.0,
+          "profit_factor": 3.0,
+          "max_drawdown": -3.0,
+          "sharpe": 3.864
+        }
+      },
+      "momentum": {
+        "ticker": "TSLA",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-01",
+            "exit_date": "2024-07-02",
+            "entry_price": 209.86,
+            "exit_price": 222.4516,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-07-02",
+            "exit_date": "2024-07-03",
+            "entry_price": 231.26,
+            "exit_price": 245.1356,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-07-03",
+            "exit_date": "2024-07-09",
+            "entry_price": 246.39,
+            "exit_price": 261.1734,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2024-07-09",
+            "exit_date": "2024-07-11",
+            "entry_price": 262.33,
+            "exit_price": 254.4601,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2024-11-06",
+            "exit_date": "2024-11-08",
+            "entry_price": 288.53,
+            "exit_price": 305.8418,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2024-11-08",
+            "exit_date": "2024-11-11",
+            "entry_price": 321.22,
+            "exit_price": 340.4932,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-11-11",
+            "exit_date": "2024-11-12",
+            "entry_price": 350.0,
+            "exit_price": 339.5,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-12-17",
+            "exit_date": "2024-12-18",
+            "entry_price": 479.86,
+            "exit_price": 465.4642,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-09-12",
+            "exit_date": "2025-09-16",
+            "entry_price": 395.94,
+            "exit_price": 419.6964,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          }
+        ],
+        "stats": {
+          "n_trades": 9,
+          "win_rate": 66.7,
+          "avg_pnl": 3.0,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 27.0,
+          "profit_factor": 4.0,
+          "max_drawdown": -6.0,
+          "sharpe": 3.742
+        }
+      },
+      "mean_reversion": {
+        "ticker": "TSLA",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-06-11",
+            "exit_date": "2024-06-13",
+            "entry_price": 170.66,
+            "exit_price": 180.8996,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2024-08-05",
+            "exit_date": "2024-08-07",
+            "entry_price": 198.88,
+            "exit_price": 192.9136,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2024-10-11",
+            "exit_date": "2024-10-18",
+            "entry_price": 217.8,
+            "exit_price": 220.7,
+            "pnl_pct": 1.331,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-10-18",
+            "exit_date": "2024-10-23",
+            "entry_price": 220.7,
+            "exit_price": 214.079,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2024-10-23",
+            "exit_date": "2024-10-24",
+            "entry_price": 213.65,
+            "exit_price": 226.469,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2025-02-05",
+            "exit_date": "2025-02-07",
+            "entry_price": 378.17,
+            "exit_price": 366.8249,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-06-05",
+            "exit_date": "2025-06-09",
+            "entry_price": 284.7,
+            "exit_price": 301.782,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2026-01-07",
+            "exit_date": "2026-01-14",
+            "entry_price": 431.41,
+            "exit_price": 439.2,
+            "pnl_pct": 1.806,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 8,
+          "win_rate": 62.5,
+          "avg_pnl": 1.517,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 12.137,
+          "profit_factor": 2.349,
+          "max_drawdown": -4.669,
+          "sharpe": 2.184
+        }
+      },
+      "gap_pullback": {
+        "ticker": "TSLA",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-07-01",
+            "exit_date": "2024-07-02",
+            "entry_price": 209.86,
+            "exit_price": 222.4516,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-07-02",
+            "exit_date": "2024-07-03",
+            "entry_price": 231.26,
+            "exit_price": 245.1356,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2024-07-03",
+            "exit_date": "2024-07-09",
+            "entry_price": 246.39,
+            "exit_price": 261.1734,
+            "pnl_pct": 6.0,
+            "reason": "tp",
+            "held_days": 3
+          },
+          {
+            "entry_date": "2025-06-23",
+            "exit_date": "2025-06-25",
+            "entry_price": 348.68,
+            "exit_price": 338.2196,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 2
+          },
+          {
+            "entry_date": "2025-07-25",
+            "exit_date": "2025-08-01",
+            "entry_price": 316.06,
+            "exit_price": 306.5782,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 5,
+          "win_rate": 60.0,
+          "avg_pnl": 2.4,
+          "max_win": 6.0,
+          "max_loss": -3.0,
+          "total_pnl": 12.0,
+          "profit_factor": 3.0,
+          "max_drawdown": -6.0,
+          "sharpe": 3.864
+        }
+      }
+    },
+    "XOM": {
+      "volatility_breakout": {
+        "ticker": "XOM",
+        "strategy": "volatility_breakout",
+        "mode": "MODERATE_BULL",
+        "trades": [],
+        "stats": {
+          "n_trades": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0,
+          "max_win": 0.0,
+          "max_loss": 0.0,
+          "total_pnl": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 0.0,
+          "sharpe": 0.0
+        }
+      },
+      "momentum": {
+        "ticker": "XOM",
+        "strategy": "momentum",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2026-01-05",
+            "exit_date": "2026-01-06",
+            "entry_price": 124.53,
+            "exit_price": 120.7941,
+            "pnl_pct": -3.0,
+            "reason": "sl",
+            "held_days": 1
+          },
+          {
+            "entry_date": "2026-01-14",
+            "exit_date": "2026-01-22",
+            "entry_price": 129.3379,
+            "exit_price": 132.7551,
+            "pnl_pct": 2.642,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2026-01-29",
+            "exit_date": "2026-02-05",
+            "entry_price": 139.5797,
+            "exit_price": 145.1128,
+            "pnl_pct": 3.964,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 66.7,
+          "avg_pnl": 1.202,
+          "max_win": 3.964,
+          "max_loss": -3.0,
+          "total_pnl": 3.606,
+          "profit_factor": 2.202,
+          "max_drawdown": -3.0,
+          "sharpe": 3.648
+        }
+      },
+      "mean_reversion": {
+        "ticker": "XOM",
+        "strategy": "mean_reversion",
+        "mode": "MODERATE_BULL",
+        "trades": [
+          {
+            "entry_date": "2024-10-29",
+            "exit_date": "2024-11-05",
+            "entry_price": 111.4631,
+            "exit_price": 113.0598,
+            "pnl_pct": 1.432,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2024-12-04",
+            "exit_date": "2024-12-11",
+            "entry_price": 109.5044,
+            "exit_price": 107.243,
+            "pnl_pct": -2.065,
+            "reason": "max_hold",
+            "held_days": 5
+          },
+          {
+            "entry_date": "2025-10-16",
+            "exit_date": "2025-10-23",
+            "entry_price": 108.9545,
+            "exit_price": 114.2131,
+            "pnl_pct": 4.826,
+            "reason": "max_hold",
+            "held_days": 5
+          }
+        ],
+        "stats": {
+          "n_trades": 3,
+          "win_rate": 66.7,
+          "avg_pnl": 1.398,
+          "max_win": 4.826,
+          "max_loss": -2.065,
+          "total_pnl": 4.193,
+          "profit_factor": 3.031,
+          "max_drawdown": -2.065,
+          "sharpe": 4.553
+        }
+      },
+      "gap_pullback": {
+        "ticker": "XOM",
+        "strategy": "gap_pullback",
+        "mode": "MODERATE_BULL",
+        "trades": [],
+        "stats": {
+          "n_trades": 0,
+          "win_rate": 0.0,
+          "avg_pnl": 0.0,
+          "max_win": 0.0,
+          "max_loss": 0.0,
+          "total_pnl": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 0.0,
+          "sharpe": 0.0
+        }
+      }
+    }
+  },
+  "by_strategy": {
+    "volatility_breakout": [
+      {
+        "entry_date": "2024-06-11",
+        "exit_date": "2024-06-18",
+        "entry_price": 205.5602,
+        "exit_price": 212.6454,
+        "pnl_pct": 3.447,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-09-20",
+        "exit_date": "2024-09-27",
+        "entry_price": 226.7108,
+        "exit_price": 226.3034,
+        "pnl_pct": -0.18,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-12-20",
+        "exit_date": "2024-12-30",
+        "entry_price": 253.1074,
+        "exit_price": 250.8298,
+        "pnl_pct": -0.9,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-04-09",
+        "exit_date": "2025-04-10",
+        "entry_price": 197.9871,
+        "exit_price": 192.0475,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 245.033,
+        "exit_price": 254.974,
+        "pnl_pct": 4.057,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-05-31",
+        "exit_date": "2024-06-07",
+        "entry_price": 151.9291,
+        "exit_price": 159.6367,
+        "pnl_pct": 5.073,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-30",
+        "exit_date": "2024-11-06",
+        "entry_price": 193.1385,
+        "exit_price": 192.8509,
+        "pnl_pct": -0.149,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-12-20",
+        "exit_date": "2024-12-30",
+        "entry_price": 168.2941,
+        "exit_price": 168.8884,
+        "pnl_pct": 0.353,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-02-28",
+        "exit_date": "2025-03-07",
+        "entry_price": 202.2454,
+        "exit_price": 207.3347,
+        "pnl_pct": 2.516,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 219.1147,
+        "exit_price": 217.2828,
+        "pnl_pct": -0.836,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-01",
+        "exit_date": "2025-10-02",
+        "entry_price": 240.6943,
+        "exit_price": 233.4735,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-12-19",
+        "exit_date": "2025-12-29",
+        "entry_price": 225.0096,
+        "exit_price": 228.9975,
+        "pnl_pct": 1.772,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-04-09",
+        "exit_date": "2025-04-10",
+        "entry_price": 96.84,
+        "exit_price": 93.9348,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-06-16",
+        "exit_date": "2025-06-24",
+        "entry_price": 126.39,
+        "exit_price": 133.9734,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-29",
+        "exit_date": "2025-08-01",
+        "entry_price": 177.44,
+        "exit_price": 172.1168,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-10-06",
+        "exit_date": "2025-10-08",
+        "entry_price": 203.71,
+        "exit_price": 215.9326,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-10-08",
+        "exit_date": "2025-10-10",
+        "entry_price": 235.56,
+        "exit_price": 228.4932,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2026-01-13",
+        "exit_date": "2026-01-21",
+        "entry_price": 220.97,
+        "exit_price": 234.2282,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-04-07",
+        "exit_date": "2025-04-09",
+        "entry_price": 175.26,
+        "exit_price": 185.7756,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-06-27",
+        "exit_date": "2025-07-07",
+        "entry_price": 223.3,
+        "exit_price": 223.47,
+        "pnl_pct": 0.076,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-31",
+        "exit_date": "2025-08-01",
+        "entry_price": 234.11,
+        "exit_price": 227.0867,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-10-31",
+        "exit_date": "2025-11-07",
+        "entry_price": 244.22,
+        "exit_price": 244.41,
+        "pnl_pct": 0.078,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-06-28",
+        "exit_date": "2024-07-08",
+        "entry_price": 324.8836,
+        "exit_price": 320.9432,
+        "pnl_pct": -1.213,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-08",
+        "entry_price": 409.7197,
+        "exit_price": 397.4281,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-06-20",
+        "exit_date": "2025-06-27",
+        "entry_price": 357.339,
+        "exit_price": 378.7793,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-29",
+        "exit_date": "2025-11-04",
+        "entry_price": 584.1233,
+        "exit_price": 566.5996,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2025-03-21",
+        "exit_date": "2025-03-28",
+        "entry_price": 157.6552,
+        "exit_price": 158.9375,
+        "pnl_pct": 0.813,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-05",
+        "exit_date": "2026-01-06",
+        "entry_price": 162.2627,
+        "exit_price": 157.3948,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2026-03-12",
+        "exit_date": "2026-03-19",
+        "entry_price": 196.97,
+        "exit_price": 201.44,
+        "pnl_pct": 2.269,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-03-20",
+        "exit_date": "2026-03-27",
+        "entry_price": 201.73,
+        "exit_price": 211.15,
+        "pnl_pct": 4.67,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-05-31",
+        "exit_date": "2024-06-07",
+        "entry_price": 163.1804,
+        "exit_price": 159.9986,
+        "pnl_pct": -1.95,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-07-23",
+        "exit_date": "2024-07-24",
+        "entry_price": 170.2467,
+        "exit_price": 165.1393,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-01-23",
+        "exit_date": "2025-01-27",
+        "entry_price": 199.3718,
+        "exit_price": 193.3907,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-06-27",
+        "exit_date": "2025-07-02",
+        "entry_price": 253.17,
+        "exit_price": 245.5749,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 299.9919,
+        "exit_price": 293.8554,
+        "pnl_pct": -2.046,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-06-21",
+        "exit_date": "2024-06-28",
+        "entry_price": 178.362,
+        "exit_price": 180.8642,
+        "pnl_pct": 1.403,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-30",
+        "exit_date": "2024-11-06",
+        "entry_price": 173.4584,
+        "exit_price": 175.4966,
+        "pnl_pct": 1.175,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-12-11",
+        "exit_date": "2024-12-18",
+        "entry_price": 194.5008,
+        "exit_price": 188.6658,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-06-27",
+        "exit_date": "2025-07-07",
+        "entry_price": 178.1285,
+        "exit_price": 176.3924,
+        "pnl_pct": -0.975,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-03",
+        "exit_date": "2025-09-10",
+        "entry_price": 230.1413,
+        "exit_price": 238.8455,
+        "pnl_pct": 3.782,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-30",
+        "exit_date": "2025-11-06",
+        "entry_price": 281.0981,
+        "exit_price": 284.3637,
+        "pnl_pct": 1.162,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-07-09",
+        "exit_date": "2024-07-16",
+        "entry_price": 455.9777,
+        "exit_price": 483.3364,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-15",
+        "exit_date": "2024-10-22",
+        "entry_price": 506.7419,
+        "exit_price": 502.784,
+        "pnl_pct": -0.781,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-13",
+        "entry_price": 578.1385,
+        "exit_price": 576.4313,
+        "pnl_pct": -0.295,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-01-15",
+        "exit_date": "2025-01-23",
+        "entry_price": 590.6929,
+        "exit_price": 623.429,
+        "pnl_pct": 5.542,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-04-09",
+        "exit_date": "2025-04-10",
+        "entry_price": 506.3794,
+        "exit_price": 491.188,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-06-20",
+        "exit_date": "2025-06-26",
+        "entry_price": 630.9233,
+        "exit_price": 668.7787,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 796.8353,
+        "exit_price": 794.3707,
+        "pnl_pct": -0.309,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-12-19",
+        "exit_date": "2025-12-29",
+        "entry_price": 888.8024,
+        "exit_price": 887.5093,
+        "pnl_pct": -0.145,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-11",
+        "exit_date": "2024-10-18",
+        "entry_price": 216.7044,
+        "exit_price": 219.707,
+        "pnl_pct": 1.386,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-07",
+        "entry_price": 240.852,
+        "exit_price": 233.6264,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-12-20",
+        "exit_date": "2024-12-30",
+        "entry_price": 231.6297,
+        "exit_price": 233.3065,
+        "pnl_pct": 0.724,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-06-27",
+        "exit_date": "2025-07-07",
+        "entry_price": 283.0741,
+        "exit_price": 289.2526,
+        "pnl_pct": 2.183,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 311.8503,
+        "exit_price": 313.1184,
+        "pnl_pct": 0.407,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-08-08",
+        "exit_date": "2024-08-13",
+        "entry_price": 835.1017,
+        "exit_price": 885.2079,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2024-09-20",
+        "exit_date": "2024-09-27",
+        "entry_price": 911.6337,
+        "exit_price": 884.2847,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-04-17",
+        "exit_date": "2025-04-25",
+        "entry_price": 833.7866,
+        "exit_price": 878.0389,
+        "pnl_pct": 5.307,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-01",
+        "exit_date": "2025-10-08",
+        "entry_price": 822.8362,
+        "exit_price": 843.0726,
+        "pnl_pct": 2.459,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-30",
+        "exit_date": "2025-11-03",
+        "entry_price": 841.8565,
+        "exit_price": 892.3679,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-11-05",
+        "exit_date": "2025-11-11",
+        "entry_price": 922.912,
+        "exit_price": 978.2867,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2026-02-04",
+        "exit_date": "2026-02-05",
+        "entry_price": 1105.2753,
+        "exit_price": 1072.117,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-07-31",
+        "exit_date": "2025-08-01",
+        "entry_price": 771.6278,
+        "exit_price": 748.479,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2026-01-29",
+        "exit_date": "2026-02-02",
+        "entry_price": 738.31,
+        "exit_price": 716.1607,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-05-01",
+        "exit_date": "2025-05-08",
+        "entry_price": 422.1681,
+        "exit_price": 434.841,
+        "pnl_pct": 3.002,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-31",
+        "exit_date": "2025-08-07",
+        "entry_price": 530.4188,
+        "exit_price": 517.8319,
+        "pnl_pct": -2.373,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 515.7852,
+        "exit_price": 509.3419,
+        "pnl_pct": -1.249,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-12-19",
+        "exit_date": "2025-12-29",
+        "entry_price": 484.8134,
+        "exit_price": 485.9908,
+        "pnl_pct": 0.243,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-18",
+        "exit_date": "2024-10-25",
+        "entry_price": 76.389,
+        "exit_price": 75.468,
+        "pnl_pct": -1.206,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-01-21",
+        "exit_date": "2025-01-22",
+        "entry_price": 86.968,
+        "exit_price": 92.1861,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-01-22",
+        "exit_date": "2025-01-29",
+        "entry_price": 95.399,
+        "exit_price": 97.815,
+        "pnl_pct": 2.533,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-21",
+        "exit_date": "2025-10-22",
+        "entry_price": 124.135,
+        "exit_price": 120.411,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2026-02-27",
+        "exit_date": "2026-03-06",
+        "entry_price": 96.24,
+        "exit_price": 99.02,
+        "pnl_pct": 2.889,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-05-23",
+        "exit_date": "2024-05-28",
+        "entry_price": 103.7405,
+        "exit_price": 109.9649,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-08-05",
+        "exit_date": "2025-08-08",
+        "entry_price": 173.27,
+        "exit_price": 183.6662,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2026-02-03",
+        "exit_date": "2026-02-04",
+        "entry_price": 157.88,
+        "exit_price": 153.1436,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-05-13",
+        "exit_date": "2025-05-14",
+        "entry_price": 38.89,
+        "exit_price": 41.2234,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-05-14",
+        "exit_date": "2025-05-20",
+        "entry_price": 45.0,
+        "exit_price": 43.65,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2025-06-25",
+        "exit_date": "2025-07-02",
+        "entry_price": 46.61,
+        "exit_price": 48.74,
+        "pnl_pct": 4.57,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-28",
+        "exit_date": "2025-08-01",
+        "entry_price": 60.05,
+        "exit_price": 58.2485,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2026-01-16",
+        "exit_date": "2026-01-20",
+        "entry_price": 32.64,
+        "exit_price": 31.6608,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2026-02-04",
+        "exit_date": "2026-02-05",
+        "entry_price": 33.76,
+        "exit_price": 32.7472,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-07-02",
+        "exit_date": "2024-07-03",
+        "entry_price": 231.26,
+        "exit_price": 245.1356,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-10-24",
+        "exit_date": "2024-10-31",
+        "entry_price": 260.48,
+        "exit_price": 252.6656,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-08",
+        "exit_date": "2024-11-11",
+        "entry_price": 321.22,
+        "exit_price": 340.4932,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-11-11",
+        "exit_date": "2024-11-12",
+        "entry_price": 350.0,
+        "exit_price": 339.5,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-09-12",
+        "exit_date": "2025-09-16",
+        "entry_price": 395.94,
+        "exit_price": 419.6964,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      }
+    ],
+    "momentum": [
+      {
+        "entry_date": "2024-12-20",
+        "exit_date": "2024-12-30",
+        "entry_price": 253.1074,
+        "exit_price": 250.8298,
+        "pnl_pct": -0.9,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-08-08",
+        "exit_date": "2025-08-15",
+        "entry_price": 228.6542,
+        "exit_price": 231.1494,
+        "pnl_pct": 1.091,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 245.033,
+        "exit_price": 254.974,
+        "pnl_pct": 4.057,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-07-25",
+        "exit_date": "2024-08-01",
+        "entry_price": 173.2273,
+        "exit_price": 180.3972,
+        "pnl_pct": 4.139,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-02-28",
+        "exit_date": "2025-03-07",
+        "entry_price": 202.2454,
+        "exit_price": 207.3347,
+        "pnl_pct": 2.516,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-11",
+        "exit_date": "2025-09-18",
+        "entry_price": 216.8987,
+        "exit_price": 218.642,
+        "pnl_pct": 0.804,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 219.1147,
+        "exit_price": 217.2828,
+        "pnl_pct": -0.836,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-30",
+        "exit_date": "2025-10-07",
+        "entry_price": 228.0479,
+        "exit_price": 229.3185,
+        "pnl_pct": 0.557,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-06-16",
+        "exit_date": "2025-06-24",
+        "entry_price": 126.39,
+        "exit_price": 133.9734,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-06-24",
+        "exit_date": "2025-07-01",
+        "entry_price": 138.43,
+        "exit_price": 136.11,
+        "pnl_pct": -1.676,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-15",
+        "exit_date": "2025-07-22",
+        "entry_price": 155.61,
+        "exit_price": 154.72,
+        "pnl_pct": -0.572,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-29",
+        "exit_date": "2025-08-01",
+        "entry_price": 177.44,
+        "exit_price": 172.1168,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-10-08",
+        "exit_date": "2025-10-10",
+        "entry_price": 235.56,
+        "exit_price": 228.4932,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-06-27",
+        "exit_date": "2025-07-07",
+        "entry_price": 223.3,
+        "exit_price": 223.47,
+        "pnl_pct": 0.076,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-04",
+        "exit_date": "2025-09-11",
+        "entry_price": 235.68,
+        "exit_price": 229.95,
+        "pnl_pct": -2.431,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-09-19",
+        "exit_date": "2024-09-26",
+        "entry_price": 365.5846,
+        "exit_price": 382.8693,
+        "pnl_pct": 4.728,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-06-24",
+        "exit_date": "2025-07-01",
+        "entry_price": 369.7287,
+        "exit_price": 387.4708,
+        "pnl_pct": 4.799,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-31",
+        "exit_date": "2025-08-07",
+        "entry_price": 435.7456,
+        "exit_price": 422.6733,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-17",
+        "exit_date": "2025-09-24",
+        "entry_price": 448.32,
+        "exit_price": 467.3507,
+        "pnl_pct": 4.245,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-14",
+        "exit_date": "2025-10-21",
+        "entry_price": 524.7311,
+        "exit_price": 523.4254,
+        "pnl_pct": -0.249,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-29",
+        "exit_date": "2025-11-04",
+        "entry_price": 584.1233,
+        "exit_price": 566.5996,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2026-01-29",
+        "exit_date": "2026-02-05",
+        "entry_price": 665.24,
+        "exit_price": 678.31,
+        "pnl_pct": 1.965,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-13",
+        "entry_price": 147.7649,
+        "exit_price": 148.7018,
+        "pnl_pct": 0.634,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-30",
+        "exit_date": "2026-02-06",
+        "entry_price": 175.1863,
+        "exit_price": 179.1079,
+        "pnl_pct": 2.239,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-03-12",
+        "exit_date": "2026-03-19",
+        "entry_price": 196.97,
+        "exit_price": 201.44,
+        "pnl_pct": 2.269,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-09-16",
+        "exit_date": "2024-09-23",
+        "entry_price": 179.5905,
+        "exit_price": 186.7468,
+        "pnl_pct": 3.985,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-01-23",
+        "exit_date": "2025-01-27",
+        "entry_price": 199.3718,
+        "exit_price": 193.3907,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-05-28",
+        "exit_date": "2025-06-04",
+        "entry_price": 242.387,
+        "exit_price": 249.5591,
+        "pnl_pct": 2.959,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-16",
+        "exit_date": "2025-07-23",
+        "entry_price": 265.1652,
+        "exit_price": 262.1766,
+        "pnl_pct": -1.127,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 299.9919,
+        "exit_price": 293.8554,
+        "pnl_pct": -2.046,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-29",
+        "exit_date": "2024-11-05",
+        "entry_price": 168.7058,
+        "exit_price": 168.7655,
+        "pnl_pct": 0.035,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-12-10",
+        "exit_date": "2024-12-16",
+        "entry_price": 184.3179,
+        "exit_price": 195.3769,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2025-02-04",
+        "exit_date": "2025-02-05",
+        "entry_price": 205.4303,
+        "exit_price": 199.2674,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-09-03",
+        "exit_date": "2025-09-10",
+        "entry_price": 230.1413,
+        "exit_price": 238.8455,
+        "pnl_pct": 3.782,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-15",
+        "exit_date": "2025-09-22",
+        "entry_price": 251.2686,
+        "exit_price": 252.1874,
+        "pnl_pct": 0.366,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-30",
+        "exit_date": "2025-11-06",
+        "entry_price": 281.0981,
+        "exit_price": 284.3637,
+        "pnl_pct": 1.162,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-24",
+        "exit_date": "2025-12-02",
+        "entry_price": 318.1478,
+        "exit_price": 315.3815,
+        "pnl_pct": -0.869,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-07-15",
+        "exit_date": "2024-07-22",
+        "entry_price": 474.6863,
+        "exit_price": 469.6812,
+        "pnl_pct": -1.054,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-13",
+        "entry_price": 578.1385,
+        "exit_price": 576.4313,
+        "pnl_pct": -0.295,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-01-15",
+        "exit_date": "2025-01-23",
+        "entry_price": 590.6929,
+        "exit_price": 623.429,
+        "pnl_pct": 5.542,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-06-20",
+        "exit_date": "2025-06-26",
+        "entry_price": 630.9233,
+        "exit_price": 668.7787,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2025-06-27",
+        "exit_date": "2025-07-07",
+        "entry_price": 680.1625,
+        "exit_price": 699.9724,
+        "pnl_pct": 2.913,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-09",
+        "exit_date": "2025-09-16",
+        "entry_price": 756.172,
+        "exit_price": 777.5629,
+        "pnl_pct": 2.829,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-05",
+        "exit_date": "2026-01-12",
+        "entry_price": 943.4747,
+        "exit_price": 944.5789,
+        "pnl_pct": 0.117,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-15",
+        "exit_date": "2026-01-20",
+        "entry_price": 970.7512,
+        "exit_price": 941.6286,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-07",
+        "entry_price": 240.852,
+        "exit_price": 233.6264,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-01-15",
+        "exit_date": "2025-01-23",
+        "entry_price": 247.2796,
+        "exit_price": 260.6064,
+        "pnl_pct": 5.389,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 311.8503,
+        "exit_price": 313.1184,
+        "pnl_pct": 0.407,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-02-06",
+        "exit_date": "2025-02-13",
+        "entry_price": 862.4866,
+        "exit_price": 863.9631,
+        "pnl_pct": 0.171,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-01",
+        "exit_date": "2025-10-08",
+        "entry_price": 822.8362,
+        "exit_price": 843.0726,
+        "pnl_pct": 2.459,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-03",
+        "exit_date": "2025-11-10",
+        "entry_price": 893.7237,
+        "exit_price": 947.3471,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-31",
+        "exit_date": "2025-08-01",
+        "entry_price": 771.6278,
+        "exit_price": 748.479,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2026-01-29",
+        "exit_date": "2026-02-02",
+        "entry_price": 738.31,
+        "exit_price": 716.1607,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-07-31",
+        "exit_date": "2025-08-07",
+        "entry_price": 530.4188,
+        "exit_price": 517.8319,
+        "pnl_pct": -2.373,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-28",
+        "exit_date": "2025-10-30",
+        "entry_price": 539.8252,
+        "exit_price": 523.6304,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2024-10-21",
+        "exit_date": "2024-10-28",
+        "entry_price": 77.207,
+        "exit_price": 74.912,
+        "pnl_pct": -2.973,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-05-29",
+        "exit_date": "2025-06-05",
+        "entry_price": 139.1572,
+        "exit_price": 139.957,
+        "pnl_pct": 0.575,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-28",
+        "exit_date": "2025-11-04",
+        "entry_price": 201.0079,
+        "exit_price": 198.6682,
+        "pnl_pct": -1.164,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-08-05",
+        "exit_date": "2025-08-08",
+        "entry_price": 173.27,
+        "exit_price": 183.6662,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 182.39,
+        "exit_price": 177.57,
+        "pnl_pct": -2.643,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-03",
+        "exit_date": "2025-11-04",
+        "entry_price": 207.18,
+        "exit_price": 200.9646,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-06-26",
+        "exit_date": "2025-06-27",
+        "entry_price": 49.27,
+        "exit_price": 47.7919,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-07-28",
+        "exit_date": "2025-08-01",
+        "entry_price": 60.05,
+        "exit_price": 58.2485,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2024-07-01",
+        "exit_date": "2024-07-02",
+        "entry_price": 209.86,
+        "exit_price": 222.4516,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-07-02",
+        "exit_date": "2024-07-03",
+        "entry_price": 231.26,
+        "exit_price": 245.1356,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-07-03",
+        "exit_date": "2024-07-09",
+        "entry_price": 246.39,
+        "exit_price": 261.1734,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2024-07-09",
+        "exit_date": "2024-07-11",
+        "entry_price": 262.33,
+        "exit_price": 254.4601,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-08",
+        "entry_price": 288.53,
+        "exit_price": 305.8418,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2024-11-08",
+        "exit_date": "2024-11-11",
+        "entry_price": 321.22,
+        "exit_price": 340.4932,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-11-11",
+        "exit_date": "2024-11-12",
+        "entry_price": 350.0,
+        "exit_price": 339.5,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-12-17",
+        "exit_date": "2024-12-18",
+        "entry_price": 479.86,
+        "exit_price": 465.4642,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-09-12",
+        "exit_date": "2025-09-16",
+        "entry_price": 395.94,
+        "exit_price": 419.6964,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2026-01-05",
+        "exit_date": "2026-01-06",
+        "entry_price": 124.53,
+        "exit_price": 120.7941,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2026-01-14",
+        "exit_date": "2026-01-22",
+        "entry_price": 129.3379,
+        "exit_price": 132.7551,
+        "pnl_pct": 2.642,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-29",
+        "exit_date": "2026-02-05",
+        "entry_price": 139.5797,
+        "exit_price": 145.1128,
+        "pnl_pct": 3.964,
+        "reason": "max_hold",
+        "held_days": 5
+      }
+    ],
+    "mean_reversion": [
+      {
+        "entry_date": "2024-08-05",
+        "exit_date": "2024-08-12",
+        "entry_price": 207.6639,
+        "exit_price": 216.1104,
+        "pnl_pct": 4.067,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-09-16",
+        "exit_date": "2024-09-23",
+        "entry_price": 214.9083,
+        "exit_price": 224.9921,
+        "pnl_pct": 4.692,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-04",
+        "exit_date": "2024-11-11",
+        "entry_price": 220.5611,
+        "exit_price": 223.0117,
+        "pnl_pct": 1.111,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-01-13",
+        "exit_date": "2025-01-21",
+        "entry_price": 233.1265,
+        "exit_price": 226.1327,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-08-05",
+        "exit_date": "2025-08-07",
+        "entry_price": 202.3044,
+        "exit_price": 214.4426,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-12-22",
+        "exit_date": "2025-12-30",
+        "entry_price": 270.7167,
+        "exit_price": 272.8247,
+        "pnl_pct": 0.779,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-05",
+        "exit_date": "2026-01-08",
+        "entry_price": 267.26,
+        "exit_price": 259.2422,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2026-01-08",
+        "exit_date": "2026-01-15",
+        "entry_price": 259.04,
+        "exit_price": 258.21,
+        "pnl_pct": -0.32,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-15",
+        "exit_date": "2026-01-20",
+        "entry_price": 258.21,
+        "exit_price": 250.4637,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2026-03-16",
+        "exit_date": "2026-03-23",
+        "entry_price": 252.82,
+        "exit_price": 251.49,
+        "pnl_pct": -0.526,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-18",
+        "exit_date": "2024-10-25",
+        "entry_price": 181.023,
+        "exit_price": 180.0549,
+        "pnl_pct": -0.535,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-03-25",
+        "exit_date": "2025-04-01",
+        "entry_price": 194.805,
+        "exit_price": 199.575,
+        "pnl_pct": 2.449,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-04-04",
+        "exit_date": "2025-04-08",
+        "entry_price": 180.8918,
+        "exit_price": 175.465,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-10-31",
+        "exit_date": "2025-11-07",
+        "entry_price": 216.2997,
+        "exit_price": 217.4108,
+        "pnl_pct": 0.514,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-12-12",
+        "exit_date": "2025-12-19",
+        "entry_price": 221.5376,
+        "exit_price": 225.0096,
+        "pnl_pct": 1.567,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-05",
+        "exit_date": "2025-09-12",
+        "entry_price": 151.14,
+        "exit_price": 158.57,
+        "pnl_pct": 4.916,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-20",
+        "exit_date": "2025-11-28",
+        "entry_price": 206.02,
+        "exit_price": 217.53,
+        "pnl_pct": 5.587,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-24",
+        "exit_date": "2025-10-01",
+        "entry_price": 220.21,
+        "exit_price": 220.63,
+        "pnl_pct": 0.191,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-20",
+        "exit_date": "2025-11-28",
+        "entry_price": 217.14,
+        "exit_price": 230.1684,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-31",
+        "exit_date": "2024-11-06",
+        "entry_price": 369.7384,
+        "exit_price": 391.9227,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2024-12-16",
+        "exit_date": "2024-12-18",
+        "entry_price": 372.4117,
+        "exit_price": 361.2393,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2026-03-06",
+        "exit_date": "2026-03-13",
+        "entry_price": 680.9,
+        "exit_price": 693.99,
+        "pnl_pct": 1.922,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-03-20",
+        "exit_date": "2026-03-27",
+        "entry_price": 680.88,
+        "exit_price": 695.4,
+        "pnl_pct": 2.133,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-12-12",
+        "exit_date": "2024-12-16",
+        "entry_price": 146.4235,
+        "exit_price": 142.0308,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2024-12-16",
+        "exit_date": "2024-12-18",
+        "entry_price": 141.36,
+        "exit_price": 137.1192,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-10-10",
+        "exit_date": "2025-10-17",
+        "entry_price": 145.8288,
+        "exit_price": 149.9226,
+        "pnl_pct": 2.807,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-06-14",
+        "exit_date": "2024-06-24",
+        "entry_price": 154.0303,
+        "exit_price": 158.635,
+        "pnl_pct": 2.99,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-29",
+        "exit_date": "2024-11-05",
+        "entry_price": 172.531,
+        "exit_price": 173.7304,
+        "pnl_pct": 0.695,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-03-10",
+        "exit_date": "2025-03-17",
+        "entry_price": 191.1084,
+        "exit_price": 200.9663,
+        "pnl_pct": 5.158,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-18",
+        "exit_date": "2025-11-25",
+        "entry_price": 295.2418,
+        "exit_price": 292.6784,
+        "pnl_pct": -0.868,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-12-01",
+        "exit_date": "2025-12-08",
+        "entry_price": 287.7014,
+        "exit_price": 286.4447,
+        "pnl_pct": -0.437,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-03-12",
+        "exit_date": "2026-03-19",
+        "entry_price": 306.7,
+        "exit_price": 297.499,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-07-29",
+        "exit_date": "2024-08-05",
+        "entry_price": 168.3333,
+        "exit_price": 163.2833,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-02-21",
+        "exit_date": "2025-02-26",
+        "entry_price": 178.8332,
+        "exit_price": 173.4682,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-10-09",
+        "exit_date": "2025-10-16",
+        "entry_price": 241.2023,
+        "exit_price": 251.1189,
+        "pnl_pct": 4.111,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-12-17",
+        "exit_date": "2025-12-24",
+        "entry_price": 296.5113,
+        "exit_price": 313.869,
+        "pnl_pct": 5.854,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-02-13",
+        "exit_date": "2026-02-23",
+        "entry_price": 305.5049,
+        "exit_price": 311.2709,
+        "pnl_pct": 1.887,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-06-11",
+        "exit_date": "2024-06-18",
+        "entry_price": 428.4356,
+        "exit_price": 441.1266,
+        "pnl_pct": 2.962,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-08-05",
+        "exit_date": "2024-08-09",
+        "entry_price": 442.6599,
+        "exit_price": 469.2195,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2024-12-17",
+        "exit_date": "2024-12-18",
+        "entry_price": 560.238,
+        "exit_price": 543.4308,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-12-18",
+        "exit_date": "2024-12-26",
+        "entry_price": 536.4219,
+        "exit_price": 566.6234,
+        "pnl_pct": 5.63,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-02-27",
+        "exit_date": "2025-03-04",
+        "entry_price": 592.7206,
+        "exit_price": 574.939,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-03-04",
+        "exit_date": "2025-03-07",
+        "entry_price": 569.3449,
+        "exit_price": 552.2646,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-10-10",
+        "exit_date": "2025-10-17",
+        "entry_price": 756.6075,
+        "exit_price": 743.1554,
+        "pnl_pct": -1.778,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-17",
+        "exit_date": "2025-10-24",
+        "entry_price": 743.1554,
+        "exit_price": 775.9296,
+        "pnl_pct": 4.41,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-02-05",
+        "exit_date": "2026-02-10",
+        "entry_price": 885.7485,
+        "exit_price": 938.8934,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2024-08-05",
+        "exit_date": "2024-08-12",
+        "entry_price": 188.8454,
+        "exit_price": 199.7847,
+        "pnl_pct": 5.793,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-12-13",
+        "exit_date": "2024-12-18",
+        "entry_price": 233.9109,
+        "exit_price": 226.8936,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2024-12-18",
+        "exit_date": "2024-12-26",
+        "entry_price": 224.5814,
+        "exit_price": 237.0305,
+        "pnl_pct": 5.543,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-02-27",
+        "exit_date": "2025-03-04",
+        "entry_price": 253.845,
+        "exit_price": 246.2296,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-03-04",
+        "exit_date": "2025-03-07",
+        "entry_price": 245.2218,
+        "exit_price": 237.8651,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-03-07",
+        "exit_date": "2025-03-10",
+        "entry_price": 237.4119,
+        "exit_price": 230.2896,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-10-10",
+        "exit_date": "2025-10-17",
+        "entry_price": 299.5389,
+        "exit_price": 296.2238,
+        "pnl_pct": -1.107,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-23",
+        "exit_date": "2026-01-30",
+        "entry_price": 297.72,
+        "exit_price": 305.89,
+        "pnl_pct": 2.744,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-03-02",
+        "exit_date": "2026-03-09",
+        "entry_price": 297.56,
+        "exit_price": 289.92,
+        "pnl_pct": -2.568,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-07-25",
+        "exit_date": "2024-07-30",
+        "entry_price": 811.2729,
+        "exit_price": 786.9348,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2024-09-10",
+        "exit_date": "2024-09-17",
+        "entry_price": 891.6103,
+        "exit_price": 896.4875,
+        "pnl_pct": 0.547,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-28",
+        "exit_date": "2026-02-04",
+        "entry_price": 1022.0941,
+        "exit_price": 1083.4197,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-02",
+        "exit_date": "2025-09-09",
+        "entry_price": 733.3876,
+        "exit_price": 763.906,
+        "pnl_pct": 4.161,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-03",
+        "exit_date": "2025-10-10",
+        "entry_price": 709.3736,
+        "exit_price": 704.1224,
+        "pnl_pct": -0.74,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-15",
+        "exit_date": "2026-01-23",
+        "entry_price": 620.8,
+        "exit_price": 658.048,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-02-23",
+        "exit_date": "2026-03-02",
+        "entry_price": 637.25,
+        "exit_price": 653.56,
+        "pnl_pct": 2.559,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-08-20",
+        "exit_date": "2025-08-27",
+        "entry_price": 502.7992,
+        "exit_price": 504.6415,
+        "pnl_pct": 0.366,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-05",
+        "exit_date": "2025-09-12",
+        "entry_price": 492.9502,
+        "exit_price": 507.7885,
+        "pnl_pct": 3.01,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-18",
+        "exit_date": "2025-11-21",
+        "entry_price": 491.7452,
+        "exit_price": 476.9928,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2024-07-12",
+        "exit_date": "2024-07-19",
+        "entry_price": 64.76,
+        "exit_price": 63.334,
+        "pnl_pct": -2.202,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-07-24",
+        "exit_date": "2024-07-31",
+        "entry_price": 63.599,
+        "exit_price": 62.835,
+        "pnl_pct": -1.201,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-01-10",
+        "exit_date": "2025-01-17",
+        "entry_price": 83.769,
+        "exit_price": 85.81,
+        "pnl_pct": 2.436,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-03-06",
+        "exit_date": "2025-03-10",
+        "entry_price": 90.636,
+        "exit_price": 87.9169,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-07-21",
+        "exit_date": "2025-07-22",
+        "entry_price": 123.327,
+        "exit_price": 119.6272,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-07-22",
+        "exit_date": "2025-07-29",
+        "entry_price": 119.008,
+        "exit_price": 116.874,
+        "pnl_pct": -1.793,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-29",
+        "exit_date": "2025-08-05",
+        "entry_price": 116.874,
+        "exit_price": 114.787,
+        "pnl_pct": -1.786,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-07-29",
+        "exit_date": "2024-07-30",
+        "entry_price": 111.5362,
+        "exit_price": 108.1901,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-09-02",
+        "exit_date": "2025-09-09",
+        "entry_price": 170.7516,
+        "exit_price": 170.7316,
+        "pnl_pct": -0.012,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-18",
+        "exit_date": "2025-11-25",
+        "entry_price": 181.3401,
+        "exit_price": 177.8005,
+        "pnl_pct": -1.952,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-06-11",
+        "exit_date": "2024-06-13",
+        "entry_price": 170.66,
+        "exit_price": 180.8996,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2024-08-05",
+        "exit_date": "2024-08-07",
+        "entry_price": 198.88,
+        "exit_price": 192.9136,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2024-10-11",
+        "exit_date": "2024-10-18",
+        "entry_price": 217.8,
+        "exit_price": 220.7,
+        "pnl_pct": 1.331,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-18",
+        "exit_date": "2024-10-23",
+        "entry_price": 220.7,
+        "exit_price": 214.079,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2024-10-23",
+        "exit_date": "2024-10-24",
+        "entry_price": 213.65,
+        "exit_price": 226.469,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-02-05",
+        "exit_date": "2025-02-07",
+        "entry_price": 378.17,
+        "exit_price": 366.8249,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-06-05",
+        "exit_date": "2025-06-09",
+        "entry_price": 284.7,
+        "exit_price": 301.782,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2026-01-07",
+        "exit_date": "2026-01-14",
+        "entry_price": 431.41,
+        "exit_price": 439.2,
+        "pnl_pct": 1.806,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-29",
+        "exit_date": "2024-11-05",
+        "entry_price": 111.4631,
+        "exit_price": 113.0598,
+        "pnl_pct": 1.432,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-12-04",
+        "exit_date": "2024-12-11",
+        "entry_price": 109.5044,
+        "exit_price": 107.243,
+        "pnl_pct": -2.065,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-16",
+        "exit_date": "2025-10-23",
+        "entry_price": 108.9545,
+        "exit_price": 114.2131,
+        "pnl_pct": 4.826,
+        "reason": "max_hold",
+        "held_days": 5
+      }
+    ],
+    "gap_pullback": [
+      {
+        "entry_date": "2025-08-06",
+        "exit_date": "2025-08-08",
+        "entry_price": 212.603,
+        "exit_price": 225.3592,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-09-19",
+        "exit_date": "2025-09-26",
+        "entry_price": 245.033,
+        "exit_price": 254.974,
+        "pnl_pct": 4.057,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-20",
+        "exit_date": "2025-10-27",
+        "entry_price": 261.7411,
+        "exit_price": 268.2986,
+        "pnl_pct": 2.505,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-02-04",
+        "exit_date": "2026-02-11",
+        "entry_price": 276.49,
+        "exit_price": 275.5,
+        "pnl_pct": -0.358,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-04-09",
+        "exit_date": "2025-04-10",
+        "entry_price": 96.84,
+        "exit_price": 93.9348,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-06-24",
+        "exit_date": "2025-07-01",
+        "entry_price": 138.43,
+        "exit_price": 136.11,
+        "pnl_pct": -1.676,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-07-15",
+        "exit_date": "2025-07-22",
+        "entry_price": 155.61,
+        "exit_price": 154.72,
+        "pnl_pct": -0.572,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-08-13",
+        "exit_date": "2025-08-15",
+        "entry_price": 184.42,
+        "exit_price": 178.8874,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-12-19",
+        "exit_date": "2025-12-29",
+        "entry_price": 213.43,
+        "exit_price": 215.61,
+        "pnl_pct": 1.021,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-13",
+        "exit_date": "2026-01-21",
+        "entry_price": 220.97,
+        "exit_price": 234.2282,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-21",
+        "exit_date": "2026-01-28",
+        "entry_price": 249.8,
+        "exit_price": 252.74,
+        "pnl_pct": 1.177,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-09-04",
+        "exit_date": "2025-09-11",
+        "entry_price": 235.68,
+        "exit_price": 229.95,
+        "pnl_pct": -2.431,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-09-19",
+        "exit_date": "2024-09-26",
+        "entry_price": 365.5846,
+        "exit_price": 382.8693,
+        "pnl_pct": 4.728,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-08",
+        "entry_price": 409.7197,
+        "exit_price": 397.4281,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-01-21",
+        "exit_date": "2025-01-28",
+        "entry_price": 392.9531,
+        "exit_price": 384.9926,
+        "pnl_pct": -2.026,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-29",
+        "exit_date": "2025-11-04",
+        "entry_price": 584.1233,
+        "exit_price": 566.5996,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2025-12-19",
+        "exit_date": "2025-12-29",
+        "entry_price": 574.8749,
+        "exit_price": 577.2594,
+        "pnl_pct": 0.415,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-31",
+        "exit_date": "2025-11-05",
+        "entry_price": 154.4669,
+        "exit_price": 149.8329,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2024-10-23",
+        "exit_date": "2024-10-28",
+        "entry_price": 180.1043,
+        "exit_price": 174.7012,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-02-04",
+        "exit_date": "2025-02-05",
+        "entry_price": 205.4303,
+        "exit_price": 199.2674,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2025-09-15",
+        "exit_date": "2025-09-22",
+        "entry_price": 251.2686,
+        "exit_price": 252.1874,
+        "pnl_pct": 0.366,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-19",
+        "exit_date": "2025-11-24",
+        "entry_price": 292.4128,
+        "exit_price": 309.9575,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-11-24",
+        "exit_date": "2025-12-02",
+        "entry_price": 318.1478,
+        "exit_price": 315.3815,
+        "pnl_pct": -0.869,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-09-19",
+        "exit_date": "2024-09-26",
+        "entry_price": 488.7472,
+        "exit_price": 482.0441,
+        "pnl_pct": -1.371,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-13",
+        "entry_price": 578.1385,
+        "exit_price": 576.4313,
+        "pnl_pct": -0.295,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-10-13",
+        "exit_date": "2025-10-16",
+        "entry_price": 778.8002,
+        "exit_price": 755.4362,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2024-10-11",
+        "exit_date": "2024-10-18",
+        "entry_price": 216.7044,
+        "exit_price": 219.707,
+        "pnl_pct": 1.386,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-11-06",
+        "exit_date": "2024-11-07",
+        "entry_price": 240.852,
+        "exit_price": 233.6264,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-05-21",
+        "exit_date": "2024-05-29",
+        "entry_price": 793.4706,
+        "exit_price": 801.7297,
+        "pnl_pct": 1.041,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-08-09",
+        "exit_date": "2024-08-16",
+        "entry_price": 880.9118,
+        "exit_price": 912.257,
+        "pnl_pct": 3.558,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-01-07",
+        "exit_date": "2026-01-09",
+        "entry_price": 1106.2437,
+        "exit_price": 1073.0563,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2026-01-22",
+        "exit_date": "2026-01-29",
+        "entry_price": 647.63,
+        "exit_price": 686.4878,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2024-10-18",
+        "exit_date": "2024-10-25",
+        "entry_price": 76.389,
+        "exit_price": 75.468,
+        "pnl_pct": -1.206,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-04-15",
+        "exit_date": "2025-04-22",
+        "entry_price": 97.628,
+        "exit_price": 103.4857,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2025-04-22",
+        "exit_date": "2025-04-28",
+        "entry_price": 104.034,
+        "exit_price": 110.276,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 4
+      },
+      {
+        "entry_date": "2025-10-31",
+        "exit_date": "2025-11-07",
+        "entry_price": 111.886,
+        "exit_price": 110.366,
+        "pnl_pct": -1.359,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2026-02-25",
+        "exit_date": "2026-02-27",
+        "entry_price": 82.7,
+        "exit_price": 87.662,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2024-05-23",
+        "exit_date": "2024-05-28",
+        "entry_price": 103.7405,
+        "exit_price": 109.9649,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2024-05-28",
+        "exit_date": "2024-05-31",
+        "entry_price": 113.8367,
+        "exit_price": 110.4216,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-12-19",
+        "exit_date": "2025-12-29",
+        "entry_price": 180.9802,
+        "exit_price": 188.2098,
+        "pnl_pct": 3.995,
+        "reason": "max_hold",
+        "held_days": 5
+      },
+      {
+        "entry_date": "2025-11-10",
+        "exit_date": "2025-11-12",
+        "entry_price": 193.61,
+        "exit_price": 187.8017,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2026-01-16",
+        "exit_date": "2026-01-20",
+        "entry_price": 32.64,
+        "exit_price": 31.6608,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-07-01",
+        "exit_date": "2024-07-02",
+        "entry_price": 209.86,
+        "exit_price": 222.4516,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-07-02",
+        "exit_date": "2024-07-03",
+        "entry_price": 231.26,
+        "exit_price": 245.1356,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 1
+      },
+      {
+        "entry_date": "2024-07-03",
+        "exit_date": "2024-07-09",
+        "entry_price": 246.39,
+        "exit_price": 261.1734,
+        "pnl_pct": 6.0,
+        "reason": "tp",
+        "held_days": 3
+      },
+      {
+        "entry_date": "2025-06-23",
+        "exit_date": "2025-06-25",
+        "entry_price": 348.68,
+        "exit_price": 338.2196,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 2
+      },
+      {
+        "entry_date": "2025-07-25",
+        "exit_date": "2025-08-01",
+        "entry_price": 316.06,
+        "exit_price": 306.5782,
+        "pnl_pct": -3.0,
+        "reason": "sl",
+        "held_days": 5
+      }
+    ]
+  },
+  "summary": [
+    {
+      "strategy": "volatility_breakout",
+      "n_tickers": 19,
+      "n_trades": 86,
+      "win_rate": 51.2,
+      "avg_pnl": 0.817,
+      "max_win": 6.0,
+      "max_loss": -3.0,
+      "total_pnl": 70.284,
+      "profit_factor": 1.735,
+      "max_drawdown": -14.393,
+      "sharpe": 0.401
+    },
+    {
+      "strategy": "momentum",
+      "n_tickers": 19,
+      "n_trades": 75,
+      "win_rate": 56.0,
+      "avg_pnl": 0.856,
+      "max_win": 6.0,
+      "max_loss": -3.0,
+      "total_pnl": 64.208,
+      "profit_factor": 1.854,
+      "max_drawdown": -20.578,
+      "sharpe": 0.478
+    },
+    {
+      "strategy": "mean_reversion",
+      "n_tickers": 19,
+      "n_trades": 86,
+      "win_rate": 52.3,
+      "avg_pnl": 0.792,
+      "max_win": 6.0,
+      "max_loss": -3.0,
+      "total_pnl": 68.096,
+      "profit_factor": 1.718,
+      "max_drawdown": -18.51,
+      "sharpe": 0.402
+    },
+    {
+      "strategy": "gap_pullback",
+      "n_tickers": 19,
+      "n_trades": 47,
+      "win_rate": 46.8,
+      "avg_pnl": 0.704,
+      "max_win": 6.0,
+      "max_loss": -3.0,
+      "total_pnl": 33.086,
+      "profit_factor": 1.579,
+      "max_drawdown": -17.394,
+      "sharpe": 0.454
+    }
+  ]
+}

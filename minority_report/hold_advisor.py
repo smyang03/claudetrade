@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trading_logger
 from credit_tracker import record as credit_record
 from runtime_paths import get_runtime_path
+from minority_report.raw_call_logger import save as save_raw_call
 
 log    = get_trading_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
@@ -68,6 +69,12 @@ JSON으로만 응답:
             raw = raw.split("```")[1].replace("json", "").strip()
         result = json.loads(raw)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor")
+        save_raw_call(
+            label=f"hold_advisor_{analyst_type}",
+            prompt=prompt, raw_response=raw, parsed=result,
+            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            market=market,
+        )
         return {
             "action":     result.get("action", "SELL").upper(),
             "confidence": float(result.get("confidence", 0.5)),

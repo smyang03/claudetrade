@@ -7,6 +7,7 @@ sys.path.insert(0,str(Path(__file__).parent.parent))
 from logger import get_minority_logger
 from claude_memory import brain as BrainDB
 from credit_tracker import record as credit_record
+from minority_report.raw_call_logger import save as save_raw_call
 
 log    = get_minority_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
@@ -47,6 +48,12 @@ JSON으로만:
         if result.get("mode") not in VALID_MODES:
             result["mode"] = prev_mode
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, f"tune_{elapsed_min}min")
+        save_raw_call(
+            label=f"tune_{elapsed_min}min",
+            prompt=prompt, raw_response=raw, parsed=result,
+            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            market=market,
+        )
         log.info(f"[튜닝 {elapsed_min}분] {result.get('action','-')} "
                  f"→ {result.get('mode','-')} | {result.get('reason','')[:60]}")
         # 튜닝 패턴 기록

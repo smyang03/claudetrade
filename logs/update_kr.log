@@ -38,3 +38,288 @@
 08:30:07 [[32m[1mINFO    [0m] trading_system | [32m[3/3] KR supplement[0m
 08:30:07 [[31m[1mERROR   [0m] trading_system | [31mKR supplement 실패: No module named 'dotenv'[0m
 08:30:07 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 완료 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 시작 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] 주가 최신화[0m
+
+[국내 주가] 2024-11-10 ~ 2026-03-25
+  [005930] 기존: 2024-11-11 ~ 2026-03-25 (332일)
+         이미 최신 상태 - 스킵
+  [000660] 기존: 2024-11-11 ~ 2026-03-24 (330일)
+         이미 최신 상태 - 스킵
+  [035420] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+  [005380] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+  [000270] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+  [051910] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+  [006400] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+  [035720] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+  [068270] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+  [028260] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+  [012330] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+  [003550] 기존: 2024-11-11 ~ 2026-03-24 (331일)
+         이미 최신 상태 - 스킵
+08:30:20 [[32m[1mINFO    [0m] trading_system | [32m[2/3] KR 뉴스 수집[0m
+08:30:20 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+08:30:20 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-25 뉴스 수집 시작 ━━━[0m
+08:30:20 [[36m[1mDEBUG   [0m] collector_phase1 | [36m시황 뉴스 2026-03-25: 0건[0m
+08:30:23 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005930] 2026-03-25: 0건[0m
+08:30:23 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:23 [[32m[1mINFO    [0m] collector_phase1 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+08:30:25 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [000660] 2026-03-25: 0건[0m
+08:30:26 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:26 [[32m[1mINFO    [0m] collector_phase1 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+08:30:27 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [035420] 2026-03-25: 0건[0m
+08:30:28 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:28 [[32m[1mINFO    [0m] collector_phase1 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+08:30:30 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005380] 2026-03-25: 0건[0m
+08:30:30 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:31 [[32m[1mINFO    [0m] collector_phase1 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+08:30:32 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [051910] 2026-03-25: 0건[0m
+08:30:33 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:33 [[32m[1mINFO    [0m] collector_phase1 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+08:30:33 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-25 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2026-03-25.json ━━━[0m
+08:30:33 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (13.05초)[0m
+08:30:33 [[32m[1mINFO    [0m] trading_system | [32m[3/3] KR supplement[0m
+08:30:33 [[32m[1mINFO    [0m] collector_phase1 | [32m[KR supplement] 2026-03-24[0m
+08:30:33 [[33m[1mWARNING [0m] collector_phase1 | [33mKIS 수급 실패: 403 Client Error: Forbidden for url: https://openapivts.koreainvestment.com:29443/oauth2/tokenP[0m
+08:30:46 [[32m[1mINFO    [0m] collector_phase1 | [32m  ✅ KR supplement 저장: 2026-03-24.json[0m
+08:30:46 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 완료 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 시작 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] 주가 최신화[0m
+
+[국내 주가] 2024-11-11 ~ 2026-03-26
+  [005930] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [000660] 기존: 2024-11-11 ~ 2026-03-26 (332일)
+         이미 최신 상태 - 스킵
+  [035420] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [005380] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [000270] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [051910] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [006400] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [035720] 기존: 2024-11-11 ~ 2026-03-25 (332일)
+         이미 최신 상태 - 스킵
+  [068270] 기존: 2024-11-11 ~ 2026-03-25 (332일)
+         이미 최신 상태 - 스킵
+  [028260] 기존: 2024-11-11 ~ 2026-03-25 (332일)
+         이미 최신 상태 - 스킵
+  [012330] 기존: 2024-11-11 ~ 2026-03-25 (332일)
+         이미 최신 상태 - 스킵
+  [003550] 기존: 2024-11-11 ~ 2026-03-25 (332일)
+         이미 최신 상태 - 스킵
+08:30:10 [[32m[1mINFO    [0m] trading_system | [32m[2/3] KR 뉴스 수집[0m
+08:30:10 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+08:30:10 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-26 뉴스 수집 시작 ━━━[0m
+08:30:10 [[36m[1mDEBUG   [0m] collector_phase1 | [36m시황 뉴스 2026-03-26: 0건[0m
+08:30:12 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005930] 2026-03-26: 0건[0m
+08:30:13 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:13 [[32m[1mINFO    [0m] collector_phase1 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+08:30:14 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [000660] 2026-03-26: 0건[0m
+08:30:15 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:15 [[32m[1mINFO    [0m] collector_phase1 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+08:30:17 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [035420] 2026-03-26: 0건[0m
+08:30:17 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:18 [[32m[1mINFO    [0m] collector_phase1 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+08:30:19 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005380] 2026-03-26: 0건[0m
+08:30:20 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:20 [[32m[1mINFO    [0m] collector_phase1 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+08:30:23 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [051910] 2026-03-26: 0건[0m
+08:30:23 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:24 [[32m[1mINFO    [0m] collector_phase1 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+08:30:24 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-26 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2026-03-26.json ━━━[0m
+08:30:24 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (13.74초)[0m
+08:30:24 [[32m[1mINFO    [0m] trading_system | [32m[3/3] KR supplement[0m
+08:30:24 [[32m[1mINFO    [0m] collector_phase1 | [32m[KR supplement] 2026-03-25[0m
+08:30:24 [[33m[1mWARNING [0m] collector_phase1 | [33mKIS 수급 실패: 403 Client Error: Forbidden for url: https://openapivts.koreainvestment.com:29443/oauth2/tokenP[0m
+08:30:36 [[32m[1mINFO    [0m] collector_phase1 | [32m  ✅ KR supplement 저장: 2026-03-25.json[0m
+08:30:36 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 완료 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 시작 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] 주가 최신화[0m
+
+[국내 주가] 2024-11-12 ~ 2026-03-27
+  [005930] 기존: 2024-11-12 ~ 2026-03-27 (333일)
+         이미 최신 상태 - 스킵
+  [000660] 기존: 2024-11-12 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [035420] 기존: 2024-11-12 ~ 2026-03-27 (333일)
+         이미 최신 상태 - 스킵
+  [005380] 기존: 2024-11-12 ~ 2026-03-27 (333일)
+         이미 최신 상태 - 스킵
+  [000270] 기존: 2024-11-12 ~ 2026-03-27 (333일)
+         이미 최신 상태 - 스킵
+  [051910] 기존: 2024-11-12 ~ 2026-03-27 (333일)
+         이미 최신 상태 - 스킵
+  [006400] 기존: 2024-11-12 ~ 2026-03-27 (333일)
+         이미 최신 상태 - 스킵
+  [035720] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [068270] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [028260] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [012330] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+  [003550] 기존: 2024-11-11 ~ 2026-03-26 (333일)
+         이미 최신 상태 - 스킵
+08:30:10 [[32m[1mINFO    [0m] trading_system | [32m[2/3] KR 뉴스 수집[0m
+08:30:10 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+08:30:10 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-27 뉴스 수집 시작 ━━━[0m
+08:30:10 [[36m[1mDEBUG   [0m] collector_phase1 | [36m시황 뉴스 2026-03-27: 0건[0m
+08:30:12 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005930] 2026-03-27: 0건[0m
+08:30:13 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:13 [[32m[1mINFO    [0m] collector_phase1 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+08:30:15 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [000660] 2026-03-27: 0건[0m
+08:30:15 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:16 [[32m[1mINFO    [0m] collector_phase1 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+08:30:17 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [035420] 2026-03-27: 0건[0m
+08:30:18 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:18 [[32m[1mINFO    [0m] collector_phase1 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+08:30:20 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005380] 2026-03-27: 0건[0m
+08:30:20 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:20 [[32m[1mINFO    [0m] collector_phase1 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+08:30:22 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [051910] 2026-03-27: 0건[0m
+08:30:23 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:23 [[32m[1mINFO    [0m] collector_phase1 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+08:30:23 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-27 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2026-03-27.json ━━━[0m
+08:30:23 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (13.02초)[0m
+08:30:23 [[32m[1mINFO    [0m] trading_system | [32m[3/3] KR supplement[0m
+08:30:23 [[32m[1mINFO    [0m] collector_phase1 | [32m[KR supplement] 2026-03-26[0m
+08:30:23 [[33m[1mWARNING [0m] collector_phase1 | [33mKIS 수급 실패: 403 Client Error: Forbidden for url: https://openapivts.koreainvestment.com:29443/oauth2/tokenP[0m
+08:30:35 [[32m[1mINFO    [0m] collector_phase1 | [32m  ✅ KR supplement 저장: 2026-03-26.json[0m
+08:30:35 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 완료 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 시작 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] 주가 최신화[0m
+
+[국내 주가] 2024-11-13 ~ 2026-03-28
+  [005930] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [000660] 기존: 2024-11-13 ~ 2026-03-27 (331일)
+         이미 최신 상태 - 스킵
+  [035420] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [005380] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [000270] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [051910] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [006400] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [035720] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [068270] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [028260] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [012330] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+  [003550] 기존: 2024-11-13 ~ 2026-03-27 (332일)
+         이미 최신 상태 - 스킵
+08:30:14 [[32m[1mINFO    [0m] trading_system | [32m[2/3] KR 뉴스 수집[0m
+08:30:15 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+08:30:15 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-28 뉴스 수집 시작 ━━━[0m
+08:30:15 [[36m[1mDEBUG   [0m] collector_phase1 | [36m시황 뉴스 2026-03-28: 0건[0m
+08:30:17 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005930] 2026-03-28: 0건[0m
+08:30:17 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:18 [[32m[1mINFO    [0m] collector_phase1 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+08:30:19 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [000660] 2026-03-28: 0건[0m
+08:30:20 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:20 [[32m[1mINFO    [0m] collector_phase1 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+08:30:22 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [035420] 2026-03-28: 0건[0m
+08:30:22 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:23 [[32m[1mINFO    [0m] collector_phase1 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+08:30:24 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005380] 2026-03-28: 0건[0m
+08:30:25 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:25 [[32m[1mINFO    [0m] collector_phase1 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+08:30:27 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [051910] 2026-03-28: 0건[0m
+08:30:27 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:28 [[32m[1mINFO    [0m] collector_phase1 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+08:30:28 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-28 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2026-03-28.json ━━━[0m
+08:30:28 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (13.10초)[0m
+08:30:28 [[32m[1mINFO    [0m] trading_system | [32m[3/3] KR supplement[0m
+08:30:28 [[32m[1mINFO    [0m] collector_phase1 | [32m[KR supplement] 2026-03-27[0m
+08:30:28 [[33m[1mWARNING [0m] collector_phase1 | [33mKIS 수급 실패: 403 Client Error: Forbidden for url: https://openapivts.koreainvestment.com:29443/oauth2/tokenP[0m
+08:30:41 [[32m[1mINFO    [0m] collector_phase1 | [32m  ✅ KR supplement 저장: 2026-03-27.json[0m
+08:30:41 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 완료 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 시작 ===[0m
+08:30:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] 주가 최신화[0m
+
+[국내 주가] 2024-11-14 ~ 2026-03-29
+  [005930] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK 삼성전자(005930): 331일 (2024-11-14 ~ 2026-03-27)
+  [000660] 기존: 2024-11-14 ~ 2026-03-27 (330일)
+         > 최신 1일 추가
+  OK SK하이닉스(000660): 330일 (2024-11-14 ~ 2026-03-27)
+  [035420] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK NAVER(035420): 331일 (2024-11-14 ~ 2026-03-27)
+  [005380] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK 현대차(005380): 331일 (2024-11-14 ~ 2026-03-27)
+  [000270] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK 기아(000270): 331일 (2024-11-14 ~ 2026-03-27)
+  [051910] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK LG화학(051910): 331일 (2024-11-14 ~ 2026-03-27)
+  [006400] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK 삼성SDI(006400): 331일 (2024-11-14 ~ 2026-03-27)
+  [035720] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK 카카오(035720): 331일 (2024-11-14 ~ 2026-03-27)
+  [068270] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK 셀트리온(068270): 331일 (2024-11-14 ~ 2026-03-27)
+  [028260] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK 삼성물산(028260): 331일 (2024-11-14 ~ 2026-03-27)
+  [012330] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK 현대모비스(012330): 331일 (2024-11-14 ~ 2026-03-27)
+  [003550] 기존: 2024-11-14 ~ 2026-03-27 (331일)
+         > 최신 1일 추가
+  OK LG(003550): 331일 (2024-11-14 ~ 2026-03-27)
+08:30:24 [[32m[1mINFO    [0m] trading_system | [32m[2/3] KR 뉴스 수집[0m
+08:30:24 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+08:30:24 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-29 뉴스 수집 시작 ━━━[0m
+08:30:24 [[36m[1mDEBUG   [0m] collector_phase1 | [36m시황 뉴스 2026-03-29: 0건[0m
+08:30:26 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005930] 2026-03-29: 0건[0m
+08:30:26 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:27 [[32m[1mINFO    [0m] collector_phase1 | [32m  [삼성전자] 뉴스 0건, 공시 0건[0m
+08:30:28 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [000660] 2026-03-29: 0건[0m
+08:30:29 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:29 [[32m[1mINFO    [0m] collector_phase1 | [32m  [SK하이닉스] 뉴스 0건, 공시 0건[0m
+08:30:31 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [035420] 2026-03-29: 0건[0m
+08:30:31 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:32 [[32m[1mINFO    [0m] collector_phase1 | [32m  [NAVER] 뉴스 0건, 공시 0건[0m
+08:30:33 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [035720] 2026-03-29: 0건[0m
+08:30:34 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:34 [[32m[1mINFO    [0m] collector_phase1 | [32m  [카카오] 뉴스 0건, 공시 0건[0m
+08:30:36 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [005380] 2026-03-29: 0건[0m
+08:30:36 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:37 [[32m[1mINFO    [0m] collector_phase1 | [32m  [현대차] 뉴스 0건, 공시 0건[0m
+08:30:38 [[36m[1mDEBUG   [0m] collector_phase1 | [36m네이버금융 [051910] 2026-03-29: 0건[0m
+08:30:39 [[36m[1mDEBUG   [0m] collector_phase1 | [36mBIGKINDS_KEY 없음 → 건너뜀[0m
+08:30:39 [[32m[1mINFO    [0m] collector_phase1 | [32m  [LG화학] 뉴스 0건, 공시 0건[0m
+08:30:39 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-29 완료 | 시황 0건 | 종목뉴스 0건 | 저장: 2026-03-29.json ━━━[0m
+08:30:39 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (15.58초)[0m
+08:30:39 [[32m[1mINFO    [0m] trading_system | [32m[3/3] KR supplement[0m
+08:30:39 [[32m[1mINFO    [0m] collector_phase1 | [32m[KR supplement] 2026-03-28[0m
+08:30:39 [[33m[1mWARNING [0m] collector_phase1 | [33mKIS 수급 실패: 403 Client Error: Forbidden for url: https://openapivts.koreainvestment.com:29443/oauth2/tokenP[0m
+08:30:52 [[32m[1mINFO    [0m] collector_phase1 | [32m  ✅ KR supplement 저장: 2026-03-28.json[0m
+08:30:52 [[32m[1mINFO    [0m] trading_system | [32m=== KR 데이터 최신화 완료 ===[0m

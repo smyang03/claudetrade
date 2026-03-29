@@ -1,0 +1,98 @@
+{
+  "date": "2026-03-26",
+  "market": "US",
+  "universe_tickers": [
+    "NVDA",
+    "TSLA",
+    "AAPL"
+  ],
+  "context": {
+    "sp500": {
+      "change_pct": -0.38,
+      "close": 6566.62
+    },
+    "nasdaq": {
+      "change_pct": -0.66,
+      "close": 21784.15
+    },
+    "vix": 26.28,
+    "dxy": 99.72,
+    "usd_krw": 1505.37,
+    "oil_wti": 93.01,
+    "fomc": false,
+    "fomc_week": false,
+    "cpi_day": false,
+    "nfp_day": false,
+    "premarket": {}
+  },
+  "technicals": {
+    "NVDA": {
+      "name": "엔비디아",
+      "close": 175.2,
+      "change_pct": -0.25,
+      "rsi": 39.3,
+      "macd": "데드크로스",
+      "bb_pct": 18.1,
+      "vol_ratio": 0.73,
+      "pos_52w": 70.6,
+      "vb_target": 175.77,
+      "news_sentiment": 0.266,
+      "sec_filing": false
+    },
+    "TSLA": {
+      "name": "테슬라",
+      "close": 383.03,
+      "change_pct": 0.57,
+      "rsi": 37.5,
+      "macd": "데드크로스",
+      "bb_pct": 21.0,
+      "vol_ratio": 1.01,
+      "pos_52w": 59.3,
+      "vb_target": 381.72,
+      "news_sentiment": 0.09,
+      "sec_filing": true
+    },
+    "AAPL": {
+      "name": "애플",
+      "close": 251.64,
+      "change_pct": 0.06,
+      "rsi": 33.6,
+      "macd": "데드크로스",
+      "bb_pct": 28.4,
+      "vol_ratio": 0.7,
+      "pos_52w": 69.4,
+      "vb_target": 252.86,
+      "news_sentiment": 0.092,
+      "sec_filing": false
+    }
+  },
+  "top_news": [
+    {
+      "title": "Microsoft Corporation $MSFT is Harbor Investment Advisory LLC's 3rd Largest Position",
+      "ticker": ""
+    },
+    {
+      "title": "Cordant Inc. Buys Shares of 4,673 Lumentum Holdings Inc. $LITE",
+      "ticker": ""
+    },
+    {
+      "title": "Czech National Bank Has $46.44 Million Stock Holdings in AT&T Inc. $T",
+      "ticker": ""
+    },
+    {
+      "title": "Cooper Financial Group Acquires 23,705 Shares of NVIDIA Corporation $NVDA",
+      "ticker": ""
+    },
+    {
+      "title": "CM SEC Filings - Canadian Imperial Bank of Commerce 10-K, 10-Q, 8-K Forms",
+      "ticker": ""
+    }
+  ],
+  "prev_result": {
+    "date": "2026-03-25",
+    "mode": "MILD_BULL",
+    "pnl_pct": 0,
+    "win": false
+  },
+  "built_at": "2026-03-26T23:33:58.197848"
+}

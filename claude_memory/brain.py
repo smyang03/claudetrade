@@ -14,15 +14,30 @@ REPO_BRAIN_PATH = Path(__file__).parent / "brain.json"
 BRAIN_PATH = get_runtime_path("state", "brain.json")
 
 
+def _ensure_extensions(brain: dict):
+    for market in ("KR", "US"):
+        m = brain["markets"][market]
+        m.setdefault("execution_patterns", {})
+        m.setdefault("execution_lessons", [])
+        m.setdefault("execution_stats", {
+            "buy_order": 0,
+            "buy_failed": 0,
+            "sell_filled": 0,
+            "sell_failed": 0,
+        })
+    return brain
+
+
 # ── 기본 읽기/쓰기 ────────────────────────────────────────────────────────────
 
 def load() -> dict:
     source = BRAIN_PATH if BRAIN_PATH.exists() else REPO_BRAIN_PATH
     with open(source, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return _ensure_extensions(json.load(f))
 
 
 def save(brain: dict):
+    brain = _ensure_extensions(brain)
     brain["meta"]["last_updated"] = date.today().isoformat()
     brain["meta"]["version"] += 1
     with open(BRAIN_PATH, "w", encoding="utf-8") as f:
@@ -114,6 +129,104 @@ def update_strategy_performance(market: str, strategy: str,
     s["win_rate"] = round((prev_wins + (1 if win else 0)) / s["count"], 3)
 
     save(brain)
+
+
+def update_execution_pattern(market: str, event: dict):
+    brain = load()
+    m = brain["markets"][market]
+    patterns = m.setdefault("execution_patterns", {})
+    stats = m.setdefault("execution_stats", {
+        "buy_order": 0,
+        "buy_failed": 0,
+        "sell_filled": 0,
+        "sell_failed": 0,
+    })
+
+    action = event.get("action", "") or "unknown"
+    strategy = event.get("strategy", "") or "unknown"
+    reason = event.get("reason", "") or "unknown"
+    detail = event.get("detail", "") or ""
+    ticker = event.get("ticker", "") or ""
+    selected_reason = event.get("selected_reason", "") or ""
+    pnl_pct = float(event.get("pnl_pct", 0) or 0)
+    success = action in ("buy_order", "sell_filled")
+    if action in stats:
+        stats[action] += 1
+
+    key = f"{action}|{strategy}|{reason}"
+    item = patterns.setdefault(key, {
+        "action": action,
+        "strategy": strategy,
+        "reason": reason,
+        "count": 0,
+        "success": 0,
+        "fail": 0,
+        "avg_pnl_pct": 0.0,
+        "last_detail": "",
+        "examples": [],
+    })
+    prev = item["count"]
+    item["count"] += 1
+    if success:
+        item["success"] += 1
+    else:
+        item["fail"] += 1
+    item["avg_pnl_pct"] = round((item["avg_pnl_pct"] * prev + pnl_pct) / max(item["count"], 1), 4)
+    item["last_detail"] = detail or selected_reason
+    example = {
+        "date": datetime.now().date().isoformat(),
+        "ticker": ticker,
+        "detail": detail,
+        "selected_reason": selected_reason,
+        "pnl_pct": pnl_pct,
+    }
+    item.setdefault("examples", []).append(example)
+    item["examples"] = item["examples"][-5:]
+
+    lessons = m.setdefault("execution_lessons", [])
+    if action == "buy_failed" and reason not in ("pending_order", "already_holding"):
+        lessons.append(f"{strategy} 진입 실패 패턴: {reason}")
+    elif action == "sell_failed":
+        lessons.append(f"청산 실패 패턴: {reason}")
+    elif action == "sell_filled" and pnl_pct < 0:
+        lessons.append(f"손실 청산 원인 점검: {reason}")
+    elif action == "sell_filled" and pnl_pct > 0:
+        lessons.append(f"수익 청산 유효 패턴: {reason}")
+    m["execution_lessons"] = lessons[-12:]
+    save(brain)
+
+
+def _build_execution_summary(market_data: dict) -> tuple[str, str]:
+    patterns = market_data.get("execution_patterns", {}) or {}
+    lessons = market_data.get("execution_lessons", []) or []
+
+    if patterns:
+        top_items = sorted(
+            patterns.values(),
+            key=lambda x: (x.get("count", 0), x.get("success", 0)),
+            reverse=True,
+        )[:5]
+        pattern_lines = [
+            "  "
+            f"{item.get('action', 'unknown')} | "
+            f"{item.get('strategy', 'unknown')} | "
+            f"{item.get('reason', 'unknown')} | "
+            f"count={item.get('count', 0)} "
+            f"success={item.get('success', 0)} "
+            f"fail={item.get('fail', 0)} "
+            f"avg_pnl={item.get('avg_pnl_pct', 0):+.2f}%"
+            for item in top_items
+        ]
+        pattern_text = "\n".join(pattern_lines)
+    else:
+        pattern_text = "  아직 없음 (학습 중)"
+
+    if lessons:
+        lesson_text = "\n".join(f"  - {lesson}" for lesson in lessons[-8:])
+    else:
+        lesson_text = "  아직 없음"
+
+    return pattern_text, lesson_text
 
 
 # ── 이슈 패턴 업데이트 ────────────────────────────────────────────────────────
@@ -231,10 +344,18 @@ def add_daily_record(market: str, record: dict):
     """
     brain = load()
     recent = brain["markets"][market]["recent_days"]
-    recent.append(record)
+    new_date = record.get("date", "")
+
+    # 같은 날짜 레코드가 이미 있으면 덮어씀 (backfill 중복 방지)
+    existing_idx = next((i for i, r in enumerate(recent) if r.get("date") == new_date), None)
+    if existing_idx is not None:
+        recent[existing_idx] = record
+    else:
+        recent.append(record)
+        brain["meta"][f"trained_days_{'kr' if market == 'KR' else 'us'}"] += 1
+        brain["markets"][market]["trained_days"] += 1
+
     brain["markets"][market]["recent_days"] = recent[-60:]  # 최근 60일만 보관
-    brain["meta"][f"trained_days_{'kr' if market == 'KR' else 'us'}"] += 1
-    brain["markets"][market]["trained_days"] += 1
     save(brain)
 
 
@@ -283,46 +404,96 @@ def update_beliefs(market: str, beliefs_update: dict):
 
 # ── 개별 분석가 맞춤 피드백 생성 ──────────────────────────────────────────────
 
+def _count_consecutive_result(recent_days: list, analyst_type: str,
+                               target: str = "MISS") -> int:
+    """최근 날짜부터 역순으로 연속 target 결과 횟수 계산."""
+    key = f"{analyst_type}_result"
+    count = 0
+    for day in reversed(recent_days):
+        if day.get(key) == target:
+            count += 1
+        else:
+            break
+    return count
+
+
 def generate_analyst_summary(market: str, analyst_type: str) -> str:
     """
     각 분석가에게 자신의 과거 적중률만 따로 피드백
     analyst_type: 'bull' | 'bear' | 'neutral'
     """
     brain = load()
-    m    = brain["markets"][market]
-    perf = m["analyst_performance"][analyst_type]
+    m     = brain["markets"][market]
+    perf  = m["analyst_performance"][analyst_type]
     total = perf["total"]
     rate  = perf["rate"] * 100
     r7    = perf["recent_7d"]["rate"] * 100
     r7n   = perf["recent_7d"]["total"]
     trend = perf["trend"]
+    recent_days = m.get("recent_days", [])
 
     if total < 5:
         return (f"[개인 실적] 데이터 부족 ({total}일) — "
                 f"아직 통계가 없으니 기본 성향으로 판단하세요.")
 
-    # 트렌드별 조언
-    if trend == "declining":
-        trend_msg = "최근 판단이 빗나가는 추세 → stance를 1단계 보수적으로 조정하세요."
-    elif trend == "improving":
-        trend_msg = "최근 판단이 잘 맞고 있습니다 → 현재 성향을 신뢰하세요."
-    else:
-        trend_msg = "판단 정확도가 안정적입니다 → 현재 기준을 유지하세요."
+    # 연속 실패/성공 감지
+    consec_miss = _count_consecutive_result(recent_days, analyst_type, "MISS")
+    consec_hit  = _count_consecutive_result(recent_days, analyst_type, "HIT")
 
-    # 전체 적중률별 추가 조언
-    if rate < 40:
+    # 연속 실패 경고 (3회 이상)
+    if consec_miss >= 5:
+        consec_msg = (
+            f"⛔ 경고: 최근 {consec_miss}일 연속 실패. "
+            f"현재 시장에서 당신의 {analyst_type.upper()} 성향은 체계적으로 틀리고 있습니다. "
+            f"오늘은 반드시 NEUTRAL 이하로 stance를 낮추세요. "
+            f"AGGRESSIVE/MODERATE_BULL 선택 시 반드시 명확한 근거를 요구합니다."
+        )
+    elif consec_miss >= 3:
+        consec_msg = (
+            f"⚠️ 주의: 최근 {consec_miss}일 연속 실패. "
+            f"stance를 1~2단계 보수적으로 조정하세요."
+        )
+    elif consec_hit >= 3:
+        consec_msg = (
+            f"✅ 최근 {consec_hit}일 연속 적중. 현재 판단 기준을 신뢰하세요."
+        )
+    else:
+        consec_msg = ""
+
+    # 전체 적중률별 메시지
+    if rate < 25:
+        rate_msg = (
+            f"전반 적중률 매우 낮음({rate:.0f}%) — "
+            f"오늘은 반드시 NEUTRAL 방향으로 1단계 완화하세요."
+        )
+    elif rate < 40:
         rate_msg = "전반 적중률 낮음 — 확신이 없으면 NEUTRAL 쪽으로 한 단계 완화하세요."
     elif rate > 65:
         rate_msg = "전반 적중률 높음 — 자신의 판단을 신뢰하세요."
     else:
         rate_msg = "적중률 보통 — 신호가 명확할 때만 강한 stance를 선택하세요."
 
-    return (
+    # 트렌드 메시지 (연속 실패가 있으면 trend "stable" 오판 방지)
+    if consec_miss >= 3:
+        trend_msg = ""   # 연속 실패 메시지로 충분
+    elif trend == "declining":
+        trend_msg = "최근 판단이 빗나가는 추세 → stance를 1단계 보수적으로 조정하세요."
+    elif trend == "improving":
+        trend_msg = "최근 판단이 잘 맞고 있습니다 → 현재 성향을 신뢰하세요."
+    else:
+        trend_msg = "판단 정확도가 안정적입니다 → 현재 기준을 유지하세요."
+
+    parts = [
         f"[{analyst_type.upper()} 개인 실적] "
-        f"누적 {rate:.1f}% ({total}일) | "
-        f"최근7일 {r7:.1f}% ({r7n}건, {trend})\n"
-        f"→ {trend_msg} {rate_msg}"
-    )
+        f"누적 {rate:.1f}% ({total}일) | 최근7일 {r7:.1f}% ({r7n}건)",
+    ]
+    if consec_msg:
+        parts.append(consec_msg)
+    if trend_msg:
+        parts.append(f"→ {trend_msg}")
+    parts.append(rate_msg)
+
+    return "\n".join(parts)
 
 
 # ── Claude 프롬프트용 요약 생성 ───────────────────────────────────────────────
@@ -344,6 +515,7 @@ def generate_prompt_summary(market: str) -> str:
     patterns = m["issue_patterns"]
     recent   = m["recent_days"][-5:]
     tuning   = m["tuning_patterns"]
+    execution_txt, execution_lessons_txt = _build_execution_summary(m)
 
     # 최근 5일 요약
     recent_txt = ""
@@ -381,15 +553,20 @@ def generate_prompt_summary(market: str) -> str:
                     key=lambda x: x[1]["avg_pnl"]
                     if x[1]["count"] > 0 else -99)
 
+    # 연속 실패 배지
+    def _consec_badge(atype: str) -> str:
+        n = _count_consecutive_result(m.get("recent_days", []), atype, "MISS")
+        return f" ⛔{n}연속실패" if n >= 3 else ""
+
     summary = f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 [{market} 시장 판단 메모리 — {m['trained_days']}일 학습]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📊 분석가 누적 신뢰도
-  🟢 Bull:    {perf['bull']['rate']*100:.1f}%  (최근7일 {perf['bull']['recent_7d']['rate']*100:.1f}%  {perf['bull']['trend']})
-  🔴 Bear:    {perf['bear']['rate']*100:.1f}%  (최근7일 {perf['bear']['recent_7d']['rate']*100:.1f}%  {perf['bear']['trend']})
-  ⚪ Neutral: {perf['neutral']['rate']*100:.1f}%  (최근7일 {perf['neutral']['recent_7d']['rate']*100:.1f}%  {perf['neutral']['trend']})
+  🟢 Bull:    {perf['bull']['rate']*100:.1f}%  (최근7일 {perf['bull']['recent_7d']['rate']*100:.1f}%  {perf['bull']['trend']}){_consec_badge('bull')}
+  🔴 Bear:    {perf['bear']['rate']*100:.1f}%  (최근7일 {perf['bear']['recent_7d']['rate']*100:.1f}%  {perf['bear']['trend']}){_consec_badge('bear')}
+  ⚪ Neutral: {perf['neutral']['rate']*100:.1f}%  (최근7일 {perf['neutral']['recent_7d']['rate']*100:.1f}%  {perf['neutral']['trend']}){_consec_badge('neutral')}
 
 🏆 모드별 평균 수익 (최적: {best_mode[0]} {best_mode[1]['avg_pnl']:+.2f}%)
   AGGRESSIVE    {modes['AGGRESSIVE']['count']:>3}회  평균 {modes['AGGRESSIVE']['avg_pnl']:+.2f}%  승률 {modes['AGGRESSIVE']['win_rate']*100:.0f}%
@@ -416,6 +593,14 @@ def generate_prompt_summary(market: str) -> str:
 {chr(10).join(f'  • {l}' for l in beliefs.get('learned_lessons', [])) or '  아직 없음'}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 이 정보를 바탕으로 오늘 판단 시 가중치를 조정하세요.
+"""
+    summary += f"""
+
+⚙️ 실행 패턴
+{execution_txt}
+
+🧠 실행 교훈
+{execution_lessons_txt}
 """
     return summary
 

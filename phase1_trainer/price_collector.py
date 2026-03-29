@@ -70,17 +70,21 @@ KR_TICKERS = {
 }
 
 US_TICKERS = {
+    # Core 5
     "NVDA":  "엔비디아",
     "TSLA":  "테슬라",
     "AAPL":  "애플",
-    "MSFT":  "마이크로소프트",
-    "AMZN":  "아마존",
     "GOOGL": "알파벳",
-    "META":  "메타",
-    "AMD":   "AMD",
-    "SMCI":  "슈퍼마이크로",
-    "PLTR":  "팔란티어",
     "NFLX":  "넷플릭스",
+    # Tier 2 — 섹터 플레이 후보
+    "JPM":   "JP모건",
+    "GS":    "골드만삭스",
+    "XOM":   "엑슨모빌",
+    "CVX":   "쉐브론",
+    "LLY":   "일라이릴리",
+    "ABBV":  "애브비",
+    "CAT":   "캐터필러",
+    "GE":    "GE에어로스페이스",
 }
 
 
@@ -425,6 +429,147 @@ def _save(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Times
     print(f"  OK {label}: {len(df)}일 ({df['date'].min().date()} ~ {df['date'].max().date()})")
 
 
+# ── 스크리너 풀 사전 수집 (Method 2) ──────────────────────────────────────────
+
+def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: int = 50):
+    """
+    새벽 스케줄러용 — 스크리너 상위 N종목 OHLCV 사전 수집.
+
+    흐름:
+      1. screen_market_us() / screen_market_kr() → 당일 핫 종목 top_n
+      2. 각 종목 yfinance로 lookback_days 수집
+      3. CSV 저장 (이미 최신이면 스킵)
+
+    실행:
+      python price_collector.py --screener --market US
+      python price_collector.py --screener --market KR
+    """
+    sys.path.insert(0, str(BASE_DIR))
+
+    today = date.today()
+    start_dt = pd.Timestamp(today - timedelta(days=lookback_days))
+    end_dt   = pd.Timestamp(today)
+
+    print(f"\n[스크리너 풀 사전수집] {market} | top_n={top_n} | {start_dt.date()}~{end_dt.date()}")
+
+    # 스크리너 후보 가져오기
+    if market == "US":
+        try:
+            from kis_api import screen_market_us
+            candidates = screen_market_us(top_n=top_n)
+        except Exception as e:
+            print(f"  FMP 스크리너 실패: {e} → 폴백 유니버스 사용")
+            candidates = [{"ticker": t} for t in [
+                "NVDA","TSLA","AAPL","GOOGL","NFLX",
+                "JPM","GS","XOM","CVX","LLY","ABBV","CAT","GE",
+                "META","AMZN","MSFT","AMD","PLTR","NFLX","ORCL",
+            ]]
+    else:
+        # KR: KIS 토큰 필요 → 없으면 폴백
+        try:
+            from kis_api import screen_market_kr, get_access_token
+            token = get_access_token()
+            candidates = screen_market_kr(token, top_n=top_n)
+        except Exception as e:
+            print(f"  KIS 스크리너 실패: {e} → 폴백 유니버스 사용")
+            candidates = [{"ticker": t} for t in [
+                "005930","000660","035420","035720","005380","051910",
+                "000270","068270","105560","055550","006400","003550",
+                "028260","012330","066570","035000","018260","032830",
+            ]]
+
+    # 2차 품질 필터 — 스크리너 필터 뚫린 것 최후 차단
+    _MIN_PRICE = float(os.environ.get("SCREEN_MIN_PRICE", "5.0"))
+    _MIN_VOL   = int(os.environ.get("SCREEN_MIN_VOLUME",  "500000"))
+    tickers = []
+    for c in candidates:
+        t = c.get("ticker", "")
+        if not t:
+            continue
+        if market == "US":
+            # US: 알파벳만, 5자 이하, 워런트/유닛/권리주 제외
+            if not t.isalpha() or len(t) > 5:
+                continue
+            if t[-1] in {"W", "U", "R"}:
+                continue
+            price = float(c.get("price", 0))
+            vol   = int(c.get("volume", 0))
+            if price < _MIN_PRICE or vol < _MIN_VOL:
+                continue
+        else:
+            # KR: 6자리 숫자 코드
+            if not t.isdigit() or len(t) != 6:
+                continue
+        tickers.append(t)
+    print(f"  후보 {len(tickers)}종목: {tickers[:10]}{'...' if len(tickers)>10 else ''}")
+
+    collected, skipped, failed = 0, 0, 0
+    for ticker in tickers:
+        path = PRICE_DIR / market.lower() / f"{market.lower()}_{ticker}.csv"
+        try:
+            # 이미 최신 상태면 스킵
+            if path.exists():
+                existing = pd.read_csv(path, parse_dates=["date"]).sort_values("date")
+                last_date = existing["date"].max()
+                if (end_dt - last_date).days <= 3:
+                    skipped += 1
+                    continue
+
+            if market == "US":
+                df_new = fetch_us_daily_yfinance(ticker, start_dt, end_dt)
+            else:
+                suffix_map = {  # KOSPI/KOSDAQ 자동 판별
+                    "A": ".KS", "0": ".KS", "1": ".KS", "2": ".KS",
+                    "3": ".KQ", "4": ".KQ", "5": ".KS", "6": ".KS",
+                    "7": ".KS", "8": ".KS", "9": ".KS",
+                }
+                # yfinance KR: 6자리 숫자.KS 또는 .KQ
+                import yfinance as yf
+                df_new = pd.DataFrame()
+                for sfx in [".KS", ".KQ"]:
+                    df_new = fetch_kr_daily_yfinance(ticker, start_dt, end_dt)
+                    if not df_new.empty:
+                        break
+                    # 직접 시도
+                    try:
+                        _h = yf.Ticker(f"{ticker}{sfx}").history(
+                            start=start_dt.strftime("%Y-%m-%d"),
+                            end=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d"),
+                            auto_adjust=True,
+                        )
+                        if not _h.empty:
+                            _h = _h.reset_index()
+                            _h.columns = [c.lower() for c in _h.columns]
+                            if "date" in _h.columns:
+                                _h["date"] = pd.to_datetime(_h["date"]).dt.tz_localize(None)
+                            df_new = _h[["date","open","high","low","close","volume"]].copy()
+                            df_new = df_new.sort_values("date").reset_index(drop=True)
+                            break
+                    except Exception:
+                        continue
+
+            if df_new.empty:
+                failed += 1
+                continue
+
+            # 기존 CSV와 머지
+            if path.exists():
+                existing = pd.read_csv(path, parse_dates=["date"])
+                existing.columns = [c.lower() for c in existing.columns]
+                df_new = pd.concat([existing, df_new])
+
+            _save(path, df_new, start_dt, end_dt, f"{market}:{ticker}")
+            collected += 1
+            time.sleep(0.3)
+
+        except Exception as ex:
+            print(f"  NG {market}:{ticker}: {ex}")
+            failed += 1
+
+    print(f"\n  완료: 수집={collected}  스킵(최신)={skipped}  실패={failed}")
+    return collected
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -451,7 +596,21 @@ def main():
                         help="최신화 모드: 누락분만 추가 (기간 설정 무시)")
     parser.add_argument("--kr-only", action="store_true", help="국내만 수집")
     parser.add_argument("--us-only", action="store_true", help="미국만 수집")
+    parser.add_argument("--screener", action="store_true",
+                        help="스크리너 풀 사전수집 모드 (새벽 스케줄러용)")
+    parser.add_argument("--top-n", type=int, default=50,
+                        help="--screener 모드: 스크리너 상위 N종목 (기본: 50)")
     args = parser.parse_args()
+
+    # ── 스크리너 풀 모드 ────────────────────────────────────────────────────────
+    if args.screener:
+        do_kr = not args.us_only
+        do_us = not args.kr_only
+        if do_us:
+            collect_screener_pool("US", lookback_days=90, top_n=args.top_n)
+        if do_kr:
+            collect_screener_pool("KR", lookback_days=90, top_n=args.top_n)
+        return
 
     today   = date.today()
     end_dt  = pd.Timestamp(args.end) if args.end else pd.Timestamp(today)

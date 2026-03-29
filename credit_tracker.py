@@ -102,6 +102,16 @@ def summary(usd_krw: float = None) -> dict:
     today = date.today().isoformat()
     td    = data["daily"].get(today, {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0})
     tot   = data["total"]
+    daily_budget = os.getenv("CLAUDE_DAILY_BUDGET_USD", "").strip()
+    monthly_budget = os.getenv("CLAUDE_MONTHLY_BUDGET_USD", "").strip()
+    try:
+        daily_budget_usd = float(daily_budget) if daily_budget else None
+    except Exception:
+        daily_budget_usd = None
+    try:
+        monthly_budget_usd = float(monthly_budget) if monthly_budget else None
+    except Exception:
+        monthly_budget_usd = None
 
     # 최근 7일
     all_days  = sorted(data["daily"].items())
@@ -128,6 +138,12 @@ def summary(usd_krw: float = None) -> dict:
             "output":   tot["output_tokens"],
             "cost_usd": round(tot["cost_usd"], 4),
             "cost_krw": int(tot["cost_usd"] * usd_krw),
+        },
+        "budget": {
+            "daily_budget_usd": daily_budget_usd,
+            "daily_remaining_usd": round(max(daily_budget_usd - td["cost_usd"], 0.0), 4) if daily_budget_usd is not None else None,
+            "monthly_budget_usd": monthly_budget_usd,
+            "monthly_remaining_usd": round(max(monthly_budget_usd - tot["cost_usd"], 0.0), 4) if monthly_budget_usd is not None else None,
         },
         "daily_7": daily_7,
     }

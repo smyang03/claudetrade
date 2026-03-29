@@ -38,3 +38,273 @@
 22:00:06 [[32m[1mINFO    [0m] trading_system | [32m[3/3] US supplement[0m
 22:00:06 [[31m[1mERROR   [0m] trading_system | [31mUS supplement 실패: No module named 'dotenv'[0m
 22:00:06 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 완료 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 시작 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] US 주가 최신화[0m
+
+[미국 주가] 2024-11-10 ~ 2026-03-25
+  INFO  500일 > 100일 → yfinance 사용 (AV compact 한계)
+  OK 엔비디아(NVDA): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 테슬라(TSLA): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  [AAPL] yfinance 조회 중...
+  yfinance 미설치: pip install yfinance
+  WARN  애플(AAPL) 데이터 없음
+  [MSFT] yfinance 조회 중...
+  yfinance 미설치: pip install yfinance
+  WARN  마이크로소프트(MSFT) 데이터 없음
+  [AMZN] yfinance 조회 중...
+  yfinance 미설치: pip install yfinance
+  WARN  아마존(AMZN) 데이터 없음
+  [GOOGL] yfinance 조회 중...
+  yfinance 미설치: pip install yfinance
+  WARN  알파벳(GOOGL) 데이터 없음
+  [META] yfinance 조회 중...
+  yfinance 미설치: pip install yfinance
+  WARN  메타(META) 데이터 없음
+  [AMD] yfinance 조회 중...
+  yfinance 미설치: pip install yfinance
+  WARN  AMD(AMD) 데이터 없음
+  [SMCI] yfinance 조회 중...
+  yfinance 미설치: pip install yfinance
+  WARN  슈퍼마이크로(SMCI) 데이터 없음
+  [PLTR] yfinance 조회 중...
+  yfinance 미설치: pip install yfinance
+  WARN  팔란티어(PLTR) 데이터 없음
+  [NFLX] yfinance 조회 중...
+  yfinance 미설치: pip install yfinance
+  WARN  넷플릭스(NFLX) 데이터 없음
+22:00:11 [[32m[1mINFO    [0m] trading_system | [32m[2/3] US 뉴스 수집[0m
+22:00:11 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+22:00:11 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-25 미국 뉴스 수집 시작 ━━━[0m
+22:00:12 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [SPY] 2026-03-25: 0건[0m
+22:00:24 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [QQQ] 2026-03-25: 0건[0m
+22:00:36 [[32m[1mINFO    [0m] collector_phase1 | [32m  시장뉴스: 0건[0m
+22:00:37 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [NVDA] 2026-03-25: 24건[0m
+22:00:37 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [NVDA] 24건[0m
+22:00:51 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [NVDA] 2026-03-25: 0건[0m
+22:00:51 [[32m[1mINFO    [0m] collector_phase1 | [32m  [엔비디아(NVDA)] 24건[0m
+22:00:52 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [TSLA] 2026-03-25: 4건[0m
+22:00:52 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [TSLA] 4건[0m
+22:01:04 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [TSLA] 2026-03-25: 0건[0m
+22:01:05 [[32m[1mINFO    [0m] collector_phase1 | [32m  [테슬라(TSLA)] 4건[0m
+22:01:05 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [AAPL] 2026-03-25: 9건[0m
+22:01:05 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [AAPL] 9건[0m
+22:01:18 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [AAPL] 2026-03-25: 0건[0m
+22:01:19 [[32m[1mINFO    [0m] collector_phase1 | [32m  [애플(AAPL)] 9건[0m
+22:01:20 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [MSFT] 2026-03-25: 28건[0m
+22:01:20 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [MSFT] 28건[0m
+22:01:32 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC 검색 실패 [MSFT]: 500 Server Error: Internal Server Error for url: https://efts.sec.gov/LATEST/search-index?q=%22MSFT%22&dateRange=custom&startdt=2026-03-25&enddt=2026-03-25&forms=8-K,10-Q,10-K[0m
+22:01:33 [[32m[1mINFO    [0m] collector_phase1 | [32m  [마이크로소프트(MSFT)] 28건[0m
+22:01:33 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [META] 2026-03-25: 4건[0m
+22:01:33 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [META] 4건[0m
+22:01:46 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [META] 2026-03-25: 5건[0m
+22:01:46 [[32m[1mINFO    [0m] collector_phase1 | [32m  SEC 공시 [META] 5건[0m
+22:01:47 [[32m[1mINFO    [0m] collector_phase1 | [32m  [메타(META)] 9건[0m
+22:01:47 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-25 완료 | 시장 0건 | 종목 74건 | FOMC=False | 저장: 2026-03-25.json ━━━[0m
+22:01:47 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (95.57초)[0m
+22:01:47 [[32m[1mINFO    [0m] trading_system | [32m[3/3] US supplement[0m
+22:01:47 [[32m[1mINFO    [0m] collector_phase1 | [32m[US supplement] 2026-03-24[0m
+22:01:59 [[32m[1mINFO    [0m] collector_phase1 | [32m  ✅ US supplement 저장: 2026-03-24.json[0m
+22:01:59 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 완료 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 시작 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] US 주가 최신화[0m
+
+[미국 주가] 2024-11-11 ~ 2026-03-26
+  INFO  500일 > 100일 → yfinance 사용 (AV compact 한계)
+  OK 엔비디아(NVDA): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 테슬라(TSLA): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 애플(AAPL): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 마이크로소프트(MSFT): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 아마존(AMZN): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 알파벳(GOOGL): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 메타(META): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK AMD(AMD): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 슈퍼마이크로(SMCI): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 팔란티어(PLTR): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 넷플릭스(NFLX): 341일 (2024-11-11 ~ 2026-03-24)
+         이미 최신 — 스킵
+22:00:06 [[32m[1mINFO    [0m] trading_system | [32m[2/3] US 뉴스 수집[0m
+22:00:06 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+22:00:06 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-26 미국 뉴스 수집 시작 ━━━[0m
+22:00:07 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [SPY] 2026-03-26: 0건[0m
+22:00:19 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [QQQ] 2026-03-26: 0건[0m
+22:00:31 [[32m[1mINFO    [0m] collector_phase1 | [32m  시장뉴스: 0건[0m
+22:00:32 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [NVDA] 2026-03-26: 18건[0m
+22:00:32 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [NVDA] 18건[0m
+22:00:44 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [NVDA] 2026-03-26: 0건[0m
+22:00:45 [[32m[1mINFO    [0m] collector_phase1 | [32m  [엔비디아(NVDA)] 18건[0m
+22:00:45 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [TSLA] 2026-03-26: 5건[0m
+22:00:45 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [TSLA] 5건[0m
+22:00:57 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [TSLA] 2026-03-26: 1건[0m
+22:00:57 [[32m[1mINFO    [0m] collector_phase1 | [32m  SEC 공시 [TSLA] 1건[0m
+22:00:58 [[32m[1mINFO    [0m] collector_phase1 | [32m  [테슬라(TSLA)] 6건[0m
+22:00:58 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [AAPL] 2026-03-26: 4건[0m
+22:00:58 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [AAPL] 4건[0m
+22:01:10 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [AAPL] 2026-03-26: 0건[0m
+22:01:11 [[32m[1mINFO    [0m] collector_phase1 | [32m  [애플(AAPL)] 4건[0m
+22:01:11 [[33m[1mWARNING [0m] collector_phase1 | [33mAV API 제한: Thank you for using Alpha Vantage! Please consider spreading out your free API requests more sparingly (1 request per second). You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to lift the free key rate limit (25 requests per day), raise the per-second burst limit, and instantly unlock all premium endpoints[0m
+22:01:11 [[33m[1mWARNING [0m] collector_phase1 | [33m⚠️  fetch_av_news() 재시도 1/3 (15.0초 후): AV API 제한: Thank you for using Alpha Vantage! Please consider spreading out your free API requests more sparingly (1 request per second). You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to lift the free key rate limit (25 requests per day), raise the per-second burst limit, and instantly unlock all premium endpoints[0m
+22:01:26 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [MSFT] 2026-03-26: 22건[0m
+22:01:26 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [MSFT] 22건[0m
+22:01:39 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [MSFT] 2026-03-26: 0건[0m
+22:01:39 [[32m[1mINFO    [0m] collector_phase1 | [32m  [마이크로소프트(MSFT)] 22건[0m
+22:01:39 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [META] 2026-03-26: 9건[0m
+22:01:39 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [META] 9건[0m
+22:01:52 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [META] 2026-03-26: 3건[0m
+22:01:52 [[32m[1mINFO    [0m] collector_phase1 | [32m  SEC 공시 [META] 3건[0m
+22:01:52 [[32m[1mINFO    [0m] collector_phase1 | [32m  [메타(META)] 12건[0m
+22:01:52 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-26 완료 | 시장 0건 | 종목 62건 | FOMC=False | 저장: 2026-03-26.json ━━━[0m
+22:01:52 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (105.61초)[0m
+22:01:52 [[32m[1mINFO    [0m] trading_system | [32m[3/3] US supplement[0m
+22:01:52 [[32m[1mINFO    [0m] collector_phase1 | [32m[US supplement] 2026-03-25[0m
+22:02:05 [[32m[1mINFO    [0m] collector_phase1 | [32m  ✅ US supplement 저장: 2026-03-25.json[0m
+22:02:05 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 완료 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 시작 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] US 주가 최신화[0m
+
+[미국 주가] 2024-11-12 ~ 2026-03-27
+  INFO  500일 > 100일 → yfinance 사용 (AV compact 한계)
+  OK 엔비디아(NVDA): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 테슬라(TSLA): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 애플(AAPL): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 마이크로소프트(MSFT): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 아마존(AMZN): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 알파벳(GOOGL): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 메타(META): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK AMD(AMD): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 슈퍼마이크로(SMCI): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 팔란티어(PLTR): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+  OK 넷플릭스(NFLX): 340일 (2024-11-12 ~ 2026-03-24)
+         이미 최신 — 스킵
+22:00:06 [[32m[1mINFO    [0m] trading_system | [32m[2/3] US 뉴스 수집[0m
+22:00:06 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+22:00:06 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-27 미국 뉴스 수집 시작 ━━━[0m
+22:00:07 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [SPY] 2026-03-27: 0건[0m
+22:00:19 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [QQQ] 2026-03-27: 0건[0m
+22:00:31 [[32m[1mINFO    [0m] collector_phase1 | [32m  시장뉴스: 0건[0m
+22:00:32 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [NVDA] 2026-03-27: 21건[0m
+22:00:32 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [NVDA] 21건[0m
+22:00:44 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [NVDA] 2026-03-27: 0건[0m
+22:00:44 [[32m[1mINFO    [0m] collector_phase1 | [32m  [엔비디아(NVDA)] 21건[0m
+22:00:45 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [TSLA] 2026-03-27: 3건[0m
+22:00:45 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [TSLA] 3건[0m
+22:00:57 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [TSLA] 2026-03-27: 0건[0m
+22:00:57 [[32m[1mINFO    [0m] collector_phase1 | [32m  [테슬라(TSLA)] 3건[0m
+22:00:58 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [AAPL] 2026-03-27: 8건[0m
+22:00:58 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [AAPL] 8건[0m
+22:01:10 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [AAPL] 2026-03-27: 0건[0m
+22:01:10 [[32m[1mINFO    [0m] collector_phase1 | [32m  [애플(AAPL)] 8건[0m
+22:01:10 [[33m[1mWARNING [0m] collector_phase1 | [33mAV API 제한: Thank you for using Alpha Vantage! Please consider spreading out your free API requests more sparingly (1 request per second). You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to lift the free key rate limit (25 requests per day), raise the per-second burst limit, and instantly unlock all premium endpoints[0m
+22:01:10 [[33m[1mWARNING [0m] collector_phase1 | [33m⚠️  fetch_av_news() 재시도 1/3 (15.0초 후): AV API 제한: Thank you for using Alpha Vantage! Please consider spreading out your free API requests more sparingly (1 request per second). You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to lift the free key rate limit (25 requests per day), raise the per-second burst limit, and instantly unlock all premium endpoints[0m
+22:01:26 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [MSFT] 2026-03-27: 16건[0m
+22:01:26 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [MSFT] 16건[0m
+22:01:38 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [MSFT] 2026-03-27: 0건[0m
+22:01:39 [[32m[1mINFO    [0m] collector_phase1 | [32m  [마이크로소프트(MSFT)] 16건[0m
+22:01:39 [[36m[1mDEBUG   [0m] collector_phase1 | [36mAV 뉴스 [META] 2026-03-27: 4건[0m
+22:01:39 [[36m[1mDEBUG   [0m] collector_phase1 | [36m  AV [META] 4건[0m
+22:01:52 [[36m[1mDEBUG   [0m] collector_phase1 | [36mSEC [META] 2026-03-27: 4건[0m
+22:01:52 [[32m[1mINFO    [0m] collector_phase1 | [32m  SEC 공시 [META] 4건[0m
+22:01:52 [[32m[1mINFO    [0m] collector_phase1 | [32m  [메타(META)] 8건[0m
+22:01:52 [[32m[1mINFO    [0m] collector_phase1 | [32m━━━ 2026-03-27 완료 | 시장 0건 | 종목 56건 | FOMC=False | 저장: 2026-03-27.json ━━━[0m
+22:01:52 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (106.12초)[0m
+22:01:52 [[32m[1mINFO    [0m] trading_system | [32m[3/3] US supplement[0m
+22:01:52 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 완료 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 시작 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] US 주가 최신화[0m
+
+[미국 주가] 2024-11-13 ~ 2026-03-28
+  INFO  500일 > 100일 → yfinance 사용 (AV compact 한계)
+  OK 엔비디아(NVDA): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 테슬라(TSLA): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 애플(AAPL): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 알파벳(GOOGL): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 넷플릭스(NFLX): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK JP모건(JPM): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 골드만삭스(GS): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 엑슨모빌(XOM): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 쉐브론(CVX): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 일라이릴리(LLY): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 애브비(ABBV): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 캐터필러(CAT): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK GE에어로스페이스(GE): 342일 (2024-11-13 ~ 2026-03-27)
+         이미 최신 — 스킵
+22:00:03 [[32m[1mINFO    [0m] trading_system | [32m[2/3] US 뉴스 수집[0m
+22:00:03 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+22:00:03 [[32m[1mINFO    [0m] collector_phase1 | [32m[SKIP] 2026-03-28 주말[0m
+22:00:03 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (0.00초)[0m
+22:00:03 [[32m[1mINFO    [0m] trading_system | [32m[3/3] US supplement[0m
+22:00:03 [[32m[1mINFO    [0m] collector_phase1 | [32m[US supplement] 2026-03-27[0m
+22:00:16 [[32m[1mINFO    [0m] collector_phase1 | [32m  ✅ US supplement 저장: 2026-03-27.json[0m
+22:00:16 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 완료 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 시작 ===[0m
+22:00:02 [[32m[1mINFO    [0m] trading_system | [32m[1/3] US 주가 최신화[0m
+
+[미국 주가] 2024-11-14 ~ 2026-03-29
+  INFO  500일 > 100일 → yfinance 사용 (AV compact 한계)
+  OK 엔비디아(NVDA): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 테슬라(TSLA): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 애플(AAPL): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 알파벳(GOOGL): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 넷플릭스(NFLX): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK JP모건(JPM): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 골드만삭스(GS): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 엑슨모빌(XOM): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 쉐브론(CVX): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 일라이릴리(LLY): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 애브비(ABBV): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK 캐터필러(CAT): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+  OK GE에어로스페이스(GE): 341일 (2024-11-14 ~ 2026-03-27)
+         이미 최신 — 스킵
+22:00:07 [[32m[1mINFO    [0m] trading_system | [32m[2/3] US 뉴스 수집[0m
+22:00:07 [[32m[1mINFO    [0m] collector_phase1 | [32m▶ collect_day() 시작[0m
+22:00:07 [[32m[1mINFO    [0m] collector_phase1 | [32m[SKIP] 2026-03-29 주말[0m
+22:00:07 [[32m[1mINFO    [0m] collector_phase1 | [32m✅ collect_day() 완료 (0.01초)[0m
+22:00:07 [[32m[1mINFO    [0m] trading_system | [32m[3/3] US supplement[0m
+22:00:07 [[32m[1mINFO    [0m] collector_phase1 | [32m[US supplement] 2026-03-28[0m
+22:00:20 [[32m[1mINFO    [0m] collector_phase1 | [32m  ✅ US supplement 저장: 2026-03-28.json[0m
+22:00:20 [[32m[1mINFO    [0m] trading_system | [32m=== US 데이터 최신화 완료 ===[0m

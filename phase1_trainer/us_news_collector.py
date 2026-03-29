@@ -43,13 +43,24 @@ NEWS_DIR = Path(__file__).parent.parent / "data" / "news" / "us"
 NEWS_DIR.mkdir(parents=True, exist_ok=True)
 
 TARGET_TICKERS = {
-    "NVDA": "엔비디아",
-    "TSLA": "테슬라",
-    "AAPL": "애플",
-    "MSFT": "마이크로소프트",
-    "META": "메타",
-    "SPY":  "S&P500 ETF",
-    "QQQ":  "나스닥100 ETF",
+    # Core 5
+    "NVDA":  "엔비디아",
+    "TSLA":  "테슬라",
+    "AAPL":  "애플",
+    "GOOGL": "알파벳",
+    "NFLX":  "넷플릭스",
+    # Tier 2 섹터 플레이 후보 (뉴스만 수집, 매일 분석 아님)
+    "JPM":   "JP모건",
+    "GS":    "골드만삭스",
+    "XOM":   "엑슨모빌",
+    "CVX":   "쉐브론",
+    "LLY":   "일라이릴리",
+    "ABBV":  "애브비",
+    "CAT":   "캐터필러",
+    "GE":    "GE에어로스페이스",
+    # 시장 지수
+    "SPY":   "S&P500 ETF",
+    "QQQ":   "나스닥100 ETF",
 }
 
 # FOMC 발표일 (2024~2026 주요 날짜 하드코딩 + API로 보완)

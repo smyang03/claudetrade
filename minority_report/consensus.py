@@ -4,11 +4,14 @@
   3. 합의 가중치 - 분석가별 과거 적중률로 투표 비중 조정
      데이터 부족(< MIN_DATA)이면 기존 1:1:1 투표 사용
 """
+import os
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from dotenv import load_dotenv
 from logger import get_minority_logger
 
+load_dotenv()
 log = get_minority_logger()
 
 # 가중치 적용 최소 누적 판단 횟수 (이 이하면 균등 가중치)
@@ -27,31 +30,34 @@ STANCE_SCORE = {
     "HALT":         -1.00,
 }
 
+def _e(key: str, default: int) -> int:
+    return int(os.getenv(key, str(default)))
+
 # 가중 점수 → (mode, size)
 # 임계값 = 인접 STANCE_SCORE 중간값 기준
 def _score_to_mode(score: float) -> tuple:
-    if   score >=  0.85: return "AGGRESSIVE",    100
-    elif score >=  0.55: return "MODERATE_BULL",  80
-    elif score >=  0.28: return "MILD_BULL",       50
-    elif score >=  0.08: return "CAUTIOUS",        60
-    elif score >= -0.20: return "NEUTRAL",          40
-    elif score >= -0.55: return "MILD_BEAR",        30
-    elif score >= -0.80: return "CAUTIOUS_BEAR",    20
-    elif score >= -0.95: return "DEFENSIVE",        10
-    else:                return "HALT",              0
+    if   score >=  0.85: return "AGGRESSIVE",    _e("SIZE_AGGRESSIVE",    100)
+    elif score >=  0.55: return "MODERATE_BULL", _e("SIZE_MODERATE_BULL",  80)
+    elif score >=  0.28: return "MILD_BULL",      _e("SIZE_MILD_BULL",      50)
+    elif score >=  0.08: return "CAUTIOUS",       _e("SIZE_CAUTIOUS",       60)
+    elif score >= -0.20: return "NEUTRAL",         _e("SIZE_NEUTRAL",        40)
+    elif score >= -0.55: return "MILD_BEAR",       _e("SIZE_MILD_BEAR",      30)
+    elif score >= -0.80: return "CAUTIOUS_BEAR",   _e("SIZE_CAUTIOUS_BEAR",  20)
+    elif score >= -0.95: return "DEFENSIVE",       _e("SIZE_DEFENSIVE",      10)
+    else:                return "HALT",             0
 
 # 기존 카테고리 기반 CONSENSUS_MAP (fallback 및 마이너리티 룰용)
 CONSENSUS_MAP = {
-    ("bull","bull","bull"):           {"mode":"AGGRESSIVE",    "size":100,"tp_mult":1.2},
-    ("bull","bull","neutral"):        {"mode":"MODERATE_BULL", "size":80, "tp_mult":1.1},
-    ("bear","bull","bull"):           {"mode":"CAUTIOUS",      "size":60, "tp_mult":1.0},
-    ("bull","neutral","neutral"):     {"mode":"MILD_BULL",     "size":50, "tp_mult":1.0},
-    ("bear","bull","neutral"):        {"mode":"NEUTRAL",       "size":40, "tp_mult":1.0},
-    ("neutral","neutral","neutral"):  {"mode":"NEUTRAL",       "size":40, "tp_mult":1.0},
-    ("bear","neutral","neutral"):     {"mode":"MILD_BEAR",     "size":30, "tp_mult":0.9},
-    ("bear","bear","neutral"):        {"mode":"CAUTIOUS_BEAR", "size":20, "tp_mult":0.8},
-    ("bear","bear","bull"):           {"mode":"DEFENSIVE",     "size":10, "tp_mult":0.8},
-    ("bear","bear","bear"):           {"mode":"HALT",          "size":0,  "tp_mult":0.0},
+    ("bull","bull","bull"):           {"mode":"AGGRESSIVE",    "size":_e("SIZE_AGGRESSIVE",   100),"tp_mult":1.2},
+    ("bull","bull","neutral"):        {"mode":"MODERATE_BULL", "size":_e("SIZE_MODERATE_BULL", 80), "tp_mult":1.1},
+    ("bear","bull","bull"):           {"mode":"CAUTIOUS",      "size":_e("SIZE_CAUTIOUS",      60), "tp_mult":1.0},
+    ("bull","neutral","neutral"):     {"mode":"MILD_BULL",     "size":_e("SIZE_MILD_BULL",     50), "tp_mult":1.0},
+    ("bear","bull","neutral"):        {"mode":"NEUTRAL",       "size":_e("SIZE_NEUTRAL",       40), "tp_mult":1.0},
+    ("neutral","neutral","neutral"):  {"mode":"NEUTRAL",       "size":_e("SIZE_NEUTRAL",       40), "tp_mult":1.0},
+    ("bear","neutral","neutral"):     {"mode":"MILD_BEAR",     "size":_e("SIZE_MILD_BEAR",     30), "tp_mult":0.9},
+    ("bear","bear","neutral"):        {"mode":"CAUTIOUS_BEAR", "size":_e("SIZE_CAUTIOUS_BEAR", 20), "tp_mult":0.8},
+    ("bear","bear","bull"):           {"mode":"DEFENSIVE",     "size":_e("SIZE_DEFENSIVE",     10), "tp_mult":0.8},
+    ("bear","bear","bear"):           {"mode":"HALT",          "size":0,                            "tp_mult":0.0},
 }
 
 def _cat(stance: str) -> str:
@@ -78,12 +84,19 @@ def _get_weights(market: str) -> dict:
         for atype in ("bull", "bear", "neutral"):
             total = perf[atype]["total"]
             rate  = perf[atype]["rate"]  # 0.0 ~ 1.0
-            # 최근 30일이 있으면 최근 데이터 우선 (0.6:0.4 혼합)
+            # 최근 30일 데이터 혼합 — 건수에 따라 가중치 점진 증가
+            # 통계 신뢰도: 5~9건은 30%, 10~19건은 45%, 20건 이상은 60%
             r30 = perf[atype]["recent_30d"]
-            if r30["total"] >= 5:
-                blended = rate * 0.4 + r30["rate"] * 0.6
+            r30_n = r30["total"]
+            if r30_n >= 20:
+                blend_w = 0.60
+            elif r30_n >= 10:
+                blend_w = 0.45
+            elif r30_n >= 5:
+                blend_w = 0.30
             else:
-                blended = rate
+                blend_w = 0.0
+            blended = rate * (1 - blend_w) + r30["rate"] * blend_w if blend_w > 0 else rate
             # 최소 보정: 0% 또는 100% 방지 → [0.2, 0.8] 범위로 클램핑
             weights[atype] = max(0.2, min(0.8, blended)) if total >= MIN_DATA else None
 
@@ -144,8 +157,36 @@ def build_consensus(judgments: dict, check_minority: bool = True,
     conf_mult = 0.7 + avg_conf * 0.3   # conf=0→0.7, conf=1→1.0
     size = max(0, min(100, int(size * conf_mult)))
 
+    # 분석가 suggested_size_pct 반영 (confidence 가중 평균, 있는 경우만)
+    analyst_sizes = [
+        (j.get("suggested_size_pct"), j.get("confidence", 0.5))
+        for j in (bull, bear, neut)
+        if j.get("suggested_size_pct") is not None
+    ]
+    if analyst_sizes:
+        w_sum   = sum(w for _, w in analyst_sizes)
+        avg_sug = sum(s * w for s, w in analyst_sizes) / w_sum if w_sum else None
+        if avg_sug is not None:
+            # 분석가 제안(50%)과 기존 size(50%) 혼합
+            blended = int(size * 0.5 + avg_sug * 0.5)
+            size = max(0, min(100, blended))
+            log.info(f"[size 혼합] 기존={int(size*0.5*2)} 분석가제안={avg_sug:.0f} → 최종={size}")
+
+    # ── 만장일치 / 분열에 따른 사이즈 보정 ────────────────────────────────────
+    _vote_cats = [_cat(bull["stance"]), _cat(bear["stance"]), _cat(neut["stance"])]
+    _n_unique = len(set(_vote_cats))
+    if _n_unique == 1:            # 3:0 만장일치 → 확신도 높음 → +30%
+        size = max(0, min(100, int(size * 1.3)))
+        log.info(f"[size 만장일치 3:0] x1.3 → {size}")
+    elif _n_unique == 3:          # 1:1:1 완전분열 → 확신 없음 → -25%
+        size = max(0, min(100, int(size * 0.75)))
+        log.info(f"[size 완전분열 1:1:1] x0.75 → {size}")
+    else:                         # 2:1 분열 → 소폭 축소 → -15%
+        size = max(0, min(100, int(size * 0.85)))
+        log.info(f"[size 분열 2:1] x0.85 → {size}")
+
     # tp_mult: CONSENSUS_MAP 기반 카테고리로 보조 참조
-    cats = tuple(sorted([_cat(bull["stance"]), _cat(bear["stance"]), _cat(neut["stance"])]))
+    cats = tuple(sorted(_vote_cats))
     tp_mult = CONSENSUS_MAP.get(cats, {}).get("tp_mult", 1.0)
 
     # ── 마이너리티 룰 적용 ─────────────────────────────────────────────────────

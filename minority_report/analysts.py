@@ -5,19 +5,46 @@
   2. 개별 적중률 피드백 - 자신의 과거 실적만 분리해서 수신
   3. 2라운드 토론  - 1차 판단 후 상대 의견 보고 최종 수정
 """
-import os, json, time, sys
+import os, json, re, time, sys
 import anthropic
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_analysis_logger, get_judgment_logger, get_minority_logger
 from credit_tracker import record as credit_record
+from minority_report.raw_call_logger import save as save_raw_call
 
 log          = get_minority_logger()
 analysis_log = get_analysis_logger()
 judgment_log = get_judgment_logger()
 client       = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+# R1 분석가: 비용 절감을 위해 Haiku 사용 (R2 토론은 Sonnet 유지)
+# R1_MODEL 환경변수로 오버라이드 가능 (기본 Haiku 4.5)
+R1_MODEL     = os.getenv("R1_MODEL", "claude-haiku-4-5-20251001")
 STANCES = "AGGRESSIVE|MODERATE_BULL|MILD_BULL|NEUTRAL|MILD_BEAR|CAUTIOUS_BEAR|DEFENSIVE|HALT"
+
+
+def _extract_json(text: str) -> dict:
+    """Claude 응답에서 JSON 추출 — 형식 무관하게 견고하게 파싱"""
+    def _fix(s: str) -> str:
+        # trailing comma
+        s = re.sub(r",(\s*[}\]])", r"\1", s)
+        # JSON 비표준 수치 리터럴 (nan, inf)
+        s = re.sub(r'\bNaN\b',       '"NaN"',  s)
+        s = re.sub(r'\bInfinity\b',  '999',    s)
+        s = re.sub(r'\b-Infinity\b', '-999',   s)
+        s = re.sub(r'\bnan\b',       '0',      s)
+        s = re.sub(r'\binf\b',       '999',    s)
+        s = re.sub(r'\b-inf\b',      '-999',   s)
+        return s
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+    if m:
+        return json.loads(_fix(m.group(1)))
+    start = text.find("{")
+    end   = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return json.loads(_fix(text[start:end + 1]))
+    raise ValueError(f"JSON 추출 실패: {text[:200]}")
 ALLOWED_STANCES = set(STANCES.split("|"))
 ALLOWED_STRATEGIES = {"모멘텀", "평균회귀", "갭풀백", "변동성돌파", "관망"}
 
@@ -92,7 +119,7 @@ PERSONAS = {
 
 [판단 기준]
 • 위험 신호 1개 → CAUTIOUS_BEAR 이하
-• VIX 25 이상 or 환율 1,450 이상 → 기본값 DEFENSIVE
+• VIX 25 이상 or 환율 당일 ±1.5% 이상 급변 → 기본값 DEFENSIVE
 • 복수 위험 신호 동시 발생 → HALT 검토
 • 위험 신호 없음 → MILD_BEAR 이상 가능
 
@@ -124,12 +151,32 @@ PERSONAS = {
 # ── 1라운드: 독립 판단 ─────────────────────────────────────────────────────────
 def call_analyst(analyst_type: str, digest_prompt: str,
                  brain_summary: str, correction: str,
-                 analyst_feedback: str = "") -> dict:
+                 analyst_feedback: str = "",
+                 portfolio_info=None,
+                 market: str = "") -> dict:
     """1라운드 독립 판단"""
     feedback_section = f"\n[나의 과거 실적]\n{analyst_feedback}\n" if analyst_feedback else ""
 
+    # 포트폴리오 현황 섹션
+    if portfolio_info:
+        cash        = portfolio_info.get("cash", 0)
+        total       = portfolio_info.get("total_equity", cash)
+        max_order   = portfolio_info.get("max_order_krw", 0)
+        n_pos       = portfolio_info.get("n_positions", 0)
+        max_pos     = portfolio_info.get("max_positions", 3)
+        portfolio_section = (
+            f"\n[포트폴리오 현황]\n"
+            f"• 가용 현금: {cash:,.0f}원\n"
+            f"• 총 자산: {total:,.0f}원\n"
+            f"• 1회 최대 주문: {max_order:,.0f}원\n"
+            f"• 현재 보유 종목: {n_pos}/{max_pos}개\n"
+            f"• 잔여 슬롯: {max(0, max_pos - n_pos)}개\n"
+        )
+    else:
+        portfolio_section = ""
+
     prompt = f"""{PERSONAS[analyst_type]}
-{feedback_section}
+{feedback_section}{portfolio_section}
 [시장 전체 메모리]
 {brain_summary}
 
@@ -140,22 +187,28 @@ def call_analyst(analyst_type: str, digest_prompt: str,
 {digest_prompt}
 
 위 데이터를 당신의 전문 영역 관점에서 분석하세요.
+포트폴리오 현황을 참고하여 이 시장 상황에서 1회 최대 주문금액 대비 몇 %를 투자할지 제안하세요.
 JSON으로만 응답 (다른 텍스트 없이):
 {{"stance":"{STANCES} 중 하나","confidence":0.0~1.0,
   "key_reason":"핵심 근거 한 문장 (구체적 지표 수치 포함)",
   "full_reasoning":"상세 분석 2~3문장",
   "top_risks":["위험1","위험2"],
-  "suggested_strategy":"모멘텀|평균회귀|갭+눌림|변동성돌파|관망"}}"""
+  "suggested_strategy":"모멘텀|평균회귀|갭+눌림|변동성돌파|관망",
+  "suggested_size_pct":0~100}}"""
 
     try:
-        resp = client.messages.create(model=MODEL, max_tokens=1024,
+        resp = client.messages.create(model=R1_MODEL, max_tokens=1024,
                                       messages=[{"role": "user", "content": prompt}])
         raw = resp.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1].replace("json", "").strip()
-        result = _sanitize_analyst_result(json.loads(raw), analyst_type)
+        result = _sanitize_analyst_result(_extract_json(raw), analyst_type)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
                       f"analyst_{analyst_type}_r1")
+        save_raw_call(
+            label=f"analyst_{analyst_type}_r1",
+            prompt=prompt, raw_response=raw, parsed=result,
+            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            market=market,
+        )
         log.info(f"[{analyst_type} R1] {result.get('stance','-')} "
                  f"conf={result.get('confidence',0):.2f} | "
                  f"{result.get('key_reason','')[:60]}")
@@ -180,7 +233,8 @@ JSON으로만 응답 (다른 텍스트 없이):
 # ── 2라운드: 토론 후 최종 판단 ────────────────────────────────────────────────
 def call_analyst_debate(analyst_type: str, my_r1: dict,
                         others: dict, digest_prompt: str,
-                        debate_history: str = "") -> dict:
+                        debate_history: str = "",
+                        market: str = "") -> dict:
     """
     2라운드: 다른 분석가 의견 + 과거 토론 이력 보고 최종 판단 수정
     others: {analyst_type: r1_result, ...} (자신 제외)
@@ -223,11 +277,15 @@ JSON으로만 응답:
         resp = client.messages.create(model=MODEL, max_tokens=512,
                                       messages=[{"role": "user", "content": prompt}])
         raw = resp.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1].replace("json", "").strip()
-        result = json.loads(raw)
+        result = _extract_json(raw)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
                       f"analyst_{analyst_type}_r2")
+        save_raw_call(
+            label=f"analyst_{analyst_type}_r2",
+            prompt=prompt, raw_response=raw, parsed=result,
+            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            market=market,
+        )
 
         changed = result.get("changed", False)
         change_mark = f"→ {result['stance']}" if changed else "유지"
@@ -246,9 +304,11 @@ JSON으로만 응답:
 # ── 3명 판단 통합 (2라운드 토론 포함) ────────────────────────────────────────
 def get_three_judgments(digest_prompt: str, brain_summary: str,
                         correction: str, delay: float = 1.5,
-                        market: str = "KR") -> dict:
+                        market: str = "KR",
+                        portfolio_info=None) -> dict:
     """
     1라운드 독립 판단 → 2라운드 토론 → 최종 판단
+    portfolio_info: {"cash", "total_equity", "max_order_krw", "n_positions", "max_positions"}
     """
     from claude_memory import brain as BrainDB
 
@@ -261,7 +321,7 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
         except Exception:
             feedback = ""
         r1[atype] = call_analyst(atype, digest_prompt, brain_summary,
-                                 correction, feedback)
+                                 correction, feedback, portfolio_info, market=market)
         time.sleep(delay)
 
     log.info(f"R1 완료 | Bull:{r1['bull']['stance']} "
@@ -278,7 +338,7 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
     for atype in ("bull", "bear", "neutral"):
         others = {k: v for k, v in r1.items() if k != atype}
         r2[atype] = call_analyst_debate(atype, r1[atype], others,
-                                        digest_prompt, debate_history)
+                                        digest_prompt, debate_history, market=market)
         time.sleep(delay)
 
     log.info(f"R2 완료 | Bull:{r2['bull']['stance']} "
@@ -344,19 +404,20 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         cand_lines.append(f"  {c.get('ticker')} {c.get('name','')} {rate_str} {vol_str}".strip())
     cand_text = "\n".join(cand_lines)
 
-    prompt = f"""Pick 3-5 tickers for today's {market} session.
-Consensus mode: {consensus_mode}
-Candidates:
+    prompt = f"""오늘 {market} 세션에서 집중 모니터링할 종목 3~5개를 선택하세요.
+합의 모드: {consensus_mode}
+후보 종목:
 {cand_text}
 
-Context:
+시장 컨텍스트:
 {digest_prompt[:400]}
 
-Rules:
-- Pick only from candidates.
-- Return JSON only.
+규칙:
+- 후보 종목 중에서만 선택.
+- reasons는 반드시 한국어로 작성 (30자 이내).
+- JSON만 반환.
 
-{{"tickers":["code1","code2","code3"],"reasons":{{"code1":"short reason"}}}}"""
+{{"tickers":["code1","code2","code3"],"reasons":{{"code1":"선택 이유 한국어"}}}}"""
 
     valid    = {c["ticker"] for c in candidates if c.get("ticker")}
     fallback = [c["ticker"] for c in candidates[:3] if c.get("ticker")]
@@ -369,10 +430,14 @@ Rules:
         resp = client.messages.create(model=MODEL, max_tokens=512,
                                       messages=[{"role": "user", "content": prompt}])
         raw = resp.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1].replace("json", "").strip()
-        result  = json.loads(raw)
+        result  = _extract_json(raw)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers")
+        save_raw_call(
+            label="select_tickers",
+            prompt=prompt, raw_response=raw, parsed=result,
+            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            market=market,
+        )
         tickers = [t for t in result.get("tickers", []) if t in valid][:5]
         if not tickers:
             raise ValueError("no valid tickers")
@@ -388,6 +453,7 @@ Rules:
                     tickers = tickers[:1] + stable_in_candidates[:4]
                     log.info(f"[ticker-selection] DEFENSIVE/HALT — 안정 종목 보완: {tickers}")
 
+        reasons = result.get("reasons", {})
         log.info(f"[ticker-selection] {market} -> {tickers}")
         analysis_log.info(
             f"[selection] {market} {tickers}",
@@ -398,11 +464,11 @@ Rules:
                     "consensus_mode": consensus_mode,
                     "selected": tickers,
                     "candidate_count": len(candidates),
-                    "reasons": result.get("reasons", {}),
+                    "reasons": reasons,
                 }
             },
         )
-        return tickers
+        return tickers, reasons
     except Exception as e:
         log.error(f"[ticker-selection] error: {e} -> fallback")
-        return fallback
+        return fallback, {}

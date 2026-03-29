@@ -8,14 +8,17 @@
   ],
   "context": {
     "sp500": {
-      "change_pct": -0.13
+      "change_pct": 0.84,
+      "close": 6611.27
     },
     "nasdaq": {
-      "change_pct": -0.63
+      "change_pct": 1.31,
+      "close": 22046.42
     },
-    "vix": 26.16,
-    "dxy": 99.37,
-    "oil_wti": 92.24,
+    "vix": 25.38,
+    "dxy": 99.46,
+    "usd_krw": 1498.62,
+    "oil_wti": 88.73,
     "fomc": false,
     "fomc_week": false,
     "cpi_day": false,
@@ -25,50 +28,71 @@
   "technicals": {
     "NVDA": {
       "name": "엔비디아",
-      "close": 172.7,
-      "change_pct": -3.09,
-      "rsi": 37.4,
+      "close": 175.2,
+      "change_pct": -0.25,
+      "rsi": 39.3,
       "macd": "데드크로스",
-      "bb_pct": 2.0,
-      "vol_ratio": 1.08,
-      "pos_52w": 68.6,
-      "vb_target": 180.94,
-      "news_sentiment": 0.0,
+      "bb_pct": 18.1,
+      "vol_ratio": 0.73,
+      "pos_52w": 70.6,
+      "vb_target": 175.77,
+      "news_sentiment": 0.246,
       "sec_filing": false
     },
     "TSLA": {
       "name": "테슬라",
-      "close": 367.96,
-      "change_pct": -3.73,
-      "rsi": 32.4,
+      "close": 383.03,
+      "change_pct": 0.57,
+      "rsi": 37.5,
       "macd": "데드크로스",
-      "bb_pct": -21.8,
-      "vol_ratio": 1.27,
-      "pos_52w": 54.0,
-      "vb_target": 386.33,
-      "news_sentiment": 0.0,
+      "bb_pct": 21.0,
+      "vol_ratio": 1.01,
+      "pos_52w": 59.3,
+      "vb_target": 381.72,
+      "news_sentiment": -0.017,
       "sec_filing": false
     },
     "AAPL": {
       "name": "애플",
-      "close": 247.99,
-      "change_pct": -0.17,
-      "rsi": 23.6,
+      "close": 251.64,
+      "change_pct": 0.06,
+      "rsi": 33.6,
       "macd": "데드크로스",
-      "bb_pct": 12.4,
-      "vol_ratio": 2.18,
-      "pos_52w": 66.3,
-      "vb_target": 249.55,
-      "news_sentiment": 0.0,
+      "bb_pct": 28.4,
+      "vol_ratio": 0.7,
+      "pos_52w": 69.4,
+      "vb_target": 252.86,
+      "news_sentiment": 0.051,
       "sec_filing": false
     }
   },
-  "top_news": [],
+  "top_news": [
+    {
+      "title": "Traveka Wealth LLC Decreases Stock Position in Alphabet Inc. $GOOG",
+      "ticker": ""
+    },
+    {
+      "title": "SG Americas Securities LLC Has $63.73 Million Stake in Synopsys, Inc. $SNPS",
+      "ticker": ""
+    },
+    {
+      "title": "Baldwin Wealth Partners LLC MA Purchases 39,092 Shares of NVIDIA Corporation $NVDA",
+      "ticker": ""
+    },
+    {
+      "title": "Lovesac (LOVE) Q4 Earnings: What To Expect",
+      "ticker": ""
+    },
+    {
+      "title": "Jabil Inc. stock surges on strong Q2 fiscal 2026 earnings beat in diversified manufacturing",
+      "ticker": ""
+    }
+  ],
   "prev_result": {
     "date": "2026-03-24",
     "mode": "Bull_Confirmed",
     "pnl_pct": 0,
     "win": false
   },
-  "built_at": "2026-03-25T01:42:36.227884"
+  "built_at": "2026-03-25T23:45:43.508875"
 }

@@ -7,18 +7,37 @@
 - best_trade / worst_trade / worst_trade_reason 필드 추가
 - HALT / 거래 없는 날 postmortem 스킵 안전장치
 """
-import os, json, sys
+import os, json, re, sys
 import anthropic
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_judgment_logger, get_minority_logger
 from claude_memory import brain as BrainDB
 from credit_tracker import record as credit_record
+from minority_report.raw_call_logger import save as save_raw_call
 
 log          = get_minority_logger()
 judgment_log = get_judgment_logger()
 client       = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+
+
+def _extract_json(text: str) -> dict:
+    """Claude 응답에서 JSON 추출 — 형식 무관하게 견고하게 파싱"""
+    # trailing comma 제거 (LLM이 자주 생성하는 오류)
+    def _fix(s: str) -> str:
+        return re.sub(r",(\s*[}\]])", r"\1", s)
+
+    # 1) ```json ... ``` 또는 ``` ... ``` 블록 (탐욕적 매칭으로 중첩 {} 포함)
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+    if m:
+        return json.loads(_fix(m.group(1)))
+    # 2) { ... } 직접 추출 — 첫 번째 { 부터 마지막 } 까지
+    start = text.find("{")
+    end   = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return json.loads(_fix(text[start:end + 1]))
+    raise ValueError(f"JSON 추출 실패: {text[:200]}")
 
 
 def _format_trade_log(trade_log: list) -> str:
@@ -48,9 +67,69 @@ def _strategy_pnl(trade_log: list) -> dict:
     return result
 
 
+_BULL_STANCES    = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL", "CAUTIOUS"}
+_NEUTRAL_STANCES = {"NEUTRAL"}
+_BEAR_STANCES    = {"MILD_BEAR", "CAUTIOUS_BEAR", "DEFENSIVE", "HALT"}
+
+
+def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
+    """
+    분석가 스탠스 + 실제 시장 등락률로 HIT/MISS/PARTIAL 객관 판정.
+    Claude 자기평가 편향 제거용.
+
+    기준:
+    - 방향 일치 → HIT
+    - 방향 반대 → MISS
+    - NEUTRAL 또는 작은 등락(±0.5% 이하) → PARTIAL
+    """
+    chg = market_change_pct
+    predicted_up   = stance in _BULL_STANCES
+    predicted_down = stance in _BEAR_STANCES
+    predicted_flat = stance in _NEUTRAL_STANCES
+
+    if chg > 0:   # 시장 상승
+        if predicted_up:   return "HIT"
+        if predicted_flat: return "PARTIAL"   # NEUTRAL은 방향 틀림이지만 극단 아님
+        return "MISS"
+    elif chg < 0:  # 시장 하락
+        if predicted_down: return "HIT"
+        if predicted_flat: return "PARTIAL"
+        return "MISS"
+    else:  # 정확히 0% (또는 abs < epsilon)
+        if predicted_flat: return "HIT"
+        return "PARTIAL"
+
+
+def _format_decision_event_log(decision_event_log: list) -> str:
+    if not decision_event_log:
+        return "  (의사결정 로그 없음)"
+    lines = []
+    for e in decision_event_log[-20:]:
+        ts = str(e.get("timestamp", ""))[11:19]
+        ticker = e.get("ticker", "-")
+        action = e.get("action", "-")
+        reason = e.get("reason", "")
+        detail = e.get("detail", "")
+        qty = int(e.get("qty", 0) or 0)
+        price_native = float(e.get("price_native", 0) or 0)
+        price_krw = float(e.get("price_krw", 0) or 0)
+        selected_reason = e.get("selected_reason", "")
+        pieces = [
+            f"[{ts}] {ticker} {action}",
+            f"{qty}주" if qty else "",
+            f"원주문가 {price_native:g}" if price_native else "",
+            f"원화환산 {price_krw:,.0f}원" if price_krw else "",
+            reason,
+            detail,
+            f"선택사유: {selected_reason}" if selected_reason else "",
+        ]
+        lines.append("  " + " | ".join([p for p in pieces if p]))
+    return "\n".join(lines)
+
+
 def run(market: str, date: str, today_judgment: dict,
         actual_result: dict, digest_prompt: str,
-        trade_log: list = None) -> dict:
+        trade_log: list = None, decision_event_log: list = None) -> dict:
     """
     장 마감 후 Claude 사후 분석.
 
@@ -60,10 +139,12 @@ def run(market: str, date: str, today_judgment: dict,
                 없으면 빈 리스트로 처리
     """
     trade_log = trade_log or []
+    decision_event_log = decision_event_log or []
     judgments      = today_judgment.get("judgments", {})
     consensus      = today_judgment.get("consensus", {})
     consensus_mode = consensus.get("mode", "CAUTIOUS")
     trade_log      = trade_log or []
+    decision_event_log = decision_event_log or []
 
     # ── HALT 또는 판단 없는 날 스킵 ──────────────────────────────────────────
     if not judgments or consensus_mode == "HALT":
@@ -81,23 +162,73 @@ def run(market: str, date: str, today_judgment: dict,
                                  "tuning_rules": [], "today_notes": ""},
         }
 
-    brain_summary = BrainDB.generate_prompt_summary(market)
+    brain_summary = BrainDB.generate_prompt_summary(market)  # 자르지 않음
     trade_section = _format_trade_log(trade_log)
+    decision_section = _format_decision_event_log(decision_event_log)
 
-    # 최고/최악 거래 요약
-    sells = [t for t in trade_log if t.get("side") == "sell" and "pnl" in t]
-    best  = max(sells, key=lambda t: t["pnl"], default=None)
-    worst = min(sells, key=lambda t: t["pnl"], default=None)
-
-    best_s  = (f"{best['ticker']} {best['pnl']:+,}원 ({best.get('strategy','-')})"
-               if best else "없음")
-    worst_s = (f"{worst['ticker']} {worst['pnl']:+,}원 ({worst.get('strategy','-')})"
-               if worst else "없음")
-
+    sells  = [t for t in trade_log if t.get("side") == "sell" and "pnl" in t]
     wins   = [t for t in trade_log if t.get("side") == "sell" and t.get("pnl", 0) > 0]
     losses = [t for t in trade_log if t.get("side") == "sell" and t.get("pnl", 0) <= 0]
 
-    prompt = f"""당신은 트레이딩 AI의 사후 분석가입니다.
+    # ── 거래 없는 날: 간소 프롬프트 (판단 적중 + 내일 보정 지침만) ──────────
+    if not sells:
+        prompt = f"""당신은 트레이딩 AI의 사후 분석가입니다.
+오늘은 체결된 매도 거래가 없습니다. 판단 적중 여부와 내일 보정 지침만 작성하세요.
+
+━━━ 아침 판단 ━━━
+  Bull:    {judgments.get('bull',{}).get('stance','-')} / {judgments.get('bull',{}).get('key_reason','-')}
+  Bear:    {judgments.get('bear',{}).get('stance','-')} / {judgments.get('bear',{}).get('key_reason','-')}
+  Neutral: {judgments.get('neutral',{}).get('stance','-')} / {judgments.get('neutral',{}).get('key_reason','-')}
+  합의 모드: {consensus_mode}
+
+━━━ 실제 시장 결과 ━━━
+  시장 변동: {actual_result.get('market_change', 0):+.2f}%
+  내 손익:   {actual_result.get('pnl_pct', 0):+.2f}%
+
+━━━ 시장 컨텍스트 ━━━
+{digest_prompt[:400]}
+
+━━━ 누적 학습 현황 ━━━
+{brain_summary}
+
+모든 문자열 값은 20자 이내로 간결하게. JSON으로만 응답:
+{{
+  "bull_result":   "HIT|MISS|PARTIAL",
+  "bear_result":   "HIT|MISS|PARTIAL",
+  "neutral_result":"HIT|MISS|PARTIAL",
+  "bull_why":      "짧게",
+  "bear_why":      "짧게",
+  "neutral_why":   "짧게",
+  "best_trade":    null,
+  "worst_trade":   null,
+  "worst_trade_reason": "",
+  "key_lesson":    "핵심 교훈",
+  "issue_type":    "한 단어",
+  "issue_desc":    "짧게",
+  "pattern_id":    null,
+  "brain_updates": {{
+    "bull_reliability_change": "up|down|stable",
+    "bear_reliability_change": "up|down|stable",
+    "new_lesson":    "교훈 또는 null",
+    "market_regime": "한 단어"
+  }},
+  "correction_guide": {{
+    "bull_adjustments":  ["주의사항"],
+    "bear_adjustments":  ["주의사항"],
+    "tuning_rules":      ["규칙"],
+    "today_notes":       "짧게"
+  }}
+}}"""
+    else:
+        # ── 거래 있는 날: 전체 프롬프트 ─────────────────────────────────────
+        best  = max(sells, key=lambda t: t["pnl"], default=None)
+        worst = min(sells, key=lambda t: t["pnl"], default=None)
+        best_s  = (f"{best['ticker']} {best['pnl']:+,}원 ({best.get('strategy','-')})"
+                   if best else "없음")
+        worst_s = (f"{worst['ticker']} {worst['pnl']:+,}원 ({worst.get('strategy','-')})"
+                   if worst else "없음")
+
+        prompt = f"""당신은 트레이딩 AI의 사후 분석가입니다.
 오늘 거래와 아침 판단을 비교해 솔직하게 복기하세요.
 
 ━━━ 아침 판단 ━━━
@@ -111,6 +242,9 @@ def run(market: str, date: str, today_judgment: dict,
   최고 거래: {best_s}
   최악 거래: {worst_s}
 
+━━━ 오늘 매수/매도 판단 로그 ({len(decision_event_log)}건) ━━━
+{decision_section}
+
 ━━━ 실제 결과 ━━━
   시장 변동: {actual_result.get('market_change', 0):+.2f}%
   내 손익:   {actual_result.get('pnl_pct', 0):+.2f}%  {'✅ 승' if actual_result.get('win') else '❌ 패'}
@@ -120,7 +254,7 @@ def run(market: str, date: str, today_judgment: dict,
 {digest_prompt[:350]}
 
 ━━━ 누적 학습 현황 ━━━
-{brain_summary[:300]}
+{brain_summary}
 
 ━━━ 분석 지침 ━━━
 1. 아침 Bull/Bear/Neutral 판단이 실제로 맞았는지 평가하세요.
@@ -128,52 +262,67 @@ def run(market: str, date: str, today_judgment: dict,
 3. 손실 거래가 있다면 반드시 원인을 분석하세요.
 4. 같은 상황이 반복된다면 내일 어떻게 다르게 할지 제안하세요.
 
-아래 JSON으로만 응답하세요:
+모든 문자열 값은 30자 이내로 간결하게. JSON으로만 응답:
 {{
   "bull_result":   "HIT|MISS|PARTIAL",
   "bear_result":   "HIT|MISS|PARTIAL",
   "neutral_result":"HIT|MISS|PARTIAL",
-  "bull_why":      "한 문장으로 왜 맞았/틀렸는지",
-  "bear_why":      "한 문장으로 왜 맞았/틀렸는지",
-  "neutral_why":   "한 문장으로 왜 맞았/틀렸는지",
-  "best_trade":    "가장 잘된 거래 ticker 또는 null",
-  "worst_trade":   "가장 아쉬운 거래 ticker 또는 null",
-  "worst_trade_reason": "손실/아쉬운 이유 한 문장",
-  "key_lesson":    "오늘 핵심 교훈 (내일 행동에 반영할 것)",
-  "issue_type":    "이슈 유형 (개별기업_호재/지수급락/변동성확대 등)",
-  "issue_desc":    "이슈 한 문장 요약",
-  "pattern_id":    "기존 패턴 ID 또는 null",
+  "bull_why":      "짧게",
+  "bear_why":      "짧게",
+  "neutral_why":   "짧게",
+  "best_trade":    "ticker 또는 null",
+  "worst_trade":   "ticker 또는 null",
+  "worst_trade_reason": "짧게",
+  "key_lesson":    "핵심 교훈",
+  "issue_type":    "한 단어",
+  "issue_desc":    "짧게",
+  "pattern_id":    null,
   "brain_updates": {{
     "bull_reliability_change": "up|down|stable",
     "bear_reliability_change": "up|down|stable",
-    "new_lesson":    "교훈 문장 또는 null",
-    "market_regime": "현재 장세 한 단어"
+    "new_lesson":    "교훈 또는 null",
+    "market_regime": "한 단어"
   }},
   "correction_guide": {{
-    "bull_adjustments":  ["내일 Bull 판단 시 주의사항"],
-    "bear_adjustments":  ["내일 Bear 판단 시 주의사항"],
-    "tuning_rules":      ["장중 튜닝 규칙"],
-    "today_notes":       "내일 특별 주의사항"
+    "bull_adjustments":  ["주의사항"],
+    "bear_adjustments":  ["주의사항"],
+    "tuning_rules":      ["규칙"],
+    "today_notes":       "짧게"
   }}
 }}"""
 
+    # ── 코드 기반 HIT/MISS 사전 계산 (Claude 편향 제거) ───────────────────────
+    market_chg = actual_result.get("market_change", 0)
+    code_bull    = _code_judge_hit_miss(judgments.get("bull",    {}).get("stance", "NEUTRAL"), market_chg)
+    code_bear    = _code_judge_hit_miss(judgments.get("bear",    {}).get("stance", "NEUTRAL"), market_chg)
+    code_neutral = _code_judge_hit_miss(judgments.get("neutral", {}).get("stance", "NEUTRAL"), market_chg)
+    log.info(f"[postmortem 코드판정] 시장변동 {market_chg:+.2f}% | "
+             f"bull={code_bull} bear={code_bear} neutral={code_neutral}")
+
     try:
         resp = client.messages.create(
-            model=MODEL, max_tokens=800,
+            model=MODEL, max_tokens=2500,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = resp.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1].replace("json", "").strip()
-        pm = json.loads(raw)
+        pm = _extract_json(raw)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "postmortem")
+        save_raw_call(
+            label="postmortem",
+            prompt=prompt, raw_response=raw, parsed=pm,
+            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            market=market, call_date=date,
+        )
+        # Claude HIT/MISS를 코드 판정으로 덮어씌움 (편향 제거)
+        pm["bull_result"]    = code_bull
+        pm["bear_result"]    = code_bear
+        pm["neutral_result"] = code_neutral
     except Exception as e:
         log.error(f"postmortem 오류: {e}")
-        win = actual_result.get("win", False)
         pm = {
-            "bull_result": "HIT" if win else "MISS",
-            "bear_result": "MISS" if win else "HIT",
-            "neutral_result": "PARTIAL",
+            "bull_result": code_bull,
+            "bear_result": code_bear,
+            "neutral_result": code_neutral,
             "bull_why": "자동 판정", "bear_why": "자동 판정", "neutral_why": "자동 판정",
             "key_lesson": "오류로 자동 판정",
             "best_trade": None, "worst_trade": None, "worst_trade_reason": "",
@@ -198,9 +347,11 @@ def run(market: str, date: str, today_judgment: dict,
 
 
     bu = pm.get("brain_updates", {})
-    if bu.get("new_lesson"):
-        BrainDB.update_beliefs(market, {"new_lesson": bu["new_lesson"]})
-    if bu.get("market_regime"):
+    # new_lesson 없으면 key_lesson을 fallback으로 사용
+    lesson_to_save = bu.get("new_lesson") or pm.get("key_lesson")
+    if lesson_to_save and lesson_to_save not in ("오류로 자동 판정", "HALT 세션 — 거래 없음"):
+        BrainDB.update_beliefs(market, {"new_lesson": lesson_to_save})
+    if bu.get("market_regime") and bu["market_regime"] != "unknown":
         BrainDB.update_beliefs(market, {"market_regime": bu["market_regime"]})
 
     BrainDB.update_issue_pattern(market, {
@@ -213,17 +364,26 @@ def run(market: str, date: str, today_judgment: dict,
     })
 
     BrainDB.add_daily_record(market, {
-        "date":           date,
-        "mode":           consensus_mode,
-        "pnl_pct":        actual_result.get("pnl_pct", 0),
-        "win":            actual_result.get("win", False),
-        "bull_result":    pm["bull_result"],
-        "bear_result":    pm["bear_result"],
-        "neutral_result": pm["neutral_result"],
-        "key_lesson":     pm.get("key_lesson", ""),
-        "best_trade":     pm.get("best_trade"),
-        "worst_trade":    pm.get("worst_trade"),
-        "trades":         len(trade_log),
+        "date":              date,
+        "mode":              consensus_mode,
+        "pnl_pct":           actual_result.get("pnl_pct", 0),
+        "market_change":     actual_result.get("market_change", 0),
+        "win":               actual_result.get("win", False),
+        "bull_result":       pm["bull_result"],
+        "bear_result":       pm["bear_result"],
+        "neutral_result":    pm["neutral_result"],
+        "bull_stance":       judgments.get("bull", {}).get("stance", ""),
+        "bear_stance":       judgments.get("bear", {}).get("stance", ""),
+        "neutral_stance":    judgments.get("neutral", {}).get("stance", ""),
+        "bull_reason":       judgments.get("bull", {}).get("key_reason", ""),
+        "bear_reason":       judgments.get("bear", {}).get("key_reason", ""),
+        "neutral_reason":    judgments.get("neutral", {}).get("key_reason", ""),
+        "key_lesson":        pm.get("key_lesson", ""),
+        "issue_type":        pm.get("issue_type", ""),
+        "best_trade":        pm.get("best_trade"),
+        "worst_trade":       pm.get("worst_trade"),
+        "worst_trade_reason": pm.get("worst_trade_reason", ""),
+        "trades":            len(trade_log),
     })
 
     # ── 전략별 성과 자동 업데이트 ─────────────────────────────────────────────
