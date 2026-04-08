@@ -2359,7 +2359,7 @@ class TradingBot:
         self.ws = KISWebSocket(
             self.token, selected,
             on_tick=self._on_tick,
-            on_notice=self._on_fill_notice if market == "KR" else None,
+            on_notice=self._on_fill_notice,
             market=market,
         )
         self.ws.start()
@@ -2389,7 +2389,7 @@ class TradingBot:
         self._process_exit_candidates()
 
     def _on_fill_notice(self, event: dict):
-        """KIS WS 체결통보 수신 → pending → filled 즉시 전환 (KR 전용)"""
+        """KIS WS 체결통보 수신 → pending → filled 즉시 전환 (KR + US)"""
         order_no    = event.get("order_no", "")
         ticker      = event.get("ticker", "")
         filled_qty  = int(event.get("filled_qty", 0) or 0)
@@ -2440,16 +2440,21 @@ class TradingBot:
             except Exception:
                 pass
 
-        # 텔레그램 체결 확인
-        fill_label = f"{filled_price:,.0f}원"
+        # 텔레그램 체결 확인 (KR: 원 / US: 달러)
+        if market == "US":
+            fill_label = f"${filled_price:.4f}"
+            log_price  = f"${filled_price:.4f}"
+        else:
+            fill_label = f"{filled_price:,.0f}원"
+            log_price  = f"{filled_price:,.0f}원"
         send(
             f"🟡 <b>[매수 체결 확인]</b> {ticker}\n"
             f"{filled_qty}주 | 주문번호 {order_no}\n"
             f"체결가 {fill_label} (WS 실시간)"
         )
         log.info(
-            f"[WS 체결통보] {ticker} {filled_qty}주 @{filled_price:,.0f}원 "
-            f"| 주문번호={order_no} | pending→filled 완료"
+            f"[WS 체결통보] {ticker} {filled_qty}주 @{log_price} "
+            f"| 주문번호={order_no} | market={market} | pending→filled 완료"
         )
 
     def _entry_scan_interval_sec(self, market: str) -> int:
