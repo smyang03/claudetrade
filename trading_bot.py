@@ -2356,7 +2356,12 @@ class TradingBot:
             log.info(f"[재시작] 브리핑 스킵 (당일 판단 재사용) consensus={consensus['mode']}")
         log.info(f"consensus: {consensus['mode']} size={consensus['size']}%")
 
-        self.ws = KISWebSocket(self.token, selected, on_tick=self._on_tick, market=market)
+        self.ws = KISWebSocket(
+            self.token, selected,
+            on_tick=self._on_tick,
+            on_notice=self._on_fill_notice if market == "KR" else None,
+            market=market,
+        )
         self.ws.start()
         self._session_open_at[market] = time.time()  # startup guard 기준점
         # 새 세션 시작 시 장중 H/L 초기화
@@ -2382,6 +2387,70 @@ class TradingBot:
         if raw_price < _cur_low:
             self._intraday_low[ticker] = raw_price
         self._process_exit_candidates()
+
+    def _on_fill_notice(self, event: dict):
+        """KIS WS 체결통보 수신 → pending → filled 즉시 전환 (KR 전용)"""
+        order_no    = event.get("order_no", "")
+        ticker      = event.get("ticker", "")
+        filled_qty  = int(event.get("filled_qty", 0) or 0)
+        filled_price= float(event.get("filled_price", 0) or 0)
+        filled_time = event.get("filled_time", "")
+        side        = event.get("side", "buy")
+
+        if side != "buy" or not order_no or filled_qty <= 0:
+            return
+
+        # pending_orders에서 order_no 매칭
+        matched = None
+        for order in self.pending_orders:
+            if str(order.get("order_no", "")).strip() == str(order_no).strip():
+                matched = order
+                break
+
+        if not matched:
+            log.debug(f"[WS 체결통보] {ticker} 주문번호={order_no} → pending 미매칭 (이미 처리됨)")
+            return
+
+        market = matched.get("market", "KR")
+        matched["filled_price_native"] = filled_price
+        matched["fill_time"] = filled_time
+
+        # broker_pos 구성 (WS 체결가 기준)
+        broker_pos = {
+            "ticker": ticker,
+            "qty": filled_qty,
+            "avg_price": filled_price,
+            "eval_price": filled_price,
+            "eval_profit": 0.0,
+            "profit_rate": 0.0,
+        }
+        pos = self._make_position_from_broker(matched, broker_pos)
+        self.risk.positions.append(pos)
+
+        # pending에서 제거
+        self.pending_orders = [o for o in self.pending_orders if o is not matched]
+        self._save_pending_orders()
+        self._save_positions()
+
+        # ML DB 업데이트
+        if _ML_DB_ENABLED and matched.get("decision_id"):
+            try:
+                from ml.db_writer import update_filled as _ml_update_filled
+                _ml_update_filled(matched["decision_id"], "FILLED")
+            except Exception:
+                pass
+
+        # 텔레그램 체결 확인
+        fill_label = f"{filled_price:,.0f}원"
+        send(
+            f"🟡 <b>[매수 체결 확인]</b> {ticker}\n"
+            f"{filled_qty}주 | 주문번호 {order_no}\n"
+            f"체결가 {fill_label} (WS 실시간)"
+        )
+        log.info(
+            f"[WS 체결통보] {ticker} {filled_qty}주 @{filled_price:,.0f}원 "
+            f"| 주문번호={order_no} | pending→filled 완료"
+        )
 
     def _entry_scan_interval_sec(self, market: str) -> int:
         real_elapsed = self._market_elapsed_min(market)

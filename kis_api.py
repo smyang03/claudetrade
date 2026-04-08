@@ -945,43 +945,60 @@ def inquire_daily_ccld_kr(token: str,
                           side_code: str = "00",
                           filled_code: str = "00") -> list[dict]:
     acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
-    tr_id = "VTTC8001R" if IS_PAPER else "TTTC8001R"
     if start_date is None:
         start_date = datetime.now().strftime("%Y%m%d")
     if end_date is None:
         end_date = start_date
 
-    headers = _headers(token, tr_id)
-    headers["custtype"] = "P"
+    # 공식 examples_user 기준 최신 TR ID를 먼저 사용하고, 레거시 샘플 TR ID로 한 번 더 시도한다.
+    tr_ids = (
+        ("VTTC0081R", "VTTC8001R")
+        if IS_PAPER
+        else ("TTTC0081R", "TTTC8001R")
+    )
 
-    def _fetch():
-        resp = _kis_get(
-            f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
-            headers=headers,
-            params={
-                "CANO": acnt_no,
-                "ACNT_PRDT_CD": acnt_prdt,
-                "INQR_STRT_DT": start_date,
-                "INQR_END_DT": end_date,
-                "SLL_BUY_DVSN_CD": side_code,
-                "INQR_DVSN": "01",
-                "PDNO": ticker,
-                "CCLD_DVSN": filled_code,
-                "ORD_GNO_BRNO": "",
-                "ODNO": order_no,
-                "INQR_DVSN_3": "00",
-                "INQR_DVSN_1": "",
-                "CTX_AREA_FK100": "",
-                "CTX_AREA_NK100": "",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        _require_kis_success(data, "국내 주문체결조회")
-        return [_normalize_kr_daily_ccld_row(row) for row in data.get("output1", [])]
+    params = {
+        "CANO": acnt_no,
+        "ACNT_PRDT_CD": acnt_prdt,
+        "INQR_STRT_DT": start_date,
+        "INQR_END_DT": end_date,
+        "SLL_BUY_DVSN_CD": side_code,
+        "INQR_DVSN": "00",
+        "PDNO": ticker,
+        "CCLD_DVSN": filled_code,
+        "ORD_GNO_BRNO": "",
+        "ODNO": order_no,
+        "INQR_DVSN_3": "00",
+        "INQR_DVSN_1": "",
+        "CTX_AREA_FK100": "",
+        "CTX_AREA_NK100": "",
+        "EXCG_ID_DVSN_CD": "KRX",
+    }
 
-    return _retry_kis("KR daily ccld", _fetch)
+    last_error = None
+    for tr_id in tr_ids:
+        headers = _headers(token, tr_id)
+        headers["custtype"] = "P"
+
+        def _fetch():
+            resp = _kis_get(
+                f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+                headers=headers,
+                params=params,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            _require_kis_success(data, "국내 주문체결조회")
+            return [_normalize_kr_daily_ccld_row(row) for row in data.get("output1", [])]
+
+        try:
+            return _retry_kis(f"KR daily ccld {tr_id}", _fetch)
+        except Exception as e:
+            last_error = e
+            log.warning(f"[KIS] 국내 주문체결조회 TR fallback {tr_id} 실패: {e}")
+
+    raise last_error
 
 
 def get_order_fill_kr(token: str, order_no: str, ticker: str = "", trade_date: str = None) -> Optional[dict]:
@@ -1689,14 +1706,42 @@ def screen_market_us(top_n: int = 30) -> list:
     ]
 
 
+def _aes_cbc_base64_dec(key: str, iv: str, cipher_text: str) -> str:
+    """AES-256 CBC 복호화 (KIS 체결통보 암호화 해제)"""
+    try:
+        from Crypto.Cipher import AES
+        from Crypto.Util.Padding import unpad
+        from base64 import b64decode
+        cipher = AES.new(key.encode("utf-8"), AES.MODE_CBC, iv.encode("utf-8"))
+        return bytes.decode(unpad(cipher.decrypt(b64decode(cipher_text)), AES.block_size))
+    except ImportError:
+        log.error("[KIS WS] pycryptodome 미설치 — pip install pycryptodome")
+        return ""
+
+
+# 체결통보 컬럼 순서 (공식 샘플 기준)
+_NOTICE_COLS = [
+    "CUST_ID", "ACNT_NO", "ODER_NO", "OODER_NO", "SELN_BYOV_CLS", "RCTF_CLS",
+    "ODER_KIND", "ODER_COND", "STCK_SHRN_ISCD", "CNTG_QTY", "CNTG_UNPR",
+    "STCK_CNTG_HOUR", "RFUS_YN", "CNTG_YN", "ACPT_YN", "BRNC_NO", "ODER_QTY",
+    "ACNT_NAME", "ORD_COND_PRC", "ORD_EXG_GB", "POPUP_YN", "FILLER", "CRDT_CLS",
+    "CRDT_LOAN_DATE", "CNTG_ISNM40", "ODER_PRC",
+]
+
+
 class KISWebSocket:
-    def __init__(self, token, tickers, on_tick=None, market="KR"):
+    def __init__(self, token, tickers, on_tick=None, on_notice=None, market="KR"):
         self.token = token
         self.tickers = tickers
         self.market = market
         self.on_tick = on_tick or (lambda d: print(f"[tick]{d}"))
+        self.on_notice = on_notice  # 체결통보 콜백: on_notice(event_dict)
         self.ws = None
         self._ws_key = None
+        self._notice_iv: Optional[str] = None
+        self._notice_key: Optional[str] = None
+        self._seen_fills: set = set()  # dedupe: (order_no, filled_qty, filled_time)
+        self._hts_id: str = os.getenv("KIS_HTS_ID", "")
 
     def _get_ws_key(self):
         resp = _kis_post(
@@ -1720,9 +1765,60 @@ class KISWebSocket:
             }
         )
 
+    def _sub_notice(self):
+        """계좌 체결통보 구독 (모의: H0STCNI9 / 실전: H0STCNI0)"""
+        tr_id = "H0STCNI9" if IS_PAPER else "H0STCNI0"
+        return json.dumps(
+            {
+                "header": {
+                    "approval_key": self._ws_key,
+                    "custtype": "P",
+                    "tr_type": "1",
+                    "content-type": "utf-8",
+                },
+                "body": {"input": {"tr_id": tr_id, "tr_key": self._hts_id}},
+            }
+        )
+
+    def _parse_notice(self, raw_data: str) -> Optional[dict]:
+        """체결통보 데이터 파싱 (AES 복호화 후 필드 추출)"""
+        try:
+            if self._notice_key and self._notice_iv:
+                decrypted = _aes_cbc_base64_dec(self._notice_key, self._notice_iv, raw_data)
+            else:
+                decrypted = raw_data
+            fields = decrypted.split("^")
+            if len(fields) < len(_NOTICE_COLS):
+                return None
+            d = dict(zip(_NOTICE_COLS, fields))
+            # CNTG_YN=2 만 체결통보 (1=접수/정정/취소)
+            if d.get("CNTG_YN") != "2":
+                return None
+            order_no    = d.get("ODER_NO", "").strip()
+            filled_qty  = int(d.get("CNTG_QTY", "0") or 0)
+            filled_price= float(d.get("CNTG_UNPR", "0") or 0)
+            filled_time = d.get("STCK_CNTG_HOUR", "").strip()
+            ticker      = d.get("STCK_SHRN_ISCD", "").strip()
+            side        = "buy" if d.get("SELN_BYOV_CLS", "") == "2" else "sell"
+            # dedupe
+            key = (order_no, filled_qty, filled_time)
+            if key in self._seen_fills:
+                return None
+            self._seen_fills.add(key)
+            return {
+                "order_no":     order_no,
+                "ticker":       ticker,
+                "filled_qty":   filled_qty,
+                "filled_price": filled_price,
+                "filled_time":  filled_time,
+                "side":         side,
+            }
+        except Exception as e:
+            log.warning(f"[KIS WS] 체결통보 파싱 오류: {e}")
+            return None
+
     def start(self):
         if self.market != "KR":
-            # US websocket routing is broker-specific; keep polling path only.
             return
 
         import websocket
@@ -1730,19 +1826,56 @@ class KISWebSocket:
         self._ws_key = self._get_ws_key()
 
         def on_open(ws):
+            # 시세 구독
             for t in self.tickers:
                 ws.send(self._sub(t))
+            # 체결통보 구독 (HTS ID 있을 때만)
+            if self.on_notice and self._hts_id:
+                ws.send(self._sub_notice())
+                log.info(f"[KIS WS] 체결통보 구독 등록 ({'모의' if IS_PAPER else '실전'})")
+            elif self.on_notice and not self._hts_id:
+                log.warning("[KIS WS] KIS_HTS_ID 미설정 — 체결통보 구독 스킵")
 
         def on_message(ws, msg):
+            # JSON 응답 = 구독 확인 or PINGPONG
             if msg.startswith("{"):
+                try:
+                    rdic = json.loads(msg)
+                    body = rdic.get("body") or {}
+                    output = body.get("output") or {}
+                    # AES key/iv 수신 (체결통보 구독 확인 시)
+                    if output.get("iv") and output.get("key"):
+                        self._notice_iv  = output["iv"]
+                        self._notice_key = output["key"]
+                        log.info("[KIS WS] 체결통보 AES key/iv 수신 완료")
+                except Exception:
+                    pass
                 return
+
+            # 파이프 구분 데이터
             parts = msg.split("|")
             if len(parts) < 4:
                 return
-            fields = parts[3].split("^")
+            tr_id   = parts[1] if len(parts) > 1 else ""
+            raw_data = parts[3]
+
+            # 체결통보 트리거
+            if tr_id in ("H0STCNI9", "H0STCNI0"):
+                if self.on_notice:
+                    event = self._parse_notice(raw_data)
+                    if event:
+                        log.info(f"[KIS WS] 체결통보 수신: {event}")
+                        self.on_notice(event)
+                return
+
+            # 시세 tick
+            fields = raw_data.split("^")
             if len(fields) < 13:
                 return
-            self.on_tick({"ticker": fields[0], "time": fields[1], "price": int(fields[2]), "volume": int(fields[12])})
+            try:
+                self.on_tick({"ticker": fields[0], "time": fields[1], "price": int(fields[2]), "volume": int(fields[12])})
+            except Exception:
+                pass
 
         self.ws = websocket.WebSocketApp(WS_URL, on_open=on_open, on_message=on_message)
         threading.Thread(target=self.ws.run_forever, daemon=True).start()
