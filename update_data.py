@@ -1,13 +1,17 @@
 """
 update_data.py - 매일 장 시작 전 데이터 최신화 마스터 스크립트
 
-실행 시점 권장:
-  KR: 08:30 (KR 장 시작 08:50 전)
-  US: 22:00 (US 장 시작 22:20 전)
+실행 시점 권장 (각 시장 하루 2회):
+  KR 장 시작 전: 08:30  → 전일 종가까지 업데이트 + forward return 채우기
+  KR 장 종료 후: 16:00  → 당일 종가 확정 + forward return 채우기
+  US 장 시작 전: 22:00  → 전일 종가까지 업데이트 + forward return 채우기
+  US 장 종료 후: 07:00  → 당일 종가 확정 + forward return 채우기
 
 Windows 작업 스케줄러 등록 (conda upbit 환경 사용):
-  schtasks /create /tn "claudetrade_kr" /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market KR" /sc daily /st 08:30
-  schtasks /create /tn "claudetrade_us" /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market US" /sc daily /st 22:00
+  schtasks /create /tn "claudetrade_kr_open"  /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market KR" /sc daily /st 08:30
+  schtasks /create /tn "claudetrade_kr_close" /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market KR" /sc daily /st 16:00
+  schtasks /create /tn "claudetrade_us_open"  /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market US" /sc daily /st 22:00
+  schtasks /create /tn "claudetrade_us_close" /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market US" /sc daily /st 07:00
 
   기존 태스크 삭제 후 재등록:
   schtasks /delete /tn "claudetrade_kr" /f
@@ -64,6 +68,14 @@ def run_kr_update():
     except Exception as e:
         log.error(f"KR supplement 실패: {e}")
 
+    # 4. ML forward return 업데이트 (주가 CSV 갱신 직후 실행)
+    log.info("[4/4] KR ML forward return 업데이트")
+    try:
+        from ml.forward_updater import run as forward_run
+        forward_run(market="KR")
+    except Exception as e:
+        log.error(f"KR forward_updater 실패: {e}")
+
     log.info("=== KR 데이터 최신화 완료 ===")
 
 
@@ -98,6 +110,14 @@ def run_us_update():
         collect_us_supplement(yesterday)
     except Exception as e:
         log.error(f"US supplement 실패: {e}")
+
+    # 4. ML forward return 업데이트 (주가 CSV 갱신 직후 실행)
+    log.info("[4/4] US ML forward return 업데이트")
+    try:
+        from ml.forward_updater import run as forward_run
+        forward_run(market="US")
+    except Exception as e:
+        log.error(f"US forward_updater 실패: {e}")
 
     log.info("=== US 데이터 최신화 완료 ===")
 

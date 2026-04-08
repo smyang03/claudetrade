@@ -56,6 +56,7 @@ KIS_RATE_RPS = float(os.getenv("KIS_RATE_RPS", "12"))
 _BALANCE_CACHE = {}
 _PRICE_CACHE = {}
 _OHLCV_CACHE = {}
+_CACHE_LOG_TS = {}
 _KIS_HTTP_LOCK = threading.Lock()
 _KIS_LAST_CALL_TS = 0.0
 
@@ -76,6 +77,14 @@ def _cache_set(cache: dict, key, value):
 
 def _cache_invalidate(cache: dict, key):
     cache.pop(key, None)
+
+
+def _log_cache_use_throttled(key: str, message: str, interval_sec: int = 300):
+    now = time.monotonic()
+    last_ts = _CACHE_LOG_TS.get(key, 0.0)
+    if now - last_ts >= interval_sec:
+        log.debug(message)
+        _CACHE_LOG_TS[key] = now
 
 
 def _retry_kis(label: str, fn, retries: int = None, delay_sec: float = 0.6):
@@ -427,9 +436,13 @@ def _get_price_kr_yf(ticker: str) -> dict:
 
 def get_price(ticker, token, market="KR"):
     if market == "US":
-        # 1차: KIS 해외 시세
+        # 1차: KIS 해외 시세 (최대 2회 재시도, 1s 간격 — VTS 500 일시오류 대응)
         try:
-            result = _get_price_us_kis(ticker, token)
+            result = _retry_kis(
+                f"US price [{ticker}]",
+                lambda: _get_price_us_kis(ticker, token),
+                retries=3, delay_sec=0.5,
+            )
             log.info(f"KIS US 현재가 성공 [{ticker}]")
             return result
         except Exception as e:
@@ -814,7 +827,7 @@ def _get_balance_us(token, force_refresh: bool = False) -> dict:
     except Exception:
         cached = _cache_get(_BALANCE_CACHE, cache_key)
         if cached is not None:
-            log.warning("KIS US 잔고 캐시 사용")
+            _log_cache_use_throttled("balance_us", "KIS US 잔고 캐시 사용")
             return cached
         raise
 
@@ -895,7 +908,7 @@ def get_balance(token, market="KR", force_refresh: bool = False):
     except Exception:
         cached = _cache_get(_BALANCE_CACHE, cache_key)
         if cached is not None:
-            log.warning("KIS KR 잔고 캐시 사용")
+            _log_cache_use_throttled("balance_kr", "KIS KR 잔고 캐시 사용")
             return cached
         raise
 
@@ -1294,8 +1307,16 @@ def _place_order_us(ticker, qty, price, side, token):
 
 def place_order(ticker, qty, price, side, token, market="KR"):
     if market == "US":
-        return _place_order_us(ticker, qty, price, side, token)
-    return _place_order_kr(ticker, qty, price, side, token)
+        return _retry_kis(
+            f"US order [{side} {ticker}]",
+            lambda: _place_order_us(ticker, qty, price, side, token),
+            retries=5, delay_sec=1.0,
+        )
+    return _retry_kis(
+        f"KR order [{side} {ticker}]",
+        lambda: _place_order_kr(ticker, qty, price, side, token),
+        retries=5, delay_sec=1.0,
+    )
 
 
 # ── 시장 스크리너 ──────────────────────────────────────────────────────────────
@@ -1423,25 +1444,95 @@ def _has_meaningful_candidate_volume(candidates: list) -> bool:
     return any(_safe_int(c.get("volume"), 0) > 0 for c in candidates)
 
 
+def _yf_screen_candidates() -> list:
+    """
+    Yahoo Finance 내부 스크리너 API로 US 후보 수집 (무제한, volume 포함)
+
+    스크린 카테고리:
+      - most_actives : 거래량 상위 (유동성 보장)
+      - day_gainers  : 당일 상승 상위
+      - day_losers   : 당일 하락 상위 (반등/공매도 기회)
+    """
+    import logging as _log
+    _logger = _log.getLogger("trading_system")
+
+    MIN_PRICE = float(os.getenv("SCREEN_MIN_PRICE",  "5.0"))
+    MIN_VOL   = int(os.getenv("SCREEN_MIN_VOLUME",   "500000"))
+    MAX_CHG   = float(os.getenv("SCREEN_MAX_CHG_PCT", "50.0"))
+    _BAD_SFXS = {"W", "U", "R"}
+
+    url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; trading-bot/1.0)"}
+
+    candidates = []
+    seen: set = set()
+    filtered_out = 0
+
+    for screen_id in ("most_actives", "day_gainers", "day_losers"):
+        try:
+            resp = requests.get(
+                url,
+                params={"formatted": "false", "scrIds": screen_id, "count": 50},
+                headers=headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            quotes = resp.json().get("finance", {}).get("result", [{}])[0].get("quotes", [])
+            for q in quotes:
+                ticker = str(q.get("symbol", "")).strip()
+                if not ticker or ticker in seen:
+                    continue
+                if not ticker.isalpha() or len(ticker) > 5:
+                    filtered_out += 1
+                    continue
+                if ticker[-1] in _BAD_SFXS:
+                    filtered_out += 1
+                    continue
+                seen.add(ticker)
+                try:
+                    price  = float(q.get("regularMarketPrice", 0))
+                    vol    = int(q.get("regularMarketVolume", 0))
+                    change = abs(float(q.get("regularMarketChangePercent", 0)))
+                    if price < MIN_PRICE or vol < MIN_VOL or change > MAX_CHG:
+                        filtered_out += 1
+                        continue
+                    candidates.append({
+                        "ticker":      ticker,
+                        "name":        q.get("shortName", ticker),
+                        "price":       price,
+                        "change_rate": float(q.get("regularMarketChangePercent", 0)),
+                        "volume":      vol,
+                        "vol_ratio":   1.0,
+                    })
+                except (ValueError, TypeError):
+                    continue
+        except Exception as e:
+            _logger.debug(f"[YF 스크리너] {screen_id} 실패: {e}")
+            continue
+
+    _logger.info(
+        f"[YF 스크리너] 통과={len(candidates)}종목 | 필터제거={filtered_out}종목 "
+        f"(기준: 가격≥${MIN_PRICE}, 거래량≥{MIN_VOL:,}, 등락≤{MAX_CHG}%)"
+    )
+    return candidates
+
+
 def _fmp_screen_candidates() -> list:
     """
-    FMP stable 엔드포인트로 US 스크리너 후보 수집 (250회/일 무료)
+    FMP stable 엔드포인트로 US 스크리너 후보 수집 (250회/일 무료, YF 실패 시 보조)
 
-    품질 필터 (페니스탁/마이크로캡/펌프종목 제거):
+    주의: FMP stable API는 volume 필드 미포함 → 거래량 필터 미적용
+    품질 필터:
       - 주가 ≥ $5  (penny stock 제거)
-      - 일거래량 ≥ 500,000주  (유동성 최소 기준)
       - |등락률| ≤ 50%  (펌프·덤프 이상 급등 제거)
-      - 티커 길이 1~5자, 알파벳만  (ODVWZ류 이상 티커 제거)
-      - 특수 티커 접미사 제거 (W=워런트, U=유닛, R=권리주)
+      - 티커 길이 1~5자, 알파벳만
     """
     if not FMP_KEY:
         raise RuntimeError("FMP_API_KEY 없음")
 
-    # 품질 필터 기준값 (환경변수로 조정 가능)
-    MIN_PRICE  = float(os.getenv("SCREEN_MIN_PRICE",  "5.0"))
-    MIN_VOL    = int(os.getenv("SCREEN_MIN_VOLUME",   "500000"))
-    MAX_CHG    = float(os.getenv("SCREEN_MAX_CHG_PCT", "50.0"))
-    _BAD_SFXS  = {"W", "U", "R"}  # 워런트/유닛/권리주
+    MIN_PRICE = float(os.getenv("SCREEN_MIN_PRICE",  "5.0"))
+    MAX_CHG   = float(os.getenv("SCREEN_MAX_CHG_PCT", "50.0"))
+    _BAD_SFXS = {"W", "U", "R"}
 
     base = "https://financialmodelingprep.com/stable"
     endpoints = ["biggest-gainers", "most-actives", "biggest-losers"]
@@ -1464,7 +1555,6 @@ def _fmp_screen_candidates() -> list:
                 ticker = str(item.get("symbol", "")).strip()
                 if not ticker or ticker in seen:
                     continue
-                # 알파벳 1~5자, 특수 접미사 제거
                 if not ticker.isalpha() or len(ticker) > 5:
                     filtered_out += 1
                     continue
@@ -1474,20 +1564,16 @@ def _fmp_screen_candidates() -> list:
                 seen.add(ticker)
                 try:
                     price  = float(item.get("price", 0))
-                    vol    = _extract_us_volume(item)
                     change = abs(float(item.get("changesPercentage", 0)))
-
-                    # 품질 필터 적용
-                    if price < MIN_PRICE or vol < MIN_VOL or change > MAX_CHG:
+                    if price < MIN_PRICE or change > MAX_CHG:
                         filtered_out += 1
                         continue
-
                     candidates.append({
                         "ticker":      ticker,
                         "name":        item.get("name", ticker),
                         "price":       price,
                         "change_rate": float(item.get("changesPercentage", 0)),
-                        "volume":      vol,
+                        "volume":      0,
                         "vol_ratio":   1.0,
                     })
                 except (ValueError, TypeError):
@@ -1498,40 +1584,68 @@ def _fmp_screen_candidates() -> list:
     import logging as _log
     _log.getLogger("trading_system").info(
         f"[FMP 스크리너] 통과={len(candidates)}종목 | 필터제거={filtered_out}종목 "
-        f"(기준: 가격≥${MIN_PRICE}, 거래량≥{MIN_VOL:,}, 등락≤{MAX_CHG}%)"
+        f"(기준: 가격≥${MIN_PRICE}, 등락≤{MAX_CHG}% / volume 미포함)"
     )
     return candidates
 
 
 def screen_market_us(top_n: int = 30) -> list:
     """
-    US 시장 스크리닝 — FMP biggest-gainers/most-actives/biggest-losers (우선)
-    - 당일 캐시 파일이 있으면 API 호출 없이 재사용
-    - FMP 실패 시 AV 레거시 폴백 → 하드코딩 유니버스 최후 폴백
+    US 시장 스크리닝
+    우선순위: Yahoo Finance 스크리너 → FMP → 하드코딩 폴백
+    - 당일 캐시 파일이 있으면 API 호출 없이 재사용 (yf/fmp 소스만)
     반환: [{ticker, name, price, change_rate, volume, vol_ratio}]
     """
     import logging as _log
     _logger = _log.getLogger("trading_system")
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # ── 당일 캐시 확인 ────────────────────────────────────────────────────────
+    # ── 당일 캐시 확인 (volume 있는 소스만, TTL=60분) ────────────────────────
+    import time as _time
+    _CACHE_TTL_SEC = int(os.getenv("US_SCREEN_CACHE_TTL_SEC", "3600"))  # 기본 60분
     if _US_SCREEN_CACHE_PATH.exists():
         try:
             cached = json.loads(_US_SCREEN_CACHE_PATH.read_text(encoding="utf-8"))
             if cached.get("date") == today and cached.get("candidates"):
-                candidates = cached["candidates"]
-                if cached.get("source") != "fmp" or _has_meaningful_candidate_volume(candidates):
-                    return candidates[:top_n]
-                _logger.warning("[US 스크리너] zero-volume FMP cache 무시 후 재조회")
+                cached_at = cached.get("cached_at", 0)
+                cache_age = _time.time() - cached_at
+                if cache_age > _CACHE_TTL_SEC:
+                    _logger.info(
+                        f"[US 스크리너 캐시] 만료 ({cache_age/60:.0f}분 경과 > TTL {_CACHE_TTL_SEC//60}분) → 재스크리닝"
+                    )
+                else:
+                    candidates = cached["candidates"]
+                    source = cached.get("source", "")
+                    if source in ("yf",) and _has_meaningful_candidate_volume(candidates):
+                        _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
+                        return candidates[:top_n]
+                    if source == "fmp" and candidates:
+                        _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
+                        return candidates[:top_n]
         except Exception:
             pass
 
-    # ── 1차: FMP ─────────────────────────────────────────────────────────────
+    # ── 1차: Yahoo Finance 스크리너 (무제한, volume 포함) ────────────────────
+    try:
+        candidates = _yf_screen_candidates()
+        if candidates:
+            _US_SCREEN_CACHE_PATH.write_text(
+                json.dumps({"date": today, "candidates": candidates,
+                            "source": "yf", "cached_at": _time.time()},
+                           ensure_ascii=False),
+                encoding="utf-8",
+            )
+            return candidates[:top_n]
+    except Exception as e:
+        _logger.warning(f"[YF 스크리너] 실패: {e}")
+
+    # ── 2차: FMP (volume 없음, price+change 필터만) ───────────────────────────
     try:
         candidates = _fmp_screen_candidates()
         if candidates:
             _US_SCREEN_CACHE_PATH.write_text(
-                json.dumps({"date": today, "candidates": candidates, "source": "fmp"},
+                json.dumps({"date": today, "candidates": candidates,
+                            "source": "fmp", "cached_at": _time.time()},
                            ensure_ascii=False),
                 encoding="utf-8",
             )
@@ -1539,51 +1653,8 @@ def screen_market_us(top_n: int = 30) -> list:
     except Exception as e:
         _logger.warning(f"[FMP 스크리너] 실패: {e}")
 
-    # ── 2차: Alpha Vantage (KEY_1 소진 시 KEY_2 자동 전환) ───────────────────
-    if AV_KEY or AV_KEY_2:
-        try:
-            data = _av_get({"function": "TOP_GAINERS_LOSERS"})
-            candidates = []
-            seen: set = set()
-            _MIN_P = float(os.getenv("SCREEN_MIN_PRICE",  "5.0"))
-            _MIN_V = int(os.getenv("SCREEN_MIN_VOLUME",   "500000"))
-            _MAX_C = float(os.getenv("SCREEN_MAX_CHG_PCT", "50.0"))
-            for section in ("most_actively_traded", "top_gainers", "top_losers"):
-                for item in data.get(section, []):
-                    ticker = item.get("ticker", "").strip()
-                    if not ticker or ticker in seen or not ticker.isalpha() or len(ticker) > 5:
-                        continue
-                    if ticker[-1] in {"W", "U", "R"}:
-                        continue
-                    seen.add(ticker)
-                    try:
-                        price  = float(item.get("price", 0))
-                        vol    = _extract_us_volume(item)
-                        change = abs(float(str(item.get("change_percentage", "0")).replace("%", "")))
-                        if price < _MIN_P or vol < _MIN_V or change > _MAX_C:
-                            continue
-                        candidates.append({
-                            "ticker": ticker, "name": ticker,
-                            "price": price,
-                            "change_rate": float(
-                                str(item.get("change_percentage", "0")).replace("%", "")
-                            ),
-                            "volume": vol,
-                            "vol_ratio": 1.0,
-                        })
-                    except (ValueError, TypeError):
-                        continue
-            if candidates:
-                _US_SCREEN_CACHE_PATH.write_text(
-                    json.dumps({"date": today, "candidates": candidates, "source": "av"},
-                               ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                return candidates[:top_n]
-        except Exception:
-            pass
-
     # ── 3차: 하드코딩 폴백 유니버스 ──────────────────────────────────────────
+    _logger.warning("[US 스크리너] 모든 소스 실패 → 폴백 유니버스 사용")
     return [
         {"ticker": t, "name": t, "price": 0.0, "change_rate": 0.0,
          "volume": 0, "vol_ratio": 1.0}

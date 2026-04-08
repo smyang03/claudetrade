@@ -239,3 +239,24 @@
 
 주의:
 - 수동으로 OFF를 눌러도, 봇을 다시 시작하면 기본값은 다시 ON이다.
+## [2026-04-01] 후보군 확장 및 히스토리 보강 정리
+
+### trading_bot.py
+- **히스토리 보강 큐 추가**: `_hist_fill_queue`, `_hist_fill_queued`, `_hist_fill_inflight`, `_hist_fill_last_ts`
+- **백그라운드 히스토리 수집**: `_history_fill_worker()`가 데이터 부족 종목의 OHLCV를 365일치 보강
+- **동기 보강 추가**: `session_open` 직전 `_prefill_history_sync()`로 부족 종목 일부를 즉시 보강 시도
+- **히스토리 필터 강화**: `_filter_candidates_by_history()`는 데이터 부족 종목을 로그로 남기고 보강 큐에 등록
+- **부분 재선택 추가**: `_partial_reselect()`가 120분마다 하위 2~3개 종목을 교체
+- **무신호 추적**: `_ticker_no_signal_cycles`로 연속 무신호 사이클을 누적
+- **재진입 쿨다운**: `_get_cooldown_excluded()`로 제외 종목의 단기 재편입을 제한
+- **consensus 접근 방어 보강**: `run_tuning()` 내 일부 직접 접근을 `.get()`/`setdefault()` 패턴으로 정리
+
+### minority_report/analysts.py
+- **최종 선택 수 확대**: Claude 최종 선택을 `최소 5개, 최대 8개`로 확장
+- **상한 반영**: 결과 슬라이스를 `[:8]`로 변경
+- **보충 로직 추가**: 5개 미만이면 거래량 상위 후보로 보충
+- **주석 정리**: `select_tickers()` 설명을 실제 동작(`최소 5개, 최대 8개`)과 맞춤
+
+### 비고
+- `_filter_candidates_by_history()`는 현재 `filtered`만 반환하고, 탈락 종목은 로그/큐 등록에 사용한다.
+- 즉시 선택 전에 모든 부족 종목을 다 채우는 구조는 아니고, 일부 동기 보강 + 나머지 백그라운드 보강 구조다.

@@ -49,10 +49,15 @@ def fetch_investor_flow_kr(ticker: str, target_date: str, token: str) -> dict:
         output = resp.json().get("output",[{}])
         if not output: return {}
         row = output[0]
+        def _toint(v, default=0):
+            try:
+                return int(v) if v != "" else default
+            except (TypeError, ValueError):
+                return default
         return {
-            "foreign":      int(row.get("frgn_ntby_qty",0)),
-            "institution":  int(row.get("orgn_ntby_qty",0)),
-            "individual":   int(row.get("indv_ntby_qty",0)),
+            "foreign":      _toint(row.get("frgn_ntby_qty")),
+            "institution":  _toint(row.get("orgn_ntby_qty")),
+            "individual":   _toint(row.get("indv_ntby_qty")),
             "foreign_5d":   0,
         }
     except Exception as e:

@@ -13,6 +13,7 @@ import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from logger import get_trading_logger
+from telegram_reporter import _display_ticker
 
 log = get_trading_logger()
 KST = ZoneInfo("Asia/Seoul")
@@ -39,6 +40,9 @@ HELP_TEXT = """━━━━━━━━━━━━━━━━━━━━━�
   /trail on|off        — 트레일링 스탑 ON/OFF
   /trail_pct [숫자]    — 트레일링 폭 변경 %  예) /trail_pct 2
   /trail_analyst on|off — TP 시 분석가 합의 ON/OFF
+  /entry               — entry_priority cutoff 상태 조회
+  /entry on|off        — cutoff 활성/비활성 토글
+  /entry cutoff [값]   — cutoff 임계값 변경  예) /entry cutoff 0.3
 
 <b>액션</b>
   /claude        — Claude 긴급 재판단 트리거
@@ -133,9 +137,22 @@ def _handle(text: str, bot) -> str:
             return f"현재 분석가 합의: {st}\n변경: /trail_analyst on|off"
         return _cmd_trail_analyst(bot, args[0])
 
+    # ── entry_priority cutoff ─────────────────────────────────────────────────
+    if cmd == "/entry":
+        if not args:
+            return _cmd_entry_status(bot)
+        if args[0].lower() in ("on", "off"):
+            return _cmd_entry_toggle(bot, args[0].lower())
+        if args[0].lower() == "cutoff" and len(args) > 1:
+            return _cmd_entry_cutoff(bot, args[1])
+        return "사용법: /entry | /entry on|off | /entry cutoff 0.3"
+
     # ── Claude 긴급 재판단 ────────────────────────────────────────────────────
     if cmd == "/claude":
         return _cmd_reinvoke(bot)
+
+    if cmd == "/rescreen":
+        return _cmd_rescreen(bot)
 
     # ── 특정 종목 청산 ────────────────────────────────────────────────────────
     if cmd == "/close":
@@ -181,7 +198,7 @@ def _legacy_cmd_status(bot) -> str:
             cur   = p.get("current_price", entry)
             pnl   = (cur / entry - 1) * 100 if entry else 0
             icon  = "🟢" if pnl > 0 else "🔴"
-            lines.append(f"  {icon} {p['ticker']} {p['qty']}주 | {cur:,}원 | {pnl:+.2f}%")
+            lines.append(f"  {icon} {_display_symbol(p['ticker'])} {p['qty']}주 | {cur:,}원 | {pnl:+.2f}%")
     else:
         lines.append("\n📌 보유 포지션: 없음")
 
@@ -197,16 +214,23 @@ def _fmt_price_for_market(value: float, market: str) -> str:
     return f"{int(round(float(value))):,}원"
 
 
+def _display_symbol(ticker: str, market: str = "", name: str = "") -> str:
+    raw_ticker = str(ticker or "").strip().upper()
+    inferred_market = market or ("US" if raw_ticker.replace(".", "").isalpha() else "KR")
+    return _display_ticker(raw_ticker, inferred_market, name or "")
+
+
 def _status_positions(bot) -> list[str]:
     lines = []
     for p in bot.risk.positions:
         market = "US" if str(p.get("ticker", "")).replace(".", "").isalpha() else "KR"
+        ticker_disp = _display_symbol(p.get("ticker", "-"), market, p.get("name", "") or "")
         entry = float(p.get("display_avg_price", p.get("avg_price", p.get("entry", 0))) or 0)
         current = float(p.get("display_current_price", p.get("current_price", entry)) or 0)
         pnl = (current / entry - 1) * 100 if entry > 0 and current > 0 else 0.0
         icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
         lines.append(
-            f"{icon} {p.get('ticker','-')} {int(p.get('qty', 0) or 0)}주"
+            f"{icon} {ticker_disp} {int(p.get('qty', 0) or 0)}주"
             f" | 매수가 {_fmt_price_for_market(entry, market)}"
             f" | 현재가 {_fmt_price_for_market(current, market)}"
             f" | {pnl:+.2f}%"
@@ -358,6 +382,8 @@ def _cmd_positions(bot) -> str:
         return "📌 보유 포지션 없음"
     lines = ["📌 <b>보유 포지션</b>", "━━━━━━━━━━━━━━━━"]
     for p in pos:
+        market = "US" if str(p.get("ticker", "")).replace(".", "").isalpha() else "KR"
+        ticker_disp = _display_symbol(p.get("ticker", "-"), market, p.get("name", "") or "")
         entry = p.get("entry", 0)
         cur   = p.get("current_price", entry)
         pnl   = (cur / entry - 1) * 100 if entry else 0
@@ -365,7 +391,7 @@ def _cmd_positions(bot) -> str:
         sl    = p.get("sl", 0)
         icon  = "🟢" if pnl > 0 else "🔴"
         lines.append(
-            f"{icon} <b>{p['ticker']}</b>  {p['qty']}주\n"
+            f"{icon} <b>{ticker_disp}</b>  {p['qty']}주\n"
             f"  진입 {entry:,}  현재 {cur:,}  PnL {pnl:+.2f}%\n"
             f"  TP {tp:,}  SL {sl:,}  전략 {p.get('strategy','-')}"
         )
@@ -451,11 +477,27 @@ def _cmd_reinvoke(bot) -> str:
         return f"❌ 재판단 실패: {e}"
 
 
+def _cmd_rescreen(bot) -> str:
+    if not bot.session_active:
+        return "세션이 비활성 상태입니다."
+    market = bot.current_market or (bot.today_judgment.get("market") if bot.today_judgment else None)
+    if not market:
+        return "시장 정보를 알 수 없습니다."
+    _send(f"🔄 {market} 종목 재추천 요청... (10~30초 소요)")
+    try:
+        selected = bot.manual_rescreen(market)
+        selected_disp = ", ".join(_display_symbol(t, market) for t in selected)
+        return f"✅ <b>[{market} 종목 재추천 완료]</b>\n{selected_disp}"
+    except Exception as e:
+        return f"❌ 종목 재추천 실패: {e}"
+
+
 def _cmd_close(bot, ticker: str) -> str:
     pos = next((p for p in bot.risk.positions if p["ticker"] == ticker), None)
     if not pos:
-        return f"❌ {ticker} 포지션 없음"
+        return f"❌ {_display_symbol(ticker)} 포지션 없음"
     market = bot._ticker_market(ticker)
+    ticker_disp = _display_symbol(ticker, market, pos.get("name", "") or "")
     try:
         from kis_api import place_order, get_price
         price_info = get_price(ticker, bot.token, market=market)
@@ -465,14 +507,14 @@ def _cmd_close(bot, ticker: str) -> str:
         if result.get("success"):
             ex = bot.risk.close_position(ticker, close_price, "manual_close")
             if not ex:
-                return f"❌ 내부 포지션 정리 실패: {ticker}"
+                return f"❌ 내부 포지션 정리 실패: {ticker_disp}"
             bot._save_positions()
             bot._write_live_status(market)
             bot._maybe_push_dashboard(force=True)
             pnl = ex["pnl"]
             icon = "🟢" if pnl > 0 else "🔴"
             return (
-                f"{icon} <b>[수동 청산]</b> {ticker}\n"
+                f"{icon} <b>[수동 청산]</b> {ticker_disp}\n"
                 f"  {pos['qty']}주 @{raw_price:,}{'원' if market == 'KR' else '$'}\n"
                 f"  P&L: {pnl:+,}원"
             )
@@ -534,6 +576,37 @@ def _cmd_trail_analyst(bot, val: str) -> str:
     return "❌ on 또는 off 를 입력하세요."
 
 
+def _cmd_entry_status(bot) -> str:
+    enabled = getattr(bot, "entry_priority_cutoff_enabled", False)
+    cutoff  = getattr(bot, "entry_priority_cutoff", 0.20)
+    st = "ON" if enabled else "OFF"
+    return (
+        f"📊 <b>entry_priority</b>\n"
+        f"  신호 정렬: 항상 활성 (score 높은 순)\n"
+        f"  cutoff: <b>{st}</b>  임계값: {cutoff:.2f}\n"
+        f"변경: /entry on|off | /entry cutoff 0.3"
+    )
+
+
+def _cmd_entry_toggle(bot, val: str) -> str:
+    bot.entry_priority_cutoff_enabled = (val == "on")
+    st = "ON" if bot.entry_priority_cutoff_enabled else "OFF"
+    cutoff = getattr(bot, "entry_priority_cutoff", 0.20)
+    return f"✅ entry_priority cutoff: <b>{st}</b>  임계값: {cutoff:.2f}"
+
+
+def _cmd_entry_cutoff(bot, val: str) -> str:
+    try:
+        v = float(val)
+        if not 0.0 <= v <= 2.0:
+            return "❌ 임계값은 0~2 사이로 입력하세요."
+        bot.entry_priority_cutoff = v
+        st = "ON" if getattr(bot, "entry_priority_cutoff_enabled", False) else "OFF"
+        return f"✅ cutoff 임계값 → <b>{v:.2f}</b>  (cutoff {st})"
+    except ValueError:
+        return "❌ 숫자를 입력하세요. 예) /entry cutoff 0.3"
+
+
 def _cmd_trades(bot, args: list) -> str:
     """
     전체 매매 내역 날짜 순 나열.
@@ -561,7 +634,7 @@ def _cmd_trades(bot, args: list) -> str:
     if ticker_filter:
         all_trades = [t for t in all_trades if t.get("ticker", "").upper() == ticker_filter]
         if not all_trades:
-            return f"📒 {ticker_filter} 매매 내역 없음"
+            return f"📒 {_display_symbol(ticker_filter)} 매매 내역 없음"
 
     # 최근 limit건 (뒤에서 자름)
     all_trades = all_trades[-limit:]
@@ -575,7 +648,7 @@ def _cmd_trades(bot, args: list) -> str:
 
     title = f"📒 <b>매매 내역</b>"
     if ticker_filter:
-        title += f" [{ticker_filter}]"
+        title += f" [{_display_symbol(ticker_filter)}]"
     title += f" (최근 {len(all_trades)}건)"
 
     lines = [title, "━━━━━━━━━━━━━━━━"]
@@ -585,29 +658,29 @@ def _cmd_trades(bot, args: list) -> str:
         for t in grouped[day]:
             side   = t.get("side", "-")
             ticker = t.get("ticker", "-")
+            mkt    = "US" if str(ticker).isalpha() and len(str(ticker)) <= 5 else "KR"
+            ticker_disp = _display_symbol(ticker, mkt, t.get("name", "") or "")
             qty    = t.get("qty", 0)
             price  = t.get("price", 0)
             strat  = t.get("strategy", "-")
 
             if side == "buy":
-                mkt = "US" if str(ticker).isalpha() and len(str(ticker)) <= 5 else "KR"
                 fee_r = 0.00015
                 krw_price = price if mkt == "KR" else price * getattr(bot, "usd_krw_rate", 1350)
                 fee_est = int(krw_price * qty * fee_r)
                 unit = "원" if mkt == "KR" else "$"
                 lines.append(
-                    f"  🟢 매수  {ticker}  {qty}주 @{price:,}{unit}"
+                    f"  🟢 매수  {ticker_disp}  {qty}주 @{price:,}{unit}"
                     f"  수수료≈{fee_est:,}원  [{strat}]"
                 )
             else:
                 pnl    = t.get("pnl", 0)
                 pct    = t.get("pnl_pct", 0.0)
                 reason = t.get("reason", "-")
-                mkt    = "US" if str(ticker).isalpha() and len(str(ticker)) <= 5 else "KR"
                 unit   = "원" if mkt == "KR" else "$"
                 ic     = "🟢" if pnl > 0 else "🔴"
                 lines.append(
-                    f"  {ic} 매도  {ticker}  {qty}주 @{price:,}{unit}"
+                    f"  {ic} 매도  {ticker_disp}  {qty}주 @{price:,}{unit}"
                     f"  순손익 {pnl:+,.0f}원 ({pct:+.2f}%)  [{reason}]"
                 )
 
@@ -725,7 +798,7 @@ def _legacy_cmd_status_runtime(bot) -> str:
             cur = p.get("current_price", entry)
             pnl = (cur / entry - 1) * 100 if entry else 0
             icon = "📈" if pnl > 0 else "📉"
-            lines.append(f"  {icon} {p['ticker']} {p['qty']}주 | {cur:,.0f}원 | {pnl:+.2f}%")
+            lines.append(f"  {icon} {_display_symbol(p['ticker'])} {p['qty']}주 | {cur:,.0f}원 | {pnl:+.2f}%")
     else:
         lines.append("\n💦 보유 포지션 없음")
 

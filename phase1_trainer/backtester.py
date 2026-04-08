@@ -34,7 +34,12 @@ MIN_ROWS = 60
 
 
 def _load_price(market: str, ticker: str) -> pd.DataFrame:
-    """가격 파일 로드 + calc_all() 지표 계산 (strategy 신호 함수와 동일 컬럼)"""
+    """가격 파일 로드 + calc_all() 지표 계산 (strategy 신호 함수와 동일 컬럼)
+
+    중요: calc_all()은 전체 raw 데이터 기준으로 먼저 실행한다.
+    이후 backtest_ticker()에서 날짜 슬라이스를 수행하므로
+    최근 3개월처럼 짧은 구간을 요청해도 ma60 등 장기 지표가 정상 계산된다.
+    """
     raw_path = PRICE_DIR / market.lower() / f"{market.lower()}_{ticker}.csv"
     if not raw_path.exists():
         return pd.DataFrame()
@@ -42,6 +47,7 @@ def _load_price(market: str, ticker: str) -> pd.DataFrame:
         df = pd.read_csv(raw_path, parse_dates=["date"])
         df.columns = [c.lower() for c in df.columns]
         df = df.sort_values("date").reset_index(drop=True)
+        # calc_all은 날짜 슬라이스 전에 전체 데이터로 실행 (지표 warm-up 확보)
         df = calc_all(df)
         return df
     except Exception as e:
@@ -82,15 +88,19 @@ def backtest_ticker(
     df: pd.DataFrame,
     ticker: str,
     strategy: str,
+    market: str = "US",
     mode: str = "MODERATE_BULL",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     tp_pct: float = 0.06,
     sl_pct: float = 0.03,
     max_hold: int = 5,
+    params_override: Optional[dict] = None,
 ) -> dict:
     """
     단일 종목/전략 백테스트.
+    params_override: 그리드 서치 등에서 파라미터를 직접 주입할 때 사용.
+                     지정 시 params_fn 호출을 건너뛰고 해당 파라미터로 실행.
     Returns: {trades, stats} 딕셔너리.
     데이터 부족 시 빈 결과 반환 (exception 아님).
     """
@@ -98,9 +108,20 @@ def backtest_ticker(
         return {"ticker": ticker, "strategy": strategy, "skip_reason": "strategy_unavailable", "trades": [], "stats": {}}
 
     sig_fn, params_fn = _STRATEGIES[strategy]
-    params = params_fn(mode)
+    if params_override is not None:
+        params = params_override
+    else:
+        try:
+            params = params_fn(mode, market=market)
+        except TypeError:
+            params = params_fn(mode)
 
-    # 날짜 필터
+    # params dict 값이 있으면 함수 인자보다 우선 적용
+    tp_pct   = float(params.get("tp_pct",   tp_pct))
+    sl_pct   = float(params.get("sl_pct",   sl_pct))
+    max_hold = int(params.get("max_hold", max_hold))
+
+    # 날짜 슬라이스 — calc_all() 이후에 수행하므로 지표는 정상 계산된 상태
     work = df.copy()
     if start_date:
         work = work[work["date"] >= pd.Timestamp(start_date)]
@@ -108,12 +129,14 @@ def backtest_ticker(
         work = work[work["date"] <= pd.Timestamp(end_date)]
     work = work.reset_index(drop=True)
 
-    # 최소 데이터 체크 — graceful skip
-    if len(work) < MIN_ROWS:
-        log.debug(f"  [{ticker}/{strategy}] 데이터 부족 {len(work)}행 < {MIN_ROWS} → 스킵")
+    # 최소 데이터 체크: 슬라이스 후 거래 구간에 최소 20행 필요
+    # (calc_all warm-up은 슬라이스 전 전체 데이터에서 이미 완료됨)
+    MIN_TRADE_ROWS = 20
+    if len(work) < MIN_TRADE_ROWS:
+        log.debug(f"  [{ticker}/{strategy}] 거래 구간 부족 {len(work)}행 < {MIN_TRADE_ROWS} → 스킵")
         return {
             "ticker": ticker, "strategy": strategy,
-            "skip_reason": f"insufficient_data ({len(work)} rows < {MIN_ROWS})",
+            "skip_reason": f"insufficient_trade_rows ({len(work)} rows < {MIN_TRADE_ROWS})",
             "trades": [], "stats": {},
         }
 
@@ -282,7 +305,7 @@ def run_backtest(
         results["by_ticker"][ticker] = {}
         for strat in strats:
             r = backtest_ticker(
-                df, ticker, strat, mode=mode,
+                df, ticker, strat, market=market, mode=mode,
                 start_date=start_date, end_date=end_date,
             )
             results["by_ticker"][ticker][strat] = r

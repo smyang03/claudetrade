@@ -2262,3 +2262,51 @@ for cand in candidates:
 - kr_news_collector TARGET_CORPS: 068270 셀트리온 ✓
 - trading_bot _DEFAULT_KR_TICKERS: 068270 ✓
 - 000660 핵심 3파일에서 완전 제거 ✓
+
+---
+
+## [2026-04-07] 아키텍처 방향 확정 — Claude 종목선택 + ML 진입신호
+
+### 핵심 인사이트
+
+> "Claude가 선택한 종목이 잘 맞는 게 관건이고, 그 튜닝 데이터를 장이 만들고, 진입 신호는 ML이 해주는 게 맞다."
+
+### 역할 분리 (확정)
+
+| 레이어 | 담당 | 상태 |
+|---|---|---|
+| 시장 판단 + 종목 선택 | Claude (analysts → select_tickers) | ✅ 가동 중 |
+| 진입 신호 | 규칙 기반 (gap_pullback, MR, momentum, VB) | ✅ 가동 중 |
+| 진입 우선순위 점수 | entry_priority_score | 수집 중 (Phase 1) |
+| 진입 신호 ML화 | decisions.db 학습 → ML 필터 | 미구현 (Phase 2+) |
+
+### 핵심 병목
+
+Claude의 종목 선택 정확도가 수익의 1차 결정 변수.
+Claude가 종목을 잘 고르면 단순 규칙 신호도 수익이 나고,
+종목을 못 고르면 어떤 신호 개선도 한계가 있다.
+
+→ **brain.json analyst 적중률 피드백 루프가 현재 가장 중요한 튜닝 메커니즘.**
+
+### 데이터 수집 목표
+
+- `brain.json`: 어떤 시장 상황에서 Claude 판단이 맞았는지 누적
+- `decisions.db`: 어떤 종목 특성 × 신호 강도에서 수익이 났는지 누적
+- `entry_priority_score` ↔ 실제 수익 상관관계 확인 → ML 진입 필터 적용 기준
+
+### 다음 단계 로드맵
+
+1. **지금**: 데이터 쌓기 (brain.json + decisions.db 누적)
+2. **Phase 2 트리거**: entry_priority_score와 실제 수익 상관관계 확인 후
+   - cutoff 적용 (`/entry on`)
+   - 동시 신호 정렬 (이미 구현됨 — 항상 활성)
+3. **Phase 3 (장기)**: decisions.db 기반 ML 모델이 진입 필터 담당
+
+### [2026-04-07] entry_priority 관련 구현 완료
+
+- `ENTRY_PRIORITY_CUTOFF_ENABLED` env (기본 `false`) — cutoff 활성화 플래그
+- `ENTRY_PRIORITY_CUTOFF` env (기본 `0.20`) — cutoff 임계값
+- 텔레그램 `/entry` — 상태 조회 / `/entry on|off` — 실시간 토글 / `/entry cutoff 0.3` — 임계값 변경
+- 신호 정렬 — 사이클 내 BUY_SIGNAL을 score 높은 순 실행 (항상 활성)
+- cutoff는 데이터 충분히 쌓인 후 `/entry on`으로 활성화 예정
+

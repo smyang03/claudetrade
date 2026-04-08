@@ -388,23 +388,43 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
 
 def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list) -> list:
     """
-    오늘 집중 모니터링할 종목을 Claude가 선택 (3~5개)
+    오늘 집중 모니터링할 종목을 Claude가 선택 (최소 8개, 최대 10개)
     candidates: screen_market_kr/us 결과
     """
     if not candidates:
         log.warning("[종목선택] 후보 없음 → 기본값 사용")
-        defaults = {"KR": ["005930", "000660", "035420"], "US": ["NVDA", "TSLA", "AAPL"]}
-        return defaults.get(market, [])
+        defaults = {
+            "KR": ["005930", "000660", "035420", "005380", "051910", "068270", "207940", "012450"],
+            "US": ["NVDA", "TSLA", "AAPL", "GOOGL", "NFLX", "AMD", "INTC", "PLTR"],
+        }
+        return defaults.get(market, []), {}
+
+    # KR 장전(08:30~09:05 KST) vol_ratio 마스킹 — 개장 전 거래량회전율은 신뢰 불가
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    _now_kr = _dt.now(_ZI("Asia/Seoul"))
+    _kr_premarket = (
+        market == "KR"
+        and (
+            (_now_kr.hour == 8 and _now_kr.minute >= 30)
+            or (_now_kr.hour == 9 and _now_kr.minute <= 5)
+        )
+    )
+    if _kr_premarket:
+        log.debug("[종목선택] KR 장전 — vol_ratio Claude 입력 마스킹 적용")
 
     cand_lines = []
     for c in candidates[:40]:
         rate_str = f"{float(c.get('change_rate', 0.0)):+.2f}%"
         vr = float(c.get("vol_ratio", 0.0))
-        vol_str  = f"거래량{vr:.1f}배" if vr > 0 else ""
+        if _kr_premarket:
+            vol_str = ""   # 장전 KR: vol_ratio 의미없음 → Claude 입력에서 제거
+        else:
+            vol_str = f"거래량{vr:.1f}배" if vr > 0 else ""
         cand_lines.append(f"  {c.get('ticker')} {c.get('name','')} {rate_str} {vol_str}".strip())
     cand_text = "\n".join(cand_lines)
 
-    prompt = f"""오늘 {market} 세션에서 집중 모니터링할 종목 3~5개를 선택하세요.
+    prompt = f"""오늘 {market} 세션에서 집중 모니터링할 종목을 최소 8개, 최대 10개 선택하세요.
 합의 모드: {consensus_mode}
 후보 종목:
 {cand_text}
@@ -414,21 +434,41 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 
 규칙:
 - 후보 종목 중에서만 선택.
+- 최소 8개 이상 선택할 것. 후보가 충분하면 10개까지 선택 가능.
 - reasons는 반드시 한국어로 작성 (30자 이내).
 - JSON만 반환.
 
 {{"tickers":["code1","code2","code3"],"reasons":{{"code1":"선택 이유 한국어"}}}}"""
 
     valid    = {c["ticker"] for c in candidates if c.get("ticker")}
-    fallback = [c["ticker"] for c in candidates[:3] if c.get("ticker")]
+    fallback = [c["ticker"] for c in candidates[:8] if c.get("ticker")]
 
     # US DEFENSIVE/HALT 모드 시 인버스 ETF만 남지 않도록 안정 종목 보호 목록
     US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
     US_STABLE_ANCHORS = ["T", "VZ", "XLU", "KO", "JNJ", "PG", "O", "VYM", "SCHD"]
 
+    import time as _time
+    last_err = None
+    resp = None
+    for _attempt in range(3):
+        try:
+            resp = client.messages.create(model=MODEL, max_tokens=512,
+                                          messages=[{"role": "user", "content": prompt}])
+            last_err = None
+            break
+        except Exception as _e:
+            last_err = _e
+            _emsg = str(_e)
+            if ("529" in _emsg or "overloaded" in _emsg.lower()) and _attempt < 2:
+                _wait = 2 ** (_attempt + 1)   # 2s, 4s
+                log.warning(f"[ticker-selection] Claude 과부하(529) — {_wait}s 후 재시도 ({_attempt+1}/3)")
+                _time.sleep(_wait)
+            else:
+                break
+
     try:
-        resp = client.messages.create(model=MODEL, max_tokens=512,
-                                      messages=[{"role": "user", "content": prompt}])
+        if last_err is not None:
+            raise last_err
         raw = resp.content[0].text.strip()
         result  = _extract_json(raw)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers")
@@ -438,9 +478,32 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
         )
-        tickers = [t for t in result.get("tickers", []) if t in valid][:5]
+        tickers = [t for t in result.get("tickers", []) if t in valid][:10]
         if not tickers:
             raise ValueError("no valid tickers")
+
+        reasons = result.get("reasons", {})
+
+        # 8개 미만이면 상위 후보로 보충
+        if len(tickers) < 8:
+            if _kr_premarket:
+                top_fill = sorted(
+                    candidates,
+                    key=lambda c: (
+                        abs(float(c.get("change_rate", 0) or 0)),
+                        float(c.get("price", 0) or 0),
+                    ),
+                    reverse=True,
+                )
+            else:
+                top_fill = sorted(candidates, key=lambda c: float(c.get("vol_ratio", 0) or 0), reverse=True)
+            for _c in top_fill:
+                _t = _c.get("ticker")
+                if _t and _t in valid and _t not in tickers:
+                    tickers.append(_t)
+                    reasons[_t] = "장전후보 보충" if _kr_premarket else "거래량 상위 보충"
+                if len(tickers) >= 8:
+                    break
 
         # US DEFENSIVE/HALT 모드: 인버스 ETF만 선택된 경우 안정 종목 보완
         if market == "US" and consensus_mode in ("DEFENSIVE", "HALT"):
@@ -449,11 +512,9 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                 # 후보에서 안정 종목 찾기
                 stable_in_candidates = [t for t in US_STABLE_ANCHORS if t in valid]
                 if stable_in_candidates:
-                    # 인버스 1개 유지, 나머지를 안정 종목으로 교체
-                    tickers = tickers[:1] + stable_in_candidates[:4]
+                    # 인버스 1개 유지, 나머지를 안정 종목으로 교체 (최소 8개 맞춤)
+                    tickers = tickers[:1] + stable_in_candidates[:7]
                     log.info(f"[ticker-selection] DEFENSIVE/HALT — 안정 종목 보완: {tickers}")
-
-        reasons = result.get("reasons", {})
         log.info(f"[ticker-selection] {market} -> {tickers}")
         analysis_log.info(
             f"[selection] {market} {tickers}",

@@ -25,6 +25,15 @@ class UniverseConfig:
     min_volume: float = 1.0
 
 
+# 시장별 Core 종목 — Dynamic Universe에서 항상 보장
+US_CORE_TICKERS: list[str] = ["NVDA", "TSLA", "AAPL", "GOOGL", "NFLX"]
+KR_CORE_TICKERS: list[str] = ["005930", "000660", "035420", "005380", "051910"]
+
+
+def get_core_tickers(market: str) -> list[str]:
+    return US_CORE_TICKERS if market.upper() == "US" else KR_CORE_TICKERS
+
+
 def _market_dir(market: str) -> Path:
     p = UNIVERSE_DIR / market.upper()
     p.mkdir(parents=True, exist_ok=True)
@@ -53,13 +62,14 @@ def _safe_float(v, default: float = 0.0) -> float:
         return default
 
 
-def _candidate_score(c: dict) -> float:
+def _candidate_score(c: dict, vol_weight: float = 4.0) -> float:
     # Liquidity + abnormal participation (vol_ratio) weighted score.
+    # vol_weight: KR 장중=4.0 / KR 장전=0.5 / US=4.0 (vol_ratio=1.0 고정이라 사실상 무영향)
     volume = max(0.0, _safe_float(c.get("volume", 0.0)))
     vol_ratio = max(0.0, _safe_float(c.get("vol_ratio", 0.0)))
     change_rate = abs(_safe_float(c.get("change_rate", 0.0)))
     liquidity = math.log1p(volume)
-    return (liquidity * 0.6) + (vol_ratio * 30.0) + (change_rate * 2.0)
+    return (liquidity * 0.6) + (vol_ratio * vol_weight) + (change_rate * 2.0)
 
 
 def build_universe_from_candidates(
@@ -68,8 +78,28 @@ def build_universe_from_candidates(
     candidates: list[dict],
     config: UniverseConfig | None = None,
     source: str = "runtime_screen",
+    core_tickers: list[str] | None = None,
 ) -> dict:
+    """
+    candidates 점수 정렬 후 top_n 선택.
+    core_tickers가 지정되면 항상 앞에 보장하고, 나머지 슬롯을 Dynamic으로 채운다.
+    """
     cfg = config or UniverseConfig()
+    core = [t.upper() for t in (core_tickers or [])]
+
+    # KR 장전(08:30~09:05 KST) vol_ratio 가중치 거의 제거 — KIS vol_tnrt가 전일 기준이라 신뢰 불가
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    _now_kr = _dt.now(_ZI("Asia/Seoul"))
+    _kr_premarket = (
+        market.upper() == "KR"
+        and (
+            (_now_kr.hour == 8 and _now_kr.minute >= 30)
+            or (_now_kr.hour == 9 and _now_kr.minute <= 5)
+        )
+    )
+    vol_weight = 0.5 if _kr_premarket else 4.0
+
     cleaned = []
     for c in candidates:
         ticker = str(c.get("ticker", "")).strip().upper()
@@ -87,11 +117,26 @@ def build_universe_from_candidates(
             "volume": volume,
             "vol_ratio": _safe_float(c.get("vol_ratio", 0.0)),
         }
-        item["score"] = _candidate_score(item)
+        item["score"] = _candidate_score(item, vol_weight=vol_weight)
         cleaned.append(item)
 
     cleaned.sort(key=lambda x: x.get("score", 0.0), reverse=True)
-    selected = cleaned[: max(1, cfg.top_n)]
+
+    # ── Core 우선 배치 ────────────────────────────────────────────────────────
+    # Core 종목을 candidates 앞에 고정, 나머지 Dynamic 슬롯으로 채움
+    core_items = [c for c in cleaned if c["ticker"] in core]
+    core_found = {c["ticker"] for c in core_items}
+    # candidates에 없는 Core는 placeholder로 추가 (price/volume=0 허용)
+    for t in core:
+        if t not in core_found:
+            core_items.append({"ticker": t, "name": t, "price": 0.0,
+                                "change_rate": 0.0, "volume": 0.0,
+                                "vol_ratio": 1.0, "score": 0.0})
+
+    dynamic_slots = max(0, cfg.top_n - len(core_items))
+    dynamic_items = [c for c in cleaned if c["ticker"] not in core][:dynamic_slots]
+    selected = core_items + dynamic_items
+
     snapshot = {
         "date": target_date,
         "market": market.upper(),
@@ -101,6 +146,7 @@ def build_universe_from_candidates(
             "min_price": cfg.min_price,
             "min_volume": cfg.min_volume,
         },
+        "core_tickers": core,
         "tickers": [c["ticker"] for c in selected],
         "candidates": selected,
         "count": len(selected),

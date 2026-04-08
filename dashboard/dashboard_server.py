@@ -1,23 +1,25 @@
-"""
+﻿"""
 dashboard_server.py
-Flask 기반 트레이딩 대시보드 서버 (4-page edition)
+Flask 湲곕컲 ?몃젅?대뵫 ??쒕낫???쒕쾭 (4-page edition)
 
-페이지:
-  /            — 오늘 현황
-  /history     — 기간별 성과
-  /trades      — 매매 원장
-  /analytics   — 분석
+?섏씠吏:
+  /            ???ㅻ뒛 ?꾪솴
+  /history     ??湲곌컙蹂??깃낵
+  /trades      ??留ㅻℓ ?먯옣
+  /analytics   ??遺꾩꽍
 
-실행: python dashboard_server.py
-접속: http://localhost:5000
+?ㅽ뻾: python dashboard_server.py
+?묒냽: http://localhost:5000
 """
 
 from flask import Flask, jsonify, render_template_string, request
 from pathlib import Path
 from datetime import datetime, date, timedelta, time as dt_time
-import json, sys, os, re, subprocess, threading, atexit
+import json, sys, os, re, subprocess, threading, atexit, time as _time
+from collections import Counter
+from typing import Optional
 
-# .env 로드 (trading_bot과 동일한 환경변수 사용)
+# .env 濡쒕뱶 (trading_bot怨??숈씪???섍꼍蹂???ъ슜)
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parent.parent / ".env")
@@ -36,7 +38,31 @@ KST = ZoneInfo("Asia/Seoul")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from runtime_paths import get_runtime_path
 from credit_tracker import summary as credit_summary
-from kis_api import get_access_token, get_balance, get_usd_krw
+from kis_api import (
+    get_access_token,
+    get_balance,
+    get_usd_krw,
+    inquire_daily_ccld_kr,
+    inquire_ccnl_us,
+)
+try:
+    from phase1_trainer.digest_builder import KR_TICKERS as _KR_TICKERS_STATIC
+except Exception:
+    _KR_TICKERS_STATIC = {}
+try:
+    from strategy.adaptive_params import adaptive_params as _adaptive_params
+    from strategy.adaptive_params import get_perf_stats as _adaptive_perf_stats
+    import strategy.gap_pullback as _gap_strategy
+    import strategy.mean_reversion as _mr_strategy
+    import strategy.momentum as _mom_strategy
+    import strategy.volatility_breakout as _vb_strategy
+except Exception:
+    _adaptive_params = None
+    _adaptive_perf_stats = None
+    _gap_strategy = None
+    _mr_strategy = None
+    _mom_strategy = None
+    _vb_strategy = None
 
 app = Flask(__name__)
 
@@ -65,7 +91,7 @@ MAX_PYRAMID = int(os.getenv("MAX_PYRAMID", "8") or 8)
 SYSTEM_LOG_DIR = get_runtime_path("logs", "system", make_parents=False)
 
 
-# ── 데이터 로더 ────────────────────────────────────────────────────────────────
+# ?? ?곗씠??濡쒕뜑 ????????????????????????????????????????????????????????????????
 
 def current_market() -> str:
     now = datetime.now(KST).time()
@@ -74,9 +100,13 @@ def current_market() -> str:
     return "KR"
 
 
+def _market_log_date_str(market: str, now_dt=None) -> str:
+    return _session_trade_date(market, now_dt).strftime("%Y%m%d")
+
+
 def best_market_with_data() -> str:
-    today = date.today().strftime("%Y%m%d")
     for mkt in ("US", "KR"):
+        today = _market_log_date_str(mkt)
         p = LOG_DIR / f"{today}_{mkt}.json"
         if p.exists():
             try:
@@ -214,7 +244,7 @@ def _restart_bot_process_legacy() -> tuple[bool, str]:
         f"cwd={repr(str(BASE_DIR))}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
     )
     _spawn_detached([sys.executable, "-c", helper], BASE_DIR)
-    return True, "봇 재시작 요청을 보냈습니다"
+    return True, "재시작 요청을 보냈습니다"
 
 
 def _restart_bot_process() -> tuple[bool, str]:
@@ -236,7 +266,7 @@ def _restart_bot_process() -> tuple[bool, str]:
         ],
     )
     _spawn_detached(["cmd", "/c", str(script_path)], BASE_DIR)
-    return True, "봇 재시작 요청을 보냈습니다"
+    return True, "재시작 요청을 보냈습니다"
 
 
 def _is_fresh_live_status(live: dict, today_rec: dict) -> bool:
@@ -248,15 +278,15 @@ def _is_fresh_live_status(live: dict, today_rec: dict) -> bool:
     if not trading_date or not today_date:
         return False
 
-    current_date = date.today().isoformat()
+    market = live.get("market") or today_rec.get("market") or "KR"
+    current_date = _session_trade_date(market).isoformat()
     if trading_date[:10] != today_date[:10] or today_date[:10] != current_date:
         return False
-    market = live.get("market") or today_rec.get("market") or "KR"
     return _session_status(market).get("active", False)
 
 
 def load_today(market: str = "KR") -> dict:
-    today = date.today().strftime("%Y%m%d")
+    today = _market_log_date_str(market)
     path  = LOG_DIR / f"{today}_{market}.json"
     if path.exists():
         try:
@@ -330,16 +360,59 @@ def _log_path_for_date(rec_date: str) -> Path:
     return SYSTEM_LOG_DIR / f"trading_{ymd}.log"
 
 
+# 濡쒓렇 ?뚯떛 寃곌낵 罹먯떆: {(date, market): (ts, result)}
+# ?ㅻ뒛 ?좎쭨??30珥?TTL, 怨쇨굅 ?좎쭨???곴뎄 罹먯떆
+_log_parse_cache: dict = {}
+
+# USD/KRW ?섏쑉 罹먯떆 ??request path?먯꽌 KIS API ?몄텧 ?꾩쟾 李⑤떒
+# 諛깃렇?쇱슫???ㅻ젅?쒓? 10遺꾨쭏??媛깆떊, request??留덉?留?媛?利됱떆 諛섑솚
+_usd_krw_cache: list = [0.0, 0.0]   # [value, monotonic_ts]
+_usd_krw_lock  = threading.Lock()
+
+def _usd_krw_bg_refresh():
+    """諛깃렇?쇱슫?쒖뿉??10遺꾨쭏???섏쑉 媛깆떊 ??request path 釉붾줈???놁쓬"""
+    while True:
+        try:
+            val = float(get_usd_krw())
+            if val > 0:
+                with _usd_krw_lock:
+                    _usd_krw_cache[0] = val
+                    _usd_krw_cache[1] = _time.monotonic()
+        except Exception:
+            pass
+        _time.sleep(600)
+
+_usd_krw_thread = threading.Thread(target=_usd_krw_bg_refresh, daemon=True)
+_usd_krw_thread.start()
+
+def _get_usd_krw_cached() -> float:
+    """??긽 利됱떆 諛섑솚 ??釉붾줈???놁쓬. 諛깃렇?쇱슫???ㅻ젅?쒓? 媛믪쓣 梨꾩슱 ?뚭퉴吏???섍꼍蹂??湲곕낯媛?"""
+    with _usd_krw_lock:
+        val = _usd_krw_cache[0]
+    return val if val > 0 else float(os.getenv("USD_KRW_RATE", "1400") or 1400)
+
 def _parse_trade_log_lines(rec_date: str, market: str) -> list:
+    cache_key = (rec_date, market)
+    now_ts = _time.monotonic()
+    today_str = date.today().strftime("%Y-%m-%d")
+    # 怨쇨굅 ?좎쭨: ?곴뎄 罹먯떆 / ?ㅻ뒛 ?좎쭨: 30珥?TTL
+    if cache_key in _log_parse_cache:
+        cached_ts, cached_result = _log_parse_cache[cache_key]
+        is_today = rec_date.replace("-", "")[:8] == today_str.replace("-", "")
+        ttl = 30 if is_today else float("inf")
+        if now_ts - cached_ts < ttl:
+            return cached_result
+
     path = _log_path_for_date(rec_date)
     if not path.exists():
+        _log_parse_cache[cache_key] = (now_ts, [])
         return []
 
     buy_re = re.compile(
-        r"\[PAPER BUY\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<qty>\d+)@(?P<price>[0-9,]+(?:\.[0-9]+)?)\s+\|\s+(?P<strategy>[^|]+?)\s+\|\s+주문번호=(?P<order_no>\d+)"
+        r"\[PAPER BUY\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<qty>\d+)@(?P<price>[0-9,]+(?:\.[0-9]+)?)\s+\|\s+(?P<strategy>[^|]+?)\s+\|\s+二쇰Ц踰덊샇=(?P<order_no>\d+)"
     )
     sell_re = re.compile(
-        r"\[PAPER SELL\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<qty>\d+)@(?P<price>[0-9,]+(?:\.[0-9]+)?)\s+\|\s+주문번호=(?P<order_no>\d+)"
+        r"\[PAPER SELL\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<qty>\d+)@(?P<price>[0-9,]+(?:\.[0-9]+)?)\s+\|\s+二쇰Ц踰덊샇=(?P<order_no>\d+)"
     )
     close_re = re.compile(
         r"\[(?P<reason>[a-zA-Z_]+)\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<pnl>[+\-]?[0-9,]+(?:\.[0-9]+)?)\s+\((?P<pnl_pct>[+\-]?[0-9.]+)%\)"
@@ -433,6 +506,7 @@ def _parse_trade_log_lines(rec_date: str, market: str) -> list:
             continue
         seen.add(key)
         result.append(row)
+    _log_parse_cache[cache_key] = (_time.monotonic(), result)
     return result
 
 
@@ -677,16 +751,19 @@ def _trade_rows_for_records(records: list, market: str) -> list:
     return deduped
 
 
-def _enrich_trade_row(row: dict, market: str) -> dict:
+def _enrich_trade_row(row: dict, market: str, name_map: Optional[dict] = None) -> dict:
     t = dict(row or {})
+    name_map = name_map or _ticker_name_map(market, include_broker=False)
     t["source_kind"] = t.get("source_kind", "trade_record")
     t["source_kind_label"] = {
         "trade_record": "체결",
         "pending_order": "미체결",
         "live_position": "라이브",
         "recovered": "복구",
+        "broker_fill": "브로커 체결",
     }.get(t["source_kind"], t["source_kind"])
     t["strategy"] = _ko_strategy_name(t.get("strategy", ""))
+    t["display_ticker"] = _display_ticker_label(t.get("ticker", ""), t.get("name", ""), name_map)
     currency = t.get("currency") or ("USD" if market == "US" else "KRW")
     qty = int(t.get("qty", 0) or 0)
     display_price = float(t.get("display_price", t.get("price", 0)) or 0)
@@ -701,10 +778,7 @@ def _enrich_trade_row(row: dict, market: str) -> dict:
         if market == "US" and not t.get("currency") and display_price >= 1000 and buy_price <= 0 and pnl_pct > -99.99:
             inferred_buy = display_price / (1.0 + (pnl_pct / 100.0)) if (1.0 + (pnl_pct / 100.0)) != 0 else 0.0
             if inferred_buy >= 1000:
-                try:
-                    usdkrw = float(get_usd_krw())
-                except Exception:
-                    usdkrw = float(os.getenv("USD_KRW_RATE", "1350") or 1350)
+                usdkrw = _get_usd_krw_cached()
                 if usdkrw > 0:
                     display_price = display_price / usdkrw
                     inferred_buy = inferred_buy / usdkrw
@@ -740,6 +814,80 @@ def _enrich_trade_row(row: dict, market: str) -> dict:
         t["pnl_krw"] = round(pnl_krw, 6)
 
     return t
+
+
+def _trade_match_price(row: dict) -> float:
+    return round(float(row.get("display_price", row.get("price", 0)) or 0), 4)
+
+
+def _trade_match_key_loose(row: dict) -> tuple:
+    return (
+        str(row.get("date", "") or ""),
+        str(row.get("ticker", "") or "").upper(),
+        str(row.get("side", "") or "").lower(),
+        int(row.get("qty", 0) or 0),
+    )
+
+
+def _trade_match_key_strict(row: dict) -> tuple:
+    return _trade_match_key_loose(row) + (_trade_match_price(row),)
+
+
+def _annotate_trade_matches(strategy_rows: list[dict], broker_rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    strategy = [dict(r) for r in (strategy_rows or [])]
+    broker = [dict(r) for r in (broker_rows or [])]
+
+    broker_by_order = {}
+    broker_by_strict = {}
+    broker_by_loose = {}
+    for idx, row in enumerate(broker):
+        row["match_status"] = row.get("match_status") or "broker_only"
+        row["matched_order_no"] = row.get("matched_order_no") or ""
+        row["matched_date"] = row.get("matched_date") or ""
+        row["matched_time"] = row.get("matched_time") or ""
+        row["_matched"] = False
+        order_no = str(row.get("order_no", "") or "").strip()
+        if order_no:
+            broker_by_order.setdefault(order_no, []).append(idx)
+        broker_by_strict.setdefault(_trade_match_key_strict(row), []).append(idx)
+        broker_by_loose.setdefault(_trade_match_key_loose(row), []).append(idx)
+
+    def _claim(indices: list[int]) -> Optional[int]:
+        for i in indices:
+            if not broker[i].get("_matched"):
+                broker[i]["_matched"] = True
+                return i
+        return None
+
+    for row in strategy:
+        row["match_status"] = row.get("match_status") or "strategy_only"
+        row["matched_order_no"] = row.get("matched_order_no") or ""
+        row["matched_date"] = row.get("matched_date") or ""
+        row["matched_time"] = row.get("matched_time") or ""
+        match_idx = None
+        order_no = str(row.get("order_no", "") or "").strip()
+        if order_no and order_no in broker_by_order:
+            match_idx = _claim(broker_by_order[order_no])
+        if match_idx is None:
+            match_idx = _claim(broker_by_strict.get(_trade_match_key_strict(row), []))
+        if match_idx is None:
+            match_idx = _claim(broker_by_loose.get(_trade_match_key_loose(row), []))
+        if match_idx is None:
+            continue
+        b = broker[match_idx]
+        row["match_status"] = "matched"
+        row["matched_order_no"] = str(b.get("order_no", "") or "")
+        row["matched_date"] = str(b.get("date", "") or "")
+        row["matched_time"] = str(b.get("time", "") or "")
+        b["match_status"] = "matched"
+        b["matched_order_no"] = str(row.get("order_no", "") or "")
+        b["matched_date"] = str(row.get("date", "") or "")
+        b["matched_time"] = str(row.get("time", "") or "")
+
+    for row in broker:
+        row.pop("_matched", None)
+
+    return strategy, broker
 
 
 def _trade_stats_from_rows(trades: list, days: int) -> dict:
@@ -926,6 +1074,43 @@ def load_digest_records_filtered(market: str, period: str, start: str, end: str)
     ]
 
 
+def _risk_status_label(value: float) -> str:
+    if value <= 0:
+        return ""
+    if value < 15:
+        return "저변동"
+    if value < 20:
+        return "정상"
+    if value < 25:
+        return "주의"
+    if value < 30:
+        return "고변동"
+    return "위기"
+
+
+def _current_risk_snapshot(market: str, today_rec: Optional[dict] = None) -> dict:
+    label = "VKOSPI" if market == "KR" else "VIX"
+    value = 0.0
+    ctx = ((today_rec or {}).get("digest_raw") or {}).get("context") or {}
+    try:
+        value = float(ctx.get("vix") or 0)
+    except Exception:
+        value = 0.0
+    if value <= 0:
+        records = load_digest_records_filtered(market, "all", "", "")
+        if records:
+            ctx = (records[-1].get("context") or {})
+            try:
+                value = float(ctx.get("vix") or 0)
+            except Exception:
+                value = 0.0
+    return {
+        "risk_label": label,
+        "risk_value": round(value, 2) if value > 0 else 0.0,
+        "risk_status": _risk_status_label(value),
+    }
+
+
 def load_records_filtered(market: str, period: str, start: str, end: str) -> list:
     all_recs = load_records(9999, market)
     today = date.today()
@@ -947,6 +1132,126 @@ def load_records_filtered(market: str, period: str, start: str, end: str) -> lis
             if d_start <= _parse_date(r.get("date", "")) <= d_end]
 
 
+def _resolve_period_bounds(period: str, start: str, end: str) -> tuple[date, date]:
+    today = date.today()
+    if period == "week":
+        return today - timedelta(days=today.weekday()), today
+    if period == "month":
+        return today.replace(day=1), today
+    if period == "3month":
+        return today - timedelta(days=90), today
+    if period == "custom":
+        d_start = _parse_date(start)
+        d_end = _parse_date(end) if end else today
+        return d_start, d_end
+    # all
+    return date(2026, 1, 1), today
+
+
+def _load_broker_trade_bundle(market: str, period: str, start: str, end: str) -> dict:
+    d_start, d_end = _resolve_period_bounds(period, start, end)
+    meta = {
+        "ok": False,
+        "market": market,
+        "query_start": d_start.isoformat(),
+        "query_end": d_end.isoformat(),
+        "rows": [],
+        "count": 0,
+        "latest_fill": "",
+        "error": "",
+    }
+
+    try:
+        token = get_access_token()
+    except Exception as e:
+        meta["error"] = str(e)
+        return meta
+
+    start_s = d_start.strftime("%Y%m%d")
+    end_s = d_end.strftime("%Y%m%d")
+    rows: list[dict] = []
+    try:
+        if market == "KR":
+            broker_rows = inquire_daily_ccld_kr(
+                token,
+                start_date=start_s,
+                end_date=end_s,
+                filled_code="01",
+            )
+        else:
+            broker_rows = inquire_ccnl_us(
+                token,
+                start_date=start_s,
+                end_date=end_s,
+                filled_code="01",
+            )
+    except Exception as e:
+        meta["error"] = str(e)
+        return meta
+
+    for row in broker_rows or []:
+        ticker = str(row.get("ticker", "") or "").strip().upper()
+        if not ticker:
+            continue
+        filled_qty = int(row.get("filled_qty", 0) or 0)
+        if filled_qty <= 0:
+            continue
+        raw = row.get("raw", {}) or {}
+        order_date_raw = str(raw.get("ord_dt") or raw.get("ORD_DT") or raw.get("ord_date") or "").strip()
+        order_date = (
+            f"{order_date_raw[:4]}-{order_date_raw[4:6]}-{order_date_raw[6:8]}"
+            if len(order_date_raw) == 8 else d_end.isoformat()
+        )
+        order_time = str(row.get("order_time", "") or "").strip()
+        hhmm = f"{order_time[:2]}:{order_time[2:4]}" if len(order_time) >= 4 else ""
+        fill_price = float(row.get("fill_price", 0) or 0)
+        rows.append({
+            "date": order_date,
+            "time": hhmm,
+            "side": row.get("side", "") or "",
+            "ticker": ticker,
+            "strategy": "broker_sync",
+            "price": fill_price,
+            "display_price": fill_price,
+            "qty": filled_qty,
+            "pnl": 0.0,
+            "pnl_pct": 0.0,
+            "reason": "broker_fill",
+            "order_no": str(row.get("order_no", "") or ""),
+            "price_source": "order_fill",
+            "currency": "USD" if market == "US" else "KRW",
+            "fill_time": hhmm,
+            "source_kind": "broker_fill",
+        })
+    dedup = []
+    seen = set()
+    for row in rows:
+        key = (
+            row.get("date", ""),
+            row.get("time", ""),
+            row.get("side", ""),
+            row.get("ticker", ""),
+            row.get("order_no", ""),
+            int(row.get("qty", 0) or 0),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append(_enrich_trade_row(row, market))
+    dedup.sort(key=lambda r: ((r.get("date", "") or ""), (r.get("time", "") or "")), reverse=True)
+    meta["ok"] = True
+    meta["rows"] = dedup
+    meta["count"] = len(dedup)
+    if dedup:
+        latest = dedup[0]
+        meta["latest_fill"] = f"{latest.get('date', '')} {latest.get('time', '')}".strip()
+    return meta
+
+
+def _load_broker_trade_rows(market: str, period: str, start: str, end: str) -> list[dict]:
+    return _load_broker_trade_bundle(market, period, start, end)["rows"]
+
+
 def group_by_month(records: list) -> dict:
     groups = {}
     for r in records:
@@ -955,10 +1260,10 @@ def group_by_month(records: list) -> dict:
     return groups
 
 
-# ── API 엔드포인트 ─────────────────────────────────────────────────────────────
+# ?? API ?붾뱶?ъ씤???????????????????????????????????????????????????????????????
 
 def _load_live_status(market: str) -> dict:
-    """trading_bot이 사이클마다 기록하는 라이브 상태 파일 읽기"""
+    """trading_bot???ъ씠?대쭏??湲곕줉?섎뒗 ?쇱씠釉??곹깭 ?뚯씪 ?쎄린"""
     path = BASE_DIR / "state" / f"live_status_{market}.json"
     if path.exists():
         try:
@@ -1074,7 +1379,7 @@ def _load_claude_control() -> dict:
             stale = True
         if stale:
             data["last_result_status"] = "error"
-            data["last_error"] = data.get("last_error") or "이전 Claude 재판단이 stale 상태로 정리되었습니다."
+            data["last_error"] = data.get("last_error") or "이전 Claude 재판단 결과가 오래되어 상태를 초기화했습니다"
             try:
                 _save_claude_control(data)
             except Exception:
@@ -1092,12 +1397,8 @@ def _claude_reinvoke_stats_today(market: str) -> dict:
         }
 
     start_re = re.compile(r"\[긴급 재판단 시작\]\s+(?P<market>[A-Z]+)\s+\|")
-    done_re = re.compile(r"\[긴급 재판단 완료\]\s+(?P<old>[^ ]+)\s+→\s+(?P<new>[^ ]+)\s+size=(?P<size>\d+)%")
+    done_re = re.compile(r"\[긴급 재판단 완료\]\s+(?P<old>\S+)\s+→\s+(?P<new>\S+)\s+size=(?P<size>\d+)%")
     close_re = re.compile(r"\[[a-zA-Z_]+\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<pnl>[+\-]?[0-9,]+(?:\.[0-9]+)?)\s+\((?P<pnl_pct>[+\-]?[0-9.]+)%\)")
-    start_marker = f"[긴급 재판단 시작] {market} |"
-    done_marker = "[긴급 재판단 완료]"
-    start_marker = f"[긴급 재판단 시작] {market} |"
-    done_marker = "[긴급 재판단 완료]"
     start_marker = f"[긴급 재판단 시작] {market} |"
     done_marker = "[긴급 재판단 완료]"
 
@@ -1228,7 +1529,7 @@ def _claude_reinvoke_stats_today(market: str) -> dict:
 
 
 def _load_broker_positions(market: str) -> list:
-    """KIS 브로커 잔고에서 현재 보유 포지션을 직접 읽어 대시보드에 표시."""
+    """KIS 釉뚮줈而??붽퀬?먯꽌 ?꾩옱 蹂댁쑀 ?ъ??섏쓣 吏곸젒 ?쎌뼱 ??쒕낫?쒖뿉 ?쒖떆."""
     try:
         token = get_access_token()
         bal = get_balance(token, market=market)
@@ -1244,6 +1545,7 @@ def _load_broker_positions(market: str) -> list:
             pnl_pct = (current_price / avg_price - 1.0) * 100.0
         positions.append({
             "ticker": stock.get("ticker", ""),
+            "name": stock.get("name", "") or stock.get("prdt_name", "") or "",
             "qty": int(stock.get("qty", 0) or 0),
             "avg_price": avg_price,
             "current_price": current_price,
@@ -1257,7 +1559,7 @@ def _load_broker_positions(market: str) -> list:
 
 
 def _broker_snapshot() -> dict:
-    """KIS 브로커 기준 KR/US 통합 스냅샷."""
+    """KIS 釉뚮줈而?湲곗? KR/US ?듯빀 ?ㅻ깄??"""
     try:
         token = get_access_token()
     except Exception:
@@ -1271,11 +1573,7 @@ def _broker_snapshot() -> dict:
     except Exception:
         us = {}
 
-    usd_krw = 0.0
-    try:
-        usd_krw = float(get_usd_krw())
-    except Exception:
-        usd_krw = float(os.getenv("USD_KRW_RATE", "1350") or 1350)
+    usd_krw = _get_usd_krw_cached()
 
     kr_cash = float(kr.get("cash", 0) or 0)
     kr_eval = float(kr.get("total_eval", 0) or 0)
@@ -1337,6 +1635,66 @@ def _filter_items_for_market(items: list, market: str) -> list:
     return filtered
 
 
+def _ticker_name_map(market: str, include_broker: bool = True) -> dict[str, str]:
+    name_map: dict[str, str] = {}
+    if market == "KR":
+        for t, name in (_KR_TICKERS_STATIC or {}).items():
+            t = str(t or "").strip().upper()
+            name = str(name or "").strip()
+            if t and name and name != t:
+                name_map[t] = name
+    rec = load_today(market)
+    digest_raw = (rec or {}).get("digest_raw") or {}
+    technicals = digest_raw.get("technicals") or {}
+    for ticker, info in technicals.items():
+        t = str(ticker or "").strip().upper()
+        name = str((info or {}).get("name", "") or "").strip()
+        if t and name and name != t:
+            name_map[t] = name
+    digest_dirs = [DIGEST_DIR, LOG_DIR]
+    suffix = f"_{market}.json"
+    for d in digest_dirs:
+        try:
+            paths = sorted(d.glob(f"*{suffix}"), reverse=True)[:10]
+        except Exception:
+            paths = []
+        for path in paths:
+            try:
+                rec = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            technicals = ((rec.get("digest_raw") or rec).get("technicals") or {})
+            for ticker, info in technicals.items():
+                t = str(ticker or "").strip().upper()
+                name = str((info or {}).get("name", "") or "").strip()
+                if t and name and name != t:
+                    name_map[t] = name
+    if include_broker:
+        for pos in _load_broker_positions(market):
+            t = str(pos.get("ticker", "") or "").strip().upper()
+            name = str(pos.get("name", "") or "").strip()
+            if t and name and name != t:
+                name_map[t] = name
+    live = _load_live_status(market) or {}
+    for bucket in ("positions", "pending_orders"):
+        for item in live.get(bucket, []) or []:
+            t = str(item.get("ticker", "") or "").strip().upper()
+            name = str(item.get("name", "") or "").strip()
+            if t and name and name != t:
+                name_map[t] = name
+    return name_map
+
+
+def _display_ticker_label(ticker: str, name: str = "", name_map: Optional[dict] = None) -> str:
+    raw_ticker = str(ticker or "").strip().upper()
+    raw_name = str(name or "").strip()
+    mapped = str(((name_map or {}).get(raw_ticker, "") if raw_ticker else "") or "").strip()
+    final_name = raw_name or mapped
+    if raw_ticker and final_name and final_name != raw_ticker:
+        return f"{final_name} ({raw_ticker})"
+    return raw_ticker or final_name or "-"
+
+
 _EXCHANGE_CAL_MAP = {"KR": "XKRX", "US": "XNYS"}
 _STRATEGY_KO_MAP = {
     "volatility_breakout": "변동성돌파",
@@ -1357,13 +1715,13 @@ def _ko_strategy_name(name: str) -> str:
 
 
 _MODE_KO_MAP = {
-    "AGGRESSIVE": "적극매수",
+    "AGGRESSIVE": "공격매수",
     "MODERATE_BULL": "강한상승",
     "Bull_Confirmed": "상승확인",
     "MILD_BULL": "완만상승",
-    "CAUTIOUS": "신중",
+    "CAUTIOUS": "중립경계",
     "NEUTRAL": "중립",
-    "MILD_BEAR": "완만약세",
+    "MILD_BEAR": "완만하락",
     "CAUTIOUS_BEAR": "신중약세",
     "DEFENSIVE": "방어",
     "HALT": "거래중지",
@@ -1377,20 +1735,20 @@ def _ko_mode_name(name: str) -> str:
 
 
 _EVENT_KO_MAP = {
-    "waiting": "대기",
-    "signal_check": "신호 없음",
-    "entry_signal": "진입 신호",
-    "entry_skip": "진입 보류",
-    "signal_blocked": "신호 차단",
-    "buy_filled": "매수 체결",
-    "sell_filled": "매도 체결",
+    "waiting": "대기중",
+    "signal_check": "신호없음",
+    "entry_signal": "진입신호",
+    "entry_skip": "진입보류",
+    "signal_blocked": "신호차단",
+    "buy_filled": "매수체결",
+    "sell_filled": "매도체결",
     "trailing": "추적중",
-    "cycle_error": "처리 오류",
+    "cycle_error": "처리오류",
 }
 
 
 def _ko_event_name(name: str) -> str:
-    return _EVENT_KO_MAP.get((name or "").strip(), (name or "").strip() or "대기")
+    return _EVENT_KO_MAP.get((name or "").strip(), (name or "").strip() or "대기중")
 
 
 def _normalize_percent_value(value: float) -> float:
@@ -1406,6 +1764,256 @@ def _session_trade_date(market: str, now_dt=None):
     if market == "US" and now_dt.time() < dt_time(5, 0):
         return current_date - timedelta(days=1)
     return current_date
+
+
+def _extract_none_reason_tags(detail: str) -> list[str]:
+    detail = str(detail or "")
+    if not detail:
+        return []
+    tags = []
+    if "거래량부족" in detail or re.search(r"vol=.*✗", detail):
+        tags.append("거래량 부족")
+    if "RSI부족" in detail or re.search(r"RSI=.*✗", detail):
+        tags.append("RSI 부족")
+    if "BB부족" in detail or re.search(r"BB=.*✗", detail):
+        tags.append("BB 부족")
+    if "돌파부족" in detail or re.search(r"돌파=.*✗", detail):
+        tags.append("돌파 부족")
+    if "MACD부족" in detail:
+        tags.append("MACD 부족")
+    if "신고가부족" in detail:
+        tags.append("신고가 부족")
+    if "추세부족" in detail:
+        tags.append("추세 부족")
+    if "갭부족" in detail or re.search(r"갭=.*✗", detail):
+        tags.append("갭 부족")
+    return tags[:2]
+
+
+def _today_signal_digest(market: str, selected_count: int = 0, universe_count: int = 0) -> dict:
+    today = _market_log_date_str(market)
+    log_path = BASE_DIR / "logs" / "analysis" / f"analysis_{today}.jsonl"
+    summary = {
+        "candidates": int(universe_count or 0),
+        "selected": int(selected_count or 0),
+        "buy_signal": 0,
+        "no_signal": 0,
+        "blocked": 0,
+        "failed": 0,
+        "top_none": [],
+    }
+    if not log_path.exists():
+        return summary
+    none_counter = Counter()
+    latest_candidates = 0
+    try:
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return summary
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        extra = rec.get("extra", {})
+        if "extra" in extra:
+            extra = extra["extra"]
+        if extra.get("market", "") != market:
+            continue
+        ev = extra.get("event", "")
+        if ev == "screen_candidates":
+            latest_candidates = len(extra.get("tickers", []) or [])
+        elif ev == "entry_signal":
+            summary["buy_signal"] += 1
+        elif ev == "signal_check" and extra.get("signal", "") == "none":
+            summary["no_signal"] += 1
+            for tag in _extract_none_reason_tags(extra.get("detail", "")):
+                none_counter[tag] += 1
+        elif ev in ("entry_skip", "signal_blocked"):
+            summary["blocked"] += 1
+        elif ev == "entry_failed":
+            summary["failed"] += 1
+    if latest_candidates > 0:
+        summary["candidates"] = latest_candidates
+    summary["top_none"] = [tag for tag, _ in none_counter.most_common(3)]
+    return summary
+
+
+def _ml_db_digest(market: str) -> dict:
+    db_path = BASE_DIR / "data" / "ml" / "decisions.db"
+    digest = {
+        "enabled": False,
+        "exists": db_path.exists(),
+        "total": 0,
+        "today": 0,
+        "buy_signal": 0,
+        "filled": 0,
+        "with_outcome": 0,
+        "forward_ready": 0,
+        "forward_ready_rate": 0.0,
+        "last_ts": "",
+        "recent_days": [],
+    }
+    if not db_path.exists():
+        return digest
+    try:
+        import sqlite3
+        session_date = _session_trade_date(market).isoformat()
+        with sqlite3.connect(db_path) as conn:
+            digest["enabled"] = True
+            digest["total"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=?", (market,)).fetchone()[0] or 0)
+            digest["today"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND session_date=?", (market, session_date)).fetchone()[0] or 0)
+            digest["buy_signal"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND session_date=? AND decision='BUY_SIGNAL'", (market, session_date)).fetchone()[0] or 0)
+            digest["filled"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND session_date=? AND filled=1", (market, session_date)).fetchone()[0] or 0)
+            digest["with_outcome"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND pnl_pct IS NOT NULL", (market,)).fetchone()[0] or 0)
+            digest["forward_ready"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND forward_1d IS NOT NULL", (market,)).fetchone()[0] or 0)
+            if digest["total"] > 0:
+                digest["forward_ready_rate"] = round((digest["forward_ready"] / digest["total"]) * 100.0, 1)
+            row = conn.execute("SELECT ts FROM decisions WHERE market=? ORDER BY id DESC LIMIT 1", (market,)).fetchone()
+            digest["last_ts"] = str(row[0]) if row and row[0] else ""
+            day_rows = conn.execute(
+                """
+                SELECT session_date, COUNT(*) as n
+                FROM decisions
+                WHERE market=?
+                GROUP BY session_date
+                ORDER BY session_date DESC
+                LIMIT 7
+                """,
+                (market,),
+            ).fetchall()
+            digest["recent_days"] = [
+                {"date": str(r[0]), "count": int(r[1] or 0)}
+                for r in reversed(day_rows)
+            ]
+    except Exception:
+        pass
+    return digest
+
+
+def _adaptive_param_digest(market: str, mode: str, context: Optional[dict] = None) -> dict:
+    digest = {"enabled": False, "rows": []}
+    if _adaptive_params is None or _adaptive_perf_stats is None:
+        return digest
+
+    context = context or {}
+    conf = 0.6
+    modules = {
+        "gap_pullback": _gap_strategy,
+        "mean_reversion": _mr_strategy,
+        "momentum": _mom_strategy,
+        "volatility_breakout": _vb_strategy,
+    }
+
+    def _short(p: dict) -> str:
+        if not p:
+            return "-"
+        keys = (
+            "gap_min",
+            "vol_mult",
+            "rsi_thr",
+            "bb_thr",
+            "ma60_thr",
+            "k",
+        )
+        parts = []
+        for key in keys:
+            if key not in p:
+                continue
+            val = p.get(key)
+            label = {
+                "gap_min": "gap",
+                "vol_mult": "vol",
+                "rsi_thr": "rsi",
+                "bb_thr": "bb",
+                "ma60_thr": "ma60",
+                "k": "k",
+            }.get(key, key)
+            if isinstance(val, float):
+                if key == "gap_min":
+                    parts.append(f"{label}={val:.3f}")
+                elif key == "ma60_thr":
+                    parts.append(f"{label}={val:.2f}")
+                elif key == "k":
+                    parts.append(f"{label}={val:.2f}")
+                else:
+                    parts.append(f"{label}={val:.1f}")
+            else:
+                parts.append(f"{label}={val}")
+        if p.get("disabled"):
+            parts.append("disabled")
+        return " ".join(parts) if parts else "-"
+
+    def _regime_reasons(strategy: str, base_p: dict, final_p: dict, ctx: dict) -> list[str]:
+        reasons = []
+        vix = ctx.get("vix")
+        usd_krw = ctx.get("usd_krw")
+        if vix is not None:
+            try:
+                vix_val = float(vix)
+                if vix_val > 35:
+                    reasons.append(f"VIX {vix_val:.1f} 고변동")
+                elif vix_val > 25:
+                    reasons.append(f"VIX {vix_val:.1f} 경계")
+            except Exception:
+                pass
+        if market == "KR" and usd_krw is not None:
+            try:
+                fx = float(usd_krw)
+                if fx > 1400 and (
+                    base_p.get("gap_min") != final_p.get("gap_min")
+                    or base_p.get("vol_mult") != final_p.get("vol_mult")
+                ):
+                    reasons.append(f"환율 {fx:.0f}원 경계")
+            except Exception:
+                pass
+        return reasons
+
+    def _perf_reason(perf: dict, final_p: dict) -> str:
+        source = perf.get("source", "none")
+        wr = perf.get("win_rate")
+        n = int(perf.get("n", 0) or 0)
+        if wr is None:
+            return f"{source} 표본 없음"
+        base = f"{source} WR {float(wr):.1f}% n={n}"
+        if final_p.get("size_hint") == "up":
+            return base + " · size up"
+        if float(wr) < 35:
+            return base + " · 강한 보수화"
+        if float(wr) < 43:
+            return base + " · 소폭 보수화"
+        return base
+
+    try:
+        for strategy, module in modules.items():
+            if module is None:
+                continue
+            if strategy == "volatility_breakout":
+                base_p = module.params(mode, conf=conf, market=market)
+            else:
+                base_p = module.params(mode, conf, market=market)
+            final_p = _adaptive_params(strategy, market, mode=mode, conf=conf, context=context)
+            perf = _adaptive_perf_stats(strategy, market)
+            changed = []
+            for key in ("gap_min", "vol_mult", "rsi_thr", "bb_thr", "ma60_thr", "k"):
+                if key in base_p and key in final_p and base_p.get(key) != final_p.get(key):
+                    changed.append(key)
+            digest["rows"].append({
+                "strategy": strategy,
+                "base": _short(base_p),
+                "final": _short(final_p),
+                "changed": changed,
+                "regime_reasons": _regime_reasons(strategy, base_p, final_p, context),
+                "perf_reason": _perf_reason(perf, final_p),
+                "perf_source": perf.get("source", "none"),
+                "perf_wr": perf.get("win_rate"),
+                "perf_n": perf.get("n", 0),
+                "disabled": bool(final_p.get("disabled")),
+            })
+        digest["enabled"] = bool(digest["rows"])
+    except Exception:
+        return {"enabled": False, "rows": []}
+    return digest
 
 
 def _is_trading_day(market: str, check_date=None) -> bool:
@@ -1429,7 +2037,7 @@ def _fallback_select_reason(ticker: str, market: str, mode: str, item: dict) -> 
     if held_qty > 0:
         return f"{mode_ko} 환경에서 보유 종목 추적 관리 중"
     if pending_count > 0:
-        return f"{mode_ko} 환경에서 미체결 주문 추적 대상"
+        return f"{mode_ko} 환경에서 미체결 주문 추적 중"
     if last_event == "signal_check":
         return f"{mode_ko} 환경에서 스크리너 통과 종목 · 신호 대기"
     return f"{mode_ko} 환경에서 스크리너 통과 종목"
@@ -1493,8 +2101,8 @@ def _claude_reinvoke_stats_today(market: str) -> dict:
     if not lines:
         return empty
 
-    start_re = re.compile(rf"\[긴급 재판단 시작\]\s+{market}\s+\|")
-    done_re = re.compile(r"\[긴급 재판단 완료\]\s+(?P<old>\S+)\s+→\s+(?P<new>\S+)\s+size=")
+    start_re = None
+    done_re = None
     close_re = re.compile(r"\[[a-zA-Z_]+\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<pnl>[+\-]?[0-9,]+(?:\.[0-9]+)?)\s+\((?P<pnl_pct>[+\-]?[0-9.]+)%\)")
     start_marker = f"[긴급 재판단 시작] {market} |"
     done_marker = "[긴급 재판단 완료]"
@@ -1503,12 +2111,12 @@ def _claude_reinvoke_stats_today(market: str) -> dict:
     pending_ts = None
     for line in lines:
         ts = line[:19]
-        if start_re.search(line) or start_marker in line:
+        if start_marker in line:
             pending_ts = ts
             continue
-        m = done_re.search(line)
-        if not m and done_marker in line:
-            m = re.search(r"\[긴급 재판단 완료\]\s+(?P<old>\S+)\s+→\s+(?P<new>\S+)\s+size=", line)
+        m = None
+        if done_marker in line:
+            m = re.search(r"\]\s+(?P<old>\S+)\s+→\s+(?P<new>\S+)\s+size=", line)
         if m and pending_ts:
             events.append({
                 "ts": pending_ts,
@@ -1564,9 +2172,9 @@ def api_summary():
 
     today_rec   = load_today(market)
     result      = today_rec.get("actual_result", {})
-    live        = _load_live_status(market)   # 장 중 실시간 상태
+    live        = _load_live_status(market)   # ??以??ㅼ떆媛??곹깭
 
-    # 장 중이면 라이브 상태 우선, 없으면 일별 기록 사용
+    # ??以묒씠硫??쇱씠釉??곹깭 ?곗꽑, ?놁쑝硫??쇰퀎 湲곕줉 ?ъ슜
     if not _is_fresh_live_status(live, today_rec):
         live = {}
 
@@ -1580,6 +2188,11 @@ def api_summary():
     broker_positions = _load_broker_positions(market)
     positions = _filter_items_for_market(broker_positions if broker_positions else live.get("positions", []), market)
     pending_orders = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
+    name_map = _ticker_name_map(market)
+    for pos in positions:
+        pos["display_ticker"] = _display_ticker_label(pos.get("ticker", ""), pos.get("name", ""), name_map)
+    for order in pending_orders:
+        order["display_ticker"] = _display_ticker_label(order.get("ticker", ""), order.get("name", ""), name_map)
     broker = _broker_snapshot()
     kr_asset = 0.0
     us_asset = 0.0
@@ -1626,6 +2239,20 @@ def api_summary():
     wins      = [m for m in metrics if m.get("win")]
     total_pnl = sum(m.get("pnl_pct", 0) for m in metrics)
     win_rate  = len(wins) / len(records) * 100 if records else 0
+    signal_digest = _today_signal_digest(
+        market,
+        selected_count=len(today_rec.get("tickers", []) or []),
+        universe_count=len(today_rec.get("universe_tickers", []) or []),
+    )
+    ml_digest = _ml_db_digest(market)
+    adaptive_digest = _adaptive_param_digest(
+        market,
+        live.get("mode") or today_rec.get("consensus", {}).get("mode", "-"),
+        context=(today_rec.get("digest_raw", {}) or {}).get("context", {}) or {},
+    )
+    mode_size_pct = int((live.get("mode_size_pct", 0) if live else 0) or (today_rec.get("consensus", {}).get("size", 0) or 0))
+    max_order_krw = float((live.get("max_order_krw", 0) if live else 0) or 500000)
+    mode_order_limit_krw = round(max_order_krw * (mode_size_pct / 100.0), 0) if mode_size_pct > 0 else 0
 
     streak = 0
     streak_type = None
@@ -1643,6 +2270,7 @@ def api_summary():
     expected_date = _session_trade_date(market).isoformat()
     if not summary_date or summary_date[:10] != expected_date:
         summary_date = expected_date
+    risk = _current_risk_snapshot(market, today_rec)
 
     return jsonify({
         "today": {
@@ -1654,6 +2282,9 @@ def api_summary():
             "win":            metrics_today.get("win", result.get("win", False)),
             "trades":         metrics_today.get("trades", result.get("trades", 0)),
             "mode":           live.get("mode") or today_rec.get("consensus", {}).get("mode", "-"),
+            "mode_size_pct":  mode_size_pct,
+            "max_order_krw":  round(max_order_krw, 0),
+            "mode_order_limit_krw": mode_order_limit_krw,
             "cumulative":     cum_asset,
             "asset_krw_kr":   round(kr_asset, 0),
             "asset_krw_us":   round(us_asset, 0),
@@ -1667,6 +2298,12 @@ def api_summary():
             "pending_count":  len(pending_orders),
             "live_updated":   live.get("updated_at", ""),
             "session":        _session_status(market),
+            "risk_label":     risk["risk_label"],
+            "risk_value":     risk["risk_value"],
+            "risk_status":    risk["risk_status"],
+            "signal_digest":  signal_digest,
+            "ml_db":          ml_digest,
+            "adaptive":       adaptive_digest,
         },
         "period": {
             "days":        len(records),
@@ -1728,9 +2365,9 @@ def api_claude_trigger():
     session = _session_status(market)
     control = _load_claude_control()
     if not bool(control.get("enabled", True)):
-        return jsonify({"ok": False, "error": "Claude 재판단 기능이 OFF 상태입니다."}), 400
+        return jsonify({"ok": False, "error": "Claude 재판단 기능이 OFF 상태입니다"}), 400
     if not session.get("active"):
-        return jsonify({"ok": False, "error": f"{market} 세션이 현재 비활성 상태입니다."}), 400
+        return jsonify({"ok": False, "error": f"{market} 세션이 현재 비활성 상태입니다"}), 400
     control["pending_trigger"] = {
         "market": market,
         "source": "dashboard_trigger",
@@ -1797,23 +2434,23 @@ def api_equity_chart():
 def api_analyst_chart():
     market  = request.args.get("market", best_market_with_data())
     brain = load_brain()
-    recent_days = list(reversed(brain.get("markets", {}).get(market, {}).get("recent_days", [])))
+    recent_days = brain.get("markets", {}).get(market, {}).get("recent_days", [])
     records = []
-    seen_dates = set()
     if recent_days:
+        dedup = {}
         for day in recent_days:
             d = (day.get("date", "") or "")[:10]
-            if not d or d in seen_dates:
+            if not d:
                 continue
-            seen_dates.add(d)
-            records.append({
+            dedup[d] = {
                 "date": d,
                 "postmortem": {
                     "bull_result": day.get("bull_result"),
                     "bear_result": day.get("bear_result"),
                     "neutral_result": day.get("neutral_result"),
                 },
-            })
+            }
+        records = [dedup[k] for k in sorted(dedup.keys())]
     else:
         raw_records = load_records(30, market)
         dedup = {}
@@ -1886,8 +2523,8 @@ def api_market_context_chart():
             risk.append(ctx.get("vix") or None)
 
     meta = {
-        "primary_label": "KOSPI 일간 등락률" if market == "KR" else "S&P500 일간 등락률",
-        "secondary_label": "KOSDAQ 일간 등락률" if market == "KR" else "NASDAQ 일간 등락률",
+        "primary_label": "KOSPI 일간 수익률" if market == "KR" else "S&P500 일간 수익률",
+        "secondary_label": "KOSDAQ 일간 수익률" if market == "KR" else "NASDAQ 일간 수익률",
         "primary_close_label": "KOSPI 지수" if market == "KR" else "S&P500 지수",
         "secondary_close_label": "KOSDAQ 지수" if market == "KR" else "NASDAQ 지수",
         "risk_label": "VKOSPI" if market == "KR" else "VIX",
@@ -1999,7 +2636,7 @@ def api_control_status():
 @app.route("/api/control/restart-dashboard", methods=["POST"])
 def api_control_restart_dashboard():
     _restart_dashboard_process()
-    return jsonify({"ok": True, "message": "대시보드 서버 재시작 요청을 보냈습니다"})
+    return jsonify({"ok": True, "message": "대시보드 재시작 요청을 보냈습니다"})
 
 
 @app.route("/api/control/restart-bot", methods=["POST"])
@@ -2066,7 +2703,7 @@ def api_brain_history():
     })
 
 
-# ── 신규 API 엔드포인트 ────────────────────────────────────────────────────────
+# ?? ?좉퇋 API ?붾뱶?ъ씤??????????????????????????????????????????????????????????
 
 @app.route("/api/stats/period")
 def api_stats_period():
@@ -2188,18 +2825,26 @@ def api_history_equity():
 
 @app.route("/api/trades/list")
 def api_trades_list():
-    market   = request.args.get("market", best_market_with_data())
-    period   = request.args.get("period", "all")
-    start    = request.args.get("start", "")
-    end      = request.args.get("end", "")
-    ticker   = request.args.get("ticker", "").upper()
-    strategy = request.args.get("strategy", "")
-    side     = request.args.get("side", "")
-    limit    = int(request.args.get("limit", "200"))
+    market       = request.args.get("market", best_market_with_data())
+    period       = request.args.get("period", "all")
+    start        = request.args.get("start", "")
+    end          = request.args.get("end", "")
+    ticker       = request.args.get("ticker", "").upper()
+    strategy     = request.args.get("strategy", "")
+    side         = request.args.get("side", "")
+    match_status = request.args.get("match_status", "")
+    limit        = int(request.args.get("limit", "100"))
+    include_live = request.args.get("include_live", "true").lower() != "false"
 
     records = load_records_filtered(market, period, start, end)
+    broker_rows = _load_broker_trade_rows(market, period, start, end)
+    # 理쒖떊?쒖쑝濡?泥섎━?섎떎媛 異⑸텇??嫄곕옒 ???뺣낫 ??議곌린 醫낅즺
+    # ?덉퐫??1媛쒕떦 ?됯퇏 2~3嫄???limit*2諛??덉퐫?쒕쭔 泥섎━?대룄 異⑸텇
+    max_records = max(30, limit * 2)
+    records_to_process = records[-max_records:] if len(records) > max_records else records
+
     trades  = []
-    for r in records:
+    for r in records_to_process:
         for t in _trades_for_record(r, market):
             t_side     = t.get("side", "")
             t_ticker   = t.get("ticker", "")
@@ -2229,30 +2874,33 @@ def api_trades_list():
         deduped.append(t)
     trades = deduped
 
-    for t in _live_trades(market):
-        t_side     = t.get("side", "")
-        t_ticker   = t.get("ticker", "")
-        t_strategy = t.get("strategy", "")
-        if ticker   and ticker   not in t_ticker.upper():
-            continue
-        if strategy and strategy != t_strategy:
-            continue
-        if side     and side     != t_side:
-            continue
-        key = (
-            t.get("date", ""),
-            t.get("time", ""),
-            t.get("side", ""),
-            t.get("ticker", ""),
-            t.get("order_no", ""),
-            int(t.get("qty", 0) or 0),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        trades.append(t)
+    # pending/live ?ъ??? include_live=false硫??ㅽ궢 (寃쎈웾 紐⑤뱶)
+    if include_live:
+        for t in _live_trades(market):
+            t_side     = t.get("side", "")
+            t_ticker   = t.get("ticker", "")
+            t_strategy = t.get("strategy", "")
+            if ticker   and ticker   not in t_ticker.upper():
+                continue
+            if strategy and strategy != t_strategy:
+                continue
+            if side     and side     != t_side:
+                continue
+            key = (
+                t.get("date", ""),
+                t.get("time", ""),
+                t.get("side", ""),
+                t.get("ticker", ""),
+                t.get("order_no", ""),
+                int(t.get("qty", 0) or 0),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            trades.append(t)
 
-    trades = [_enrich_trade_row(t, market) for t in trades]
+    name_map = _ticker_name_map(market, include_broker=False)
+    trades = [_enrich_trade_row(t, market, name_map=name_map) for t in trades]
 
     def _trade_score(row: dict) -> tuple:
         return (
@@ -2292,16 +2940,70 @@ def api_trades_list():
             merged[key] = t
 
     trades = [merged[k] for k in ordered_keys]
+    trades, _ = _annotate_trade_matches(trades, broker_rows)
+    if match_status:
+        trades = [t for t in trades if str(t.get("match_status", "") or "") == match_status]
     trades.sort(key=lambda x: (x.get("date", ""), x.get("time", ""), x.get("side", "")), reverse=True)
     return jsonify(trades[:limit])
 
 
+@app.route("/api/trades/broker")
+def api_trades_broker():
+    market = request.args.get("market", best_market_with_data())
+    period = request.args.get("period", "all")
+    start = request.args.get("start", "")
+    end = request.args.get("end", "")
+    ticker = request.args.get("ticker", "").upper()
+    side = request.args.get("side", "")
+    match_status = request.args.get("match_status", "")
+    limit = int(request.args.get("limit", "100"))
+
+    trades = _load_broker_trade_rows(market, period, start, end)
+    strategy_rows = []
+    records = load_records_filtered(market, period, start, end)
+    max_records = max(30, limit * 2)
+    records_to_process = records[-max_records:] if len(records) > max_records else records
+    for r in records_to_process:
+        strategy_rows.extend(_trades_for_record(r, market))
+    _, trades = _annotate_trade_matches(strategy_rows, trades)
+    filtered = []
+    for t in trades:
+        t_side = t.get("side", "")
+        t_ticker = t.get("ticker", "")
+        if ticker and ticker not in t_ticker.upper():
+            continue
+        if side and side != t_side:
+            continue
+        if match_status and str(t.get("match_status", "") or "") != match_status:
+            continue
+        filtered.append(t)
+    return jsonify(filtered[:limit])
+
+
+@app.route("/api/trades/broker/status")
+def api_trades_broker_status():
+    market = request.args.get("market", best_market_with_data())
+    period = request.args.get("period", "all")
+    start = request.args.get("start", "")
+    end = request.args.get("end", "")
+    bundle = _load_broker_trade_bundle(market, period, start, end)
+    return jsonify({
+        "ok": bool(bundle.get("ok")),
+        "market": market,
+        "query_start": bundle.get("query_start", ""),
+        "query_end": bundle.get("query_end", ""),
+        "count": int(bundle.get("count", 0) or 0),
+        "latest_fill": bundle.get("latest_fill", ""),
+        "error": bundle.get("error", ""),
+    })
+
+
 @app.route("/api/signals/recent")
 def api_signals_recent():
-    """최근 신호 이벤트 목록 (analysis JSONL에서 읽기)"""
+    """理쒓렐 ?좏샇 ?대깽??紐⑸줉 (analysis JSONL?먯꽌 ?쎄린)"""
     market = request.args.get("market", "KR")
     n      = min(int(request.args.get("n", "60")), 200)
-    today  = datetime.now().strftime("%Y%m%d")
+    today  = _market_log_date_str(market)
     log_path = BASE_DIR / "logs" / "analysis" / f"analysis_{today}.jsonl"
     events: list[dict] = []
     if log_path.exists():
@@ -2314,7 +3016,7 @@ def api_signals_recent():
                 rec = json.loads(line)
             except Exception:
                 continue
-            # extra 중첩 구조 처리: {"extra": {"extra": {...}}} 또는 {"extra": {...}}
+            # extra 以묒꺽 援ъ“ 泥섎━: {"extra": {"extra": {...}}} ?먮뒗 {"extra": {...}}
             extra = rec.get("extra", {})
             if "extra" in extra:
                 extra = extra["extra"]
@@ -2324,7 +3026,7 @@ def api_signals_recent():
             ev_market = extra.get("market", "")
             if market and ev_market and ev_market != market:
                 continue
-            # signal_check에서 signal=none인 경우만 포함 (신호 없음)
+            # signal_check?먯꽌 signal=none??寃쎌슦留??ы븿 (?좏샇 ?놁쓬)
             if ev == "signal_check" and extra.get("signal", "") != "none":
                 continue
             events.append({
@@ -2335,9 +3037,9 @@ def api_signals_recent():
                 "reason":    extra.get("reason", extra.get("signal", "")),
                 "price":     extra.get("price", 0),
                 "mode":      extra.get("mode", ""),
+                "detail":    extra.get("detail", ""),
             })
-    # 최신순으로 n개
-    events.reverse()
+    # 理쒖떊?쒖쑝濡?n媛?    events.reverse()
     runtime_events = _parse_runtime_events(market, limit=n)
     merged = events + runtime_events
     merged.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
@@ -2420,7 +3122,7 @@ def api_signals_recent():
 
 @app.route("/api/tickers/today")
 def api_tickers_today():
-    """오늘 Claude가 선택한 모니터링 종목 + 최근 신호 요약"""
+    """?ㅻ뒛 Claude媛 ?좏깮??紐⑤땲?곕쭅 醫낅ぉ + 理쒓렐 ?좏샇 ?붿빟"""
     market = request.args.get("market", best_market_with_data())
     rec    = load_today(market)
     tickers  = rec.get("tickers", [])
@@ -2430,6 +3132,7 @@ def api_tickers_today():
     broker_positions = _filter_items_for_market(_load_broker_positions(market), market)
     live_positions = _filter_items_for_market(live.get("positions", []) if live else [], market)
     live_pending = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
+    name_map = _ticker_name_map(market)
 
     held_entries: dict[str, int] = {}
     held_qty_map: dict[str, int] = {}
@@ -2457,14 +3160,30 @@ def api_tickers_today():
             continue
         pending_map[ticker] = pending_map.get(ticker, 0) + 1
 
-    # 오늘 analysis 로그에서 종목별 최근 이벤트 + 선택 이유 집계
-    today_str = datetime.now().strftime("%Y%m%d")
+    # ?ㅻ뒛 analysis 濡쒓렇?먯꽌 醫낅ぉ蹂?理쒓렐 ?대깽??+ ?좏깮 ?댁쑀 吏묎퀎
+    today_str = _market_log_date_str(market)
     log_path  = BASE_DIR / "logs" / "analysis" / f"analysis_{today_str}.jsonl"
     ticker_last: dict[str, dict] = {}
     ticker_sig_count: dict[str, int] = {}
-    ticker_skip_reasons: dict[str, list] = {}   # 미체결 이유 누적
+    ticker_skip_reasons: dict[str, list] = {}   # 誘몄껜寃??댁쑀 ?꾩쟻
     selection_reasons: dict[str, str] = {}
     candidates_list: list[str] = []
+    def _prefer_ticker_event(prev: dict, cand: dict) -> dict:
+        if not prev:
+            return cand
+        prev_ts = str(prev.get("ts", "") or "")
+        cand_ts = str(cand.get("ts", "") or "")
+        if cand_ts > prev_ts:
+            return cand
+        if cand_ts < prev_ts:
+            return prev
+        prev_price = float(prev.get("price", 0) or 0)
+        cand_price = float(cand.get("price", 0) or 0)
+        prev_detail = str(prev.get("detail", "") or "")
+        cand_detail = str(cand.get("detail", "") or "")
+        prev_score = (1 if prev_price > 0 else 0) + (1 if prev_detail else 0)
+        cand_score = (1 if cand_price > 0 else 0) + (1 if cand_detail else 0)
+        return cand if cand_score >= prev_score else prev
     if log_path.exists():
         try:
             lines = log_path.read_text(encoding="utf-8").splitlines()
@@ -2490,23 +3209,27 @@ def api_tickers_today():
                 selection_reasons.clear()
                 candidates_list.clear()
                 continue
-            # 선택 이유 수집 (ticker_selection / ticker_rescreen)
+            # ?좏깮 ?댁쑀 ?섏쭛 (ticker_selection / ticker_rescreen)
             if ev in ("ticker_selection", "ticker_rescreen"):
                 reasons = extra.get("reasons", {})
                 if reasons:
                     selection_reasons.update(reasons)
-            # 스크리너 후보 수집
+            # ?ㅽ겕由щ꼫 ?꾨낫 ?섏쭛
             if ev == "screen_candidates":
                 candidates_list = extra.get("tickers", [])
             t = extra.get("ticker", "")
             if not t:
                 continue
-            ticker_last[t] = {"event": ev, "ts": r.get("timestamp", ""),
-                               "price": extra.get("price", 0),
-                               "reason": extra.get("reason", "")}
+            ticker_last[t] = _prefer_ticker_event(
+                ticker_last.get(t, {}),
+                {"event": ev, "ts": r.get("timestamp", ""),
+                 "price": extra.get("price", 0),
+                 "reason": extra.get("reason", ""),
+                 "detail": extra.get("detail", "")}
+            )
             if ev == "entry_signal":
                 ticker_sig_count[t] = ticker_sig_count.get(t, 0) + 1
-            # 미체결 이유 누적 (entry_skip / signal_blocked / entry_failed)
+            # 誘몄껜寃??댁쑀 ?꾩쟻 (entry_skip / signal_blocked / entry_failed)
             if ev in ("entry_skip", "signal_blocked", "entry_failed"):
                 reason = extra.get("reason", "") or extra.get("mode", "") or ev
                 if reason:
@@ -2519,12 +3242,16 @@ def api_tickers_today():
         t = ev.get("ticker", "")
         if not t:
             continue
-        ticker_last[t] = {
-            "event": ev.get("event", ""),
-            "ts": ev.get("timestamp", ""),
-            "price": ev.get("price", 0),
-            "reason": ev.get("reason", ""),
-        }
+        ticker_last[t] = _prefer_ticker_event(
+            ticker_last.get(t, {}),
+            {
+                "event": ev.get("event", ""),
+                "ts": ev.get("timestamp", ""),
+                "price": ev.get("price", 0),
+                "reason": ev.get("reason", ""),
+                "detail": ev.get("detail", ""),
+            }
+        )
 
     recent_trade_map: dict[str, dict] = {}
     for trade in _trade_rows_for_records(load_records(90, market), market):
@@ -2533,17 +3260,93 @@ def api_tickers_today():
             continue
         recent_trade_map[ticker] = trade
 
-    # 이유 한글 매핑
+    # ?댁쑀 ?쒓? 留ㅽ븨
     _REASON_KO = {
         "already_holding":      "이미 보유중",
         "budget_exhausted":     "예산 소진",
         "max_positions":        "최대 포지션 도달",
-        "est_slippage_too_high":"슬리피지 과다",
-        "HALT":                 "HALT 모드",
-        "DEFENSIVE":            "DEFENSIVE 모드",
+        "est_slippage_too_high":"예상 슬리피지 과다",
+        "HALT":                 "거래중지 모드",
+        "DEFENSIVE":            "방어 모드",
         "entry_failed":         "주문 실패",
         "signal_blocked":       "모드 차단",
+        "pending_order":        "미체결 주문",
     }
+
+    def _today_watchlist_history(_market: str) -> dict:
+        day_str = _market_log_date_str(_market)
+        sys_path = BASE_DIR / "logs" / "system" / f"trading_{day_str}.log"
+        initial: list[str] = []
+        history: list[dict] = []
+        current: list[str] = []
+        if not sys_path.exists():
+            return {"initial": initial, "current": current, "history": history}
+        try:
+            lines = sys_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            return {"initial": initial, "current": current, "history": history}
+        pat_initial = re.compile(rf"\[(?:종목선택 확정|종목 재선택 완료)\]\s+{_market}:\s+\[(.*)\]")
+        pat_manual = re.compile(rf"\[수동 종목 재선택 완료\]\s+{_market}:\s+\[(.*)\]")
+        pat_sched = re.compile(rf"\[{_market} 정시 재스크리닝\]\s+\[(.*)\]")
+        pat_partial = re.compile(rf"\[부분교체\]\s+{_market}:\s+\[(.*)\]\s+→\s+\[(.*)\]")
+        for line in lines:
+            ts = line[:19]
+            m = pat_initial.search(line)
+            if m:
+                tickers0 = [x.strip().strip("'") for x in m.group(1).split(",") if x.strip()]
+                if tickers0:
+                    if not initial:
+                        initial = tickers0
+                        current = tickers0[:]
+                        history.append({"ts": ts, "kind": "initial", "tickers": tickers0})
+                    elif current:
+                        out_list = [t for t in current if t not in tickers0]
+                        in_list = [t for t in tickers0 if t not in current]
+                        if out_list or in_list:
+                            history.append({"ts": ts, "kind": "partial", "out": out_list, "in": in_list})
+                        current = tickers0[:]
+                continue
+            m = pat_manual.search(line)
+            if m:
+                tickers1 = [x.strip().strip("'") for x in m.group(1).split(",") if x.strip()]
+                if tickers1:
+                    if current:
+                        out_list = [t for t in current if t not in tickers1]
+                        in_list = [t for t in tickers1 if t not in current]
+                        if out_list or in_list:
+                            history.append({"ts": ts, "kind": "partial", "out": out_list, "in": in_list})
+                    current = tickers1[:]
+                continue
+            m = pat_sched.search(line)
+            if m:
+                tickers2 = [x.strip().strip("'") for x in m.group(1).split(",") if x.strip()]
+                if tickers2:
+                    if current:
+                        out_list = [t for t in current if t not in tickers2]
+                        in_list = [t for t in tickers2 if t not in current]
+                        if out_list or in_list:
+                            history.append({"ts": ts, "kind": "partial", "out": out_list, "in": in_list})
+                    current = tickers2[:]
+                continue
+            m = pat_partial.search(line)
+            if m:
+                out_list = [x.strip().strip("'") for x in m.group(1).split(",") if x.strip()]
+                in_list = [x.strip().strip("'") for x in m.group(2).split(",") if x.strip()]
+                history.append({"ts": ts, "kind": "partial", "out": out_list, "in": in_list})
+                if current:
+                    current = [t for t in current if t not in set(out_list)] + [t for t in in_list if t not in current]
+        compact: list[dict] = []
+        prev_key = None
+        for item in history:
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            if key == prev_key:
+                continue
+            compact.append(item)
+            prev_key = key
+        return {"initial": initial, "current": current, "history": compact[-12:]}
+
+    watch_hist = _today_watchlist_history(market)
+    tickers = watch_hist.get("current") or tickers
 
     result = []
     for t in tickers:
@@ -2552,15 +3355,17 @@ def api_tickers_today():
         skip_reasons_ko = [_REASON_KO.get(r, r) for r in raw_reasons]
         result.append({
             "ticker":          t,
+            "display_ticker":  _display_ticker_label(t, "", name_map),
             "last_event":      last.get("event", "waiting"),
             "last_ts":         _format_hhmm(last.get("ts", "")),
             "last_price":      last.get("price", 0),
             "last_reason":     last.get("reason", ""),
+            "none_reason":     last.get("detail", ""),
             "sig_count":       ticker_sig_count.get(t, 0),
             "select_reason":   selection_reasons.get(t, ""),
-            "skip_reasons":    skip_reasons_ko,   # 오늘 누적 미체결 이유
+            "skip_reasons":    skip_reasons_ko,   # ?ㅻ뒛 ?꾩쟻 誘몄껜寃??댁쑀
         })
-    # 선택되지 않은 후보 목록 (축약)
+    # ?좏깮?섏? ?딆? ?꾨낫 紐⑸줉 (異뺤빟)
     for item in result:
         ticker = item.get("ticker", "")
         broker = broker_map.get(ticker, {})
@@ -2610,13 +3415,16 @@ def api_tickers_today():
         "market":         market,
         "mode":           consensus.get("mode", ""),
         "tickers":        result,
+        "current_tickers": tickers,
+        "initial_tickers": watch_hist.get("initial", []),
+        "watchlist_history": watch_hist.get("history", []),
         "universe_count": len(universe) or len(candidates_list),
         "candidates":     candidates_list,
         "not_selected":   not_selected,
     })
 
 
-# ── HTML 헬퍼 ─────────────────────────────────────────────────────────────────
+# ?? HTML ?ы띁 ?????????????????????????????????????????????????????????????????
 
 def _head(title: str) -> str:
     return f"""<!DOCTYPE html>
@@ -2624,7 +3432,7 @@ def _head(title: str) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{title} — TRADINGBRAIN</title>
+<title>{title} · TRADINGBRAIN</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
@@ -2654,7 +3462,7 @@ body {{
   min-height: 100vh;
 }}
 
-/* ── 헤더 ── */
+/* ?? ?ㅻ뜑 ?? */
 header {{
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 24px; height: 56px;
@@ -2701,7 +3509,7 @@ nav a.active {{ color: var(--cyan); background: rgba(6,182,212,0.12);
 }}
 .mkt-btn:hover {{ color: var(--text); }}
 
-/* ── 기간 필터 바 ── */
+/* ?? 湲곌컙 ?꾪꽣 諛??? */
 .period-bar {{
   background: var(--surface2); border-bottom: 1px solid var(--border);
   padding: 10px 24px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -2728,7 +3536,7 @@ nav a.active {{ color: var(--cyan); background: rgba(6,182,212,0.12);
 }}
 .apply-btn:hover {{ background: rgba(59,130,246,0.3); }}
 
-/* ── 레이아웃 ── */
+/* ?? ?덉씠?꾩썐 ?? */
 main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 
 .grid-5 {{ display: grid; grid-template-columns: repeat(5,1fr); gap: 16px; margin-bottom: 20px; }}
@@ -2736,7 +3544,7 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 .grid-3 {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-bottom: 20px; }}
 .grid-2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }}
 
-/* ── 카드 ── */
+/* ?? 移대뱶 ?? */
 .card {{
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 20px; position: relative; overflow: hidden;
@@ -2764,7 +3572,7 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 .down {{ color: var(--red); }}
 .neutral-color {{ color: var(--yellow); }}
 
-/* ── 섹션 타이틀 ── */
+/* ?? ?뱀뀡 ??댄? ?? */
 .section-title {{
   font-size: 11px; font-weight: 600; letter-spacing: 2px; color: var(--muted);
   text-transform: uppercase; margin-bottom: 14px;
@@ -2772,10 +3580,10 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 }}
 .section-title::after {{ content: ''; flex: 1; height: 1px; background: var(--border); }}
 
-/* ── 차트 ── */
+/* ?? 李⑦듃 ?? */
 .chart-container {{ position: relative; height: 220px; }}
 
-/* ── 테이블 ── */
+/* ?? ?뚯씠釉??? */
 .table-wrap {{ overflow-x: auto; }}
 table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
 th {{
@@ -2790,7 +3598,7 @@ td {{
 }}
 tr:hover td {{ background: rgba(255,255,255,0.02); }}
 
-/* ── 배지 / 뱃지 ── */
+/* ?? 諛곗? / 諭껋? ?? */
 .mode-badge {{
   padding: 2px 8px; border-radius: 4px;
   font-family: var(--mono); font-size: 11px; font-weight: 600; white-space: nowrap;
@@ -2809,7 +3617,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 .side-buy  {{ color: var(--green); }}
 .side-sell {{ color: var(--red); }}
 
-/* ── 분석가 카드 ── */
+/* ?? 遺꾩꽍媛 移대뱶 ?? */
 .analyst-grid {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-bottom: 20px; }}
 .analyst-card {{
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px;
@@ -2844,7 +3652,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
   border-radius: 8px; padding: 12px 16px; font-size: 13px; line-height: 1.6; color: var(--yellow);
 }}
 
-/* ── 교훈 ── */
+/* ?? 援먰썕 ?? */
 .lesson-item {{ display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }}
 .lesson-count {{
   background: rgba(59,130,246,0.2); color: var(--blue); border-radius: 4px;
@@ -2853,17 +3661,17 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 }}
 .lesson-text {{ font-size: 13px; line-height: 1.5; }}
 
-/* ── 진행 바 ── */
+/* ?? 吏꾪뻾 諛??? */
 .mini-bar-wrap {{ background: var(--border); border-radius: 2px; height: 4px; width: 80px; display: inline-block; vertical-align: middle; overflow: hidden; }}
 .mini-bar-fill  {{ height: 100%; border-radius: 2px; }}
 
-/* ── 거래 원장 날짜 그룹 헤더 ── */
+/* ?? 嫄곕옒 ?먯옣 ?좎쭨 洹몃９ ?ㅻ뜑 ?? */
 .date-group-row td {{
   background: var(--surface2); color: var(--muted); font-size: 11px;
   letter-spacing: 2px; padding: 6px 12px; border-bottom: 1px solid var(--border);
 }}
 
-/* ── Brain 상태 ── */
+/* ?? Brain ?곹깭 ?? */
 .brain-stats {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 12px; }}
 .brain-stat {{
   background: rgba(255,255,255,0.03); border-radius: 8px;
@@ -2872,7 +3680,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 .brain-stat-val {{ font-family: var(--mono); font-size: 20px; font-weight: 700; margin-bottom: 4px; }}
 .brain-stat-label {{ font-size: 11px; color: var(--muted); }}
 
-/* ── 반응형 ── */
+/* ?? 諛섏쓳???? */
 @media (max-width: 1200px) {{
   .grid-5 {{ grid-template-columns: repeat(3,1fr); }}
   .grid-4 {{ grid-template-columns: repeat(2,1fr); }}
@@ -2894,6 +3702,7 @@ def _header_html(active_page: str) -> str:
         ("/",          "오늘 현황"),
         ("/history",   "기간별 성과"),
         ("/trades",    "매매 원장"),
+        ("/broker-trades", "실거래 원장"),
         ("/analytics", "분석"),
     ]
     nav_links = "".join(
@@ -2906,8 +3715,8 @@ def _header_html(active_page: str) -> str:
   <nav>{nav_links}</nav>
   <div class="header-right">
     <span class="status-dot"></span>
-    <button class="mkt-btn" id="btn-kr" onclick="setMarket('KR')">🇰🇷 KR</button>
-    <button class="mkt-btn" id="btn-us" onclick="setMarket('US')">🇺🇸 US</button>
+    <button class="mkt-btn" id="btn-kr" onclick="setMarket('KR')">한국장 KR</button>
+    <button class="mkt-btn" id="btn-us" onclick="setMarket('US')">미국장 US</button>
     <span id="clock"></span>
   </div>
 </header>
@@ -2933,7 +3742,7 @@ def _period_bar_html(extra_filters: str = "") -> str:
 
 COMMON_JS_BLOCK = """
 <script>
-// ── 공통 상태 ──────────────────────────────────────────────────────────────────
+// ?? 怨듯넻 ?곹깭 ??????????????????????????????????????????????????????????????????
 let MARKET = localStorage.getItem('market') || 'KR';
 let PERIOD = localStorage.getItem('period') || 'month';
 let DATE_START = localStorage.getItem('date_start') || '';
@@ -2989,7 +3798,7 @@ function marketParam(extra = '') {
   return '?' + p.toString();
 }
 
-// ── 포맷터 ─────────────────────────────────────────────────────────────────────
+// ?? ?щ㎎???????????????????????????????????????????????????????????????????????
 const fmt = {
   pct:   v => (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%',
   krw:   v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString() + '원',
@@ -2998,13 +3807,13 @@ const fmt = {
 };
 
 const MODE_KO = {
-  AGGRESSIVE: '적극매수',
+  AGGRESSIVE: '공격매수',
   MODERATE_BULL: '강한상승',
   Bull_Confirmed: '상승확인',
   MILD_BULL: '완만상승',
-  CAUTIOUS: '신중',
+  CAUTIOUS: '중립경계',
   NEUTRAL: '중립',
-  MILD_BEAR: '완만약세',
+  MILD_BEAR: '완만하락',
   CAUTIOUS_BEAR: '신중약세',
   DEFENSIVE: '방어',
   HALT: '거래중지',
@@ -3026,8 +3835,8 @@ const STRATEGY_KO = {
 const REGIME_KO = {
   SIDEWAYS_BEAR: '횡보약세',
   SIDEWAYS_BULL: '횡보강세',
-  BULL: '상승장',
-  BEAR: '약세장',
+  BULL: '상승',
+  BEAR: '약세',
   UNKNOWN: '미확인',
   unknown: '미확인',
 };
@@ -3043,7 +3852,7 @@ function colorVar(v) {
   return v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--muted)';
 }
 
-// ── 시계 ───────────────────────────────────────────────────────────────────────
+// ?? ?쒓퀎 ???????????????????????????????????????????????????????????????????????
 function updateClock() {
   const el = document.getElementById('clock');
   if (!el) return;
@@ -3056,25 +3865,25 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
-// ── 초기화 ─────────────────────────────────────────────────────────────────────
+// ?? 珥덇린???????????????????????????????????????????????????????????????????????
 (function initState() {
-  // 마켓 버튼
+  // 留덉폆 踰꾪듉
   const btn = document.getElementById('btn-' + MARKET.toLowerCase());
   if (btn) btn.classList.add('active');
 
-  // 기간 버튼
+  // 湲곌컙 踰꾪듉
   document.querySelectorAll('.period-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.p === PERIOD);
   });
 
-  // 날짜 인풋 복원
+  // ?좎쭨 ?명뭼 蹂듭썝
   const ds = document.getElementById('date-start');
   const de = document.getElementById('date-end');
   if (ds && DATE_START) ds.value = DATE_START;
   if (de && DATE_END)   de.value = DATE_END;
 })();
 
-// ── 자동 새로고침 ──────────────────────────────────────────────────────────────
+// ?? ?먮룞 ?덈줈怨좎묠 ??????????????????????????????????????????????????????????????
 setTimeout(() => {
   if (typeof loadAll === 'function') setInterval(loadAll, 30000);
 }, 1000);
@@ -3082,7 +3891,7 @@ setTimeout(() => {
 """
 
 
-# ── 페이지 1: 오늘 현황 ─────────────────────────────────────────────────────────
+# ?? ?섏씠吏 1: ?ㅻ뒛 ?꾪솴 ?????????????????????????????????????????????????????????
 
 PAGE_TODAY_HTML = """
 <main>
@@ -3092,7 +3901,7 @@ PAGE_TODAY_HTML = """
   <div class="card cyan">
     <div class="card-label">오늘 손익</div>
     <div class="card-value" id="today-pnl">--</div>
-    <div class="card-sub"  id="today-krw">-- 원</div>
+    <div class="card-sub"  id="today-krw">--</div>
   </div>
   <div class="card blue">
     <div class="card-label">누적 자산</div>
@@ -3103,7 +3912,7 @@ PAGE_TODAY_HTML = """
   <div class="card green">
     <div class="card-label">기간 승률</div>
     <div class="card-value" id="win-rate">--</div>
-    <div class="card-sub"  id="win-detail">-- 승 / -- 패</div>
+    <div class="card-sub"  id="win-detail">--</div>
   </div>
   <div class="card yellow">
     <div class="card-label">연속 기록</div>
@@ -3114,13 +3923,25 @@ PAGE_TODAY_HTML = """
     <div class="card-label">AI 크레딧 (오늘)</div>
     <div class="card-value" id="credit-today" style="font-size:22px">--</div>
     <div class="card-sub"  id="credit-total">누적: --</div>
-    <div class="card-sub"  id="credit-calls" style="margin-top:4px">호출: --회</div>
+    <div class="card-sub"  id="credit-calls" style="margin-top:4px">호출: --</div>
     <div class="card-sub"  id="credit-remaining" style="margin-top:4px">예산 기준 잔여: --</div>
   </div>
 </div>
 
 <!-- 보유 포지션 -->
-<div class="section-title" style="margin-top:24px">보유 포지션 <span id="position-count" style="font-size:12px;color:var(--text-dim);font-weight:400;margin-left:8px"></span></div>
+<div class="section-title" style="margin-top:24px">보유 포지션<span id="position-count" style="font-size:12px;color:var(--text-dim);font-weight:400;margin-left:8px"></span></div>
+<div class="section-title" style="margin-top:18px">ML DB 수집 현황</div>
+<div class="card" style="padding:16px;margin-bottom:20px">
+  <div id="ml-db-title" style="font-size:14px;font-weight:700;color:var(--text)">확인 중..</div>
+  <div id="ml-db-meta" style="font-size:12px;color:var(--text-dim);margin-top:8px">--</div>
+  <div id="ml-db-breakdown" style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.6">--</div>
+</div>
+<div class="section-title" style="margin-top:-4px">Adaptive 파라미터</div>
+<div class="card" style="padding:16px;margin-bottom:20px">
+  <div id="adaptive-title" style="font-size:14px;font-weight:700;color:var(--text)">확인 중..</div>
+  <div id="adaptive-meta" style="font-size:12px;color:var(--text-dim);margin-top:8px">--</div>
+  <div id="adaptive-breakdown" style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.7">--</div>
+</div>
 <div id="position-board" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px"></div>
 
 <!-- 미체결 주문 -->
@@ -3181,7 +4002,7 @@ PAGE_TODAY_HTML = """
   </div>
 </div>
 
-<!-- 현재 모니터링 종목 -->
+<!-- 오늘 모니터링 종목 -->
 <div class="section-title" style="margin-top:24px">
   오늘 모니터링 종목
   <span id="ticker-mode-badge" style="margin-left:10px"></span>
@@ -3205,16 +4026,23 @@ PAGE_TODAY_HTML = """
   </div>
 </div>
 
+<div class="section-title" style="margin-top:8px">
+  오늘 종목
+  <span id="ticker-meta" style="font-size:11px;color:var(--text-dim);margin-left:12px;font-weight:400"></span>
+</div>
+<div id="ticker-quick-board" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+<div id="ticker-initial-board" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px"></div>
+<div id="ticker-history-board" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px"></div>
 <div id="ticker-board" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px"></div>
 
-<!-- 신호 실시간 피드 -->
+<!-- 실시간 신호 피드 -->
 <div class="section-title" style="margin-top:4px">
   실시간 신호 피드
   <span id="signal-ts" style="font-size:11px;color:var(--text-dim);margin-left:12px;font-weight:400"></span>
 </div>
 <div class="card" style="padding:0;overflow:hidden">
   <div style="display:flex;gap:12px;padding:10px 16px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:11px;color:var(--text-dim);font-family:var(--mono)">
-    <span>🟢 진입신호</span><span>⬜ 신호없음</span><span>🔴 가격오류</span><span>🟠 예산/차단</span><span>🔵 보유중</span>
+    <span>진입신호</span><span>신호없음</span><span>가격오류</span><span>예산/차단</span><span>보유중</span>
   </div>
   <div id="signal-feed-cards" style="display:flex;flex-wrap:wrap;gap:10px;padding:12px 12px 0 12px"></div>
   <div id="signal-feed" style="max-height:320px;overflow-y:auto;font-family:var(--mono);font-size:12px"></div>
@@ -3225,62 +4053,7 @@ PAGE_TODAY_HTML = """
 <script>
 
 async function loadSummary() {
-  const d = await fetch('/api/summary?market=' + MARKET).then(r => r.json()).catch(() => ({}));
-  if (!d.today) return;
-  const t = d.today, p = d.period;
-  window.__todaySummary = t;
-
-  const pnlEl = document.getElementById('today-pnl');
-  pnlEl.textContent = fmt.pct(t.pnl_pct);
-  pnlEl.className = 'card-value ' + colorClass(t.pnl_pct);
-  document.getElementById('today-krw').textContent = `실현 ${fmt.krw(t.realized_pnl_krw || 0)} | 미실현 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
-  document.getElementById('cumulative').textContent = fmt.asset(t.cumulative);
-  const cumulativePnl = document.getElementById('cumulative-pnl');
-  if (cumulativePnl) cumulativePnl.textContent = `누적 손익: ${fmt.pct(p.total_pnl || 0)}`;
-  document.getElementById('today-mode').innerHTML =
-    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건`;
-
-  if (todayMode) {
-    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${sessTxt} | KR ${fmt.krw(t.asset_krw_kr || 0)} / US ${fmt.krw(t.asset_krw_us || 0)}`;
-  }
-  const wrEl = document.getElementById('win-rate');
-  wrEl.textContent = p.win_rate + '%';
-  wrEl.className = 'card-value ' + (p.win_rate >= 55 ? 'up' : p.win_rate >= 45 ? 'neutral-color' : 'down');
-  document.getElementById('win-detail').textContent =
-    `${p.wins}승 / ${p.losses}패 (${p.days}일)`;
-
-  const emoji = p.streak_type === 'win' ? '🔥' : '❄️';
-  document.getElementById('streak-val').innerHTML =
-    `<span style="font-size:20px">${emoji}</span> ${p.streak}연속`;
-  document.getElementById('total-pnl').textContent = `누적: ${fmt.pct(p.total_pnl)}`;
-
-  // 보유 포지션 카드
-  const positions = t.positions || [];
-  const posBoard = document.getElementById('position-board');
-  const posCount = document.getElementById('position-count');
-  posCount.textContent = positions.length ? `${positions.length}개 보유중` : '보유 없음';
-  if (positions.length === 0) {
-    posBoard.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px 0">현재 보유 포지션 없음</div>';
-  } else {
-    posBoard.innerHTML = positions.map(pos => {
-      const pnl = pos.pnl_pct || 0;
-      const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
-      const entry = MARKET === 'KR' ? fmt.krw(pos.avg_price) : '$' + (pos.avg_price||0).toFixed(2);
-      const cur   = MARKET === 'KR' ? fmt.krw(pos.current_price) : '$' + (pos.current_price||0).toFixed(2);
-      return `
-      <div class="card" style="min-width:180px;flex:1;padding:14px 16px">
-        <div style="font-size:15px;font-weight:700;margin-bottom:6px">${pos.ticker}</div>
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.strategy || '-'} · ${pos.qty}주</div>
-        <div style="font-size:11px;color:var(--text-dim)">매수가</div>
-        <div style="font-family:var(--mono);font-size:13px;margin-bottom:4px">${entry}</div>
-        <div style="font-size:11px;color:var(--text-dim)">현재가</div>
-        <div style="font-family:var(--mono);font-size:13px;margin-bottom:6px">${cur}</div>
-        <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">매수총액 ${buyTotalText}</div>
-        <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">현재평가 ${curTotalText}${!isKRW && usdKrw > 0 ? ' · 원화손익 ' + pnlKrwText : ''}</div>
-        <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
-      </div>`;
-    }).join('');
-  }
+  return;
 }
 
 async function loadJudgments() {
@@ -3292,11 +4065,11 @@ async function loadJudgments() {
     const res  = info.result || '';
     const rb   = res === 'HIT' ? 'hit' : res === 'MISS' ? 'miss' : 'partial';
     const barC = iconClass === 'bull' ? 'var(--green)' : iconClass === 'bear' ? 'var(--red)' : 'var(--yellow)';
-    // 1라운드→2라운드 의견 변경 표시
+    // 1라운드와 토론 후 스탠스 변경 여부 표시
     const r1stance = info.r1_stance || '';
     const debateHtml = (r1stance && r1stance !== info.stance)
-      ? `<div style="font-size:11px;color:#f59e0b;margin-top:4px">💬 토론 변경: ${r1stance} → <b>${info.stance}</b></div>`
-      : (r1stance ? `<div style="font-size:11px;color:#475569;margin-top:4px">💬 토론 유지: ${info.stance}</div>` : '');
+      ? `<div style="font-size:11px;color:#f59e0b;margin-top:4px">토론 후 변경: ${r1stance} → <b>${info.stance}</b></div>`
+      : (r1stance ? `<div style="font-size:11px;color:#475569;margin-top:4px">토론 후 유지: ${info.stance}</div>` : '');
     return `
     <div class="analyst-card">
       <div class="analyst-header">
@@ -3309,20 +4082,20 @@ async function loadJudgments() {
       </div>
       <div class="analyst-confidence">신뢰도 ${conf}%</div>
       <div class="conf-bar"><div class="conf-bar-fill" style="width:${conf}%;background:${barC}"></div></div>
-      <div class="analyst-reason">📋 ${info.key_reason || '-'}</div>
+      <div class="analyst-reason">핵심 ${info.key_reason || '-'}</div>
       ${debateHtml}
-      ${info.why ? `<div class="postmortem">→ ${info.why}</div>` : ''}
+      ${info.why ? `<div class="postmortem">사후판정 ${info.why}</div>` : ''}
     </div>`;
   }
 
   const sec = document.getElementById('analyst-section');
   sec.innerHTML =
-    analystCard(d.bull,    '🟢 Bull 분석가',    'bull', 'stance-bull') +
-    analystCard(d.bear,    '🔴 Bear 분석가',    'bear', 'stance-bear') +
-    analystCard(d.neutral, '⚪ Neutral 분석가', 'neut', 'stance-neut');
+    analystCard(d.bull,    '상승 분석가', 'bull', 'stance-bull') +
+    analystCard(d.bear,    '하락 분석가', 'bear', 'stance-bear') +
+    analystCard(d.neutral, '중립 분석가', 'neut', 'stance-neut');
 
   if (d.lesson) {
-    sec.innerHTML += `<div class="lesson-box" style="grid-column:1/-1">💡 오늘의 교훈: ${d.lesson}</div>`;
+    sec.innerHTML += `<div class="lesson-box" style="grid-column:1/-1">오늘의 교훈: ${d.lesson}</div>`;
   }
 }
 
@@ -3343,7 +4116,7 @@ async function loadEquityChart() {
           borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1', fill: true,
         },
         {
-          type: 'bar', label: '일별 손익%', data: d.pnl,
+          type: 'bar', label: '일간 손익%', data: d.pnl,
           backgroundColor: colors, yAxisID: 'y2', barThickness: 'flex',
         }
       ]
@@ -3515,7 +4288,7 @@ async function loadCredits() {
   const td = d.today, tot = d.total, budget = d.budget || {};
   document.getElementById('credit-today').textContent = `$${td.cost_usd.toFixed(3)}`;
   document.getElementById('credit-total').textContent = `누적: $${tot.cost_usd.toFixed(3)}`;
-  document.getElementById('credit-calls').textContent = `오늘 호출: ${td.calls}회`;
+  document.getElementById('credit-calls').textContent = `호출: ${td.calls}회`;
   const remainingLine = document.getElementById('credit-remaining');
   if (remainingLine) {
     const daily = budget.daily_remaining_usd;
@@ -3523,8 +4296,8 @@ async function loadCredits() {
     if (daily != null || monthly != null) {
       remainingLine.style.display = '';
       const parts = [];
-      if (daily != null) parts.push(`일 $${Number(daily).toFixed(3)}`);
-      if (monthly != null) parts.push(`월 $${Number(monthly).toFixed(3)}`);
+      if (daily != null) parts.push(`일간 $${Number(daily).toFixed(3)}`);
+      if (monthly != null) parts.push(`월간 $${Number(monthly).toFixed(3)}`);
       remainingLine.textContent = `예산 기준 잔여: ${parts.join(' / ')}`;
     } else {
       remainingLine.textContent = '';
@@ -3535,14 +4308,14 @@ async function loadCredits() {
   document.getElementById('credit-detail').innerHTML = `
     <div><span style="color:var(--muted)">오늘 입력</span> ${td.input.toLocaleString()} tok</div>
     <div><span style="color:var(--muted)">오늘 출력</span> ${td.output.toLocaleString()} tok</div>
-    <div><span style="color:var(--muted)">오늘 비용</span> <span style="color:var(--purple)">$${td.cost_usd.toFixed(4)} ≈ ${td.cost_krw.toLocaleString()}원</span></div>
+    <div><span style="color:var(--muted)">오늘 비용</span> <span style="color:var(--purple)">$${td.cost_usd.toFixed(4)} · ${td.cost_krw.toLocaleString()}원</span></div>
     <div style="border-top:1px solid var(--border);margin:4px 0"></div>
     <div><span style="color:var(--muted)">누적 비용</span> <span style="color:var(--cyan)">$${tot.cost_usd.toFixed(4)}</span></div>
     <div><span style="color:var(--muted)">누적 입력</span> ${tot.input.toLocaleString()} tok</div>
     <div><span style="color:var(--muted)">누적 출력</span> ${tot.output.toLocaleString()} tok</div>
     <div><span style="color:var(--muted)">예산 잔여</span> ${
       budget.daily_remaining_usd != null || budget.monthly_remaining_usd != null
-        ? `${budget.daily_remaining_usd != null ? `일 $${Number(budget.daily_remaining_usd).toFixed(3)}` : ''}${budget.daily_remaining_usd != null && budget.monthly_remaining_usd != null ? ' / ' : ''}${budget.monthly_remaining_usd != null ? `월 $${Number(budget.monthly_remaining_usd).toFixed(3)}` : ''}`
+        ? `${budget.daily_remaining_usd != null ? `일간 $${Number(budget.daily_remaining_usd).toFixed(3)}` : ''}${budget.daily_remaining_usd != null && budget.monthly_remaining_usd != null ? ' / ' : ''}${budget.monthly_remaining_usd != null ? `월간 $${Number(budget.monthly_remaining_usd).toFixed(3)}` : ''}`
         : '설정 없음'
     }</div>
   `;
@@ -3576,15 +4349,26 @@ async function loadCredits() {
 
 async function loadMonitorTickers() {
   const board = document.getElementById('ticker-board');
+  const quickBoard = document.getElementById('ticker-quick-board');
+  const initialBoard = document.getElementById('ticker-initial-board');
+  const historyBoard = document.getElementById('ticker-history-board');
+  const meta = document.getElementById('ticker-meta');
   if (!board) return;
+  const fmtNoneReason = (txt) => String(txt || '')
+    .replace(/✓/g, '<span style="color:#22c55e;font-weight:700">✓</span>')
+    .replace(/✗/g, '<span style="color:#ef4444;font-weight:700">✗</span>');
   const d = await fetch('/api/tickers/today?market=' + MARKET).then(r => r.json()).catch(() => ({}));
   const tickers = d.tickers || [];
+  if (meta) {
+    meta.textContent = tickers.length
+      ? `${tickers.length}개 · 모드 ${koMode(d.mode || '-')}`
+      : '종목 데이터 없음';
+  }
   if (tickers.length === 0) {
     board.innerHTML = '<span style="color:var(--text-dim);font-size:13px">종목 데이터 없음</span>';
     return;
   }
 
-  // 모드 배지
   const modeEl = document.getElementById('ticker-mode-badge');
   if (modeEl && d.mode) {
     modeEl.innerHTML = `<span class="mode-badge mode-${d.mode}">${koMode(d.mode)}</span>`;
@@ -3597,16 +4381,90 @@ async function loadMonitorTickers() {
     'entry_signal':  { icon: '🟢', label: '진입신호', color: '#10b981' },
     'entry_failed':  { icon: '❌', label: '주문실패', color: '#ef4444' },
     'signal_blocked':{ icon: '🚫', label: '모드차단', color: '#f59e0b' },
-    'entry_skip':    { icon: '🟠', label: '스킵',     color: '#f59e0b' },
+    'entry_skip':    { icon: '⏸', label: '진입보류', color: '#f59e0b' },
     'signal_check':  { icon: '⬜', label: '신호없음', color: '#64748b' },
-    'waiting':       { icon: '⏳', label: '대기중',   color: '#64748b' },
+    'waiting':       { icon: '⏳', label: '대기중',   color: '#cbd5e1' },
+    'cycle_error':   { icon: '⚠', label: '처리오류', color: '#ef4444' },
   };
+
+  if (quickBoard) {
+    quickBoard.innerHTML = tickers.map(t => {
+      const ev = EVENT_MAP[t.last_event] || EVENT_MAP['waiting'];
+      const displayPrice = Number(t.display_price || 0);
+      const priceText = displayPrice > 0
+        ? (MARKET === 'KR' ? Math.round(displayPrice).toLocaleString() + '원' : '$' + displayPrice.toFixed(2))
+        : '--';
+      const statusText = Number(t.sig_count || 0) > 0 ? `신호 ${t.sig_count}` : ev.label;
+      return `
+        <div class="card" style="padding:10px 12px;min-width:132px;flex:0 0 auto;border-color:${ev.color}33">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="font-size:12px">${ev.icon}</span>
+            <span style="font-size:12px;font-weight:700;color:var(--text)">${t.display_ticker || t.ticker}</span>
+          </div>
+          <div style="font-family:var(--mono);font-size:12px;color:var(--text);margin-bottom:3px">${priceText}</div>
+          <div style="font-size:10px;color:${ev.color}">${statusText}</div>
+        </div>`;
+    }).join('');
+  }
+
+  const initialTickers = d.initial_tickers || [];
+  if (initialBoard) {
+    if (!initialTickers.length) {
+      initialBoard.innerHTML = '';
+    } else {
+      initialBoard.innerHTML = `
+        <div style="width:100%;font-size:11px;color:var(--text-dim);margin-bottom:2px">세션 시작 종목</div>
+        ${initialTickers.map(t => `
+          <div class="card" style="padding:8px 10px;min-width:120px;flex:0 0 auto;background:rgba(148,163,184,0.08)">
+            <div style="font-size:11px;font-weight:700;color:var(--text)">${t}</div>
+          </div>
+        `).join('')}
+      `;
+    }
+  }
+
+  const hist = d.watchlist_history || [];
+  if (historyBoard) {
+    if (!hist.length) {
+      historyBoard.innerHTML = '';
+    } else {
+      const lastHist = hist.slice(-6).reverse();
+      const labelMap = {
+        initial: '초기선정',
+        rescreen: '수동 재선정',
+        scheduled: '정시 재스크리닝',
+        partial: '부분교체',
+      };
+      historyBoard.innerHTML = `
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:2px">오늘 변경 이력</div>
+        ${lastHist.map(h => {
+          const ts = (h.ts || '').slice(11, 16);
+          if (h.kind === 'partial') {
+            const outText = (h.out || []).join(', ') || '-';
+            const inText = (h.in || []).join(', ') || '-';
+            return `<div class="card" style="padding:10px 12px;background:rgba(15,23,42,0.55)">
+              <div style="font-size:11px;color:#94a3b8;margin-bottom:4px">${ts} · ${labelMap[h.kind] || h.kind}</div>
+              <div style="font-size:12px;color:#fca5a5">OUT: ${outText}</div>
+              <div style="font-size:12px;color:#86efac">IN: ${inText}</div>
+            </div>`;
+          }
+          const tickText = (h.tickers || []).join(', ');
+          return `<div class="card" style="padding:10px 12px;background:rgba(15,23,42,0.55)">
+            <div style="font-size:11px;color:#94a3b8;margin-bottom:4px">${ts} · ${labelMap[h.kind] || h.kind}</div>
+            <div style="font-size:12px;color:var(--text)">${tickText}</div>
+          </div>`;
+        }).join('')}
+      `;
+    }
+  }
 
   board.innerHTML = tickers.map(t => {
     const ev = EVENT_MAP[t.last_event] || EVENT_MAP['waiting'];
     const displayPrice = Number(t.display_price || 0);
     const avgPrice = Number(t.avg_price || 0);
     const currentPrice = Number(t.current_price || 0);
+    let pendingExplain = '';
+    const reasons = t.skip_reasons || [];
     const shownPriceStr = displayPrice > 0
       ? (MARKET === 'KR' ? Math.round(displayPrice).toLocaleString() + '원' : '$' + displayPrice.toFixed(2))
       : '--';
@@ -3614,17 +4472,14 @@ async function loadMonitorTickers() {
       ? (MARKET === 'KR' ? Math.round(t.last_price).toLocaleString() + '원' : '$' + t.last_price.toFixed(2))
       : '--';
     const sigBadge = t.sig_count > 0
-      ? `<span style="background:#10b981;color:#000;border-radius:3px;padding:1px 5px;font-size:10px;margin-left:4px">신호 ${t.sig_count}회</span>`
+      ? `<span style="background:#10b981;color:#000;border-radius:3px;padding:1px 5px;font-size:10px;margin-left:4px">신호 ${t.sig_count}</span>`
       : '';
-    const skipHtmlFinal = pendingExplain
-      ? `<div style="font-size:10px;color:#f87171;margin-top:4px">⚠ ${pendingExplain}</div>`
-      : skipHtml;
     const heldEntries = Number(t.held_entries || 0);
     const heldQty = Number(t.held_qty || 0);
     const pendingCount = Number(t.pending_count || 0);
     const pyramidLimit = Number(t.pyramid_limit || 0);
     const statusBits = [];
-    if (heldEntries > 0) statusBits.push(`보유 ${heldEntries}회`);
+    if (heldEntries > 0) statusBits.push(`보유 ${heldEntries}건`);
     if (heldQty > 0) statusBits.push(`수량 ${heldQty}`);
     if (pyramidLimit > 0) statusBits.push(`최대 ${pyramidLimit}회`);
     if (pendingCount > 0) statusBits.push(`미체결 ${pendingCount}건`);
@@ -3640,11 +4495,12 @@ async function loadMonitorTickers() {
     const selectReasonHtml = t.select_reason
       ? `<div style="font-size:10px;color:#64748b;margin-top:5px;line-height:1.4;border-top:1px solid var(--border);padding-top:5px">${t.select_reason}</div>`
       : '';
-    let pendingExplain = '';
-    const reasons = t.skip_reasons || [];
-    if (reasons.includes('이미 보유중') && reasons.includes('pending_order')) {
-      pendingExplain = `추가 진입 보류: 이미 보유 중, 미체결 주문 ${pendingCount}건 존재`;
-    } else if (reasons.includes('이미 보유중')) {
+    const noneReasonHtml = (t.last_event === 'signal_check' && t.none_reason)
+      ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px;line-height:1.4">${fmtNoneReason(t.none_reason)}</div>`
+      : '';
+    if (reasons.includes('already_holding') && reasons.includes('pending_order')) {
+      pendingExplain = `추가 진입 보류: 이미 보유 중 · 미체결 주문 ${pendingCount}건`;
+    } else if (reasons.includes('already_holding')) {
       pendingExplain = '추가 진입 보류: 이미 보유 중';
     } else if (reasons.includes('pending_order')) {
       pendingExplain = `추가 진입 보류: 미체결 주문 ${pendingCount}건 존재`;
@@ -3652,21 +4508,23 @@ async function loadMonitorTickers() {
       pendingExplain = reasons.join(' / ');
     }
     const skipHtml = pendingExplain
-      ? `<div style="font-size:10px;color:#f87171;margin-top:4px">⚠ 미체결: ${t.skip_reasons.join(' / ')}</div>`
+      ? `<div style="font-size:10px;color:#f87171;margin-top:4px">${pendingExplain}</div>`
       : '';
+    const skipHtmlFinal = skipHtml;
     return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:160px;max-width:280px;cursor:default">
-      <div style="font-family:var(--mono);font-weight:700;font-size:14px;color:#e2e8f0">${t.ticker}${sigBadge}</div>
+      <div style="font-family:var(--mono);font-weight:700;font-size:14px;color:#e2e8f0">${t.display_ticker || t.ticker}${sigBadge}</div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${shownPriceStr}</div>
       <div style="margin-top:6px;font-size:12px;color:${ev.color}">${ev.icon} ${ev.label}</div>
       <div style="font-size:10px;color:#475569;margin-top:2px">${t.last_ts}${t.last_reason ? ' · ' + t.last_reason : ''}</div>
       ${statusHtml}
       ${priceMetaHtml}
       ${skipHtmlFinal}
+      ${noneReasonHtml}
       ${selectReasonHtml}
     </div>`;
   }).join('');
 
-  // 선택 안 된 후보 목록 (접힌 형태)
+  // ?좏깮 ?????꾨낫 紐⑸줉 (?묓엺 ?뺥깭)
   const notSel = d.not_selected || [];
   if (notSel.length > 0) {
     const notSelDiv = document.createElement('div');
@@ -3695,8 +4553,8 @@ async function loadSignalFeed() {
     signal_blocked: '신호 차단',
     buy_filled: '매수 체결',
     sell_filled: '매도 체결',
-    trailing: '추적중',
-    waiting: '대기',
+    trailing: '추적 중',
+    waiting: '대기중',
     cycle_error: '처리 오류'
   };
   const REASON_KO = {
@@ -3708,7 +4566,7 @@ async function loadSignalFeed() {
     trail_stop: '추적 손절',
     stop_loss: '손절',
     max_hold: '보유 기간 만료',
-    session_close: '장마감 정산',
+    session_close: '세션 종료 청산',
     live_position: '브로커 잔고 반영',
     us_order_blocked: '미국 주문 차단'
   };
@@ -3727,12 +4585,12 @@ async function loadSignalFeed() {
         const pendingCount = Number(t.pending_count || 0);
         const label = heldEntries > 0 ? '보유중' : '미체결';
         const statusBits = [];
-        if (heldEntries > 0) statusBits.push(`보유 ${heldEntries}회`);
+        if (heldEntries > 0) statusBits.push(`보유 ${heldEntries}건`);
         if (heldQty > 0) statusBits.push(`수량 ${heldQty}`);
         if (pendingCount > 0) statusBits.push(`미체결 ${pendingCount}건`);
         return `<div style="background:var(--surface2);border:1px solid rgba(59,130,246,0.35);border-radius:8px;padding:12px 14px;min-width:170px;max-width:260px;flex:1">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
-            <div style="font-family:var(--mono);font-weight:700;font-size:14px;color:#e2e8f0">${t.ticker}</div>
+            <div style="font-family:var(--mono);font-weight:700;font-size:14px;color:#e2e8f0">${t.display_ticker || t.ticker}</div>
             <div style="font-size:11px;color:#93c5fd">${label}</div>
           </div>
           <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${priceStr}</div>
@@ -3744,7 +4602,7 @@ async function loadSignalFeed() {
   }
   if (!Array.isArray(d) || d.length === 0) {
     if (!tickerList.length) {
-      feed.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">신호 없음 · 선택 종목과 보유 포지션이 아직 없습니다</div>';
+      feed.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">신호 이력도 없고 선택 종목과 보유 상태도 아직 없습니다</div>';
       return;
     }
     const fallbackRows = tickerList.map(t => {
@@ -3754,14 +4612,14 @@ async function loadSignalFeed() {
       const heldQty = Number(t.held_qty || 0);
       const pendingCount = Number(t.pending_count || 0);
       let detail = '신호 없음';
-      if (heldEntries > 0 && pendingCount > 0) detail = `보유 ${heldEntries}회 · 수량 ${heldQty} · 미체결 ${pendingCount}건`;
-      else if (heldEntries > 0) detail = `보유 ${heldEntries}회 · 수량 ${heldQty} · 최대 ${t.pyramid_limit || 8}회`;
+      if (heldEntries > 0 && pendingCount > 0) detail = `보유 ${heldEntries}건 · 수량 ${heldQty} · 미체결 ${pendingCount}건`;
+      else if (heldEntries > 0) detail = `보유 ${heldEntries}건 · 수량 ${heldQty} · 최대 ${t.pyramid_limit || 8}회`;
       else if (pendingCount > 0) detail = `미체결 ${pendingCount}건 대기중`;
       return `<div style="display:flex;align-items:center;gap:10px;padding:6px 16px;background:transparent;border-bottom:1px solid rgba(31,41,55,0.4)">
         <span style="color:var(--text-dim);min-width:56px">${t.last_ts || '--:--'}</span>
         <span>⬜</span>
         <span style="min-width:36px;color:#94a3b8">${MARKET}</span>
-        <span style="min-width:80px;color:#cbd5e1;font-weight:600">${t.ticker || ''}</span>
+        <span style="min-width:80px;color:#cbd5e1;font-weight:600">${t.display_ticker || t.ticker || ''}</span>
         <span style="min-width:72px;color:var(--text-dim)">${priceStr}</span>
         <span style="color:var(--text-dim)">${detail}</span>
       </div>`;
@@ -3777,14 +4635,14 @@ async function loadSignalFeed() {
     const heldQty = Number(t.held_qty || 0);
     const pendingCount = Number(t.pending_count || 0);
     const parts = [];
-    if (heldEntries > 0) parts.push(`보유 ${heldEntries}회 · 수량 ${heldQty}`);
+    if (heldEntries > 0) parts.push(`보유 ${heldEntries}건 · 수량 ${heldQty}`);
     if (pendingCount > 0) parts.push(`미체결 ${pendingCount}건`);
     if (!parts.length) parts.push('상태 없음');
     return `<div style="display:flex;align-items:center;gap:10px;padding:6px 16px;background:rgba(59,130,246,0.08);border-bottom:1px solid rgba(31,41,55,0.4)">
       <span style="color:var(--text-dim);min-width:56px">${t.last_ts || '--:--'}</span>
-      <span>📌</span>
+      <span>🔵</span>
       <span style="min-width:36px;color:#94a3b8">${MARKET}</span>
-      <span style="min-width:80px;color:#93c5fd;font-weight:700">${t.ticker || ''}</span>
+      <span style="min-width:80px;color:#93c5fd;font-weight:700">${t.display_ticker || t.ticker || ''}</span>
       <span style="min-width:72px;color:var(--text-dim)">${priceStr}</span>
       <span style="color:var(--text-dim)">${parts.join(' · ')}</span>
     </div>`;
@@ -3803,19 +4661,28 @@ async function loadSignalFeed() {
     if (event === 'entry_signal') {
       icon = '🟢'; bg = 'rgba(16,185,129,0.08)'; textColor = '#10b981';
     } else if (event === 'entry_skip') {
-      if (reason === 'invalid_price') { icon = '🔴'; bg = 'rgba(239,68,68,0.08)'; textColor = '#ef4444'; }
+      if (reason === 'invalid_price') { icon = '❌'; bg = 'rgba(239,68,68,0.08)'; textColor = '#ef4444'; }
       else if (reason === 'already_holding') { icon = '🔵'; bg = 'rgba(59,130,246,0.08)'; textColor = '#3b82f6'; }
-      else { icon = '🟠'; bg = 'rgba(245,158,11,0.08)'; textColor = '#f59e0b'; }
+      else { icon = '⏸'; bg = 'rgba(245,158,11,0.08)'; textColor = '#f59e0b'; }
     } else if (event === 'signal_blocked') {
       icon = '🚫'; bg = 'rgba(245,158,11,0.08)'; textColor = '#f59e0b';
     }
 
     const priceStr = price > 0 ? (market === 'KR' ? Math.round(price).toLocaleString() + '원' : '$' + price.toFixed(2)) : '';
     let detail   = reason ? koReason(reason) : (mode ? koMode(mode) : '');
+    const eventNoneReason = (event === 'signal_check')
+      ? String(ev.detail || tickerInfo.none_reason || '')
+      : '';
+    const noneReasonHtml = eventNoneReason
+      ? `<span style="color:#94a3b8"> · ${eventNoneReason}</span>`
+      : '';
+    const noneReasonHtmlColored = noneReasonHtml
+      .replace(/✓/g, '<span style="color:#22c55e;font-weight:700">✓</span>')
+      .replace(/✗/g, '<span style="color:#ef4444;font-weight:700">✗</span>');
     if (reason === 'already_holding') {
-      detail = `보유 ${tickerInfo.held_entries ?? 0}회 · 최대 ${tickerInfo.pyramid_limit ?? summary.pyramid_limit ?? 8}회 · 미체결 ${tickerInfo.pending_count ?? 0}건`;
+      detail = `보유 ${tickerInfo.held_entries ?? 0}건 · 최대 ${tickerInfo.pyramid_limit ?? summary.pyramid_limit ?? 8}회 · 미체결 ${tickerInfo.pending_count ?? 0}건`;
     } else if (reason === 'pending_order') {
-      detail = `미체결 ${tickerInfo.pending_count ?? 0}건 · 보유 ${tickerInfo.held_entries ?? 0}회 / 최대 ${tickerInfo.pyramid_limit ?? summary.pyramid_limit ?? 8}회`;
+      detail = `미체결 ${tickerInfo.pending_count ?? 0}건 · 보유 ${tickerInfo.held_entries ?? 0}건 / 최대 ${tickerInfo.pyramid_limit ?? summary.pyramid_limit ?? 8}회`;
     }
 
     return `<div style="display:flex;align-items:center;gap:10px;padding:6px 16px;background:${bg};border-bottom:1px solid rgba(31,41,55,0.4)">
@@ -3824,7 +4691,7 @@ async function loadSignalFeed() {
       <span style="min-width:36px;color:#94a3b8">${market}</span>
       <span style="min-width:96px;color:${textColor};font-weight:600">${ticker} · ${koEvent(event)}</span>
       <span style="min-width:72px;color:var(--text-dim)">${priceStr}</span>
-      <span style="color:var(--text-dim)">${detail}</span>
+      <span style="color:var(--text-dim)">${detail}${noneReasonHtmlColored}</span>
     </div>`;
   }).join('');
   const pinnedHeader = pinnedRows
@@ -3846,14 +4713,14 @@ async function loadSummary() {
   document.getElementById('today-krw').textContent = fmt.krw(t.pnl_krw);
   document.getElementById('cumulative').textContent = fmt.asset(t.cumulative);
   document.getElementById('today-mode').innerHTML =
-    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건`;
+    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.krw(t.mode_order_limit_krw)}` : ''}`;
 
   const wrEl = document.getElementById('win-rate');
   wrEl.textContent = p.win_rate + '%';
   wrEl.className = 'card-value ' + (p.win_rate >= 55 ? 'up' : p.win_rate >= 45 ? 'neutral-color' : 'down');
   document.getElementById('win-detail').textContent = `${p.wins}승 / ${p.losses}패 (${p.days}일)`;
 
-  const emoji = p.streak_type === 'win' ? '🔥' : '🧊';
+  const emoji = p.streak_type === 'win' ? '🟢' : '🔴';
   document.getElementById('streak-val').innerHTML =
     `<span style="font-size:20px">${emoji}</span> ${p.streak}연속`;
   document.getElementById('total-pnl').textContent = `누적: ${fmt.pct(p.total_pnl)}`;
@@ -3863,15 +4730,64 @@ async function loadSummary() {
   const posCount = document.getElementById('position-count');
   if (posCount) {
     posCount.textContent = positions.length
-      ? `${positions.length}/${t.position_limit || 0}개 보유중 · 남은 슬롯 ${t.position_remaining || 0}${t.live_updated ? ' · ' + t.live_updated : ''}`
-      : `보유 없음 · 남은 슬롯 ${t.position_remaining || 0}${t.live_updated ? ' · ' + t.live_updated : ''}`;
+      ? `${positions.length}/${t.position_limit || 0}개 보유중 · 추가 여력 ${t.position_remaining || 0}${t.live_updated ? ' · ' + t.live_updated : ''}`
+      : `보유 없음 · 추가 여력 ${t.position_remaining || 0}${t.live_updated ? ' · ' + t.live_updated : ''}`;
   }
+  const ml = t.ml_db || {};
+  const mlTitle = document.getElementById('ml-db-title');
+  const mlMeta = document.getElementById('ml-db-meta');
+  const mlBreakdown = document.getElementById('ml-db-breakdown');
+  if (mlTitle) {
+    mlTitle.textContent = ml.enabled
+      ? `누적 ${ml.total || 0}건 · 오늘 ${ml.today || 0}건`
+      : 'ML DB 비활성';
+  }
+  if (mlMeta) {
+    mlMeta.textContent = ml.enabled
+      ? `BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건 · 마지막 ${ml.last_ts || '--'}`
+      : '--';
+  }
+  if (mlBreakdown) {
+    const recentDays = (ml.recent_days || []).map(x => `${String(x.date || '').slice(5)} ${x.count || 0}`).join(' · ');
+    mlBreakdown.textContent = ml.enabled
+      ? `forward 준비 ${ml.forward_ready || 0}건 (${Number(ml.forward_ready_rate || 0).toFixed(1)}%)${recentDays ? ' · 최근7일 ' + recentDays : ''}`
+      : '--';
+  }
+  const adaptive = t.adaptive || {};
+  const adaptiveTitle = document.getElementById('adaptive-title');
+  const adaptiveMeta = document.getElementById('adaptive-meta');
+  const adaptiveBreakdown = document.getElementById('adaptive-breakdown');
+  if (adaptiveTitle) {
+    adaptiveTitle.textContent = adaptive.enabled
+      ? `현재 모드 ${koMode(t.mode || '-')} · 전략 ${Number((adaptive.rows || []).length || 0)}개`
+      : 'Adaptive 파라미터 비활성';
+  }
+  if (adaptiveMeta) {
+    const changedCount = (adaptive.rows || []).filter(r => (r.changed || []).length > 0).length;
+    const perfSources = Array.from(new Set((adaptive.rows || []).map(r => r.perf_source || 'none'))).join(', ');
+    adaptiveMeta.textContent = adaptive.enabled
+      ? `조정 전략 ${changedCount}개 · 성과 소스 ${perfSources || 'none'}`
+      : '--';
+  }
+  if (adaptiveBreakdown) {
+    adaptiveBreakdown.innerHTML = adaptive.enabled
+      ? (adaptive.rows || []).map(r => {
+          const strategyKo = koStrategy(r.strategy || '') || r.strategy || '-';
+          const changed = (r.changed || []).length ? ` · 조정 ${r.changed.join(', ')}` : '';
+          const state = r.disabled ? ' · 비활성' : '';
+          const reasons = []
+            .concat(r.regime_reasons || [])
+            .concat(r.perf_reason ? [r.perf_reason] : []);
+          const reasonText = reasons.length ? ` · ${reasons.join(' / ')}` : '';
+          return `<div><span style="color:#e2e8f0">${strategyKo}</span> <span style="color:#64748b">base</span> ${r.base || '-'} <span style="color:#64748b">→ final</span> ${r.final || '-'} <span style="color:#64748b">(${changed ? changed.slice(3) : '변경 없음'}${state}${reasonText})</span></div>`;
+        }).join('')
+      : '--';
+  }
+
   if (!posBoard) return;
   if (positions.length === 0) {
     posBoard.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px 0">현재 보유 포지션이 없습니다</div>';
-    return;
-  }
-
+  } else {
   posBoard.innerHTML = positions.map(pos => {
     const avgPrice = Number(pos.avg_price || 0);
     const curPrice = Number(pos.current_price || 0);
@@ -3881,7 +4797,7 @@ async function loadSummary() {
     const cur = MARKET === 'KR' ? fmt.krw(curPrice) : '$' + curPrice.toFixed(2);
     return `
     <div class="card" style="min-width:180px;flex:1;padding:14px 16px">
-      <div style="font-size:15px;font-weight:700;margin-bottom:6px">${pos.ticker}</div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:6px">${pos.display_ticker || pos.ticker}</div>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.strategy || '-'} · ${pos.qty}주</div>
       <div style="font-size:11px;color:var(--text-dim)">매수가</div>
       <div style="font-family:var(--mono);font-size:13px;margin-bottom:4px">${entry}</div>
@@ -3890,6 +4806,7 @@ async function loadSummary() {
       <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
     </div>`;
   }).join('');
+  }
 
   const pendingOrders = t.pending_orders || [];
   const pendingBoard = document.getElementById('pending-board');
@@ -3909,7 +4826,7 @@ async function loadSummary() {
         const createdAt = order.created_at ? order.created_at.substring(11, 19) : '--:--:--';
         return `
         <div class="card" style="min-width:180px;flex:1;padding:14px 16px;border-style:dashed">
-          <div style="font-size:15px;font-weight:700;margin-bottom:6px">${order.ticker}</div>
+          <div style="font-size:15px;font-weight:700;margin-bottom:6px">${order.display_ticker || order.ticker}</div>
           <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${order.strategy || '-'} · ${order.qty}주</div>
           <div style="font-size:11px;color:var(--text-dim)">주문가</div>
           <div style="font-family:var(--mono);font-size:13px;margin-bottom:4px">${orderPrice}</div>
@@ -3935,57 +4852,57 @@ setInterval(loadSignalFeed, 10000);
 """
 
 
-# ── 페이지 2: 기간별 성과 ──────────────────────────────────────────────────────
+# ?? ?섏씠吏 2: 湲곌컙蹂??깃낵 ??????????????????????????????????????????????????????
 
 PAGE_HISTORY_HTML = """
 <main>
 
-<!-- 4 통계 카드 -->
+<!-- 4 ?듦퀎 移대뱶 -->
 <div class="grid-4" id="stat-cards">
   <div class="card green">
-    <div class="card-label">기간 승률</div>
+    <div class="card-label">청산 승률</div>
     <div class="card-value" id="h-win-rate">--</div>
     <div class="card-sub"  id="h-win-detail">-- 승 / -- 패</div>
   </div>
   <div class="card cyan">
-    <div class="card-label">총 손익</div>
+    <div class="card-label">청산 손익 합계</div>
     <div class="card-value" id="h-total-pnl">--</div>
     <div class="card-sub"  id="h-days">-- 거래일</div>
   </div>
   <div class="card blue">
-    <div class="card-label">평균 일손익</div>
+    <div class="card-label">평균 청산 손익률</div>
     <div class="card-value" id="h-avg-pnl">--</div>
-    <div class="card-sub" style="color:var(--muted)">일 평균</div>
+    <div class="card-sub" style="color:var(--muted)">매도 완료 1건당 평균</div>
   </div>
   <div class="card yellow">
-    <div class="card-label">거래 수</div>
+    <div class="card-label">청산 거래 수</div>
     <div class="card-value" id="h-trades">--</div>
     <div class="card-sub" style="color:var(--muted)">총 체결 건수</div>
   </div>
 </div>
 
-<!-- 2 차트 -->
+<!-- 2 李⑦듃 -->
 <div class="grid-2">
   <div class="card blue">
-    <div class="section-title">수익 곡선</div>
+    <div class="section-title">손익 곡선</div>
     <div class="chart-container"><canvas id="histEquityChart"></canvas></div>
   </div>
   <div class="card red">
-    <div class="section-title">월별 손익</div>
+    <div class="section-title">월별 청산 손익</div>
     <div class="chart-container"><canvas id="monthlyChart"></canvas></div>
   </div>
 </div>
 
-<!-- 월별 테이블 -->
+<!-- ?붾퀎 ?뚯씠釉?-->
 <div class="card">
-  <div class="section-title">월별 성과 요약</div>
+  <div class="section-title">월별 청산 성과 요약</div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
           <th>월</th><th>거래일</th><th>승</th><th>패</th>
           <th>승률</th><th>총손익%</th><th>평균손익%</th>
-          <th>거래수</th><th>최고일</th><th>최악일</th>
+          <th>거래수</th><th>최고일</th><th>최저일</th>
         </tr>
       </thead>
       <tbody id="monthly-tbody"></tbody>
@@ -4010,10 +4927,10 @@ async function loadPeriodStats() {
   }
   const cardSubs = document.querySelectorAll('#stat-cards .card-sub');
   if (cardSubs.length >= 4) {
-    cardSubs[1].textContent = `${d.wins || 0}승 / ${d.losses || 0}패 · 매도 완료 기준`;
-    cardSubs[2].textContent = `${d.days || 0} 거래일 · 청산 기준`;
-    cardSubs[3].textContent = '매도 완료 1건당 평균';
-    cardSubs[4] && (cardSubs[4].textContent = '매도 완료 건수');
+    cardSubs[0].textContent = `${d.wins || 0}승 / ${d.losses || 0}패 기준`;
+    cardSubs[1].textContent = `${d.days || 0} 거래일 기준`;
+    cardSubs[2].textContent = '매도 완료 1건당 평균';
+    cardSubs[3].textContent = '매도 완료 건수';
   }
 
   const wrEl = document.getElementById('h-win-rate');
@@ -4086,7 +5003,7 @@ async function loadMonthly() {
     historyTitles[2].textContent = '월별 청산 성과 요약';
   }
 
-  // 월별 차트
+  // ?붾퀎 李⑦듃
   const labels = rows.map(r => r.month);
   const pnls   = rows.map(r => r.total_pnl);
   const bgs    = pnls.map(v => v >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)');
@@ -4113,8 +5030,7 @@ async function loadMonthly() {
     }
   });
 
-  // 테이블
-  const tbody = document.getElementById('monthly-tbody');
+  // ?뚯씠釉?  const tbody = document.getElementById('monthly-tbody');
   tbody.innerHTML = rows.map(r => {
     const wrPct = r.win_rate;
     const wrColor = wrPct >= 55 ? 'var(--green)' : wrPct >= 45 ? 'var(--yellow)' : 'var(--red)';
@@ -4151,12 +5067,12 @@ loadAll();
 """
 
 
-# ── 페이지 3: 매매 원장 ────────────────────────────────────────────────────────
+# ?? ?섏씠吏 3: 留ㅻℓ ?먯옣 ????????????????????????????????????????????????????????
 
 PAGE_TRADES_HTML = """
 <main>
 
-<!-- 4 요약 카드 -->
+<!-- 4 ?붿빟 移대뱶 -->
 <div class="grid-4">
   <div class="card blue">
     <div class="card-label">총 거래 수</div>
@@ -4180,7 +5096,30 @@ PAGE_TRADES_HTML = """
   </div>
 </div>
 
-<!-- 거래 테이블 -->
+<div class="grid-4" style="margin-top:12px">
+  <div class="card">
+    <div class="card-label">매칭됨</div>
+    <div class="card-value" id="m-matched">--</div>
+    <div class="card-sub" id="m-match-rate">매칭률 --%</div>
+  </div>
+  <div class="card">
+    <div class="card-label">전략만 존재</div>
+    <div class="card-value" id="m-strategy-only">--</div>
+    <div class="card-sub">브로커 체결 미확인</div>
+  </div>
+  <div class="card">
+    <div class="card-label">브로커만 존재</div>
+    <div class="card-value" id="m-broker-only">--</div>
+    <div class="card-sub">전략 원장 미매칭</div>
+  </div>
+  <div class="card">
+    <div class="card-label">매칭 불확실</div>
+    <div class="card-value" id="m-ambiguous">0</div>
+    <div class="card-sub">현재는 엄격 매칭만 사용</div>
+  </div>
+</div>
+
+<!-- 嫄곕옒 ?뚯씠釉?-->
 <div class="card">
   <div class="section-title" style="justify-content:space-between">
     <span>매매 원장</span>
@@ -4191,8 +5130,9 @@ PAGE_TRADES_HTML = """
       <thead>
         <tr>
           <th style="width:90px">구분</th>
-          <th style="width:90px">종목</th>
+          <th style="width:110px">종목</th>
           <th style="width:110px">전략</th>
+          <th style="width:90px">매칭</th>
           <th style="width:220px">가격</th>
           <th style="width:80px">수량</th>
           <th style="width:90px">손익%</th>
@@ -4214,11 +5154,13 @@ async function loadTrades() {
   const filterTicker   = document.getElementById('f-ticker').value.trim().toUpperCase();
   const filterStrategy = document.getElementById('f-strategy').value;
   const filterSide     = document.getElementById('f-side').value;
+  const filterMatch    = document.getElementById('f-match') ? document.getElementById('f-match').value : '';
 
   let url = '/api/trades/list' + marketParam();
   if (filterTicker)   url += '&ticker='   + encodeURIComponent(filterTicker);
   if (filterStrategy) url += '&strategy=' + encodeURIComponent(filterStrategy);
   if (filterSide)     url += '&side='     + encodeURIComponent(filterSide);
+  if (filterMatch)    url += '&match_status=' + encodeURIComponent(filterMatch);
 
   const trades = await fetch(url).then(r => r.json()).catch(() => []);
   _allTrades = trades;
@@ -4235,6 +5177,12 @@ function renderSummaryCards(trades) {
   const totalKrw = sells.reduce((s, t) => s + (t.pnl || 0), 0);
   const maxWin  = sells.length ? Math.max(...sells.map(t => t.pnl_pct)) : 0;
   const maxLoss = sells.length ? Math.min(...sells.map(t => t.pnl_pct)) : 0;
+  const matched = trades.filter(t => t.match_status === 'matched').length;
+  const strategyOnly = trades.filter(t => t.match_status === 'strategy_only').length;
+  const brokerOnly = trades.filter(t => t.match_status === 'broker_only').length;
+  const ambiguous = trades.filter(t => t.match_status === 'ambiguous').length;
+  const matchBase = matched + strategyOnly;
+  const matchRate = matchBase > 0 ? ((matched / matchBase) * 100).toFixed(1) : '0.0';
 
   document.getElementById('t-count').textContent   = fmt.num(trades.length);
   document.getElementById('t-buy-sell').textContent = `매수 ${buys.length} / 매도 ${sells.length}`;
@@ -4253,6 +5201,11 @@ function renderSummaryCards(trades) {
     `<span class="up">${fmt.pct(maxWin)}</span> / <span class="down">${fmt.pct(maxLoss)}</span>`;
 
   document.getElementById('trades-count-label').textContent = `${trades.length}건 표시`;
+  document.getElementById('m-matched').textContent = fmt.num(matched);
+  document.getElementById('m-match-rate').textContent = `매칭률 ${matchRate}%`;
+  document.getElementById('m-strategy-only').textContent = fmt.num(strategyOnly);
+  document.getElementById('m-broker-only').textContent = fmt.num(brokerOnly);
+  document.getElementById('m-ambiguous').textContent = fmt.num(ambiguous);
 }
 
 function dayOfWeek(dateStr) {
@@ -4263,7 +5216,7 @@ function dayOfWeek(dateStr) {
 function renderTrades(trades) {
   const tbody = document.getElementById('trades-tbody');
   if (!trades.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">선택 시장(${MARKET}) 기준 거래 내역이 없습니다</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">선택 시장(${MARKET}) 기준 거래 이력이 없습니다</td></tr>`;
     return;
   }
 
@@ -4306,12 +5259,12 @@ function renderTrades(trades) {
     if (d !== lastDate) {
       lastDate = d;
       const dow = dayOfWeek(d);
-      const sep = '─'.repeat(30);
-      html += `<tr class="date-group-row"><td colspan="8">── ${d} (${dow}) ${sep}</td></tr>`;
+      const sep = '-'.repeat(30);
+      html += `<tr class="date-group-row"><td colspan="8">날짜 ${d} (${dow}) ${sep}</td></tr>`;
     }
 
     const isSell  = t.side === 'sell' || t.side === '매도';
-    const sideLbl = isSell ? '🔴 매도' : '🟢 매수';
+    const sideLbl = isSell ? '매도' : '매수';
     const sideCls = isSell ? 'side-sell' : 'side-buy';
     const timeLbl = t.time || t.fill_time || '--:--';
     const pnlPct  = isSell ? `<span class="${colorClass(t.pnl_pct)}">${fmt.pct(t.pnl_pct)}</span>` : '<span style="color:var(--muted)">-</span>';
@@ -4332,8 +5285,8 @@ function renderTrades(trades) {
       return currency === 'USD' ? ('$' + v.toFixed(2)) : (Math.round(v).toLocaleString() + '원');
     };
     const metaBits = [];
-    if (t.price_source === 'broker_balance') metaBits.push('브로커평균단가');
-    if (t.price_source === 'order_fill') metaBits.push('체결조회단가');
+    if (t.price_source === 'broker_balance') metaBits.push('브로커 평균단가');
+    if (t.price_source === 'order_fill') metaBits.push('체결 조회 기준');
     if (t.order_no) metaBits.push('주문번호 ' + t.order_no);
     if (t.fill_time) metaBits.push('체결시각 ' + t.fill_time);
     if (isSell) {
@@ -4356,6 +5309,15 @@ function renderTrades(trades) {
         </div>`;
     }
     const reasonLine = [reasonText(t), sourceText(t)].filter(Boolean).join(' · ');
+    const matchStatus = String(t.match_status || '').trim();
+    const matchMap = {
+      matched: ['매칭됨', 'rgba(34,197,94,0.16)', 'var(--green)'],
+      strategy_only: ['전략만', 'rgba(245,158,11,0.16)', 'var(--yellow)'],
+      broker_only: ['브로커만', 'rgba(59,130,246,0.16)', 'var(--blue)'],
+      ambiguous: ['불확실', 'rgba(239,68,68,0.16)', 'var(--red)'],
+    };
+    const matchInfo = matchMap[matchStatus] || ['-', 'rgba(148,163,184,0.16)', '#cbd5e1'];
+    const matchTitle = [t.matched_order_no ? `주문 ${t.matched_order_no}` : '', t.matched_date || t.matched_time ? `${t.matched_date || ''} ${t.matched_time || ''}`.trim() : ''].filter(Boolean).join(' · ');
 
     if (t.source_kind_label) {
       sourceBadge = `<div style="display:inline-block;margin-top:4px;padding:1px 6px;border-radius:999px;background:rgba(148,163,184,0.16);color:#cbd5e1;font-size:10px">${t.source_kind_label}</div>`;
@@ -4364,8 +5326,9 @@ function renderTrades(trades) {
     html += `
     <tr>
       <td class="${sideCls}" style="font-weight:600;white-space:nowrap">${sideLbl}<div style="font-size:10px;color:var(--muted);margin-top:4px">${timeLbl}</div></td>
-      <td style="font-weight:600">${t.ticker || '-'}</td>
+      <td style="font-weight:600">${t.display_ticker || t.ticker || '-'}</td>
       <td><span style="color:var(--blue)">${t.strategy || '-'}</span></td>
+      <td><span title="${matchTitle.replace(/"/g,'&quot;')}" style="display:inline-block;padding:2px 8px;border-radius:999px;background:${matchInfo[1]};color:${matchInfo[2]};font-size:11px;font-weight:700">${matchInfo[0]}</span></td>
       <td style="line-height:1.45">
         <div>${price}</div>
         ${metaLine}
@@ -4383,6 +5346,12 @@ function renderTrades(trades) {
 
 async function loadAll() {
   await loadTrades();
+}
+
+if (PERIOD === 'month') {
+  PERIOD = 'all';
+  localStorage.setItem('period', 'all');
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.dataset.p === 'all'));
 }
 
 loadAll();
@@ -4404,97 +5373,57 @@ TRADES_EXTRA_FILTERS = """
     <option value="buy">매수</option>
     <option value="sell">매도</option>
   </select>
+  <select class="date-input" id="f-match">
+    <option value="">매칭 전체</option>
+    <option value="matched">매칭됨</option>
+    <option value="strategy_only">전략만</option>
+    <option value="broker_only">브로커만</option>
+    <option value="ambiguous">불확실</option>
+  </select>
   <button class="apply-btn" onclick="loadAll()">적용</button>
 """
 
+PAGE_BROKER_TRADES_HTML = (
+    PAGE_TRADES_HTML
+    .replace("/api/trades/list", "/api/trades/broker")
+    .replace("선택 시장(${MARKET}) 기준 거래 이력이 없습니다", "선택 시장(${MARKET}) 기준 실거래 체결 이력이 없습니다")
+    .replace("매매 원장", "실거래 원장")
+    .replace("브로커 체결 미확인", "전략 원장과 연결되지 않은 체결")
+    .replace("전략 원장 미매칭", "브로커에서만 확인된 체결")
+    .replace("현재는 엄격 매칭만 사용", "주문번호·종목·수량 기준 매칭")
+)
 
-# ── 페이지 4: 분석 ────────────────────────────────────────────────────────────
+BROKER_TRADES_STATUS_JS = """
+<script>
+async function loadBrokerTradeStatus() {
+  const s = await fetch('/api/trades/broker/status' + marketParam()).then(r => r.json()).catch(() => ({}));
+  const label = document.getElementById('trades-count-label');
+  if (label) {
+    label.textContent = s.ok
+      ? `브로커 조회 성공 · ${s.query_start || '-'} ~ ${s.query_end || '-'} · ${s.count || 0}건`
+      : `브로커 조회 실패${s.error ? ' · ' + s.error : ''}`;
+  }
+  const brokerSub = document.getElementById('m-broker-only') ? document.getElementById('m-broker-only').nextElementSibling : null;
+  if (brokerSub) {
+    brokerSub.textContent = s.ok
+      ? `브로커에서만 확인된 체결 · 최근 ${s.latest_fill || '없음'}`
+      : '브로커 조회 실패';
+  }
+  const ambiguousSub = document.querySelector('#m-ambiguous + .card-sub');
+  if (ambiguousSub && s.ok) {
+    ambiguousSub.textContent = `조회 구간 ${s.query_start || '-'} ~ ${s.query_end || '-'}`;
+  }
+}
+loadBrokerTradeStatus();
+</script>
+"""
+
+
+# ?? ?섏씠吏 4: 遺꾩꽍 ????????????????????????????????????????????????????????????
 
 TODAY_SUMMARY_OVERRIDE_JS = """
 <script>
-async function loadSummary() {
-  const d = await fetch('/api/summary?market=' + MARKET).then(r => r.json()).catch(() => ({}));
-  if (!d.today) return;
-  const t = d.today, p = d.period || {};
-  window.__todaySummary = t;
-
-  const pnlEl = document.getElementById('today-pnl');
-  if (pnlEl) {
-    pnlEl.textContent = fmt.pct(t.pnl_pct || 0);
-    pnlEl.className = 'card-value ' + colorClass(t.pnl_pct || 0);
-  }
-  const todayKrw = document.getElementById('today-krw');
-  if (todayKrw) {
-    todayKrw.textContent = `실현 ${fmt.krw(t.realized_pnl_krw || 0)} | 미실현 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
-  }
-  const cumulative = document.getElementById('cumulative');
-  if (cumulative) cumulative.textContent = fmt.asset(t.cumulative || 0);
-  const cumulativePnl = document.getElementById('cumulative-pnl');
-  if (cumulativePnl) cumulativePnl.textContent = `누적 손익: ${fmt.pct(p.total_pnl || 0)}`;
-
-  const sess = t.session || {};
-  const sessTxt = sess.label ? ` · ${sess.label} (${sess.open_time || '--:--'}~${sess.close_time || '--:--'})` : '';
-  const todayMode = document.getElementById('today-mode');
-  if (todayMode) {
-    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades || 0}건${sessTxt}`;
-  }
-
-  const wrEl = document.getElementById('win-rate');
-  if (wrEl) {
-    wrEl.textContent = (p.win_rate || 0) + '%';
-    wrEl.className = 'card-value ' + ((p.win_rate || 0) >= 55 ? 'up' : (p.win_rate || 0) >= 45 ? 'neutral-color' : 'down');
-  }
-  const winDetail = document.getElementById('win-detail');
-  if (winDetail) winDetail.textContent = `${p.wins || 0}승 / ${p.losses || 0}패 (${p.days || 0}일)`;
-
-  const emoji = p.streak_type === 'win' ? '▲' : '▼';
-  const streakVal = document.getElementById('streak-val');
-  if (streakVal) streakVal.innerHTML = `<span style="font-size:20px">${emoji}</span> ${p.streak || 0}연속`;
-  const totalPnl = document.getElementById('total-pnl');
-  if (totalPnl) totalPnl.textContent = `누적: ${fmt.pct(p.total_pnl || 0)}`;
-
-  const positions = t.positions || [];
-  const posBoard = document.getElementById('position-board');
-  const posCount = document.getElementById('position-count');
-  if (posCount) {
-    posCount.textContent = positions.length
-      ? `${positions.length}개 보유중${t.live_updated ? ' · ' + t.live_updated : ''}`
-      : `보유 없음${t.live_updated ? ' · ' + t.live_updated : ''}`;
-  }
-  if (!posBoard) return;
-  if (positions.length === 0) {
-    posBoard.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px 0">현재 보유 포지션이 없습니다</div>';
-    return;
-  }
-  posBoard.innerHTML = positions.map(pos => {
-    const pnl = pos.pnl_pct || 0;
-    const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
-    const isKRW = (pos.currency || (MARKET === 'KR' ? 'KRW' : 'USD')) === 'KRW';
-    const qty = Number(pos.qty || 0);
-    const avg = Number(pos.avg_price || 0);
-    const curPx = Number(pos.current_price || 0);
-    const usdKrw = Number(t.usd_krw || 0);
-    const buyTotal = avg * qty;
-    const curTotal = curPx * qty;
-    const pnlNative = curTotal - buyTotal;
-    const pnlKrw = !isKRW && usdKrw > 0 ? pnlNative * usdKrw : pnlNative;
-    const entry = isKRW ? fmt.krw(pos.avg_price || 0) : '$' + (pos.avg_price || 0).toFixed(2);
-    const cur = isKRW ? fmt.krw(pos.current_price || 0) : '$' + (pos.current_price || 0).toFixed(2);
-    const buyTotalText = isKRW ? fmt.asset(buyTotal) : '$' + buyTotal.toFixed(2);
-    const curTotalText = isKRW ? fmt.asset(curTotal) : '$' + curTotal.toFixed(2);
-    const pnlKrwText = fmt.krw(pnlKrw);
-    return `
-      <div class="card" style="min-width:180px;flex:1;padding:14px 16px">
-        <div style="font-size:15px;font-weight:700;margin-bottom:6px">${pos.ticker}</div>
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.strategy || '-'} · ${pos.qty || 0}주</div>
-        <div style="font-size:11px;color:var(--text-dim)">매수가</div>
-        <div style="font-family:var(--mono);font-size:13px;margin-bottom:4px">${entry}</div>
-        <div style="font-size:11px;color:var(--text-dim)">현재가</div>
-        <div style="font-family:var(--mono);font-size:13px;margin-bottom:6px">${cur}</div>
-        <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
-      </div>`;
-  }).join('');
-}
+/* legacy summary override disabled */
 </script>
 """
 
@@ -4520,10 +5449,12 @@ async function loadSummary() {
   if (cumulativePnl) cumulativePnl.textContent = `누적 손익: ${fmt.pct(p.total_pnl || 0)}`;
 
   const sess = t.session || {};
+  const riskText = t.risk_value ? ` | ${t.risk_label} ${Number(t.risk_value).toFixed(1)} ${t.risk_status || ''}` : '';
   const sessTxt = sess.label ? ` | ${sess.label} (${sess.open_time || '--:--'}~${sess.close_time || '--:--'})` : '';
   const todayMode = document.getElementById('today-mode');
   if (todayMode) {
-    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${sessTxt}`;
+    const orderTxt = t.mode_order_limit_krw ? ` | 최대매수 ${fmt.krw(t.mode_order_limit_krw)}` : '';
+    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${sessTxt}${riskText}`;
   }
 
   const wrEl = document.getElementById('win-rate');
@@ -4539,6 +5470,58 @@ async function loadSummary() {
   const totalPnl = document.getElementById('total-pnl');
   if (totalPnl) totalPnl.textContent = `누적: ${fmt.pct(p.total_pnl || 0)}`;
 
+  const ml = t.ml_db || {};
+  const mlTitle = document.getElementById('ml-db-title');
+  const mlMeta = document.getElementById('ml-db-meta');
+  const mlBreakdown = document.getElementById('ml-db-breakdown');
+  if (mlTitle) {
+    mlTitle.textContent = ml.enabled
+      ? `누적 ${ml.total || 0}건 · 오늘 ${ml.today || 0}건`
+      : 'ML DB 비활성';
+  }
+  if (mlMeta) {
+    mlMeta.textContent = ml.enabled
+      ? `BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건 · 마지막 ${ml.last_ts || '--'}`
+      : '--';
+  }
+  if (mlBreakdown) {
+    const recentDays = (ml.recent_days || []).map(x => `${String(x.date || '').slice(5)} ${x.count || 0}`).join(' · ');
+    mlBreakdown.textContent = ml.enabled
+      ? `forward 준비 ${ml.forward_ready || 0}건 (${Number(ml.forward_ready_rate || 0).toFixed(1)}%)${recentDays ? ' · 최근7일 ' + recentDays : ''}`
+      : '--';
+  }
+
+  const adaptive = t.adaptive || {};
+  const adaptiveTitle = document.getElementById('adaptive-title');
+  const adaptiveMeta = document.getElementById('adaptive-meta');
+  const adaptiveBreakdown = document.getElementById('adaptive-breakdown');
+  if (adaptiveTitle) {
+    adaptiveTitle.textContent = adaptive.enabled
+      ? `현재 모드 ${koMode(t.mode || '-')} · 전략 ${Number((adaptive.rows || []).length || 0)}개`
+      : 'Adaptive 파라미터 비활성';
+  }
+  if (adaptiveMeta) {
+    const changedCount = (adaptive.rows || []).filter(r => (r.changed || []).length > 0).length;
+    const perfSources = Array.from(new Set((adaptive.rows || []).map(r => r.perf_source || 'none'))).join(', ');
+    adaptiveMeta.textContent = adaptive.enabled
+      ? `조정 전략 ${changedCount}개 · 성과 소스 ${perfSources || 'none'}`
+      : '--';
+  }
+  if (adaptiveBreakdown) {
+    adaptiveBreakdown.innerHTML = adaptive.enabled
+      ? (adaptive.rows || []).map(r => {
+          const strategyKo = koStrategy(r.strategy || '') || r.strategy || '-';
+          const changed = (r.changed || []).length ? ` · 조정 ${r.changed.join(', ')}` : '';
+          const state = r.disabled ? ' · 비활성' : '';
+          const reasons = []
+            .concat(r.regime_reasons || [])
+            .concat(r.perf_reason ? [r.perf_reason] : []);
+          const reasonText = reasons.length ? ` · ${reasons.join(' / ')}` : '';
+          return `<div><span style="color:#e2e8f0">${strategyKo}</span> <span style="color:#64748b">base</span> ${r.base || '-'} <span style="color:#64748b">→ final</span> ${r.final || '-'} <span style="color:#64748b">(${changed ? changed.slice(3) : '변경 없음'}${state}${reasonText})</span></div>`;
+        }).join('')
+      : '--';
+  }
+
   const positions = t.positions || [];
   const posBoard = document.getElementById('position-board');
   const posCount = document.getElementById('position-count');
@@ -4550,43 +5533,79 @@ async function loadSummary() {
   if (!posBoard) return;
   if (positions.length === 0) {
     posBoard.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px 0">현재 보유 포지션이 없습니다</div>';
-    return;
+  } else {
+    posBoard.innerHTML = positions.map(pos => {
+      const pnl = pos.pnl_pct || 0;
+      const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
+      const isKRW = (pos.currency || (MARKET === 'KR' ? 'KRW' : 'USD')) === 'KRW';
+      const qty = Number(pos.qty || 0);
+      const avg = Number(pos.avg_price || 0);
+      const curPx = Number(pos.current_price || 0);
+      const usdKrw = Number(t.usd_krw || 0);
+      const buyTotal = avg * qty;
+      const curTotal = curPx * qty;
+      const pnlNative = curTotal - buyTotal;
+      const pnlKrw = !isKRW && usdKrw > 0 ? pnlNative * usdKrw : pnlNative;
+      const entry = isKRW ? fmt.krw(pos.avg_price || 0) : '$' + (pos.avg_price || 0).toFixed(2);
+      const cur = isKRW ? fmt.krw(pos.current_price || 0) : '$' + (pos.current_price || 0).toFixed(2);
+      const buyTotalText = isKRW ? fmt.krw(buyTotal) : '$' + buyTotal.toFixed(2);
+      const curTotalText = isKRW ? fmt.krw(curTotal) : '$' + curTotal.toFixed(2);
+      const pnlKrwText = fmt.krw(pnlKrw);
+      return `
+        <div class="card" style="min-width:180px;flex:1;padding:14px 16px">
+          <div style="font-size:15px;font-weight:700;margin-bottom:6px">${pos.display_ticker || pos.ticker}</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.strategy || '-'} · ${pos.qty || 0}주</div>
+          <div style="font-size:11px;color:var(--text-dim)">매수가</div>
+          <div style="font-family:var(--mono);font-size:13px;margin-bottom:4px">${entry}</div>
+          <div style="font-size:11px;color:var(--text-dim)">현재가</div>
+          <div style="font-family:var(--mono);font-size:13px;margin-bottom:6px">${cur}</div>
+          <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">매수총액 ${buyTotalText}</div>
+          <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">현재평가 ${curTotalText}${!isKRW && usdKrw > 0 ? ' · 원화손익 ' + pnlKrwText : ''}</div>
+          <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
+        </div>`;
+    }).join('');
   }
-  posBoard.innerHTML = positions.map(pos => {
-    const pnl = pos.pnl_pct || 0;
-    const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
-    const isKRW = (pos.currency || (MARKET === 'KR' ? 'KRW' : 'USD')) === 'KRW';
-    const qty = Number(pos.qty || 0);
-    const avg = Number(pos.avg_price || 0);
-    const curPx = Number(pos.current_price || 0);
-    const usdKrw = Number(t.usd_krw || 0);
-    const buyTotal = avg * qty;
-    const curTotal = curPx * qty;
-    const pnlNative = curTotal - buyTotal;
-    const pnlKrw = !isKRW && usdKrw > 0 ? pnlNative * usdKrw : pnlNative;
-    const entry = isKRW ? fmt.krw(pos.avg_price || 0) : '$' + (pos.avg_price || 0).toFixed(2);
-    const cur = isKRW ? fmt.krw(pos.current_price || 0) : '$' + (pos.current_price || 0).toFixed(2);
-    const buyTotalText = isKRW ? fmt.krw(buyTotal) : '$' + buyTotal.toFixed(2);
-    const curTotalText = isKRW ? fmt.krw(curTotal) : '$' + curTotal.toFixed(2);
-    const pnlKrwText = fmt.krw(pnlKrw);
-    return `
-      <div class="card" style="min-width:180px;flex:1;padding:14px 16px">
-        <div style="font-size:15px;font-weight:700;margin-bottom:6px">${pos.ticker}</div>
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.strategy || '-'} | ${pos.qty || 0}주</div>
-        <div style="font-size:11px;color:var(--text-dim)">매수가</div>
-        <div style="font-family:var(--mono);font-size:13px;margin-bottom:4px">${entry}</div>
-        <div style="font-size:11px;color:var(--text-dim)">현재가</div>
-        <div style="font-family:var(--mono);font-size:13px;margin-bottom:6px">${cur}</div>
-        <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">매수총액 ${buyTotalText}</div>
-        <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">현재평가 ${curTotalText}${!isKRW && usdKrw > 0 ? ' · 원화손익 ' + pnlKrwText : ''}</div>
-        <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
-      </div>`;
-  }).join('');
+
 }
 
 if (typeof loadSummary === 'function') {
   loadSummary();
 }
+
+loadSummary();
+</script>
+"""
+
+TODAY_SIGNAL_DIGEST_JS = """
+<script>
+(function() {
+  if (typeof loadSummary !== 'function') return;
+  const _origLoadSummary = loadSummary;
+  loadSummary = async function() {
+    await _origLoadSummary();
+    const d = await fetch('/api/summary?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+    if (!d.today) return;
+    const t = d.today || {};
+    const sig = t.signal_digest || {};
+    const funnelTxt = (sig.candidates || sig.selected || sig.buy_signal || sig.no_signal || sig.blocked || sig.failed)
+      ? `후보 ${sig.candidates || 0} → 선택 ${sig.selected || 0} · 매수신호 ${sig.buy_signal || 0} · 무신호 ${sig.no_signal || 0} · 차단 ${sig.blocked || 0} · 실패 ${sig.failed || 0}`
+      : '';
+    const noneTopTxt = (sig.top_none || []).length ? `무신호 상위 원인: ${(sig.top_none || []).join(', ')}` : '';
+    const todayMode = document.getElementById('today-mode');
+    if (!todayMode) return;
+    const extraId = 'today-signal-digest-extra';
+    const prev = document.getElementById(extraId);
+    if (prev) prev.remove();
+    if (!funnelTxt && !noneTopTxt) return;
+    const box = document.createElement('div');
+    box.id = extraId;
+    box.style.marginTop = '6px';
+    box.innerHTML =
+      (funnelTxt ? `<div style="font-size:11px;color:var(--text-dim)">${funnelTxt}</div>` : '')
+      + (noneTopTxt ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px">${noneTopTxt}</div>` : '');
+    todayMode.appendChild(box);
+  };
+})();
 </script>
 """
 
@@ -4607,19 +5626,18 @@ async function loadClaudeControl() {
   const pending = d.pending_trigger || null;
   const status = d.last_result_status || 'idle';
   const stats = d.stats || {};
+
   badge.textContent = enabled ? 'ON' : 'OFF';
   badge.style.color = enabled ? 'var(--green)' : 'var(--red)';
-  stateLine.textContent = enabled
-    ? `활성 상태${sess.label ? ' | ' + sess.label : ''}`
-    : '비활성 상태';
+  stateLine.textContent = enabled ? `활성 상태${sess.label ? ' | ' + sess.label : ''}` : '비활성 상태';
   metaLine.textContent = [
-    d.last_trigger_at ? `마지막 트리거 ${d.last_trigger_at.slice(11, 19)}` : '',
+    d.last_trigger_at ? `마지막 트리거 ${String(d.last_trigger_at).slice(11, 19)}` : '',
     d.last_result_at ? `마지막 결과 ${status}` : '',
     pending ? `대기 ${pending.market} ${String(pending.requested_at || '').slice(11, 19)}` : '',
-    stats.count ? `오늘 승률 ${stats.win_rate}% (${stats.wins}/${stats.count})` : ''
+    stats.count ? `오늘 적중 ${stats.win_rate}% (${stats.wins}/${stats.count})` : ''
   ].filter(Boolean).join(' | ') || '--';
   const statsLine = stats.count
-    ? `오늘 재판단 ${stats.count}회 · 모드변경 ${stats.changed}회 · 유지 ${stats.unchanged}회 · HIT ${stats.wins} / MISS ${stats.losses} / FLAT ${stats.flats} · 누적 ${fmt.krw(stats.pnl_krw || 0)}`
+    ? `오늘 판단 ${stats.count}건 · 모드변경 ${stats.changed}건 · 유지 ${stats.unchanged}건 · HIT ${stats.wins} / MISS ${stats.losses} / FLAT ${stats.flats} · 누적 ${fmt.krw(stats.pnl_krw || 0)}`
     : '';
   errLine.textContent = [statsLine, d.last_error || ''].filter(Boolean).join(' | ');
 
@@ -4634,9 +5652,8 @@ async function loadProcessControl() {
   const stateLine = document.getElementById('control-state-line');
   const metaLine = document.getElementById('control-meta-line');
   const errLine = document.getElementById('control-error-line');
-  const dashBtn = document.getElementById('restart-dashboard-btn');
   const botBtn = document.getElementById('restart-bot-btn');
-  if (!stateLine || !metaLine || !errLine || !dashBtn || !botBtn) return;
+  if (!stateLine || !metaLine || !errLine || !botBtn) return;
 
   const dash = d.dashboard || {};
   const bot = d.bot || {};
@@ -4651,7 +5668,7 @@ async function loadProcessControl() {
 
 async function restartDashboardServer() {
   const errLine = document.getElementById('control-error-line');
-  if (errLine) errLine.textContent = '대시보드 서버 재시작 요청 중...';
+  if (errLine) errLine.textContent = '대시보드 서버 재시작 요청 중..';
   fetch('/api/control/restart-dashboard', { method: 'POST' }).catch(() => ({}));
 }
 
@@ -4684,7 +5701,7 @@ async function triggerClaudeReinvoke() {
   }).then(async r => ({ ok: r.ok, data: await r.json() })).catch(() => ({ ok: false, data: {} }));
   if (!res.ok) {
     const errLine = document.getElementById('claude-error-line');
-    if (errLine) errLine.textContent = res.data.error || 'Claude 재판단 요청 실패';
+    if (errLine) errLine.textContent = res.data.error || 'Claude 판단 요청 실패';
     return;
   }
   await loadClaudeControl();
@@ -4722,7 +5739,7 @@ async function loadClaudeNarrative() {
     buy_filled: '매수 체결',
     sell_filled: '매도 체결',
     trailing: '추적중',
-    waiting: '대기',
+    waiting: '대기중',
     cycle_error: '처리 오류'
   };
   const REASON_KO = {
@@ -4734,7 +5751,7 @@ async function loadClaudeNarrative() {
     trail_stop: '추적 손절',
     stop_loss: '손절',
     max_hold: '보유 기간 만료',
-    session_close: '장마감 정산',
+    session_close: '세션 종료 청산',
     live_position: '브로커 잔고 반영',
     us_order_blocked: '미국 주문 차단'
   };
@@ -4772,7 +5789,7 @@ async function loadClaudeNarrative() {
   (tickers.tickers || []).slice(0, 5).forEach(t => {
     rows.push(timelineRow(
       'pick',
-      `${t.ticker} 선택`,
+      `${t.display_ticker || t.ticker} 선택`,
       `${t.select_reason || '선택 이유 없음'}${t.last_event_ko ? `<br>현재 상태: ${t.last_event_ko}` : (t.last_event ? `<br>현재 상태: ${t.last_event}` : '')}`,
       tickers.mode || ''
     ));
@@ -4785,7 +5802,7 @@ async function loadClaudeNarrative() {
     rows.push(timelineRow(
       s.event === 'entry_signal' ? 'buy' : s.event === 'sell_filled' ? 'sell' : 'judgment',
       `${s.ticker || '-'} · ${koEvent(s.event || '-')}`,
-      `${koReason(s.reason || '-') }<br>가격: ${priceTxt}`,
+      `${koReason(s.reason || '-') }<br>가격 ${priceTxt}`,
       s.timestamp ? s.timestamp.substring(11, 19) : ''
     ));
   });
@@ -4794,14 +5811,12 @@ async function loadClaudeNarrative() {
     const price = Number(t.display_price || t.price || 0);
     const currency = (t.currency || (MARKET === 'KR' ? 'KRW' : 'USD'));
     const isKRW = currency === 'KRW';
-    const priceTxt = price > 0 ? (isKRW
-      ? Math.round(price).toLocaleString() + '원'
-      : '$' + price.toFixed(2)) : '-';
+    const priceTxt = price > 0 ? (isKRW ? Math.round(price).toLocaleString() + '원' : '$' + price.toFixed(2)) : '-';
     const buyPrice = Number(t.buy_price_native || 0);
     const buyTotal = Number(t.buy_total_native || 0);
     const sellTotal = Number(t.sell_total_native || 0);
     const pnlKrw = Number(t.pnl_krw || 0);
-    let detail = `${koReason(t.reason || '-') }<br>가격: ${priceTxt}`;
+    let detail = `${koReason(t.reason || '-') }<br>가격 ${priceTxt}`;
     if (t.side === 'sell') {
       const buyPriceTxt = buyPrice > 0 ? (isKRW ? Math.round(buyPrice).toLocaleString() + '원' : '$' + buyPrice.toFixed(4)) : '-';
       const buyTotalTxt = buyTotal > 0 ? (isKRW ? Math.round(buyTotal).toLocaleString() + '원' : '$' + buyTotal.toFixed(2)) : '-';
@@ -4817,14 +5832,14 @@ async function loadClaudeNarrative() {
     }
     rows.push(timelineRow(
       t.side === 'buy' ? 'buy' : t.side === 'sell' ? 'sell' : 'judgment',
-      `${t.ticker || '-'} ${t.side || '-'} ${t.qty || 0}주`,
+      `${t.display_ticker || t.ticker || '-'} ${t.side || '-'} ${t.qty || 0}주`,
       detail,
       t.time || t.fill_time || t.date || ''
     ));
   });
 
   if (!rows.length) {
-    box.innerHTML = '<div style="color:var(--text-dim);font-size:13px">표시할 Claude 판단/실행 내역이 아직 없습니다</div>';
+    box.innerHTML = '<div style="color:var(--text-dim);font-size:13px">실시간 Claude 판단/실행 이력이 아직 없습니다</div>';
     return;
   }
   box.innerHTML = rows.join('');
@@ -4837,16 +5852,20 @@ loadAll = async function() {
   await loadProcessControl();
   await loadClaudeNarrative();
 };
+
+loadClaudeControl();
+loadProcessControl();
+loadClaudeNarrative();
 </script>
 """
 
 PAGE_ANALYTICS_HTML = """
 <main>
 
-<!-- Row 1: 분석가 적중률 추이 + 모드별 성과 -->
+<!-- Row 1: 遺꾩꽍媛 ?곸쨷瑜?異붿씠 + 紐⑤뱶蹂??깃낵 -->
 <div class="grid-2">
   <div class="card purple">
-    <div class="section-title">분석가 적중률 추이 (7일 이동평균)</div>
+    <div class="section-title">분석가 영향률 추이 (7일 이동평균)</div>
     <div class="chart-container"><canvas id="analystChart"></canvas></div>
   </div>
   <div class="card blue">
@@ -4860,7 +5879,7 @@ PAGE_ANALYTICS_HTML = """
   </div>
 </div>
 
-<!-- Row 2: 전략별 성과 + 반복 교훈 -->
+<!-- Row 2: ?꾨왂蹂??깃낵 + 諛섎났 援먰썕 -->
 <div class="grid-2">
   <div class="card cyan">
     <div class="section-title">전략별 성과</div>
@@ -4877,7 +5896,7 @@ PAGE_ANALYTICS_HTML = """
   </div>
 </div>
 
-<!-- Row 3: Brain 상태 + 분석가 상세 -->
+<!-- Row 3: Brain ?곹깭 + 遺꾩꽍媛 ?곸꽭 -->
 <div class="grid-3">
   <div class="card">
     <div class="section-title">Brain 상태</div>
@@ -4889,7 +5908,7 @@ PAGE_ANALYTICS_HTML = """
   </div>
 </div>
 
-<!-- Row 4: Brain 일별 학습 이력 -->
+<!-- Row 4: Brain ?쇰퀎 ?숈뒿 ?대젰 -->
 <div class="card" style="margin-top:0">
   <div class="section-title" style="display:flex;align-items:center;gap:12px">
     Brain 일별 학습 이력
@@ -4901,9 +5920,9 @@ PAGE_ANALYTICS_HTML = """
         <tr>
           <th>날짜</th>
           <th>모드</th>
-          <th>PnL%</th>
+          <th>손익률</th>
           <th>시장%</th>
-          <th>승패</th>
+          <th>판정</th>
           <th>Bull</th>
           <th>Bear</th>
           <th>Neutral</th>
@@ -4915,7 +5934,7 @@ PAGE_ANALYTICS_HTML = """
       <tbody id="brain-history-tbody"></tbody>
     </table>
   </div>
-  <!-- 누적 교훈 + correction_guide -->
+  <!-- ?꾩쟻 援먰썕 + correction_guide -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
     <div>
       <div style="font-size:11px;font-weight:600;letter-spacing:1.2px;color:var(--muted);margin-bottom:8px">누적 교훈</div>
@@ -4943,7 +5962,7 @@ async function loadAnalystChart() {
       labels: d.labels,
       datasets: [
         { label: '상승', data: d.bull, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.14)', borderWidth: 3, pointRadius: 3, pointHoverRadius: 5, pointBackgroundColor: '#22c55e', tension: 0.35, fill: false },
-        { label: '약세', data: d.bear, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.14)', borderWidth: 3, pointRadius: 3, pointHoverRadius: 5, pointBackgroundColor: '#ef4444', tension: 0.35, fill: false },
+        { label: '하락', data: d.bear, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.14)', borderWidth: 3, pointRadius: 3, pointHoverRadius: 5, pointBackgroundColor: '#ef4444', tension: 0.35, fill: false },
         { label: '중립', data: d.neutral, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.14)', borderWidth: 3, pointRadius: 3, pointHoverRadius: 5, pointBackgroundColor: '#38bdf8', tension: 0.35, fill: false, borderDash: [6, 4] },
       ]
     },
@@ -5000,16 +6019,16 @@ async function loadBrain() {
   // Brain 상태 카드
   document.getElementById('brain-status').innerHTML = `
     <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:12px">
-      버전 ${d.version || '-'} &nbsp;|&nbsp; ${d.trained_days || 0}일 학습 &nbsp;|&nbsp; 장세: <span style="color:var(--text)">${koRegime(d.regime)}</span>
+      버전 ${d.version || '-'} &nbsp;|&nbsp; ${d.trained_days || 0}일 학습 &nbsp;|&nbsp; 체제: <span style="color:var(--text)">${koRegime(d.regime)}</span>
     </div>
     <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:4px">마지막 업데이트</div>
     <div style="font-family:var(--mono);font-size:12px;margin-bottom:16px">${d.updated || '-'}</div>
-    <div style="font-size:11px;font-weight:600;letter-spacing:1.5px;color:var(--muted);margin-bottom:10px">분석가 적중률</div>
+    <div style="font-size:11px;font-weight:600;letter-spacing:1.5px;color:var(--muted);margin-bottom:10px">분석가 영향률</div>
     ${['bull','bear','neutral'].map(k => {
       const perf = a[k] || {};
       const rate = Math.round((perf.rate || 0) * 100);
       const col  = k === 'bull' ? 'var(--green)' : k === 'bear' ? 'var(--red)' : 'var(--yellow)';
-      const lbl  = k === 'bull' ? '🟢 Bull' : k === 'bear' ? '🔴 Bear' : '⚪ Neutral';
+      const lbl  = k === 'bull' ? '상승' : k === 'bear' ? '하락' : '중립';
       return `
       <div style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;margin-bottom:4px">
@@ -5032,14 +6051,14 @@ async function loadBrain() {
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
       ${rows.map(([k, v]) => {
         const col = k === 'bull' ? 'var(--green)' : k === 'bear' ? 'var(--red)' : 'var(--yellow)';
-        const lbl = k === 'bull' ? '🟢 Bull 분석가' : k === 'bear' ? '🔴 Bear 분석가' : '⚪ Neutral 분석가';
+        const lbl = k === 'bull' ? '상승 분석가' : k === 'bear' ? '하락 분석가' : '중립 분석가';
         const rate = Math.round((v.rate || 0) * 100);
         return `
         <div style="background:rgba(255,255,255,0.03);border-radius:8px;padding:16px;border:1px solid var(--border)">
           <div style="color:${col};font-weight:600;margin-bottom:10px">${lbl}</div>
           <div style="font-family:var(--mono);font-size:12px;line-height:2;color:var(--muted)">
-            <div>적중률 <span style="color:${col}">${rate}%</span></div>
-            <div>총 판단 <span style="color:var(--text)">${v.total || 0}회</span></div>
+            <div>영향률 <span style="color:${col}">${rate}%</span></div>
+            <div>총 판단 <span style="color:var(--text)">${v.total || 0}건</span></div>
             <div>HIT <span class="up">${v.hit || v.hits || 0}</span> / MISS <span class="down">${v.miss || v.misses || 0}</span> / PARTIAL <span class="neutral-color">${v.partial || v.partials || Math.max((v.total || 0) - (v.hit || v.hits || 0) - (v.miss || v.misses || 0), 0)}</span></div>
             ${v.recent_streak !== undefined ? `<div>최근 연속 <span style="color:var(--text)">${v.recent_streak}</span></div>` : ''}
             ${v.avg_confidence !== undefined ? `<div>평균 신뢰도 <span style="color:var(--text)">${Math.round((v.avg_confidence||0)*100)}%</span></div>` : ''}
@@ -5049,7 +6068,7 @@ async function loadBrain() {
     </div>
   `;
 
-  // 전략별 성과 (brain에 strategy 필드 있을 경우)
+  // 전략별 성과
   const strategy = d.strategy || {};
   const mergedStrategy = {};
   Object.entries(strategy).forEach(([name, v]) => {
@@ -5103,9 +6122,9 @@ async function loadBrainHistory() {
   // 메타 헤더
   const regime = koRegime(d.market_regime || 'unknown');
   document.getElementById('brain-history-meta').textContent =
-    `${d.trained_days || 0}일 학습 | 장세: ${regime}`;
+    `${d.trained_days || 0}일 학습 | 체제: ${regime}`;
 
-  // 결과 뱃지
+  // 결과 배지
   function resultBadge(r) {
     if (!r) return '<span style="color:var(--muted)">-</span>';
     const col = r === 'HIT' ? 'var(--green)' : r === 'MISS' ? 'var(--red)' : 'var(--yellow)';
@@ -5179,7 +6198,7 @@ loadAll();
 """
 
 
-# ── Flask 라우트 ───────────────────────────────────────────────────────────────
+# ?? Flask ?쇱슦?????????????????????????????????????????????????????????????????
 
 @app.route("/")
 def page_today():
@@ -5189,6 +6208,7 @@ def page_today():
         + COMMON_JS_BLOCK
         + PAGE_TODAY_HTML
         + TODAY_SUMMARY_OVERRIDE_JS_V2
+        + TODAY_SIGNAL_DIGEST_JS
         + CLAUDE_CONTROL_JS
         + "</body></html>"
     )
@@ -5221,6 +6241,20 @@ def page_trades():
     return render_template_string(html)
 
 
+@app.route("/broker-trades")
+def page_broker_trades():
+    html = (
+        _head("실거래 원장")
+        + _header_html("/broker-trades")
+        + _period_bar_html(extra_filters=TRADES_EXTRA_FILTERS)
+        + COMMON_JS_BLOCK
+        + PAGE_BROKER_TRADES_HTML
+        + BROKER_TRADES_STATUS_JS
+        + "</body></html>"
+    )
+    return render_template_string(html)
+
+
 @app.route("/analytics")
 def page_analytics():
     html = (
@@ -5233,7 +6267,7 @@ def page_analytics():
     return render_template_string(html)
 
 
-# ── 실행 ──────────────────────────────────────────────────────────────────────
+# ?? ?ㅽ뻾 ??????????????????????????????????????????????????????????????????????
 
 if __name__ == "__main__":
     _write_pid_file(DASHBOARD_PID_PATH, "dashboard_server", [sys.executable, str(Path(__file__).resolve())])
@@ -5245,6 +6279,7 @@ if __name__ == "__main__":
     print("  /            오늘 현황")
     print("  /history     기간별 성과")
     print("  /trades      매매 원장")
+    print("  /broker-trades 실거래 원장")
     print("  /analytics   분석")
     print("=" * 52)
     app.run(host="0.0.0.0", port=5000, debug=False)

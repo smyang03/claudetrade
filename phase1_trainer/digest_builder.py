@@ -489,19 +489,33 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         vol_r = row.get("vol_ratio", 1.0)
         vol_signal = "폭증" if vol_r > 3 else "증가" if vol_r > 1.5 else "보통" if vol_r > 0.7 else "감소"
 
+        def _safe_int(v, default=0):
+            try:
+                f = float(v)
+                return default if f != f else int(f)  # NaN check
+            except (TypeError, ValueError):
+                return default
+
+        def _safe_float(v, default=0.0):
+            try:
+                f = float(v)
+                return default if f != f else f
+            except (TypeError, ValueError):
+                return default
+
         layer_b[ticker] = {
             "name":        name,
-            "close":       int(row.get("close", 0)),
-            "change_pct":  round(float(row.get("change_pct", 0)), 2),
-            "rsi":         round(float(row.get("rsi", 50)), 1),
+            "close":       _safe_int(row.get("close", 0)),
+            "change_pct":  round(_safe_float(row.get("change_pct", 0)), 2),
+            "rsi":         round(_safe_float(row.get("rsi", 50), 50), 1),
             "macd":        macd_sig,
             "bb_pos":      bb_pos,
-            "bb_pct":      round(float(bb_pct), 1),
+            "bb_pct":      round(_safe_float(bb_pct, 50), 1),
             "ma_align":    ma_align,
-            "vol_ratio":   round(float(vol_r), 2),
+            "vol_ratio":   round(_safe_float(vol_r, 1.0), 2),
             "vol_signal":  vol_signal,
-            "pos_52w":     round(float(row.get("pos52", 50)), 1),
-            "gap_pct":     round(float(row.get("gap", 0)), 2),
+            "pos_52w":     round(_safe_float(row.get("pos52", 50), 50), 1),
+            "gap_pct":     round(_safe_float(row.get("gap", 0)), 2),
             # 수급 (supplement에서)
             "foreign_flow": supp.get("flows", {}).get(ticker, {}).get("foreign", 0),
             "inst_flow":    supp.get("flows", {}).get(ticker, {}).get("institution", 0),
