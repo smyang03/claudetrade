@@ -691,12 +691,15 @@ class TradingBot:
     # ── 포지션 영속성 ──────────────────────────────────────────────────────────
 
     def _save_positions(self):
-        """이월 포지션을 파일에 저장 (봇 재시작 복구용)"""
-        carry = [p for p in self.risk.positions if p.get("max_hold", 1) > 1]
+        """이월 포지션을 파일에 저장 (봇 재시작 복구용)
+        max_hold>1 장기 보유 뿐 아니라 당일 미청산 포지션(max_hold==1)도 저장:
+        VTS 잔고 API 미반영 시 재시작 후 복구 가능하도록.
+        """
+        carry = list(self.risk.positions)  # 보유 중인 모든 포지션 저장
         with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
             json.dump(carry, f, ensure_ascii=False, indent=2, default=str)
         if carry:
-            log.info(f"[포지션 저장] {[p['ticker'] for p in carry]} → {POSITIONS_FILE}")
+            log.info(f"[포지션 저장] {[p['ticker'] for p in carry]} ({len(carry)}개) → {POSITIONS_FILE}")
 
     def _save_pending_orders(self):
         self._normalize_pending_orders()
@@ -1116,18 +1119,37 @@ class TradingBot:
             log.error("[브로커 동기화] KR/US 모두 조회 실패 → 저장 포지션 그대로 사용")
             return saved
 
+        # VTS(모의) 잔고 API가 장 마감 후 0건 반환하는 경우 안전장치:
+        # 저장 포지션이 있는데 브로커가 해당 마켓 주식을 0개 반환하면 API 오류로 간주
+        saved_kr_count = sum(1 for p in saved if not p.get("ticker", "").replace(".", "").isalpha())
+        saved_us_count = sum(1 for p in saved if p.get("ticker", "").replace(".", "").isalpha())
+
+        if kr_ok and saved_kr_count > 0 and len(broker_kr) == 0:
+            log.warning(
+                f"[브로커 동기화] KR 잔고 조회 성공했으나 보유주식 0개 반환 "
+                f"(저장 포지션 {saved_kr_count}개) — VTS API 미반영으로 판단, 검증 스킵"
+            )
+            kr_ok = False  # 검증 무력화 → 아래 루프에서 KR 포지션 그대로 유지
+
+        if us_ok and saved_us_count > 0 and len(broker_us) == 0:
+            log.warning(
+                f"[브로커 동기화] US 잔고 조회 성공했으나 보유주식 0개 반환 "
+                f"(저장 포지션 {saved_us_count}개) — API 미반영으로 판단, 검증 스킵"
+            )
+            us_ok = False  # 검증 무력화 → 아래 루프에서 US 포지션 그대로 유지
+
         verified = []
         for pos in saved:
             tk = pos["ticker"]
             market = "US" if tk.replace(".", "").isalpha() else "KR"
 
-            # 해당 마켓 잔고 조회 실패 시 → 포지션 제거하지 않고 유지
+            # 해당 마켓 잔고 조회 실패 or 0건 의심 → 포지션 제거하지 않고 유지
             if market == "US" and not us_ok:
-                log.warning(f"[브로커 동기화] US 잔고 조회 실패 — {tk} 포지션 유지 (검증 스킵)")
+                log.warning(f"[브로커 동기화] US 잔고 조회 신뢰 불가 — {tk} 포지션 유지 (검증 스킵)")
                 verified.append(pos)
                 continue
             if market == "KR" and not kr_ok:
-                log.warning(f"[브로커 동기화] KR 잔고 조회 실패 — {tk} 포지션 유지 (검증 스킵)")
+                log.warning(f"[브로커 동기화] KR 잔고 조회 신뢰 불가 — {tk} 포지션 유지 (검증 스킵)")
                 verified.append(pos)
                 continue
 
