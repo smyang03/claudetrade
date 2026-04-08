@@ -263,7 +263,8 @@ class TradingBot:
                 else:
                     raise ValueError("잔고 0 — 계좌 확인 필요")
             env_cap = int(os.getenv("MAX_ORDER_KRW", "500000" if is_paper else "2000000"))
-            max_order = min(env_cap, int(init_cash * 0.05))
+            order_pct = float(os.getenv("MAX_ORDER_PCT", "0.05"))
+            max_order = min(env_cap, int(init_cash * order_pct))
             log.info(f"{mode_label} | KIS KR 잔고 {init_cash:,}원 "
                      f"(현금 {bal_kr['cash']:,} + 평가 {bal_kr['total_eval']:,}) "
                      f"| 최대주문 {max_order:,}원")
@@ -4924,6 +4925,17 @@ def main(is_paper: bool = True):
         except Exception as e:
             log.warning(f"[수급 수집] {market} 실패: {e}")
 
+    # ── 장 마감 후 데이터 최신화 (종가 확정 + forward return) ──────────────────
+    def _data_update(market: str):
+        try:
+            from update_data import run_kr_update, run_us_update
+            if market == "KR":
+                run_kr_update()
+            else:
+                run_us_update()
+        except Exception as e:
+            log.warning(f"[데이터 최신화] {market} 실패: {e}")
+
     schedule.every().day.at("08:20").do(_supplement_collect, "KR")   # KR 수급 (외국인/기관)
     schedule.every().day.at("21:20").do(_supplement_collect, "US")   # US VIX/DXY
     schedule.every().day.at("08:30").do(_screener_collect, "KR")
@@ -4931,8 +4943,10 @@ def main(is_paper: bool = True):
 
     schedule.every().day.at("08:50").do(bot.session_open, "KR")
     schedule.every().day.at("16:00").do(bot.session_close, "KR")
+    schedule.every().day.at("16:10").do(_data_update, "KR")          # KR 장 후 종가 확정
     schedule.every().day.at("22:20").do(bot.session_open, "US")
     schedule.every().day.at("05:00").do(bot.session_close, "US")
+    schedule.every().day.at("06:30").do(_data_update, "US")          # US 장 후 종가 확정
 
     schedule.every(5).minutes.do(bot.run_housekeeping, "KR")
     schedule.every(5).minutes.do(bot.run_housekeeping, "US")
