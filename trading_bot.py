@@ -1409,32 +1409,45 @@ class TradingBot:
             broker_qty = int((broker_pos or {}).get("qty", 0) or 0)
             current_qty = accounted.get(key, 0)
             order_qty = int(order.get("qty", 0) or 0)
-            if broker_pos and broker_qty >= current_qty + order_qty:
-                if not order.get("filled_price_native"):
-                    try:
-                        fill = (
-                            get_order_fill_kr(
-                                self.token,
-                                order_no=order.get("order_no", ""),
-                                ticker=ticker,
-                                trade_date=datetime.now(KST).strftime("%Y%m%d"),
-                            )
-                            if market == "KR"
-                            else get_order_fill_us(
-                                self.token,
-                                order_no=order.get("order_no", ""),
-                                ticker=ticker,
-                                created_at=order.get("created_at", ""),
-                            )
+            fill = None
+            if not order.get("filled_price_native"):
+                try:
+                    fill = (
+                        get_order_fill_kr(
+                            self.token,
+                            order_no=order.get("order_no", ""),
+                            ticker=ticker,
+                            trade_date=datetime.now(KST).strftime("%Y%m%d"),
                         )
-                        if fill:
-                            fp = float(fill.get("fill_price", 0) or 0)
-                            if fp > 0:
-                                order["filled_price_native"] = fp
-                            order["fill_time"] = fill.get("order_time", "")
-                    except Exception as e:
-                        label = "국내" if market == "KR" else "해외"
-                        log.warning(f"[{label} 체결조회 실패] {ticker} 주문번호={order.get('order_no','')}: {e}")
+                        if market == "KR"
+                        else get_order_fill_us(
+                            self.token,
+                            order_no=order.get("order_no", ""),
+                            ticker=ticker,
+                            created_at=order.get("created_at", ""),
+                        )
+                    )
+                    if fill:
+                        fp = float(fill.get("fill_price", 0) or 0)
+                        if fp > 0:
+                            order["filled_price_native"] = fp
+                        order["fill_time"] = fill.get("order_time", "")
+                except Exception as e:
+                    label = "국내" if market == "KR" else "해외"
+                    log.warning(f"[{label} 체결조회 실패] {ticker} 주문번호={order.get('order_no','')}: {e}")
+
+            filled_by_broker = bool(broker_pos and broker_qty >= current_qty + order_qty)
+            filled_by_query = bool(fill and int(fill.get("filled_qty", 0) or 0) >= max(order_qty, 1))
+            if filled_by_broker or filled_by_query:
+                if not broker_pos:
+                    broker_pos = {
+                        "ticker": ticker,
+                        "qty": order_qty,
+                        "avg_price": float(order.get("filled_price_native", 0) or order.get("raw_price", 0) or 0),
+                        "eval_price": float(self.price_cache_raw.get(ticker, 0) or self.price_cache.get(ticker, 0) or order.get("filled_price_native", 0) or order.get("raw_price", 0) or 0),
+                        "eval_profit": 0.0,
+                        "profit_rate": 0.0,
+                    }
                 self.risk.positions.append(self._make_position_from_broker(order, broker_pos))
                 accounted[key] = current_qty + order_qty
                 # ML DB: 체결 확인 기록
@@ -4612,6 +4625,14 @@ class TradingBot:
         log.info(f"[{market}] session_close")
         if self.current_market != market:
             return
+
+        # 장 마감 직전 마지막으로 브로커 잔고/체결을 동기화해 미체결 오판을 줄인다.
+        try:
+            broker_kr = self._normalize_broker_balance(get_balance(self.token, market="KR", force_refresh=True), "KR")
+            broker_us = self._normalize_broker_balance(get_balance(self.token, market="US", force_refresh=True), "US")
+            self._reconcile_pending_orders(broker_kr, broker_us)
+        except Exception as e:
+            log.warning(f"[{market}] session_close 최종 체결 동기화 실패: {e}")
 
         self._clear_pending_orders_for_market(market, "session_close")
         self.session_active = False

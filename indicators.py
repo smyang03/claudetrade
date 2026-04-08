@@ -41,7 +41,7 @@ def calc_all(df: pd.DataFrame) -> pd.DataFrame:
     d["pos52"]  = (d["close"] - d["low52"]) / denom52 * 100
     # 갭, 수익률
     d["gap_pct"]    = (d["open"]-d["close"].shift())/d["close"].shift()*100
-    d["change_pct"] = d["close"].pct_change()*100
+    d["change_pct"] = d["close"].pct_change(fill_method=None)*100
     # 신호 생성
     valid_ma = d["ma5"].notna() & d["ma20"].notna() & d["ma60"].notna()
     d["ma_align"] = np.where(

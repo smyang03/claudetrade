@@ -1,0 +1,222 @@
+{
+  "date": "2026-04-08",
+  "market": "US",
+  "source": "runtime_screen",
+  "config": {
+    "top_n": 20,
+    "min_price": 1.0,
+    "min_volume": 1.0
+  },
+  "core_tickers": [
+    "NVDA",
+    "TSLA",
+    "AAPL",
+    "GOOGL",
+    "NFLX"
+  ],
+  "tickers": [
+    "AAPL",
+    "TSLA",
+    "NVDA",
+    "NFLX",
+    "GOOGL",
+    "COMP",
+    "HIMS",
+    "AAOI",
+    "RGTI",
+    "CLSK",
+    "IBRX",
+    "SOUN",
+    "PFE",
+    "VG",
+    "NIO",
+    "INTC",
+    "RKLB",
+    "AAL",
+    "NOK",
+    "SNDK"
+  ],
+  "candidates": [
+    {
+      "ticker": "AAPL",
+      "name": "Apple Inc.",
+      "price": 247.53,
+      "change_rate": -4.3768783,
+      "volume": 22052617.0,
+      "vol_ratio": 1.0,
+      "score": 22.899121729780795
+    },
+    {
+      "ticker": "TSLA",
+      "name": "Tesla, Inc.",
+      "price": 338.43,
+      "change_rate": -4.078571,
+      "volume": 32298245.0,
+      "vol_ratio": 1.0,
+      "score": 22.5314560899877
+    },
+    {
+      "ticker": "NVDA",
+      "name": "NVIDIA Corporation",
+      "price": 174.885,
+      "change_rate": -1.5508922,
+      "volume": 49105337.0,
+      "vol_ratio": 1.0,
+      "score": 17.727471382255864
+    },
+    {
+      "ticker": "NFLX",
+      "name": "Netflix, Inc.",
+      "price": 98.96,
+      "change_rate": 0.030323237,
+      "volume": 8674219.0,
+      "vol_ratio": 1.0,
+      "score": 13.646166053726038
+    },
+    {
+      "ticker": "GOOGL",
+      "name": "GOOGL",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "COMP",
+      "name": "Compass, Inc.",
+      "price": 6.4,
+      "change_rate": -5.8866825,
+      "volume": 5795876.0,
+      "vol_ratio": 1.0,
+      "score": 25.11695941639926
+    },
+    {
+      "ticker": "HIMS",
+      "name": "Hims & Hers Health, Inc.",
+      "price": 19.22,
+      "change_rate": -5.45723,
+      "volume": 7519959.0,
+      "vol_ratio": 1.0,
+      "score": 24.414302826057764
+    },
+    {
+      "ticker": "AAOI",
+      "name": "Applied Optoelectronics, Inc.",
+      "price": 113.2899,
+      "change_rate": 5.443605,
+      "volume": 5663937.0,
+      "vol_ratio": 1.0,
+      "score": 24.216987980780857
+    },
+    {
+      "ticker": "RGTI",
+      "name": "Rigetti Computing, Inc.",
+      "price": 13.4726,
+      "change_rate": -5.1225343,
+      "volume": 7884876.0,
+      "vol_ratio": 1.0,
+      "score": 23.773342907411127
+    },
+    {
+      "ticker": "CLSK",
+      "name": "CleanSpark, Inc.",
+      "price": 8.63,
+      "change_rate": -5.1676774,
+      "volume": 4878130.0,
+      "vol_ratio": 1.0,
+      "score": 23.575518427599576
+    },
+    {
+      "ticker": "IBRX",
+      "name": "ImmunityBio, Inc.",
+      "price": 6.755,
+      "change_rate": -4.590393,
+      "volume": 5990640.0,
+      "vol_ratio": 1.0,
+      "score": 22.54421138563146
+    },
+    {
+      "ticker": "SOUN",
+      "name": "SoundHound AI, Inc.",
+      "price": 6.405,
+      "change_rate": -4.4029794,
+      "volume": 5413893.0,
+      "vol_ratio": 1.0,
+      "score": 22.10864630205707
+    },
+    {
+      "ticker": "PFE",
+      "name": "Pfizer, Inc.",
+      "price": 26.825,
+      "change_rate": -3.611208,
+      "volume": 16583560.0,
+      "vol_ratio": 1.0,
+      "score": 21.196769476869846
+    },
+    {
+      "ticker": "VG",
+      "name": "Venture Global, Inc.",
+      "price": 16.4975,
+      "change_rate": 3.499114,
+      "volume": 9122809.0,
+      "vol_ratio": 1.0,
+      "score": 20.61400105717693
+    },
+    {
+      "ticker": "NIO",
+      "name": "NIO Inc.",
+      "price": 6.0279,
+      "change_rate": -3.3990314,
+      "volume": 9727609.0,
+      "vol_ratio": 1.0,
+      "score": 20.45235007515435
+    },
+    {
+      "ticker": "INTC",
+      "name": "Intel Corporation",
+      "price": 52.1301,
+      "change_rate": 2.658727,
+      "volume": 56944709.0,
+      "vol_ratio": 1.0,
+      "score": 20.032008813026625
+    },
+    {
+      "ticker": "RKLB",
+      "name": "Rocket Lab Corporation",
+      "price": 65.65,
+      "change_rate": -2.9850698,
+      "volume": 8536267.0,
+      "vol_ratio": 1.0,
+      "score": 19.54604028074569
+    },
+    {
+      "ticker": "AAL",
+      "name": "American Airlines Group, Inc.",
+      "price": 10.625,
+      "change_rate": -2.5229323,
+      "volume": 19268693.0,
+      "vol_ratio": 1.0,
+      "score": 19.110259958611344
+    },
+    {
+      "ticker": "NOK",
+      "name": "Nokia Corporation Sponsored",
+      "price": 8.7101,
+      "change_rate": -2.022509,
+      "volume": 39429661.0,
+      "vol_ratio": 1.0,
+      "score": 18.53903536019833
+    },
+    {
+      "ticker": "SNDK",
+      "name": "Sandisk Corporation",
+      "price": 707.715,
+      "change_rate": -2.3342917,
+      "volume": 6218208.0,
+      "vol_ratio": 1.0,
+      "score": 18.05437888867793
+    }
+  ],
+  "count": 20
+}

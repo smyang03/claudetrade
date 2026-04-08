@@ -2,12 +2,12 @@
   "enabled": true,
   "updated_at": "2026-03-28T03:54:37+09:00",
   "updated_by": "dashboard",
-  "last_trigger_at": "2026-03-28T04:00:36+09:00",
+  "last_trigger_at": "2026-04-08T00:27:34+09:00",
   "last_trigger_market": "US",
-  "last_trigger_source": "dashboard_trigger",
-  "last_result_at": "2026-03-28T04:01:26+09:00",
+  "last_trigger_source": "튜너 경고: Bear momentum accelerating early session — avoid chasing bounces until index stabilizes above opening level.",
+  "last_result_at": "2026-04-08T00:28:19+09:00",
   "last_result_market": "US",
-  "last_result_status": "error",
-  "last_error": "이전 Claude 재판단이 stale 상태로 정리되었습니다.",
+  "last_result_status": "success",
+  "last_error": "",
   "pending_trigger": null
 }

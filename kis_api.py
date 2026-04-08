@@ -988,19 +988,38 @@ def get_order_fill_kr(token: str, order_no: str, ticker: str = "", trade_date: s
     if not order_no:
         return None
     query_date = trade_date or datetime.now().strftime("%Y%m%d")
-    rows = inquire_daily_ccld_kr(
-        token,
-        start_date=query_date,
-        end_date=query_date,
-        order_no=str(order_no).strip(),
-        ticker=ticker,
-        filled_code="01",
-    )
     order_no_s = str(order_no).strip()
     try:
         target_int = int(order_no_s) if order_no_s else None
     except ValueError:
         target_int = None
+
+    # VTS에서는 체결구분("01")이 비거나, 전체("00")에만 보이는 경우가 있어 둘 다 본다.
+    rows = []
+    seen = set()
+    for filled_code in ("01", "00"):
+        try:
+            fetched = inquire_daily_ccld_kr(
+                token,
+                start_date=query_date,
+                end_date=query_date,
+                order_no=order_no_s,
+                ticker=ticker,
+                filled_code=filled_code,
+            )
+        except Exception:
+            fetched = []
+        for row in fetched:
+            key = (
+                str(row.get("order_no", "")).strip(),
+                str(row.get("ticker", "")).strip(),
+                str(row.get("order_time", "")).strip(),
+                int(row.get("filled_qty", 0) or 0),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
     for row in rows:
         row_no = str(row.get("order_no", "")).strip()
         if row_no == order_no_s:
@@ -1011,7 +1030,15 @@ def get_order_fill_kr(token: str, order_no: str, ticker: str = "", trade_date: s
                     return row
             except ValueError:
                 pass
-    return rows[0] if rows else None
+    if ticker:
+        ticker_rows = [r for r in rows if str(r.get("ticker", "")).strip() == str(ticker).strip()]
+        if ticker_rows:
+            ticker_rows.sort(key=lambda r: (r.get("filled_qty", 0), r.get("order_time", "")), reverse=True)
+            return ticker_rows[0]
+    if rows:
+        rows.sort(key=lambda r: (r.get("filled_qty", 0), r.get("order_time", "")), reverse=True)
+        return rows[0]
+    return None
 
 
 def _normalize_us_inquire_ccnl_row(row: dict) -> dict:

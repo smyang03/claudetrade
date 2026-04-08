@@ -30,3 +30,30 @@ docs/plans/
 # OS
 .DS_Store
 Thumbs.db
+
+# Data (runtime-generated, regeneratable)
+data/cache/
+data/backtest/
+data/daily_digest/
+data/news/
+data/supplement/
+data/price/
+
+# State (runtime) — brain.json / claude_control.json 제외하고 무시
+state/*.pid
+state/live_status_*.json
+state/kis_token.json
+state/api_usage.json
+state/us_screen_cache.json
+state/restart/
+state/dashboard_server.pid
+state/trading_bot.pid
+
+# Dashboard tmp/log
+dashboard/_tmp_*.js
+dashboard/*.log
+dashboard/__pycache__/
+
+# ML outputs (generated)
+ml/analysis_outputs/
+data/ml/

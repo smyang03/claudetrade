@@ -1,0 +1,222 @@
+{
+  "date": "2026-04-06",
+  "market": "US",
+  "source": "runtime_screen",
+  "config": {
+    "top_n": 20,
+    "min_price": 1.0,
+    "min_volume": 1.0
+  },
+  "core_tickers": [
+    "NVDA",
+    "TSLA",
+    "AAPL",
+    "GOOGL",
+    "NFLX"
+  ],
+  "tickers": [
+    "TSLA",
+    "NFLX",
+    "NVDA",
+    "AAPL",
+    "GOOGL",
+    "PL",
+    "ONDS",
+    "MARA",
+    "NOK",
+    "INTC",
+    "RGTI",
+    "RKT",
+    "AMD",
+    "CCL",
+    "RKLB",
+    "SMCI",
+    "AAL",
+    "BP",
+    "IREN",
+    "OWL"
+  ],
+  "candidates": [
+    {
+      "ticker": "TSLA",
+      "name": "Tesla, Inc.",
+      "price": 360.59,
+      "change_rate": -5.4215007,
+      "volume": 83031226.0,
+      "vol_ratio": 1.0,
+      "score": 51.78383779435211
+    },
+    {
+      "ticker": "NFLX",
+      "name": "Netflix, Inc.",
+      "price": 98.66,
+      "change_rate": 3.2548409,
+      "volume": 37068024.0,
+      "vol_ratio": 1.0,
+      "score": 46.9666409776748
+    },
+    {
+      "ticker": "NVDA",
+      "name": "NVIDIA Corporation",
+      "price": 177.39,
+      "change_rate": 0.9331433,
+      "volume": 141415327.0,
+      "vol_ratio": 1.0,
+      "score": 43.12661362434941
+    },
+    {
+      "ticker": "AAPL",
+      "name": "Apple Inc.",
+      "price": 255.92,
+      "change_rate": 0.113442585,
+      "volume": 31289369.0,
+      "vol_ratio": 1.0,
+      "score": 40.58215855872851
+    },
+    {
+      "ticker": "GOOGL",
+      "name": "GOOGL",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "PL",
+      "name": "Planet Labs PBC",
+      "price": 35.88,
+      "change_rate": 16.8349,
+      "volume": 25707679.0,
+      "vol_ratio": 1.0,
+      "score": 73.90718020274521
+    },
+    {
+      "ticker": "ONDS",
+      "name": "Ondas Inc",
+      "price": 9.6,
+      "change_rate": 8.967082,
+      "volume": 71272367.0,
+      "vol_ratio": 1.0,
+      "score": 58.78337555881237
+    },
+    {
+      "ticker": "MARA",
+      "name": "MARA Holdings, Inc.",
+      "price": 8.71,
+      "change_rate": 8.333334,
+      "volume": 50528896.0,
+      "vol_ratio": 1.0,
+      "score": 57.30950156904791
+    },
+    {
+      "ticker": "NOK",
+      "name": "Nokia Corporation Sponsored",
+      "price": 8.82,
+      "change_rate": 6.65053,
+      "volume": 88715243.0,
+      "vol_ratio": 1.0,
+      "score": 54.28162537562988
+    },
+    {
+      "ticker": "INTC",
+      "name": "Intel Corporation",
+      "price": 50.38,
+      "change_rate": 4.892772,
+      "volume": 117134237.0,
+      "vol_ratio": 1.0,
+      "score": 50.932842701046894
+    },
+    {
+      "ticker": "RGTI",
+      "name": "Rigetti Computing, Inc.",
+      "price": 14.19,
+      "change_rate": 5.111108,
+      "volume": 25642875.0,
+      "vol_ratio": 1.0,
+      "score": 50.458081811327844
+    },
+    {
+      "ticker": "RKT",
+      "name": "Rocket Companies, Inc.",
+      "price": 14.96,
+      "change_rate": 3.6729,
+      "volume": 30585592.0,
+      "vol_ratio": 1.0,
+      "score": 47.68742378343601
+    },
+    {
+      "ticker": "AMD",
+      "name": "Advanced Micro Devices, Inc.",
+      "price": 217.5,
+      "change_rate": 3.4679573,
+      "volume": 38463484.0,
+      "vol_ratio": 1.0,
+      "score": 47.41504654458657
+    },
+    {
+      "ticker": "CCL",
+      "name": "Carnival Corporation",
+      "price": 25.64,
+      "change_rate": -3.5365,
+      "volume": 26861539.0,
+      "vol_ratio": 1.0,
+      "score": 47.33672364904517
+    },
+    {
+      "ticker": "RKLB",
+      "name": "Rocket Lab Corporation",
+      "price": 67.73,
+      "change_rate": 3.3730142,
+      "volume": 32670583.0,
+      "vol_ratio": 1.0,
+      "score": 47.12721979548667
+    },
+    {
+      "ticker": "SMCI",
+      "name": "Super Micro Computer, Inc.",
+      "price": 23.22,
+      "change_rate": 3.1541495,
+      "volume": 30446148.0,
+      "vol_ratio": 1.0,
+      "score": 46.647181044699934
+    },
+    {
+      "ticker": "AAL",
+      "name": "American Airlines Group, Inc.",
+      "price": 10.84,
+      "change_rate": -2.60557,
+      "volume": 53047622.0,
+      "vol_ratio": 1.0,
+      "score": 45.88316036914062
+    },
+    {
+      "ticker": "BP",
+      "name": "BP p.l.c.",
+      "price": 47.12,
+      "change_rate": 2.05761,
+      "volume": 29968119.0,
+      "vol_ratio": 1.0,
+      "score": 44.44460682475753
+    },
+    {
+      "ticker": "IREN",
+      "name": "IREN LIMITED",
+      "price": 34.77,
+      "change_rate": 1.9947207,
+      "volume": 30118142.0,
+      "vol_ratio": 1.0,
+      "score": 44.32182438336532
+    },
+    {
+      "ticker": "OWL",
+      "name": "Blue Owl Capital Inc.",
+      "price": 8.57,
+      "change_rate": -1.60735,
+      "volume": 62392112.0,
+      "vol_ratio": 1.0,
+      "score": 43.984069658672276
+    }
+  ],
+  "count": 20
+}

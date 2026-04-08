@@ -1,0 +1,82 @@
+{
+  "date": "2026-04-08",
+  "market": "KR",
+  "source": "runtime_screen",
+  "config": {
+    "top_n": 20,
+    "min_price": 1.0,
+    "min_volume": 1.0
+  },
+  "core_tickers": [
+    "005930",
+    "000660",
+    "035420",
+    "005380",
+    "051910"
+  ],
+  "tickers": [
+    "005930",
+    "000660",
+    "035420",
+    "005380",
+    "051910",
+    "005880"
+  ],
+  "candidates": [
+    {
+      "ticker": "005930",
+      "name": "005930",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "000660",
+      "name": "000660",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "035420",
+      "name": "035420",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "005380",
+      "name": "005380",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "051910",
+      "name": "051910",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "005880",
+      "name": "대한해운",
+      "price": 2290.0,
+      "change_rate": 0.0,
+      "volume": 105017.0,
+      "vol_ratio": 0.03,
+      "score": 6.952132225811334
+    }
+  ],
+  "count": 6
+}
