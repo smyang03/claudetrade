@@ -16,6 +16,13 @@ env/
 # Logs
 logs/
 
+# Local docs / notes
+docs/archive/
+docs/plans/
+
+# Local databases
+*.db
+
 # IDE
 .vscode/
 .idea/
