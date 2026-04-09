@@ -436,9 +436,13 @@ def _get_price_kr_yf(ticker: str) -> dict:
 
 def is_trading_halted(ticker: str, token) -> bool:
     """종목 거래 정지 여부 확인 (KR 전용)
-    iscd_stat_cls_code != '00' 이면 거래 중지/정지/관리 상태.
+    iscd_stat_cls_code 코드:
+      00=정상, 51=관리, 52=투자주의, 53=투자경고, 54=투자위험예고,
+      55=투자위험, 56=정리매매, 57=단기과열, 58=거래정지
+    실제 매도 불가 상태는 58(거래정지)만 해당.
     API 실패 시 False 반환 (보수적 처리 — 진입 차단하지 않음).
     """
+    _HALT_CODES = {"58"}  # 거래정지만 실제 매도 불가
     try:
         resp = _kis_get(
             f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
@@ -448,9 +452,11 @@ def is_trading_halted(ticker: str, token) -> bool:
         )
         resp.raise_for_status()
         stat = resp.json().get("output", {}).get("iscd_stat_cls_code", "00")
-        if stat not in ("00", ""):
-            log.warning(f"[거래 상태] {ticker} iscd_stat_cls_code={stat} → 거래 정지/비정상")
+        if stat in _HALT_CODES:
+            log.warning(f"[거래 상태] {ticker} iscd_stat_cls_code={stat} → 거래정지")
             return True
+        if stat not in ("00", ""):
+            log.debug(f"[거래 상태] {ticker} iscd_stat_cls_code={stat} → 경고/주의 (거래 가능)")
         return False
     except Exception as e:
         log.debug(f"[거래 상태 확인 실패] {ticker}: {e}")
