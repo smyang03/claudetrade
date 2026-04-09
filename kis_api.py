@@ -434,6 +434,29 @@ def _get_price_kr_yf(ticker: str) -> dict:
         }
 
 
+def is_trading_halted(ticker: str, token) -> bool:
+    """종목 거래 정지 여부 확인 (KR 전용)
+    iscd_stat_cls_code != '00' 이면 거래 중지/정지/관리 상태.
+    API 실패 시 False 반환 (보수적 처리 — 진입 차단하지 않음).
+    """
+    try:
+        resp = _kis_get(
+            f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
+            headers=_headers(token, "FHKST01010100"),
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        stat = resp.json().get("output", {}).get("iscd_stat_cls_code", "00")
+        if stat not in ("00", ""):
+            log.warning(f"[거래 상태] {ticker} iscd_stat_cls_code={stat} → 거래 정지/비정상")
+            return True
+        return False
+    except Exception as e:
+        log.debug(f"[거래 상태 확인 실패] {ticker}: {e}")
+        return False
+
+
 def get_price(ticker, token, market="KR"):
     if market == "US":
         # 1차: KIS 해외 시세 (최대 2회 재시도, 1s 간격 — VTS 500 일시오류 대응)

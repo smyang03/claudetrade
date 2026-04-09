@@ -45,6 +45,7 @@ from kis_api import (
     get_usd_krw,
     screen_market_kr,
     screen_market_us,
+    is_trading_halted,
 )
 from indicators import calc_all
 from risk_manager import RiskManager, HARD_RULES
@@ -1783,6 +1784,12 @@ class TradingBot:
             if time.time() - _fail_ts < self._SELL_FAIL_COOLDOWN_SEC:
                 remaining = int(self._SELL_FAIL_COOLDOWN_SEC - (time.time() - _fail_ts))
                 log.debug(f"[exit skip] {cand['ticker']} 매도 실패 쿨다운 {remaining}초 남음")
+                continue
+
+            # ── 거래 중지 체크 (KR만) ──────────────────────────────────────
+            if market == "KR" and is_trading_halted(cand["ticker"], self.token):
+                self._sell_fail_at[cand["ticker"]] = time.time() + 600  # 10분 쿨다운
+                log.warning(f"[거래 중지] {cand['ticker']} 매도 불가 → 10분 후 재확인")
                 continue
 
             # ── TP 도달 → 트레일링 스탑 처리 ──────────────────────────────
