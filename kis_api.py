@@ -837,7 +837,7 @@ def get_balance(token, market="KR", force_refresh: bool = False):
         return _get_balance_us(token, force_refresh=force_refresh)
 
     acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
-    tr_id = "VTTC8908R" if IS_PAPER else "TTTC8908R"
+    tr_id = "VTTC8434R" if IS_PAPER else "TTTC8434R"
     cache_key = ("KR",)
 
     def _fetch():
@@ -1719,14 +1719,24 @@ def _aes_cbc_base64_dec(key: str, iv: str, cipher_text: str) -> str:
         return ""
 
 
-# 체결통보 컬럼 순서 (공식 샘플 기준)
-_NOTICE_COLS = [
+# KR 체결통보 컬럼 순서 (H0STCNI0/H0STCNI9, 공식 샘플 기준)
+_NOTICE_COLS_KR = [
     "CUST_ID", "ACNT_NO", "ODER_NO", "OODER_NO", "SELN_BYOV_CLS", "RCTF_CLS",
     "ODER_KIND", "ODER_COND", "STCK_SHRN_ISCD", "CNTG_QTY", "CNTG_UNPR",
     "STCK_CNTG_HOUR", "RFUS_YN", "CNTG_YN", "ACPT_YN", "BRNC_NO", "ODER_QTY",
     "ACNT_NAME", "ORD_COND_PRC", "ORD_EXG_GB", "POPUP_YN", "FILLER", "CRDT_CLS",
     "CRDT_LOAN_DATE", "CNTG_ISNM40", "ODER_PRC",
 ]
+# US 체결통보 컬럼 순서 (H0GSCNI0/H0GSCNI9, 공식 샘플 기준)
+_NOTICE_COLS_US = [
+    "CUST_ID", "ACNT_NO", "ODER_NO", "OODER_NO", "SELN_BYOV_CLS", "RCTF_CLS",
+    "ODER_KIND2", "STCK_SHRN_ISCD", "CNTG_QTY", "CNTG_UNPR",
+    "STCK_CNTG_HOUR", "RFUS_YN", "CNTG_YN", "ACPT_YN", "BRNC_NO", "ODER_QTY",
+    "ACNT_NAME", "CNTG_ISNM", "ODER_COND", "DEBT_GB", "DEBT_DATE",
+    "START_TM", "END_TM", "TM_DIV_TP", "CNTG_UNPR12",
+]
+# 하위 호환 alias
+_NOTICE_COLS = _NOTICE_COLS_KR
 
 
 class KISWebSocket:
@@ -1765,9 +1775,15 @@ class KISWebSocket:
             }
         )
 
-    def _sub_notice(self):
-        """계좌 체결통보 구독 (모의: H0STCNI9 / 실전: H0STCNI0)"""
-        tr_id = "H0STCNI9" if IS_PAPER else "H0STCNI0"
+    def _sub_notice(self, market: str = "KR"):
+        """계좌 체결통보 구독
+        KR: H0STCNI9(모의) / H0STCNI0(실전)
+        US: H0GSCNI9(모의) / H0GSCNI0(실전)
+        """
+        if market == "US":
+            tr_id = "H0GSCNI9" if IS_PAPER else "H0GSCNI0"
+        else:
+            tr_id = "H0STCNI9" if IS_PAPER else "H0STCNI0"
         return json.dumps(
             {
                 "header": {
@@ -1780,26 +1796,29 @@ class KISWebSocket:
             }
         )
 
-    def _parse_notice(self, raw_data: str) -> Optional[dict]:
+    def _parse_notice(self, raw_data: str, market: str = "KR") -> Optional[dict]:
         """체결통보 데이터 파싱 (AES 복호화 후 필드 추출)"""
+        cols = _NOTICE_COLS_US if market == "US" else _NOTICE_COLS_KR
         try:
             if self._notice_key and self._notice_iv:
                 decrypted = _aes_cbc_base64_dec(self._notice_key, self._notice_iv, raw_data)
             else:
                 decrypted = raw_data
             fields = decrypted.split("^")
-            if len(fields) < len(_NOTICE_COLS):
+            if len(fields) < len(cols):
                 return None
-            d = dict(zip(_NOTICE_COLS, fields))
+            d = dict(zip(cols, fields))
             # CNTG_YN=2 만 체결통보 (1=접수/정정/취소)
             if d.get("CNTG_YN") != "2":
                 return None
-            order_no    = d.get("ODER_NO", "").strip()
-            filled_qty  = int(d.get("CNTG_QTY", "0") or 0)
-            filled_price= float(d.get("CNTG_UNPR", "0") or 0)
-            filled_time = d.get("STCK_CNTG_HOUR", "").strip()
-            ticker      = d.get("STCK_SHRN_ISCD", "").strip()
-            side        = "buy" if d.get("SELN_BYOV_CLS", "") == "2" else "sell"
+            order_no     = d.get("ODER_NO", "").strip()
+            filled_qty   = int(d.get("CNTG_QTY", "0") or 0)
+            # US는 CNTG_UNPR12(소수점 포함 가격) 우선
+            price_field  = "CNTG_UNPR12" if market == "US" else "CNTG_UNPR"
+            filled_price = float(d.get(price_field) or d.get("CNTG_UNPR", "0") or 0)
+            filled_time  = d.get("STCK_CNTG_HOUR", "").strip()
+            ticker       = d.get("STCK_SHRN_ISCD", "").strip()
+            side         = "buy" if d.get("SELN_BYOV_CLS", "") == "2" else "sell"
             # dedupe
             key = (order_no, filled_qty, filled_time)
             if key in self._seen_fills:
@@ -1812,27 +1831,27 @@ class KISWebSocket:
                 "filled_price": filled_price,
                 "filled_time":  filled_time,
                 "side":         side,
+                "market":       market,
             }
         except Exception as e:
-            log.warning(f"[KIS WS] 체결통보 파싱 오류: {e}")
+            log.warning(f"[KIS WS] 체결통보 파싱 오류 ({market}): {e}")
             return None
 
     def start(self):
-        if self.market != "KR":
-            return
-
         import websocket
 
         self._ws_key = self._get_ws_key()
 
         def on_open(ws):
-            # 시세 구독
-            for t in self.tickers:
-                ws.send(self._sub(t))
-            # 체결통보 구독 (HTS ID 있을 때만)
+            # KR 시세 구독 (KR 세션만)
+            if self.market == "KR":
+                for t in self.tickers:
+                    ws.send(self._sub(t))
+            # 체결통보 구독 (KR + US 모두, HTS ID 있을 때)
             if self.on_notice and self._hts_id:
-                ws.send(self._sub_notice())
-                log.info(f"[KIS WS] 체결통보 구독 등록 ({'모의' if IS_PAPER else '실전'})")
+                ws.send(self._sub_notice("KR"))
+                ws.send(self._sub_notice("US"))
+                log.info(f"[KIS WS] KR+US 체결통보 구독 등록 ({'모의' if IS_PAPER else '실전'})")
             elif self.on_notice and not self._hts_id:
                 log.warning("[KIS WS] KIS_HTS_ID 미설정 — 체결통보 구독 스킵")
 
@@ -1856,15 +1875,24 @@ class KISWebSocket:
             parts = msg.split("|")
             if len(parts) < 4:
                 return
-            tr_id   = parts[1] if len(parts) > 1 else ""
+            tr_id    = parts[1] if len(parts) > 1 else ""
             raw_data = parts[3]
 
-            # 체결통보 트리거
+            # KR 체결통보
             if tr_id in ("H0STCNI9", "H0STCNI0"):
                 if self.on_notice:
-                    event = self._parse_notice(raw_data)
+                    event = self._parse_notice(raw_data, market="KR")
                     if event:
-                        log.info(f"[KIS WS] 체결통보 수신: {event}")
+                        log.info(f"[KIS WS] KR 체결통보 수신: {event}")
+                        self.on_notice(event)
+                return
+
+            # US 체결통보
+            if tr_id in ("H0GSCNI9", "H0GSCNI0"):
+                if self.on_notice:
+                    event = self._parse_notice(raw_data, market="US")
+                    if event:
+                        log.info(f"[KIS WS] US 체결통보 수신: {event}")
                         self.on_notice(event)
                 return
 
