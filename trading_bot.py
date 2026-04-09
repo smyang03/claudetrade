@@ -1879,13 +1879,28 @@ class TradingBot:
                 order_no=result.get("order_no", ""),
             )
             if "잔고내역이 없습니다" in (result.get("msg", "") or ""):
-                before = len(self.risk.positions)
-                self.risk.positions = [p for p in self.risk.positions if p.get("ticker") != cand["ticker"]]
-                after = len(self.risk.positions)
-                if before != after:
-                    log.warning(f"[브로커 미보유 정리] {cand['ticker']} 내부 포지션 제거")
-                    self._save_positions()
-                    self._write_live_status(market, force=True)
+                # 브로커 실제 잔고 확인 후에만 포지션 제거 (VTS API 오류로 인한 오제거 방지)
+                broker_has = False
+                try:
+                    bal_chk = get_balance(self.token, market=market, force_refresh=True)
+                    broker_tickers = {s["ticker"].upper() if market == "US" else s["ticker"]
+                                      for s in bal_chk.get("stocks", [])}
+                    chk_key = cand["ticker"].upper() if market == "US" else cand["ticker"]
+                    broker_has = chk_key in broker_tickers
+                except Exception as _be:
+                    log.warning(f"[브로커 확인 실패] {cand['ticker']}: {_be} → 포지션 유지")
+                    broker_has = True  # 확인 실패 시 안전하게 유지
+
+                if broker_has:
+                    log.warning(f"[매도 실패 무시] {cand['ticker']} 브로커에 보유 확인 → 포지션 유지, 다음 사이클 재시도")
+                else:
+                    before = len(self.risk.positions)
+                    self.risk.positions = [p for p in self.risk.positions if p.get("ticker") != cand["ticker"]]
+                    after = len(self.risk.positions)
+                    if before != after:
+                        log.warning(f"[브로커 미보유 정리] {cand['ticker']} 브로커 미보유 확인 → 내부 포지션 제거")
+                        self._save_positions()
+                        self._write_live_status(market, force=True)
             return
         log.info(f"[{'PAPER' if self.is_paper else 'LIVE'} SELL] {cand['ticker']} {cand['qty']}@{order_px:,} | 주문번호={result.get('order_no','')}")
 
