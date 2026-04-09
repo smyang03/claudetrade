@@ -346,6 +346,9 @@ class TradingBot:
         self._intraday_high: dict[str, float] = {}
         self._intraday_low:  dict[str, float] = {}
 
+        # 매도 실패 쿨다운 — ticker → 실패 시각, 90초간 재시도 억제
+        self._sell_fail_at:  dict[str, float] = {}
+
         # entry_priority cutoff (Phase 2) — env로 ON/OFF, 텔레그램으로 실시간 토글
         self.entry_priority_cutoff_enabled: bool = (
             os.getenv("ENTRY_PRIORITY_CUTOFF_ENABLED", "false").lower() == "true"
@@ -1761,6 +1764,8 @@ class TradingBot:
         multiplier = min(3.0, 1.0 / effective_progress)
         return volume * multiplier
 
+    _SELL_FAIL_COOLDOWN_SEC = 90  # 매도 실패 후 재시도 억제 시간
+
     def _process_exit_candidates(self):
         candidates = self.risk.get_exit_candidates()
         for cand in candidates:
@@ -1772,6 +1777,12 @@ class TradingBot:
                 continue
             if not self._is_order_allowed_now(market):
                 log.debug(f"[exit skip] {cand['ticker']} 장 시작 전 — 매도 보류")
+                continue
+            # 매도 실패 쿨다운 체크
+            _fail_ts = self._sell_fail_at.get(cand["ticker"], 0)
+            if time.time() - _fail_ts < self._SELL_FAIL_COOLDOWN_SEC:
+                remaining = int(self._SELL_FAIL_COOLDOWN_SEC - (time.time() - _fail_ts))
+                log.debug(f"[exit skip] {cand['ticker']} 매도 실패 쿨다운 {remaining}초 남음")
                 continue
 
             # ── TP 도달 → 트레일링 스탑 처리 ──────────────────────────────
@@ -1892,7 +1903,8 @@ class TradingBot:
                     broker_has = True  # 확인 실패 시 안전하게 유지
 
                 if broker_has:
-                    log.warning(f"[매도 실패 무시] {cand['ticker']} 브로커에 보유 확인 → 포지션 유지, 다음 사이클 재시도")
+                    self._sell_fail_at[cand["ticker"]] = time.time()  # 쿨다운 시작
+                    log.warning(f"[매도 실패 무시] {cand['ticker']} 브로커에 보유 확인 → 포지션 유지, {self._SELL_FAIL_COOLDOWN_SEC}초 후 재시도")
                 else:
                     before = len(self.risk.positions)
                     self.risk.positions = [p for p in self.risk.positions if p.get("ticker") != cand["ticker"]]

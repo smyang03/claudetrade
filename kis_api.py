@@ -853,7 +853,7 @@ def get_balance(token, market="KR", force_refresh: bool = False):
                 "UNPR_DVSN": "01",
                 "FUND_STTL_ICLD_YN": "N",
                 "FNCG_AMT_AUTO_RDPT_YN": "N",
-                "PRCS_DVSN": "01",
+                "PRCS_DVSN": "00",
                 "PDNO": "",
                 "ORD_UNPR": "",
                 "ORD_DVSN": "",
