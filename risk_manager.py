@@ -17,16 +17,16 @@ FEE_RATES = {
 }
 
 HARD_RULES = {
-    "max_daily_loss_pct": -3.0,
-    "max_single_loss_pct": -3.0,
-    "take_profit_pct": 6.0,
-    "max_positions":     int(os.getenv("MAX_POSITIONS",  "3")),   # 동시 보유 최대 종목 수
-    "max_pyramid":       int(os.getenv("MAX_PYRAMID",    "2")),   # 동일 종목 최대 추가매수 횟수
-    "max_position_pct": 0.20,
-    "max_order_krw": 500_000,
-    "no_new_entry_min": 10,
-    "close_before_min": 10,
-    "max_sector_positions": 2,
+    "max_daily_loss_pct":   float(os.getenv("MAX_DAILY_LOSS_PCT",   "-3.0")),   # 일일 최대 손실 (%)
+    "max_single_loss_pct":  float(os.getenv("MAX_SINGLE_LOSS_PCT",  "-3.0")),   # 단일 종목 최대 손실 (%)
+    "take_profit_pct":      float(os.getenv("TAKE_PROFIT_PCT",       "6.0")),   # 기본 TP (%)
+    "max_positions":          int(os.getenv("MAX_POSITIONS",            "3")),   # 동시 보유 최대 종목 수
+    "max_pyramid":            int(os.getenv("MAX_PYRAMID",              "2")),   # 동일 종목 최대 추가매수 횟수
+    "max_position_pct":     float(os.getenv("MAX_POSITION_PCT",      "0.20")),  # 종목당 최대 비중 (소수)
+    "max_order_krw":        float(os.getenv("MAX_ORDER_KRW",      "500000")),   # 1회 최대 주문금액
+    "no_new_entry_min":       int(os.getenv("NO_NEW_ENTRY_MIN",       "10")),   # 장 시작 후 N분 진입 금지
+    "close_before_min":       int(os.getenv("CLOSE_BEFORE_MIN",       "10")),   # 장 마감 전 N분 신규 금지
+    "max_sector_positions":   int(os.getenv("MAX_SECTOR_POSITIONS",    "2")),   # 동일 섹터 최대 보유
 }
 
 
