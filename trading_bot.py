@@ -1913,7 +1913,85 @@ class TradingBot:
             lines.append("보유 포지션 없음")
         send("\n".join(lines))
 
-    def _handle_tp_trailing(self, cand: dict, market: str):
+    def _post_session_position_review(self, market: str, positions: list):
+        """장 종료 후 이월 포지션 Claude 점검 — 왜 보유 중인지 이유 기록 + 텔레그램 전송."""
+        from telegram_reporter import send
+        if not positions:
+            send(f"🌙 <b>[장 종료 포지션] {market}</b>\n이월 포지션 없음")
+            return
+
+        digest = self.today_judgment.get("digest_prompt", "")
+        lines = [f"🌙 <b>[장 종료 포지션 현황] {market}</b>", "━━━━━━━━━━━━━━━━"]
+
+        for pos in positions:
+            ticker  = pos.get("ticker", "")
+            name    = self._lookup_ticker_name(ticker, market)
+            disp    = f"{ticker}({name})" if name else ticker
+            entry   = float(pos.get("display_avg_price", pos.get("entry", 0)) or 0)
+            cur     = float(pos.get("display_current_price", pos.get("current_price", entry)) or 0)
+            qty     = int(pos.get("qty", 0) or 0)
+            pnl     = (cur / entry - 1) * 100 if entry else 0
+            held    = int(pos.get("held_days", 0) or 0)
+            is_us   = market == "US"
+            px      = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f}원"
+            pnl_icon = "🟢" if pnl >= 0 else "🔴"
+
+            # 수수료 차감 실손익
+            fee = entry * qty * 0.00015 + cur * qty * (0.00015 if is_us else 0.00195)
+            net = (cur - entry) * qty - fee
+            net_str = (f"+${net:.2f}" if is_us else f"+{net:,.0f}원") if net >= 0 else (f"-${abs(net):.2f}" if is_us else f"-{abs(net):,.0f}원")
+
+            # Claude hold_advisor 호출
+            action, reason, trail_info = "HOLD", "", ""
+            try:
+                from minority_report.hold_advisor import ask as advisor_ask
+                advice = advisor_ask(pos, market, digest)
+                action = advice.get("action", "HOLD")
+                votes  = advice.get("votes", {})
+                for v in votes.values():
+                    if v.get("action") == action and v.get("reason"):
+                        reason = v["reason"][:80]
+                        break
+                # hold_advice 포지션에 기록 (대시보드에서 보임)
+                for p2 in self.risk.positions:
+                    if p2.get("ticker") == ticker:
+                        p2["hold_advice"] = advice
+                if action == "TRAIL" and advice.get("trail_pct"):
+                    trail_info = f" (트레일링 {advice['trail_pct']*100:.1f}%)"
+            except Exception as e:
+                log.warning(f"[장후 리뷰] {ticker} hold_advisor 오류: {e}")
+
+            action_ko = {"HOLD": "홀드 유지", "TRAIL": "트레일링 유지", "SELL": "매도 권고"}.get(action, action)
+
+            # 매도 기준
+            is_trailing = pos.get("trailing", False)
+            trail_sl    = float(pos.get("trail_sl", 0) or 0)
+            sl          = float(pos.get("sl", 0) or 0)
+            tp          = float(pos.get("tp", 0) or 0)
+            if is_trailing and trail_sl > 0:
+                exit_cond = f"트레일링 {px(trail_sl)} 이하 시 매도"
+            elif sl > 0 or tp > 0:
+                parts = []
+                if sl > 0: parts.append(f"손절 {px(sl)}")
+                if tp > 0: parts.append(f"목표 {px(tp)}")
+                exit_cond = " · ".join(parts)
+            else:
+                exit_cond = "장 시작 전 재판단"
+
+            block = (
+                f"{pnl_icon} <b>{disp}</b>  {pnl:+.2f}%  {net_str}\n"
+                f"  매수 {px(entry)} → 현재 {px(cur)}  {qty}주  {held}일째\n"
+                f"  📋 {exit_cond}\n"
+                f"  🤖 Claude: <b>{action_ko}{trail_info}</b>"
+            )
+            if reason:
+                block += f"\n     → {reason}"
+            lines.append(block)
+
+        # 포지션 파일 다시 저장 (hold_advice 갱신 반영)
+        self._save_positions()
+        self._write_live_status(market, force=True)
+        send("\n\n".join(lines))
         """TP 도달 시 트레일링 스탑 전환 (분석가 합의 옵션)"""
         ticker     = cand["ticker"]
         trail_pct  = self.trailing_stop_pct
@@ -4959,6 +5037,12 @@ class TradingBot:
 
         # 이월 포지션 파일 저장 (재시작 대비)
         self._save_positions()
+
+        # ── 장 종료 후 이월 포지션 Claude 점검 → 텔레그램 전송 ──────────────
+        try:
+            self._post_session_position_review(market, multi_days)
+        except Exception as _pse:
+            log.warning(f"[장후 포지션 리뷰 오류] {market}: {_pse}")
 
         today = date.today().strftime("%Y-%m-%d")
         session_trades = self._filter_trades_for_market(self.risk.trade_log, market)
