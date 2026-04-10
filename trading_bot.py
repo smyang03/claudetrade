@@ -330,6 +330,8 @@ class TradingBot:
 
         # 긴급 재판단 쿨다운 (마지막 재호출 튜닝 카운트, 60분=2사이클 간격 유지)
         self._last_reinvoke_tuning: int = -99
+        # 장 시작 전 포지션 리뷰 결과 (session_open에서 채움 → startup guard 후 실행)
+        self._pre_session_sell_queue: dict[str, list] = {"KR": [], "US": []}
 
         # 장중 이벤트 기록 (튜닝/긴급재판단) — session_close 시 daily_judgment에 포함
         self._session_events: list = []
@@ -1845,6 +1847,72 @@ class TradingBot:
             if cand["reason"] in ("stop_loss", "trail_stop"):
                 self._block_entry(cand["ticker"], _STOP_COOLDOWN_MIN, cand["reason"])
 
+    def _pre_session_position_review(self, market: str):
+        """장 시작 전 보유 포지션 Claude 검토.
+        SELL 결정 종목은 _pre_session_sell_queue에 담아두고,
+        startup guard 해제 후 run_cycle에서 즉시 매도.
+        """
+        positions = [p for p in self.risk.positions
+                     if self._ticker_market(p.get("ticker", "")) == market]
+        if not positions:
+            return
+
+        self._pre_session_sell_queue[market] = []
+        digest = self.today_judgment.get("digest_prompt", "")
+
+        sell_list, hold_list = [], []
+        for pos in positions:
+            ticker = pos.get("ticker", "")
+            try:
+                from minority_report.hold_advisor import ask as advisor_ask
+                advice = advisor_ask(pos, market, digest)
+            except Exception as e:
+                log.warning(f"[장전 리뷰] {ticker} hold_advisor 오류 → HOLD 유지: {e}")
+                hold_list.append((ticker, "오류 → 기본 홀드"))
+                continue
+
+            action = advice.get("action", "HOLD")
+            votes  = advice.get("votes", {})
+            reason = ""
+            for v in votes.values():
+                if v.get("action") == action and v.get("reason"):
+                    reason = v["reason"][:80]
+                    break
+
+            if action == "SELL":
+                self._pre_session_sell_queue[market].append({**pos, "hold_advice": advice})
+                sell_list.append((ticker, reason))
+                log.info(f"[장전 리뷰] {ticker} → SELL 예약: {reason}")
+            else:
+                trail_pct = advice.get("trail_pct", pos.get("trail_pct", 0.03))
+                # TRAIL/HOLD → 트레일링 폭 업데이트만
+                if pos.get("trailing"):
+                    for p2 in self.risk.positions:
+                        if p2.get("ticker") == ticker:
+                            p2["trail_pct"] = trail_pct
+                            p2["hold_advice"] = advice
+                hold_list.append((ticker, reason))
+                log.info(f"[장전 리뷰] {ticker} → {action} 유지: {reason}")
+
+        # ── 텔레그램 알림 ───────────────────────────────────────────────────
+        from telegram_reporter import send
+        lines = [f"🌅 <b>[장 시작 전 포지션 점검] {market}</b>"]
+        if sell_list:
+            lines.append("🔴 <b>매도 예정 (장 시작 즉시)</b>")
+            for tk, rsn in sell_list:
+                name = self._lookup_ticker_name(tk, market)
+                disp = f"{tk}({name})" if name else tk
+                lines.append(f"  • {disp}: {rsn or '분석가 합의'}")
+        if hold_list:
+            lines.append("🟢 <b>홀드 유지</b>")
+            for tk, rsn in hold_list:
+                name = self._lookup_ticker_name(tk, market)
+                disp = f"{tk}({name})" if name else tk
+                lines.append(f"  • {disp}: {rsn or '계속 보유'}")
+        if not sell_list and not hold_list:
+            lines.append("보유 포지션 없음")
+        send("\n".join(lines))
+
     def _handle_tp_trailing(self, cand: dict, market: str):
         """TP 도달 시 트레일링 스탑 전환 (분석가 합의 옵션)"""
         ticker     = cand["ticker"]
@@ -2185,6 +2253,12 @@ class TradingBot:
         self._sync_runtime_with_broker()
         self.risk.reset_daily_state(clear_trade_log=True)
         self.risk.increment_holding_days()
+
+        # ── 장 시작 전 보유 포지션 Claude 점검 ───────────────────────────────
+        try:
+            self._pre_session_position_review(market)
+        except Exception as _psr_e:
+            log.warning(f"[장전 포지션 리뷰 오류] {market}: {_psr_e}")
 
         # ── USD/KRW 환율 자동 갱신 ────────────────────────────────────────────
         try:
@@ -2683,6 +2757,21 @@ class TradingBot:
             )
             self._leave_market_task(market, "run_cycle")
             return
+        # ── 장전 SELL 예약 큐 처리 (startup guard 해제 직후 1회) ─────────────
+        sell_queue = self._pre_session_sell_queue.get(market, [])
+        if sell_queue:
+            log.info(f"[장전 SELL 큐] {market} {len(sell_queue)}건 매도 실행")
+            self._pre_session_sell_queue[market] = []
+            for _sq_pos in sell_queue:
+                _sq_tk = _sq_pos.get("ticker", "")
+                try:
+                    _sq_cp = _sq_pos.get("current_price", _sq_pos.get("entry", 0))
+                    cand = {**_sq_pos, "exit_price": _sq_cp, "reason": "pre_session_sell"}
+                    self._execute_sell(cand, market, reason="pre_session_sell",
+                                       hold_advice=_sq_pos.get("hold_advice"))
+                except Exception as _sqe:
+                    log.error(f"[장전 SELL 실패] {_sq_tk}: {_sqe}")
+
         self._refresh_claude_control()
         self._consume_pending_claude_trigger(market)
 
