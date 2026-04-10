@@ -61,7 +61,7 @@ JSON으로만 응답:
 
     try:
         resp = client.messages.create(
-            model=MODEL, max_tokens=120,
+            model=MODEL, max_tokens=200,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.content[0].text.strip()

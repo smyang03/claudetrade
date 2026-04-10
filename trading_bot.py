@@ -1992,6 +1992,101 @@ class TradingBot:
         self._save_positions()
         self._write_live_status(market, force=True)
         send("\n\n".join(lines))
+
+    def _intraday_position_review(self, market: str, force: bool = False):
+        """장 중 1시간 주기 보유 포지션 Claude 점검.
+        - 진입 후 최소 60분 경과한 포지션만 대상
+        - SELL 결정 시 즉시 매도
+        - force=True: 텔레그램 /review 명령어로 수동 호출
+        """
+        if not self.session_active or self.current_market != market:
+            if not force:
+                return
+        from telegram_reporter import send
+
+        now_ts = time.time()
+        # 해당 마켓 포지션만, 진입 60분 이상 경과한 것만
+        MIN_HOLD_SEC = 3600
+        positions = []
+        for p in self.risk.positions:
+            if self._ticker_market(p.get("ticker", "")) != market:
+                continue
+            # fill_time 또는 entry_date로 경과 판단
+            fill_ts = p.get("_fill_ts", 0)
+            if fill_ts and (now_ts - fill_ts) < MIN_HOLD_SEC and not force:
+                continue
+            positions.append(p)
+
+        if not positions:
+            if force:
+                send(f"🔍 <b>[장 중 포지션 점검] {market}</b>\n검토 대상 포지션 없음 (진입 후 60분 미경과)")
+            return
+
+        digest = self.today_judgment.get("digest_prompt", "")
+        label  = "수동 요청" if force else "1시간 정기"
+        lines  = [f"🔍 <b>[장 중 포지션 점검 · {label}] {market}</b>", "━━━━━━━━━━━━━━━━"]
+
+        for pos in positions:
+            ticker  = pos.get("ticker", "")
+            name    = self._lookup_ticker_name(ticker, market)
+            disp    = f"{ticker}({name})" if name else ticker
+            entry   = float(pos.get("display_avg_price", pos.get("entry", 0)) or 0)
+            cur     = float(pos.get("display_current_price", pos.get("current_price", entry)) or 0)
+            qty     = int(pos.get("qty", 0) or 0)
+            pnl     = (cur / entry - 1) * 100 if entry else 0
+            is_us   = market == "US"
+            px      = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f}원"
+            pnl_icon = "🟢" if pnl >= 0 else "🔴"
+            fee     = entry * qty * 0.00015 + cur * qty * (0.00015 if is_us else 0.00195)
+            net     = (cur - entry) * qty - fee
+            net_str = f"+{net:,.0f}원" if net >= 0 else f"{net:,.0f}원"
+
+            action, reason = "HOLD", ""
+            try:
+                from minority_report.hold_advisor import ask as advisor_ask
+                advice = advisor_ask(pos, market, digest)
+                action = advice.get("action", "HOLD")
+                votes  = advice.get("votes", {})
+                for v in votes.values():
+                    if v.get("action") == action and v.get("reason"):
+                        reason = v["reason"][:80]
+                        break
+                # hold_advice 업데이트
+                for p2 in self.risk.positions:
+                    if p2.get("ticker") == ticker:
+                        p2["hold_advice"] = advice
+            except Exception as e:
+                log.warning(f"[장중 리뷰] {ticker} 오류: {e}")
+
+            action_ko = {"HOLD": "홀드 유지", "TRAIL": "트레일링 유지", "SELL": "즉시 매도"}.get(action, action)
+            color_icon = "🔴" if action == "SELL" else ("🟡" if action == "TRAIL" else "🟢")
+
+            block = (
+                f"{pnl_icon} <b>{disp}</b>  {pnl:+.2f}%  {net_str}\n"
+                f"  매수 {px(entry)} → 현재 {px(cur)}  {qty}주\n"
+                f"  {color_icon} Claude: <b>{action_ko}</b>"
+            )
+            if reason:
+                block += f"\n     → {reason}"
+            lines.append(block)
+
+            # SELL 결정 → 즉시 매도
+            if action == "SELL" and self.session_active:
+                try:
+                    cand = {**pos, "exit_price": cur, "reason": "intraday_review_sell"}
+                    self._execute_sell(cand, market, reason="intraday_review_sell",
+                                       hold_advice=advice)
+                    lines.append(f"  ⚡ 매도 주문 접수")
+                    log.info(f"[장중 리뷰 SELL] {ticker} {pnl:+.2f}% → 즉시 매도")
+                except Exception as se:
+                    log.error(f"[장중 리뷰 매도 실패] {ticker}: {se}")
+                    lines.append(f"  ❌ 매도 실패: {se}")
+
+        self._save_positions()
+        self._write_live_status(market, force=True)
+        send("\n\n".join(lines))
+
+    def _handle_tp_trailing(self, cand: dict, market: str):
         """TP 도달 시 트레일링 스탑 전환 (분석가 합의 옵션)"""
         ticker     = cand["ticker"]
         trail_pct  = self.trailing_stop_pct
@@ -5232,6 +5327,10 @@ def main(is_paper: bool = True):
 
     schedule.every(30).minutes.do(bot.run_tuning, "KR")
     schedule.every(30).minutes.do(bot.run_tuning, "US")
+
+    # 장 중 1시간 주기 보유 포지션 Claude 점검
+    schedule.every(60).minutes.do(bot._intraday_position_review, "KR")
+    schedule.every(60).minutes.do(bot._intraday_position_review, "US")
 
     # 1시간마다 상태 보고 (세션 중일 때만 실제 전송)
     schedule.every(60).minutes.do(bot._heartbeat)

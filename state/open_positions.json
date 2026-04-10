@@ -1,1 +1,52 @@
-[]
+[
+  {
+    "ticker": "017900",
+    "entry": 9379.0,
+    "qty": 21,
+    "current_price": 10530,
+    "display_avg_price": 9379.0,
+    "display_current_price": 10530.0,
+    "display_currency": "KRW",
+    "price_source": "broker_balance",
+    "order_no": "0000004755",
+    "fill_time": "09:15",
+    "strategy": "momentum",
+    "tp": 9296.75,
+    "sl": 8979.3,
+    "max_hold": 3,
+    "held_days": 3,
+    "entry_date": "2026-04-08",
+    "trailing": true,
+    "trail_sl": 10214.1,
+    "trail_pct": 0.04,
+    "tp_triggered": true,
+    "hold_advice": {
+      "action": "HOLD",
+      "trail_pct": 0.04,
+      "votes": {
+        "bull": {
+          "action": "HOLD",
+          "confidence": 0.78,
+          "trail_pct": 0.04,
+          "reason": "코스피 +6.87% 강세장에서 3일 만에 +12.27% 달성했으나 모멘텀이 살아있고 SK하이닉스 동반 급등으로 섹터 추세 유효, 4% 트레일링으로 수익 보호하며 추가 상승 추구"
+        },
+        "bear": {
+          "action": "SELL",
+          "confidence": 0.82,
+          "trail_pct": 0.03,
+          "reason": "3일 만에 +12.27% 달성으로 목표가 도달, 단기 과열 및 차익실현 압력 높음, 즉시 청산이 합리적"
+        },
+        "neutral": {
+          "action": "HOLD",
+          "confidence": 0.72,
+          "trail_pct": 0.04,
+          "reason": "코스피 강세장 모멘텀 유효, 단기 급등 되돌림 리스크 감안해 4% 트레일링으로 수익 방어하며 추가 상승 확인"
+        }
+      }
+    },
+    "tp_price": 10530,
+    "decision_id": null,
+    "market": "KR",
+    "last_hold_update": "2026-04-10"
+  }
+]
