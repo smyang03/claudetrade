@@ -3221,12 +3221,21 @@ def api_review_position():
     if not ticker:
         return jsonify({"error": "ticker required"}), 400
 
-    # live_status에서 포지션 찾기
+    # live_status에서 포지션 찾기 — 지정 market 없으면 반대 market도 탐색
     live = _load_live_status(market) or {}
     positions = live.get("positions", [])
     pos = next((p for p in positions if p.get("ticker") == ticker), None)
     if pos is None:
-        return jsonify({"error": f"{ticker} not found in {market} positions"}), 404
+        other = "US" if market == "KR" else "KR"
+        live2 = _load_live_status(other) or {}
+        pos2  = next((p for p in live2.get("positions", []) if p.get("ticker") == ticker), None)
+        if pos2 is not None:
+            market    = other
+            live      = live2
+            positions = live2.get("positions", [])
+            pos       = pos2
+    if pos is None:
+        return jsonify({"error": f"{ticker} 포지션을 찾을 수 없습니다"}), 404
 
     try:
         from minority_report.hold_advisor import ask as advisor_ask
