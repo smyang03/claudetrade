@@ -41,6 +41,7 @@ from credit_tracker import summary as credit_summary
 from kis_api import (
     get_access_token,
     get_balance,
+    get_price,
     get_usd_krw,
     inquire_daily_ccld_kr,
     inquire_ccnl_us,
@@ -3212,6 +3213,77 @@ def api_decisions():
     return jsonify(rows[:limit])
 
 
+def _is_live_market(market: str) -> bool:
+    """현재 시각이 해당 market 장 시간인지 판별 (KST 기준)"""
+    from datetime import time as _t, timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST).time()
+    if market == "KR":
+        return _t(9, 0) <= now < _t(15, 35)
+    else:  # US: 22:30 ~ 05:00(익일)
+        return now >= _t(22, 30) or now < _t(5, 5)
+
+
+@app.route("/api/refresh_prices", methods=["POST"])
+def api_refresh_prices():
+    """포지션 현재가 갱신: 장 중이면 KIS API 실시간, 장 외이면 저장 데이터 반환"""
+    body   = request.get_json(silent=True) or {}
+    market = body.get("market", "KR").upper()
+
+    live = _load_live_status(market) or {}
+    positions = live.get("positions", [])
+    if not positions:
+        return jsonify({"ok": True, "market": market, "live": False, "positions": []})
+
+    is_live = _is_live_market(market)
+    updated = False
+
+    if is_live:
+        try:
+            token = get_access_token()
+            for pos in positions:
+                ticker = pos.get("ticker", "")
+                if not ticker:
+                    continue
+                try:
+                    px_data = get_price(ticker, token, market=market)
+                    cp = float(px_data.get("current_price") or px_data.get("price") or 0)
+                    if cp > 0:
+                        pos["current_price"] = cp
+                        # display 필드도 갱신
+                        if "display_current_price" in pos:
+                            pos["display_current_price"] = cp
+                        updated = True
+                except Exception:
+                    pass  # 개별 종목 실패 시 기존값 유지
+            if updated:
+                live["positions"] = positions
+                live_path = BASE_DIR / "state" / f"live_status_{market}.json"
+                live_path.write_text(json.dumps(live, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            is_live = False  # 토큰 오류 등 → 저장 데이터 반환
+
+    return jsonify({
+        "ok": True,
+        "market": market,
+        "live": is_live and updated,
+        "positions": [
+            {
+                "ticker":        p.get("ticker"),
+                "current_price": p.get("current_price", p.get("avg_price", 0)),
+                "avg_price":     p.get("avg_price", 0),
+                "qty":           p.get("qty", 0),
+                "pnl_pct":       (
+                    (float(p.get("current_price") or p.get("avg_price") or 0) /
+                     float(p.get("avg_price") or 1) - 1) * 100
+                    if p.get("avg_price") else p.get("pnl_pct", 0)
+                ),
+            }
+            for p in positions
+        ],
+    })
+
+
 @app.route("/api/review_position", methods=["POST"])
 def api_review_position():
     """종목별 Claude 즉시 재판단 (대시보드 버튼 → hold_advisor 호출)"""
@@ -5070,7 +5142,18 @@ async function loadSummary() {
   }
 }
 
+async function refreshPrices(market) {
+  try {
+    await fetch('/api/refresh_prices', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({market})
+    });
+  } catch(e) {}
+}
+
 async function loadAll() {
+  await refreshPrices(MARKET);
   await Promise.all([loadSummary(), loadJudgments(), loadEquityChart(), loadMarketContext(), loadCredits()]);
   loadMonitorTickers();
   loadSignalFeed();
@@ -5113,6 +5196,8 @@ async function reviewPosition(market, ticker, cardId) {
 loadAll();
 setInterval(loadMonitorTickers, 15000);
 setInterval(loadSignalFeed, 10000);
+// 30초마다 현재가 갱신 후 포지션 카드 새로고침
+setInterval(async () => { await refreshPrices(MARKET); loadSummary(); }, 30000);
 </script>
 """
 
