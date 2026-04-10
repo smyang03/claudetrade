@@ -4918,9 +4918,17 @@ async function loadSummary() {
     // hold_advice
     const adv = pos.hold_advice;
     const advAction = adv ? (adv.action || '') : '';
-    const advLabel = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? 'TP 달성 → 트레일링으로 전환' : advAction === 'HOLD' ? '홀드 유지' : '';
+    const advLabel = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? 'TP 달성 → 트레일링 유지' : advAction === 'HOLD' ? '홀드 유지' : '';
+    // hold_advisor 이유: votes에서 다수결 이유 추출
+    let advReasonText = '';
+    if (adv && adv.votes) {
+      const reasons = Object.values(adv.votes)
+        .filter(v => v.action === advAction && v.reason)
+        .map(v => v.reason);
+      if (reasons.length) advReasonText = reasons[0].length > 80 ? reasons[0].slice(0,80)+'…' : reasons[0];
+    }
     const advHtml = advLabel
-      ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">Claude 판단: ${advLabel}</div>`
+      ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">Claude 판단: ${advLabel}${advReasonText ? '<br><span style="color:#94a3b8;font-style:italic">→ '+advReasonText+'</span>' : ''}</div>`
       : '';
     return `
     <div class="card" style="min-width:200px;flex:1;padding:14px 16px">
@@ -5713,9 +5721,16 @@ async function loadSummary() {
         : '';
       const adv = pos.hold_advice;
       const advAction = adv ? (adv.action || '') : '';
-      const advLabel = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? 'TP 달성 → 트레일링으로 전환' : advAction === 'HOLD' ? '홀드 유지' : '';
+      const advLabel = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? 'TP 달성 → 트레일링 유지' : advAction === 'HOLD' ? '홀드 유지' : '';
+      let advReasonText2 = '';
+      if (adv && adv.votes) {
+        const reasons2 = Object.values(adv.votes)
+          .filter(v => v.action === advAction && v.reason)
+          .map(v => v.reason);
+        if (reasons2.length) advReasonText2 = reasons2[0].length > 80 ? reasons2[0].slice(0,80)+'…' : reasons2[0];
+      }
       const advHtml = advLabel
-        ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">Claude 판단: ${advLabel}</div>`
+        ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">Claude 판단: ${advLabel}${advReasonText2 ? '<br><span style="color:#94a3b8;font-style:italic">→ '+advReasonText2+'</span>' : ''}</div>`
         : '';
       return `
         <div class="card" style="min-width:200px;flex:1;padding:14px 16px">

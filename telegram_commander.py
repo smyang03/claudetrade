@@ -413,18 +413,63 @@ def _cmd_positions(bot) -> str:
     for p in pos:
         market = "US" if str(p.get("ticker", "")).replace(".", "").isalpha() else "KR"
         ticker_disp = _display_symbol(p.get("ticker", "-"), market, p.get("name", "") or "")
-        entry = p.get("entry", 0)
-        cur   = p.get("current_price", entry)
-        pnl   = (cur / entry - 1) * 100 if entry else 0
-        tp    = p.get("tp", 0)
-        sl    = p.get("sl", 0)
-        icon  = "🟢" if pnl > 0 else "🔴"
-        lines.append(
-            f"{icon} <b>{ticker_disp}</b>  {p['qty']}주\n"
-            f"  진입 {entry:,}  현재 {cur:,}  PnL {pnl:+.2f}%\n"
-            f"  TP {tp:,}  SL {sl:,}  전략 {p.get('strategy','-')}"
-        )
-    return "\n".join(lines)
+        entry  = float(p.get("display_avg_price", p.get("entry", 0)) or 0)
+        cur    = float(p.get("display_current_price", p.get("current_price", entry)) or 0)
+        pnl    = (cur / entry - 1) * 100 if entry else 0
+        pnl_icon = "🟢" if pnl > 0 else "🔴"
+        is_us  = market == "US"
+        px     = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f}원"
+
+        # ── 매도 기준 (사람 언어로) ──────────────────────────────────────
+        is_trailing = p.get("trailing", False)
+        trail_sl    = float(p.get("trail_sl", 0) or 0)
+        trail_pct   = float(p.get("trail_pct", 0.03) or 0.03) * 100
+        sl          = float(p.get("sl", 0) or 0)
+        tp          = float(p.get("tp", 0) or 0)
+        held        = int(p.get("held_days", 0) or 0)
+        max_hold    = int(p.get("max_hold", 0) or 0)
+
+        if is_trailing and trail_sl > 0:
+            exit_line = f"  📉 <b>{px(trail_sl)} 이하 시 자동 매도</b> (트레일링 {trail_pct:.1f}%)"
+        else:
+            parts = []
+            if sl > 0: parts.append(f"손절 {px(sl)}")
+            if tp > 0: parts.append(f"목표 {px(tp)}")
+            exit_line = f"  🎯 {' · '.join(parts)}" if parts else ""
+
+        hold_line = ""
+        if max_hold > 0:
+            remain = max_hold - held
+            hold_line = f"  ⏱ {held}일 보유 중" + (f" (최대 {max_hold}일 · {remain}일 남음)" if remain >= 0 else " (기간 초과)")
+
+        # ── Claude 판단 (hold_advice) ──────────────────────────────────
+        adv = p.get("hold_advice")
+        claude_line = ""
+        if adv:
+            action = adv.get("action", "")
+            action_ko = {"TRAIL": "트레일링 유지", "SELL": "매도 권고", "HOLD": "홀드"}.get(action, action)
+            votes = adv.get("votes", {})
+            reason = ""
+            for v in votes.values():
+                if v.get("action") == action and v.get("reason"):
+                    reason = v["reason"][:60]
+                    break
+            claude_line = f"  🤖 Claude: <b>{action_ko}</b>" + (f"\n     → {reason}" if reason else "")
+
+        # ── 조합 ──────────────────────────────────────────────────────
+        strat = p.get("strategy", "")
+        if strat in ("broker_balance", "broker_sync", ""): strat = ""
+        sub = " · ".join(filter(None, [strat, f"{p['qty']}주", f"{held}일째" if held else ""]))
+
+        block = [f"{pnl_icon} <b>{ticker_disp}</b>  {pnl:+.2f}%"]
+        if sub:    block.append(f"  {sub}")
+        block.append(f"  매수 {px(entry)} → 현재 {px(cur)}")
+        if exit_line:  block.append(exit_line)
+        if hold_line:  block.append(hold_line)
+        if claude_line: block.append(claude_line)
+        lines.append("\n".join(block))
+
+    return "\n\n".join(lines)
 
 
 def _cmd_mode(bot) -> str:
