@@ -415,10 +415,23 @@ def _cmd_positions(bot) -> str:
         ticker_disp = _display_symbol(p.get("ticker", "-"), market, p.get("name", "") or "")
         entry  = float(p.get("display_avg_price", p.get("entry", 0)) or 0)
         cur    = float(p.get("display_current_price", p.get("current_price", entry)) or 0)
+        qty    = int(p.get("qty", 0) or 0)
         pnl    = (cur / entry - 1) * 100 if entry else 0
         pnl_icon = "🟢" if pnl > 0 else "🔴"
         is_us  = market == "US"
         px     = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f}원"
+
+        # ── 수익금 + 수수료 차감 실손익 ─────────────────────────────────
+        gross_pnl = (cur - entry) * qty
+        # 수수료: KR 매수 0.015% + 매도 0.195%(거래세 포함), US 0.015% 양방향
+        fee_buy  = entry * qty * (0.00015)
+        fee_sell = cur   * qty * (0.00195 if not is_us else 0.00015)
+        net_pnl  = gross_pnl - fee_buy - fee_sell
+        net_sign = "+" if net_pnl >= 0 else ""
+        if is_us:
+            pnl_str = f"${net_pnl:+.2f} (수수료 제외)"
+        else:
+            pnl_str = f"{net_sign}{net_pnl:,.0f}원 (수수료 제외)"
 
         # ── 매도 기준 (사람 언어로) ──────────────────────────────────────
         is_trailing = p.get("trailing", False)
@@ -461,7 +474,7 @@ def _cmd_positions(bot) -> str:
         if strat in ("broker_balance", "broker_sync", ""): strat = ""
         sub = " · ".join(filter(None, [strat, f"{p['qty']}주", f"{held}일째" if held else ""]))
 
-        block = [f"{pnl_icon} <b>{ticker_disp}</b>  {pnl:+.2f}%"]
+        block = [f"{pnl_icon} <b>{ticker_disp}</b>  {pnl:+.2f}%  <b>{pnl_str}</b>"]
         if sub:    block.append(f"  {sub}")
         block.append(f"  매수 {px(entry)} → 현재 {px(cur)}")
         if exit_line:  block.append(exit_line)
