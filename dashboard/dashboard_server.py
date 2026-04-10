@@ -3894,6 +3894,7 @@ function marketParam(extra = '') {
 const fmt = {
   pct:   v => (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%',
   krw:   v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString() + '원',
+  price: v => Math.round(v).toLocaleString() + '원',   // 가격 표시 (부호 없음)
   asset: v => Math.round(v).toLocaleString() + '원',
   num:   v => Number(v).toLocaleString(),
 };
@@ -4885,40 +4886,49 @@ async function loadSummary() {
     const curPrice = Number(pos.current_price || 0);
     const pnl = avgPrice > 0 ? ((curPrice / avgPrice) - 1) * 100 : Number(pos.pnl_pct || 0);
     const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
-    const entry = MARKET === 'KR' ? fmt.krw(avgPrice) : '$' + avgPrice.toFixed(2);
-    const cur = MARKET === 'KR' ? fmt.krw(curPrice) : '$' + curPrice.toFixed(2);
+    const isKR = MARKET === 'KR';
+    const entry = isKR ? fmt.price(avgPrice) : '$' + avgPrice.toFixed(2);
+    const cur   = isKR ? fmt.price(curPrice)  : '$' + curPrice.toFixed(2);
+    // 전략명 정제
+    const stratRaw = pos.strategy || '';
+    const stratLabel = !stratRaw || stratRaw === 'broker_balance' || stratRaw === 'broker_sync' ? '' : stratRaw;
     // 트레일링 / SL / TP 표시
     const isTrailing = pos.trailing;
     const trailSl = Number(pos.trail_sl || 0);
+    const trailPct = Number(pos.trail_pct || 0);
     const sl = Number(pos.sl || 0);
     const tp = Number(pos.tp || 0);
-    const fmtPx = v => v > 0 ? (MARKET === 'KR' ? fmt.krw(v) : '$' + v.toFixed(2)) : '--';
-    const stopLine = isTrailing
-      ? `<span style="color:#f59e0b">트레일링</span> · SL ${fmtPx(trailSl)}`
-      : `SL ${fmtPx(sl)} · TP ${fmtPx(tp)}`;
+    const fmtPx = v => v > 0 ? (isKR ? fmt.price(v) : '$' + v.toFixed(2)) : null;
+    let stopLine = '';
+    if (isTrailing && trailSl > 0) {
+      stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${fmtPx(trailSl)} 이하 시 자동 매도`;
+    } else if (sl > 0 || tp > 0) {
+      const slTxt = fmtPx(sl) ? `손절 ${fmtPx(sl)}` : '';
+      const tpTxt = fmtPx(tp) ? `목표 ${fmtPx(tp)}` : '';
+      stopLine = [slTxt, tpTxt].filter(Boolean).join(' · ');
+    }
     // 보유일
     const heldDays = pos.held_days || 0;
-    const entryDate = pos.entry_date ? pos.entry_date.slice(5) : '';  // MM-DD
-    // 진입이유 (selected_reason)
+    const entryDate = pos.entry_date ? pos.entry_date.slice(5) : '';
+    // 진입이유
     const reason = pos.selected_reason || '';
     const reasonHtml = reason
-      ? `<div style="font-size:10px;color:#94a3b8;margin-top:6px;line-height:1.4;border-top:1px solid rgba(100,116,139,0.2);padding-top:5px">${reason.length > 80 ? reason.slice(0,80)+'…' : reason}</div>`
+      ? `<div style="font-size:10px;color:#94a3b8;margin-top:6px;line-height:1.4;border-top:1px solid rgba(100,116,139,0.2);padding-top:5px">진입이유: ${reason.length > 80 ? reason.slice(0,80)+'…' : reason}</div>`
       : '';
     // hold_advice
     const adv = pos.hold_advice;
     const advAction = adv ? (adv.action || '') : '';
-    const advHtml = advAction
-      ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">
-           Claude: ${advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? '트레일링 유지' : '홀드'}
-         </div>`
+    const advLabel = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? 'TP 달성 → 트레일링으로 전환' : advAction === 'HOLD' ? '홀드 유지' : '';
+    const advHtml = advLabel
+      ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">Claude 판단: ${advLabel}</div>`
       : '';
     return `
     <div class="card" style="min-width:200px;flex:1;padding:14px 16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
-        <div style="font-size:15px;font-weight:700">${pos.display_ticker || pos.ticker}</div>
+        <div style="font-size:15px;font-weight:700">${pos.display_ticker || pos.ticker}${pos.name ? ' <span style="font-size:12px;font-weight:400;color:var(--text-dim)">'+pos.name+'</span>' : ''}</div>
         <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
       </div>
-      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.name ? pos.name + ' · ' : ''}${pos.strategy || '-'} · ${pos.qty}주${entryDate ? ' · '+entryDate : ''}${heldDays ? ' ('+heldDays+'일)' : ''}</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${[stratLabel, pos.qty+'주', entryDate ? entryDate+(heldDays?' ('+heldDays+'일째)':'') : (heldDays?heldDays+'일째':'')].filter(Boolean).join(' · ')}</div>
       <div style="display:flex;gap:16px;margin-bottom:4px">
         <div>
           <div style="font-size:10px;color:var(--text-dim)">매수가</div>
@@ -4929,7 +4939,7 @@ async function loadSummary() {
           <div style="font-family:var(--mono);font-size:12px">${cur}</div>
         </div>
       </div>
-      <div style="font-size:10px;color:var(--text-dim);margin-top:4px">${stopLine}</div>
+      ${stopLine ? `<div style="font-size:10px;color:var(--text-dim);margin-top:4px">${stopLine}</div>` : ''}
       ${advHtml}${reasonHtml}
     </div>`;
   }).join('');
@@ -5673,38 +5683,47 @@ async function loadSummary() {
       const curTotal = curPx * qty;
       const pnlNative = curTotal - buyTotal;
       const pnlKrw = !isKRW && usdKrw > 0 ? pnlNative * usdKrw : pnlNative;
-      const entry = isKRW ? fmt.krw(pos.avg_price || 0) : '$' + (pos.avg_price || 0).toFixed(2);
-      const cur = isKRW ? fmt.krw(pos.current_price || 0) : '$' + (pos.current_price || 0).toFixed(2);
-      const buyTotalText = isKRW ? fmt.krw(buyTotal) : '$' + buyTotal.toFixed(2);
-      const curTotalText = isKRW ? fmt.krw(curTotal) : '$' + curTotal.toFixed(2);
+      const entry = isKRW ? fmt.price(pos.avg_price || 0) : '$' + (pos.avg_price || 0).toFixed(2);
+      const cur = isKRW ? fmt.price(pos.current_price || 0) : '$' + (pos.current_price || 0).toFixed(2);
+      const buyTotalText = isKRW ? fmt.price(buyTotal) : '$' + buyTotal.toFixed(2);
+      const curTotalText = isKRW ? fmt.price(curTotal) : '$' + curTotal.toFixed(2);
       const pnlKrwText = fmt.krw(pnlKrw);
+      // 전략명 정제
+      const stratRaw = pos.strategy || '';
+      const stratLabel = !stratRaw || stratRaw === 'broker_balance' || stratRaw === 'broker_sync' ? '' : stratRaw;
       // 트레일링 / SL / TP
       const isTrailing = pos.trailing;
       const trailSl = Number(pos.trail_sl || 0);
       const sl = Number(pos.sl || 0);
       const tp = Number(pos.tp || 0);
-      const fmtPx = v => v > 0 ? (isKRW ? fmt.krw(v) : '$' + v.toFixed(2)) : '--';
-      const stopLine = isTrailing
-        ? `<span style="color:#f59e0b">트레일링</span> · SL ${fmtPx(trailSl)}`
-        : `SL ${fmtPx(sl)} · TP ${fmtPx(tp)}`;
+      const fmtPx = v => v > 0 ? (isKRW ? fmt.price(v) : '$' + v.toFixed(2)) : null;
+      let stopLine = '';
+      if (isTrailing && trailSl > 0) {
+        stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${fmtPx(trailSl)} 이하 시 자동 매도`;
+      } else if (sl > 0 || tp > 0) {
+        const slTxt = fmtPx(sl) ? `손절 ${fmtPx(sl)}` : '';
+        const tpTxt = fmtPx(tp) ? `목표 ${fmtPx(tp)}` : '';
+        stopLine = [slTxt, tpTxt].filter(Boolean).join(' · ');
+      }
       const heldDays = pos.held_days || 0;
       const entryDate = pos.entry_date ? pos.entry_date.slice(5) : '';
       const reason = pos.selected_reason || '';
       const reasonHtml = reason
-        ? `<div style="font-size:10px;color:#94a3b8;margin-top:6px;line-height:1.4;border-top:1px solid rgba(100,116,139,0.2);padding-top:5px">${reason.length > 80 ? reason.slice(0,80)+'…' : reason}</div>`
+        ? `<div style="font-size:10px;color:#94a3b8;margin-top:6px;line-height:1.4;border-top:1px solid rgba(100,116,139,0.2);padding-top:5px">진입이유: ${reason.length > 80 ? reason.slice(0,80)+'…' : reason}</div>`
         : '';
       const adv = pos.hold_advice;
       const advAction = adv ? (adv.action || '') : '';
-      const advHtml = advAction
-        ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">Claude: ${advAction==='SELL'?'매도 권고':advAction==='TRAIL'?'트레일링 유지':'홀드'}</div>`
+      const advLabel = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? 'TP 달성 → 트레일링으로 전환' : advAction === 'HOLD' ? '홀드 유지' : '';
+      const advHtml = advLabel
+        ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">Claude 판단: ${advLabel}</div>`
         : '';
       return `
         <div class="card" style="min-width:200px;flex:1;padding:14px 16px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
-            <div style="font-size:15px;font-weight:700">${pos.display_ticker || pos.ticker}</div>
+            <div style="font-size:15px;font-weight:700">${pos.display_ticker || pos.ticker}${pos.name ? ' <span style="font-size:12px;font-weight:400;color:var(--text-dim)">'+pos.name+'</span>' : ''}</div>
             <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
           </div>
-          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.name ? pos.name + ' · ' : ''}${pos.strategy || '-'} · ${qty}주${entryDate ? ' · '+entryDate : ''}${heldDays ? ' ('+heldDays+'일)' : ''}</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${[stratLabel, qty+'주', entryDate ? entryDate+(heldDays?' ('+heldDays+'일째)':'') : (heldDays?heldDays+'일째':'')].filter(Boolean).join(' · ')}</div>
           <div style="display:flex;gap:16px;margin-bottom:4px">
             <div>
               <div style="font-size:10px;color:var(--text-dim)">매수가</div>
@@ -5716,7 +5735,7 @@ async function loadSummary() {
             </div>
           </div>
           <div style="font-size:10px;color:var(--text-dim);margin-top:2px;margin-bottom:4px">매수총액 ${buyTotalText} · 평가 ${curTotalText}${!isKRW && usdKrw > 0 ? ' · 원화손익 ' + pnlKrwText : ''}</div>
-          <div style="font-size:10px;color:var(--text-dim)">${stopLine}</div>
+          ${stopLine ? `<div style="font-size:10px;color:var(--text-dim)">${stopLine}</div>` : ''}
           ${advHtml}${reasonHtml}
         </div>`;
     }).join('');
