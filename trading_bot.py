@@ -1185,8 +1185,14 @@ class TradingBot:
             eval_price *= self.usd_krw_rate
         tp_pct = float(template.get("tp_pct", 0.025))
         sl_pct = float(template.get("sl_pct", 0.015 if market == "US" else 0.01))
+        pos_name = (
+            str(template.get("name", "") or "").strip()
+            or str(broker_pos.get("name", "") or "").strip()
+            or self._lookup_ticker_name(ticker, market)
+        )
         return {
             "ticker": ticker,
+            "name": pos_name,
             "entry": avg_price,
             "qty": int(broker_pos.get("qty", 0) or 0),
             "current_price": eval_price or avg_price,
@@ -1390,8 +1396,14 @@ class TradingBot:
         qty = int(order.get("qty", 0))
         tp_pct = float(order.get("tp_pct", 0.0))
         sl_pct = float(order.get("sl_pct", 0.0))
+        pos_name = (
+            str(order.get("name", "") or "").strip()
+            or str(broker_pos.get("name", "") or "").strip()
+            or self._lookup_ticker_name(order.get("ticker", ""), market)
+        )
         return {
             "ticker": order.get("ticker", ""),
+            "name": pos_name,
             "entry": avg_price,
             "qty": qty,
             "current_price": eval_price or avg_price,
@@ -1415,6 +1427,31 @@ class TradingBot:
             "tp_price": 0.0,
             "decision_id": order.get("decision_id"),   # ML DB 연동
         }
+
+    def _lookup_ticker_name(self, ticker: str, market: str) -> str:
+        raw_ticker = str(ticker or "").strip().upper() if market == "US" else str(ticker or "").strip()
+        if not raw_ticker:
+            return ""
+        try:
+            technicals = ((self.today_judgment.get("digest_raw") or {}).get("technicals") or {})
+            info = technicals.get(raw_ticker) or technicals.get(str(ticker or "").strip()) or {}
+            name = str((info or {}).get("name", "") or "").strip()
+            if name and name != raw_ticker:
+                return name
+        except Exception:
+            pass
+        try:
+            for fname in sorted(JUDGMENT_DIR.glob(f"*_{market}.json"), reverse=True):
+                with open(fname, encoding="utf-8") as f:
+                    rec = json.load(f)
+                technicals = ((rec.get("digest_raw") or {}).get("technicals") or {})
+                info = technicals.get(raw_ticker) or technicals.get(str(ticker or "").strip()) or {}
+                name = str((info or {}).get("name", "") or "").strip()
+                if name and name != raw_ticker:
+                    return name
+        except Exception:
+            pass
+        return ""
 
     def _reconcile_pending_orders(self, broker_kr: dict, broker_us: dict):
         if not self.pending_orders:
@@ -4656,12 +4693,20 @@ class TradingBot:
                 if self._ticker_market(ticker) != market:
                     continue
                 key = ticker.upper() if self._ticker_market(ticker) == "US" else ticker
+                avg_price = float(pos.get("display_avg_price", pos.get("entry", pos.get("avg_price", 0))) or 0)
+                current_price = float(
+                    pos.get("display_current_price", pos.get("current_price", pos.get("entry", pos.get("avg_price", 0))))
+                    or 0
+                )
+                pnl_pct = ((current_price / avg_price) - 1.0) * 100.0 if avg_price > 0 and current_price > 0 else 0.0
+                pos_name = str(pos.get("name", "") or "").strip() or self._lookup_ticker_name(ticker, market)
                 dedup_positions[key] = {
                     "ticker":        ticker,
+                    "name":          pos_name,
                     "qty":           pos.get("qty", 0),
-                    "avg_price":     pos.get("display_avg_price", pos.get("entry", pos.get("avg_price", 0))),
-                    "current_price": pos.get("display_current_price", pos.get("current_price", pos.get("entry", pos.get("avg_price", 0)))),
-                    "pnl_pct":       pos.get("pnl_pct", 0),
+                    "avg_price":     avg_price,
+                    "current_price": current_price,
+                    "pnl_pct":       round(pnl_pct, 4),
                     "strategy":      pos.get("strategy", ""),
                     "trailing":      pos.get("trailing", False),
                     "price_source":  pos.get("price_source", "runtime"),
