@@ -106,9 +106,18 @@ def _handle(text: str, bot) -> str:
             else:
                 ticker_filter = args[0].upper()
         try:
-            bot._intraday_position_review(market, force=True, ticker_filter=ticker_filter)
+            bot._refresh_claude_control()
+            bot.claude_control["pending_position_review"] = {
+                "market": market,
+                "ticker": ticker_filter,
+                "source": "telegram_review",
+                "requested_at": datetime.now(KST).isoformat(timespec="seconds"),
+            }
+            bot.claude_control["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            bot.claude_control["updated_by"] = "telegram"
+            bot._save_claude_control()
             target = f"{market} {ticker_filter}" if ticker_filter else market
-            return f"✅ {target} 포지션 재판단 실행 — 결과는 텔레그램으로 전송됩니다"
+            return f"✅ {target} 포지션 재판단 큐 등록 — 결과는 텔레그램으로 전송됩니다"
         except Exception as e:
             return f"❌ 재판단 실패: {e}"
 

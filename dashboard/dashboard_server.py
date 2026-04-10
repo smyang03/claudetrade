@@ -1390,147 +1390,6 @@ def _load_claude_control() -> dict:
     return data
 
 
-def _claude_reinvoke_stats_today(market: str) -> dict:
-    path = _log_path_for_date(date.today().isoformat())
-    if not path.exists():
-        return {
-            "count": 0, "changed": 0, "unchanged": 0,
-            "wins": 0, "losses": 0, "flats": 0,
-            "win_rate": 0.0, "pnl_krw": 0.0,
-        }
-
-    start_re = re.compile(r"\[긴급 재판단 시작\]\s+(?P<market>[A-Z]+)\s+\|")
-    done_re = re.compile(r"\[긴급 재판단 완료\]\s+(?P<old>\S+)\s+→\s+(?P<new>\S+)\s+size=(?P<size>\d+)%")
-    close_re = re.compile(r"\[[a-zA-Z_]+\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<pnl>[+\-]?[0-9,]+(?:\.[0-9]+)?)\s+\((?P<pnl_pct>[+\-]?[0-9.]+)%\)")
-    start_marker = f"[긴급 재판단 시작] {market} |"
-    done_marker = "[긴급 재판단 완료]"
-
-    try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except Exception:
-        lines = []
-
-    pending_market = ""
-    events = []
-    for line in lines:
-        ts = line[:19]
-        m = start_re.search(line)
-        if m:
-            pending_market = m.group("market")
-            continue
-        m = done_re.search(line)
-        if m:
-            ev_market = pending_market or market
-            if ev_market == market:
-                events.append({
-                    "ts": ts,
-                    "market": ev_market,
-                    "old_mode": m.group("old"),
-                    "new_mode": m.group("new"),
-                    "changed": m.group("old") != m.group("new"),
-                    "pnl_krw": 0.0,
-                })
-            pending_market = ""
-
-    if not events:
-        return {
-            "count": 0, "changed": 0, "unchanged": 0,
-            "wins": 0, "losses": 0, "flats": 0,
-            "win_rate": 0.0, "pnl_krw": 0.0,
-        }
-
-    event_idx = 0
-    for line in lines:
-        ts = line[:19]
-        while event_idx + 1 < len(events) and ts >= events[event_idx + 1]["ts"]:
-            event_idx += 1
-        m = close_re.search(line)
-        if not m:
-            continue
-        ticker = m.group("ticker").upper()
-        if _ticker_market(ticker) != market:
-            continue
-        pnl = float(m.group("pnl").replace(",", ""))
-        if ts >= events[event_idx]["ts"]:
-            events[event_idx]["pnl_krw"] += pnl
-
-    wins = sum(1 for e in events if e["pnl_krw"] > 0)
-    losses = sum(1 for e in events if e["pnl_krw"] < 0)
-    flats = sum(1 for e in events if e["pnl_krw"] == 0)
-    count = len(events)
-    return {
-        "count": count,
-        "changed": sum(1 for e in events if e["changed"]),
-        "unchanged": sum(1 for e in events if not e["changed"]),
-        "wins": wins,
-        "losses": losses,
-        "flats": flats,
-        "win_rate": round(wins / count * 100, 1) if count else 0.0,
-        "pnl_krw": round(sum(e["pnl_krw"] for e in events), 2),
-    }
-
-
-def _claude_reinvoke_stats_today(market: str) -> dict:
-    path = _log_path_for_date(date.today().isoformat())
-    empty = {
-        "count": 0, "changed": 0, "unchanged": 0,
-        "wins": 0, "losses": 0, "flats": 0,
-        "win_rate": 0.0, "pnl_krw": 0.0,
-    }
-    if not path.exists():
-        return empty
-
-    close_re = re.compile(r"\[[a-zA-Z_]+\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<pnl>[+\-]?[0-9,]+(?:\.[0-9]+)?)\s+\((?P<pnl_pct>[+\-]?[0-9.]+)%\)")
-    reinvoke_re = re.compile(rf"\[reinvoke {market}\]\s+(?P<old>\S+)\s+.+?\s+(?P<new>\S+)\s+\|")
-    try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except Exception:
-        return empty
-
-    events = []
-    for line in lines:
-        m = reinvoke_re.search(line)
-        if not m:
-            continue
-        events.append({
-            "ts": line[:19],
-            "old_mode": m.group("old"),
-            "new_mode": m.group("new"),
-            "changed": m.group("old") != m.group("new"),
-            "pnl_krw": 0.0,
-        })
-    if not events:
-        return empty
-
-    event_idx = 0
-    for line in lines:
-        ts = line[:19]
-        while event_idx + 1 < len(events) and ts >= events[event_idx + 1]["ts"]:
-            event_idx += 1
-        m = close_re.search(line)
-        if not m:
-            continue
-        ticker = m.group("ticker").upper()
-        if _ticker_market(ticker) != market:
-            continue
-        events[event_idx]["pnl_krw"] += float(m.group("pnl").replace(",", ""))
-
-    wins = sum(1 for e in events if e["pnl_krw"] > 0)
-    losses = sum(1 for e in events if e["pnl_krw"] < 0)
-    flats = sum(1 for e in events if e["pnl_krw"] == 0)
-    count = len(events)
-    return {
-        "count": count,
-        "changed": sum(1 for e in events if e["changed"]),
-        "unchanged": sum(1 for e in events if not e["changed"]),
-        "wins": wins,
-        "losses": losses,
-        "flats": flats,
-        "win_rate": round(wins / count * 100, 1) if count else 0.0,
-        "pnl_krw": round(sum(e["pnl_krw"] for e in events), 2),
-    }
-
-
 def _load_broker_positions(market: str) -> list:
     """KIS 釉뚮줈而??붽퀬?먯꽌 ?꾩옱 蹂댁쑀 ?ъ??섏쓣 吏곸젒 ?쎌뼱 ??쒕낫?쒖뿉 ?쒖떆."""
     try:
@@ -3329,6 +3188,20 @@ def api_review_position():
         live_path = BASE_DIR / "state" / f"live_status_{market}.json"
         live_path.write_text(json.dumps(live, ensure_ascii=False), encoding="utf-8")
 
+        queued_sell = False
+        if advice.get("action") == "SELL":
+            control = _load_claude_control()
+            control["pending_position_review"] = {
+                "market": market,
+                "ticker": ticker,
+                "source": "dashboard_review",
+                "requested_at": datetime.now(KST).isoformat(timespec="seconds"),
+            }
+            control["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            control["updated_by"] = "dashboard_review"
+            _save_claude_control(control)
+            queued_sell = True
+
         # decisions.jsonl 기록
         from datetime import datetime as _dt
         decisions_path = BASE_DIR / "state" / "decisions.jsonl"
@@ -3341,13 +3214,14 @@ def api_review_position():
             "trail_pct": advice.get("trail_pct"),
             "votes":     advice.get("votes", {}),
             "source":    "dashboard_review",
+            "queued_sell": queued_sell,
         }
         with open(decisions_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
         return jsonify({"ok": True, "ticker": ticker, "market": market,
                         "action": advice.get("action"), "trail_pct": advice.get("trail_pct"),
-                        "votes": advice.get("votes", {})})
+                        "votes": advice.get("votes", {}), "queued_sell": queued_sell})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

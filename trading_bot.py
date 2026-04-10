@@ -776,6 +776,7 @@ class TradingBot:
             "last_result_status": "idle",
             "last_error": "",
             "pending_trigger": None,
+            "pending_position_review": None,
         }
 
     def _save_claude_control(self):
@@ -903,6 +904,30 @@ class TradingBot:
             log.error(f"[Claude 대시보드 트리거 실패] {market}: {e}")
         finally:
             self.claude_control["pending_trigger"] = None
+            self.claude_control["last_result_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            self.claude_control["last_result_market"] = market
+            self._save_claude_control()
+
+    def _consume_pending_position_review(self, market: str):
+        self._refresh_claude_control()
+        pending = self.claude_control.get("pending_position_review")
+        if not pending or pending.get("market") != market:
+            return
+        ticker = str(pending.get("ticker", "") or "").strip()
+        source = str(pending.get("source", "dashboard_review") or "dashboard_review")
+        try:
+            if not ticker:
+                raise ValueError("ticker missing")
+            self._intraday_position_review(market, force=True, ticker_filter=ticker)
+            self.claude_control["last_result_status"] = "success"
+            self.claude_control["last_error"] = ""
+            log.info(f"[포지션 재판단 트리거 처리] {market} {ticker} | {source}")
+        except Exception as e:
+            self.claude_control["last_result_status"] = "error"
+            self.claude_control["last_error"] = str(e)
+            log.error(f"[포지션 재판단 트리거 실패] {market} {ticker}: {e}")
+        finally:
+            self.claude_control["pending_position_review"] = None
             self.claude_control["last_result_at"] = datetime.now(KST).isoformat(timespec="seconds")
             self.claude_control["last_result_market"] = market
             self._save_claude_control()
@@ -1251,6 +1276,22 @@ class TradingBot:
 
     def _daily_pnl_pct(self) -> float:
         return float(self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100.0)
+
+    def _normalize_broker_balance(self, balance: dict | None, market: str) -> dict:
+        """get_balance() 응답을 ticker -> position dict 형태로 정규화."""
+        if not isinstance(balance, dict):
+            return {}
+        stocks = balance.get("stocks", []) or []
+        normalized = {}
+        for stock in stocks:
+            if not isinstance(stock, dict):
+                continue
+            ticker = str(stock.get("ticker", "") or "").strip()
+            if not ticker:
+                continue
+            key = ticker.upper() if market == "US" else ticker
+            normalized[key] = stock
+        return normalized
 
     def _kis_total_equity_krw(self) -> float:
         """통합계좌 기준 KIS 총자산(KRW). KR+US 잔고 합산 후 실패 시 내부 계산값으로 폴백."""
@@ -2951,6 +2992,7 @@ class TradingBot:
 
         self._refresh_claude_control()
         self._consume_pending_claude_trigger(market)
+        self._consume_pending_position_review(market)
 
         mode = self.today_judgment.get("consensus", {}).get("mode", "CAUTIOUS")
         size_pct = self.today_judgment.get("consensus", {}).get("size", 50)
