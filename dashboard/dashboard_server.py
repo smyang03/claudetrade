@@ -66,6 +66,8 @@ except Exception:
 
 app = Flask(__name__)
 
+_BROKER_REALIZED_CACHE: dict[tuple[str, str], dict] = {}
+
 
 @app.after_request
 def add_no_cache_headers(resp):
@@ -1605,6 +1607,61 @@ def _broker_snapshot() -> dict:
     }
 
 
+def _broker_realized_pnl_krw(market: str, trade_date: str) -> float:
+    """브로커 체결 원장 기준 실현손익을 FIFO로 계산한다."""
+    cache_key = (market, trade_date)
+    now_ts = _time.time()
+    cached = _BROKER_REALIZED_CACHE.get(cache_key)
+    if cached and now_ts - float(cached.get("ts", 0) or 0) < 60:
+        return float(cached.get("value", 0) or 0)
+
+    realized = 0.0
+    usd_krw = _get_usd_krw_cached()
+    try:
+        token = get_access_token()
+        if market == "KR":
+            rows = inquire_daily_ccld_kr(token, start_date=trade_date, end_date=trade_date)
+        else:
+            rows = inquire_ccnl_us(token, start_date=trade_date, end_date=trade_date)
+    except Exception:
+        rows = []
+
+    try:
+        from collections import defaultdict, deque
+
+        queues = defaultdict(deque)
+        rows = sorted(rows, key=lambda r: str(r.get("order_time", "") or ""))
+        for row in rows:
+            ticker = str(row.get("ticker", "") or "").upper() if market == "US" else str(row.get("ticker", "") or "")
+            side = str(row.get("side", "") or "").lower()
+            qty = int(row.get("filled_qty", 0) or 0)
+            px = float(row.get("fill_price", 0) or 0)
+            if not ticker or qty <= 0 or px <= 0:
+                continue
+            if side == "buy":
+                queues[ticker].append([qty, px])
+                continue
+            if side != "sell":
+                continue
+            remaining = qty
+            while remaining > 0 and queues[ticker]:
+                buy_qty, buy_px = queues[ticker][0]
+                take = min(remaining, buy_qty)
+                pnl_native = (px - buy_px) * take
+                realized += pnl_native if market == "KR" else pnl_native * usd_krw
+                buy_qty -= take
+                remaining -= take
+                if buy_qty <= 0:
+                    queues[ticker].popleft()
+                else:
+                    queues[ticker][0][0] = buy_qty
+    except Exception:
+        realized = 0.0
+
+    _BROKER_REALIZED_CACHE[cache_key] = {"ts": now_ts, "value": realized}
+    return float(realized)
+
+
 def _live_asset_fallback(market: str, usd_krw: float) -> dict:
     live = _load_live_status(market)
     if not live or not live.get("positions"):
@@ -2179,7 +2236,11 @@ def api_summary():
         live = {}
 
     metrics_today = _record_metrics(today_rec, market)
-    realized_pnl_krw = live.get("daily_pnl", metrics_today.get("pnl_krw", result.get("pnl_krw", 0)))
+    broker_trade_date = _session_trade_date(market).strftime("%Y%m%d")
+    broker_realized_pnl_krw = _broker_realized_pnl_krw(market, broker_trade_date)
+    realized_pnl_krw = broker_realized_pnl_krw
+    if abs(float(realized_pnl_krw or 0)) < 1e-9:
+        realized_pnl_krw = live.get("daily_pnl", metrics_today.get("pnl_krw", result.get("pnl_krw", 0)))
     unrealized_pnl_krw = 0.0
     pnl_krw  = realized_pnl_krw
     pnl_pct  = live.get("daily_pnl_pct", result.get("pnl_pct", 0))
@@ -3118,6 +3179,37 @@ def api_signals_recent():
     rows = pinned + normalized
     rows.sort(key=lambda x: (0 if x.get("pinned") else 1, x.get("timestamp", "")), reverse=False)
     return jsonify(rows[:n])
+
+
+@app.route("/api/decisions")
+def api_decisions():
+    """Claude 매수/매도/홀드 판단 이력 (state/decisions.jsonl)"""
+    market = request.args.get("market", "")
+    action = request.args.get("action", "")
+    ticker = request.args.get("ticker", "")
+    limit  = int(request.args.get("limit", "100"))
+
+    decisions_path = BASE_DIR / "state" / "decisions.jsonl"
+    rows = []
+    if decisions_path.exists():
+        try:
+            lines = decisions_path.read_text(encoding="utf-8").strip().splitlines()
+            for line in lines:
+                try:
+                    ev = json.loads(line)
+                    if market and ev.get("market") != market:
+                        continue
+                    if action and ev.get("action") != action:
+                        continue
+                    if ticker and ev.get("ticker") != ticker:
+                        continue
+                    rows.append(ev)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    rows.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    return jsonify(rows[:limit])
 
 
 @app.route("/api/tickers/today")
@@ -4795,15 +4887,50 @@ async function loadSummary() {
     const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
     const entry = MARKET === 'KR' ? fmt.krw(avgPrice) : '$' + avgPrice.toFixed(2);
     const cur = MARKET === 'KR' ? fmt.krw(curPrice) : '$' + curPrice.toFixed(2);
+    // 트레일링 / SL / TP 표시
+    const isTrailing = pos.trailing;
+    const trailSl = Number(pos.trail_sl || 0);
+    const sl = Number(pos.sl || 0);
+    const tp = Number(pos.tp || 0);
+    const fmtPx = v => v > 0 ? (MARKET === 'KR' ? fmt.krw(v) : '$' + v.toFixed(2)) : '--';
+    const stopLine = isTrailing
+      ? `<span style="color:#f59e0b">트레일링</span> · SL ${fmtPx(trailSl)}`
+      : `SL ${fmtPx(sl)} · TP ${fmtPx(tp)}`;
+    // 보유일
+    const heldDays = pos.held_days || 0;
+    const entryDate = pos.entry_date ? pos.entry_date.slice(5) : '';  // MM-DD
+    // 진입이유 (selected_reason)
+    const reason = pos.selected_reason || '';
+    const reasonHtml = reason
+      ? `<div style="font-size:10px;color:#94a3b8;margin-top:6px;line-height:1.4;border-top:1px solid rgba(100,116,139,0.2);padding-top:5px">${reason.length > 80 ? reason.slice(0,80)+'…' : reason}</div>`
+      : '';
+    // hold_advice
+    const adv = pos.hold_advice;
+    const advAction = adv ? (adv.action || '') : '';
+    const advHtml = advAction
+      ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">
+           Claude: ${advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? '트레일링 유지' : '홀드'}
+         </div>`
+      : '';
     return `
-    <div class="card" style="min-width:180px;flex:1;padding:14px 16px">
-      <div style="font-size:15px;font-weight:700;margin-bottom:6px">${pos.display_ticker || pos.ticker}</div>
-      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.strategy || '-'} · ${pos.qty}주</div>
-      <div style="font-size:11px;color:var(--text-dim)">매수가</div>
-      <div style="font-family:var(--mono);font-size:13px;margin-bottom:4px">${entry}</div>
-      <div style="font-size:11px;color:var(--text-dim)">현재가</div>
-      <div style="font-family:var(--mono);font-size:13px;margin-bottom:6px">${cur}</div>
-      <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
+    <div class="card" style="min-width:200px;flex:1;padding:14px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+        <div style="font-size:15px;font-weight:700">${pos.display_ticker || pos.ticker}</div>
+        <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.name ? pos.name + ' · ' : ''}${pos.strategy || '-'} · ${pos.qty}주${entryDate ? ' · '+entryDate : ''}${heldDays ? ' ('+heldDays+'일)' : ''}</div>
+      <div style="display:flex;gap:16px;margin-bottom:4px">
+        <div>
+          <div style="font-size:10px;color:var(--text-dim)">매수가</div>
+          <div style="font-family:var(--mono);font-size:12px">${entry}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text-dim)">현재가</div>
+          <div style="font-family:var(--mono);font-size:12px">${cur}</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px">${stopLine}</div>
+      ${advHtml}${reasonHtml}
     </div>`;
   }).join('');
   }
@@ -5551,17 +5678,46 @@ async function loadSummary() {
       const buyTotalText = isKRW ? fmt.krw(buyTotal) : '$' + buyTotal.toFixed(2);
       const curTotalText = isKRW ? fmt.krw(curTotal) : '$' + curTotal.toFixed(2);
       const pnlKrwText = fmt.krw(pnlKrw);
+      // 트레일링 / SL / TP
+      const isTrailing = pos.trailing;
+      const trailSl = Number(pos.trail_sl || 0);
+      const sl = Number(pos.sl || 0);
+      const tp = Number(pos.tp || 0);
+      const fmtPx = v => v > 0 ? (isKRW ? fmt.krw(v) : '$' + v.toFixed(2)) : '--';
+      const stopLine = isTrailing
+        ? `<span style="color:#f59e0b">트레일링</span> · SL ${fmtPx(trailSl)}`
+        : `SL ${fmtPx(sl)} · TP ${fmtPx(tp)}`;
+      const heldDays = pos.held_days || 0;
+      const entryDate = pos.entry_date ? pos.entry_date.slice(5) : '';
+      const reason = pos.selected_reason || '';
+      const reasonHtml = reason
+        ? `<div style="font-size:10px;color:#94a3b8;margin-top:6px;line-height:1.4;border-top:1px solid rgba(100,116,139,0.2);padding-top:5px">${reason.length > 80 ? reason.slice(0,80)+'…' : reason}</div>`
+        : '';
+      const adv = pos.hold_advice;
+      const advAction = adv ? (adv.action || '') : '';
+      const advHtml = advAction
+        ? `<div style="font-size:10px;margin-top:4px;color:${advAction==='SELL'?'#ef4444':advAction==='TRAIL'?'#f59e0b':'#34d399'}">Claude: ${advAction==='SELL'?'매도 권고':advAction==='TRAIL'?'트레일링 유지':'홀드'}</div>`
+        : '';
       return `
-        <div class="card" style="min-width:180px;flex:1;padding:14px 16px">
-          <div style="font-size:15px;font-weight:700;margin-bottom:6px">${pos.display_ticker || pos.ticker}</div>
-          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.strategy || '-'} · ${pos.qty || 0}주</div>
-          <div style="font-size:11px;color:var(--text-dim)">매수가</div>
-          <div style="font-family:var(--mono);font-size:13px;margin-bottom:4px">${entry}</div>
-          <div style="font-size:11px;color:var(--text-dim)">현재가</div>
-          <div style="font-family:var(--mono);font-size:13px;margin-bottom:6px">${cur}</div>
-          <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">매수총액 ${buyTotalText}</div>
-          <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">현재평가 ${curTotalText}${!isKRW && usdKrw > 0 ? ' · 원화손익 ' + pnlKrwText : ''}</div>
-          <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
+        <div class="card" style="min-width:200px;flex:1;padding:14px 16px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+            <div style="font-size:15px;font-weight:700">${pos.display_ticker || pos.ticker}</div>
+            <div style="font-size:18px;font-weight:700;color:${pnlColor}">${fmt.pct(pnl)}</div>
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${pos.name ? pos.name + ' · ' : ''}${pos.strategy || '-'} · ${qty}주${entryDate ? ' · '+entryDate : ''}${heldDays ? ' ('+heldDays+'일)' : ''}</div>
+          <div style="display:flex;gap:16px;margin-bottom:4px">
+            <div>
+              <div style="font-size:10px;color:var(--text-dim)">매수가</div>
+              <div style="font-family:var(--mono);font-size:12px">${entry}</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:var(--text-dim)">현재가</div>
+              <div style="font-family:var(--mono);font-size:12px">${cur}</div>
+            </div>
+          </div>
+          <div style="font-size:10px;color:var(--text-dim);margin-top:2px;margin-bottom:4px">매수총액 ${buyTotalText} · 평가 ${curTotalText}${!isKRW && usdKrw > 0 ? ' · 원화손익 ' + pnlKrwText : ''}</div>
+          <div style="font-size:10px;color:var(--text-dim)">${stopLine}</div>
+          ${advHtml}${reasonHtml}
         </div>`;
     }).join('');
   }

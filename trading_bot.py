@@ -116,6 +116,7 @@ PENDING_ORDERS_FILE = get_runtime_path("state", "pending_orders.json")
 PENDING_ORDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
 CLAUDE_CONTROL_FILE = get_runtime_path("state", "claude_control.json")
 BOT_PID_FILE = get_runtime_path("state", "trading_bot.pid")
+DECISIONS_FILE = get_runtime_path("state", "decisions.jsonl")  # Claude 판단 이력 영속 DB
 
 
 def _write_bot_pid_file():
@@ -4669,6 +4670,12 @@ class TradingBot:
         }
         self.decision_event_log.append(event)
         self.decision_event_log = self.decision_event_log[-200:]
+        # ── 영속 DB 기록 (state/decisions.jsonl) ────────────────────────────
+        try:
+            with open(DECISIONS_FILE, "a", encoding="utf-8") as _df:
+                _df.write(json.dumps(event, ensure_ascii=False) + "\n")
+        except Exception as _de:
+            log.debug(f"decisions.jsonl 기록 실패: {_de}")
         try:
             decision_event_alert(event)
         except Exception as e:
@@ -4700,17 +4707,33 @@ class TradingBot:
                 )
                 pnl_pct = ((current_price / avg_price) - 1.0) * 100.0 if avg_price > 0 and current_price > 0 else 0.0
                 pos_name = str(pos.get("name", "") or "").strip() or self._lookup_ticker_name(ticker, market)
+                # selected_reason: pending_order 또는 포지션 자체에서 복구
+                sel_reason = str(pos.get("selected_reason", "") or "").strip()
+                if not sel_reason:
+                    for pord in self.pending_orders:
+                        if pord.get("ticker") == ticker:
+                            sel_reason = str(pord.get("selected_reason", "") or "").strip()
+                            break
+                hold_adv = pos.get("hold_advice") or None
                 dedup_positions[key] = {
-                    "ticker":        ticker,
-                    "name":          pos_name,
-                    "qty":           pos.get("qty", 0),
-                    "avg_price":     avg_price,
-                    "current_price": current_price,
-                    "pnl_pct":       round(pnl_pct, 4),
-                    "strategy":      pos.get("strategy", ""),
-                    "trailing":      pos.get("trailing", False),
-                    "price_source":  pos.get("price_source", "runtime"),
-                    "currency":      pos.get("display_currency", "KRW"),
+                    "ticker":          ticker,
+                    "name":            pos_name,
+                    "qty":             pos.get("qty", 0),
+                    "avg_price":       avg_price,
+                    "current_price":   current_price,
+                    "pnl_pct":         round(pnl_pct, 4),
+                    "strategy":        pos.get("strategy", ""),
+                    "trailing":        pos.get("trailing", False),
+                    "trail_sl":        round(float(pos.get("trail_sl", 0) or 0), 2),
+                    "trail_pct":       round(float(pos.get("trail_pct", 0) or 0) * 100, 1),
+                    "tp":              round(float(pos.get("tp", 0) or 0), 2),
+                    "sl":              round(float(pos.get("sl", 0) or 0), 2),
+                    "entry_date":      pos.get("entry_date", ""),
+                    "held_days":       int(pos.get("held_days", 0) or 0),
+                    "selected_reason": sel_reason,
+                    "hold_advice":     hold_adv,
+                    "price_source":    pos.get("price_source", "runtime"),
+                    "currency":        pos.get("display_currency", "KRW"),
                 }
             positions = list(dedup_positions.values())
             pending_orders = [
