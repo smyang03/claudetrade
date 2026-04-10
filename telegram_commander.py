@@ -96,10 +96,19 @@ def _handle(text: str, bot) -> str:
 
     # ── 보유 포지션 즉시 Claude 재판단 ───────────────────────────────────────
     if cmd == "/review":
-        market = args[0].upper() if args and args[0].upper() in ("KR", "US") else (bot.current_market or "KR")
+        # /review [KR|US] [ticker]
+        market = bot.current_market or "KR"
+        ticker_filter = ""
+        if args:
+            if args[0].upper() in ("KR", "US"):
+                market = args[0].upper()
+                ticker_filter = args[1].upper() if len(args) > 1 else ""
+            else:
+                ticker_filter = args[0].upper()
         try:
-            bot._intraday_position_review(market, force=True)
-            return f"✅ {market} 포지션 재판단 실행 — 결과는 텔레그램으로 전송됩니다"
+            bot._intraday_position_review(market, force=True, ticker_filter=ticker_filter)
+            target = f"{market} {ticker_filter}" if ticker_filter else market
+            return f"✅ {target} 포지션 재판단 실행 — 결과는 텔레그램으로 전송됩니다"
         except Exception as e:
             return f"❌ 재판단 실패: {e}"
 

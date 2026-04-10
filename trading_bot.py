@@ -1993,11 +1993,13 @@ class TradingBot:
         self._write_live_status(market, force=True)
         send("\n\n".join(lines))
 
-    def _intraday_position_review(self, market: str, force: bool = False):
+    def _intraday_position_review(self, market: str, force: bool = False,
+                                   ticker_filter: str = ""):
         """장 중 1시간 주기 보유 포지션 Claude 점검.
         - 진입 후 최소 60분 경과한 포지션만 대상
         - SELL 결정 시 즉시 매도
         - force=True: 텔레그램 /review 명령어로 수동 호출
+        - ticker_filter: 지정 시 해당 종목만 점검
         """
         if not self.session_active or self.current_market != market:
             if not force:
@@ -2010,6 +2012,8 @@ class TradingBot:
         positions = []
         for p in self.risk.positions:
             if self._ticker_market(p.get("ticker", "")) != market:
+                continue
+            if ticker_filter and p.get("ticker", "") != ticker_filter:
                 continue
             # fill_time 또는 entry_date로 경과 판단
             fill_ts = p.get("_fill_ts", 0)
