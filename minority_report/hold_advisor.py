@@ -35,6 +35,21 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
     ticker  = pos.get("ticker", "-")
     strat   = pos.get("strategy", "-")
     held    = pos.get("held_days", 0)
+    tp      = float(pos.get("tp", 0) or 0)
+    sl      = float(pos.get("sl", 0) or 0)
+    trailing = bool(pos.get("trailing", False))
+    trail_sl = float(pos.get("trail_sl", 0) or 0)
+    tp_triggered = bool(pos.get("tp_triggered", False))
+    status_bits = []
+    if tp > 0:
+        status_bits.append(f"TP={tp:,.2f}")
+    if sl > 0:
+        status_bits.append(f"SL={sl:,.2f}")
+    if tp_triggered:
+        status_bits.append("TP 도달 상태")
+    if trailing:
+        status_bits.append(f"트레일링 활성(trail_sl={trail_sl:,.2f})" if trail_sl > 0 else "트레일링 활성")
+    status_line = " / ".join(status_bits) if status_bits else "별도 TP/SL 상태 정보 없음"
 
     prompt = f"""{PERSONAS[analyst_type]}
 
@@ -44,6 +59,7 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
   종목: {ticker} ({market})  전략: {strat}
   진입가: {entry:,}  현재가: {cp:,}  수익률: {pnl_pct:+.2f}%
   보유일: {held}일
+  포지션 상태: {status_line}
 
 ━━━ 시장 컨텍스트 ━━━
 {digest_prompt[:250] if digest_prompt else "  (정보 없음)"}

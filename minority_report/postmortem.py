@@ -21,6 +21,22 @@ judgment_log = get_judgment_logger()
 client       = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
+_POSTMORTEM_PLACEHOLDER_LESSONS = {
+    "오류로 자동 판정",
+    "API 오류로 자동 판정",
+    "postmortem 응답 실패",
+    "HALT 세션 — 거래 없음",
+}
+
+
+def _is_placeholder_lesson(text: str) -> bool:
+    text = (text or "").strip()
+    if not text:
+        return True
+    if text in _POSTMORTEM_PLACEHOLDER_LESSONS:
+        return True
+    return ("자동 판정" in text) or ("응답 실패" in text)
+
 
 def _extract_json(text: str) -> dict:
     """Claude 응답에서 JSON 추출 — 형식 무관하게 견고하게 파싱"""
@@ -63,6 +79,8 @@ def _strategy_pnl(trade_log: list) -> dict:
     sells = [t for t in trade_log if t.get("side") == "sell" and "pnl_pct" in t]
     for t in sells:
         s = t.get("strategy", "unknown")
+        if s in ("broker_sync", "broker_balance", "", None):
+            continue
         result.setdefault(s, []).append(t["pnl_pct"])
     return result
 
@@ -323,15 +341,17 @@ def run(market: str, date: str, today_judgment: dict,
             "bull_result": code_bull,
             "bear_result": code_bear,
             "neutral_result": code_neutral,
-            "bull_why": "자동 판정", "bear_why": "자동 판정", "neutral_why": "자동 판정",
-            "key_lesson": "오류로 자동 판정",
+            "bull_why": "응답 실패, 코드 판정",
+            "bear_why": "응답 실패, 코드 판정",
+            "neutral_why": "응답 실패, 코드 판정",
+            "key_lesson": "postmortem 응답 실패",
             "best_trade": None, "worst_trade": None, "worst_trade_reason": "",
-            "issue_type": "미분류", "issue_desc": "", "pattern_id": None,
+            "issue_type": "postmortem_error", "issue_desc": str(e)[:160], "pattern_id": None,
             "brain_updates": {"bull_reliability_change": "stable",
                               "bear_reliability_change": "stable",
                               "new_lesson": None, "market_regime": "unknown"},
             "correction_guide": {"bull_adjustments": [], "bear_adjustments": [],
-                                 "tuning_rules": [], "today_notes": ""},
+                                 "tuning_rules": [], "today_notes": "postmortem 응답 실패"},
         }
 
     # ── brain 업데이트 ────────────────────────────────────────────────────────
@@ -349,7 +369,7 @@ def run(market: str, date: str, today_judgment: dict,
     bu = pm.get("brain_updates", {})
     # new_lesson 없으면 key_lesson을 fallback으로 사용
     lesson_to_save = bu.get("new_lesson") or pm.get("key_lesson")
-    if lesson_to_save and lesson_to_save not in ("오류로 자동 판정", "HALT 세션 — 거래 없음"):
+    if lesson_to_save and not _is_placeholder_lesson(lesson_to_save):
         BrainDB.update_beliefs(market, {"new_lesson": lesson_to_save})
     if bu.get("market_regime") and bu["market_regime"] != "unknown":
         BrainDB.update_beliefs(market, {"market_regime": bu["market_regime"]})
@@ -360,7 +380,7 @@ def run(market: str, date: str, today_judgment: dict,
         "description": pm.get("issue_desc", ""),
         "bull_hit":    pm["bull_result"] == "HIT",
         "pnl_pct":     actual_result.get("pnl_pct", 0),
-        "insight":     pm.get("key_lesson", ""),
+        "insight":     "" if _is_placeholder_lesson(pm.get("key_lesson", "")) else pm.get("key_lesson", ""),
     })
 
     BrainDB.add_daily_record(market, {

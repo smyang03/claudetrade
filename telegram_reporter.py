@@ -8,6 +8,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 import requests
@@ -21,6 +22,11 @@ BASE_DIR = Path(__file__).resolve().parent
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on", "y")
 
 _MODE_KO_MAP = {
     "AGGRESSIVE": "공격매수",
@@ -303,50 +309,25 @@ def tuning_report(elapsed_min: int, tuning_result: dict, prev_mode: str, positio
     return text
 
 
-def trade_alert(
-    side: str,
-    ticker: str,
-    qty: int,
-    price: int,
-    strategy: str,
-    tp: int,
-    sl: int,
-    reason: str = "",
-    market: str = "KR",
-) -> str:
-    icon = "🟢" if side == "buy" else "🔴"
-    ticker_disp = _display_ticker(ticker, market)
-    total = int(price) * int(qty)
-    fee_rate = 0.00015 if market == "US" or side == "buy" else 0.00195
-    fee = int(total * fee_rate)
-    extra_line = f"TP: {tp:,}원  SL: {sl:,}원" if side == "buy" else f"사유: {_ko_reason(reason) if reason else reason}"
-    text = (
-        f"━━━━━━━━\n"
-        f"{icon} <b>[{'매수' if side == 'buy' else '매도'} 체결]</b>\n"
-        f"종목: {ticker_disp}  {qty}주 @{price:,}원\n"
-        f"총금액: {total:,}원  수수료≈{fee:,}원\n"
-        f"전략: {_ko_strategy(strategy)}\n"
-        f"{extra_line}\n"
-        f"━━━━━━━━"
-    )
-    send(text)
-    return text
-
-
-def pnl_alert(ticker: str, pnl_pct: float, pnl_krw: int, reason: str) -> str:
-    icon = "🟢" if pnl_krw > 0 else "🔴"
-    market = "US" if str(ticker or "").replace(".", "").isalpha() else "KR"
-    ticker_disp = _display_ticker(ticker, market)
-    text = (
-        f"{icon} <b>[청산]</b> {ticker_disp}\n"
-        f"{fmt_pct(pnl_pct)}  {pnl_krw:+,}원 (수수료 차감 후)  ({_ko_reason(reason)})"
-    )
-    send(text)
-    return text
-
-
 def emergency_alert(msg: str) -> str:
     text = f"🚨 <b>[긴급 알림]</b>\n{msg}"
+    send(text)
+    return text
+
+
+def system_alert(
+    title: str,
+    lines: Optional[List[str]] = None,
+    icon: str = "🤖",
+) -> str:
+    if not _env_flag("TG_SYSTEM_ALERTS_ENABLED", False):
+        return ""
+    body = "\n".join([str(x) for x in (lines or []) if str(x).strip()]) or "내용 없음"
+    text = (
+        f"{icon} <b>[{title}]</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"{body}"
+    )
     send(text)
     return text
 
@@ -451,6 +432,153 @@ def signal_alert(
     return text
 
 
+def signal_state_alert(
+    event: str,
+    market: str,
+    ticker: str,
+    strategy: str = "",
+    price: float = 0.0,
+    reason: str = "",
+    mode: str = "",
+    summary: str = "",
+    order_cost_krw: int = 0,
+    name: str = "",
+) -> str:
+    if not _env_flag("TG_SIGNAL_STATE_ENABLED", False):
+        return ""
+    ticker_disp = _display_ticker(ticker, market, name)
+    text_market = "🇰🇷KR" if market == "KR" else "🇺🇸US"
+    now = datetime.now(KST).strftime("%H:%M:%S")
+    price_str = _display_price(price, market) if price > 0 else "-"
+    ko_strategy = _ko_strategy(strategy)
+    ko_mode = _ko_mode(mode)
+    ko_reason = _ko_reason(reason)
+
+    if event == "entry_signal":
+        detail = [
+            f"전략: {ko_strategy} | 가격 {price_str}" + (f" | 주문금액 {order_cost_krw:,}원" if order_cost_krw else ""),
+            f"모드: {ko_mode}",
+        ]
+        return block_alert("진입 신호", [f"{ticker_disp} {text_market} {now}", *detail], market="", icon="🟢")
+    if event == "signal_blocked":
+        detail = [
+            f"전략: {ko_strategy} | 가격 {price_str}",
+            f"모드: {ko_mode} | 사유: {ko_reason}",
+        ]
+        return block_alert("신호 차단", [f"{ticker_disp} {text_market} {now}", *detail], market="", icon="⛔")
+    if event == "signal_check":
+        detail = [f"{ticker_disp} {text_market} {now}", f"모드: {ko_mode}"]
+        if summary:
+            detail.append(summary)
+        return block_alert("신호 없음", detail, market="", icon="⚪")
+    if event == "entry_skip":
+        detail = [
+            f"{ticker_disp} {text_market} {now}",
+            f"사유: {ko_reason} | 가격 {price_str}",
+            f"모드: {ko_mode}",
+        ]
+        if summary:
+            detail.append(summary)
+        return block_alert("진입 보류", detail, market="", icon="⏭")
+    return ""
+
+
+def block_alert(
+    title: str,
+    lines: Optional[List[str]] = None,
+    market: str = "",
+    icon: str = "📌",
+    show_time: bool = False,
+) -> str:
+    now = f" {datetime.now(KST).strftime('%H:%M')}" if show_time else ""
+    market_txt = f" {market}" if market else ""
+    body = "\n".join([str(x) for x in (lines or []) if str(x).strip()]) or "내용 없음"
+    text = (
+        f"{icon} <b>[{title}{market_txt}]</b>{now}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"{body}"
+    )
+    send(text)
+    return text
+
+
+def buy_order_alert(
+    market: str,
+    ticker: str,
+    qty: int,
+    order_no: str = "",
+    detail: str = "",
+    name: str = "",
+) -> str:
+    ticker_disp = _display_ticker(ticker, market, name)
+    lines = [f"{ticker_disp} | {qty}주"]
+    if order_no:
+        lines.append(f"주문번호 {order_no}")
+    if detail:
+        lines.append(detail)
+    return block_alert("매수 주문 접수", lines, market=market, icon="🟡")
+
+
+def fill_confirm_alert(
+    market: str,
+    ticker: str,
+    qty: int,
+    order_no: str = "",
+    price: float = 0.0,
+    source: str = "",
+    name: str = "",
+    usd_krw: float = 0.0,
+) -> str:
+    ticker_disp = _display_ticker(ticker, market, name)
+    price_txt = _display_price(price, market) if price > 0 else "-"
+    if market == "US":
+        rate = float(usd_krw or 0) or _env_usd_krw_rate()
+        if price > 0 and rate > 0:
+            price_txt += f" (약 {int(round(price * rate)):,}원)"
+    lines = [f"{ticker_disp} | {qty}주", f"체결가 {price_txt}" + (f" ({source})" if source else "")]
+    if order_no:
+        lines.insert(1, f"주문번호 {order_no}")
+    return block_alert("매수 체결 확인", lines, market=market, icon="🟡")
+
+
+def trailing_alert(
+    market: str,
+    ticker: str,
+    action: str,
+    trail_pct: float = 0.0,
+    detail: str = "",
+    name: str = "",
+) -> str:
+    ticker_disp = _display_ticker(ticker, market, name)
+    title_map = {
+        "sell": "TP→분석가 SELL",
+        "hold": "TP→분석가 HOLD",
+        "trail": "TP 도달 → 트레일링",
+    }
+    lines = [ticker_disp]
+    if trail_pct > 0:
+        lines.append(f"트레일링 스탑 {trail_pct*100:.1f}% 활성화")
+    if detail:
+        lines.append(detail)
+    return block_alert(title_map.get(action, "트레일링"), lines, market=market, icon="📈" if action != "sell" else "🔴")
+
+
+def watchlist_change_alert(
+    market: str,
+    removed: List[str],
+    added: List[str],
+    reason: str = "",
+) -> str:
+    lines = []
+    if removed:
+        lines.append("OUT: " + ", ".join(removed))
+    if added:
+        lines.append("IN: " + ", ".join(added))
+    if reason:
+        lines.append(f"사유: {reason}")
+    return block_alert("종목 교체", lines, market=market, icon="🔁")
+
+
 def watchlist_alert(
     market: str,
     mode: str,
@@ -490,6 +618,20 @@ def watchlist_alert(
     return text
 
 
+def _clean_postmortem_lesson(text: str) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    placeholders = (
+        "오류로 자동 판정",
+        "API 오류로 자동 판정",
+        "postmortem 응답 실패",
+        "자동 판정",
+        "응답 실패",
+    )
+    return "" if any(p in text for p in placeholders) else text
+
+
 def daily_summary(
     date: str,
     market: str,
@@ -503,6 +645,11 @@ def daily_summary(
 ) -> str:
     icon = "🇰🇷" if market == "KR" else "🇺🇸"
     credit_line = _credit_line()
+    lesson = _clean_postmortem_lesson(postmortem.get("key_lesson", ""))
+    lesson_block = (
+        f"오늘의 교훈:\n"
+        f"  {lesson}\n\n"
+    ) if lesson else ""
     text = (
         f"━━━━━━━━━━━\n"
         f"{icon} <b>[일일 결산] {date} {market}</b>\n"
@@ -514,8 +661,7 @@ def daily_summary(
         f"  Bull:    {postmortem.get('bull_result', '?')}\n"
         f"  Bear:    {postmortem.get('bear_result', '?')}\n"
         f"  Neutral: {postmortem.get('neutral_result', '?')}\n\n"
-        f"오늘의 교훈:\n"
-        f"  {postmortem.get('key_lesson', '')}\n\n"
+        f"{lesson_block}"
         f"{credit_line}\n"
         f"━━━━━━━━━━━"
     )
@@ -628,6 +774,84 @@ def dashboard_push(
         f"  Bear {_ko_mode(bear.get('stance', '-'))} ({int((bear.get('confidence', 0) or 0) * 100)}%)\n"
         f"  Neutral {_ko_mode(neut.get('stance', '-'))} ({int((neut.get('confidence', 0) or 0) * 100)}%)\n\n"
         f"감시종목: {tickers_txt}"
+    )
+    send(text)
+    return text
+
+
+def _env_usd_krw_rate() -> float:
+    try:
+        return float(os.getenv("USD_KRW_RATE", "1350") or 1350)
+    except Exception:
+        return 1350.0
+
+
+def trade_alert(
+    side: str,
+    ticker: str,
+    qty: int,
+    price: int,
+    strategy: str,
+    tp: int,
+    sl: int,
+    reason: str = "",
+    market: str = "KR",
+    usd_krw: float = 0.0,
+) -> str:
+    icon = "🟢" if side == "buy" else "🔴"
+    ticker_disp = _display_ticker(ticker, market)
+    rate = float(usd_krw or 0) or _env_usd_krw_rate()
+    total = float(price) * int(qty)
+    fee_rate = 0.00015 if market == "US" or side == "buy" else 0.00195
+    fee = total * fee_rate
+
+    if market == "US":
+        price_txt = f"${float(price or 0):.2f}" + (f" (약 {int(round(float(price or 0) * rate)):,}원)" if rate > 0 else "")
+        total_txt = f"${total:.2f}" + (f" (약 {int(round(total * rate)):,}원)" if rate > 0 else "")
+        fee_txt = f"${fee:.2f}" + (f" (약 {int(round(fee * rate)):,}원)" if rate > 0 else "")
+        tp_txt = f"${float(tp or 0):.2f}" + (f" (약 {int(round(float(tp or 0) * rate)):,}원)" if tp else "")
+        sl_txt = f"${float(sl or 0):.2f}" + (f" (약 {int(round(float(sl or 0) * rate)):,}원)" if sl else "")
+    else:
+        price_txt = f"{int(float(price or 0)):,}원"
+        total_txt = f"{int(round(total)):,}원"
+        fee_txt = f"{int(round(fee)):,}원"
+        tp_txt = f"{int(float(tp or 0)):,}원"
+        sl_txt = f"{int(float(sl or 0)):,}원"
+
+    extra_line = f"TP: {tp_txt} / SL: {sl_txt}" if side == "buy" else f"사유: {_ko_reason(reason) if reason else reason}"
+    text = (
+        f"━━━━━━━━━━━━\n"
+        f"{icon} <b>[{'매수' if side == 'buy' else '매도'} 체결]</b>\n"
+        f"종목: {ticker_disp}  {qty}주 @{price_txt}\n"
+        f"총금액: {total_txt}  수수료약 {fee_txt}\n"
+        f"전략: {_ko_strategy(strategy)}\n"
+        f"{extra_line}\n"
+        f"━━━━━━━━━━━━"
+    )
+    send(text)
+    return text
+
+
+def pnl_alert(
+    ticker: str,
+    pnl_pct: float,
+    pnl_krw: int,
+    reason: str,
+    market: Optional[str] = None,
+    usd_krw: float = 0.0,
+) -> str:
+    icon = "🟢" if pnl_krw > 0 else "🔴"
+    market = market or ("US" if str(ticker or "").replace(".", "").isalpha() else "KR")
+    ticker_disp = _display_ticker(ticker, market)
+    rate = float(usd_krw or 0) or _env_usd_krw_rate()
+    if market == "US":
+        pnl_usd = float(pnl_krw) / rate if rate > 0 else 0.0
+        pnl_txt = f"${pnl_usd:+.2f}" + (f" (약 {int(pnl_krw):+,}원)" if pnl_krw else "")
+    else:
+        pnl_txt = f"{int(pnl_krw):+,}원"
+    text = (
+        f"{icon} <b>[청산]</b> {ticker_disp}\n"
+        f"{fmt_pct(pnl_pct)}  {pnl_txt} (수수료 차감 후)  ({_ko_reason(reason)})"
     )
     send(text)
     return text

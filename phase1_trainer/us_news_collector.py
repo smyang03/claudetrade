@@ -29,6 +29,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_collector_logger, log_retry, log_call, ProgressLogger
+from kis_api import get_access_token, _headers, _kis_get, _get_us_quote_codes, BASE_URL
 
 load_dotenv()
 
@@ -38,6 +39,9 @@ log = get_collector_logger()
 
 AV_KEY      = os.getenv("ALPHA_VANTAGE_KEY", "")
 FINNHUB_KEY = os.getenv("FINNHUB_KEY", "")
+
+# Alpha Vantage 무료 한도 초과 시 당일 재시도 중단
+_AV_EXHAUSTED_DATE = ""
 
 NEWS_DIR = Path(__file__).parent.parent / "data" / "news" / "us"
 NEWS_DIR.mkdir(parents=True, exist_ok=True)
@@ -139,6 +143,16 @@ def fetch_av_news(ticker: str, target_date: str) -> list[dict]:
     return results
 
 
+def _is_av_exhausted(target_date: str) -> bool:
+    return _AV_EXHAUSTED_DATE == target_date
+
+
+def _mark_av_exhausted(target_date: str):
+    global _AV_EXHAUSTED_DATE
+    _AV_EXHAUSTED_DATE = target_date
+    log.warning(f"AV 일일 한도 소진 감지 — {target_date} 남은 세션 동안 AV 호출 중단")
+
+
 # ── Finnhub 뉴스 (백업) ───────────────────────────────────────────────────────
 
 @log_retry(max_retries=3, delay=2.0, logger=log)
@@ -178,6 +192,97 @@ def fetch_finnhub_news(ticker: str, target_date: str) -> list[dict]:
         })
 
     log.debug(f"Finnhub [{ticker}] {target_date}: {len(results)}건")
+    return results
+
+
+@log_retry(max_retries=2, delay=1.0, logger=log)
+def fetch_kis_news(ticker: str, target_date: str) -> list[dict]:
+    """
+    KIS 해외 뉴스 종합(제목)
+    Finnhub 대체/보강용. 외부 뉴스 도메인 차단 환경에서도 동작 가능성이 높음.
+    """
+    token = get_access_token()
+    _, quote_exch = _get_us_quote_codes(ticker, token)
+    resp = _kis_get(
+        f"{BASE_URL}/uapi/overseas-price/v1/quotations/news-title",
+        headers=_headers(token, "HHPSTH60100C1"),
+        params={
+            "INFO_GB": "",
+            "CLASS_CD": "",
+            "NATION_CD": "US",
+            "EXCHANGE_CD": quote_exch,
+            "SYMB": ticker.upper(),
+            "DATA_DT": target_date.replace("-", ""),
+            "DATA_TM": "",
+            "CTS": "",
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    items = data.get("outblock1", []) or data.get("output", []) or []
+
+    results = []
+    for item in items[:15]:
+        results.append({
+            "source": "KIS",
+            "date": target_date,
+            "title": item.get("title", "") or item.get("hts_pbnt_titl_cntt", ""),
+            "content": "",
+            "url": "",
+            "sentiment_score": 0.0,
+            "sentiment_label": "Neutral",
+            "relevance": 1.0,
+        })
+
+    log.debug(f"KIS [{ticker}] {target_date}: {len(results)}건")
+    return results
+
+
+@log_retry(max_retries=2, delay=1.0, logger=log)
+def fetch_kis_market_news(target_date: str) -> list[dict]:
+    """
+    KIS 해외 브로커 뉴스(제목)
+    시장 전반 개요 뉴스 보강용.
+    """
+    token = get_access_token()
+    resp = _kis_get(
+        f"{BASE_URL}/uapi/overseas-price/v1/quotations/brknews-title",
+        headers=_headers(token, "FHKST01011801"),
+        params={
+            "FID_NEWS_OFER_ENTP_CODE": "0",
+            "FID_COND_SCR_DIV_CODE": "11801",
+            "FID_COND_MRKT_CLS_CODE": "",
+            "FID_INPUT_ISCD": "",
+            "FID_TITL_CNTT": "",
+            "FID_INPUT_DATE_1": target_date.replace("-", ""),
+            "FID_INPUT_HOUR_1": "",
+            "FID_RANK_SORT_CLS_CODE": "",
+            "FID_INPUT_SRNO": "",
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    items = data.get("output", []) or []
+
+    results = []
+    for item in items[:20]:
+        title = item.get("hts_pbnt_titl_cntt", "")
+        if not title:
+            continue
+        results.append({
+            "source": "KIS",
+            "date": target_date,
+            "title": title,
+            "content": "",
+            "url": "",
+            "sentiment_score": 0.0,
+            "sentiment_label": "Neutral",
+            "relevance": 1.0,
+        })
+
+    log.debug(f"KIS market [{target_date}]: {len(results)}건")
     return results
 
 
@@ -250,17 +355,27 @@ def check_macro_events(target_date: str) -> dict:
 def fetch_market_overview(target_date: str) -> list[dict]:
     """미국 시장 전반 뉴스 (SPY, QQQ)"""
     results = []
+    try:
+        results.extend(fetch_kis_market_news(target_date)[:10])
+    except Exception as e:
+        log.debug(f"KIS 시장 뉴스 실패: {e}")
+
     for ticker in ["SPY", "QQQ"]:
         try:
-            if AV_KEY:
-                news = fetch_av_news(ticker, target_date)
-                results.extend(news[:5])
-                time.sleep(12)  # AV API 제한
-            elif FINNHUB_KEY:
+            if FINNHUB_KEY:
                 news = fetch_finnhub_news(ticker, target_date)
                 results.extend(news[:5])
                 time.sleep(1)
+            elif len(results) < 3:
+                news = fetch_kis_news(ticker, target_date)
+                results.extend(news[:5])
+            elif AV_KEY and not _is_av_exhausted(target_date):
+                news = fetch_av_news(ticker, target_date)
+                results.extend(news[:5])
+                time.sleep(12)  # AV API 제한
         except Exception as e:
+            if "AV API 제한" in str(e):
+                _mark_av_exhausted(target_date)
             log.warning(f"시장 뉴스 [{ticker}]: {e}")
     return results
 
@@ -299,24 +414,23 @@ def collect_day(target_date: str) -> dict:
     for ticker, name in corp_tickers.items():
         items = []
 
-        # Alpha Vantage 우선
-        if AV_KEY:
-            try:
-                av_news = fetch_av_news(ticker, target_date)
-                items.extend(av_news)
-                log.debug(f"  AV [{ticker}] {len(av_news)}건")
-                time.sleep(12)  # 5회/분 제한
-            except Exception as e:
-                log.warning(f"  AV 실패 [{ticker}]: {e}")
-
-        # Finnhub 백업
-        if FINNHUB_KEY and len(items) < 3:
+        # Finnhub 우선
+        if FINNHUB_KEY:
             try:
                 fh_news = fetch_finnhub_news(ticker, target_date)
                 items.extend(fh_news)
                 time.sleep(1)
             except Exception as e:
                 log.debug(f"  Finnhub 실패 [{ticker}]: {e}")
+
+        # KIS 뉴스 보강
+        if len(items) < 3:
+            try:
+                kis_news = fetch_kis_news(ticker, target_date)
+                items.extend(kis_news)
+                time.sleep(0.2)
+            except Exception as e:
+                log.debug(f"  KIS 뉴스 실패 [{ticker}]: {e}")
 
         # SEC 공시
         try:
@@ -327,6 +441,18 @@ def collect_day(target_date: str) -> dict:
             time.sleep(0.5)
         except Exception as e:
             log.debug(f"  SEC 실패 [{ticker}]: {e}")
+
+        # Alpha Vantage 보조
+        if AV_KEY and len(items) < 3 and not _is_av_exhausted(target_date):
+            try:
+                av_news = fetch_av_news(ticker, target_date)
+                items.extend(av_news)
+                log.debug(f"  AV [{ticker}] {len(av_news)}건")
+                time.sleep(12)  # 5회/분 제한
+            except Exception as e:
+                if "AV API 제한" in str(e):
+                    _mark_av_exhausted(target_date)
+                log.warning(f"  AV 실패 [{ticker}]: {e}")
 
         result["corp_news"][ticker] = {
             "name":  name,

@@ -27,9 +27,11 @@ _DB   = _ROOT / "data" / "ml" / "decisions.db"
 import strategy.gap_pullback        as _gap
 import strategy.mean_reversion      as _mr
 import strategy.momentum            as _mom
+import strategy.opening_range_pullback as _orp
 import strategy.volatility_breakout as _vb
 
 _PARAMS_FN = {
+    "opening_range_pullback": _orp.params,
     "gap_pullback":        _gap.params,
     "mean_reversion":      _mr.params,
     "momentum":            _mom.params,
