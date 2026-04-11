@@ -2215,16 +2215,26 @@ class TradingBot:
             lines.append(block)
 
             # SELL 결정 → 즉시 매도
-            if action == "SELL" and self.session_active:
-                try:
-                    cand = {**pos, "exit_price": cur, "reason": "intraday_review_sell"}
-                    self._execute_sell(cand, market, reason="intraday_review_sell",
-                                       hold_advice=advice)
-                    lines.append(f"  ⚡ 매도 주문 접수")
-                    log.info(f"[장중 리뷰 SELL] {ticker} {pnl:+.2f}% → 즉시 매도")
-                except Exception as se:
-                    log.error(f"[장중 리뷰 매도 실패] {ticker}: {se}")
-                    lines.append(f"  ❌ 매도 실패: {se}")
+            if action == "SELL":
+                if not self.session_active:
+                    log.warning(f"[장중 리뷰 SELL 스킵] {ticker} — session_active=False, 매도 불가")
+                    lines.append(f"  ⚠️ 세션 비활성 — 매도 보류 (다음 세션 시작 시 재검토)")
+                else:
+                    # exit_price: KRW 기준 (price_cache) 또는 display_current_price
+                    sell_px = self.price_cache.get(ticker, cur) or cur
+                    if sell_px <= 0:
+                        log.error(f"[장중 리뷰 SELL 스킵] {ticker} — 유효 가격 없음 (cur={cur})")
+                        lines.append(f"  ❌ 유효 가격 없음 — 매도 보류")
+                    else:
+                        try:
+                            cand = {**pos, "exit_price": sell_px, "reason": "intraday_review_sell"}
+                            self._execute_sell(cand, market, reason="intraday_review_sell",
+                                               hold_advice=advice)
+                            lines.append(f"  ⚡ 매도 주문 접수 ({px(cur)} × {qty}주)")
+                            log.info(f"[장중 리뷰 SELL] {ticker} {pnl:+.2f}% → 즉시 매도 ({sell_px:,.0f})")
+                        except Exception as se:
+                            log.error(f"[장중 리뷰 매도 실패] {ticker}: {se}")
+                            lines.append(f"  ❌ 매도 실패: {se}")
 
         self._save_positions()
         self._write_live_status(market, force=True)
@@ -2420,6 +2430,17 @@ class TradingBot:
             tp_price    = ex.get("tp_price", 0.0) or ex.get("tp", 0.0)
             exit_price  = ex.get("exit_price", 0.0)
             entry_price = ex.get("entry", 0.0)
+
+            # US: price_cache (KRW 환산값) 우선 사용 — raw USD가 잘못 들어오는 경우 방지
+            if market == "US":
+                ticker = ex.get("ticker", "")
+                krw_px = self.price_cache.get(ticker, 0.0)
+                if krw_px > 0 and self.usd_krw_rate > 0:
+                    # price_cache 값이 exit_price보다 신뢰도 높음
+                    exit_price = krw_px
+                elif exit_price > 0 and self.usd_krw_rate > 0 and exit_price < 5000:
+                    # exit_price가 USD raw 값으로 의심될 때 (< $5000 수준) → KRW 환산
+                    exit_price = exit_price * self.usd_krw_rate
 
             if decision == "HOLD":
                 # HOLD 성공: 청산가 > TP 도달가 (트레일 덕에 더 벌었음)
@@ -5454,28 +5475,86 @@ class TradingBot:
             self.ws.stop()
             self.ws = None
 
-        # ── 포지션 정리: 당일 청산 전략만 강제 청산, 멀티데이는 이월 ─────────
+        # ── 포지션 정리: Claude 판단 후 청산 or 이월 ────────────────────────
         day_trades  = [p for p in list(self.risk.positions) if p.get("max_hold", 1) <= 1]
         multi_days  = [p for p in list(self.risk.positions) if p.get("max_hold", 1) > 1]
+        from telegram_reporter import send as _tg_send
 
+        # day_trade도 Claude에게 먼저 물어본 후 SELL/이월 결정
+        claude_review_lines = [f"🔔 <b>[장마감 포지션 검토] {market}</b>", "━━━━━━━━━━━━━━━━"]
         for pos in day_trades:
-            cp = self.price_cache.get(pos["ticker"], pos["current_price"])
-            raw_cp = self.price_cache_raw.get(pos["ticker"], cp)
-            if not self.is_paper:
-                order_px = self._compute_order_price("sell", market, float(raw_cp))
-                result = place_order(pos["ticker"], pos["qty"], order_px, "sell",
-                                     self.token, market=market)
-                if not result["success"]:
-                    log.error(f"force sell failed [{pos['ticker']}]: {result['msg']}")
-            ex = self.risk.close_position(pos["ticker"], cp, "session_close")
-            if ex:
-                pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "session_close", market=market, usd_krw=self.usd_krw_rate)
-                trade_alert("sell", ex["ticker"], ex["qty"], int(raw_cp),
-                            ex["strategy"], 0, 0, reason="session_close", market=market, usd_krw=self.usd_krw_rate)
-                # hold_advisor 결과 기록 (트레일링 활성화 상태였던 포지션)
-                if ex.get("hold_advice"):
-                    self._record_hold_advisor_outcome(ex, market, ex["hold_advice"])
-            log.warning(f"[당일청산] {pos['ticker']} {cp:,.0f}")
+            ticker = pos.get("ticker", "")
+            cp     = self.price_cache.get(ticker, pos.get("current_price", 0))
+            raw_cp = self.price_cache_raw.get(ticker, cp)
+            entry  = float(pos.get("display_avg_price", pos.get("entry", 0)) or 0)
+            qty    = int(pos.get("qty", 0) or 0)
+            pnl    = (cp / entry - 1) * 100 if entry and cp else 0
+            is_us  = market == "US"
+            px_fmt = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f}원"
+
+            action = "SELL"  # 기본값: 청산
+            reason_txt = ""
+            advice = None
+            try:
+                from minority_report.hold_advisor import ask as advisor_ask
+                digest = self.today_judgment.get("digest_prompt", "")
+                advice = advisor_ask(pos, market, digest)
+                action = advice.get("action", "SELL")
+                votes  = advice.get("votes", {})
+                for v in votes.values():
+                    if v.get("action") == action and v.get("reason"):
+                        reason_txt = v["reason"][:100]
+                        break
+                log.info(f"[장마감 검토] {ticker} Claude → {action} ({reason_txt[:50]})")
+            except Exception as e:
+                log.warning(f"[장마감 검토] {ticker} hold_advisor 실패 → 기본 청산: {e}")
+                action = "SELL"
+
+            action_ko  = "즉시 청산" if action == "SELL" else "내일로 이월"
+            color_icon = "🔴" if action == "SELL" else "🟡"
+            pnl_icon   = "🟢" if pnl >= 0 else "🔴"
+            block = (
+                f"{pnl_icon} <b>{ticker}</b>  {pnl:+.2f}%  {px_fmt(cp)}\n"
+                f"  {color_icon} Claude: <b>{action_ko}</b>"
+            )
+            if reason_txt:
+                block += f"\n     → {reason_txt}"
+            claude_review_lines.append(block)
+
+            if action == "SELL":
+                # 즉시 청산
+                if not self.is_paper:
+                    order_px = self._compute_order_price("sell", market, float(raw_cp))
+                    result = place_order(ticker, qty, order_px, "sell",
+                                         self.token, market=market)
+                    if not result["success"]:
+                        log.error(f"force sell failed [{ticker}]: {result['msg']}")
+                ex = self.risk.close_position(ticker, cp, "session_close")
+                if ex:
+                    pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "session_close",
+                              market=market, usd_krw=self.usd_krw_rate)
+                    trade_alert("sell", ex["ticker"], ex["qty"], int(raw_cp),
+                                ex["strategy"], 0, 0, reason="session_close_claude_sell",
+                                market=market, usd_krw=self.usd_krw_rate)
+                    if advice:
+                        self._record_hold_advisor_outcome(ex, market, advice)
+                log.info(f"[장마감 Claude 청산] {ticker} {pnl:+.2f}%")
+            else:
+                # HOLD/TRAIL → 이월: max_hold 하루 연장
+                for p2 in self.risk.positions:
+                    if p2.get("ticker") == ticker:
+                        p2["max_hold"] = max(p2.get("max_hold", 1) + 1, 2)
+                        if advice:
+                            p2["hold_advice"] = advice
+                        break
+                multi_days.append(pos)
+                log.info(f"[장마감 Claude 이월] {ticker} {pnl:+.2f}% → max_hold 연장")
+
+        if len(claude_review_lines) > 2:
+            try:
+                _tg_send("\n\n".join(claude_review_lines))
+            except Exception:
+                pass
 
         if multi_days:
             log.info(f"[이월] {[p['ticker'] for p in multi_days]} "
