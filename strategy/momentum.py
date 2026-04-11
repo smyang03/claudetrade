@@ -67,7 +67,7 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
         "MODERATE_BULL":(0.8, 1.3),
         "MILD_BULL":    (0.7, 1.4),
         "CAUTIOUS_BULL":(0.55,1.5),
-        "NEUTRAL":      (0.5, 1.5),
+        "NEUTRAL":      (0.65, 1.5),
     }
     size, vol_mult = _table.get(brain_mode, _table["NEUTRAL"])
 
