@@ -2022,6 +2022,11 @@ class TradingBot:
                     self._block_entry(cand["ticker"], _TP_COOLDOWN_MIN, "take_profit")
                 continue
 
+            # ── max_hold 도달 → Claude 먼저 물어보고 결정 ──────────────────
+            if cand["reason"] == "max_hold":
+                self._handle_max_hold_claude(cand, market)
+                continue
+
             self._execute_sell(cand, market, reason=cand["reason"])
             # 손절/트레일링 청산 후 재진입 쿨다운
             if cand["reason"] in ("stop_loss", "trail_stop"):
@@ -2302,6 +2307,71 @@ class TradingBot:
         self._save_positions()
         self._write_live_status(market, force=True)
         block_alert(f"장 중 포지션 점검 · {label}", lines[1:], market=market, icon="🔍")
+
+    def _handle_max_hold_claude(self, cand: dict, market: str):
+        """max_hold 도달 시 Claude에게 SELL/HOLD 물어본 후 결정.
+        - SELL: 즉시 매도
+        - HOLD/TRAIL: max_hold +1 연장 (1회만, 이후 재도달 시 강제 청산)
+        """
+        from telegram_reporter import send as _send
+        ticker    = cand["ticker"]
+        held_days = int(cand.get("held_days", 0))
+        max_hold  = int(cand.get("max_hold", 1))
+        pnl       = float(cand.get("pnl_pct", 0))
+        cur       = float(cand.get("exit_price", 0))
+        is_us     = market == "US"
+        px_fmt    = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f}원"
+
+        action, reason_txt, advice = "SELL", "", None
+
+        # 이미 한 번 연장했으면 강제 청산 (무한 연장 방지)
+        already_extended = cand.get("max_hold_extended", False)
+        if already_extended:
+            log.info(f"[max_hold 강제청산] {ticker} — 이미 1회 연장 후 재도달 → 즉시 청산")
+            self._execute_sell(cand, market, reason="max_hold_final")
+            _send(f"⏰ <b>[보유기한 만료] {ticker}</b>  {pnl:+.2f}%\n"
+                  f"  max_hold {max_hold}일 연장 후 재도달 → 즉시 청산")
+            return
+
+        try:
+            from minority_report.hold_advisor import ask as advisor_ask
+            digest = self.today_judgment.get("digest_prompt", "")
+            advice = advisor_ask(cand, market, digest)
+            action = advice.get("action", "SELL")
+            votes  = advice.get("votes", {})
+            for v in votes.values():
+                if v.get("action") == action and v.get("reason"):
+                    reason_txt = v["reason"][:100]
+                    break
+        except Exception as e:
+            log.warning(f"[max_hold Claude] {ticker} hold_advisor 실패 → 기본 청산: {e}")
+            action = "SELL"
+
+        action_ko  = "즉시 청산" if action == "SELL" else f"보유기한 {max_hold+1}일로 연장"
+        color_icon = "🔴" if action == "SELL" else "🟡"
+
+        if action == "SELL":
+            self._execute_sell(cand, market, reason="max_hold", hold_advice=advice)
+            msg = (f"⏰ <b>[보유기한 만료 · Claude 청산] {ticker}</b>  {pnl:+.2f}%\n"
+                   f"  {held_days}일 보유, {px_fmt(cur)} 매도\n"
+                   f"  {color_icon} Claude: {action_ko}"
+                   + (f"\n     → {reason_txt}" if reason_txt else ""))
+        else:
+            # max_hold +1 연장, 연장 플래그 세팅
+            for p2 in self.risk.positions:
+                if p2.get("ticker") == ticker:
+                    p2["max_hold"] = max_hold + 1
+                    p2["max_hold_extended"] = True
+                    if advice:
+                        p2["hold_advice"] = advice
+                    break
+            self._save_positions()
+            msg = (f"⏰ <b>[보유기한 만료 · Claude 연장] {ticker}</b>  {pnl:+.2f}%\n"
+                   f"  {held_days}일 보유 → max_hold {max_hold+1}일로 연장 (1회 한정)\n"
+                   f"  {color_icon} Claude: {action_ko}"
+                   + (f"\n     → {reason_txt}" if reason_txt else ""))
+        _send(msg)
+        log.info(f"[max_hold Claude] {ticker} held={held_days} → {action} ({reason_txt[:50]})")
 
     def _handle_tp_trailing(self, cand: dict, market: str):
         """TP 도달 시 트레일링 스탑 전환 (분석가 합의 옵션)"""
@@ -5355,13 +5425,28 @@ class TradingBot:
             "pending_n":  len(self.pending_orders),
         }
 
+    # ── Claude 튜닝용 결정 이벤트 타입 ──────────────────────────────────────
+    # entry      : 매수 신호 발생 (Claude 선택 종목)
+    # closed     : 포지션 종료 요약 (진입~청산 전체)
+    # hold_outcome: hold_advisor 판단 결과 (결과 확정 시)
+    # 실행 오류(sell_failed 등)는 decisions.jsonl에 기록하지 않음
+    _DECISION_TYPES = {"entry", "closed", "hold_outcome"}
+
     def _record_decision_event(self, market: str, action: str, ticker: str, **kwargs):
+        # ── 실행 오류/상태 이벤트는 decisions.jsonl 제외 ───────────────────
+        # sell_failed, buy_blocked 등은 Claude 판단이 아니라 시스템 실행 이벤트
+        _SKIP_ACTIONS = {
+            "sell_failed", "buy_blocked", "buy_skipped",
+            "halt", "cooldown", "no_cash",
+        }
+        # in-memory 로그는 모든 이벤트 유지 (모니터링용)
+        mode = self.today_judgment.get("consensus", {}).get("mode", "")
         event = {
             "timestamp": datetime.now(KST).isoformat(timespec="seconds"),
             "market": market,
             "action": action,
             "ticker": ticker,
-            "mode": self.today_judgment.get("consensus", {}).get("mode", ""),
+            "mode": mode,
             "strategy": kwargs.get("strategy", ""),
             "qty": int(kwargs.get("qty", 0) or 0),
             "price_native": float(kwargs.get("price_native", 0) or 0),
@@ -5375,12 +5460,55 @@ class TradingBot:
         }
         self.decision_event_log.append(event)
         self.decision_event_log = self.decision_event_log[-200:]
-        # ── 영속 DB 기록 (state/decisions.jsonl) ────────────────────────────
-        try:
-            with open(DECISIONS_FILE, "a", encoding="utf-8") as _df:
-                _df.write(json.dumps(event, ensure_ascii=False) + "\n")
-        except Exception as _de:
-            log.debug(f"decisions.jsonl 기록 실패: {_de}")
+
+        # ── Claude 판단 이벤트만 decisions.jsonl 기록 ───────────────────────
+        if action not in _SKIP_ACTIONS:
+            # buy_order → entry 타입으로 정규화
+            # sell_filled / sell_executed → closed 타입으로 정규화
+            _type_map = {
+                "buy_order":      "entry",
+                "buy_signal":     "entry",
+                "sell_filled":    "closed",
+                "sell_executed":  "closed",
+                "HOLD_REVIEW":    "hold_outcome",
+            }
+            record = {
+                "type":      _type_map.get(action, action),
+                "timestamp": event["timestamp"],
+                "market":    market,
+                "ticker":    ticker,
+                "mode":      mode,
+                "strategy":  event["strategy"],
+            }
+            # entry: 진입 컨텍스트
+            if action in ("buy_order", "buy_signal"):
+                record.update({
+                    "entry_price": event["price_krw"] or event["price_native"],
+                    "qty":         event["qty"],
+                    "selected_reason": event["selected_reason"],
+                })
+            # closed: 종료 요약
+            elif action in ("sell_filled", "sell_executed"):
+                record.update({
+                    "exit_reason": event["reason"],
+                    "pnl_pct":     event["pnl_pct"],
+                    "pnl_krw":     event["pnl_krw"],
+                    "held_days":   kwargs.get("hold_days", 0),
+                })
+            # hold_outcome: 판단 결과
+            elif action == "HOLD_REVIEW":
+                record.update({
+                    "hold_action":  kwargs.get("hold_action", ""),
+                    "trail_pct":    kwargs.get("trail_pct", 0),
+                    "votes":        kwargs.get("votes", {}),
+                    "source":       kwargs.get("source", ""),
+                })
+            try:
+                with open(DECISIONS_FILE, "a", encoding="utf-8") as _df:
+                    _df.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except Exception as _de:
+                log.debug(f"decisions.jsonl 기록 실패: {_de}")
+
         try:
             decision_event_alert(event)
         except Exception as e:
