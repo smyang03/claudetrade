@@ -286,11 +286,19 @@ def _status_positions(bot) -> list[str]:
         current = float(p.get("display_current_price", p.get("current_price", entry)) or 0)
         pnl = (current / entry - 1) * 100 if entry > 0 and current > 0 else 0.0
         icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
+        claude_state = "점검 전"
+        adv = p.get("hold_advice") or {}
+        if adv:
+            action = str(adv.get("action", "") or "")
+            claude_state = {"TRAIL": "트레일링 유지", "SELL": "매도 권고", "HOLD": "홀드 유지"}.get(action, action or "점검 완료")
+        elif p.get("pending_next_open_sell"):
+            claude_state = "다음 세션 청산 예정"
         lines.append(
             f"{icon} {ticker_disp} {int(p.get('qty', 0) or 0)}주"
             f" | 매수가 {_fmt_price_for_market(entry, market)}"
             f" | 현재가 {_fmt_price_for_market(current, market)}"
             f" | {pnl:+.2f}%"
+            f" | Claude {claude_state}"
         )
     return lines
 
@@ -436,78 +444,103 @@ def _cmd_pnl(bot) -> str:
 def _cmd_positions(bot) -> str:
     pos = bot.risk.positions
     if not pos:
-        return "📌 보유 포지션 없음"
-    lines = ["📌 <b>보유 포지션</b>", "━━━━━━━━━━━━━━━━"]
+        return "📭 보유 포지션이 없습니다."
+
+    usd_krw = float(getattr(bot, "usd_krw_rate", 0) or 0)
+    lines = ["📦 <b>보유 포지션</b>", "━━━━━━━━"]
+
     for p in pos:
         market = "US" if str(p.get("ticker", "")).replace(".", "").isalpha() else "KR"
+        is_us = market == "US"
         ticker_disp = _display_symbol(p.get("ticker", "-"), market, p.get("name", "") or "")
-        entry  = float(p.get("display_avg_price", p.get("entry", 0)) or 0)
-        cur    = float(p.get("display_current_price", p.get("current_price", entry)) or 0)
-        qty    = int(p.get("qty", 0) or 0)
-        pnl    = (cur / entry - 1) * 100 if entry else 0
-        pnl_icon = "🟢" if pnl > 0 else "🔴"
-        is_us  = market == "US"
-        px     = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f}원"
+        entry = float(p.get("display_avg_price", p.get("entry", 0)) or 0)
+        cur = float(p.get("display_current_price", p.get("current_price", entry)) or 0)
+        qty = int(p.get("qty", 0) or 0)
+        pnl = (cur / entry - 1) * 100 if entry else 0.0
+        pnl_icon = "🟢" if pnl > 0 else ("🔴" if pnl < 0 else "⚪")
 
-        # ── 수익금 + 수수료 차감 실손익 ─────────────────────────────────
+        def px(v: float) -> str:
+            if is_us:
+                krw = f" (약 {int(round(v * usd_krw)):,}원)" if usd_krw > 0 else ""
+                return f"${v:.2f}{krw}"
+            return f"{v:,.0f}원"
+
         gross_pnl = (cur - entry) * qty
-        # 수수료: KR 매수 0.015% + 매도 0.195%(거래세 포함), US 0.015% 양방향
-        fee_buy  = entry * qty * (0.00015)
-        fee_sell = cur   * qty * (0.00195 if not is_us else 0.00015)
-        net_pnl  = gross_pnl - fee_buy - fee_sell
-        net_sign = "+" if net_pnl >= 0 else ""
+        fee_buy = entry * qty * 0.00015
+        fee_sell = cur * qty * (0.00015 if is_us else 0.00195)
+        net_pnl = gross_pnl - fee_buy - fee_sell
         if is_us:
-            pnl_str = f"${net_pnl:+.2f} (수수료 제외)"
+            pnl_str = f"{net_pnl:+.2f}달러" + (f" · {int(round(net_pnl * usd_krw)):+,}원" if usd_krw > 0 else "")
         else:
-            pnl_str = f"{net_sign}{net_pnl:,.0f}원 (수수료 제외)"
+            pnl_str = f"{int(round(net_pnl)):+,}원"
 
-        # ── 매도 기준 (사람 언어로) ──────────────────────────────────────
-        is_trailing = p.get("trailing", False)
-        trail_sl    = float(p.get("trail_sl", 0) or 0)
-        trail_pct   = float(p.get("trail_pct", 0.03) or 0.03) * 100
-        sl          = float(p.get("sl", 0) or 0)
-        tp          = float(p.get("tp", 0) or 0)
-        held        = int(p.get("held_days", 0) or 0)
-        max_hold    = int(p.get("max_hold", 0) or 0)
+        is_trailing = bool(p.get("trailing", False))
+        trail_sl = float(p.get("trail_sl", 0) or 0)
+        sl = float(p.get("sl", 0) or 0)
+        tp = float(p.get("tp", 0) or 0)
+        tp_price = float(p.get("tp_price", 0) or 0)
+        held = int(p.get("held_days", 0) or 0)
+        max_hold = int(p.get("max_hold", 0) or 0)
 
         if is_trailing and trail_sl > 0:
-            exit_line = f"  📉 <b>{px(trail_sl)} 이하 시 자동 매도</b> (트레일링 {trail_pct:.1f}%)"
+            parts = []
+            if tp > 0:
+                parts.append(f"최초 목표 {px(tp)}")
+            if tp_price > 0:
+                parts.append(f"TP 달성가 {px(tp_price)}")
+            dist_pct = ((trail_sl / cur - 1) * 100) if cur > 0 else 0.0
+            parts.append(f"현재 스탑 {px(trail_sl)} 이하 시 자동 매도 ({dist_pct:+.1f}%)")
+            parts.append("상방 목표 고정 없음")
+            exit_line = "  📉 " + " · ".join(parts)
         else:
             parts = []
-            if sl > 0: parts.append(f"손절 {px(sl)}")
-            if tp > 0: parts.append(f"목표 {px(tp)}")
+            if sl > 0:
+                parts.append(f"손절 {px(sl)}")
+            if tp > 0:
+                parts.append(f"목표 {px(tp)}")
             exit_line = f"  🎯 {' · '.join(parts)}" if parts else ""
 
         hold_line = ""
         if max_hold > 0:
             remain = max_hold - held
-            hold_line = f"  ⏱ {held}일 보유 중" + (f" (최대 {max_hold}일 · {remain}일 남음)" if remain >= 0 else " (기간 초과)")
+            hold_line = f"  📅 {held}일 보유 중 (최대 {max_hold}일 · {remain}일 남음)" if remain >= 0 else f"  📅 {held}일 보유 중 (최대 {max_hold}일 초과)"
 
-        # ── Claude 판단 (hold_advice) ──────────────────────────────────
-        adv = p.get("hold_advice")
         claude_line = ""
+        adv = p.get("hold_advice")
         if adv:
             action = adv.get("action", "")
-            action_ko = {"TRAIL": "트레일링 유지", "SELL": "매도 권고", "HOLD": "홀드"}.get(action, action)
-            votes = adv.get("votes", {})
+            action_ko = {"TRAIL": "트레일링 유지", "SELL": "매도 권고", "HOLD": "홀드 유지"}.get(action, action)
+            votes = adv.get("votes", {}) or {}
             reason = ""
             for v in votes.values():
                 if v.get("action") == action and v.get("reason"):
-                    reason = v["reason"][:60]
+                    reason = str(v.get("reason") or "")
                     break
-            claude_line = f"  🤖 Claude: <b>{action_ko}</b>" + (f"\n     → {reason}" if reason else "")
+            claude_line = f"  🤖 Claude: <b>{action_ko}</b>"
+            if reason:
+                claude_line += f"\n     → {reason[:120]}"
+        elif p.get("pending_next_open_sell"):
+            claude_line = "  🤖 Claude: <b>다음 세션 청산 예정</b>"
+            pending_reason = str(p.get("pending_next_open_reason", "") or "").strip()
+            if pending_reason:
+                claude_line += f"\n     → {pending_reason[:120]}"
+        else:
+            claude_line = "  🤖 Claude: <b>아직 재판단 없음</b>"
 
-        # ── 조합 ──────────────────────────────────────────────────────
         strat = p.get("strategy", "")
-        if strat in ("broker_balance", "broker_sync", ""): strat = ""
-        sub = " · ".join(filter(None, [strat, f"{p['qty']}주", f"{held}일째" if held else ""]))
+        if strat in ("broker_balance", "broker_sync", ""):
+            strat = ""
+        sub = " · ".join(filter(None, [strat, f"{qty}주", f"{held}일째" if held else ""]))
 
         block = [f"{pnl_icon} <b>{ticker_disp}</b>  {pnl:+.2f}%  <b>{pnl_str}</b>"]
-        if sub:    block.append(f"  {sub}")
-        block.append(f"  매수 {px(entry)} → 현재 {px(cur)}")
-        if exit_line:  block.append(exit_line)
-        if hold_line:  block.append(hold_line)
-        if claude_line: block.append(claude_line)
+        if sub:
+            block.append(f"  {sub}")
+        block.append(f"  매수가 {px(entry)} → 현재가 {px(cur)}")
+        if exit_line:
+            block.append(exit_line)
+        if hold_line:
+            block.append(hold_line)
+        block.append(claude_line)
         lines.append("\n".join(block))
 
     return "\n\n".join(lines)

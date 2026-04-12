@@ -85,6 +85,7 @@ JUDGMENT_LOG_DIR = get_runtime_path("logs", "judgment", make_parents=False)
 CLAUDE_CONTROL_PATH = get_runtime_path("state", "claude_control.json")
 BOT_PID_PATH = get_runtime_path("state", "trading_bot.pid")
 DASHBOARD_PID_PATH = get_runtime_path("state", "dashboard_server.pid")
+OPEN_POSITIONS_PATH = get_runtime_path("state", "open_positions.json")
 RESTART_DIR = get_runtime_path("state", "restart", make_parents=False)
 RESTART_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1045,6 +1046,15 @@ def _clean_lesson(text: str) -> str:
     return text
 
 
+def _execution_issue_label(issue: str) -> str:
+    mapping = {
+        "broker_position_removed": "브로커 포지션 동기화 오류",
+        "quote_invalid": "시세 무효/가격 수신 오류",
+    }
+    key = str(issue or "").strip()
+    return mapping.get(key, key or "-")
+
+
 def load_digest_records_filtered(market: str, period: str, start: str, end: str) -> list:
     if not DIGEST_DIR.exists():
         return []
@@ -1429,7 +1439,15 @@ def _load_broker_positions(market: str) -> list:
 
 
 def _saved_positions_for_market(market: str) -> list:
-    items = []
+    # open_positions.json + live_status를 함께 사용.
+    # 우선순위는 open_positions < live_status 로 두어 수동 재판단/실시간 상태가 이김.
+    merged: dict[str, dict] = {}
+
+    for pos in _load_open_positions():
+        ticker = str(pos.get("ticker", "") or "").strip().upper()
+        if ticker and _ticker_market(ticker) == market:
+            merged[ticker] = dict(pos)
+
     for source in (
         _load_live_status(market) or {},
         _load_live_status("US" if market == "KR" else "KR") or {},
@@ -1437,8 +1455,26 @@ def _saved_positions_for_market(market: str) -> list:
         for pos in source.get("positions", []) or []:
             ticker = str(pos.get("ticker", "") or "").strip().upper()
             if ticker and _ticker_market(ticker) == market:
-                items.append(pos)
-    return items
+                base = merged.get(ticker)
+                merged[ticker] = _merge_position_context(base or {}, pos) if base else dict(pos)
+
+    return list(merged.values())
+
+
+def _load_open_positions() -> list:
+    if not OPEN_POSITIONS_PATH.exists():
+        return []
+    try:
+        return json.loads(OPEN_POSITIONS_PATH.read_text(encoding="utf-8")) or []
+    except Exception:
+        return []
+
+
+def _save_open_positions(items: list) -> None:
+    OPEN_POSITIONS_PATH.write_text(
+        json.dumps(items or [], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _merge_position_context(base: dict, overlay: dict | None) -> dict:
@@ -1455,7 +1491,7 @@ def _merge_position_context(base: dict, overlay: dict | None) -> dict:
         return merged
     for key in (
         "strategy", "entry", "avg_price", "display_avg_price", "display_current_price",
-        "tp", "sl", "tp_triggered", "trailing", "trail_sl", "trail_pct",
+        "tp", "tp_price", "sl", "tp_triggered", "trailing", "trail_sl", "trail_pct",
         "held_days", "entry_date", "hold_advice", "name", "qty",
     ):
         value = overlay.get(key)
@@ -2270,8 +2306,8 @@ def api_summary():
     cum_base = float(result.get("cumulative", 0) or PAPER_CASH)
     cum_asset = float((live.get("total_equity", 0) if live else 0) or cum_base or PAPER_CASH)
     broker_positions = _filter_items_for_market(_load_broker_positions(market), market)
-    live_positions = _filter_items_for_market(live.get("positions", []) if live else [], market)
-    positions = _merge_positions_for_display(market, broker_positions, live_positions)
+    saved_positions = _saved_positions_for_market(market)
+    positions = _merge_positions_for_display(market, broker_positions, saved_positions)
     pending_orders = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
     name_map = _ticker_name_map(market)
     for pos in positions:
@@ -2788,6 +2824,25 @@ def api_brain_history():
     brain = load_brain()
     m     = brain.get("markets", {}).get(mkt, {})
     days  = list(reversed(m.get("recent_days", [])))  # 최신순
+    record_map = {}
+    for rec in load_records(90, mkt):
+        d = (rec.get("date", "") or "")[:10]
+        if d:
+            record_map[d] = rec
+    enriched_days = []
+    for day in days:
+        item = dict(day)
+        rec = record_map.get((day.get("date", "") or "")[:10], {}) or {}
+        actual = rec.get("actual_result", {}) or {}
+        execution_issues = list(actual.get("execution_issues", []) or [])
+        execution_contaminated = bool(actual.get("execution_contaminated", False))
+        item["execution_contaminated"] = execution_contaminated
+        item["execution_issues"] = execution_issues
+        lesson = str(item.get("key_lesson", "") or "").strip()
+        if execution_contaminated and ("오류로 자동 판정" in lesson or not lesson):
+            labels = [_execution_issue_label(x) for x in execution_issues[:3]]
+            item["key_lesson"] = "실행오염: " + (", ".join(labels) if labels else "자동 판정")
+        enriched_days.append(item)
     beliefs = m.get("current_beliefs", {})
     return jsonify({
         "market":         mkt,
@@ -2796,7 +2851,7 @@ def api_brain_history():
         "learned_lessons": beliefs.get("learned_lessons", []),
         "correction_guide": brain.get("correction_guide", {}).get(mkt, {}),
         "analyst_performance": m.get("analyst_performance", {}),
-        "recent_days":    days,
+        "recent_days":    enriched_days,
     })
 
 
@@ -3343,21 +3398,42 @@ def api_review_position():
             pass
 
         advice = advisor_ask(pos, market, digest)
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
 
         # live_status 업데이트
         updated = False
         for p2 in positions:
             if str(p2.get("ticker", "") or "").strip().upper() == ticker:
                 p2["hold_advice"] = advice
+                p2["last_hold_update"] = now_iso[:10]
                 updated = True
         if not updated:
             pos = dict(pos)
             pos["hold_advice"] = advice
+            pos["last_hold_update"] = now_iso[:10]
             positions.append(pos)
         live["positions"] = positions
         live["position_count"] = len(positions)
         live_path = BASE_DIR / "state" / f"live_status_{market}.json"
         live_path.write_text(json.dumps(live, ensure_ascii=False), encoding="utf-8")
+
+        # open_positions.json도 같이 갱신해 재시작/오프마켓 후에도 유지
+        saved_positions = _load_open_positions()
+        saved_updated = False
+        for p2 in saved_positions:
+            if str(p2.get("ticker", "") or "").strip().upper() == ticker:
+                p2["hold_advice"] = advice
+                p2["last_hold_update"] = now_iso[:10]
+                saved_updated = True
+                break
+        if not saved_updated:
+            saved_positions.append({
+                **dict(pos),
+                "market": market,
+                "hold_advice": advice,
+                "last_hold_update": now_iso[:10],
+            })
+        _save_open_positions(saved_positions)
 
         queued_sell = False
         if advice.get("action") == "SELL":
@@ -3366,9 +3442,9 @@ def api_review_position():
                 "market": market,
                 "ticker": ticker,
                 "source": "dashboard_review",
-                "requested_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "requested_at": now_iso,
             }
-            control["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            control["updated_at"] = now_iso
             control["updated_by"] = "dashboard_review"
             _save_claude_control(control)
             queued_sell = True
@@ -3377,7 +3453,7 @@ def api_review_position():
         from datetime import datetime as _dt
         decisions_path = BASE_DIR / "state" / "decisions.jsonl"
         event = {
-            "timestamp": _dt.now().isoformat(timespec="seconds"),
+            "timestamp": now_iso,
             "market":    market,
             "ticker":    ticker,
             "action":    "HOLD_REVIEW",
@@ -5117,6 +5193,9 @@ async function loadSummary() {
     const trailSl = !isKR && usdKrw > 0 && trailSlRaw > 0 ? trailSlRaw / usdKrw : trailSlRaw;
     const sl = !isKR && usdKrw > 0 && slRaw > 0 ? slRaw / usdKrw : slRaw;
     const tp = !isKR && usdKrw > 0 && tpRaw > 0 ? tpRaw / usdKrw : tpRaw;
+    const tpPriceRaw = Number(pos.tp_price || 0);
+    const tpPrice = !isKR && usdKrw > 0 && tpPriceRaw > 0 ? tpPriceRaw / usdKrw : tpPriceRaw;
+    const tpTriggered = !!pos.tp_triggered;
     const fmtPx = v => {
       if (!(v > 0)) return null;
       if (isKR) return fmt.price(v);
@@ -5126,7 +5205,10 @@ async function loadSummary() {
     let stopLine = '';
     if (isTrailing && trailSl > 0) {
       const distPct = curPrice > 0 ? ((trailSl / curPrice - 1) * 100).toFixed(1) : '';
-      stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${fmtPx(trailSl)} 이하 시 자동 매도 (현재가 대비 ${distPct}%)`;
+      const tpTxt = fmtPx(tp) ? `최초 목표 ${fmtPx(tp)}` : '';
+      const trailStartTxt = fmtPx(tpPrice) ? `TP 달성가 ${fmtPx(tpPrice)}` : '';
+      const stopTxt = `현재 스탑 ${fmtPx(trailSl)} 이하 시 자동 매도 (현재가 대비 ${distPct}%)`;
+      stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${[tpTxt, trailStartTxt, stopTxt, '상방 목표 고정 없음'].filter(Boolean).join(' · ')}`;
     } else if (sl > 0 || tp > 0) {
       const slPct = sl > 0 && avgPrice > 0 ? ` (${((sl/avgPrice-1)*100).toFixed(1)}%)` : '';
       const tpPct = tp > 0 && avgPrice > 0 ? ` (${((tp/avgPrice-1)*100).toFixed(1)}%)` : '';
@@ -5144,13 +5226,13 @@ async function loadSummary() {
     let advReasonText = '';
     if (adv && adv.votes) {
       const reasons = Object.values(adv.votes).filter(v => v.action === advAction && v.reason).map(v => v.reason);
-      if (reasons.length) advReasonText = reasons[0].length > 90 ? reasons[0].slice(0,90)+'…' : reasons[0];
+      if (reasons.length) advReasonText = reasons[0];
     }
     const advColor = advAction === 'SELL' ? '#ef4444' : advAction === 'TRAIL' ? '#f59e0b' : '#34d399';
     const advHtml  = advLabel
       ? `<div style="font-size:10px;margin-top:5px;padding-top:5px;border-top:1px solid rgba(100,116,139,0.2);overflow-wrap:anywhere;word-break:break-word">
            <span style="color:${advColor};font-weight:600;display:block">Claude: ${advLabel}</span>
-           ${advReasonText ? `<span style="color:#94a3b8;display:block;margin-top:3px;max-height:56px;overflow-y:auto;line-height:1.45;padding-right:4px">→ ${advReasonText}</span>` : ''}
+           ${advReasonText ? `<span style="color:#94a3b8;display:block;margin-top:3px;max-height:120px;overflow-y:auto;line-height:1.45;padding-right:4px;white-space:normal">→ ${advReasonText}</span>` : ''}
          </div>`
       : '';
     const cardId = 'pos-card-kr-' + pos.ticker;
@@ -5999,6 +6081,9 @@ async function loadSummary() {
       const trailSl = !isKRW && usdKrw > 0 && trailSlRaw > 0 ? trailSlRaw / usdKrw : trailSlRaw;
       const sl = !isKRW && usdKrw > 0 && slRaw > 0 ? slRaw / usdKrw : slRaw;
       const tp = !isKRW && usdKrw > 0 && tpRaw > 0 ? tpRaw / usdKrw : tpRaw;
+      const tpPriceRaw = Number(pos.tp_price || 0);
+      const tpPrice = !isKRW && usdKrw > 0 && tpPriceRaw > 0 ? tpPriceRaw / usdKrw : tpPriceRaw;
+      const tpTriggered = !!pos.tp_triggered;
       const fmtPx = v => {
         if (!(v > 0)) return null;
         if (isKRW) return fmt.price(v);
@@ -6008,7 +6093,10 @@ async function loadSummary() {
       let stopLine = '';
       if (isTrailing && trailSl > 0) {
         const distPct = curPx > 0 ? ((trailSl / curPx - 1) * 100).toFixed(1) : '';
-        stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${fmtPx(trailSl)} 이하 시 자동 매도 (현재가 대비 ${distPct}%)`;
+        const tpTxt = fmtPx(tp) ? `최초 목표 ${fmtPx(tp)}` : '';
+        const trailStartTxt = fmtPx(tpPrice) ? `TP 달성가 ${fmtPx(tpPrice)}` : '';
+        const stopTxt = `현재 스탑 ${fmtPx(trailSl)} 이하 시 자동 매도 (현재가 대비 ${distPct}%)`;
+        stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${[tpTxt, trailStartTxt, stopTxt, '상방 목표 고정 없음'].filter(Boolean).join(' · ')}`;
       } else if (sl > 0 || tp > 0) {
         const slPct = sl > 0 && avg > 0 ? ` (${((sl/avg-1)*100).toFixed(1)}%)` : '';
         const tpPct = tp > 0 && avg > 0 ? ` (${((tp/avg-1)*100).toFixed(1)}%)` : '';
@@ -6024,13 +6112,13 @@ async function loadSummary() {
       let advReasonText2 = '';
       if (adv && adv.votes) {
         const reasons2 = Object.values(adv.votes).filter(v => v.action === advAction && v.reason).map(v => v.reason);
-        if (reasons2.length) advReasonText2 = reasons2[0].length > 90 ? reasons2[0].slice(0,90)+'…' : reasons2[0];
+        if (reasons2.length) advReasonText2 = reasons2[0];
       }
       const advColor2 = advAction === 'SELL' ? '#ef4444' : advAction === 'TRAIL' ? '#f59e0b' : '#34d399';
       const advHtml = advLabel
         ? `<div style="font-size:10px;margin-top:5px;padding-top:5px;border-top:1px solid rgba(100,116,139,0.2);overflow-wrap:anywhere;word-break:break-word">
              <span style="color:${advColor2};font-weight:600;display:block">Claude: ${advLabel}</span>
-             ${advReasonText2 ? `<span style="color:#94a3b8;display:block;margin-top:3px;max-height:56px;overflow-y:auto;line-height:1.45;padding-right:4px">→ ${advReasonText2}</span>` : ''}
+             ${advReasonText2 ? `<span style="color:#94a3b8;display:block;margin-top:3px;max-height:120px;overflow-y:auto;line-height:1.45;padding-right:4px;white-space:normal">→ ${advReasonText2}</span>` : ''}
            </div>`
         : '';
       const cardId2 = 'pos-card-us-' + pos.ticker;
@@ -6657,7 +6745,7 @@ async function loadBrainHistory() {
       const win    = day.win ? '<span style="color:var(--green)">WIN</span>' : '<span style="color:var(--red)">LOSS</span>';
       const mode   = day.mode || '-';
       const modeCol = mode.includes('BULL') ? 'var(--green)' : mode.includes('BEAR') || mode === 'HALT' ? 'var(--red)' : mode === 'DEFENSIVE' ? 'var(--yellow)' : 'var(--cyan)';
-      const lesson  = (day.key_lesson || '').slice(0, 40) || '-';
+      const lesson  = (day.key_lesson || '').slice(0, 80) || '-';
       const trades  = day.trades != null ? day.trades : '-';
       const best    = day.best_trade  ? `<span style="color:var(--green)">${day.best_trade}</span>`  : '-';
       const worst   = day.worst_trade ? `<span style="color:var(--red)">${day.worst_trade}</span>`   : '-';
@@ -6675,7 +6763,7 @@ async function loadBrainHistory() {
         <td title="${bearTitle}">${resultBadge(day.bear_result)}</td>
         <td title="${neutTitle}">${resultBadge(day.neutral_result)}</td>
         <td style="text-align:center;color:var(--muted)">${trades}</td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cyan)"
+        <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cyan)"
             title="${(day.key_lesson||'').replace(/"/g,'&quot;')}">${lesson}</td>
         <td style="font-family:var(--mono);font-size:11px">${best} / ${worst}</td>
       </tr>`;

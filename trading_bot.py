@@ -1366,6 +1366,11 @@ class TradingBot:
             count = 1
         self._sell_fail_meta[ticker] = {"sig": sig, "count": count, "ts": now}
         self._flag_execution_issue(market, "sell_failed")
+        if "장종료" in detail or "장 종료" in detail:
+            next_open_ts = self._next_market_open_dt(market).timestamp()
+            self._sell_fail_at[ticker] = max(self._sell_fail_at.get(ticker, 0.0), next_open_ts)
+            log.warning(f"[매도 재시도 억제] {ticker} 장종료 응답 감지 → 다음 세션 시작까지 보류")
+            return
         if count >= 3:
             self._sell_fail_at[ticker] = now + 600
             log.warning(
@@ -1435,6 +1440,19 @@ class TradingBot:
             ticker = order.get("ticker", "")
             key = ticker.upper() if market == "US" else ticker
             pending_by_key[(market, key)] = order
+        saved_templates = {}
+        try:
+            if POSITIONS_FILE.exists():
+                with open(POSITIONS_FILE, encoding="utf-8") as _spf:
+                    for _saved_pos in json.load(_spf) or []:
+                        _tk = str(_saved_pos.get("ticker", "") or "").strip()
+                        if not _tk:
+                            continue
+                        _mkt = self._ticker_market(_tk)
+                        _key = _tk.upper() if _mkt == "US" else _tk
+                        saved_templates[(_mkt, _key)] = _saved_pos
+        except Exception as _e:
+            log.warning(f"[브로커 런타임 동기화] 저장 포지션 템플릿 로드 실패: {_e}")
 
         for pos in self.risk.positions:
             ticker = pos.get("ticker", "")
@@ -1490,7 +1508,8 @@ class TradingBot:
             if key in seen_keys or int(broker_pos.get("qty", 0) or 0) <= 0:
                 continue
             synced_positions[key] = self._make_runtime_position_from_broker(
-                ticker, "KR", broker_pos, template=pending_by_key.get(key)
+                ticker, "KR", broker_pos,
+                template=pending_by_key.get(key) or saved_templates.get(key)
             )
             self._flag_execution_issue("KR", "broker_position_injected")
             seen_keys.add(key)
@@ -1501,7 +1520,8 @@ class TradingBot:
             if key in seen_keys or int(broker_pos.get("qty", 0) or 0) <= 0:
                 continue
             synced_positions[key] = self._make_runtime_position_from_broker(
-                ticker.upper(), "US", broker_pos, template=pending_by_key.get(key)
+                ticker.upper(), "US", broker_pos,
+                template=pending_by_key.get(key) or saved_templates.get(key)
             )
             self._flag_execution_issue("US", "broker_position_injected")
             seen_keys.add(key)
@@ -1699,6 +1719,7 @@ class TradingBot:
                     order_no=str(order.get("order_no", "") or ""),
                     price=float(fill_px_native or 0),
                     source="브로커 평균단가",
+                    name=str(order.get("name", "") or "").strip(),
                     usd_krw=self.usd_krw_rate,
                 )
             self.pending_orders = remaining
@@ -1869,16 +1890,16 @@ class TradingBot:
         return now_ts < start_block_end or now_ts > end_block_start
 
     def _is_order_allowed_now(self, market: str) -> bool:
-        """US는 22:30(KST) 이전 주문 불가 — 장전 주문 실패 반복 방지"""
-        if market != "US":
+        """정규장 외 주문 차단 — 장전/장종료 주문 실패 반복 방지."""
+        now_dt = datetime.now(KST)
+        open_dt = self._market_open_anchor_dt(market)
+        close_dt = self._market_close_anchor_dt(market)
+        if open_dt <= now_dt < close_dt:
             return True
-        now_t = datetime.now(KST).time()
-        # US 장: 22:30 ~ 05:00(익일)
-        us_open = dt_time(22, 30)
-        us_close = dt_time(5, 0)
-        if now_t >= us_open or now_t < us_close:
-            return True
-        log.debug(f"[US 주문차단] 장 시작 전 ({now_t.strftime('%H:%M')} < 22:30) — 주문 보류")
+        if market == "US" and now_dt < open_dt:
+            log.debug(f"[US 주문차단] 장 시작 전 ({now_dt.strftime('%H:%M')} < 22:30) — 주문 보류")
+        else:
+            log.debug(f"[{market} 주문차단] 정규장 외 시간 ({now_dt.strftime('%H:%M')}) — 주문 보류")
         return False
 
     def _intraday_session_progress(self, market: str) -> float:
@@ -1910,6 +1931,31 @@ class TradingBot:
         open_dt = datetime.combine(now_dt.date(), dt_time(22, 30), tzinfo=KST)
         if now_dt.time() < dt_time(5, 0):
             open_dt -= timedelta(days=1)
+        return open_dt
+
+    def _market_close_anchor_dt(self, market: str) -> datetime:
+        """현재 세션의 실제 장 종료 시각(KST)을 반환한다."""
+        now_dt = datetime.now(KST)
+        if market == "KR":
+            return datetime.combine(now_dt.date(), dt_time(15, 30), tzinfo=KST)
+        close_dt = datetime.combine(now_dt.date(), dt_time(5, 0), tzinfo=KST)
+        if now_dt.time() >= dt_time(22, 30):
+            close_dt += timedelta(days=1)
+        return close_dt
+
+    def _minutes_to_close(self, market: str) -> float:
+        return (self._market_close_anchor_dt(market) - datetime.now(KST)).total_seconds() / 60.0
+
+    def _next_market_open_dt(self, market: str) -> datetime:
+        now_dt = datetime.now(KST)
+        if market == "KR":
+            open_dt = datetime.combine(now_dt.date(), dt_time(9, 0), tzinfo=KST)
+            if now_dt >= open_dt:
+                open_dt += timedelta(days=1)
+            return open_dt
+        open_dt = datetime.combine(now_dt.date(), dt_time(22, 30), tzinfo=KST)
+        if now_dt >= open_dt:
+            open_dt += timedelta(days=1)
         return open_dt
 
     def _market_elapsed_min(self, market: str) -> float:
@@ -1997,6 +2043,12 @@ class TradingBot:
         sell_list, hold_list = [], []
         for pos in positions:
             ticker = pos.get("ticker", "")
+            if pos.get("pending_next_open_sell"):
+                self._pre_session_sell_queue[market].append(pos)
+                sell_reason = str(pos.get("pending_next_open_reason", "") or "").strip()
+                sell_list.append((ticker, sell_reason))
+                log.info(f"[장전 리뷰] {ticker} → 전일 장마감 SELL 예약 유지")
+                continue
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
                 advice = advisor_ask(pos, market, digest)
@@ -2014,11 +2066,20 @@ class TradingBot:
                     break
 
             if action == "SELL":
-                self._pre_session_sell_queue[market].append({**pos, "hold_advice": advice})
+                queued = {**pos, "hold_advice": advice, "pending_next_open_sell": False}
+                self._pre_session_sell_queue[market].append(queued)
+                for p2 in self.risk.positions:
+                    if p2.get("ticker") == ticker:
+                        p2["pending_next_open_sell"] = False
+                        p2["pending_next_open_reason"] = ""
                 sell_list.append((ticker, reason))
                 log.info(f"[장전 리뷰] {ticker} → SELL 예약: {reason}")
             else:
                 trail_pct = advice.get("trail_pct", pos.get("trail_pct", 0.03))
+                for p2 in self.risk.positions:
+                    if p2.get("ticker") == ticker:
+                        p2["pending_next_open_sell"] = False
+                        p2["pending_next_open_reason"] = ""
                 # TRAIL/HOLD → 트레일링 폭 업데이트만
                 if pos.get("trailing"):
                     for p2 in self.risk.positions:
@@ -2033,13 +2094,15 @@ class TradingBot:
         if sell_list:
             lines.append("🔴 <b>매도 예정 (장 시작 즉시)</b>")
             for tk, rsn in sell_list:
-                name = self._lookup_ticker_name(tk, market)
+                pos = next((p for p in self.risk.positions if p.get("ticker") == tk), {})
+                name = str(pos.get("name", "") or "").strip() or self._lookup_ticker_name(tk, market)
                 disp = f"{tk}({name})" if name else tk
                 lines.append(f"  • {disp}: {rsn or '분석가 합의'}")
         if hold_list:
             lines.append("🟢 <b>홀드 유지</b>")
             for tk, rsn in hold_list:
-                name = self._lookup_ticker_name(tk, market)
+                pos = next((p for p in self.risk.positions if p.get("ticker") == tk), {})
+                name = str(pos.get("name", "") or "").strip() or self._lookup_ticker_name(tk, market)
                 disp = f"{tk}({name})" if name else tk
                 lines.append(f"  • {disp}: {rsn or '계속 보유'}")
         if not sell_list and not hold_list:
@@ -2057,7 +2120,7 @@ class TradingBot:
 
         for pos in positions:
             ticker  = pos.get("ticker", "")
-            name    = self._lookup_ticker_name(ticker, market)
+            name    = str(pos.get("name", "") or "").strip() or self._lookup_ticker_name(ticker, market)
             disp    = f"{ticker}({name})" if name else ticker
             entry   = float(pos.get("display_avg_price", pos.get("entry", 0)) or 0)
             cur     = float(pos.get("display_current_price", pos.get("current_price", entry)) or 0)
@@ -2167,7 +2230,7 @@ class TradingBot:
 
         for pos in positions:
             ticker  = pos.get("ticker", "")
-            name    = self._lookup_ticker_name(ticker, market)
+            name    = str(pos.get("name", "") or "").strip() or self._lookup_ticker_name(ticker, market)
             disp    = f"{ticker}({name})" if name else ticker
             entry   = float(pos.get("display_avg_price", pos.get("entry", 0)) or 0)
             cur     = float(pos.get("display_current_price", pos.get("current_price", entry)) or 0)
@@ -2403,8 +2466,9 @@ class TradingBot:
             pnl_krw=ex.get("pnl", 0),
             pnl_pct=ex.get("pnl_pct", 0),
         )
-        pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), reason, market=market, usd_krw=self.usd_krw_rate)
-        trade_alert("sell", ex["ticker"], ex["qty"], int(raw_exit), ex["strategy"], 0, 0, reason=reason, market=market, usd_krw=self.usd_krw_rate)
+        ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
+        pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), reason, market=market, name=ex_name, usd_krw=self.usd_krw_rate)
+        trade_alert("sell", ex["ticker"], ex["qty"], int(raw_exit), ex["strategy"], 0, 0, reason=reason, market=market, name=ex_name, usd_krw=self.usd_krw_rate)
         try:
             _perf_strategy = str(ex.get("strategy", "unknown") or "unknown")
             if _perf_strategy not in ("broker_sync", "broker_balance", ""):
@@ -2442,8 +2506,8 @@ class TradingBot:
                     # exit_price가 USD raw 값으로 의심될 때 (< $5000 수준) → KRW 환산
                     exit_price = exit_price * self.usd_krw_rate
 
-            if decision == "HOLD":
-                # HOLD 성공: 청산가 > TP 도달가 (트레일 덕에 더 벌었음)
+            if decision in ("HOLD", "TRAIL"):
+                # HOLD/TRAIL 성공: 청산가 > TP 도달가 (보유/트레일 덕에 더 벌었음)
                 success = exit_price > tp_price if tp_price > 0 else (ex.get("pnl", 0) > 0)
                 # 추가 수익: TP 대비 청산가 차이
                 extra_pnl_pct = ((exit_price / tp_price - 1) * 100) if tp_price > 0 else 0.0
@@ -2687,6 +2751,7 @@ class TradingBot:
                         "judgments": saved["judgments"],
                         "consensus": saved["consensus"],
                         "digest_prompt": saved.get("digest_prompt", ""),
+                        "digest_raw": saved.get("digest_raw", {}),
                         "tickers": saved.get("tickers", []),
                         "universe_tickers": saved.get("universe_tickers", []),
                         # debate 필드 복원 (파인튜닝 데이터 연속성 유지)
@@ -2980,6 +3045,7 @@ class TradingBot:
             order_no=order_no,
             price=filled_price,
             source="WS 실시간",
+            name=str(matched.get("name", "") or "").strip(),
             usd_krw=self.usd_krw_rate,
         )
         log.info(
@@ -4514,6 +4580,7 @@ class TradingBot:
                     self._add_pending_order({
                         "order_no":       result.get("order_no", ""),
                         "ticker":         _s_tk,
+                        "name":           str(_s_row.get("name", "") or "").strip() or self._lookup_ticker_name(_s_tk, market),
                         "market":         market,
                         "qty":            qty,
                         "raw_price":      float(_s_px),
@@ -4532,6 +4599,7 @@ class TradingBot:
                         qty=qty,
                         order_no=str(result.get("order_no", "") or ""),
                         detail="체결 확인 후 보유 포지션에 반영됩니다.",
+                        name=str(_s_row.get("name", "") or "").strip(),
                     )
                 except Exception as e:
                     log.error(f"pending signal execute error [{_s_tk}]: {e}")
@@ -4617,6 +4685,7 @@ class TradingBot:
                         self._add_pending_order({
                             "order_no":      _t2_result.get("order_no", ""),
                             "ticker":        _t2_ticker,
+                            "name":          str(_t2_price_info.get("name", "") or "").strip() or self._lookup_ticker_name(_t2_ticker, "US"),
                             "market":        "US",
                             "qty":           _t2_qty,
                             "raw_price":     float(_t2_price),
@@ -4633,6 +4702,7 @@ class TradingBot:
                             ticker=_t2_ticker,
                             qty=_t2_qty,
                             detail=f"{_play['etf']} {_play['etf_chg']:+.2f}% 섹터강세 | conf={_play['confidence']:.2f} | {_play['reason']}",
+                            name=str(_t2_price_info.get("name", "") or "").strip(),
                         )
                     except Exception as _t2_e:
                         log.error(f"[Tier2] {_t2_ticker} 오류: {_t2_e}")
@@ -4724,9 +4794,10 @@ class TradingBot:
                                     self.token, market=self._ticker_market(pos["ticker"]))
                     ex = self.risk.close_position(pos["ticker"], cp, "tuner_reverse")
                     if ex:
-                        pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "tuner_reverse", market=market, usd_krw=self.usd_krw_rate)
+                        ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
+                        pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "tuner_reverse", market=market, name=ex_name, usd_krw=self.usd_krw_rate)
                         trade_alert("sell", ex["ticker"], ex["qty"], int(cp),
-                                    ex["strategy"], 0, 0, reason="tuner_reverse", market=market, usd_krw=self.usd_krw_rate)
+                                    ex["strategy"], 0, 0, reason="tuner_reverse", market=market, name=ex_name, usd_krw=self.usd_krw_rate)
             self._persist_live_judgment(market)
 
         warning = result.get("warning")
@@ -5361,6 +5432,8 @@ class TradingBot:
                     "trail_sl":        round(float(pos.get("trail_sl", 0) or 0), 2),
                     "trail_pct":       round(float(pos.get("trail_pct", 0) or 0) * 100, 1),
                     "tp":              round(float(pos.get("tp", 0) or 0), 2),
+                    "tp_price":        round(float(pos.get("tp_price", 0) or 0), 2),
+                    "tp_triggered":    bool(pos.get("tp_triggered", False)),
                     "sl":              round(float(pos.get("sl", 0) or 0), 2),
                     "entry_date":      pos.get("entry_date", ""),
                     "held_days":       int(pos.get("held_days", 0) or 0),
@@ -5475,19 +5548,21 @@ class TradingBot:
             self.ws.stop()
             self.ws = None
 
-        # ── 포지션 정리: Claude 판단 후 청산 or 이월 ────────────────────────
-        day_trades  = [p for p in list(self.risk.positions) if p.get("max_hold", 1) <= 1]
-        multi_days  = [p for p in list(self.risk.positions) if p.get("max_hold", 1) > 1]
+        # ── 포지션 정리: 장 종료 후에는 주문하지 않고, 다음 세션 행동만 결정 ─────
+        market_positions = [
+            p for p in list(self.risk.positions)
+            if self._ticker_market(p.get("ticker", "")) == market
+        ]
+        day_trades = [p for p in market_positions if p.get("max_hold", 1) <= 1]
+        multi_days = [p for p in market_positions if p.get("max_hold", 1) > 1]
         from telegram_reporter import send as _tg_send
 
-        # day_trade도 Claude에게 먼저 물어본 후 SELL/이월 결정
+        # day_trade도 Claude에게 먼저 물어본 후 다음 세션 행동 결정
         claude_review_lines = [f"🔔 <b>[장마감 포지션 검토] {market}</b>", "━━━━━━━━━━━━━━━━"]
         for pos in day_trades:
             ticker = pos.get("ticker", "")
             cp     = self.price_cache.get(ticker, pos.get("current_price", 0))
-            raw_cp = self.price_cache_raw.get(ticker, cp)
             entry  = float(pos.get("display_avg_price", pos.get("entry", 0)) or 0)
-            qty    = int(pos.get("qty", 0) or 0)
             pnl    = (cp / entry - 1) * 100 if entry and cp else 0
             is_us  = market == "US"
             px_fmt = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f}원"
@@ -5510,7 +5585,7 @@ class TradingBot:
                 log.warning(f"[장마감 검토] {ticker} hold_advisor 실패 → 기본 청산: {e}")
                 action = "SELL"
 
-            action_ko  = "즉시 청산" if action == "SELL" else "내일로 이월"
+            action_ko  = "다음 세션 청산 권고" if action == "SELL" else "내일로 이월"
             color_icon = "🔴" if action == "SELL" else "🟡"
             pnl_icon   = "🟢" if pnl >= 0 else "🔴"
             block = (
@@ -5522,23 +5597,13 @@ class TradingBot:
             claude_review_lines.append(block)
 
             if action == "SELL":
-                # 즉시 청산
-                if not self.is_paper:
-                    order_px = self._compute_order_price("sell", market, float(raw_cp))
-                    result = place_order(ticker, qty, order_px, "sell",
-                                         self.token, market=market)
-                    if not result["success"]:
-                        log.error(f"force sell failed [{ticker}]: {result['msg']}")
-                ex = self.risk.close_position(ticker, cp, "session_close")
-                if ex:
-                    pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "session_close",
-                              market=market, usd_krw=self.usd_krw_rate)
-                    trade_alert("sell", ex["ticker"], ex["qty"], int(raw_cp),
-                                ex["strategy"], 0, 0, reason="session_close_claude_sell",
-                                market=market, usd_krw=self.usd_krw_rate)
-                    if advice:
-                        self._record_hold_advisor_outcome(ex, market, advice)
-                log.info(f"[장마감 Claude 청산] {ticker} {pnl:+.2f}%")
+                for p2 in self.risk.positions:
+                    if p2.get("ticker") == ticker:
+                        p2["hold_advice"] = advice
+                        p2["pending_next_open_sell"] = True
+                        p2["pending_next_open_reason"] = reason_txt
+                        break
+                log.info(f"[장마감 Claude 매도권고] {ticker} {pnl:+.2f}% → 다음 세션 장전/시초가 재검토")
             else:
                 # HOLD/TRAIL → 이월: max_hold 하루 연장
                 for p2 in self.risk.positions:
@@ -5546,6 +5611,8 @@ class TradingBot:
                         p2["max_hold"] = max(p2.get("max_hold", 1) + 1, 2)
                         if advice:
                             p2["hold_advice"] = advice
+                        p2["pending_next_open_sell"] = False
+                        p2["pending_next_open_reason"] = ""
                         break
                 multi_days.append(pos)
                 log.info(f"[장마감 Claude 이월] {ticker} {pnl:+.2f}% → max_hold 연장")
