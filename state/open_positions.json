@@ -1,52 +1,149 @@
 [
   {
-    "ticker": "017900",
-    "entry": 9379.0,
-    "qty": 21,
-    "current_price": 10530,
-    "display_avg_price": 9379.0,
-    "display_current_price": 10530.0,
+    "ticker": "010820",
+    "name": "퍼스텍",
+    "entry": 11150.0,
+    "qty": 16,
+    "current_price": 11665,
+    "display_avg_price": 11150.0,
+    "display_current_price": 12000.0,
     "display_currency": "KRW",
     "price_source": "broker_balance",
-    "order_no": "0000004755",
-    "fill_time": "09:15",
-    "strategy": "momentum",
-    "tp": 9296.75,
-    "sl": 8979.3,
-    "max_hold": 3,
-    "held_days": 3,
-    "entry_date": "2026-04-08",
+    "order_no": "",
+    "fill_time": "",
+    "strategy": "broker_sync",
+    "tp": 11428.749999999998,
+    "sl": 11038.5,
+    "max_hold": 2,
+    "held_days": 1,
+    "entry_date": "2026-04-13",
     "trailing": true,
-    "trail_sl": 10214.1,
-    "trail_pct": 0.04,
+    "trail_sl": 11426.6,
+    "trail_pct": 0.03,
     "tp_triggered": true,
     "hold_advice": {
       "action": "HOLD",
-      "trail_pct": 0.04,
+      "trail_pct": 0.03,
       "votes": {
         "bull": {
           "action": "HOLD",
-          "confidence": 0.78,
-          "trail_pct": 0.04,
-          "reason": "코스피 +6.87% 강세장에서 3일 만에 +12.27% 달성했으나 모멘텀이 살아있고 SK하이닉스 동반 급등으로 섹터 추세 유효, 4% 트레일링으로 수익 보호하며 추가 상승 추구"
+          "confidence": 0.72,
+          "trail_pct": 0.03,
+          "reason": "코스피 +1.40% 상승 환경에서 1일 만에 목표가를 돌파하며 강한 모멘텀을 확인했고, 트레일링 SL(11,426)이 이미 진입가 대비 안전권에 위치하므로 추세 연장을 노리며 3% 트레일링으로 수익 극대화를 추구한다."
+        },
+        "bear": {
+          "action": "HOLD",
+          "confidence": 0.72,
+          "trail_pct": 0.03,
+          "reason": "TP 초과 달성 후 코스피 +1.40% 강세 지속 중이나, 1일 보유에 +4.62% 수익은 충분히 의미 있으므로 trail_sl=11,426.60 수준을 3% 트레일링으로 유지해 추가 상승을 추종하되 욕심 경계 차원에서 즉각 청산보다 트레일링 이탈 시 자동 실현 전략을 고수한다."
+        },
+        "neutral": {
+          "action": "HOLD",
+          "confidence": 0.72,
+          "trail_pct": 0.03,
+          "reason": "TP 초과 달성(+4.62%) 및 코스피 강세(+1.40%) 환경에서 트레일링 SL(11,426)이 원금 보호 수준 이상으로 설정되어 있어 추가 상승 여력을 3% 트레일로 추적하며 보유 유지."
+        }
+      }
+    },
+    "tp_price": 11630.0,
+    "decision_id": null
+  },
+  {
+    "ticker": "069540",
+    "name": "빛과전자",
+    "entry": 4815.0,
+    "qty": 25,
+    "current_price": 4920,
+    "display_avg_price": 4815.0,
+    "display_current_price": 4920.0,
+    "display_currency": "KRW",
+    "price_source": "broker_balance",
+    "order_no": "",
+    "fill_time": "",
+    "strategy": "broker_sync",
+    "tp": 4935.375,
+    "sl": 4766.85,
+    "max_hold": 2,
+    "held_days": 1,
+    "entry_date": "2026-04-13",
+    "trailing": false,
+    "trail_sl": 0.0,
+    "trail_pct": 0.03,
+    "tp_triggered": false,
+    "hold_advice": {
+      "action": "HOLD",
+      "trail_pct": 0.027,
+      "votes": {
+        "bull": {
+          "action": "HOLD",
+          "confidence": 0.72,
+          "trail_pct": 0.03,
+          "reason": "코스피 +1.40% 상승 환경에서 목표가(4,935)까지 잔여 상승 여력이 있고 보유 1일차로 추세 초기 단계이므로 3% 트레일링으로 수익 보호하며 보유 유지"
+        },
+        "bear": {
+          "action": "HOLD",
+          "confidence": 0.65,
+          "trail_pct": 0.02,
+          "reason": "목표가(4,935)까지 잔여 상승여력 0.31% 남아있고 코스피 +1.40% 강세 환경이나, 1일 보유에 이미 +2.18% 확보된 상태로 욕심을 경계해 최소 트레일링(2%)으로 이익을 보호하며 TP 터치 시 즉시 청산 준비."
+        },
+        "neutral": {
+          "action": "HOLD",
+          "confidence": 0.67,
+          "trail_pct": 0.03,
+          "reason": "TP(4,935)까지 잔여 상승여력 15p 존재하고 코스피 +1.40% 강세 시장 환경이나 보유 1일·수익률 2.18%로 리스크 관리 차원에서 3% 트레일링 스톱으로 수익 보호하며 보유 유지"
+        }
+      }
+    },
+    "tp_price": 0.0,
+    "decision_id": null
+  },
+  {
+    "ticker": "203650",
+    "name": "드림시큐리티",
+    "entry": 2005.0,
+    "qty": 300,
+    "current_price": 2000,
+    "display_avg_price": 2005.0,
+    "display_current_price": 1992.0,
+    "display_currency": "KRW",
+    "price_source": "broker_balance",
+    "order_no": "0000020490",
+    "fill_time": "133436",
+    "strategy": "momentum",
+    "tp": 2055.125,
+    "sl": 1984.95,
+    "max_hold": 5,
+    "held_days": 0,
+    "entry_date": "2026-04-13",
+    "trailing": false,
+    "trail_sl": 0.0,
+    "trail_pct": 0.03,
+    "tp_triggered": false,
+    "hold_advice": {
+      "action": "SELL",
+      "trail_pct": 0.03,
+      "votes": {
+        "bull": {
+          "action": "HOLD",
+          "confidence": 0.62,
+          "trail_pct": 0.03,
+          "reason": "진입 당일 소폭 마이너스이나 코스피 +1.40% 강세장에서 MACD 골든크로스와 BB 상단 위치가 상승 모멘텀을 지지하므로 TP 2,055까지 추세 보유, 3% 트레일링으로 리스크 관리."
         },
         "bear": {
           "action": "SELL",
           "confidence": 0.82,
           "trail_pct": 0.03,
-          "reason": "3일 만에 +12.27% 달성으로 목표가 도달, 단기 과열 및 차익실현 압력 높음, 즉시 청산이 합리적"
+          "reason": "진입 당일 현재가가 진입가 대비 -0.25% 하락하며 모멘텀 미확인 상태이고, TP 미달성·보유일 0일 시점에서 손절선(1,984.95) 접근 위험이 있어 손실 확대 전 조기 청산이 리스크 관리상 적절합니다."
         },
         "neutral": {
-          "action": "HOLD",
+          "action": "SELL",
           "confidence": 0.72,
-          "trail_pct": 0.04,
-          "reason": "코스피 강세장 모멘텀 유효, 단기 급등 되돌림 리스크 감안해 4% 트레일링으로 수익 방어하며 추가 상승 확인"
+          "trail_pct": 0.03,
+          "reason": "진입 당일(보유 0일) 목표가 미달 상태(-0.25%)에서 삼성전자 -3.09% 급락 및 VKOSPI 데이터 부재로 시장 불확실성이 높고, 모멘텀 전략 특성상 즉각적 방향성 미확인 시 손절선(1,984.95) 근접 리스크가 수익 기대치를 초과한다."
         }
       }
     },
-    "tp_price": 10530,
-    "decision_id": null,
-    "market": "KR",
-    "last_hold_update": "2026-04-10"
+    "tp_price": 0.0,
+    "decision_id": 47786
   }
 ]

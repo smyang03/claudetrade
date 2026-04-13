@@ -131,7 +131,9 @@ def get_logger(
     log_type: 서브디렉토리 ('system'|'phase1'|'brain'|'daily')
     level:    로그 레벨 ('DEBUG'|'INFO'|'WARNING'|'ERROR')
     """
-    cache_key = f"{name}_{log_type}"
+    today = date.today().strftime("%Y%m%d")
+    # 날짜를 캐시 키에 포함 → 자정 이후에도 새 파일로 자동 전환
+    cache_key = f"{name}_{log_type}_{today}"
     if cache_key in _loggers:
         return _loggers[cache_key]
 
@@ -148,8 +150,6 @@ def get_logger(
         ch.setLevel(logging.DEBUG)
         ch.setFormatter(ColorFormatter(fmt_str, datefmt=date_fmt))
         logger.addHandler(ch)
-
-    today = date.today().strftime("%Y%m%d")
 
     # 텍스트 로그 파일 (읽기 쉬운 형식)
     if to_file:

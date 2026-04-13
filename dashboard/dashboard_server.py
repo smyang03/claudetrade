@@ -3157,6 +3157,15 @@ def api_signals_recent():
     n      = min(int(request.args.get("n", "60")), 200)
     today  = _market_log_date_str(market)
     log_path = BASE_DIR / "logs" / "analysis" / f"analysis_{today}.jsonl"
+    # 봇이 전날 시작된 경우 로거가 전날 파일에 기록 → 어제 파일에서 오늘 타임스탬프 보완
+    if not log_path.exists():
+        from datetime import datetime as _dt, timedelta as _td
+        _yesterday = (_dt.strptime(today, "%Y%m%d") - _td(days=1)).strftime("%Y%m%d")
+        _fallback = BASE_DIR / "logs" / "analysis" / f"analysis_{_yesterday}.jsonl"
+        if _fallback.exists():
+            log_path = _fallback
+    # 날짜 필터 prefix (어제 파일에서 오늘 항목만 읽기 위해)
+    today_prefix = today[:4] + "-" + today[4:6] + "-" + today[6:]  # "20260413" → "2026-04-13"
     events: list[dict] = []
     if log_path.exists():
         try:
@@ -3167,6 +3176,10 @@ def api_signals_recent():
             try:
                 rec = json.loads(line)
             except Exception:
+                continue
+            # 어제 파일 읽는 경우 오늘 타임스탬프만 포함
+            ts = rec.get("timestamp", "")
+            if ts and not ts.startswith(today_prefix):
                 continue
             # extra 以묒꺽 援ъ“ 泥섎━: {"extra": {"extra": {...}}} ?먮뒗 {"extra": {...}}
             extra = rec.get("extra", {})

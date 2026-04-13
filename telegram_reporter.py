@@ -796,10 +796,11 @@ def trade_alert(
     sl: int,
     reason: str = "",
     market: str = "KR",
+    name: str = "",
     usd_krw: float = 0.0,
 ) -> str:
     icon = "🟢" if side == "buy" else "🔴"
-    ticker_disp = _display_ticker(ticker, market)
+    ticker_disp = _display_ticker(ticker, market, name)
     rate = float(usd_krw or 0) or _env_usd_krw_rate()
     total = float(price) * int(qty)
     fee_rate = 0.00015 if market == "US" or side == "buy" else 0.00195
@@ -838,11 +839,12 @@ def pnl_alert(
     pnl_krw: int,
     reason: str,
     market: Optional[str] = None,
+    name: str = "",
     usd_krw: float = 0.0,
 ) -> str:
     icon = "🟢" if pnl_krw > 0 else "🔴"
     market = market or ("US" if str(ticker or "").replace(".", "").isalpha() else "KR")
-    ticker_disp = _display_ticker(ticker, market)
+    ticker_disp = _display_ticker(ticker, market, name)
     rate = float(usd_krw or 0) or _env_usd_krw_rate()
     if market == "US":
         pnl_usd = float(pnl_krw) / rate if rate > 0 else 0.0
