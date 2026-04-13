@@ -29,18 +29,40 @@ PERSONAS = {
 
 
 def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> dict:
-    entry   = float(pos.get("entry", 0) or 0)
+    # entry: open_positions(KRW) 우선, 없으면 display_avg_price(USD) 폴백
+    entry = float(pos.get("entry", 0) or 0)
+    if entry <= 0:
+        entry = float(pos.get("avg_price", 0) or pos.get("display_avg_price", 0) or 0)
     if entry <= 0:
         raise ValueError(f"[hold_advisor] entry=0 — 진입가 미확정, 호출 불가 ({pos.get('ticker','-')})")
-    cp      = pos.get("current_price", entry)
-    pnl_pct = (cp / entry - 1) * 100 if entry else 0
+
+    # display 가격이 있으면 USD 단위로 표시 (entry/cp/tp/sl 일관성 유지)
+    disp_entry = float(pos.get("display_avg_price", 0) or 0)
+    disp_cp    = float(pos.get("display_current_price", 0) or 0)
+    if market == "US" and disp_entry > 0 and disp_cp > 0:
+        show_entry = disp_entry
+        show_cp    = disp_cp
+        show_tp    = round(float(pos.get("tp", 0) or 0) / (entry / disp_entry), 2) if entry > 0 else 0
+        show_sl    = round(float(pos.get("sl", 0) or 0) / (entry / disp_entry), 2) if entry > 0 else 0
+        show_trail = round(float(pos.get("trail_sl", 0) or 0) / (entry / disp_entry), 2) if entry > 0 else 0
+        ccy = "USD"
+    else:
+        show_entry = entry
+        show_cp    = float(pos.get("current_price", entry) or entry)
+        show_tp    = float(pos.get("tp", 0) or 0)
+        show_sl    = float(pos.get("sl", 0) or 0)
+        show_trail = float(pos.get("trail_sl", 0) or 0)
+        ccy = "KRW"
+
+    cp      = show_cp
+    pnl_pct = (show_cp / show_entry - 1) * 100 if show_entry else 0
     ticker  = pos.get("ticker", "-")
     strat   = pos.get("strategy", "-")
     held    = pos.get("held_days", 0)
-    tp      = float(pos.get("tp", 0) or 0)
-    sl      = float(pos.get("sl", 0) or 0)
+    tp      = show_tp
+    sl      = show_sl
     trailing = bool(pos.get("trailing", False))
-    trail_sl = float(pos.get("trail_sl", 0) or 0)
+    trail_sl = show_trail
     tp_triggered = bool(pos.get("tp_triggered", False))
     status_bits = []
     if tp > 0:
@@ -58,8 +80,8 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
 목표가에 도달한 포지션을 계속 보유할지 판단하세요.
 
 ━━━ 포지션 ━━━
-  종목: {ticker} ({market})  전략: {strat}
-  진입가: {entry:,}  현재가: {cp:,}  수익률: {pnl_pct:+.2f}%
+  종목: {ticker} ({market}, {ccy})  전략: {strat}
+  진입가: {show_entry:,.2f}  현재가: {show_cp:,.2f}  수익률: {pnl_pct:+.2f}%
   보유일: {held}일
   포지션 상태: {status_line}
 
