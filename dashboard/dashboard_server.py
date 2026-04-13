@@ -3569,12 +3569,31 @@ def api_tickers_today():
         prev_score = (1 if prev_price > 0 else 0) + (1 if prev_detail else 0)
         cand_score = (1 if cand_price > 0 else 0) + (1 if cand_detail else 0)
         return cand if cand_score >= prev_score else prev
+    # US 자정 세션: session date != system date → 오늘 파일도 함께 읽기
+    _watch_sysdate = datetime.now(KST).strftime("%Y%m%d")
+    _watch_all_lines: list[str] = []
     if log_path.exists():
+        _analysis_today_prefix = today_str[:4] + "-" + today_str[4:6] + "-" + today_str[6:]
         try:
-            lines = log_path.read_text(encoding="utf-8").splitlines()
+            for _wl in log_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    _wr = json.loads(_wl)
+                    _wts = _wr.get("timestamp", "")
+                    if _wts and not _wts.startswith(_analysis_today_prefix):
+                        continue
+                    _watch_all_lines.append(_wl)
+                except Exception:
+                    pass
         except Exception:
-            lines = []
-        for line in lines:
+            pass
+    if _watch_sysdate != today_str:
+        _ep2 = BASE_DIR / "logs" / "analysis" / f"analysis_{_watch_sysdate}.jsonl"
+        if _ep2.exists():
+            try:
+                _watch_all_lines.extend(_ep2.read_text(encoding="utf-8").splitlines())
+            except Exception:
+                pass
+    for line in _watch_all_lines:
             try:
                 r = json.loads(line)
             except Exception:
