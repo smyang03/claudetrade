@@ -44,15 +44,6 @@ def signal(df: pd.DataFrame, i: int, params: dict) -> bool:
 
 
 def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
-    if market.upper() == "US":
-        return {
-            "tp_pct": 0.060,
-            "sl_pct": 0.030,
-            "max_hold": 5,
-            "size_mult": 0.0,
-            "vol_mult": 9.9,
-            "disabled": True,
-        }
     if brain_mode in {"MILD_BEAR", "CAUTIOUS_BEAR", "DEFENSIVE", "HALT"}:
         return {
             "tp_pct": 0.060,
@@ -62,6 +53,28 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
             "vol_mult": 9.9,
             "disabled": True,
         }
+
+    if market.upper() == "US":
+        # US 모멘텀: KR 대비 TP/SL 넓게, vol_mult 강하게 (유동성 풍부한 대형주 기준)
+        _us_table = {
+            "AGGRESSIVE":   (1.0, 1.3),
+            "MODERATE_BULL":(0.8, 1.4),
+            "MILD_BULL":    (0.7, 1.5),
+            "CAUTIOUS_BULL":(0.55, 1.6),
+            "NEUTRAL":      (0.6, 1.6),
+        }
+        size, vol_mult = _us_table.get(brain_mode, _us_table["NEUTRAL"])
+        conf_adj = (0.6 - max(0.4, min(0.9, conf))) * 1.0
+        vol_mult = round(max(1.2, vol_mult + conf_adj), 2)
+        return {
+            "tp_pct":    0.060,
+            "sl_pct":    0.030,
+            "max_hold":  5,
+            "size_mult": size,
+            "vol_mult":  vol_mult,
+        }
+
+    # KR
     _table = {
         "AGGRESSIVE":   (1.0, 1.2),
         "MODERATE_BULL":(0.8, 1.3),
