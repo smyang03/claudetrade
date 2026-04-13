@@ -3419,6 +3419,16 @@ def api_review_position():
     if pos is None:
         return jsonify({"error": f"{ticker} 포지션을 찾을 수 없습니다"}), 404
 
+    # live_status position은 entry=None/0일 수 있음 → open_positions.json의 KRW entry로 보완
+    if float(pos.get("entry", 0) or 0) <= 0:
+        saved = next(
+            (p for p in _load_open_positions()
+             if str(p.get("ticker", "") or "").strip().upper() == ticker),
+            None,
+        )
+        if saved and float(saved.get("entry", 0) or 0) > 0:
+            pos = _merge_position_context(saved, pos)
+
     try:
         from minority_report.hold_advisor import ask as advisor_ask
         digest = ""
