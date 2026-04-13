@@ -1,0 +1,222 @@
+{
+  "date": "2026-04-09",
+  "market": "KR",
+  "source": "runtime_screen",
+  "config": {
+    "top_n": 20,
+    "min_price": 1.0,
+    "min_volume": 1.0
+  },
+  "core_tickers": [
+    "005930",
+    "000660",
+    "035420",
+    "005380",
+    "051910"
+  ],
+  "tickers": [
+    "005930",
+    "000660",
+    "035420",
+    "005380",
+    "051910",
+    "065440",
+    "100590",
+    "071090",
+    "026940",
+    "092600",
+    "017550",
+    "017900",
+    "024740",
+    "340440",
+    "008350",
+    "069540",
+    "036090",
+    "152550",
+    "038110",
+    "252670"
+  ],
+  "candidates": [
+    {
+      "ticker": "005930",
+      "name": "삼성전자",
+      "price": 204000.0,
+      "change_rate": -3.09,
+      "volume": 22710987.0,
+      "vol_ratio": 0.38,
+      "score": 17.863015650919564
+    },
+    {
+      "ticker": "000660",
+      "name": "000660",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "035420",
+      "name": "035420",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "005380",
+      "name": "005380",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "051910",
+      "name": "051910",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "065440",
+      "name": "이루온",
+      "price": 4465.0,
+      "change_rate": 14.19,
+      "volume": 57643740.0,
+      "vol_ratio": 211.34,
+      "score": 884.4618753379009
+    },
+    {
+      "ticker": "100590",
+      "name": "머큐리",
+      "price": 8590.0,
+      "change_rate": 16.24,
+      "volume": 26010627.0,
+      "vol_ratio": 164.31,
+      "score": 699.9644094690159
+    },
+    {
+      "ticker": "071090",
+      "name": "하이스틸",
+      "price": 4395.0,
+      "change_rate": 14.9,
+      "volume": 22130758.0,
+      "vol_ratio": 109.6,
+      "score": 478.3474874052638
+    },
+    {
+      "ticker": "026940",
+      "name": "부국철강",
+      "price": 2675.0,
+      "change_rate": 29.85,
+      "volume": 19458334.0,
+      "vol_ratio": 97.29,
+      "score": 458.930271642563
+    },
+    {
+      "ticker": "092600",
+      "name": "앤씨앤",
+      "price": 1432.0,
+      "change_rate": -4.41,
+      "volume": 25299048.0,
+      "vol_ratio": 100.86,
+      "score": 422.48776641843506
+    },
+    {
+      "ticker": "017550",
+      "name": "수산세보틱스",
+      "price": 2945.0,
+      "change_rate": 9.07,
+      "volume": 50763191.0,
+      "vol_ratio": 81.35,
+      "score": 354.1856092497964
+    },
+    {
+      "ticker": "017900",
+      "name": "광전자",
+      "price": 10530.0,
+      "change_rate": 30.0,
+      "volume": 38297268.0,
+      "vol_ratio": 66.09,
+      "score": 334.8365334876753
+    },
+    {
+      "ticker": "024740",
+      "name": "한일단조",
+      "price": 3300.0,
+      "change_rate": 14.98,
+      "volume": 23866450.0,
+      "vol_ratio": 72.55,
+      "score": 330.3527905841454
+    },
+    {
+      "ticker": "340440",
+      "name": "세림B&G",
+      "price": 2005.0,
+      "change_rate": 4.21,
+      "volume": 22079111.0,
+      "vol_ratio": 77.8,
+      "score": 329.7660855367039
+    },
+    {
+      "ticker": "008350",
+      "name": "남선알미늄",
+      "price": 2165.0,
+      "change_rate": 5.1,
+      "volume": 95891910.0,
+      "vol_ratio": 74.29,
+      "score": 318.38723931281004
+    },
+    {
+      "ticker": "069540",
+      "name": "빛과전자",
+      "price": 4225.0,
+      "change_rate": 30.0,
+      "volume": 58104924.0,
+      "vol_ratio": 59.53,
+      "score": 308.8466565915229
+    },
+    {
+      "ticker": "036090",
+      "name": "위지트",
+      "price": 743.0,
+      "change_rate": 19.07,
+      "volume": 76679251.0,
+      "vol_ratio": 64.77,
+      "score": 308.1130850327613
+    },
+    {
+      "ticker": "152550",
+      "name": "한국ANKOR유전",
+      "price": 231.0,
+      "change_rate": 3.59,
+      "volume": 50102024.0,
+      "vol_ratio": 71.55,
+      "score": 304.01774319064
+    },
+    {
+      "ticker": "038110",
+      "name": "에코플라스틱",
+      "price": 3735.0,
+      "change_rate": 6.41,
+      "volume": 24756463.0,
+      "vol_ratio": 60.13,
+      "score": 263.5547583107581
+    },
+    {
+      "ticker": "252670",
+      "name": "KODEX 200선물인버스2X",
+      "price": 227.0,
+      "change_rate": 4.61,
+      "volume": 2793520044.0,
+      "vol_ratio": 56.85,
+      "score": 249.67034098145436
+    }
+  ],
+  "count": 20
+}

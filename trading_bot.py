@@ -3448,7 +3448,7 @@ class TradingBot:
                     self._flag_execution_issue(market, "quote_invalid")
                     cnt = self._invalid_price_count.get(ticker, 0) + 1
                     self._invalid_price_count[ticker] = cnt
-                    _MAX_INVALID = 2 if market == "US" else 3
+                    _MAX_INVALID = 1 if market == "US" else 2
                     if cnt >= _MAX_INVALID:
                         log.warning(
                             f"[skip {market}] {ticker} invalid price {cnt}회 연속 "
@@ -4854,10 +4854,15 @@ class TradingBot:
                     pos["sl"] = pos["sl"] * (1 + adj_clamped)
                 log.info(f"SL adjusted: {adj_clamped:+.3f}")
 
-            # REVERSE: Claude가 장세 반전 판단 → 보유 포지션 전체 청산
+            # REVERSE: Claude가 장세 반전 판단 → 보유 포지션 청산
+            # broker_sync 전략은 hold_advisor가 개별 판단하므로 REVERSE 대상에서 제외
             if action == "REVERSE" and self.risk.positions:
-                log.warning(f"[REVERSE] 튜너 판단: {result.get('reason','')} — 포지션 전체 청산")
-                for pos in list(self.risk.positions):
+                reverse_targets = [p for p in self.risk.positions if p.get("strategy") != "broker_sync"]
+                skipped = [p["ticker"] for p in self.risk.positions if p.get("strategy") == "broker_sync"]
+                if skipped:
+                    log.info(f"[REVERSE] broker_sync 포지션 제외 (hold_advisor 관할): {skipped}")
+                log.warning(f"[REVERSE] 튜너 판단: {result.get('reason','')} — {len(reverse_targets)}개 포지션 청산")
+                for pos in reverse_targets:
                     cp = self.price_cache.get(pos["ticker"], pos["current_price"])
                     if not self.is_paper:
                         place_order(pos["ticker"], pos["qty"], 0, "sell",

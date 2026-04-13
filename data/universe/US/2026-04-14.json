@@ -1,0 +1,222 @@
+{
+  "date": "2026-04-14",
+  "market": "US",
+  "source": "runtime_screen",
+  "config": {
+    "top_n": 20,
+    "min_price": 1.0,
+    "min_volume": 1.0
+  },
+  "core_tickers": [
+    "NVDA",
+    "TSLA",
+    "AAPL",
+    "GOOGL",
+    "NFLX"
+  ],
+  "tickers": [
+    "TSLA",
+    "AAPL",
+    "NVDA",
+    "NFLX",
+    "GOOGL",
+    "RVMD",
+    "EOSE",
+    "CRWV",
+    "ORCL",
+    "NOK",
+    "NBIS",
+    "IREN",
+    "MARA",
+    "CAG",
+    "APLD",
+    "INTC",
+    "SOFI",
+    "MSFT",
+    "MRVL",
+    "AAL"
+  ],
+  "candidates": [
+    {
+      "ticker": "TSLA",
+      "name": "Tesla, Inc.",
+      "price": 352.1,
+      "change_rate": 0.8894096,
+      "volume": 20952578.0,
+      "vol_ratio": 1.0,
+      "score": 15.893482579628728
+    },
+    {
+      "ticker": "AAPL",
+      "name": "Apple Inc.",
+      "price": 257.53,
+      "change_rate": -1.1325293,
+      "volume": 8155220.0,
+      "vol_ratio": 1.0,
+      "score": 15.813559936165245
+    },
+    {
+      "ticker": "NVDA",
+      "name": "NVIDIA Corporation",
+      "price": 189.1,
+      "change_rate": 0.18809028,
+      "volume": 47179167.0,
+      "vol_ratio": 1.0,
+      "score": 14.977858358318429
+    },
+    {
+      "ticker": "NFLX",
+      "name": "Netflix, Inc.",
+      "price": 102.73,
+      "change_rate": -0.29310733,
+      "volume": 7909523.0,
+      "vol_ratio": 1.0,
+      "score": 14.116361556565186
+    },
+    {
+      "ticker": "GOOGL",
+      "name": "GOOGL",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "RVMD",
+      "name": "Revolution Medicines, Inc.",
+      "price": 130.72,
+      "change_rate": 35.559475,
+      "volume": 7715810.0,
+      "vol_ratio": 1.0,
+      "score": 84.6342192948906
+    },
+    {
+      "ticker": "EOSE",
+      "name": "Eos Energy Enterprises, Inc.",
+      "price": 6.28,
+      "change_rate": 11.764293,
+      "volume": 12582174.0,
+      "vol_ratio": 1.0,
+      "score": 37.33726101266436
+    },
+    {
+      "ticker": "CRWV",
+      "name": "CoreWeave, Inc.",
+      "price": 112.39,
+      "change_rate": 10.186275,
+      "volume": 26137708.0,
+      "vol_ratio": 1.0,
+      "score": 34.61988377131668
+    },
+    {
+      "ticker": "ORCL",
+      "name": "Oracle Corporation",
+      "price": 150.2,
+      "change_rate": 8.769643,
+      "volume": 14943166.0,
+      "vol_ratio": 1.0,
+      "score": 31.451144817877477
+    },
+    {
+      "ticker": "NOK",
+      "name": "Nokia Corporation Sponsored",
+      "price": 10.24,
+      "change_rate": 8.24524,
+      "volume": 71678988.0,
+      "vol_ratio": 1.0,
+      "score": 31.343104933307284
+    },
+    {
+      "ticker": "NBIS",
+      "name": "Nebius Group N.V.",
+      "price": 156.73,
+      "change_rate": 8.110901,
+      "volume": 12806440.0,
+      "vol_ratio": 1.0,
+      "score": 30.04107728327037
+    },
+    {
+      "ticker": "IREN",
+      "name": "IREN LIMITED",
+      "price": 41.53,
+      "change_rate": 5.620547,
+      "volume": 14733853.0,
+      "vol_ratio": 1.0,
+      "score": 25.14448903827315
+    },
+    {
+      "ticker": "MARA",
+      "name": "MARA Holdings, Inc.",
+      "price": 10.0447,
+      "change_rate": 5.2903533,
+      "volume": 18486441.0,
+      "vol_ratio": 1.0,
+      "score": 24.620235493904172
+    },
+    {
+      "ticker": "CAG",
+      "name": "ConAgra Brands, Inc.",
+      "price": 14.375,
+      "change_rate": -5.3030324,
+      "volume": 8480118.0,
+      "vol_ratio": 1.0,
+      "score": 24.178005824413095
+    },
+    {
+      "ticker": "APLD",
+      "name": "Applied Digital Corporation",
+      "price": 27.3099,
+      "change_rate": 4.09003,
+      "volume": 8848797.0,
+      "vol_ratio": 1.0,
+      "score": 21.777535313130485
+    },
+    {
+      "ticker": "INTC",
+      "name": "Intel Corporation",
+      "price": 64.2501,
+      "change_rate": 2.997913,
+      "volume": 40936875.0,
+      "vol_ratio": 1.0,
+      "score": 20.512351097097287
+    },
+    {
+      "ticker": "SOFI",
+      "name": "SoFi Technologies, Inc.",
+      "price": 16.6699,
+      "change_rate": 2.773746,
+      "volume": 16776450.0,
+      "vol_ratio": 1.0,
+      "score": 19.5287840409075
+    },
+    {
+      "ticker": "MSFT",
+      "name": "Microsoft Corporation",
+      "price": 378.735,
+      "change_rate": 2.1206865,
+      "volume": 10946761.0,
+      "vol_ratio": 1.0,
+      "score": 17.96650555764044
+    },
+    {
+      "ticker": "MRVL",
+      "name": "Marvell Technology, Inc.",
+      "price": 131.06,
+      "change_rate": 2.0001495,
+      "volume": 15122801.0,
+      "vol_ratio": 1.0,
+      "score": 17.919327537404094
+    },
+    {
+      "ticker": "AAL",
+      "name": "American Airlines Group, Inc.",
+      "price": 11.105,
+      "change_rate": -1.8992947,
+      "volume": 11258885.0,
+      "vol_ratio": 1.0,
+      "score": 17.540590344900515
+    }
+  ],
+  "count": 20
+}

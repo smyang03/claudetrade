@@ -1,0 +1,222 @@
+{
+  "date": "2026-04-09",
+  "market": "US",
+  "source": "runtime_screen",
+  "config": {
+    "top_n": 20,
+    "min_price": 1.0,
+    "min_volume": 1.0
+  },
+  "core_tickers": [
+    "NVDA",
+    "TSLA",
+    "AAPL",
+    "GOOGL",
+    "NFLX"
+  ],
+  "tickers": [
+    "TSLA",
+    "NVDA",
+    "AAPL",
+    "GOOGL",
+    "NFLX",
+    "AXTI",
+    "APLD",
+    "IBRX",
+    "SNDK",
+    "RKT",
+    "CRWV",
+    "PATH",
+    "HOOD",
+    "MRVL",
+    "IREN",
+    "NIO",
+    "INTC",
+    "ONDS",
+    "CCL",
+    "ORCL"
+  ],
+  "candidates": [
+    {
+      "ticker": "TSLA",
+      "name": "Tesla, Inc.",
+      "price": 339.48,
+      "change_rate": -1.0983217,
+      "volume": 16469622.0,
+      "vol_ratio": 1.0,
+      "score": 16.166860327073174
+    },
+    {
+      "ticker": "NVDA",
+      "name": "NVIDIA Corporation",
+      "price": 181.81,
+      "change_rate": -0.14828882,
+      "volume": 25336293.0,
+      "vol_ratio": 1.0,
+      "score": 14.52522672270498
+    },
+    {
+      "ticker": "AAPL",
+      "name": "AAPL",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "GOOGL",
+      "name": "GOOGL",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "NFLX",
+      "name": "NFLX",
+      "price": 0.0,
+      "change_rate": 0.0,
+      "volume": 0.0,
+      "vol_ratio": 1.0,
+      "score": 0.0
+    },
+    {
+      "ticker": "AXTI",
+      "name": "AXT Inc",
+      "price": 61.265,
+      "change_rate": 15.203081,
+      "volume": 6574182.0,
+      "vol_ratio": 1.0,
+      "score": 43.82535852185134
+    },
+    {
+      "ticker": "APLD",
+      "name": "Applied Digital Corporation",
+      "price": 25.35,
+      "change_rate": -8.783299,
+      "volume": 13811134.0,
+      "vol_ratio": 1.0,
+      "score": 31.431189425297678
+    },
+    {
+      "ticker": "IBRX",
+      "name": "ImmunityBio, Inc.",
+      "price": 7.48,
+      "change_rate": 7.163324,
+      "volume": 8220554.0,
+      "vol_ratio": 1.0,
+      "score": 27.87993696980077
+    },
+    {
+      "ticker": "SNDK",
+      "name": "Sandisk Corporation",
+      "price": 822.69,
+      "change_rate": 5.351515,
+      "volume": 6129496.0,
+      "vol_ratio": 1.0,
+      "score": 24.08020394944844
+    },
+    {
+      "ticker": "RKT",
+      "name": "Rocket Companies, Inc.",
+      "price": 14.395,
+      "change_rate": -5.2960486,
+      "volume": 5855227.0,
+      "vol_ratio": 1.0,
+      "score": 23.941804497199065
+    },
+    {
+      "ticker": "CRWV",
+      "name": "CoreWeave, Inc.",
+      "price": 85.26,
+      "change_rate": -4.0944877,
+      "volume": 20819785.0,
+      "vol_ratio": 1.0,
+      "score": 22.299824005511987
+    },
+    {
+      "ticker": "PATH",
+      "name": "UiPath, Inc.",
+      "price": 9.955,
+      "change_rate": -4.186319,
+      "volume": 6005065.0,
+      "vol_ratio": 1.0,
+      "score": 21.737506402566073
+    },
+    {
+      "ticker": "HOOD",
+      "name": "Robinhood Markets, Inc.",
+      "price": 68.95,
+      "change_rate": -4.0094733,
+      "volume": 5813108.0,
+      "vol_ratio": 1.0,
+      "score": 21.36432225854972
+    },
+    {
+      "ticker": "MRVL",
+      "name": "Marvell Technology, Inc.",
+      "price": 118.865,
+      "change_rate": 3.856738,
+      "volume": 9370739.0,
+      "vol_ratio": 1.0,
+      "score": 21.345337575929868
+    },
+    {
+      "ticker": "IREN",
+      "name": "IREN LIMITED",
+      "price": 35.4194,
+      "change_rate": -3.8320549,
+      "volume": 6717945.0,
+      "vol_ratio": 1.0,
+      "score": 21.096285606609293
+    },
+    {
+      "ticker": "NIO",
+      "name": "NIO Inc.",
+      "price": 6.16,
+      "change_rate": -3.44828,
+      "volume": 23631826.0,
+      "vol_ratio": 1.0,
+      "score": 21.083422977886542
+    },
+    {
+      "ticker": "INTC",
+      "name": "Intel Corporation",
+      "price": 60.815,
+      "change_rate": 3.1639626,
+      "volume": 53040765.0,
+      "vol_ratio": 1.0,
+      "score": 20.999868007400927
+    },
+    {
+      "ticker": "ONDS",
+      "name": "Ondas Inc",
+      "price": 9.12,
+      "change_rate": -3.4920628,
+      "volume": 9246547.0,
+      "vol_ratio": 1.0,
+      "score": 20.6079821103882
+    },
+    {
+      "ticker": "CCL",
+      "name": "Carnival Corporation",
+      "price": 27.0592,
+      "change_rate": -3.4634333,
+      "volume": 6236761.0,
+      "vol_ratio": 1.0,
+      "score": 20.31444961724521
+    },
+    {
+      "ticker": "ORCL",
+      "name": "Oracle Corporation",
+      "price": 138.235,
+      "change_rate": -3.4401248,
+      "volume": 6182393.0,
+      "vol_ratio": 1.0,
+      "score": 20.262579279837748
+    }
+  ],
+  "count": 20
+}

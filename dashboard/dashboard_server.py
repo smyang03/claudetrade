@@ -3166,44 +3166,63 @@ def api_signals_recent():
             log_path = _fallback
     # 날짜 필터 prefix (어제 파일에서 오늘 항목만 읽기 위해)
     today_prefix = today[:4] + "-" + today[4:6] + "-" + today[6:]  # "20260413" → "2026-04-13"
+    # US 자정 세션: session date = 어제인데 봇이 자정 넘어 오늘 파일에 기록 → 오늘 파일도 추가
+    _sysdate_str = datetime.now(KST).strftime("%Y%m%d")
+    _extra_log_paths: list = []
+    if _sysdate_str != today:
+        _extra_path = BASE_DIR / "logs" / "analysis" / f"analysis_{_sysdate_str}.jsonl"
+        if _extra_path.exists():
+            _extra_log_paths.append(_extra_path)
     events: list[dict] = []
-    if log_path.exists():
+
+    def _read_analysis_lines(path, prefix_filter=None):
         try:
-            lines = log_path.read_text(encoding="utf-8").splitlines()
+            raw = path.read_text(encoding="utf-8").splitlines()
         except Exception:
-            lines = []
-        for line in lines:
+            return []
+        result = []
+        for _line in raw:
             try:
-                rec = json.loads(line)
+                _rec = json.loads(_line)
             except Exception:
                 continue
-            # 어제 파일 읽는 경우 오늘 타임스탬프만 포함
-            ts = rec.get("timestamp", "")
-            if ts and not ts.startswith(today_prefix):
-                continue
-            # extra 以묒꺽 援ъ“ 泥섎━: {"extra": {"extra": {...}}} ?먮뒗 {"extra": {...}}
-            extra = rec.get("extra", {})
-            if "extra" in extra:
-                extra = extra["extra"]
-            ev = extra.get("event", "")
-            if ev not in ("signal_check", "entry_signal", "entry_skip", "signal_blocked"):
-                continue
-            ev_market = extra.get("market", "")
-            if market and ev_market and ev_market != market:
-                continue
-            # signal_check?먯꽌 signal=none??寃쎌슦留??ы븿 (?좏샇 ?놁쓬)
-            if ev == "signal_check" and extra.get("signal", "") != "none":
-                continue
-            events.append({
-                "timestamp": rec.get("timestamp", ""),
-                "event":     ev,
-                "market":    ev_market,
-                "ticker":    extra.get("ticker", ""),
-                "reason":    extra.get("reason", extra.get("signal", "")),
-                "price":     extra.get("price", 0),
-                "mode":      extra.get("mode", ""),
-                "detail":    extra.get("detail", ""),
-            })
+            if prefix_filter:
+                _ts = _rec.get("timestamp", "")
+                if _ts and not _ts.startswith(prefix_filter):
+                    continue
+            result.append(_rec)
+        return result
+
+    all_recs = []
+    if log_path.exists():
+        all_recs.extend(_read_analysis_lines(log_path, prefix_filter=today_prefix))
+    for _ep in _extra_log_paths:
+        all_recs.extend(_read_analysis_lines(_ep))
+
+    for rec in all_recs:
+        # extra 以묒꺽 援ъ“ 泥섎━: {"extra": {"extra": {...}}} ?먮뒗 {"extra": {...}}
+        extra = rec.get("extra", {})
+        if "extra" in extra:
+            extra = extra["extra"]
+        ev = extra.get("event", "")
+        if ev not in ("signal_check", "entry_signal", "entry_skip", "signal_blocked"):
+            continue
+        ev_market = extra.get("market", "")
+        if market and ev_market and ev_market != market:
+            continue
+        # signal_check?먯꽌 signal=none??寃쎌슦留??ы븿 (?좏샇 ?놁쓬)
+        if ev == "signal_check" and extra.get("signal", "") != "none":
+            continue
+        events.append({
+            "timestamp": rec.get("timestamp", ""),
+            "event":     ev,
+            "market":    ev_market,
+            "ticker":    extra.get("ticker", ""),
+            "reason":    extra.get("reason", extra.get("signal", "")),
+            "price":     extra.get("price", 0),
+            "mode":      extra.get("mode", ""),
+            "detail":    extra.get("detail", ""),
+        })
     # 理쒖떊?쒖쑝濡?n媛?    events.reverse()
     runtime_events = _parse_runtime_events(market, limit=n)
     merged = events + runtime_events
@@ -3642,14 +3661,28 @@ def api_tickers_today():
     def _today_watchlist_history(_market: str) -> dict:
         day_str = _market_log_date_str(_market)
         sys_path = BASE_DIR / "logs" / "system" / f"trading_{day_str}.log"
+        # US 자정 세션: session date = 어제, 시스템 날짜 = 오늘 → 오늘 로그도 함께 읽기
+        _now = datetime.now(KST)
+        sysdate_str = _now.strftime("%Y%m%d")
+        sysdate_path = BASE_DIR / "logs" / "system" / f"trading_{sysdate_str}.log"
         initial: list[str] = []
         history: list[dict] = []
         current: list[str] = []
-        if not sys_path.exists():
+        # 읽을 로그 파일 목록 (오래된 것 먼저, 최신 것 나중에)
+        paths_to_read = []
+        if sys_path.exists():
+            paths_to_read.append(sys_path)
+        if sysdate_str != day_str and sysdate_path.exists():
+            paths_to_read.append(sysdate_path)
+        if not paths_to_read:
             return {"initial": initial, "current": current, "history": history}
-        try:
-            lines = sys_path.read_text(encoding="utf-8").splitlines()
-        except Exception:
+        lines = []
+        for p in paths_to_read:
+            try:
+                lines.extend(p.read_text(encoding="utf-8").splitlines())
+            except Exception:
+                pass
+        if not lines:
             return {"initial": initial, "current": current, "history": history}
         pat_initial = re.compile(rf"\[(?:종목선택 확정|종목 재선택 완료)\]\s+{_market}:\s+\[(.*)\]")
         pat_manual = re.compile(rf"\[수동 종목 재선택 완료\]\s+{_market}:\s+\[(.*)\]")

@@ -464,8 +464,8 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
             log.warning(f"주가 데이터 없음: {ticker}")
             continue
 
-        # date 컬럼이 str로 로드된 경우 Timestamp 비교 오류 방지
-        if "date" in df.columns and df["date"].dtype == object:
+        # date 컬럼 타입 강제 통일 (str/mixed 모두 대응)
+        if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
         dt_row = df[df["date"] == pd.Timestamp(target_date)]
@@ -626,8 +626,8 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         if df.empty:
             continue
 
-        # date 컬럼이 str로 로드된 경우 Timestamp 비교 오류 방지
-        if "date" in df.columns and df["date"].dtype == object:
+        # date 컬럼 타입 강제 통일 (str/mixed 모두 대응)
+        if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
         dt_row = df[df["date"] == pd.Timestamp(target_date)]

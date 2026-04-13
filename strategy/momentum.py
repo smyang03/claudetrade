@@ -55,32 +55,34 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
         }
 
     if market.upper() == "US":
-        # US 모멘텀: KR 대비 TP/SL 넓게, vol_mult 강하게 (유동성 풍부한 대형주 기준)
+        # US 모멘텀: vol_mult 1.6 유지 (거래량이 병목, 필터 역할), TP/SL 약간 넓게
+        # size_mult: 방향 불분명 + 고변동성 → 전반적으로 -25% 하향 (4/14 조정)
         _us_table = {
-            "AGGRESSIVE":   (1.0, 1.3),
-            "MODERATE_BULL":(0.8, 1.4),
-            "MILD_BULL":    (0.7, 1.5),
-            "CAUTIOUS_BULL":(0.55, 1.6),
-            "NEUTRAL":      (0.6, 1.6),
+            "AGGRESSIVE":   (0.75, 1.3),
+            "MODERATE_BULL":(0.60, 1.4),
+            "MILD_BULL":    (0.55, 1.5),
+            "CAUTIOUS_BULL":(0.40, 1.6),
+            "NEUTRAL":      (0.45, 1.6),
         }
         size, vol_mult = _us_table.get(brain_mode, _us_table["NEUTRAL"])
         conf_adj = (0.6 - max(0.4, min(0.9, conf))) * 1.0
         vol_mult = round(max(1.2, vol_mult + conf_adj), 2)
         return {
-            "tp_pct":    0.060,
-            "sl_pct":    0.030,
+            "tp_pct":    0.070,   # 0.06 → 0.07 (ATR 8% 고변동성 반영)
+            "sl_pct":    0.035,   # 0.03 → 0.035
             "max_hold":  5,
             "size_mult": size,
             "vol_mult":  vol_mult,
         }
 
-    # KR
+    # KR: vol_mult 병목 아님(1.2~1.6 히트 수 거의 동일) → TP/SL 넓혀서 변동성 대응
+    # size_mult: ATR 9% 고변동성 → -10% 하향 (4/14 조정)
     _table = {
-        "AGGRESSIVE":   (1.0, 1.2),
-        "MODERATE_BULL":(0.8, 1.3),
-        "MILD_BULL":    (0.7, 1.4),
-        "CAUTIOUS_BULL":(0.55,1.5),
-        "NEUTRAL":      (0.65, 1.5),
+        "AGGRESSIVE":   (0.90, 1.2),
+        "MODERATE_BULL":(0.72, 1.3),
+        "MILD_BULL":    (0.63, 1.4),
+        "CAUTIOUS_BULL":(0.50, 1.5),
+        "NEUTRAL":      (0.58, 1.5),
     }
     size, vol_mult = _table.get(brain_mode, _table["NEUTRAL"])
 
@@ -88,8 +90,8 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
     vol_mult = round(max(1.0, vol_mult + conf_adj), 2)
 
     return {
-        "tp_pct":    0.060,
-        "sl_pct":    0.030,
+        "tp_pct":    0.080,   # 0.06 → 0.08 (ATR 9% 고변동성, 중간 손절 방지)
+        "sl_pct":    0.040,   # 0.03 → 0.04
         "max_hold":  5,
         "size_mult": size,
         "vol_mult":  vol_mult,

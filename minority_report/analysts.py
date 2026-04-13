@@ -36,14 +36,45 @@ def _extract_json(text: str) -> dict:
         s = re.sub(r'\bnan\b',       '0',      s)
         s = re.sub(r'\binf\b',       '999',    s)
         s = re.sub(r'\b-inf\b',      '-999',   s)
+        # 전각 따옴표/콜론 → ASCII
+        s = s.replace('\u201c', '"').replace('\u201d', '"')
+        s = s.replace('\u2018', "'").replace('\u2019', "'")
+        s = s.replace('\uff1a', ':')
+        # string value 내 literal 개행·탭 제거 (키-값 구분자 오파싱 방지)
+        s = re.sub(r'(?<=":)(\s*"[^"]*?)\n([^"]*?")', lambda m: m.group(0).replace('\n', ' '), s)
+        s = s.replace('\r\n', ' ').replace('\r', ' ')
+        # 제어문자 제거 (null바이트 등)
+        s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', s)
         return s
+
+    def _try_parse(s: str) -> dict:
+        try:
+            return json.loads(_fix(s))
+        except json.JSONDecodeError:
+            pass
+        # tickers 배열 추출
+        reasons_start = s.find('"reasons"')
+        tickers_section = s[:reasons_start] if reasons_start != -1 else s
+        tickers = re.findall(r'"([A-Z0-9]{1,10})"', tickers_section)
+        tickers = [t for t in tickers if len(t) >= 2]
+        # reasons 개별 key:value 쌍 regex 추출 시도
+        reasons = {}
+        if reasons_start != -1:
+            reasons_section = s[reasons_start:]
+            pairs = re.findall(r'"([A-Z0-9]{1,10})"\s*:\s*"([^"]{1,60})"', reasons_section)
+            reasons = {k: v for k, v in pairs}
+        if tickers:
+            log.warning(f"[_extract_json] JSON 파싱 실패 — regex 복구: tickers={tickers[:20]} reasons={len(reasons)}개")
+            return {"tickers": tickers[:20], "reasons": reasons}
+        raise ValueError("tickers 추출 불가")
+
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if m:
-        return json.loads(_fix(m.group(1)))
+        return _try_parse(m.group(1))
     start = text.find("{")
     end   = text.rfind("}")
     if start != -1 and end != -1 and end > start:
-        return json.loads(_fix(text[start:end + 1]))
+        return _try_parse(text[start:end + 1])
     raise ValueError(f"JSON 추출 실패: {text[:200]}")
 ALLOWED_STANCES = set(STANCES.split("|"))
 ALLOWED_STRATEGIES = {"모멘텀", "평균회귀", "갭풀백", "변동성돌파", "관망"}
@@ -414,7 +445,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         log.debug("[종목선택] KR 장전 — vol_ratio Claude 입력 마스킹 적용")
 
     cand_lines = []
-    for c in candidates[:40]:
+    for c in candidates[:50]:
         rate_str = f"{float(c.get('change_rate', 0.0)):+.2f}%"
         vr = float(c.get("vol_ratio", 0.0))
         if _kr_premarket:
@@ -424,7 +455,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         cand_lines.append(f"  {c.get('ticker')} {c.get('name','')} {rate_str} {vol_str}".strip())
     cand_text = "\n".join(cand_lines)
 
-    prompt = f"""오늘 {market} 세션에서 집중 모니터링할 종목을 최소 8개, 최대 10개 선택하세요.
+    prompt = f"""오늘 {market} 세션에서 집중 모니터링할 종목을 최소 16개, 최대 20개 선택하세요.
 합의 모드: {consensus_mode}
 후보 종목:
 {cand_text}
@@ -434,14 +465,14 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 
 규칙:
 - 후보 종목 중에서만 선택.
-- 최소 8개 이상 선택할 것. 후보가 충분하면 10개까지 선택 가능.
+- 최소 16개 이상 선택할 것. 후보가 충분하면 20개까지 선택 가능.
 - reasons는 반드시 한국어로 작성 (30자 이내).
 - JSON만 반환.
 
 {{"tickers":["code1","code2","code3"],"reasons":{{"code1":"선택 이유 한국어"}}}}"""
 
     valid    = {c["ticker"] for c in candidates if c.get("ticker")}
-    fallback = [c["ticker"] for c in candidates[:8] if c.get("ticker")]
+    fallback = [c["ticker"] for c in candidates[:16] if c.get("ticker")]
 
     # US DEFENSIVE/HALT 모드 시 인버스 ETF만 남지 않도록 안정 종목 보호 목록
     US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
@@ -452,7 +483,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
     resp = None
     for _attempt in range(3):
         try:
-            resp = client.messages.create(model=MODEL, max_tokens=512,
+            resp = client.messages.create(model=MODEL, max_tokens=1024,
                                           messages=[{"role": "user", "content": prompt}])
             last_err = None
             break
@@ -478,14 +509,14 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
         )
-        tickers = [t for t in result.get("tickers", []) if t in valid][:10]
+        tickers = [t for t in result.get("tickers", []) if t in valid][:20]
         if not tickers:
             raise ValueError("no valid tickers")
 
         reasons = result.get("reasons", {})
 
-        # 8개 미만이면 상위 후보로 보충
-        if len(tickers) < 8:
+        # 16개 미만이면 상위 후보로 보충
+        if len(tickers) < 16:
             if _kr_premarket:
                 top_fill = sorted(
                     candidates,
@@ -502,7 +533,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                 if _t and _t in valid and _t not in tickers:
                     tickers.append(_t)
                     reasons[_t] = "장전후보 보충" if _kr_premarket else "거래량 상위 보충"
-                if len(tickers) >= 8:
+                if len(tickers) >= 16:
                     break
 
         # US DEFENSIVE/HALT 모드: 인버스 ETF만 선택된 경우 안정 종목 보완
@@ -512,8 +543,8 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                 # 후보에서 안정 종목 찾기
                 stable_in_candidates = [t for t in US_STABLE_ANCHORS if t in valid]
                 if stable_in_candidates:
-                    # 인버스 1개 유지, 나머지를 안정 종목으로 교체 (최소 8개 맞춤)
-                    tickers = tickers[:1] + stable_in_candidates[:7]
+                    # 인버스 1개 유지, 나머지를 안정 종목으로 교체 (최소 16개 맞춤)
+                    tickers = tickers[:1] + stable_in_candidates[:15]
                     log.info(f"[ticker-selection] DEFENSIVE/HALT — 안정 종목 보완: {tickers}")
         log.info(f"[ticker-selection] {market} -> {tickers}")
         analysis_log.info(
