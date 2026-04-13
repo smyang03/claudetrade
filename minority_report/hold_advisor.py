@@ -29,7 +29,9 @@ PERSONAS = {
 
 
 def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> dict:
-    entry   = pos.get("entry", 0)
+    entry   = float(pos.get("entry", 0) or 0)
+    if entry <= 0:
+        raise ValueError(f"[hold_advisor] entry=0 — 진입가 미확정, 호출 불가 ({pos.get('ticker','-')})")
     cp      = pos.get("current_price", entry)
     pnl_pct = (cp / entry - 1) * 100 if entry else 0
     ticker  = pos.get("ticker", "-")

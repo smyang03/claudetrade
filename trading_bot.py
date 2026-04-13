@@ -2054,6 +2054,10 @@ class TradingBot:
                 sell_list.append((ticker, sell_reason))
                 log.info(f"[장전 리뷰] {ticker} → 전일 장마감 SELL 예약 유지")
                 continue
+            if float(pos.get("entry", 0) or 0) <= 0:
+                log.warning(f"[장전 리뷰] {ticker} entry=0 → hold_advisor 건너뜀, HOLD 유지")
+                hold_list.append((ticker, "진입가 미확정 → 홀드"))
+                continue
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
                 advice = advisor_ask(pos, market, digest)
@@ -2146,8 +2150,12 @@ class TradingBot:
             else:
                 net_str = f"{int(round(net)):+,}원"
 
-            # Claude hold_advisor 호출
+            # Claude hold_advisor 호출 (entry=0이면 건너뜀)
             action, reason, trail_info = "HOLD", "", ""
+            if float(pos.get("entry", 0) or 0) <= 0:
+                log.warning(f"[장후 리뷰] {ticker} entry=0 → hold_advisor 건너뜀, HOLD 유지")
+                lines.append(f"  ⚠️ 진입가 미확정 → Claude 판단 보류 (HOLD)")
+                continue
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
                 advice = advisor_ask(pos, market, digest)
@@ -2333,19 +2341,24 @@ class TradingBot:
                   f"  max_hold {max_hold}일 연장 후 재도달 → 즉시 청산")
             return
 
-        try:
-            from minority_report.hold_advisor import ask as advisor_ask
-            digest = self.today_judgment.get("digest_prompt", "")
-            advice = advisor_ask(cand, market, digest)
-            action = advice.get("action", "SELL")
-            votes  = advice.get("votes", {})
-            for v in votes.values():
-                if v.get("action") == action and v.get("reason"):
-                    reason_txt = v["reason"][:100]
-                    break
-        except Exception as e:
-            log.warning(f"[max_hold Claude] {ticker} hold_advisor 실패 → 기본 청산: {e}")
-            action = "SELL"
+        entry_ok = float(cand.get("entry", 0) or 0) > 0
+        if not entry_ok:
+            log.warning(f"[max_hold Claude] {ticker} entry=0 → hold_advisor 건너뜀, HOLD 유지")
+            action = "HOLD"
+        else:
+            try:
+                from minority_report.hold_advisor import ask as advisor_ask
+                digest = self.today_judgment.get("digest_prompt", "")
+                advice = advisor_ask(cand, market, digest)
+                action = advice.get("action", "SELL")
+                votes  = advice.get("votes", {})
+                for v in votes.values():
+                    if v.get("action") == action and v.get("reason"):
+                        reason_txt = v["reason"][:100]
+                        break
+            except Exception as e:
+                log.warning(f"[max_hold Claude] {ticker} hold_advisor 실패 → 기본 청산: {e}")
+                action = "SELL"
 
         action_ko  = "즉시 청산" if action == "SELL" else f"보유기한 {max_hold+1}일로 연장"
         color_icon = "🔴" if action == "SELL" else "🟡"
@@ -2380,23 +2393,27 @@ class TradingBot:
 
         hold_advice = None
         if self.enable_trailing_analyst:
-            # 분석가 3명에게 HOLD/SELL 물어봄
-            try:
-                from minority_report.hold_advisor import ask as advisor_ask
-                digest = self.today_judgment.get("digest_prompt", "")
-                advice = advisor_ask(cand, market, digest)
-                if advice["action"] == "SELL":
-                    log.info(f"[TP→분석가합의:SELL] {ticker} — 즉시 청산")
-                    trailing_alert(market, ticker, "sell", detail="분석가 합의: 즉시 청산")
-                    self._execute_sell(cand, market, reason="tp_analyst_sell",
-                                       hold_advice=advice)
-                    return
-                trail_pct  = advice["trail_pct"]
-                hold_advice = advice
-                log.info(f"[TP→분석가합의:HOLD] {ticker} trail={trail_pct:.2%}")
-                trailing_alert(market, ticker, "hold", trail_pct=trail_pct)
-            except Exception as e:
-                log.warning(f"[hold_advisor] 오류 → trail 기본값 적용: {e}")
+            # 분석가 3명에게 HOLD/SELL 물어봄 (entry=0이면 건너뜀)
+            entry_ok = float(cand.get("entry", 0) or 0) > 0
+            if not entry_ok:
+                log.warning(f"[TP trailing] {ticker} entry=0 → hold_advisor 건너뜀, 트레일링 즉시 전환")
+            else:
+                try:
+                    from minority_report.hold_advisor import ask as advisor_ask
+                    digest = self.today_judgment.get("digest_prompt", "")
+                    advice = advisor_ask(cand, market, digest)
+                    if advice["action"] == "SELL":
+                        log.info(f"[TP→분석가합의:SELL] {ticker} — 즉시 청산")
+                        trailing_alert(market, ticker, "sell", detail="분석가 합의: 즉시 청산")
+                        self._execute_sell(cand, market, reason="tp_analyst_sell",
+                                           hold_advice=advice)
+                        return
+                    trail_pct  = advice["trail_pct"]
+                    hold_advice = advice
+                    log.info(f"[TP→분석가합의:HOLD] {ticker} trail={trail_pct:.2%}")
+                    trailing_alert(market, ticker, "hold", trail_pct=trail_pct)
+                except Exception as e:
+                    log.warning(f"[hold_advisor] 오류 → trail 기본값 적용: {e}")
         else:
             log.info(f"[TP→트레일링] {ticker} trail={trail_pct:.2%} (분석가 생략)")
             trailing_alert(market, ticker, "trail", trail_pct=trail_pct)
