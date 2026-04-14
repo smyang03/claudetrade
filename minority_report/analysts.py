@@ -509,7 +509,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
         )
-        tickers = [t for t in result.get("tickers", []) if t in valid][:20]
+        tickers = list(dict.fromkeys(t for t in result.get("tickers", []) if t in valid))[:20]
         if not tickers:
             raise ValueError("no valid tickers")
 
