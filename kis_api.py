@@ -1415,6 +1415,16 @@ _KR_FALLBACK_UNIVERSE = [
     "068270",  # 셀트리온
     "105560",  # KB금융
     "055550",  # 신한지주
+    "006400",  # 삼성SDI
+    "003550",  # LG
+    "028260",  # 삼성물산
+    "012330",  # 현대모비스
+    "066570",  # LG전자
+    "207940",  # 삼성바이오로직스
+    "012450",  # 한화에어로스페이스
+    "003490",  # 대한항공
+    "096770",  # SK이노베이션
+    "034730",  # SK
 ]
 
 
@@ -1464,7 +1474,7 @@ def screen_market_kr(token: str, top_n: int = 30) -> list:
             except (ValueError, TypeError):
                 continue
         # 개장 전 거래량 부족으로 후보가 5개 미만이면 블루칩 폴백으로 보완
-        if len(result) < 5:
+        if len(result) < 10:
             existing = {r["ticker"] for r in result}
             for ticker in _KR_FALLBACK_UNIVERSE:
                 if ticker not in existing:
@@ -1476,7 +1486,7 @@ def screen_market_kr(token: str, top_n: int = 30) -> list:
                         "volume": 0,
                         "vol_ratio": 1.0,
                     })
-                if len(result) >= 10:
+                if len(result) >= 20:
                     break
         return result
     except Exception as e:
