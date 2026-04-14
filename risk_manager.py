@@ -158,12 +158,15 @@ class RiskManager:
             "strategy": strategy,
             "tp": price * (1 + tp_pct),
             "sl": price * (1 - sl_pct),
+            "tp_pct": tp_pct,        # 비율 보존 — US 환율 드리프트 방지
+            "sl_pct": sl_pct,
             "max_hold": max_hold,
             "held_days": 0,
             "entry_date": date.today().isoformat(),
             # 트레일링 스탑
             "trailing": False,       # 트레일링 모드 여부
-            "trail_sl": 0.0,         # 트레일링 SL 가격
+            "trail_sl": 0.0,         # 트레일링 SL 가격 (KRW/KRW)
+            "trail_sl_usd": 0.0,     # 트레일링 SL (USD, US 전용)
             "trail_pct": 0.03,       # 트레일링 폭 (기본 3%)
             "tp_triggered": False,   # TP 도달 여부 (중복 방지)
             # hold_advisor 기록
@@ -184,15 +187,27 @@ class RiskManager:
         log.info(f"[BUY] {ticker} {qty}@{price:,} TP={pos['tp']:.0f} SL={pos['sl']:.0f}")
         return True
 
-    def update_prices(self, prices: dict):
+    def update_prices(self, prices: dict, raw_prices: dict | None = None):
+        """prices: KRW 환산 가격 dict / raw_prices: USD(US) 또는 KRW(KR) 원시가격 dict (선택)"""
         for pos in self.positions:
-            if pos["ticker"] in prices:
-                pos["current_price"] = prices[pos["ticker"]]
-                # 트레일링 모드: SL을 현재가 기준으로 끌어올림 (내려가지 않음)
-                if pos.get("trailing") and pos["current_price"] > 0:
-                    new_trail = pos["current_price"] * (1 - pos["trail_pct"])
-                    if new_trail > pos["trail_sl"]:
-                        pos["trail_sl"] = new_trail
+            if pos["ticker"] not in prices:
+                continue
+            pos["current_price"] = prices[pos["ticker"]]
+            # US 종목: display_current_price(USD)를 raw_prices로 갱신
+            if raw_prices and pos["ticker"] in raw_prices and pos.get("display_currency") == "USD":
+                pos["display_current_price"] = float(raw_prices[pos["ticker"]] or 0)
+            # 트레일링 모드: SL을 현재가 기준으로 끌어올림 (내려가지 않음)
+            if pos.get("trailing") and pos["current_price"] > 0:
+                new_trail = pos["current_price"] * (1 - pos["trail_pct"])
+                if new_trail > pos["trail_sl"]:
+                    pos["trail_sl"] = new_trail
+                # US 트레일링: USD 기준으로도 trail_sl_usd 갱신
+                if pos.get("display_currency") == "USD":
+                    cp_usd = float(pos.get("display_current_price") or 0)
+                    if cp_usd > 0:
+                        new_trail_usd = cp_usd * (1 - pos["trail_pct"])
+                        if new_trail_usd > float(pos.get("trail_sl_usd", 0) or 0):
+                            pos["trail_sl_usd"] = new_trail_usd
 
     def increment_holding_days(self, today_iso: Optional[str] = None):
         if today_iso is None:
@@ -208,8 +223,40 @@ class RiskManager:
         for pos in self.positions:
             cp = pos["current_price"]
             reason = None
+
+            is_us = pos.get("display_currency") == "USD"
+            avg_usd = float(pos.get("display_avg_price") or 0)
+            cp_usd = float(pos.get("display_current_price") or 0)
+            entry_krw = float(pos.get("entry") or 0)
+
+            # US 종목: 환율 드리프트 방지를 위해 USD 기준으로 TP/SL 비교
+            if is_us and avg_usd > 0 and cp_usd > 0 and entry_krw > 0:
+                # tp_pct/sl_pct가 있으면 우선 사용, 없으면 KRW 비율에서 역산
+                tp_pct = float(pos.get("tp_pct") or 0) or (pos["tp"] / entry_krw - 1 if pos.get("tp") else 0)
+                sl_pct = float(pos.get("sl_pct") or 0) or (1 - pos["sl"] / entry_krw if pos.get("sl") else 0)
+                tp_usd = avg_usd * (1 + tp_pct)
+                sl_usd = avg_usd * (1 - sl_pct)
+
+                if pos.get("trailing"):
+                    trail_sl_usd = float(pos.get("trail_sl_usd") or 0)
+                    if trail_sl_usd > 0 and cp_usd <= trail_sl_usd:
+                        reason = "trail_stop"
+                    elif pos["held_days"] >= pos["max_hold"]:
+                        reason = "max_hold"
+                else:
+                    if cp_usd >= tp_usd and not pos.get("tp_triggered"):
+                        reason = "tp_check"
+                    elif cp_usd <= sl_usd:
+                        reason = "stop_loss"
+                    elif pos["held_days"] >= pos["max_hold"]:
+                        reason = "max_hold"
+
+                if reason:
+                    candidates.append({**pos, "exit_price": cp, "reason": reason})
+                continue
+
+            # KR 종목 (기존 로직)
             if pos.get("trailing"):
-                # 트레일링 모드: trail_sl 발동 여부만 체크
                 if cp <= pos["trail_sl"]:
                     reason = "trail_stop"
                 elif pos["held_days"] >= pos["max_hold"]:
@@ -234,6 +281,10 @@ class RiskManager:
                 pos["trail_sl"]     = pos["current_price"] * (1 - trail_pct)
                 pos["tp_triggered"] = True
                 pos["tp_price"]     = pos["current_price"]   # TP 도달 시점 가격
+                # US 종목: USD 기준 trail_sl도 함께 설정
+                if pos.get("display_currency") == "USD":
+                    cp_usd = float(pos.get("display_current_price") or 0)
+                    pos["trail_sl_usd"] = cp_usd * (1 - trail_pct) if cp_usd > 0 else 0.0
                 if hold_advice is not None:
                     pos["hold_advice"] = hold_advice
                 log.info(f"[TRAILING] {ticker} trail_sl={pos['trail_sl']:,.0f} ({trail_pct*100:.1f}%)")

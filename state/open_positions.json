@@ -1,26 +1,81 @@
 [
   {
-    "ticker": "010820",
-    "name": "퍼스텍",
-    "entry": 11150.0,
-    "qty": 16,
-    "current_price": 11665,
-    "display_avg_price": 11150.0,
-    "display_current_price": 12000.0,
-    "display_currency": "KRW",
-    "price_source": "broker_balance",
-    "order_no": "",
-    "fill_time": "",
-    "strategy": "broker_sync",
-    "tp": 11428.749999999998,
-    "sl": 11038.5,
+    "ticker": "CRWV",
+    "name": "코어위브",
+    "entry": 164647.22356612,
+    "qty": 41,
+    "current_price": 168769.1808,
+    "display_avg_price": 110.66414634,
+    "display_current_price": 116.558,
+    "display_currency": "USD",
+    "price_source": "order_fill",
+    "order_no": "0000028078",
+    "fill_time": "004441",
+    "strategy": "gap_pullback",
+    "tp": 198704.17246632,
+    "sl": 155418.74668524,
     "max_hold": 2,
     "held_days": 1,
-    "entry_date": "2026-04-13",
-    "trailing": true,
-    "trail_sl": 11426.6,
+    "entry_date": "2026-04-14",
+    "trailing": false,
+    "trail_sl": 0.0,
     "trail_pct": 0.03,
-    "tp_triggered": true,
+    "tp_triggered": false,
+    "hold_advice": {
+      "action": "HOLD",
+      "trail_pct": 0.04,
+      "votes": {
+        "bull": {
+          "action": "HOLD",
+          "confidence": 0.72,
+          "trail_pct": 0.04,
+          "reason": "진입 1일차로 목표가($133.55)까지 아직 14.6% 여유가 있고, XLK +0.83% 기술주 섹터 강세와 VIX 19.9의 안정적 환경에서 gap_pullback 모멘텀 추세가 살아있어 트레일링 스톱 4%로 수익 보호하며 보유 유지."
+        },
+        "bear": {
+          "action": "HOLD",
+          "confidence": 0.62,
+          "trail_pct": 0.04,
+          "reason": "목표가($133.55)까지 아직 14.6% 여유가 있고 나스닥·XLK 양호, VIX 19.9로 안정적이나 시장 횡보 레짐과 1일 보유 단기 리스크를 감안해 4% 트레일링 스탑으로 수익(+5.33%)을 보호하며 추가 상승을 추구한다."
+        },
+        "neutral": {
+          "action": "HOLD",
+          "confidence": 0.72,
+          "trail_pct": 0.04,
+          "reason": "보유 1일차로 TP($133.55)까지 14.6% 추가 상승 여력이 남아있고, VIX 19.9 안정권·XLK +0.83% 기술주 강세 환경에서 gap_pullback 모멘텀이 유효하므로 4% 트레일링 스탑으로 수익 보호하며 보유 유지."
+        }
+      }
+    },
+    "tp_price": 0.0,
+    "decision_id": 48083,
+    "last_hold_update": "2026-04-14",
+    "pending_next_open_sell": false,
+    "pending_next_open_reason": "",
+    "max_hold_extended": true,
+    "tp_pct": 0.206848,
+    "sl_pct": 0.05605
+  },
+  {
+    "ticker": "008350",
+    "name": "남선알미늄",
+    "entry": 2985.0,
+    "qty": 288,
+    "current_price": 3080.0,
+    "display_avg_price": 2985.0,
+    "display_current_price": 3080.0,
+    "display_currency": "KRW",
+    "price_source": "order_fill",
+    "order_no": "0000003300",
+    "fill_time": "090834",
+    "strategy": "momentum",
+    "tp": 3693.6428571428573,
+    "sl": 2817.6907499999993,
+    "max_hold": 5,
+    "held_days": 1,
+    "entry_date": "2026-04-14",
+    "trailing": false,
+    "trail_sl": 0.0,
+    "trail_pct": 0.03,
+    "tp_triggered": false,
     "hold_advice": {
       "action": "HOLD",
       "trail_pct": 0.03,
@@ -29,121 +84,214 @@
           "action": "HOLD",
           "confidence": 0.72,
           "trail_pct": 0.03,
-          "reason": "코스피 +1.40% 상승 환경에서 1일 만에 목표가를 돌파하며 강한 모멘텀을 확인했고, 트레일링 SL(11,426)이 이미 진입가 대비 안전권에 위치하므로 추세 연장을 노리며 3% 트레일링으로 수익 극대화를 추구한다."
-        },
-        "bear": {
-          "action": "HOLD",
-          "confidence": 0.72,
-          "trail_pct": 0.03,
-          "reason": "TP 초과 달성 후 코스피 +1.40% 강세 지속 중이나, 1일 보유에 +4.62% 수익은 충분히 의미 있으므로 trail_sl=11,426.60 수준을 3% 트레일링으로 유지해 추가 상승을 추종하되 욕심 경계 차원에서 즉각 청산보다 트레일링 이탈 시 자동 실현 전략을 고수한다."
-        },
-        "neutral": {
-          "action": "HOLD",
-          "confidence": 0.72,
-          "trail_pct": 0.03,
-          "reason": "TP 초과 달성(+4.62%) 및 코스피 강세(+1.40%) 환경에서 트레일링 SL(11,426)이 원금 보호 수준 이상으로 설정되어 있어 추가 상승 여력을 3% 트레일로 추적하며 보유 유지."
-        }
-      }
-    },
-    "tp_price": 11630.0,
-    "decision_id": null
-  },
-  {
-    "ticker": "069540",
-    "name": "빛과전자",
-    "entry": 4815.0,
-    "qty": 25,
-    "current_price": 4920,
-    "display_avg_price": 4815.0,
-    "display_current_price": 4920.0,
-    "display_currency": "KRW",
-    "price_source": "broker_balance",
-    "order_no": "",
-    "fill_time": "",
-    "strategy": "broker_sync",
-    "tp": 4935.375,
-    "sl": 4766.85,
-    "max_hold": 2,
-    "held_days": 1,
-    "entry_date": "2026-04-13",
-    "trailing": false,
-    "trail_sl": 0.0,
-    "trail_pct": 0.03,
-    "tp_triggered": false,
-    "hold_advice": {
-      "action": "HOLD",
-      "trail_pct": 0.027,
-      "votes": {
-        "bull": {
-          "action": "HOLD",
-          "confidence": 0.72,
-          "trail_pct": 0.03,
-          "reason": "코스피 +1.40% 상승 환경에서 목표가(4,935)까지 잔여 상승 여력이 있고 보유 1일차로 추세 초기 단계이므로 3% 트레일링으로 수익 보호하며 보유 유지"
+          "reason": "보유 1일차로 TP(3,693)까지 약 20% 상승 여지가 남아있고, 코스피 +1.40% 강세장과 반도체 관련 종목들의 모멘텀(SK하이닉스 골든크로스·거래량 증가)이 추세 지속을 지지하므로 3% 트레일링 스탑으로 수익을 보호하며 보유 유지."
         },
         "bear": {
           "action": "HOLD",
           "confidence": 0.65,
-          "trail_pct": 0.02,
-          "reason": "목표가(4,935)까지 잔여 상승여력 0.31% 남아있고 코스피 +1.40% 강세 환경이나, 1일 보유에 이미 +2.18% 확보된 상태로 욕심을 경계해 최소 트레일링(2%)으로 이익을 보호하며 TP 터치 시 즉시 청산 준비."
+          "trail_pct": 0.03,
+          "reason": "진입 1일차로 목표가(3,693)까지 상승 여력이 충분하고 코스피 강세(+1.40%) 및 모멘텀 환경이 우호적이나, 욕심을 경계해 3% 트레일링 스톱으로 수익을 보호하며 추가 상승을 추종한다."
         },
         "neutral": {
           "action": "HOLD",
-          "confidence": 0.67,
+          "confidence": 0.72,
           "trail_pct": 0.03,
-          "reason": "TP(4,935)까지 잔여 상승여력 15p 존재하고 코스피 +1.40% 강세 시장 환경이나 보유 1일·수익률 2.18%로 리스크 관리 차원에서 3% 트레일링 스톱으로 수익 보호하며 보유 유지"
+          "reason": "보유 1일차로 TP(3,693)까지 잔여 상승여력 19.9% 존재하고 코스피 +1.40% 강세 및 모멘텀 전략 초기 단계임을 감안, 3% 트레일링으로 수익 보호하며 추가 상승 추종"
         }
       }
     },
     "tp_price": 0.0,
-    "decision_id": null
+    "decision_id": 48512,
+    "last_hold_update": "2026-04-14",
+    "pending_next_open_sell": false,
+    "pending_next_open_reason": ""
   },
   {
-    "ticker": "203650",
-    "name": "드림시큐리티",
-    "entry": 2005.0,
-    "qty": 300,
-    "current_price": 2000,
-    "display_avg_price": 2005.0,
-    "display_current_price": 1992.0,
+    "ticker": "037030",
+    "name": "파워넷",
+    "entry": 8210.0,
+    "qty": 37,
+    "current_price": 8470.0,
+    "display_avg_price": 8210.0,
+    "display_current_price": 8470.0,
     "display_currency": "KRW",
-    "price_source": "broker_balance",
-    "order_no": "0000020490",
-    "fill_time": "133436",
+    "price_source": "order_fill",
+    "order_no": "0000023347",
+    "fill_time": "135526",
     "strategy": "momentum",
-    "tp": 2055.125,
-    "sl": 1984.95,
+    "tp": 10972.912254816873,
+    "sl": 7749.829499999999,
     "max_hold": 5,
-    "held_days": 0,
-    "entry_date": "2026-04-13",
+    "held_days": 1,
+    "entry_date": "2026-04-14",
     "trailing": false,
     "trail_sl": 0.0,
     "trail_pct": 0.03,
     "tp_triggered": false,
     "hold_advice": {
-      "action": "SELL",
+      "action": "HOLD",
       "trail_pct": 0.03,
       "votes": {
         "bull": {
           "action": "HOLD",
-          "confidence": 0.62,
-          "trail_pct": 0.03,
-          "reason": "진입 당일 소폭 마이너스이나 코스피 +1.40% 강세장에서 MACD 골든크로스와 BB 상단 위치가 상승 모멘텀을 지지하므로 TP 2,055까지 추세 보유, 3% 트레일링으로 리스크 관리."
-        },
-        "bear": {
-          "action": "SELL",
-          "confidence": 0.82,
-          "trail_pct": 0.03,
-          "reason": "진입 당일 현재가가 진입가 대비 -0.25% 하락하며 모멘텀 미확인 상태이고, TP 미달성·보유일 0일 시점에서 손절선(1,984.95) 접근 위험이 있어 손실 확대 전 조기 청산이 리스크 관리상 적절합니다."
-        },
-        "neutral": {
-          "action": "SELL",
           "confidence": 0.72,
           "trail_pct": 0.03,
-          "reason": "진입 당일(보유 0일) 목표가 미달 상태(-0.25%)에서 삼성전자 -3.09% 급락 및 VKOSPI 데이터 부재로 시장 불확실성이 높고, 모멘텀 전략 특성상 즉각적 방향성 미확인 시 손절선(1,984.95) 근접 리스크가 수익 기대치를 초과한다."
+          "reason": "진입 1일차로 TP(10,972원) 대비 현재가(8,470원)는 목표의 24% 수준에 불과하고, 코스피 +1.40% 상승 모멘텀과 반도체 섹터(SK하이닉스 MACD 골든크로스, 거래량 1.6배 증가) 호조가 추세 지속을 지지하므로 3% 트레일링 스탑으로 수익을 보호하며 보유 유지."
+        },
+        "bear": {
+          "action": "HOLD",
+          "confidence": 0.65,
+          "trail_pct": 0.03,
+          "reason": "목표가(10,972)까지 아직 29% 여유가 있고 보유 1일에 불과하며 코스피 상승 모멘텀(+1.40%)이 유효하나, 욕심을 경계해 3% 트레일링 스탑으로 수익(+3.17%)을 보호하면서 추가 상승을 추종한다."
+        },
+        "neutral": {
+          "action": "HOLD",
+          "confidence": 0.72,
+          "trail_pct": 0.03,
+          "reason": "보유 1일차로 TP(10,972)까지 상승여력 29.5% 잔존, 코스피 +1.40% 상승 및 모멘텀 전략 유효 구간이나 현재가가 TP 대비 초기 단계이므로 3% 트레일링으로 수익 보호하며 추가 상승 추종."
         }
       }
     },
     "tp_price": 0.0,
-    "decision_id": 47786
+    "decision_id": 48689,
+    "last_hold_update": "2026-04-14",
+    "pending_next_open_sell": false,
+    "pending_next_open_reason": ""
+  },
+  {
+    "ticker": "010170",
+    "name": "대한광통신",
+    "entry": 19980.0,
+    "qty": 18,
+    "current_price": 20150.0,
+    "display_avg_price": 19980.0,
+    "display_current_price": 20150.0,
+    "display_currency": "KRW",
+    "price_source": "order_fill",
+    "order_no": "0000024711",
+    "fill_time": "143656",
+    "strategy": "momentum",
+    "tp": 25383.724004859574,
+    "sl": 18860.120999999996,
+    "max_hold": 5,
+    "held_days": 1,
+    "entry_date": "2026-04-14",
+    "trailing": false,
+    "trail_sl": 0.0,
+    "trail_pct": 0.03,
+    "tp_triggered": false,
+    "hold_advice": {
+      "action": "HOLD",
+      "trail_pct": 0.03,
+      "votes": {
+        "bull": {
+          "action": "HOLD",
+          "confidence": 0.72,
+          "trail_pct": 0.03,
+          "reason": "보유 1일차로 목표가(25,384)까지 상승여력 25% 이상 남아있고, 코스피 +1.40% 강세장에 반도체 섹터(SK하이닉스 MACD 골든크로스·거래량 1.6배)모멘텀이 동반되어 추세 유효 판단, 3% 트레일링으로 수익 보호하며 보유 유지."
+        },
+        "bear": {
+          "action": "HOLD",
+          "confidence": 0.62,
+          "trail_pct": 0.03,
+          "reason": "진입 1일차로 목표가(25,383)까지 여전히 큰 상승 여력이 있고 코스피 강세(+1.40%) 및 모멘텀 지표 우호적이나, 수익률 0.85%로 아직 초기 단계이므로 3% 트레일링 스탑으로 하방을 보호하며 추세 추종."
+        },
+        "neutral": {
+          "action": "HOLD",
+          "confidence": 0.72,
+          "trail_pct": 0.03,
+          "reason": "보유 1일차로 TP(25,384)까지 상승여력 약 26% 잔존, 코스피 +1.40% 강세 및 반도체 섹터(SK하이닉스 RSI 63.5 골든크로스) 모멘텀 유효하나 현재 수익률 +0.85%는 초기 단계이므로 3% 트레일링 스탑으로 이익 보호하며 추세 추종 유지."
+        }
+      }
+    },
+    "tp_price": 0.0,
+    "decision_id": 48754,
+    "last_hold_update": "2026-04-14",
+    "pending_next_open_sell": false,
+    "pending_next_open_reason": ""
+  },
+  {
+    "ticker": "GSAT",
+    "name": "글로벌스타",
+    "entry": 116759.08062056701,
+    "qty": 58,
+    "current_price": 117720.6228,
+    "display_avg_price": 79.36639655,
+    "display_current_price": 79.96,
+    "display_currency": "USD",
+    "price_source": "order_fill",
+    "order_no": "0000027979",
+    "fill_time": "224359",
+    "strategy": "gap_pullback",
+    "tp": 143521.4169836189,
+    "sl": 108585.9449771273,
+    "max_hold": 1,
+    "held_days": 0,
+    "entry_date": "2026-04-14",
+    "trailing": false,
+    "trail_sl": 0.0,
+    "trail_pct": 0.03,
+    "tp_triggered": false,
+    "hold_advice": null,
+    "tp_price": 0.0,
+    "decision_id": 48887,
+    "tp_pct": 0.22921,
+    "sl_pct": 0.07
+  },
+  {
+    "ticker": "CLSK",
+    "name": "클린스파크",
+    "entry": 17160.8481,
+    "qty": 398,
+    "current_price": 17065.224000000002,
+    "display_avg_price": 11.665,
+    "display_current_price": 11.58,
+    "display_currency": "USD",
+    "price_source": "order_fill",
+    "order_no": "0000028106",
+    "fill_time": "225129",
+    "strategy": "gap_pullback",
+    "tp": 20726.26113978718,
+    "sl": 15959.588732999999,
+    "max_hold": 1,
+    "held_days": 0,
+    "entry_date": "2026-04-14",
+    "trailing": false,
+    "trail_sl": 0.0,
+    "trail_pct": 0.03,
+    "tp_triggered": false,
+    "hold_advice": null,
+    "tp_price": 0.0,
+    "decision_id": 48930,
+    "tp_pct": 0.207764,
+    "sl_pct": 0.07
+  },
+  {
+    "ticker": "HOOD",
+    "name": "로빈훗 마케츠",
+    "entry": 114866.6112,
+    "qty": 59,
+    "current_price": 115116.705,
+    "display_avg_price": 78.08,
+    "display_current_price": 77.7738,
+    "display_currency": "USD",
+    "price_source": "order_fill",
+    "order_no": "0000028108",
+    "fill_time": "225132",
+    "strategy": "gap_pullback",
+    "tp": 134566.22302519783,
+    "sl": 106825.948416,
+    "max_hold": 1,
+    "held_days": 0,
+    "entry_date": "2026-04-14",
+    "trailing": false,
+    "trail_sl": 0.0,
+    "trail_pct": 0.03,
+    "tp_triggered": false,
+    "hold_advice": null,
+    "tp_price": 0.0,
+    "decision_id": 48931,
+    "tp_pct": 0.1715,
+    "sl_pct": 0.07
   }
 ]

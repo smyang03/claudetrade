@@ -1577,11 +1577,14 @@ class TradingBot:
             "strategy": order.get("strategy", "broker_fill"),
             "tp": avg_price * (1 + tp_pct),
             "sl": avg_price * (1 - sl_pct),
+            "tp_pct": tp_pct,        # 비율 보존 — US 환율 드리프트 방지
+            "sl_pct": sl_pct,
             "max_hold": int(order.get("max_hold", 1)),
             "held_days": 0,
             "entry_date": date.today().isoformat(),
             "trailing": False,
             "trail_sl": 0.0,
+            "trail_sl_usd": 0.0,     # US 트레일링 SL (USD 기준)
             "trail_pct": 0.03,
             "tp_triggered": False,
             "hold_advice": None,
@@ -2777,7 +2780,7 @@ class TradingBot:
                     self.price_cache[pos["ticker"]] = self._price_to_krw(raw_price, market)
                 except Exception as e:
                     log.warning(f"이월 포지션 시가 조회 실패 [{pos['ticker']}]: {e}")
-        self.risk.update_prices(self.price_cache)
+        self.risk.update_prices(self.price_cache, self.price_cache_raw)
         if self.risk.positions:
             updated_prices = []
             for p in self.risk.positions:
@@ -3104,7 +3107,7 @@ class TradingBot:
             return
         self.price_cache_raw[ticker] = raw_price
         self.price_cache[ticker] = self._price_to_krw(raw_price, market)
-        self.risk.update_prices(self.price_cache)
+        self.risk.update_prices(self.price_cache, self.price_cache_raw)
         # 장중 고가/저가 누적 — 당일봉 단일가봉 탈출용
         if raw_price > self._intraday_high.get(ticker, 0):
             self._intraday_high[ticker] = raw_price
@@ -3219,7 +3222,7 @@ class TradingBot:
             self._refresh_claude_control()
             self._consume_pending_claude_trigger(market)
             self._sync_runtime_with_broker()
-            self.risk.update_prices(self.price_cache)
+            self.risk.update_prices(self.price_cache, self.price_cache_raw)
             self._process_exit_candidates()
             self._write_live_status(market)
         finally:
@@ -3614,7 +3617,7 @@ class TradingBot:
                 self._invalid_price_count.pop(ticker, None)  # 정상 가격 수신 시 카운터 리셋
                 self.price_cache_raw[ticker] = price
                 self.price_cache[ticker] = risk_price
-                self.risk.update_prices(self.price_cache)
+                self.risk.update_prices(self.price_cache, self.price_cache_raw)
                 # US는 WS 시세 미사용이라 opening scan 가격으로 OR를 근사 누적
                 if market == "US" and self.session_active and self.current_market == "US":
                     _or_elapsed_us = self._market_elapsed_min("US")
@@ -4804,7 +4807,7 @@ class TradingBot:
                         _t2_risk_price = self._price_to_krw(_t2_price, "US")
                         self.price_cache_raw[_t2_ticker] = _t2_price
                         self.price_cache[_t2_ticker] = _t2_risk_price
-                        self.risk.update_prices(self.price_cache)
+                        self.risk.update_prices(self.price_cache, self.price_cache_raw)
                         # 50% 사이즈 적용
                         _t2_size = max(10, int(size_pct * TIER2_SIZE_RATIO))
                         _t2_sl, _t2_tp = 0.025, 0.05  # Tier2 고정 SL 2.5% / TP 5%
@@ -4900,7 +4903,7 @@ class TradingBot:
                         if _t2_risk_price <= 0:
                             continue
                         self.price_cache[_t2_ticker] = _t2_risk_price
-                        self.risk.update_prices(self.price_cache)
+                        self.risk.update_prices(self.price_cache, self.price_cache_raw)
                         _t2_size = max(10, int(size_pct * TIER2_SIZE_RATIO))
                         _t2_sl, _t2_tp = 0.025, 0.05
                         _t2_qty = self.risk.calc_order_size(
