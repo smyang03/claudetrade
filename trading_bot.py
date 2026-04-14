@@ -1,4 +1,4 @@
-﻿"""
+"""
 trading_bot.py
 Main loop for KR/US sessions. Paper by default, live with --live.
 """
@@ -45,6 +45,7 @@ from kis_api import (
     get_usd_krw,
     screen_market_kr,
     screen_market_us,
+    save_kr_screen_cache,
     is_trading_halted,
 )
 from indicators import calc_all
@@ -77,7 +78,7 @@ from minority_report.consensus import build_consensus
 from minority_report.tuner import tune
 from minority_report.postmortem import run as run_postmortem
 from phase1_trainer.digest_builder import build_kr_digest, build_us_digest, digest_to_prompt
-from phase1_trainer.sector_play import run_sector_plays, TIER2_SIZE_RATIO
+from phase1_trainer.sector_play import run_sector_plays, run_kr_sector_plays, TIER2_SIZE_RATIO
 from strategy.momentum import signal as mom_sig, params as mom_params, diagnostics as mom_diag
 from strategy.mean_reversion import signal as mr_sig, params as mr_params
 from strategy.gap_pullback import signal as gap_sig, params as gap_params
@@ -343,6 +344,9 @@ class TradingBot:
         # 장 시작 전 포지션 리뷰 결과 (session_open에서 채움 → startup guard 후 실행)
         self._pre_session_sell_queue: dict[str, list] = {"KR": [], "US": []}
 
+        # KR 장중 스크리닝 결과 (session_close 시 캐시 저장 → 다음날 장전 사용)
+        self._last_kr_candidates: list = []
+
         # 장중 이벤트 기록 (튜닝/긴급재판단) — session_close 시 daily_judgment에 포함
         self._session_events: list = []
         self.decision_event_log: list = []
@@ -489,9 +493,11 @@ class TradingBot:
             digest_prompt = (self.today_judgment or {}).get("digest_prompt", "")
             today = date.today().isoformat()
             if target_market == "KR":
-                candidates = screen_market_kr(self.token)
+                candidates = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                if candidates:
+                    self._last_kr_candidates = candidates
             else:
-                candidates = screen_market_us()
+                candidates = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
             if not candidates:
                 raise RuntimeError("재스크리닝 후보가 없습니다.")
             self._log_screen_candidates(target_market, candidates, "manual_rescreen")
@@ -2796,9 +2802,11 @@ class TradingBot:
         universe_tickers = None
         if self.enable_dynamic_universe:
             if market == "KR":
-                pre_candidates = screen_market_kr(self.token)
+                pre_candidates = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                if pre_candidates:
+                    self._last_kr_candidates = pre_candidates
             else:
-                pre_candidates = screen_market_us()
+                pre_candidates = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
             if pre_candidates:
                 snapshot = build_universe_from_candidates(
                     market=market,
@@ -2910,9 +2918,11 @@ class TradingBot:
             # 오늘 집중 종목: 스크리너 → 히스토리 필터 → Claude 선택
             log.info(f"[스크리너] {market} 시장 스캔 중...")
             if market == "KR":
-                candidates = screen_market_kr(self.token)
+                candidates = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                if candidates:
+                    self._last_kr_candidates = candidates
             else:
-                candidates = screen_market_us()
+                candidates = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
             self._log_screen_candidates(market, candidates, "session_open")
             candidates = self._prefill_history_sync(candidates, market)
             candidates = self._filter_candidates_by_history(candidates, market)
@@ -2963,9 +2973,11 @@ class TradingBot:
             # (reused=True 시 전날 저장된 종목이 그대로 고정되는 문제 방지)
             log.info(f"[종목 재스크리닝] {market} 판단 재사용 + 종목만 새로 선택 (mode={consensus['mode']})")
             if market == "KR":
-                fresh_candidates = screen_market_kr(self.token)
+                fresh_candidates = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                if fresh_candidates:
+                    self._last_kr_candidates = fresh_candidates
             else:
-                fresh_candidates = screen_market_us()
+                fresh_candidates = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
             if fresh_candidates:
                 self._log_screen_candidates(market, fresh_candidates, "session_reuse_rescreen")
                 fresh_candidates = self._prefill_history_sync(fresh_candidates, market)
@@ -4084,11 +4096,11 @@ class TradingBot:
                             f", 신고가{'충족' if _kr_md.get('high_ok') else '부족'}"
                         )
                         none_detail = " | ".join([
-                            _orp_detail(sig_df, i, orp_p),
-                            _gap_detail(sig_df, i, gap_p),
-                            _kr_mom_str,
-                            _mr_detail(sig_df, i, mr_p),
-                            _vb_detail(sig_df, i, vb_p),
+                            str(_orp_detail(sig_df, i, orp_p)),
+                            str(_gap_detail(sig_df, i, gap_p)),
+                            str(_kr_mom_str),
+                            str(_mr_detail(sig_df, i, mr_p)),
+                            str(_vb_detail(sig_df, i, vb_p)),
                         ])
                 else:
                     _us_orp_p = _ap("opening_range_pullback")
@@ -4189,11 +4201,11 @@ class TradingBot:
                             )
                         )
                         none_detail = " | ".join([
-                            _orp_detail(sig_df, i, orp_p),
-                            _gap_detail(sig_df, i, gap_p),
-                            _mom_detail,
-                            _mr_detail(sig_df, i, mr_p),
-                            _vb_detail(sig_df, i, vb_p),
+                            str(_orp_detail(sig_df, i, orp_p)),
+                            str(_gap_detail(sig_df, i, gap_p)),
+                            str(_mom_detail),
+                            str(_mr_detail(sig_df, i, mr_p)),
+                            str(_vb_detail(sig_df, i, vb_p)),
                         ])
                     else:
                         _us_orp_p = _ap("opening_range_pullback")
@@ -4213,11 +4225,11 @@ class TradingBot:
                             )
                         )
                         none_detail = " | ".join([
-                            _orp_detail(sig_df, i, _us_orp_p),
-                            _vb_detail(sig_df, i, _us_vb_p),
-                            _us_mom_detail,
-                            _mr_detail(sig_df, i, _us_mr_p),
-                            _gap_detail(sig_df, i, _us_gap_p),
+                            str(_orp_detail(sig_df, i, _us_orp_p)),
+                            str(_vb_detail(sig_df, i, _us_vb_p)),
+                            str(_us_mom_detail),
+                            str(_mr_detail(sig_df, i, _us_mr_p)),
+                            str(_gap_detail(sig_df, i, _us_gap_p)),
                         ])
                     if market == "KR" and kr_momentum_diag:
                         log.debug(
@@ -4860,6 +4872,90 @@ class TradingBot:
                         log.error(f"[Tier2] {_t2_ticker} 오류: {_t2_e}")
             except Exception as _t2_loop_e:
                 log.error(f"[Tier2 섹터플레이] 루프 오류: {_t2_loop_e}")
+        # ── KR Tier 2 섹터 플레이 ─────────────────────────────────────────────
+        if market == "KR" and mode not in ("HALT", "DEFENSIVE", "CAUTIOUS_BEAR"):
+            try:
+                _digest_raw    = self.today_judgment.get("digest_raw", {})
+                _kr_sectors    = (_digest_raw.get("context") or {}).get("kr_sectors", {})
+                _digest_summary = self.today_judgment.get("digest_prompt", "")[:300]
+                _kr_t2_plays   = run_kr_sector_plays(
+                    kr_sectors=_kr_sectors,
+                    market_mode=mode,
+                    digest_summary=_digest_summary,
+                    max_plays=2,
+                )
+                for _play in _kr_t2_plays:
+                    _t2_ticker = _play["ticker"]
+                    try:
+                        if any(p["ticker"] == _t2_ticker for p in self.risk.positions):
+                            log.debug(f"  [KR Tier2] {_t2_ticker} 이미 포지션 보유 — 스킵")
+                            continue
+                        if self._is_entry_blocked(_t2_ticker):
+                            log.debug(f"  [KR Tier2] {_t2_ticker} 진입 쿨다운 — 스킵")
+                            continue
+                        _t2_price_info = get_price(_t2_ticker, self.token, market="KR")
+                        if not _t2_price_info:
+                            continue
+                        _t2_risk_price = int(_t2_price_info.get("price", 0) or 0)
+                        if _t2_risk_price <= 0:
+                            continue
+                        self.price_cache[_t2_ticker] = _t2_risk_price
+                        self.risk.update_prices(self.price_cache)
+                        _t2_size = max(10, int(size_pct * TIER2_SIZE_RATIO))
+                        _t2_sl, _t2_tp = 0.025, 0.05
+                        _t2_qty = self.risk.calc_order_size(
+                            _t2_risk_price, _t2_size, _t2_sl
+                        )
+                        if _t2_qty <= 0:
+                            continue
+                        _t2_result = place_order(
+                            self.token, _t2_ticker, "buy", _t2_qty,
+                            market="KR", order_type="market",
+                        )
+                        if not _t2_result["success"]:
+                            log.error(f"  [KR Tier2] {_t2_ticker} 주문실패: {_t2_result.get('msg')}")
+                            continue
+                        log.info(
+                            f"[KR Tier2 BUY] {_t2_ticker} {_t2_qty}주 @{_t2_risk_price:,}원 "
+                            f"| ETF={_play['etf']} {_play['etf_chg']:+.2f}% "
+                            f"| conf={_play['confidence']:.2f} | {_play['reason']}"
+                        )
+                        self._record_decision_event(
+                            "KR", "buy_order", _t2_ticker,
+                            strategy="kr_sector_play",
+                            qty=_t2_qty,
+                            price_native=float(_t2_risk_price),
+                            price_krw=_t2_risk_price,
+                            reason=f"KR Tier2 섹터플레이 [{_play['etf']} {_play['etf_chg']:+.2f}%]",
+                            detail=_play["reason"],
+                            order_no=_t2_result.get("order_no", ""),
+                            selected_reason=f"kr_sector_etf={_play['etf']}",
+                        )
+                        self._add_pending_order({
+                            "ticker":        _t2_ticker,
+                            "side":          "buy",
+                            "qty":           _t2_qty,
+                            "market":        "KR",
+                            "raw_price":     float(_t2_risk_price),
+                            "risk_price_krw": float(_t2_risk_price),
+                            "strategy":      "kr_sector_play",
+                            "tp_pct":        float(_t2_tp),
+                            "sl_pct":        float(_t2_sl),
+                            "max_hold":      1,
+                            "created_at":    datetime.now(KST).isoformat(),
+                        })
+                        self._block_entry(_t2_ticker, _BUY_COOLDOWN_MIN, "buy_placed")
+                        buy_order_alert(
+                            market="KR",
+                            ticker=_t2_ticker,
+                            qty=_t2_qty,
+                            detail=f"{_play['etf']} {_play['etf_chg']:+.2f}% 섹터강세 | conf={_play['confidence']:.2f} | {_play['reason']}",
+                            name=str(_t2_price_info.get("name", "") or "").strip(),
+                        )
+                    except Exception as _t2_e:
+                        log.error(f"[KR Tier2] {_t2_ticker} 오류: {_t2_e}")
+            except Exception as _t2_loop_e:
+                log.error(f"[KR Tier2 섹터플레이] 루프 오류: {_t2_loop_e}")
         # ── Tier 2 섹터 플레이 끝 ──────────────────────────────────────────────
 
         log.info(
@@ -4918,9 +5014,9 @@ class TradingBot:
                 try:
                     log.info(f"[튜너 종목갱신] {old_mode}→{new_mode} 모드 변경 → 종목 재선택")
                     if market == "KR":
-                        tune_cands = screen_market_kr(self.token)
+                        tune_cands = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     else:
-                        tune_cands = screen_market_us()
+                        tune_cands = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     if tune_cands:
                         self._log_screen_candidates(market, tune_cands, "tuning_rescreen")
                         digest_p = self.today_judgment.get("digest_prompt", "")
@@ -5251,9 +5347,9 @@ class TradingBot:
         # 새 후보 스크리닝 + 히스토리 필터
         try:
             if market == "KR":
-                new_cands = screen_market_kr(self.token)
+                new_cands = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
             else:
-                new_cands = screen_market_us()
+                new_cands = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
         except Exception as e:
             log.warning(f"[부분교체] {market} 스크리닝 실패: {e}")
             return
@@ -5463,9 +5559,9 @@ class TradingBot:
                 try:
                     log.info(f"[종목 재선택] 모드 변경({old_mode}→{new_consensus['mode']}) → 종목 갱신 시작")
                     if market == "KR":
-                        reinvoke_cands = screen_market_kr(self.token)
+                        reinvoke_cands = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     else:
-                        reinvoke_cands = screen_market_us()
+                        reinvoke_cands = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     if reinvoke_cands:
                         self._log_screen_candidates(market, reinvoke_cands, "analyst_reinvoke_rescreen")
                         reinvoke_cands = self._filter_candidates_by_history(reinvoke_cands, market)
@@ -5992,6 +6088,14 @@ class TradingBot:
                 log.info(f"[param_tuner] {market} outcome 기록 완료 ({len(_pt_ids)}개 세션)")
         except Exception as _pt_e:
             log.warning(f"[param_tuner] outcome 업데이트 오류: {_pt_e}")
+
+        # KR 장중 마지막 스크리닝 결과 → 다음 날 장전 A캐시로 저장
+        if market == "KR" and self._last_kr_candidates:
+            try:
+                save_kr_screen_cache(self._last_kr_candidates)
+                log.info(f"[KR 스크리너 캐시] session_close 저장 완료 ({len(self._last_kr_candidates)}종목)")
+            except Exception as _e:
+                log.warning(f"[KR 스크리너 캐시] session_close 저장 실패: {_e}")
 
 
 def _in_session_now(market: str) -> bool:

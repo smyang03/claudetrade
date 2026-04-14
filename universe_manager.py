@@ -22,12 +22,19 @@ UNIVERSE_DIR.mkdir(parents=True, exist_ok=True)
 class UniverseConfig:
     top_n: int = 20
     min_price: float = 1.0
-    min_volume: float = 1.0
+    min_dollar_volume: float = 0.0  # price * volume 하한 (0=비활성화)
 
 
 # 시장별 Core 종목 — Dynamic Universe에서 항상 보장
 US_CORE_TICKERS: list[str] = ["NVDA", "TSLA", "AAPL", "GOOGL", "NFLX"]
-KR_CORE_TICKERS: list[str] = ["005930", "000660", "035420", "005380", "051910"]
+KR_CORE_TICKERS: list[str] = [
+    "005930",  # 삼성전자
+    "068270",  # 셀트리온 (000660 SK하이닉스 → 교체)
+    "035420",  # NAVER
+    "035720",  # 카카오
+    "005380",  # 현대차
+    "051910",  # LG화학
+]
 
 
 def get_core_tickers(market: str) -> list[str]:
@@ -107,7 +114,9 @@ def build_universe_from_candidates(
             continue
         price = _safe_float(c.get("price", 0.0))
         volume = _safe_float(c.get("volume", 0.0))
-        if price < cfg.min_price or volume < cfg.min_volume:
+        if price < cfg.min_price:
+            continue
+        if cfg.min_dollar_volume > 0 and price * volume < cfg.min_dollar_volume:
             continue
         item = {
             "ticker": ticker,
@@ -144,7 +153,7 @@ def build_universe_from_candidates(
         "config": {
             "top_n": cfg.top_n,
             "min_price": cfg.min_price,
-            "min_volume": cfg.min_volume,
+            "min_dollar_volume": cfg.min_dollar_volume,
         },
         "core_tickers": core,
         "tickers": [c["ticker"] for c in selected],

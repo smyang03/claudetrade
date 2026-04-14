@@ -365,11 +365,29 @@ def fetch_live_context_kr() -> dict:
     if not _YF_OK:
         return {}
     log.info("  [live context] yfinance로 KR 시장 지표 수집 중...")
+    # TIGER 섹터 ETF 등락률 (KR Tier2 트리거)
+    kr_sector_etfs = {
+        "091160.KS": "반도체",   # TIGER 반도체
+        "227550.KS": "헬스케어", # TIGER 헬스케어
+        "139220.KS": "금융",     # TIGER KRX금융
+        "309230.KS": "방산",     # TIGER 방산&우주
+        "305720.KS": "2차전지",  # TIGER 2차전지테마
+    }
+    kr_sectors = {}
+    for etf_code, sector_name in kr_sector_etfs.items():
+        try:
+            chg = _yf_change(etf_code)
+            if chg != 0:
+                kr_sectors[etf_code] = chg
+        except Exception:
+            pass
+
     return {
-        "kospi":   {"change_pct": _yf_change("^KS11"), "close": _yf_last("^KS11")},
-        "kosdaq":  {"change_pct": _yf_change("^KQ11"), "close": _yf_last("^KQ11")},
-        "usd_krw": _yf_last("KRW=X"),
-        "vkospi":  _yf_last("^KS200VOL") or _yf_last("^VKOSPI") or 0,
+        "kospi":      {"change_pct": _yf_change("^KS11"), "close": _yf_last("^KS11")},
+        "kosdaq":     {"change_pct": _yf_change("^KQ11"), "close": _yf_last("^KQ11")},
+        "usd_krw":    _yf_last("KRW=X"),
+        "vkospi":     _yf_last("^KS200VOL") or _yf_last("^VKOSPI") or 0,
+        "kr_sectors": kr_sectors,  # KR Tier2 섹터 트리거
     }
 
 
@@ -451,6 +469,7 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         "us_prev": supp.get("us_prev", {}),  # 전날 미국장
         "fomc": target_date in FOMC_DATES,
         "options_expiry": supp.get("options_expiry", False),
+        "kr_sectors": supp.get("kr_sectors", {}),  # KR Tier2 섹터 ETF 등락
     }
 
     # ── Layer B: 종목 핵심 지표 (~300 토큰) ──────────────────────────────────

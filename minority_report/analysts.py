@@ -455,7 +455,11 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         cand_lines.append(f"  {c.get('ticker')} {c.get('name','')} {rate_str} {vol_str}".strip())
     cand_text = "\n".join(cand_lines)
 
-    prompt = f"""오늘 {market} 세션에서 집중 모니터링할 종목을 최소 16개, 최대 20개 선택하세요.
+    n_cands  = len([c for c in candidates if c.get("ticker")])
+    req_min  = min(16, n_cands)
+    req_max  = min(20, n_cands)
+
+    prompt = f"""오늘 {market} 세션에서 집중 모니터링할 종목을 최소 {req_min}개, 최대 {req_max}개 선택하세요.
 합의 모드: {consensus_mode}
 후보 종목:
 {cand_text}
@@ -464,15 +468,15 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 {digest_prompt[:400]}
 
 규칙:
-- 후보 종목 중에서만 선택.
-- 최소 16개 이상 선택할 것. 후보가 충분하면 20개까지 선택 가능.
+- 후보 종목 중에서만 선택. 중복 없이 선택할 것.
+- 최소 {req_min}개 이상 선택할 것. 후보가 충분하면 {req_max}개까지 선택 가능.
 - reasons는 반드시 한국어로 작성 (30자 이내).
 - JSON만 반환.
 
 {{"tickers":["code1","code2","code3"],"reasons":{{"code1":"선택 이유 한국어"}}}}"""
 
     valid    = {c["ticker"] for c in candidates if c.get("ticker")}
-    fallback = [c["ticker"] for c in candidates[:16] if c.get("ticker")]
+    fallback = [c["ticker"] for c in candidates[:req_min] if c.get("ticker")]
 
     # US DEFENSIVE/HALT 모드 시 인버스 ETF만 남지 않도록 안정 종목 보호 목록
     US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}

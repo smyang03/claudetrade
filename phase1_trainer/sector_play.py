@@ -59,6 +59,24 @@ SECTOR_NAMES: dict[str, str] = {
     "XLI": "산업재",
 }
 
+# ── KR Tier 2 설정 ──────────────────────────────────────────────────────────
+# TIGER 섹터 ETF → KR Tier2 후보 종목 (Pick1 우선)
+KR_SECTOR_MAP: dict[str, list[str]] = {
+    "091160.KS": ["000660", "009150"],  # TIGER 반도체  → SK하이닉스, 삼성전기
+    "227550.KS": ["207940", "128940"],  # TIGER 헬스케어 → 삼성바이오, 한미약품
+    "139220.KS": ["105560", "055550"],  # TIGER KRX금융 → KB금융, 신한지주
+    "309230.KS": ["012450", "064350"],  # TIGER 방산    → 한화에어로스페이스, 현대로템
+    "305720.KS": ["006400", "003670"],  # TIGER 2차전지 → 삼성SDI, 포스코퓨처엠
+}
+
+KR_SECTOR_NAMES: dict[str, str] = {
+    "091160.KS": "반도체",
+    "227550.KS": "헬스케어",
+    "139220.KS": "금융",
+    "309230.KS": "방산",
+    "305720.KS": "2차전지",
+}
+
 
 def _etf_prev_day_chg(etf: str) -> float:
     """yfinance로 ETF 전일 등락률 조회 (모멘텀 연속성 확인용)"""
@@ -289,6 +307,161 @@ def run_sector_plays(
                 continue
             log.info(
                 f"[sector_play] {ticker} → {judgment['action']} "
+                f"(conf={judgment['confidence']:.2f}) {judgment['reason']}"
+            )
+            if judgment["action"] == "BUY" and judgment["confidence"] >= 0.55:
+                results.append({
+                    "ticker":     ticker,
+                    "etf":        etf,
+                    "etf_chg":    etf_chg,
+                    "confidence": judgment["confidence"],
+                    "reason":     judgment["reason"],
+                    "size_ratio": TIER2_SIZE_RATIO,
+                    "snap":       snap,
+                })
+
+    return results
+
+
+# ── KR Tier 2 ────────────────────────────────────────────────────────────────
+
+def fetch_kr_ticker_snapshot(ticker: str) -> Optional[dict]:
+    """yfinance로 KR 종목 스냅샷 수집 (6자리 코드 → .KS suffix)"""
+    if not _YF_OK:
+        return None
+    try:
+        yf_code = f"{ticker}.KS"
+        tk   = yf.Ticker(yf_code)
+        hist = tk.history(period="5d", interval="1d", auto_adjust=True)
+        if hist.empty or len(hist) < 2:
+            return None
+        closes  = hist["Close"].tolist()
+        volumes = hist["Volume"].tolist()
+        change_pct = (closes[-1] - closes[-2]) / closes[-2] * 100 if closes[-2] else 0
+        vol_ratio  = volumes[-1] / (sum(volumes[:-1]) / max(len(volumes) - 1, 1)) if volumes else 1.0
+        return {
+            "ticker":     ticker,
+            "close":      int(round(closes[-1])),
+            "change_pct": round(change_pct, 2),
+            "vol_ratio":  round(vol_ratio, 2),
+            "closes_5d":  [int(round(c)) for c in closes],
+        }
+    except Exception as e:
+        log.warning(f"[kr_sector_play] {ticker} 스냅샷 실패: {e}")
+        return None
+
+
+def evaluate_kr_sector_play(
+    ticker: str,
+    snap: dict,
+    etf: str,
+    etf_chg: float,
+    market_mode: str,
+    digest_summary: str = "",
+) -> Optional[dict]:
+    """Claude Haiku로 KR Tier2 섹터 플레이 판단"""
+    try:
+        import anthropic
+        from minority_report.analysts import R1_MODEL
+
+        sector_name = KR_SECTOR_NAMES.get(etf, etf)
+        prompt = (
+            f"## KR Tier2 섹터 플레이 판단\n\n"
+            f"섹터ETF: {etf}({sector_name}) {etf_chg:+.2f}% → 임계값({ETF_THRESHOLD}%) 초과\n"
+            f"시장모드: {market_mode}\n\n"
+            f"### {ticker} 현재 상태\n"
+            f"- 종가: {snap['close']:,}원\n"
+            f"- 금일 등락: {snap['change_pct']:+.2f}%\n"
+            f"- 거래량 비율(5일 평균 대비): {snap['vol_ratio']:.2f}x\n"
+            f"- 5일 종가 추이: {snap['closes_5d']}\n"
+        )
+        if digest_summary:
+            prompt += f"\n### 오늘 시장 요약\n{digest_summary}\n"
+        prompt += (
+            f"\n### 판단 지침\n"
+            f"- 섹터 ETF({sector_name})가 {etf_chg:+.2f}%로 강하게 움직였습니다.\n"
+            f"- {ticker}이 섹터 모멘텀에 올라탈 가능성이 있는지 판단하세요.\n"
+            f"- 포지션 사이즈는 Core 종목의 50%만 사용합니다.\n"
+            f"- BUY 또는 SKIP 중 하나로만 답하세요.\n\n"
+            f'### 응답 형식 (JSON)\n{{"action": "BUY" | "SKIP", "confidence": 0.0~1.0, "reason": "한 줄 이유"}}'
+        )
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model=R1_MODEL, max_tokens=200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
+        start, end = raw.find("{"), raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            result = json.loads(raw[start:end])
+            result.setdefault("action", "SKIP")
+            result.setdefault("confidence", 0.5)
+            result.setdefault("reason", "")
+            return result
+    except Exception as e:
+        log.warning(f"[kr_sector_play] {ticker} Claude 판단 실패: {e}")
+    return None
+
+
+def run_kr_sector_plays(
+    kr_sectors: dict,
+    market_mode: str,
+    digest_summary: str = "",
+    max_plays: int = 2,
+) -> list[dict]:
+    """
+    KR Tier2 섹터 플레이 — TIGER ETF 강세 시 on-demand 종목 판단
+
+    Args:
+        kr_sectors:     digest context의 kr_sectors dict {etf_code: change_pct}
+        market_mode:    오늘 시장 모드
+        digest_summary: 간략한 시장 요약
+        max_plays:      최대 Tier2 종목 수
+
+    Returns:
+        [{"ticker": ..., "etf": ..., "etf_chg": ..., "confidence": ...,
+          "reason": ..., "size_ratio": TIER2_SIZE_RATIO}, ...]
+    """
+    _BEAR_MODES = {"CAUTIOUS_BEAR", "MILD_BEAR", "DEFENSIVE", "HALT"}
+    if market_mode in _BEAR_MODES:
+        log.info(f"[kr_sector_play] {market_mode} — KR Tier2 비활성화")
+        return []
+
+    MAX_SPIKE = float(os.getenv("SECTOR_MAX_SPIKE_PCT", "8.0"))
+
+    # 활성 섹터 필터링
+    active = []
+    for etf, candidates in KR_SECTOR_MAP.items():
+        chg = kr_sectors.get(etf, 0) or 0
+        if abs(chg) < ETF_THRESHOLD:
+            continue
+        if abs(chg) > MAX_SPIKE:
+            log.info(f"[kr_sector_play] {etf} {chg:+.2f}% — 단일 스파이크 제외")
+            continue
+        sector_name = KR_SECTOR_NAMES.get(etf, etf)
+        log.info(f"[kr_sector_play] {etf}({sector_name}) {chg:+.2f}% → 후보: {candidates}")
+        active.append((etf, candidates, chg, abs(chg)))
+
+    active.sort(key=lambda x: -x[3])
+
+    results = []
+    for etf, candidates, etf_chg, _ in active:
+        if len(results) >= max_plays:
+            break
+        for ticker in candidates:
+            if len(results) >= max_plays:
+                break
+            snap = fetch_kr_ticker_snapshot(ticker)
+            if snap is None:
+                log.warning(f"[kr_sector_play] {ticker} 스냅샷 없음 — 스킵")
+                continue
+            judgment = evaluate_kr_sector_play(
+                ticker, snap, etf, etf_chg, market_mode, digest_summary
+            )
+            if judgment is None:
+                continue
+            log.info(
+                f"[kr_sector_play] {ticker} → {judgment['action']} "
                 f"(conf={judgment['confidence']:.2f}) {judgment['reason']}"
             )
             if judgment["action"] == "BUY" and judgment["confidence"] >= 0.55:

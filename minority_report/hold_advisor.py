@@ -36,16 +36,27 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
     if entry <= 0:
         raise ValueError(f"[hold_advisor] entry=0 — 진입가 미확정, 호출 불가 ({pos.get('ticker','-')})")
 
-    # display 가격이 있으면 USD 단위로 표시 (entry/cp/tp/sl 일관성 유지)
+    # US: display_avg_price(USD) 기준으로 표시, KRW 환산값을 괄호에 병기
+    # KR: KRW 단위 그대로 표시
     disp_entry = float(pos.get("display_avg_price", 0) or 0)
     disp_cp    = float(pos.get("display_current_price", 0) or 0)
-    if market == "US" and disp_entry > 0 and disp_cp > 0:
+    # USD/KRW 환율: entry(KRW) / disp_entry(USD)로 역산
+    fx_rate = (entry / disp_entry) if (market == "US" and disp_entry > 0) else 1.0
+
+    if market == "US" and disp_entry > 0:
         show_entry = disp_entry
-        show_cp    = disp_cp
-        show_tp    = round(float(pos.get("tp", 0) or 0) / (entry / disp_entry), 2) if entry > 0 else 0
-        show_sl    = round(float(pos.get("sl", 0) or 0) / (entry / disp_entry), 2) if entry > 0 else 0
-        show_trail = round(float(pos.get("trail_sl", 0) or 0) / (entry / disp_entry), 2) if entry > 0 else 0
+        show_cp    = disp_cp if disp_cp > 0 else float(pos.get("current_price", entry) or entry) / fx_rate
+        show_tp    = round(float(pos.get("tp", 0) or 0) / fx_rate, 2)
+        show_sl    = round(float(pos.get("sl", 0) or 0) / fx_rate, 2)
+        show_trail = round(float(pos.get("trail_sl", 0) or 0) / fx_rate, 2)
         ccy = "USD"
+        # KRW 환산값 (괄호 병기용)
+        krw_entry  = int(entry)
+        krw_cp     = int(show_cp * fx_rate)
+        krw_tp     = int(float(pos.get("tp", 0) or 0))
+        krw_sl     = int(float(pos.get("sl", 0) or 0))
+        krw_trail  = int(float(pos.get("trail_sl", 0) or 0))
+        def _p(usd, krw): return f"${usd:,.2f} (≈{krw:,}원)" if krw > 0 else f"${usd:,.2f}"
     else:
         show_entry = entry
         show_cp    = float(pos.get("current_price", entry) or entry)
@@ -53,6 +64,8 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
         show_sl    = float(pos.get("sl", 0) or 0)
         show_trail = float(pos.get("trail_sl", 0) or 0)
         ccy = "KRW"
+        krw_entry = krw_cp = krw_tp = krw_sl = krw_trail = 0
+        def _p(val, _krw=0): return f"{val:,.0f}원"
 
     cp      = show_cp
     pnl_pct = (show_cp / show_entry - 1) * 100 if show_entry else 0
@@ -66,14 +79,23 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
     tp_triggered = bool(pos.get("tp_triggered", False))
     status_bits = []
     if tp > 0:
-        status_bits.append(f"TP={tp:,.2f}")
+        status_bits.append(f"TP={_p(tp, krw_tp)}")
     if sl > 0:
-        status_bits.append(f"SL={sl:,.2f}")
+        status_bits.append(f"SL={_p(sl, krw_sl)}")
     if tp_triggered:
         status_bits.append("TP 도달 상태")
     if trailing:
-        status_bits.append(f"트레일링 활성(trail_sl={trail_sl:,.2f})" if trail_sl > 0 else "트레일링 활성")
+        _tr_str = f"트레일링 활성(trail_sl={_p(trail_sl, krw_trail)})" if trail_sl > 0 else "트레일링 활성"
+        status_bits.append(_tr_str)
     status_line = " / ".join(status_bits) if status_bits else "별도 TP/SL 상태 정보 없음"
+
+    # 진입가/현재가 표시 (US: USD + KRW 병기)
+    if market == "US":
+        entry_str = _p(show_entry, krw_entry)
+        cp_str    = _p(show_cp, krw_cp)
+    else:
+        entry_str = f"{show_entry:,.0f}원"
+        cp_str    = f"{show_cp:,.0f}원"
 
     prompt = f"""{PERSONAS[analyst_type]}
 
@@ -81,7 +103,7 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
 
 ━━━ 포지션 ━━━
   종목: {ticker} ({market}, {ccy})  전략: {strat}
-  진입가: {show_entry:,.2f}  현재가: {show_cp:,.2f}  수익률: {pnl_pct:+.2f}%
+  진입가: {entry_str}  현재가: {cp_str}  수익률: {pnl_pct:+.2f}%
   보유일: {held}일
   포지션 상태: {status_line}
 
@@ -139,6 +161,15 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
     }
     """
     ticker  = pos.get("ticker", "-")
+
+    # entry=0이면 Claude가 "데이터 오류"로 일관되게 SELL 판단 → 의미없는 호출 차단
+    _entry = float(pos.get("entry", 0) or 0)
+    if _entry <= 0:
+        _entry = float(pos.get("avg_price", 0) or pos.get("display_avg_price", 0) or 0)
+    if _entry <= 0:
+        log.warning(f"[hold_advisor] {ticker} entry=0 → 호출 차단 (진입가 미확정), HOLD 반환")
+        return {"action": "HOLD", "trail_pct": 0.03, "votes": {}}
+
     votes   = {}
     for atype in ("bull", "bear", "neutral"):
         votes[atype] = _ask_one(atype, pos, market, digest_prompt)

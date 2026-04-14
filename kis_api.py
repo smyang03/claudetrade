@@ -1427,13 +1427,47 @@ _KR_FALLBACK_UNIVERSE = [
     "034730",  # SK
 ]
 
+# KR 장전 스크리닝 캐시 경로 (장중 정상 결과를 저장, 다음 날 장전에 재사용)
+_KR_SCREEN_CACHE_PATH = get_runtime_path("state", "kr_screen_cache.json")
 
-def screen_market_kr(token: str, top_n: int = 30) -> list:
-    """
-    KR 시장 스크리닝 — KIS 거래량 순위 API
-    반환: [{ticker, name, price, change_rate, volume, vol_ratio}]
-    장 외 시간이나 API 실패 시 빈 리스트 반환 (호출부에서 폴백 처리)
-    """
+
+def save_kr_screen_cache(candidates: list) -> None:
+    """장중 유효한 KR 스크리닝 결과를 캐시에 저장 (session_close 또는 장중 정상 스크리닝 시 호출)"""
+    import logging as _log
+    try:
+        _KR_SCREEN_CACHE_PATH.write_text(
+            json.dumps({
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "cached_at": __import__("time").time(),
+                "candidates": candidates,
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        _log.getLogger("trading_system").debug(
+            f"[KR 스크리너 캐시] 저장 완료 ({len(candidates)}종목)"
+        )
+    except Exception as e:
+        _log.getLogger("trading_system").warning(f"[KR 스크리너 캐시] 저장 실패: {e}")
+
+
+def _load_kr_screen_cache() -> list:
+    """전일 KR 스크리닝 캐시 로드. 오늘 또는 어제 날짜 파일만 유효."""
+    try:
+        if not _KR_SCREEN_CACHE_PATH.exists():
+            return []
+        cached = json.loads(_KR_SCREEN_CACHE_PATH.read_text(encoding="utf-8"))
+        from datetime import timedelta
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        if cached.get("date") not in (today, yesterday):
+            return []
+        return cached.get("candidates", [])
+    except Exception:
+        return []
+
+
+def _kis_volume_rank(token: str, vol_cnt: str, top_n: int) -> list:
+    """KIS 거래량순위 API 호출 공통 함수."""
     url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/volume-rank"
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
@@ -1445,52 +1479,138 @@ def screen_market_kr(token: str, top_n: int = 30) -> list:
         "FID_TRGT_EXLS_CLS_CODE": "000000",
         "FID_INPUT_PRICE_1":      "",
         "FID_INPUT_PRICE_2":      "",
-        "FID_VOL_CNT":            "100000",
+        "FID_VOL_CNT":            vol_cnt,
         "FID_INPUT_DATE_1":       "",
     }
+    resp = _kis_get(
+        url,
+        headers=_headers(token, "FHPST01710000"),
+        params=params,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    items = resp.json().get("output", [])
+    result = []
+    for it in items[:top_n]:
+        ticker = it.get("mksc_shrn_iscd", "").strip()
+        if not ticker or not ticker.isdigit():
+            continue
+        try:
+            result.append({
+                "ticker": ticker,
+                "name": it.get("hts_kor_isnm", ticker),
+                "price": int(it.get("stck_prpr", 0)),
+                "change_rate": float(it.get("prdy_ctrt", 0)),
+                "volume": int(it.get("acml_vol", 0)),
+                "vol_ratio": float(it.get("vol_tnrt", 1.0)),
+            })
+        except (ValueError, TypeError):
+            continue
+    return result
+
+
+def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list:
+    """
+    KR 시장 스크리닝 — A+B 병행 전략
+
+    장중(09:05~15:30):
+      B: KIS volume-rank (FID_VOL_CNT=KR_SCREEN_MIN_VOLUME 환경변수, 기본 100000) → 정상 결과 → 캐시 저장 (A 준비)
+
+    장전(08:30~09:05):
+      B: KIS volume-rank (FID_VOL_CNT=0, 필터 OFF) → 동시호가·시간외 잔량 있는 종목
+      A: kr_screen_cache.json (전일 장중 저장분) → B 결과 보충
+      → 합쳐서 top_n 반환
+
+    반환: [{ticker, name, price, change_rate, volume, vol_ratio}]
+    """
+    import logging as _log
+    import time as _time
+    _logger = _log.getLogger("trading_system")
+
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+    _now_kr = _dt.now(ZoneInfo("Asia/Seoul"))
+    _is_premarket = (
+        (_now_kr.hour == 8 and _now_kr.minute >= 30)
+        or (_now_kr.hour == 9 and _now_kr.minute <= 5)
+    )
+
     try:
-        resp = _kis_get(
-            url,
-            headers=_headers(token, "FHPST01710000"),
-            params=params,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        items = resp.json().get("output", [])
-        result = []
-        for it in items[:top_n]:
-            ticker = it.get("mksc_shrn_iscd", "").strip()
-            if not ticker or not ticker.isdigit():
-                continue
+        if _is_premarket:
+            # ── B: KIS 거래량 필터 OFF → 동시호가 잔량 종목 수집 ───────────────
+            live = []
             try:
-                result.append({
-                    "ticker": ticker,
-                    "name": it.get("hts_kor_isnm", ticker),
-                    "price": int(it.get("stck_prpr", 0)),
-                    "change_rate": float(it.get("prdy_ctrt", 0)),
-                    "volume": int(it.get("acml_vol", 0)),
-                    "vol_ratio": float(it.get("vol_tnrt", 1.0)),
-                })
-            except (ValueError, TypeError):
-                continue
-        # 개장 전 거래량 부족으로 후보가 5개 미만이면 블루칩 폴백으로 보완
-        if len(result) < 10:
-            existing = {r["ticker"] for r in result}
-            for ticker in _KR_FALLBACK_UNIVERSE:
-                if ticker not in existing:
-                    result.append({
-                        "ticker": ticker,
-                        "name": ticker,
-                        "price": 0,
-                        "change_rate": 0.0,
-                        "volume": 0,
-                        "vol_ratio": 1.0,
-                    })
-                if len(result) >= 20:
-                    break
-        return result
+                live = _kis_volume_rank(token, vol_cnt="0", top_n=top_n)
+                _logger.info(
+                    f"[KR 스크리너 장전-B] KIS 거래량필터OFF → {len(live)}종목"
+                )
+            except Exception as e:
+                _logger.warning(f"[KR 스크리너 장전-B] KIS 실패: {e}")
+
+            # ── A: 전일 캐시 로드 → B 보충 ────────────────────────────────────
+            cached = _load_kr_screen_cache()
+            _logger.info(
+                f"[KR 스크리너 장전-A] 전일 캐시 {len(cached)}종목 로드"
+            )
+
+            # B 우선, A로 보충 (중복 제거)
+            seen = {c["ticker"] for c in live}
+            merged = list(live)
+            for c in cached:
+                if c["ticker"] not in seen:
+                    merged.append(c)
+                    seen.add(c["ticker"])
+
+            if len(merged) < 10:
+                # 최후 폴백: 하드코딩 블루칩
+                for ticker in _KR_FALLBACK_UNIVERSE:
+                    if ticker not in seen:
+                        merged.append({
+                            "ticker": ticker, "name": ticker,
+                            "price": 0, "change_rate": 0.0,
+                            "volume": 0, "vol_ratio": 1.0,
+                        })
+                        seen.add(ticker)
+                    if len(merged) >= top_n:
+                        break
+
+            _logger.info(
+                f"[KR 스크리너 장전] 최종 {len(merged[:top_n])}종목 "
+                f"(B라이브={len(live)}, A캐시={len(cached)})"
+            )
+            return merged[:top_n]
+
+        else:
+            # ── 장중: 정상 스크리닝 + 캐시 저장 ─────────────────────────────
+            preset = get_screening_preset("KR", mode)
+            _kr_vol_cnt = str(preset["kr_min_volume"])
+            _logger.info(f"[KR 스크리너] mode={mode} → FID_VOL_CNT={_kr_vol_cnt}")
+            result = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=top_n)
+
+            if len(result) >= 10:
+                # 충분한 결과면 캐시 저장 (다음 날 장전 A로 사용)
+                save_kr_screen_cache(result)
+            elif len(result) < 10:
+                # 보완: 하드코딩 폴백
+                existing = {r["ticker"] for r in result}
+                for ticker in _KR_FALLBACK_UNIVERSE:
+                    if ticker not in existing:
+                        result.append({
+                            "ticker": ticker, "name": ticker,
+                            "price": 0, "change_rate": 0.0,
+                            "volume": 0, "vol_ratio": 1.0,
+                        })
+                    if len(result) >= 20:
+                        break
+
+            return result
+
     except Exception as e:
-        # API 자체 실패 시 전체 폴백
+        _logger.warning(f"[KR 스크리너] API 실패 → 캐시·폴백: {e}")
+        # API 완전 실패 시 캐시 → 하드코딩 순
+        cached = _load_kr_screen_cache()
+        if cached:
+            return cached[:top_n]
         return [
             {"ticker": t, "name": t, "price": 0, "change_rate": 0.0, "volume": 0, "vol_ratio": 1.0}
             for t in _KR_FALLBACK_UNIVERSE
@@ -1527,29 +1647,138 @@ def _has_meaningful_candidate_volume(candidates: list) -> bool:
     return any(_safe_int(c.get("volume"), 0) > 0 for c in candidates)
 
 
-def _yf_screen_candidates() -> list:
+def get_screening_preset(market: str, mode: str) -> dict:
     """
-    Yahoo Finance 내부 스크리너 API로 US 후보 수집 (무제한, volume 포함)
+    시장 모드별 스크리닝 프리셋 반환.
 
-    스크린 카테고리:
-      - most_actives : 거래량 상위 (유동성 보장)
-      - day_gainers  : 당일 상승 상위
-      - day_losers   : 당일 하락 상위 (반등/공매도 기회)
+    Claude는 mode만 결정하고, 실제 스크리너 파라미터는 이 함수가 확정.
+    환경변수는 최종 수동 override로만 사용.
+
+    반환 키:
+      KR: kr_min_volume
+      US: min_price, max_chg, min_dollar_vol, loser_max_chg,
+          quota_actives, quota_gainers, quota_losers
+    """
+    _mode = str(mode).upper()
+    _market = str(market).upper()
+
+    if _market == "KR":
+        _presets = {
+            "AGGRESSIVE": {"kr_min_volume": 100_000},
+            "NEUTRAL":    {"kr_min_volume": 100_000},
+            "DEFENSIVE":  {"kr_min_volume": 200_000},
+        }
+        base = _presets.get(_mode, _presets["NEUTRAL"]).copy()
+        # 환경변수 override (수동 튜닝용)
+        if os.getenv("KR_SCREEN_MIN_VOLUME"):
+            base["kr_min_volume"] = int(os.getenv("KR_SCREEN_MIN_VOLUME"))
+        return base
+
+    else:  # US
+        _presets = {
+            "AGGRESSIVE": {
+                "min_price":      5.0,
+                "max_chg":        25.0,
+                "min_dollar_vol": 15_000_000,
+                "loser_max_chg":  20.0,
+                "quota_actives":  12,
+                "quota_gainers":  12,
+                "quota_losers":   6,
+            },
+            "NEUTRAL": {
+                "min_price":      5.0,
+                "max_chg":        25.0,
+                "min_dollar_vol": 15_000_000,
+                "loser_max_chg":  20.0,
+                "quota_actives":  15,
+                "quota_gainers":  10,
+                "quota_losers":   5,
+            },
+            "DEFENSIVE": {
+                "min_price":      5.0,
+                "max_chg":        25.0,
+                "min_dollar_vol": 20_000_000,
+                "loser_max_chg":  15.0,
+                "quota_actives":  20,
+                "quota_gainers":  7,
+                "quota_losers":   3,
+            },
+        }
+        base = _presets.get(_mode, _presets["NEUTRAL"]).copy()
+        # 환경변수 override
+        if os.getenv("US_SCREEN_MIN_PRICE"):
+            base["min_price"] = float(os.getenv("US_SCREEN_MIN_PRICE"))
+        if os.getenv("US_SCREEN_MAX_CHG_PCT"):
+            base["max_chg"] = float(os.getenv("US_SCREEN_MAX_CHG_PCT"))
+        if os.getenv("US_SCREEN_MIN_DOLLAR_VOL"):
+            base["min_dollar_vol"] = float(os.getenv("US_SCREEN_MIN_DOLLAR_VOL"))
+        if os.getenv("US_LOSER_MAX_CHG_PCT"):
+            base["loser_max_chg"] = float(os.getenv("US_LOSER_MAX_CHG_PCT"))
+        if os.getenv("US_QUOTA_ACTIVES"):
+            base["quota_actives"] = int(os.getenv("US_QUOTA_ACTIVES"))
+        if os.getenv("US_QUOTA_GAINERS"):
+            base["quota_gainers"] = int(os.getenv("US_QUOTA_GAINERS"))
+        if os.getenv("US_QUOTA_LOSERS"):
+            base["quota_losers"] = int(os.getenv("US_QUOTA_LOSERS"))
+        return base
+
+
+def _us_post_filter(
+    candidates: list,
+    category: str,
+    min_price: float,
+    max_abs_chg: float,
+    min_dollar_vol: float,
+    loser_max_chg: float,
+) -> list:
+    """
+    소스 무관 공통 후처리 필터 (raw 수집 후 적용).
+
+    - 가격 하한, 등락폭 상한, 유효 티커 형식, ETF/워런트/유닛 제외
+    - dollar volume 하한 (volume_missing=True인 경우 건너뜀)
+    - day_losers는 loser_max_chg 추가 제한
+    """
+    _BAD_SFXS = {"W", "U", "R"}
+    result = []
+    for c in candidates:
+        ticker = str(c.get("ticker", "")).strip()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            continue
+        if ticker[-1] in _BAD_SFXS:
+            continue
+        price      = float(c.get("price", 0) or 0)
+        change_abs = abs(float(c.get("change_rate", 0) or 0))
+        volume     = int(c.get("volume", 0) or 0)
+        vol_miss   = bool(c.get("volume_missing", False))
+
+        if price < min_price:
+            continue
+        if change_abs > max_abs_chg:
+            continue
+        if category == "day_losers" and change_abs > loser_max_chg:
+            continue
+        if not vol_miss and min_dollar_vol > 0 and price * volume < min_dollar_vol:
+            continue
+        result.append(c)
+    return result
+
+
+def _yf_screen_candidates() -> dict:
+    """
+    Yahoo Finance 내부 스크리너 API로 US 카테고리별 raw 후보 수집.
+
+    반환: {"most_actives": [...], "day_gainers": [...], "day_losers": [...]}
+    각 항목은 ticker/name/price/change_rate/volume/vol_ratio 포함.
+    필터링은 screen_market_us()에서 _us_post_filter()로 일괄 처리.
     """
     import logging as _log
     _logger = _log.getLogger("trading_system")
 
-    MIN_PRICE = float(os.getenv("SCREEN_MIN_PRICE",  "5.0"))
-    MIN_VOL   = int(os.getenv("SCREEN_MIN_VOLUME",   "500000"))
-    MAX_CHG   = float(os.getenv("SCREEN_MAX_CHG_PCT", "50.0"))
     _BAD_SFXS = {"W", "U", "R"}
-
     url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
     headers = {"User-Agent": "Mozilla/5.0 (compatible; trading-bot/1.0)"}
 
-    candidates = []
-    seen: set = set()
-    filtered_out = 0
+    raw: dict = {"most_actives": [], "day_gainers": [], "day_losers": []}
 
     for screen_id in ("most_actives", "day_gainers", "day_losers"):
         try:
@@ -1561,67 +1790,50 @@ def _yf_screen_candidates() -> list:
             )
             resp.raise_for_status()
             quotes = resp.json().get("finance", {}).get("result", [{}])[0].get("quotes", [])
+            bucket = []
             for q in quotes:
                 ticker = str(q.get("symbol", "")).strip()
-                if not ticker or ticker in seen:
-                    continue
-                if not ticker.isalpha() or len(ticker) > 5:
-                    filtered_out += 1
+                if not ticker or not ticker.isalpha() or len(ticker) > 5:
                     continue
                 if ticker[-1] in _BAD_SFXS:
-                    filtered_out += 1
                     continue
-                seen.add(ticker)
                 try:
-                    price  = float(q.get("regularMarketPrice", 0))
-                    vol    = int(q.get("regularMarketVolume", 0))
-                    change = abs(float(q.get("regularMarketChangePercent", 0)))
-                    if price < MIN_PRICE or vol < MIN_VOL or change > MAX_CHG:
-                        filtered_out += 1
-                        continue
-                    candidates.append({
+                    bucket.append({
                         "ticker":      ticker,
                         "name":        q.get("shortName", ticker),
-                        "price":       price,
+                        "price":       float(q.get("regularMarketPrice", 0)),
                         "change_rate": float(q.get("regularMarketChangePercent", 0)),
-                        "volume":      vol,
+                        "volume":      int(q.get("regularMarketVolume", 0)),
                         "vol_ratio":   1.0,
+                        "category":    screen_id,
                     })
                 except (ValueError, TypeError):
                     continue
+            raw[screen_id] = bucket
+            _logger.debug(f"[YF raw] {screen_id} {len(bucket)}종목")
         except Exception as e:
             _logger.debug(f"[YF 스크리너] {screen_id} 실패: {e}")
-            continue
 
-    _logger.info(
-        f"[YF 스크리너] 통과={len(candidates)}종목 | 필터제거={filtered_out}종목 "
-        f"(기준: 가격≥${MIN_PRICE}, 거래량≥{MIN_VOL:,}, 등락≤{MAX_CHG}%)"
-    )
-    return candidates
+    return raw
 
 
 def _fmp_screen_candidates() -> list:
     """
-    FMP stable 엔드포인트로 US 스크리너 후보 수집 (250회/일 무료, YF 실패 시 보조)
+    FMP stable 엔드포인트로 US 스크리너 후보 raw 수집 (YF 실패 시 보조).
 
-    주의: FMP stable API는 volume 필드 미포함 → 거래량 필터 미적용
-    품질 필터:
-      - 주가 ≥ $5  (penny stock 제거)
-      - |등락률| ≤ 50%  (펌프·덤프 이상 급등 제거)
-      - 티커 길이 1~5자, 알파벳만
+    주의: FMP stable API는 volume 필드 미포함.
+    각 후보에 volume_missing=True 플래그 부여 → 호출부에서 dollar volume 필터 면제,
+    최대 quota(기본 5개) 제한 적용.
+    필터링은 screen_market_us()에서 _us_post_filter()로 일괄 처리.
     """
     if not FMP_KEY:
         raise RuntimeError("FMP_API_KEY 없음")
 
-    MIN_PRICE = float(os.getenv("SCREEN_MIN_PRICE",  "5.0"))
-    MAX_CHG   = float(os.getenv("SCREEN_MAX_CHG_PCT", "50.0"))
     _BAD_SFXS = {"W", "U", "R"}
-
     base = "https://financialmodelingprep.com/stable"
     endpoints = ["biggest-gainers", "most-actives", "biggest-losers"]
     candidates = []
     seen: set = set()
-    filtered_out = 0
 
     for ep in endpoints:
         try:
@@ -1639,25 +1851,20 @@ def _fmp_screen_candidates() -> list:
                 if not ticker or ticker in seen:
                     continue
                 if not ticker.isalpha() or len(ticker) > 5:
-                    filtered_out += 1
                     continue
                 if ticker[-1] in _BAD_SFXS:
-                    filtered_out += 1
                     continue
                 seen.add(ticker)
                 try:
-                    price  = float(item.get("price", 0))
-                    change = abs(float(item.get("changesPercentage", 0)))
-                    if price < MIN_PRICE or change > MAX_CHG:
-                        filtered_out += 1
-                        continue
                     candidates.append({
-                        "ticker":      ticker,
-                        "name":        item.get("name", ticker),
-                        "price":       price,
-                        "change_rate": float(item.get("changesPercentage", 0)),
-                        "volume":      0,
-                        "vol_ratio":   1.0,
+                        "ticker":         ticker,
+                        "name":           item.get("name", ticker),
+                        "price":          float(item.get("price", 0)),
+                        "change_rate":    float(item.get("changesPercentage", 0)),
+                        "volume":         0,
+                        "vol_ratio":      1.0,
+                        "volume_missing": True,
+                        "category":       ep,
                     })
                 except (ValueError, TypeError):
                     continue
@@ -1666,81 +1873,127 @@ def _fmp_screen_candidates() -> list:
 
     import logging as _log
     _log.getLogger("trading_system").info(
-        f"[FMP 스크리너] 통과={len(candidates)}종목 | 필터제거={filtered_out}종목 "
-        f"(기준: 가격≥${MIN_PRICE}, 등락≤{MAX_CHG}% / volume 미포함)"
+        f"[FMP 스크리너] raw {len(candidates)}종목 수집 (volume 미포함)"
     )
     return candidates
 
 
-def screen_market_us(top_n: int = 30) -> list:
+def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
     """
-    US 시장 스크리닝
-    우선순위: Yahoo Finance 스크리너 → FMP → 하드코딩 폴백
-    - 당일 캐시 파일이 있으면 API 호출 없이 재사용 (yf/fmp 소스만)
-    반환: [{ticker, name, price, change_rate, volume, vol_ratio}]
+    US 시장 스크리닝 — 모드 기반 프리셋 + 공통 post-filter + 카테고리 quota 적용.
+
+    소스 우선순위: Yahoo Finance → FMP (최대 5개) → 하드코딩 폴백
+    캐시: 당일 TTL(기본 60분) 내 재사용.
+    파라미터는 get_screening_preset("US", mode)로 결정, 환경변수는 override용.
+
+    반환: [{ticker, name, price, change_rate, volume, vol_ratio, category}]
     """
     import logging as _log
+    import time as _time
     _logger = _log.getLogger("trading_system")
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # ── 당일 캐시 확인 (volume 있는 소스만, TTL=60분) ────────────────────────
-    import time as _time
-    _CACHE_TTL_SEC = int(os.getenv("US_SCREEN_CACHE_TTL_SEC", "3600"))  # 기본 60분
+    # ── 모드 기반 프리셋 (환경변수 override 포함) ──────────────────────────
+    preset = get_screening_preset("US", mode)
+    _min_price      = preset["min_price"]
+    _max_chg        = preset["max_chg"]
+    _min_dollar_vol = preset["min_dollar_vol"]
+    _loser_max_chg  = preset["loser_max_chg"]
+    _quota = {
+        "most_actives": preset["quota_actives"],
+        "day_gainers":  preset["quota_gainers"],
+        "day_losers":   preset["quota_losers"],
+    }
+    _logger.info(
+        f"[US 스크리너] mode={mode} → "
+        f"actives={_quota['most_actives']} gainers={_quota['day_gainers']} losers={_quota['day_losers']} "
+        f"dolvol≥${_min_dollar_vol/1e6:.0f}M max_chg≤{_max_chg}%"
+    )
+    _fmp_max        = int(os.getenv("US_FMP_MAX", "5"))
+    _CACHE_TTL_SEC  = int(os.getenv("US_SCREEN_CACHE_TTL_SEC", "3600"))
+
+    # ── 당일 캐시 확인 ────────────────────────────────────────────────────
     if _US_SCREEN_CACHE_PATH.exists():
         try:
             cached = json.loads(_US_SCREEN_CACHE_PATH.read_text(encoding="utf-8"))
             if cached.get("date") == today and cached.get("candidates"):
-                cached_at = cached.get("cached_at", 0)
-                cache_age = _time.time() - cached_at
-                if cache_age > _CACHE_TTL_SEC:
-                    _logger.info(
-                        f"[US 스크리너 캐시] 만료 ({cache_age/60:.0f}분 경과 > TTL {_CACHE_TTL_SEC//60}분) → 재스크리닝"
-                    )
-                else:
-                    candidates = cached["candidates"]
+                cache_age = _time.time() - cached.get("cached_at", 0)
+                if cache_age <= _CACHE_TTL_SEC:
                     source = cached.get("source", "")
-                    if source in ("yf",) and _has_meaningful_candidate_volume(candidates):
+                    cands  = cached["candidates"]
+                    if source == "yf" and _has_meaningful_candidate_volume(cands):
                         _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
-                        return candidates[:top_n]
-                    if source == "fmp" and candidates:
+                        return cands[:top_n]
+                    if source == "fmp" and cands:
                         _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
-                        return candidates[:top_n]
+                        return cands[:top_n]
+                else:
+                    _logger.info(
+                        f"[US 스크리너 캐시] 만료 ({cache_age/60:.0f}분 > TTL {_CACHE_TTL_SEC//60}분) → 재스크리닝"
+                    )
         except Exception:
             pass
 
-    # ── 1차: Yahoo Finance 스크리너 (무제한, volume 포함) ────────────────────
+    # ── 1차: Yahoo Finance — 카테고리별 raw 수집 + post-filter + quota ────
     try:
-        candidates = _yf_screen_candidates()
-        if candidates:
+        raw_by_cat = _yf_screen_candidates()
+        merged: list = []
+        seen: set = set()
+        cat_stats = {}
+        for cat, quota in _quota.items():
+            bucket = raw_by_cat.get(cat, [])
+            filtered = _us_post_filter(bucket, cat, _min_price, _max_chg,
+                                       _min_dollar_vol, _loser_max_chg)
+            added = 0
+            for c in filtered:
+                if c["ticker"] in seen or added >= quota:
+                    continue
+                seen.add(c["ticker"])
+                merged.append(c)
+                added += 1
+            cat_stats[cat] = added
+
+        if merged:
+            _logger.info(
+                f"[YF 스크리너] 통과={len(merged)}종목 "
+                f"actives={cat_stats.get('most_actives',0)} "
+                f"gainers={cat_stats.get('day_gainers',0)} "
+                f"losers={cat_stats.get('day_losers',0)} "
+                f"(기준: ${_min_price}+, ≤{_max_chg}%, dolvol≥${_min_dollar_vol/1e6:.0f}M)"
+            )
             _US_SCREEN_CACHE_PATH.write_text(
-                json.dumps({"date": today, "candidates": candidates,
+                json.dumps({"date": today, "candidates": merged,
                             "source": "yf", "cached_at": _time.time()},
                            ensure_ascii=False),
                 encoding="utf-8",
             )
-            return candidates[:top_n]
+            return merged[:top_n]
     except Exception as e:
         _logger.warning(f"[YF 스크리너] 실패: {e}")
 
-    # ── 2차: FMP (volume 없음, price+change 필터만) ───────────────────────────
+    # ── 2차: FMP fallback — volume_missing, 최대 _fmp_max개 ──────────────
     try:
-        candidates = _fmp_screen_candidates()
-        if candidates:
+        fmp_raw = _fmp_screen_candidates()
+        fmp_filtered = _us_post_filter(fmp_raw, "most_actives", _min_price, _max_chg,
+                                       _min_dollar_vol, _loser_max_chg)
+        fmp_cands = fmp_filtered[:_fmp_max]
+        if fmp_cands:
+            _logger.info(f"[FMP 스크리너] 통과={len(fmp_cands)}종목 (최대 {_fmp_max}개, volume 미포함)")
             _US_SCREEN_CACHE_PATH.write_text(
-                json.dumps({"date": today, "candidates": candidates,
+                json.dumps({"date": today, "candidates": fmp_cands,
                             "source": "fmp", "cached_at": _time.time()},
                            ensure_ascii=False),
                 encoding="utf-8",
             )
-            return candidates[:top_n]
+            return fmp_cands[:top_n]
     except Exception as e:
         _logger.warning(f"[FMP 스크리너] 실패: {e}")
 
-    # ── 3차: 하드코딩 폴백 유니버스 ──────────────────────────────────────────
+    # ── 3차: 하드코딩 폴백 ───────────────────────────────────────────────
     _logger.warning("[US 스크리너] 모든 소스 실패 → 폴백 유니버스 사용")
     return [
         {"ticker": t, "name": t, "price": 0.0, "change_rate": 0.0,
-         "volume": 0, "vol_ratio": 1.0}
+         "volume": 0, "vol_ratio": 1.0, "category": "fallback"}
         for t in _US_FALLBACK_UNIVERSE
     ]
 
