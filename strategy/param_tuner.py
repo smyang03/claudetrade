@@ -22,14 +22,20 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 import time
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
 
-log = logging.getLogger(__name__)
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+try:
+    from logger import get_trading_logger
+    log = get_trading_logger()
+except Exception:
+    log = logging.getLogger(__name__)
 
-_ROOT     = Path(__file__).parent.parent
 _DB_PATH  = _ROOT / "data" / "ml" / "decisions.db"
 _ENABLED  = os.getenv("CLAUDE_PARAM_REVIEW", "false").lower() in ("1", "true", "yes")
 
