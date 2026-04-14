@@ -4018,10 +4018,19 @@ class TradingBot:
                         mom_p = locals().get("mom_p") or _ap("momentum")
                         mr_p = locals().get("mr_p") or _ap("mean_reversion")
                         vb_p = locals().get("vb_p") or _ap("volatility_breakout")
+                        _kr_md = locals().get("kr_momentum_diag") or mom_diag(sig_df, i, mom_p)
+                        _kr_mom_str = (
+                            f"모멘텀: 전략 비활성({market} {mode})"
+                            if mom_p.get("disabled") else
+                            f"모멘텀: 추세{'충족' if _kr_md.get('ma_ok') else '부족'}"
+                            f", MACD{'충족' if _kr_md.get('macd_ok') else '부족'}"
+                            f", 거래량{'충족' if _kr_md.get('vol_ok') else '부족'}"
+                            f", 신고가{'충족' if _kr_md.get('high_ok') else '부족'}"
+                        )
                         none_detail = " | ".join([
                             _orp_detail(sig_df, i, orp_p),
                             _gap_detail(sig_df, i, gap_p),
-                            kr_momentum_diag or mom_diag(sig_df, i, mom_p),
+                            _kr_mom_str,
                             _mr_detail(sig_df, i, mr_p),
                             _vb_detail(sig_df, i, vb_p),
                         ])
