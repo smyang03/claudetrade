@@ -57,6 +57,7 @@ try:
     import strategy.mean_reversion as _mr_strategy
     import strategy.momentum as _mom_strategy
     import strategy.volatility_breakout as _vb_strategy
+    import strategy.param_tuner as _param_tuner_mod
 except Exception:
     _adaptive_params = None
     _adaptive_perf_stats = None
@@ -64,6 +65,7 @@ except Exception:
     _mr_strategy = None
     _mom_strategy = None
     _vb_strategy = None
+    _param_tuner_mod = None
 
 app = Flask(__name__)
 
@@ -2060,6 +2062,44 @@ def _adaptive_param_digest(market: str, mode: str, context: Optional[dict] = Non
             return base + " · 소폭 보수화"
         return base
 
+    # 오늘 Claude 검토 결과 조회 (param_sessions 테이블)
+    claude_rows: dict[str, dict] = {}
+    try:
+        if _param_tuner_mod is not None:
+            import sqlite3 as _sq
+            _db = _param_tuner_mod._DB_PATH
+            if _db.exists():
+                with _sq.connect(str(_db), timeout=3) as _conn:
+                    _today = __import__("datetime").date.today().isoformat()
+                    _rs = _conn.execute(
+                        """
+                        SELECT strategy, base_params, claude_params, claude_reason,
+                               was_adjusted, trigger
+                        FROM param_sessions
+                        WHERE market = ? AND session_date = ?
+                        ORDER BY id DESC
+                        """,
+                        (market, _today),
+                    ).fetchall()
+                    # 전략별 최신 1건만 사용
+                    _seen: set[str] = set()
+                    for _strat, _bp, _cp, _reason, _adj, _trg in _rs:
+                        if _strat in _seen:
+                            continue
+                        _seen.add(_strat)
+                        try:
+                            claude_rows[_strat] = {
+                                "base_p":  json.loads(_bp or "{}"),
+                                "claude_p": json.loads(_cp or "{}"),
+                                "reason":  _reason or "",
+                                "adjusted": bool(_adj),
+                                "trigger":  _trg or "",
+                            }
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+
     try:
         for strategy, module in modules.items():
             if module is None:
@@ -2074,6 +2114,24 @@ def _adaptive_param_digest(market: str, mode: str, context: Optional[dict] = Non
             for key in ("gap_min", "vol_mult", "rsi_thr", "bb_thr", "ma60_thr", "k"):
                 if key in base_p and key in final_p and base_p.get(key) != final_p.get(key):
                     changed.append(key)
+
+            # Claude 검토 레이어 데이터
+            cr = claude_rows.get(strategy, {})
+            claude_p = cr.get("claude_p", {})
+            claude_reason = cr.get("reason", "")
+            claude_trigger = cr.get("trigger", "")
+            claude_adjusted = cr.get("adjusted", False)
+            # adaptive→claude 변경된 키
+            claude_changed = []
+            _cmp_keys = ("gap_min", "vol_mult", "rsi_thr", "bb_thr",
+                         "tp_pct", "sl_pct", "size_mult", "max_hold")
+            for key in _cmp_keys:
+                if key in final_p and key in claude_p:
+                    fv = round(float(final_p[key]), 4)
+                    cv = round(float(claude_p[key]), 4)
+                    if fv != cv:
+                        claude_changed.append(key)
+
             digest["rows"].append({
                 "strategy": strategy,
                 "base": _short(base_p),
@@ -2085,6 +2143,12 @@ def _adaptive_param_digest(market: str, mode: str, context: Optional[dict] = Non
                 "perf_wr": perf.get("win_rate"),
                 "perf_n": perf.get("n", 0),
                 "disabled": bool(final_p.get("disabled")),
+                # Claude 4th layer
+                "claude": _short(claude_p) if claude_p else None,
+                "claude_changed": claude_changed,
+                "claude_reason": claude_reason,
+                "claude_trigger": claude_trigger,
+                "claude_adjusted": claude_adjusted,
             })
         digest["enabled"] = bool(digest["rows"])
     except Exception:
@@ -4287,6 +4351,62 @@ function modeDescription(v) { return MODE_DESC[v] || ''; }
 function koStrategy(v) { return STRATEGY_KO[v] || v || '-'; }
 function koRegime(v) { return REGIME_KO[v] || MODE_KO[v] || v || '-'; }
 
+function renderAdaptive(t, titleId, metaId, breakdownId) {
+  const adaptive = t.adaptive || {};
+  const titleEl = document.getElementById(titleId);
+  const metaEl  = document.getElementById(metaId);
+  const bdEl    = document.getElementById(breakdownId);
+  if (titleEl) {
+    const claudeAdjCount = (adaptive.rows || []).filter(r => r.claude_adjusted).length;
+    const claudeBadge = claudeAdjCount > 0 ? ` · Claude 조정 ${claudeAdjCount}개` : '';
+    titleEl.textContent = adaptive.enabled
+      ? `현재 모드 ${koMode(t.mode || '-')} · 전략 ${(adaptive.rows || []).length}개${claudeBadge}`
+      : 'Adaptive 파라미터 비활성';
+  }
+  if (metaEl) {
+    const changedCount  = (adaptive.rows || []).filter(r => (r.changed || []).length > 0).length;
+    const perfSources   = Array.from(new Set((adaptive.rows || []).map(r => r.perf_source || 'none'))).join(', ');
+    const claudeRows    = (adaptive.rows || []).filter(r => r.claude);
+    const claudeInfo    = claudeRows.length
+      ? ` · Claude 검토 ${claudeRows.length}개 (${claudeRows.filter(r => r.claude_adjusted).length}개 조정)`
+      : '';
+    metaEl.textContent = adaptive.enabled
+      ? `적응형 조정 ${changedCount}개 · 성과 소스 ${perfSources || 'none'}${claudeInfo}`
+      : '--';
+  }
+  if (bdEl) {
+    bdEl.innerHTML = adaptive.enabled
+      ? (adaptive.rows || []).map(r => {
+          const stratKo   = koStrategy(r.strategy || '') || r.strategy || '-';
+          const state     = r.disabled ? ' <span style="color:#ef4444">비활성</span>' : '';
+          const adaptChg  = (r.changed || []).length
+            ? `<span style="color:#fbbf24"> △${r.changed.join(',')}</span>` : '';
+          let claudePart  = '';
+          if (r.claude) {
+            if (r.claude_adjusted && (r.claude_changed || []).length > 0) {
+              claudePart = ` <span style="color:#94a3b8">→ Claude</span> ${r.claude}`
+                + `<span style="color:#a78bfa"> ✏${r.claude_changed.join(',')}</span>`;
+              if (r.claude_reason) {
+                claudePart += ` <span style="color:#64748b;font-size:10px">(${r.claude_reason})</span>`;
+              }
+            } else {
+              claudePart = ` <span style="color:#64748b">→ Claude 유지</span>`;
+            }
+          }
+          const reasons   = [].concat(r.regime_reasons || []).concat(r.perf_reason ? [r.perf_reason] : []);
+          const reasonTxt = reasons.length
+            ? ` <span style="color:#64748b;font-size:10px">[${reasons.join(' / ')}]</span>` : '';
+          return `<div style="margin-bottom:3px">`
+            + `<span style="color:#e2e8f0;font-weight:600">${stratKo}</span>${state} `
+            + `<span style="color:#64748b">기본</span> ${r.base || '-'}${adaptChg}`
+            + ` <span style="color:#64748b">→ 적응형</span> ${r.final || '-'}`
+            + `${claudePart}${reasonTxt}`
+            + `</div>`;
+        }).join('')
+      : '--';
+  }
+}
+
 function colorClass(v) {
   return v > 0 ? 'up' : v < 0 ? 'down' : 'neutral-color';
 }
@@ -5195,36 +5315,7 @@ async function loadSummary() {
       ? `forward 준비 ${ml.forward_ready || 0}건 (${Number(ml.forward_ready_rate || 0).toFixed(1)}%)${recentDays ? ' · 최근7일 ' + recentDays : ''}`
       : '--';
   }
-  const adaptive = t.adaptive || {};
-  const adaptiveTitle = document.getElementById('adaptive-title');
-  const adaptiveMeta = document.getElementById('adaptive-meta');
-  const adaptiveBreakdown = document.getElementById('adaptive-breakdown');
-  if (adaptiveTitle) {
-    adaptiveTitle.textContent = adaptive.enabled
-      ? `현재 모드 ${koMode(t.mode || '-')} · 전략 ${Number((adaptive.rows || []).length || 0)}개`
-      : 'Adaptive 파라미터 비활성';
-  }
-  if (adaptiveMeta) {
-    const changedCount = (adaptive.rows || []).filter(r => (r.changed || []).length > 0).length;
-    const perfSources = Array.from(new Set((adaptive.rows || []).map(r => r.perf_source || 'none'))).join(', ');
-    adaptiveMeta.textContent = adaptive.enabled
-      ? `조정 전략 ${changedCount}개 · 성과 소스 ${perfSources || 'none'}`
-      : '--';
-  }
-  if (adaptiveBreakdown) {
-    adaptiveBreakdown.innerHTML = adaptive.enabled
-      ? (adaptive.rows || []).map(r => {
-          const strategyKo = koStrategy(r.strategy || '') || r.strategy || '-';
-          const changed = (r.changed || []).length ? ` · 조정 ${r.changed.join(', ')}` : '';
-          const state = r.disabled ? ' · 비활성' : '';
-          const reasons = []
-            .concat(r.regime_reasons || [])
-            .concat(r.perf_reason ? [r.perf_reason] : []);
-          const reasonText = reasons.length ? ` · ${reasons.join(' / ')}` : '';
-          return `<div><span style="color:#e2e8f0">${strategyKo}</span> <span style="color:#64748b">base</span> ${r.base || '-'} <span style="color:#64748b">→ final</span> ${r.final || '-'} <span style="color:#64748b">(${changed ? changed.slice(3) : '변경 없음'}${state}${reasonText})</span></div>`;
-        }).join('')
-      : '--';
-  }
+  renderAdaptive(t, 'adaptive-title', 'adaptive-meta', 'adaptive-breakdown');
 
   if (!posBoard) return;
   if (positions.length === 0) {
@@ -6071,36 +6162,7 @@ async function loadSummary() {
       : '--';
   }
 
-  const adaptive = t.adaptive || {};
-  const adaptiveTitle = document.getElementById('adaptive-title');
-  const adaptiveMeta = document.getElementById('adaptive-meta');
-  const adaptiveBreakdown = document.getElementById('adaptive-breakdown');
-  if (adaptiveTitle) {
-    adaptiveTitle.textContent = adaptive.enabled
-      ? `현재 모드 ${koMode(t.mode || '-')} · 전략 ${Number((adaptive.rows || []).length || 0)}개`
-      : 'Adaptive 파라미터 비활성';
-  }
-  if (adaptiveMeta) {
-    const changedCount = (adaptive.rows || []).filter(r => (r.changed || []).length > 0).length;
-    const perfSources = Array.from(new Set((adaptive.rows || []).map(r => r.perf_source || 'none'))).join(', ');
-    adaptiveMeta.textContent = adaptive.enabled
-      ? `조정 전략 ${changedCount}개 · 성과 소스 ${perfSources || 'none'}`
-      : '--';
-  }
-  if (adaptiveBreakdown) {
-    adaptiveBreakdown.innerHTML = adaptive.enabled
-      ? (adaptive.rows || []).map(r => {
-          const strategyKo = koStrategy(r.strategy || '') || r.strategy || '-';
-          const changed = (r.changed || []).length ? ` · 조정 ${r.changed.join(', ')}` : '';
-          const state = r.disabled ? ' · 비활성' : '';
-          const reasons = []
-            .concat(r.regime_reasons || [])
-            .concat(r.perf_reason ? [r.perf_reason] : []);
-          const reasonText = reasons.length ? ` · ${reasons.join(' / ')}` : '';
-          return `<div><span style="color:#e2e8f0">${strategyKo}</span> <span style="color:#64748b">base</span> ${r.base || '-'} <span style="color:#64748b">→ final</span> ${r.final || '-'} <span style="color:#64748b">(${changed ? changed.slice(3) : '변경 없음'}${state}${reasonText})</span></div>`;
-        }).join('')
-      : '--';
-  }
+  renderAdaptive(t, 'adaptive-title', 'adaptive-meta', 'adaptive-breakdown');
 
   const positions = t.positions || [];
   const posBoard = document.getElementById('position-board');
