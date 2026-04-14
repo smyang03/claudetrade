@@ -66,6 +66,15 @@ def init_db():
         if "entry_priority_score" not in existing:
             conn.execute("ALTER TABLE decisions ADD COLUMN entry_priority_score REAL")
             _log.info("[ml.db] entry_priority_score 컬럼 마이그레이션 완료")
+
+    # param_sessions 테이블 (Claude 파라미터 검토 레이어)
+    try:
+        from strategy.param_tuner import ensure_table as _pt_ensure
+        _pt_ensure()
+        _log.info("[ml.db] param_sessions 테이블 확인 완료")
+    except Exception as _pte:
+        _log.warning("[ml.db] param_sessions 테이블 초기화 실패: %s", _pte)
+
     _log.info(f"[ml.db] 초기화 완료: {_DB_PATH}")
 
 

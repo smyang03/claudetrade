@@ -86,6 +86,7 @@ from strategy.opening_range_pullback import signal as orp_sig
 from strategy.cross_asset import apply_cross_asset_adjust, get_vix_regime
 from strategy.adaptive_params import adaptive_params as _adaptive_params
 from strategy.entry_priority import compute as entry_priority_score
+import strategy.param_tuner as _param_tuner
 
 from claude_memory import brain as BrainDB
 from runtime_paths import get_runtime_path
@@ -3024,6 +3025,14 @@ class TradingBot:
         )
         self.ws.start()
         self._session_open_at[market] = time.time()  # startup guard 기준점
+
+        # ── Claude 파라미터 검토 (4th layer) — session_open 1회 ──────────────
+        try:
+            _param_tuner.reset_session(market)
+            self._run_param_review(market, trigger="session_open")
+        except Exception as _pt_e:
+            log.warning(f"[param_tuner session_open] {market}: {_pt_e}")
+
         # 새 세션 시작 시 장중 H/L 초기화
         for _t in selected:
             self._intraday_high.pop(_t, None)
@@ -3032,6 +3041,47 @@ class TradingBot:
             self._or_low.pop(_t, None)
             self._or_formed.pop(_t, None)
         self._leave_market_task(market, "session_open")
+
+    # ── Claude 파라미터 검토 헬퍼 ─────────────────────────────────────────────
+    def _run_param_review(self, market: str, trigger: str = "session_open") -> None:
+        """모든 전략의 adaptive_params를 계산해 Claude 검토 레이어에 넘긴다.
+
+        결과는 _param_tuner._cache[market]에 저장되어
+        run_cycle의 _ap() 헬퍼에서 자동으로 참조된다.
+        """
+        consensus  = self.today_judgment.get("consensus", {})
+        mode       = consensus.get("mode", "NEUTRAL")
+        conf       = float(consensus.get("confidence", 0.6) or 0.6)
+        ctx        = getattr(self, "_ca_context_last", None) or {}
+        vix        = float(ctx.get("vix") or 0) or None
+        usd_krw    = float(self.usd_krw_rate or 0) or None
+
+        all_strats = [
+            "opening_range_pullback",
+            "gap_pullback",
+            "momentum",
+            "mean_reversion",
+            "volatility_breakout",
+        ]
+        all_params = {}
+        for strat in all_strats:
+            try:
+                all_params[strat] = _adaptive_params(strat, market, mode, conf,
+                                                     context=ctx)
+            except Exception as _ape:
+                log.debug("[param_review] %s params 오류: %s", strat, _ape)
+
+        if not all_params:
+            return
+
+        _param_tuner.claude_review(
+            market=market,
+            mode=mode,
+            all_params=all_params,
+            context={"vix": vix, "usd_krw": usd_krw, "analyst_conf": conf},
+            trigger=trigger,
+            force=(trigger in ("reverse", "mode_change")),
+        )
 
     def _on_tick(self, data: dict):
         ticker = data["ticker"]
@@ -3399,6 +3449,7 @@ class TradingBot:
 
         # Cross-asset 컨텍스트 (VIX/VKOSPI, USD/KRW, 섹터 ETF) — 파라미터 보정용
         _ca_context = self.today_judgment.get("digest_raw", {}).get("context", {})
+        self._ca_context_last = _ca_context   # param_tuner가 참조
         _fear_label = get_vix_regime(_ca_context, market)
         if _ca_context:
             log.debug(f"[{market}] cross-asset 보정 적용 | {_fear_label} | "
@@ -3832,9 +3883,14 @@ class TradingBot:
                     return apply_cross_asset_adjust(p, _ca_context, market, ticker, mode)
 
                 def _ap(strat: str) -> dict:
-                    """adaptive_params + cross-asset 조정 통합 헬퍼."""
-                    p = _ca(_adaptive_params(strat, market, mode, _avg_conf,
-                                            context=_ca_context))
+                    """adaptive_params + cross-asset + Claude 검토 통합 헬퍼."""
+                    # param_tuner 캐시 우선 (캐시 없으면 adaptive_params 기본)
+                    _pt_cache = _param_tuner._cache.get(market, {})
+                    if strat in _pt_cache and not _pt_cache[strat].get("disabled"):
+                        p = _ca(dict(_pt_cache[strat]))
+                    else:
+                        p = _ca(_adaptive_params(strat, market, mode, _avg_conf,
+                                                context=_ca_context))
                     # 장초반 opening window 판단용 — gap_pullback.signal()이 사용
                     p["session_elapsed_min"] = self._market_elapsed_min(market)
                     if strat == "opening_range_pullback":
@@ -4848,6 +4904,15 @@ class TradingBot:
             old_mode = self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL")
             new_mode = result.get("mode", old_mode)
             self.today_judgment.setdefault("consensus", {})["mode"] = new_mode
+            # 모드 변경 시 Claude 파라미터 재검토
+            if old_mode != new_mode:
+                try:
+                    self._run_param_review(
+                        market,
+                        trigger="reverse" if action == "REVERSE" else "mode_change",
+                    )
+                except Exception as _pt_e:
+                    log.warning(f"[param_tuner mode_change] {market}: {_pt_e}")
             # 모드 변경 시 종목 재선택 (단, REVERSE는 _reinvoke에서 처리)
             if old_mode != new_mode and action != "REVERSE":
                 try:
@@ -5243,6 +5308,12 @@ class TradingBot:
 
         self._partial_reselect_last[market] = now
         self._persist_live_judgment(market)
+
+        # 부분교체 후 param_tuner 캐시 갱신 (rescreen 트리거)
+        try:
+            self._run_param_review(market, trigger="rescreen")
+        except Exception as _pt_e:
+            log.debug("[param_tuner rescreen] %s: %s", market, _pt_e)
 
         out_str = ", ".join(replace_out)
         in_str  = ", ".join(replace_in)
@@ -5896,6 +5967,31 @@ class TradingBot:
         )
         log.info(f"[{market}] summary | {actual['pnl_pct']:+.2f}% | {actual['pnl_krw']:+,}")
 
+        # ── param_tuner outcome 업데이트 ──────────────────────────────────────
+        try:
+            _pt_ids = _param_tuner.get_session_ids(market)
+            if _pt_ids:
+                _pt_signals = len([e for e in self._session_events
+                                   if e.get("type") == "signal"])
+                _pt_entries = actual.get("trades", 0)
+                _pt_losses  = len(sell_trades) - wins
+                _pt_avg_pnl = (
+                    sum(t.get("pnl", 0) for t in sell_trades) / len(sell_trades)
+                    if sell_trades else 0.0
+                )
+                _param_tuner.update_outcomes(
+                    session_ids=_pt_ids,
+                    signals=_pt_signals,
+                    entries=_pt_entries,
+                    wins=wins,
+                    losses=_pt_losses,
+                    avg_pnl_pct=_pt_avg_pnl,
+                    total_pnl_krw=float(actual.get("pnl_krw", 0)),
+                )
+                _param_tuner.clear_cache(market)
+                log.info(f"[param_tuner] {market} outcome 기록 완료 ({len(_pt_ids)}개 세션)")
+        except Exception as _pt_e:
+            log.warning(f"[param_tuner] outcome 업데이트 오류: {_pt_e}")
 
 
 def _in_session_now(market: str) -> bool:
