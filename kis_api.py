@@ -1659,7 +1659,12 @@ def get_screening_preset(market: str, mode: str) -> dict:
       US: min_price, max_chg, min_dollar_vol, loser_max_chg,
           quota_actives, quota_gainers, quota_losers
     """
-    _mode = str(mode).upper()
+    _MODE_MAP = {
+        "AGGRESSIVE": "AGGRESSIVE", "MILD_BULL": "AGGRESSIVE", "BULL": "AGGRESSIVE",
+        "NEUTRAL":    "NEUTRAL",    "MILD_BEAR": "NEUTRAL",
+        "DEFENSIVE":  "DEFENSIVE",  "BEAR": "DEFENSIVE", "CAUTIOUS": "DEFENSIVE", "HALT": "DEFENSIVE",
+    }
+    _mode = _MODE_MAP.get(str(mode).upper(), "NEUTRAL")
     _market = str(market).upper()
 
     if _market == "KR":
