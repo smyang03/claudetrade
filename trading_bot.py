@@ -2515,7 +2515,12 @@ class TradingBot:
                     self._save_positions()
                     self._write_live_status(market, force=True)
             return
-        result   = place_order(cand["ticker"], cand["qty"], order_px, "sell", self.token, market=market)
+        try:
+            result = place_order(cand["ticker"], cand["qty"], order_px, "sell", self.token, market=market)
+        except Exception as _pe:
+            self._note_sell_failure(market, cand["ticker"], reason, str(_pe))
+            log.error(f"sell order exception [{cand['ticker']}]: {_pe}")
+            return
         if not result["success"]:
             self._note_sell_failure(market, cand["ticker"], reason, result.get("msg", ""))
             log.error(f"sell order failed [{cand['ticker']}]: {result['msg']}")
