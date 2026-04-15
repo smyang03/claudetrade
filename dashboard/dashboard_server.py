@@ -5322,8 +5322,13 @@ async function loadSummary() {
     posBoard.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px 0">현재 보유 포지션이 없습니다</div>';
   } else {
   posBoard.innerHTML = positions.map(pos => {
-    const avgPrice = Number(pos.avg_price || 0);
-    const curPrice = Number(pos.current_price || 0);
+    // US 포지션: display 필드(USD) 우선, 없으면 내부 KRW 값을 환율로 나눔
+    const avgPrice = !isKR && usdKrw > 0
+      ? Number(pos.display_avg_price || (pos.avg_price > 0 ? pos.avg_price / usdKrw : pos.entry > 0 ? pos.entry / usdKrw : 0))
+      : Number(pos.avg_price || pos.entry || 0);
+    const curPrice = !isKR && usdKrw > 0
+      ? Number(pos.display_current_price || (pos.current_price > 0 ? pos.current_price / usdKrw : 0))
+      : Number(pos.current_price || 0);
     const qty      = Number(pos.qty || 0);
     const pnl      = avgPrice > 0 ? ((curPrice / avgPrice) - 1) * 100 : Number(pos.pnl_pct || 0);
     const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';

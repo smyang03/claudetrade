@@ -360,6 +360,9 @@ class TradingBot:
         # 당일 손절 카운터 {market: count} — 연속 손절 시 size_mult 자동 축소
         self._daily_sl_count: dict[str, int] = {"KR": 0, "US": 0}
 
+        # 이번 세션에서 매도 완료된 티커 — broker sync 재주입 방지
+        self._session_closed_tickers: dict[str, set] = {"KR": set(), "US": set()}
+
         # WS tick 기반 장중 고가/저가 누적 — 당일봉 주입 시 단일가봉 탈출에 사용
         self._intraday_high: dict[str, float] = {}
         self._intraday_low:  dict[str, float] = {}
@@ -1514,6 +1517,9 @@ class TradingBot:
             key = ("KR", ticker)
             if key in seen_keys or int(broker_pos.get("qty", 0) or 0) <= 0:
                 continue
+            if ticker in self._session_closed_tickers.get("KR", set()):
+                log.info(f"[브로커 런타임 동기화] KR 재주입 차단: {ticker} (이번 세션 매도 완료)")
+                continue
             synced_positions[key] = self._make_runtime_position_from_broker(
                 ticker, "KR", broker_pos,
                 template=pending_by_key.get(key) or saved_templates.get(key)
@@ -1525,6 +1531,9 @@ class TradingBot:
         for ticker, broker_pos in broker_us.items():
             key = ("US", ticker.upper())
             if key in seen_keys or int(broker_pos.get("qty", 0) or 0) <= 0:
+                continue
+            if ticker.upper() in self._session_closed_tickers.get("US", set()):
+                log.info(f"[브로커 런타임 동기화] US 재주입 차단: {ticker} (이번 세션 매도 완료)")
                 continue
             synced_positions[key] = self._make_runtime_position_from_broker(
                 ticker.upper(), "US", broker_pos,
@@ -2342,13 +2351,13 @@ class TradingBot:
 
         action, reason_txt, advice = "SELL", "", None
 
-        # 이미 한 번 연장했으면 강제 청산 (무한 연장 방지)
+        # 이미 연장했으면: max_hold_final=True이면 진짜 강제 청산, 아니면 Claude 재확인
         already_extended = cand.get("max_hold_extended", False)
-        if already_extended:
-            log.info(f"[max_hold 강제청산] {ticker} — 이미 1회 연장 후 재도달 → 즉시 청산")
+        if already_extended and cand.get("max_hold_final", False):
+            log.info(f"[max_hold 강제청산] {ticker} — 2회 연장 후 재도달 → 즉시 청산")
             self._execute_sell(cand, market, reason="max_hold_final")
             _send(f"⏰ <b>[보유기한 만료] {ticker}</b>  {pnl:+.2f}%\n"
-                  f"  max_hold {max_hold}일 연장 후 재도달 → 즉시 청산")
+                  f"  max_hold {max_hold}일 2회 연장 후 재도달 → 즉시 청산")
             return
 
         entry_ok = float(cand.get("entry", 0) or 0) > 0
@@ -2385,6 +2394,9 @@ class TradingBot:
                 if p2.get("ticker") == ticker:
                     p2["max_hold"] = max_hold + 1
                     p2["max_hold_extended"] = True
+                    if already_extended:
+                        # 2번째 연장 → 다음 재도달 시 진짜 강제 청산
+                        p2["max_hold_final"] = True
                     if advice:
                         p2["hold_advice"] = advice
                     break
@@ -2513,6 +2525,9 @@ class TradingBot:
         log.info(f"[{'PAPER' if self.is_paper else 'LIVE'} SELL] {cand['ticker']} {cand['qty']}@{order_px:,} | 주문번호={result.get('order_no','')}")
         self._sell_fail_meta.pop(cand["ticker"], None)
         self._sell_fail_at.pop(cand["ticker"], None)
+        # 매도 완료 티커 등록 — broker sync 재주입 방지
+        _closed_key = cand["ticker"].upper() if market == "US" else cand["ticker"]
+        self._session_closed_tickers.setdefault(market, set()).add(_closed_key)
 
         # hold_advice: 분석가 SELL 즉시 청산 시 전달된 advice
         # cand에 저장된 hold_advice(포지션에서 온 것)도 확인
@@ -2746,6 +2761,7 @@ class TradingBot:
         self._entry_blocked = {}           # 새 세션 시작 시 쿨다운 초기화
         self.decision_event_log = []
         self._daily_sl_count[market] = 0   # 당일 손절 카운터 초기화
+        self._session_closed_tickers[market] = set()  # 매도 완료 티커 초기화
         self._normalize_pending_orders()
         self._save_pending_orders()
         if market == "US":
