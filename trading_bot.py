@@ -2493,7 +2493,12 @@ class TradingBot:
             log.error(f"sell skipped [{cand['ticker']}]: invalid exit/raw price exit={cand.get('exit_price')} raw={raw_px}")
             return
         order_px = self._compute_order_price("sell", market, float(raw_px))
-        precheck = precheck_order(cand["ticker"], cand["qty"], order_px, "sell", self.token, market=market)
+        try:
+            precheck = precheck_order(cand["ticker"], cand["qty"], order_px, "sell", self.token, market=market)
+        except Exception as _pre_e:
+            self._note_sell_failure(market, cand["ticker"], reason, str(_pre_e))
+            log.error(f"sell precheck exception [{cand['ticker']}]: {_pre_e}")
+            return
         if not precheck.get("ok"):
             self._note_sell_failure(market, cand["ticker"], reason, precheck.get("msg", "주문 불가"))
             has_pending_buy = any(
@@ -3289,6 +3294,8 @@ class TradingBot:
             self.risk.update_prices(self.price_cache, self.price_cache_raw)
             self._process_exit_candidates()
             self._write_live_status(market)
+        except Exception as _hk_e:
+            log.error(f"[housekeeping 오류] {market}: {_hk_e}", exc_info=True)
         finally:
             self._leave_market_task(market, "housekeeping")
 
@@ -3305,7 +3312,10 @@ class TradingBot:
             f"[{market} 엔트리 스캔] interval={int(interval_sec/60)}분 "
             f"(장초 {_ENTRY_SCAN_OPENING_MIN}분={_ENTRY_SCAN_OPENING_INTERVAL_MIN}분, 이후={_ENTRY_SCAN_REGULAR_INTERVAL_MIN}분)"
         )
-        self.run_cycle(market)
+        try:
+            self.run_cycle(market)
+        except Exception as _es_e:
+            log.error(f"[entry_scan 오류] {market}: {_es_e}", exc_info=True)
 
     def run_rescreen(self, market: str):
         if not self.session_active or self.current_market != market:
