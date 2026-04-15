@@ -262,28 +262,39 @@ class TradingBot:
 
         # ── 투자 금액 설정 — KIS 잔고 직접 조회 (모의/실거래 공통) ─────────
         mode_label = "모의투자" if is_paper else "실거래"
-        try:
-            bal_kr = get_balance(self.token, market="KR")
-            init_cash = bal_kr["cash"] + bal_kr["total_eval"]
-            if init_cash <= 0:
-                if is_paper:
-                    # 모의투자 계좌 미초기화 → PAPER_CASH 폴백
-                    init_cash = int(os.getenv("PAPER_CASH", "10000000"))
-                    log.warning(
-                        f"모의투자 잔고 0 → PAPER_CASH 폴백({init_cash:,}원) 사용. "
-                        f"KIS 앱에서 모의투자 계좌 초기화 필요 (모의투자 메뉴 → 초기화)"
-                    )
+        _bal_retry_max = 10 if is_paper else 3
+        _bal_retry_delay = 10  # 초
+        bal_kr = None
+        for _attempt in range(1, _bal_retry_max + 1):
+            try:
+                bal_kr = get_balance(self.token, market="KR")
+                break
+            except Exception as e:
+                log.warning(f"KIS KR 잔고 조회 실패 ({_attempt}/{_bal_retry_max}): {e}")
+                if _attempt < _bal_retry_max:
+                    import time as _t; _t.sleep(_bal_retry_delay)
                 else:
-                    raise ValueError("잔고 0 — 계좌 확인 필요")
-            env_cap = int(os.getenv("MAX_ORDER_KRW", "500000" if is_paper else "2000000"))
-            order_pct = float(os.getenv("MAX_ORDER_PCT", "0.05"))
-            max_order = min(env_cap, int(init_cash * order_pct))
-            log.info(f"{mode_label} | KIS KR 잔고 {init_cash:,}원 "
-                     f"(현금 {bal_kr['cash']:,} + 평가 {bal_kr['total_eval']:,}) "
-                     f"| 최대주문 {max_order:,}원")
-        except Exception as e:
-            log.error(f"KIS 잔고 조회 실패: {e}")
-            raise SystemExit(f"KIS {mode_label} 잔고 조회 실패. 계좌/API 설정을 확인하세요.")
+                    if is_paper:
+                        log.warning("KIS 서버 응답 없음 — PAPER_CASH 폴백으로 기동")
+                        bal_kr = {"cash": int(os.getenv("PAPER_CASH", "10000000")), "total_eval": 0}
+                    else:
+                        raise SystemExit(f"KIS 실거래 잔고 조회 {_bal_retry_max}회 실패 — 종료")
+        init_cash = bal_kr["cash"] + bal_kr["total_eval"]
+        if init_cash <= 0:
+            if is_paper:
+                init_cash = int(os.getenv("PAPER_CASH", "10000000"))
+                log.warning(
+                    f"모의투자 잔고 0 → PAPER_CASH 폴백({init_cash:,}원) 사용. "
+                    f"KIS 앱에서 모의투자 계좌 초기화 필요 (모의투자 메뉴 → 초기화)"
+                )
+            else:
+                raise SystemExit("잔고 0 — 실거래 계좌 확인 필요")
+        env_cap = int(os.getenv("MAX_ORDER_KRW", "500000" if is_paper else "2000000"))
+        order_pct = float(os.getenv("MAX_ORDER_PCT", "0.05"))
+        max_order = min(env_cap, int(init_cash * order_pct))
+        log.info(f"{mode_label} | KIS KR 잔고 {init_cash:,}원 "
+                 f"(현금 {bal_kr['cash']:,} + 평가 {bal_kr['total_eval']:,}) "
+                 f"| 최대주문 {max_order:,}원")
 
         # US 잔고 조회 (참고용 — KR과 공유 풀이므로 init_cash에는 미포함)
         try:
