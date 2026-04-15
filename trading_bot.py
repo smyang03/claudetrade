@@ -803,6 +803,7 @@ class TradingBot:
             "last_error": "",
             "pending_trigger": None,
             "pending_position_review": None,
+            "pending_sell": None,
         }
 
     def _save_claude_control(self):
@@ -954,6 +955,37 @@ class TradingBot:
             log.error(f"[포지션 재판단 트리거 실패] {market} {ticker}: {e}")
         finally:
             self.claude_control["pending_position_review"] = None
+            self.claude_control["last_result_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            self.claude_control["last_result_market"] = market
+            self._save_claude_control()
+
+    def _consume_pending_sell(self, market: str):
+        """대시보드 즉시 매도 버튼 → claude_control.json pending_sell 소비"""
+        self._refresh_claude_control()
+        pending = self.claude_control.get("pending_sell")
+        if not pending or pending.get("market") != market:
+            return
+        ticker     = str(pending.get("ticker", "") or "").strip()
+        sell_price = float(pending.get("sell_price", 0) or 0)
+        try:
+            if not ticker:
+                raise ValueError("ticker missing")
+            pos = next((p for p in self.risk.positions if p.get("ticker") == ticker), None)
+            if pos is None:
+                raise ValueError(f"{ticker} 포지션 없음")
+            raw_px = sell_price if sell_price > 0 else self.price_cache_raw.get(ticker, pos.get("current_price", 0))
+            cand = {**pos, "exit_price": pos.get("current_price", 0), "reason": "manual_sell"}
+            self.price_cache_raw[ticker] = raw_px
+            self._execute_sell(cand, market, reason="manual_sell")
+            log.info(f"[즉시 매도] {market} {ticker} @ {raw_px:,.2f} (대시보드 요청)")
+            self.claude_control["last_result_status"] = "success"
+            self.claude_control["last_error"] = ""
+        except Exception as e:
+            self.claude_control["last_result_status"] = "error"
+            self.claude_control["last_error"] = str(e)
+            log.error(f"[즉시 매도 실패] {market} {ticker}: {e}")
+        finally:
+            self.claude_control["pending_sell"] = None
             self.claude_control["last_result_at"] = datetime.now(KST).isoformat(timespec="seconds")
             self.claude_control["last_result_market"] = market
             self._save_claude_control()
@@ -3379,6 +3411,7 @@ class TradingBot:
         self._refresh_claude_control()
         self._consume_pending_claude_trigger(market)
         self._consume_pending_position_review(market)
+        self._consume_pending_sell(market)
 
         mode = self.today_judgment.get("consensus", {}).get("mode", "CAUTIOUS")
         size_pct = self.today_judgment.get("consensus", {}).get("size", 50)

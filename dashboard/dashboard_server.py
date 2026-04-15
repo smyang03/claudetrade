@@ -3579,6 +3579,79 @@ def api_review_position():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/immediate_sell", methods=["POST"])
+def api_immediate_sell():
+    """즉시 매도: Claude에게 적정 매도가 물어보고 pending_sell에 기록"""
+    import anthropic as _anthropic
+    body   = request.get_json(silent=True) or {}
+    market = body.get("market", "KR").upper()
+    ticker = body.get("ticker", "").strip().upper()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+
+    market, pos, live, positions = _resolve_review_position(market, ticker)
+    if pos is None:
+        return jsonify({"error": f"{ticker} 포지션을 찾을 수 없습니다"}), 404
+
+    is_us = (market == "US")
+    cur_px_display = float(pos.get("display_current_price") or 0)
+    cur_px_raw     = float(pos.get("current_price") or 0)
+    avg_px_display = float(pos.get("display_avg_price") or pos.get("avg_price") or pos.get("entry") or 0)
+    currency       = "USD" if is_us else "KRW"
+
+    # 현재가: display 우선, 없으면 raw
+    cur_px = cur_px_display if cur_px_display > 0 else cur_px_raw
+    if cur_px <= 0:
+        return jsonify({"error": "현재가 조회 실패"}), 400
+
+    # Claude에게 적정 매도가 질의
+    try:
+        client = _anthropic.Anthropic()
+        pnl_pct = ((cur_px / avg_px_display) - 1) * 100 if avg_px_display > 0 else 0
+        prompt = (
+            f"포지션 정보:\n"
+            f"- 종목: {ticker} ({market})\n"
+            f"- 전략: {pos.get('strategy','')}\n"
+            f"- 매수가: {avg_px_display:.4f} {currency}\n"
+            f"- 현재가: {cur_px:.4f} {currency}\n"
+            f"- 수익률: {pnl_pct:+.2f}%\n"
+            f"- 보유일: {pos.get('held_days', 0)}일\n\n"
+            f"사용자가 이 포지션을 즉시 매도하려 합니다. "
+            f"현재 시장 상황에서 즉시 체결되면서도 최대한 유리한 매도 호가를 {currency}로 추천해주세요. "
+            f"숫자만 답하세요 (예: 120.45 또는 85200)."
+        )
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=20,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = msg.content[0].text.strip().replace(",", "").replace("$", "").replace("원", "")
+        sell_price = float(raw)
+    except Exception as e:
+        # Claude 실패 시 현재가 그대로 사용
+        sell_price = cur_px
+
+    # pending_sell 기록
+    try:
+        ctrl_path = Path(BASE_DIR) / "state" / "claude_control.json"
+        ctrl = {}
+        if ctrl_path.exists():
+            with open(ctrl_path, encoding="utf-8") as f:
+                ctrl = json.load(f)
+        ctrl["pending_sell"] = {
+            "market": market,
+            "ticker": ticker,
+            "sell_price": sell_price,
+            "requested_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+        with open(ctrl_path, "w", encoding="utf-8") as f:
+            json.dump(ctrl, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return jsonify({"error": f"pending_sell 기록 실패: {e}"}), 500
+
+    return jsonify({"ok": True, "ticker": ticker, "market": market, "sell_price": sell_price, "currency": currency})
+
+
 @app.route("/api/tickers/today")
 def api_tickers_today():
     """?ㅻ뒛 Claude媛 ?좏깮??紐⑤땲?곕쭅 醫낅ぉ + 理쒓렐 ?좏샇 ?붿빟"""
@@ -5426,11 +5499,14 @@ async function loadSummary() {
       </div>
       ${stopLine ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px">${stopLine}</div>` : ''}
       ${advHtml}
-      <div style="margin-top:8px">
+      <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <button onclick="reviewPosition('KR','${pos.ticker}','${cardId}')"
           style="font-size:10px;padding:3px 10px;border:1px solid rgba(100,116,139,0.4);border-radius:4px;background:rgba(100,116,139,0.1);color:var(--text-dim);cursor:pointer"
           id="${cardId}-btn">Claude 재판단</button>
-        <span id="${cardId}-status" style="font-size:10px;margin-left:8px;color:var(--text-dim)"></span>
+        <button onclick="immediatelySell('KR','${pos.ticker}','${cardId}')"
+          style="font-size:10px;padding:3px 10px;border:1px solid rgba(239,68,68,0.5);border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;cursor:pointer"
+          id="${cardId}-sell-btn">즉시 매도</button>
+        <span id="${cardId}-status" style="font-size:10px;color:var(--text-dim)"></span>
       </div>
     </div>`;
   }).join('');
@@ -5515,6 +5591,33 @@ async function reviewPosition(market, ticker, cardId) {
     if (status) status.textContent = '❌ 연결 오류';
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Claude 재판단'; }
+  }
+}
+
+async function immediatelySell(market, ticker, cardId) {
+  const btn    = document.getElementById(cardId + '-sell-btn');
+  const status = document.getElementById(cardId + '-status');
+  if (!confirm(`${ticker} 즉시 매도를 요청합니다. Claude가 적정 매도가를 결정합니다. 계속할까요?`)) return;
+  if (btn) { btn.disabled = true; btn.textContent = '가격 산정 중...'; }
+  if (status) status.textContent = '';
+  try {
+    const res = await fetch('/api/immediate_sell', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({market, ticker})
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      if (status) status.textContent = '❌ ' + (data.error || '오류');
+    } else {
+      const px = data.currency === 'USD' ? '$' + Number(data.sell_price).toFixed(2) : Math.round(data.sell_price).toLocaleString() + '원';
+      if (status) status.innerHTML = `<span style="color:#f59e0b;font-weight:600">매도 예약 ${px}</span>`;
+      setTimeout(() => loadSummary(), 2000);
+    }
+  } catch(e) {
+    if (status) status.textContent = '❌ 연결 오류';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '즉시 매도'; }
   }
 }
 
@@ -6283,11 +6386,14 @@ async function loadSummary() {
           </div>
           ${stopLine ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px">${stopLine}</div>` : ''}
           ${advHtml}
-          <div style="margin-top:8px">
+          <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <button onclick="reviewPosition('US','${pos.ticker}','${cardId2}')"
               style="font-size:10px;padding:3px 10px;border:1px solid rgba(100,116,139,0.4);border-radius:4px;background:rgba(100,116,139,0.1);color:var(--text-dim);cursor:pointer"
               id="${cardId2}-btn">Claude 재판단</button>
-            <span id="${cardId2}-status" style="font-size:10px;margin-left:8px;color:var(--text-dim)"></span>
+            <button onclick="immediatelySell('US','${pos.ticker}','${cardId2}')"
+              style="font-size:10px;padding:3px 10px;border:1px solid rgba(239,68,68,0.5);border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;cursor:pointer"
+              id="${cardId2}-sell-btn">즉시 매도</button>
+            <span id="${cardId2}-status" style="font-size:10px;color:var(--text-dim)"></span>
           </div>
         </div>`;
     }).join('');
