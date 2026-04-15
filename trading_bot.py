@@ -3124,6 +3124,8 @@ class TradingBot:
             self._or_high.pop(_t, None)
             self._or_low.pop(_t, None)
             self._or_formed.pop(_t, None)
+        # session_open 완료 즉시 대시보드 강제 갱신 — stale live_status 방지
+        self._maybe_push_dashboard(force=True)
         self._leave_market_task(market, "session_open")
 
     # ── Claude 파라미터 검토 헬퍼 ─────────────────────────────────────────────
@@ -6054,6 +6056,53 @@ class TradingBot:
         if len(_deduped) < len(session_trades):
             log.info(f"[{market}] trade_log 중복 제거: {len(session_trades)} → {len(_deduped)}건")
         session_trades = _deduped
+
+        # ── decisions.jsonl 폴백 머지 ─────────────────────────────────────────
+        # 재시작으로 trade_log가 비거나 부분만 남을 경우 decisions.jsonl의
+        # 당일 closed 거래를 보조 소스로 추가해 매매 원장 누락을 방지한다.
+        try:
+            _dec_trades = []
+            if DECISIONS_FILE.exists():
+                for _line in DECISIONS_FILE.read_text(encoding="utf-8").splitlines():
+                    try:
+                        _rec = json.loads(_line)
+                    except Exception:
+                        continue
+                    if _rec.get("type") != "closed":
+                        continue
+                    if _rec.get("market") != market:
+                        continue
+                    _ts = str(_rec.get("timestamp", "") or "")[:10]
+                    if _ts != today:
+                        continue
+                    _ono = str(_rec.get("order_no", "") or "").strip()
+                    _key = _ono if _ono else f"dec_{_rec.get('ticker','')}_{_rec.get('exit_price',0)}"
+                    if _key in _seen_orders:
+                        continue
+                    _seen_orders.add(_key)
+                    _usd_krw = _get_usd_krw_cached()
+                    _ep = float(_rec.get("exit_price", 0) or 0)
+                    _ep_disp = round(_ep / _usd_krw, 4) if market == "US" and _usd_krw > 0 else _ep
+                    _dec_trades.append({
+                        "ticker":    _rec.get("ticker", ""),
+                        "side":      "sell",
+                        "qty":       int(_rec.get("qty", 0) or 0),
+                        "price":     _ep,
+                        "display_price": _ep_disp,
+                        "pnl":       float(_rec.get("pnl_krw", 0) or 0),
+                        "pnl_pct":   float(_rec.get("pnl_pct", 0) or 0),
+                        "strategy":  _rec.get("strategy", ""),
+                        "reason":    _rec.get("exit_reason", ""),
+                        "order_no":  _ono,
+                        "date":      today,
+                        "currency":  "USD" if market == "US" else "KRW",
+                        "source_kind": "decisions_fallback",
+                    })
+            if _dec_trades:
+                log.info(f"[{market}] decisions.jsonl 폴백 {len(_dec_trades)}건 머지 (trade_log 누락 보완)")
+                session_trades = session_trades + _dec_trades
+        except Exception as _dm_e:
+            log.warning(f"[{market}] decisions.jsonl 머지 실패: {_dm_e}")
         _sell_log = [t for t in session_trades if t.get("side") == "sell"]
         execution_health = self._build_execution_health(market, session_trades)
         cumulative_equity = int(round(self._kis_total_equity_krw()))
