@@ -262,8 +262,8 @@ class TradingBot:
 
         # ── 투자 금액 설정 — KIS 잔고 직접 조회 (모의/실거래 공통) ─────────
         mode_label = "모의투자" if is_paper else "실거래"
-        _bal_retry_max = 10 if is_paper else 3
-        _bal_retry_delay = 10  # 초
+        _bal_retry_max = 3 if is_paper else 3
+        _bal_retry_delay = 5  # 초
         bal_kr = None
         for _attempt in range(1, _bal_retry_max + 1):
             try:
