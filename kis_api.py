@@ -1909,12 +1909,23 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
         "day_gainers":  preset["quota_gainers"],
         "day_losers":   preset["quota_losers"],
     }
+    _cache_mode = str(mode).upper()
     _logger.info(
         f"[US 스크리너] mode={mode} → "
         f"actives={_quota['most_actives']} gainers={_quota['day_gainers']} losers={_quota['day_losers']} "
         f"dolvol≥${_min_dollar_vol/1e6:.0f}M max_chg≤{_max_chg}%"
     )
     _fmp_max        = int(os.getenv("US_FMP_MAX", "5"))
+    _cache_preset = {
+        "min_price": _min_price,
+        "max_chg": _max_chg,
+        "min_dollar_vol": _min_dollar_vol,
+        "loser_max_chg": _loser_max_chg,
+        "quota_actives": _quota["most_actives"],
+        "quota_gainers": _quota["day_gainers"],
+        "quota_losers": _quota["day_losers"],
+        "fmp_max": _fmp_max,
+    }
     _CACHE_TTL_SEC  = int(os.getenv("US_SCREEN_CACHE_TTL_SEC", "3600"))
 
     # ── 당일 캐시 확인 ────────────────────────────────────────────────────
@@ -1926,10 +1937,17 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                 if cache_age <= _CACHE_TTL_SEC:
                     source = cached.get("source", "")
                     cands  = cached["candidates"]
-                    if source == "yf" and _has_meaningful_candidate_volume(cands):
+                    cached_mode = str(cached.get("mode", "")).upper()
+                    cached_preset = cached.get("preset", {})
+                    if cached_mode != _cache_mode or cached_preset != _cache_preset:
+                        _logger.info(
+                            f"[US 스크리너 캐시] mode/preset 불일치 "
+                            f"(cached={cached_mode or '-'} current={_cache_mode}) → 재스크리닝"
+                        )
+                    elif source == "yf" and _has_meaningful_candidate_volume(cands):
                         _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
                         return cands[:top_n]
-                    if source == "fmp" and cands:
+                    elif source == "fmp" and cands:
                         _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
                         return cands[:top_n]
                 else:
@@ -1968,7 +1986,8 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
             )
             _US_SCREEN_CACHE_PATH.write_text(
                 json.dumps({"date": today, "candidates": merged,
-                            "source": "yf", "cached_at": _time.time()},
+                            "source": "yf", "cached_at": _time.time(),
+                            "mode": _cache_mode, "preset": _cache_preset},
                            ensure_ascii=False),
                 encoding="utf-8",
             )
@@ -1986,7 +2005,8 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
             _logger.info(f"[FMP 스크리너] 통과={len(fmp_cands)}종목 (최대 {_fmp_max}개, volume 미포함)")
             _US_SCREEN_CACHE_PATH.write_text(
                 json.dumps({"date": today, "candidates": fmp_cands,
-                            "source": "fmp", "cached_at": _time.time()},
+                            "source": "fmp", "cached_at": _time.time(),
+                            "mode": _cache_mode, "preset": _cache_preset},
                            ensure_ascii=False),
                 encoding="utf-8",
             )

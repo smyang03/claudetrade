@@ -45,7 +45,10 @@ def run_kr_update():
     try:
         from phase1_trainer.price_collector import collect_kr_incremental
         import pandas as pd
-        end_dt   = pd.Timestamp(date.today())
+        from datetime import datetime
+        # 16:00 이전(장 전/장중) 실행 시 당일 미확정 데이터 제외 → 전일까지만 수집
+        # KIS API는 장중에 당일 volume=0 또는 1을 반환해 vol_ratio 오염을 일으킴
+        end_dt   = pd.Timestamp(date.today() if datetime.now().hour >= 16 else date.today() - timedelta(days=1))
         start_dt = pd.Timestamp(date.today() - timedelta(days=500))
         collect_kr_incremental(start_dt, end_dt)
     except Exception as e:

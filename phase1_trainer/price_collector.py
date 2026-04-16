@@ -618,7 +618,7 @@ def _save(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Times
 
 # ── 스크리너 풀 사전 수집 (Method 2) ──────────────────────────────────────────
 
-def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: int = 50):
+def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: int = 50, mode: str = "NEUTRAL"):
     """
     새벽 스케줄러용 — 스크리너 상위 N종목 OHLCV 사전 수집.
 
@@ -642,8 +642,9 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
     # 스크리너 후보 가져오기
     if market == "US":
         try:
-            from kis_api import screen_market_us
-            candidates = screen_market_us(top_n=top_n)
+            from kis_api import get_screening_preset, screen_market_us
+            candidates = screen_market_us(top_n=top_n, mode=mode)
+            us_preset = get_screening_preset("US", mode)
         except Exception as e:
             print(f"  FMP 스크리너 실패: {e} → 폴백 유니버스 사용")
             candidates = [{"ticker": t} for t in [
@@ -651,6 +652,7 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
                 "JPM","GS","XOM","CVX","LLY","ABBV","CAT","GE",
                 "META","AMZN","MSFT","AMD","PLTR","NFLX","ORCL",
             ]]
+            us_preset = {"min_price": 5.0, "min_dollar_vol": 15_000_000.0}
     else:
         # KR: KIS 토큰 필요 → 없으면 폴백
         try:
@@ -666,8 +668,6 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
             ]]
 
     # 2차 품질 필터 — 스크리너 필터 뚫린 것 최후 차단
-    _MIN_PRICE = float(os.environ.get("SCREEN_MIN_PRICE", "5.0"))
-    _MIN_VOL   = int(os.environ.get("SCREEN_MIN_VOLUME",  "500000"))
     tickers = []
     for c in candidates:
         t = c.get("ticker", "")
@@ -680,8 +680,15 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
             if t[-1] in {"W", "U", "R"}:
                 continue
             price = float(c.get("price", 0))
-            vol   = int(c.get("volume", 0))
-            if price < _MIN_PRICE or vol < _MIN_VOL:
+            vol = int(c.get("volume", 0) or 0)
+            vol_missing = bool(c.get("volume_missing", False))
+            if price < float(us_preset.get("min_price", 5.0)):
+                continue
+            if (
+                not vol_missing
+                and float(us_preset.get("min_dollar_vol", 0.0)) > 0
+                and price * vol < float(us_preset.get("min_dollar_vol", 0.0))
+            ):
                 continue
         else:
             # KR: 6자리 숫자 코드

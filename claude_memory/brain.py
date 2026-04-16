@@ -154,6 +154,7 @@ def update_execution_pattern(market: str, event: dict):
         stats[action] += 1
 
     key = f"{action}|{strategy}|{reason}"
+    today_str = datetime.now().date().isoformat()
     item = patterns.setdefault(key, {
         "action": action,
         "strategy": strategy,
@@ -163,6 +164,7 @@ def update_execution_pattern(market: str, event: dict):
         "fail": 0,
         "avg_pnl_pct": 0.0,
         "last_detail": "",
+        "last_seen": today_str,
         "examples": [],
     })
     prev = item["count"]
@@ -173,6 +175,7 @@ def update_execution_pattern(market: str, event: dict):
         item["fail"] += 1
     item["avg_pnl_pct"] = round((item["avg_pnl_pct"] * prev + pnl_pct) / max(item["count"], 1), 4)
     item["last_detail"] = detail or selected_reason
+    item["last_seen"] = today_str
     example = {
         "date": datetime.now().date().isoformat(),
         "ticker": ticker,
@@ -206,17 +209,35 @@ def _build_execution_summary(market_data: dict) -> tuple[str, str]:
             key=lambda x: (x.get("count", 0), x.get("success", 0)),
             reverse=True,
         )[:5]
-        pattern_lines = [
-            "  "
-            f"{item.get('action', 'unknown')} | "
-            f"{item.get('strategy', 'unknown')} | "
-            f"{item.get('reason', 'unknown')} | "
-            f"count={item.get('count', 0)} "
-            f"success={item.get('success', 0)} "
-            f"fail={item.get('fail', 0)} "
-            f"avg_pnl={item.get('avg_pnl_pct', 0):+.2f}%"
-            for item in top_items
-        ]
+        today = datetime.now().date()
+        pattern_lines = []
+        for item in top_items:
+            last_seen_str = item.get("last_seen", "")
+            if last_seen_str:
+                try:
+                    last_seen_date = datetime.strptime(last_seen_str, "%Y-%m-%d").date()
+                    days_ago = (today - last_seen_date).days
+                    if days_ago == 0:
+                        recency = "오늘 발생"
+                    elif days_ago <= 7:
+                        recency = f"{days_ago}일 전"
+                    elif days_ago <= 30:
+                        recency = f"{days_ago}일 전 (최근 없음)"
+                    else:
+                        recency = f"{days_ago}일 전 (오래된 이력)"
+                except Exception:
+                    recency = "날짜 미확인"
+            else:
+                recency = "날짜 미확인"
+            pattern_lines.append(
+                "  "
+                f"{item.get('action', 'unknown')} | "
+                f"{item.get('strategy', 'unknown')} | "
+                f"{item.get('reason', 'unknown')} | "
+                f"누적 {item.get('count', 0)}회 "
+                f"(마지막: {recency}) "
+                f"avg_pnl={item.get('avg_pnl_pct', 0):+.2f}%"
+            )
         pattern_text = "\n".join(pattern_lines)
     else:
         pattern_text = "  아직 없음 (학습 중)"
@@ -306,9 +327,10 @@ def update_tuning_pattern(market: str, pattern_key: str,
                            new_threshold: float = None):
     brain = load()
     tp = brain["markets"][market]["tuning_patterns"]
+    today_str = datetime.now().date().isoformat()
 
     if pattern_key not in tp:
-        tp[pattern_key] = {"count": 0, "correct": 0, "rate": 0.0, "insight": ""}
+        tp[pattern_key] = {"count": 0, "correct": 0, "rate": 0.0, "insight": "", "last_seen": today_str}
 
     tp[pattern_key]["count"] += 1
     if correct:
@@ -316,6 +338,7 @@ def update_tuning_pattern(market: str, pattern_key: str,
     tp[pattern_key]["rate"] = round(
         tp[pattern_key]["correct"] / tp[pattern_key]["count"], 3
     )
+    tp[pattern_key]["last_seen"] = today_str
     if new_insight:
         tp[pattern_key]["insight"] = new_insight
     if new_threshold is not None:
@@ -526,9 +549,10 @@ def generate_prompt_summary(market: str) -> str:
             f"실제 {r.get('pnl_pct', 0):+.2f}%  {win_mark}\n"
         )
 
-    # 패턴 상위 3개
+    # 패턴 상위 3개 — description 없는 항목(미분류) 제외
     top_patterns = sorted(
-        patterns, key=lambda x: x["count"], reverse=True
+        [p for p in patterns if p.get("description", "").strip()],
+        key=lambda x: x["count"], reverse=True
     )[:3]
     pattern_txt = ""
     for p in top_patterns:
@@ -541,12 +565,30 @@ def generate_prompt_summary(market: str) -> str:
 
     # 튜닝 패턴
     tuning_txt = ""
+    today_dt = datetime.now().date()
     for k, v in tuning.items():
-        if v["count"] > 0:
-            tuning_txt += (
-                f"  {k}: {v['count']}회 중 {v['correct']}회 적중 "
-                f"({v['rate']*100:.0f}%) → {v['insight']}\n"
-            )
+        if v["count"] == 0:
+            continue
+        rate = v["rate"]
+        cnt = v["count"]
+        correct = v["correct"]
+        insight = v.get("insight", "")
+
+        # last_seen 기반 recency 표시
+        last_seen_str = v.get("last_seen", "")
+        if last_seen_str:
+            try:
+                days_ago = (today_dt - datetime.strptime(last_seen_str, "%Y-%m-%d").date()).days
+                recency_tag = "" if days_ago <= 7 else f" [⚠ {days_ago}일 전 이력]"
+            except Exception:
+                recency_tag = ""
+        else:
+            recency_tag = " [⚠ 날짜 미확인]"
+
+        tuning_txt += (
+            f"  {k}{recency_tag}: {cnt}회 중 {correct}회 적중 "
+            f"({rate*100:.0f}%) → {insight}\n"
+        )
 
     # 모드별 성과 상위
     best_mode = max(modes.items(),
@@ -557,6 +599,18 @@ def generate_prompt_summary(market: str) -> str:
     def _consec_badge(atype: str) -> str:
         n = _count_consecutive_result(m.get("recent_days", []), atype, "MISS")
         return f" ⛔{n}연속실패" if n >= 3 else ""
+
+    # 모드별 성과 텍스트 (f-string 내 \n 금지 우회)
+    _nl = "\n"
+    mode_perf_lines = []
+    for _mode, _v in modes.items():
+        if _v["count"] > 0:
+            mode_perf_lines.append(
+                f"  {_mode:<14}{_v['count']:>3}회  평균 {_v['avg_pnl']:+.2f}%  승률 {_v['win_rate']*100:.0f}%"
+            )
+        else:
+            mode_perf_lines.append(f"  {_mode:<14}  —  (데이터 없음)")
+    mode_perf_txt = _nl.join(mode_perf_lines)
 
     summary = f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -569,11 +623,7 @@ def generate_prompt_summary(market: str) -> str:
   ⚪ Neutral: {perf['neutral']['rate']*100:.1f}%  (최근7일 {perf['neutral']['recent_7d']['rate']*100:.1f}%  {perf['neutral']['trend']}){_consec_badge('neutral')}
 
 🏆 모드별 평균 수익 (최적: {best_mode[0]} {best_mode[1]['avg_pnl']:+.2f}%)
-  AGGRESSIVE    {modes['AGGRESSIVE']['count']:>3}회  평균 {modes['AGGRESSIVE']['avg_pnl']:+.2f}%  승률 {modes['AGGRESSIVE']['win_rate']*100:.0f}%
-  MODERATE_BULL {modes['MODERATE_BULL']['count']:>3}회  평균 {modes['MODERATE_BULL']['avg_pnl']:+.2f}%  승률 {modes['MODERATE_BULL']['win_rate']*100:.0f}%
-  CAUTIOUS      {modes['CAUTIOUS']['count']:>3}회  평균 {modes['CAUTIOUS']['avg_pnl']:+.2f}%  승률 {modes['CAUTIOUS']['win_rate']*100:.0f}%
-  DEFENSIVE     {modes['DEFENSIVE']['count']:>3}회  평균 {modes['DEFENSIVE']['avg_pnl']:+.2f}%  승률 {modes['DEFENSIVE']['win_rate']*100:.0f}%
-  HALT          {modes['HALT']['count']:>3}회  평균 {modes['HALT']['avg_pnl']:+.2f}%  승률 {modes['HALT']['win_rate']*100:.0f}%
+{mode_perf_txt}
 
 💡 반복 이슈 패턴 (상위 3)
 {pattern_txt if pattern_txt else '  아직 없음 (학습 중)'}

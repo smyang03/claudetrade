@@ -2823,6 +2823,19 @@ class TradingBot:
         self.risk.reset_daily_state(clear_trade_log=True)
         self.risk.increment_holding_days()
 
+        # ── 데이터 무결성 자동 점검 ──────────────────────────────────────────
+        try:
+            from claude_memory.data_integrity import run_pre_session_check
+            integrity = run_pre_session_check(market)
+            for msg in integrity["fixed"]:
+                log.info(f"[data_integrity] 수정: {msg}")
+            for msg in integrity["warnings"]:
+                log.warning(f"[data_integrity] 경고: {msg}")
+            if integrity["fixed"]:
+                log.info(f"[data_integrity] 총 {len(integrity['fixed'])}건 자동 수정 완료")
+        except Exception as _di_e:
+            log.warning(f"[data_integrity] 점검 실패 (무시하고 계속): {_di_e}")
+
         # ── 장 시작 전 보유 포지션 Claude 점검 ───────────────────────────────
         try:
             self._pre_session_position_review(market)

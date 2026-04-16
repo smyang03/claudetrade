@@ -430,9 +430,11 @@ def _cmd_pnl(bot) -> str:
             hold_ok  = hp["hold_success"]
             hold_pct = hold_ok / hold_n * 100 if hold_n else 0
             extra    = hp.get("hold_avg_extra_pnl", 0.0)
+            # 샘플 수 부족 경고 (30건 미만은 통계 신뢰도 낮음)
+            sample_warn = " ⚠소표본" if hold_n < 30 else ""
             lines.append(
                 f"\n  📈 TP 후 분석가 합의 (총 {hp['total']}건)\n"
-                f"     HOLD {hold_n}건 성공 {hold_ok}건 ({hold_pct:.0f}%)"
+                f"     HOLD {hold_n}건 성공 {hold_ok}건 ({hold_pct:.0f}%){sample_warn}"
                 + (f"  평균 추가수익 {extra:+.2f}%" if hold_n > 0 else "")
             )
     except Exception as e:
