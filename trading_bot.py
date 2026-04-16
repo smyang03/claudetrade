@@ -2820,7 +2820,6 @@ class TradingBot:
         if market == "US":
             self._reset_us_order_cache()
         self._sync_runtime_with_broker()
-        self.risk.reset_daily_state(clear_trade_log=True)
         self.risk.increment_holding_days()
 
         # ── 데이터 무결성 자동 점검 ──────────────────────────────────────────
@@ -2863,6 +2862,10 @@ class TradingBot:
                 except Exception as e:
                     log.warning(f"이월 포지션 시가 조회 실패 [{pos['ticker']}]: {e}")
         self.risk.update_prices(self.price_cache, self.price_cache_raw)
+        # ── session_start_equity: 환율 갱신 + 현재가 반영 이후 기준으로 확정 ──
+        # (이전에 reset_daily_state를 먼저 호출하면 구환율 기준으로 base가 잡혀
+        #  환율 변동분이 일일 손실로 잘못 계산되는 버그 수정)
+        self.risk.reset_daily_state(clear_trade_log=True)
         if self.risk.positions:
             updated_prices = []
             for p in self.risk.positions:
@@ -3442,7 +3445,13 @@ class TradingBot:
             for _sq_pos in sell_queue:
                 _sq_tk = _sq_pos.get("ticker", "")
                 try:
-                    _sq_cp = _sq_pos.get("current_price", _sq_pos.get("entry", 0))
+                    # 큐 생성 시점의 current_price는 구환율 기준일 수 있으므로
+                    # 실제 실행 시점의 price_cache(최신 환율 반영) 우선 사용
+                    _sq_cp = (
+                        self.price_cache.get(_sq_tk)
+                        or _sq_pos.get("current_price")
+                        or _sq_pos.get("entry", 0)
+                    )
                     cand = {**_sq_pos, "exit_price": _sq_cp, "reason": "pre_session_sell"}
                     self._execute_sell(cand, market, reason="pre_session_sell",
                                        hold_advice=_sq_pos.get("hold_advice"))
