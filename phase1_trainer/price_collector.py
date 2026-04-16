@@ -697,6 +697,32 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
         tickers.append(t)
     print(f"  후보 {len(tickers)}종목: {tickers[:10]}{'...' if len(tickers)>10 else ''}")
 
+    # US 신규 종목 거래소 코드 사전 resolve → exchange_cache.json 저장
+    if market == "US":
+        try:
+            from kis_api import (
+                _US_EXCHANGE_CACHE, _US_EXCHANGE_MAP,
+                _resolve_us_exchange_finnhub, _save_exchange_cache,
+            )
+            known = set(_US_EXCHANGE_CACHE) | {t for ts in _US_EXCHANGE_MAP.values() for t in ts}
+            new_tickers = [t for t in tickers if t not in known]
+            if new_tickers:
+                print(f"  [거래소 resolve] 신규 {len(new_tickers)}종목: {new_tickers}")
+                resolved = 0
+                for t in new_tickers:
+                    try:
+                        code = _resolve_us_exchange_finnhub(t)
+                        _US_EXCHANGE_CACHE[t] = code
+                        resolved += 1
+                    except Exception as e:
+                        print(f"    {t}: resolve 실패 ({e})")
+                    time.sleep(0.2)
+                if resolved:
+                    _save_exchange_cache()
+                    print(f"  [거래소 resolve] {resolved}종목 저장 완료")
+        except Exception as e:
+            print(f"  [거래소 resolve] 건너뜀: {e}")
+
     collected, skipped, failed = 0, 0, 0
     for ticker in tickers:
         path = PRICE_DIR / market.lower() / f"{market.lower()}_{ticker}.csv"
