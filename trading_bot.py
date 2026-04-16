@@ -3392,9 +3392,10 @@ class TradingBot:
         if last_ts and (now_ts - last_ts) < interval_sec:
             return
         self._last_entry_scan_at[market] = now_ts
+        _regular_min = int(os.getenv("US_ENTRY_SCAN_REGULAR_INTERVAL_MIN", "5")) if market == "US" else _ENTRY_SCAN_REGULAR_INTERVAL_MIN
         log.info(
             f"[{market} 엔트리 스캔] interval={int(interval_sec/60)}분 "
-            f"(장초 {_ENTRY_SCAN_OPENING_MIN}분={_ENTRY_SCAN_OPENING_INTERVAL_MIN}분, 이후={_ENTRY_SCAN_REGULAR_INTERVAL_MIN}분)"
+            f"(장초 {_ENTRY_SCAN_OPENING_MIN}분={_ENTRY_SCAN_OPENING_INTERVAL_MIN}분, 이후={_regular_min}분)"
         )
         try:
             self.run_cycle(market)
