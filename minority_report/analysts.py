@@ -417,7 +417,8 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
             "_debate": {"r1": r1, "changes": changes}}
 
 
-def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list) -> list:
+def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
+                   intraday_context: str = "") -> list:
     """
     오늘 집중 모니터링할 종목을 Claude가 선택 (최소 8개, 최대 10개)
     candidates: screen_market_kr/us 결과
@@ -459,14 +460,18 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
     req_min  = min(16, n_cands)
     req_max  = min(20, n_cands)
 
+    intraday_section = (
+        f"\n장중 현재 상황:\n{intraday_context}\n"
+        if intraday_context else ""
+    )
+
     prompt = f"""오늘 {market} 세션에서 집중 모니터링할 종목을 최소 {req_min}개, 최대 {req_max}개 선택하세요.
 합의 모드: {consensus_mode}
 후보 종목:
 {cand_text}
 
-시장 컨텍스트:
-{digest_prompt[:400]}
-
+시장 컨텍스트 (장전 분석):
+{digest_prompt[:400]}{intraday_section}
 규칙:
 - 후보 종목 중에서만 선택. 중복 없이 선택할 것.
 - 최소 {req_min}개 이상 선택할 것. 후보가 충분하면 {req_max}개까지 선택 가능.

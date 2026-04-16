@@ -60,6 +60,59 @@ _CACHE_LOG_TS = {}
 _KIS_HTTP_LOCK = threading.Lock()
 _KIS_LAST_CALL_TS = 0.0
 
+# ── US 거래소 코드 영속 캐시 ────────────────────────────────────────────────────
+from pathlib import Path as _Path
+_EXCHANGE_CACHE_FILE = _Path(__file__).resolve().parent / "data" / "exchange_cache.json"
+
+_FINNHUB_EXCHANGE_MAP = {
+    "NEW YORK STOCK EXCHANGE": "NYSE",
+    "NASDAQ NMS":              "NASD",
+    "NASDAQ CAPITAL MARKET":   "NASD",
+    "NASDAQ GLOBAL SELECT":    "NASD",
+    "NYSE AMERICAN":           "AMEX",
+    "NYSE ARCA":               "AMEX",
+}
+
+
+def _load_exchange_cache() -> None:
+    """data/exchange_cache.json → _US_EXCHANGE_CACHE 로드 (모듈 init 시 1회 호출)"""
+    try:
+        with open(_EXCHANGE_CACHE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        _US_EXCHANGE_CACHE.update(data)
+        log.debug(f"[exchange_cache] {len(data)}종목 로드")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log.warning(f"[exchange_cache] 로드 실패: {e}")
+
+
+def _save_exchange_cache() -> None:
+    """_US_EXCHANGE_CACHE → data/exchange_cache.json 저장"""
+    try:
+        _EXCHANGE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_EXCHANGE_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_US_EXCHANGE_CACHE, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        log.warning(f"[exchange_cache] 저장 실패: {e}")
+
+
+def _resolve_us_exchange_finnhub(ticker: str) -> str:
+    """Finnhub profile2 → KIS 거래소 코드 (NASD/NYSE/AMEX) 반환. 실패 시 ValueError."""
+    if not FINNHUB_KEY:
+        raise RuntimeError("FINNHUB_API_KEY 없음")
+    resp = requests.get(
+        "https://finnhub.io/api/v1/stock/profile2",
+        params={"symbol": ticker, "token": FINNHUB_KEY},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    exch_name = (resp.json().get("exchange") or "").upper()
+    for key, code in _FINNHUB_EXCHANGE_MAP.items():
+        if key in exch_name:
+            return code
+    raise ValueError(f"Finnhub 거래소 매핑 불가: {ticker} exchange='{exch_name}'")
+
 
 def _cache_get(cache: dict, key):
     item = cache.get(key)
@@ -241,8 +294,9 @@ _US_QUOTE_CODE_MAP = {
     "AMEX": "AMS",
 }
 
-_US_EXCHANGE_CACHE = {}
+_US_EXCHANGE_CACHE: dict[str, str] = {}
 _US_DAILYPRICE_FALLBACK = set()
+_load_exchange_cache()  # data/exchange_cache.json → _US_EXCHANGE_CACHE
 
 
 def _probe_us_exchange_code(ticker: str, token: str):
@@ -273,20 +327,46 @@ def _probe_us_exchange_code(ticker: str, token: str):
 
 
 def _get_ovrs_excg_cd(ticker: str, token: str = None) -> str:
+    """
+    KIS 거래소 코드 반환 순서:
+    1. _US_EXCHANGE_CACHE (메모리 + 파일 로드분)
+    2. _US_EXCHANGE_MAP (하드코딩 고정 종목)
+    3. Finnhub profile2 resolve
+    4. KIS VTS probe (보조)
+    실패 시 ValueError — 침묵 NASD fallback 없음.
+    """
     normalized = ticker.upper()
+    # 1. 메모리 캐시
     if normalized in _US_EXCHANGE_CACHE:
         return _US_EXCHANGE_CACHE[normalized]
+    # 2. 하드코딩 맵
     for exch, tickers in _US_EXCHANGE_MAP.items():
         if normalized in tickers:
             _US_EXCHANGE_CACHE[normalized] = exch
             return exch
+    # 3. Finnhub profile resolve
+    try:
+        code = _resolve_us_exchange_finnhub(normalized)
+        _US_EXCHANGE_CACHE[normalized] = code
+        _save_exchange_cache()
+        log.info(f"[exchange_resolve] {normalized} → {code} (Finnhub)")
+        return code
+    except Exception as e:
+        log.debug(f"[exchange_resolve] Finnhub 실패 [{normalized}]: {e}")
+    # 4. KIS VTS probe (보조)
     if token:
         try:
-            return _probe_us_exchange_code(normalized, token)
-        except Exception:
-            pass  # probe 실패 시 NASD 기본값으로 fallback
-    _US_EXCHANGE_CACHE[normalized] = "NASD"
-    return "NASD"
+            code = _probe_us_exchange_code(normalized, token)
+            _US_EXCHANGE_CACHE[normalized] = code
+            _save_exchange_cache()
+            log.info(f"[exchange_resolve] {normalized} → {code} (KIS probe)")
+            return code
+        except Exception as e:
+            log.debug(f"[exchange_resolve] KIS probe 실패 [{normalized}]: {e}")
+    raise ValueError(
+        f"[exchange_resolve] {normalized}: exchange code unknown. "
+        "Run collect_screener_pool or add to _US_EXCHANGE_MAP."
+    )
 
 
 def _get_us_quote_codes(ticker: str, token: str) -> tuple[str, str]:
@@ -343,6 +423,9 @@ def _get_price_us_kis(ticker: str, token: str) -> dict:
                 )
         except Exception as e:
             log.warning(f"KIS US 현재가 OHLC 보정 실패 [{ticker}]: {e}")
+
+    if price <= 0:
+        raise ValueError(f"KIS US price=0 [{ticker}] EXCD={quote_exch} — Finnhub 폴백 전환")
 
     return {
         "ticker": ticker.upper(),
@@ -424,7 +507,7 @@ def _get_price_kr_yf(ticker: str) -> dict:
             "ticker": ticker, "name": ticker,
             "price": price,
             "change": 0, "change_rate": 0.0,
-            "volume": 0, "open": price, "high": price, "low": price,
+            "volume": 0, "open": 0, "high": price, "low": price,
         }
     except Exception:
         return {
@@ -465,32 +548,40 @@ def is_trading_halted(ticker: str, token) -> bool:
 
 def get_price(ticker, token, market="KR"):
     if market == "US":
-        # 1차: KIS 해외 시세 (최대 2회 재시도, 1s 간격 — VTS 500 일시오류 대응)
-        try:
-            result = _retry_kis(
-                f"US price [{ticker}]",
-                lambda: _get_price_us_kis(ticker, token),
-                retries=3, delay_sec=0.5,
-            )
-            log.info(f"KIS US 현재가 성공 [{ticker}]")
-            return result
-        except Exception as e:
-            log.warning(f"KIS US 현재가 실패 [{ticker}] → 폴백 전환: {e}")
-        # 2차: Finnhub (무료 무제한)
-        try:
-            result = _get_price_us_finnhub(ticker)
-            log.info(f"US 현재가 Finnhub 폴백 성공 [{ticker}]")
-            return result
-        except Exception as e:
-            log.warning(f"US 현재가 Finnhub 실패 [{ticker}]: {e}")
-        # 3차: yfinance
+        if IS_PAPER:
+            # 모의투자: KIS VTS 미지원(실시간 WS 없음) → Finnhub 1차
+            try:
+                result = _get_price_us_finnhub(ticker)
+                log.info(f"US 현재가 Finnhub 성공 [{ticker}]")
+                return result
+            except Exception as e:
+                log.warning(f"US 현재가 Finnhub 실패 [{ticker}] → 폴백: {e}")
+        else:
+            # 실투자: KIS WebSocket tick이 있지만 REST도 1차로 유지
+            try:
+                result = _retry_kis(
+                    f"US price [{ticker}]",
+                    lambda: _get_price_us_kis(ticker, token),
+                    retries=3, delay_sec=0.5,
+                )
+                log.info(f"KIS US 현재가 성공 [{ticker}]")
+                return result
+            except Exception as e:
+                log.warning(f"KIS US 현재가 실패 [{ticker}] → 폴백 전환: {e}")
+            # 실투자 2차: Finnhub
+            try:
+                result = _get_price_us_finnhub(ticker)
+                log.info(f"US 현재가 Finnhub 폴백 성공 [{ticker}]")
+                return result
+            except Exception as e:
+                log.warning(f"US 현재가 Finnhub 실패 [{ticker}]: {e}")
+        # 공통 폴백: yfinance → Alpha Vantage
         try:
             result = _get_price_us_yf(ticker)
             log.info(f"US 현재가 yfinance 폴백 성공 [{ticker}]")
             return result
         except Exception as e:
             log.warning(f"US 현재가 yfinance 실패 [{ticker}]: {e}")
-        # 4차: Alpha Vantage (레거시 최후 폴백)
         result = _get_price_us_alpha(ticker)
         log.info(f"US 현재가 Alpha Vantage 폴백 성공 [{ticker}]")
         return result
@@ -1338,7 +1429,7 @@ _US_EXCHANGE_MAP = {
     ],
     "NYSE": ["BRK.B","JPM","BAC","WFC","GS","MS","C","USB","BLK","AXP",
              "XOM","CVX","COP","SLB","WMT","HD","MCD","NKE","PG","KO",
-             "PFE","JNJ","MRK","ABT","UNH","V","MA"],
+             "PFE","JNJ","MRK","ABT","UNH","V","MA","HIMS"],
     "AMEX": ["SPY","QQQ","IWM","GLD","SLV","USO"],
 }
 
@@ -1926,7 +2017,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
         "quota_losers": _quota["day_losers"],
         "fmp_max": _fmp_max,
     }
-    _CACHE_TTL_SEC  = int(os.getenv("US_SCREEN_CACHE_TTL_SEC", "3600"))
+    _CACHE_TTL_SEC  = int(os.getenv("US_SCREEN_CACHE_TTL_SEC", "1800"))
 
     # ── 당일 캐시 확인 ────────────────────────────────────────────────────
     if _US_SCREEN_CACHE_PATH.exists():
@@ -2092,6 +2183,36 @@ class KISWebSocket:
             }
         )
 
+    def _sub_us(self, ticker: str) -> Optional[str]:
+        """해외주식 실시간 현재가 구독 (실전 전용: HDFSASP0).
+        tr_key 포맷: D{quote_exch}{ticker}  예) DNYSHIMS, DNASAAPL
+        """
+        from kis_api import _US_EXCHANGE_CACHE, _US_EXCHANGE_MAP, _US_QUOTE_CODE_MAP
+        normalized = ticker.upper()
+        # 거래소 코드 조회 (캐시 우선)
+        exch = _US_EXCHANGE_CACHE.get(normalized)
+        if not exch:
+            for e, tickers in _US_EXCHANGE_MAP.items():
+                if normalized in tickers:
+                    exch = e
+                    break
+        if not exch:
+            log.warning(f"[KIS WS] US 실시간 구독 스킵: {normalized} 거래소 코드 미확인")
+            return None
+        quote_exch = _US_QUOTE_CODE_MAP.get(exch, "NAS")
+        rsym = f"D{quote_exch}{normalized}"
+        return json.dumps(
+            {
+                "header": {
+                    "approval_key": self._ws_key,
+                    "custtype": "P",
+                    "tr_type": "1",
+                    "content-type": "utf-8",
+                },
+                "body": {"input": {"tr_id": "HDFSASP0", "tr_key": rsym}},
+            }
+        )
+
     def _sub_notice(self, market: str = "KR"):
         """계좌 체결통보 구독
         KR: H0STCNI9(모의) / H0STCNI0(실전)
@@ -2160,10 +2281,21 @@ class KISWebSocket:
         self._ws_key = self._get_ws_key()
 
         def on_open(ws):
-            # KR 시세 구독 (KR 세션만)
+            # KR 실시간 시세 구독 (KR 세션만)
             if self.market == "KR":
                 for t in self.tickers:
                     ws.send(self._sub(t))
+            # US 실시간 시세 구독 (US 세션 + 실전 서버만, VTS 미지원)
+            if self.market == "US" and not IS_PAPER:
+                subscribed = 0
+                for t in self.tickers:
+                    msg = self._sub_us(t)
+                    if msg:
+                        ws.send(msg)
+                        subscribed += 1
+                log.info(f"[KIS WS] US 실시간 시세 구독 {subscribed}/{len(self.tickers)}종목")
+            elif self.market == "US" and IS_PAPER:
+                log.info("[KIS WS] US 실시간 시세: VTS 미지원 — API 폴링 사용")
             # 체결통보 구독 (KR + US 모두, HTS ID 있을 때)
             if self.on_notice and self._hts_id:
                 ws.send(self._sub_notice("KR"))
@@ -2213,7 +2345,24 @@ class KISWebSocket:
                         self.on_notice(event)
                 return
 
-            # 시세 tick
+            # US 실시간 시세 tick (HDFSASP0, 실전 전용)
+            # RSYM 포맷: D{NAS/NYS/AMS}{ticker}  예) DNYSHIMS
+            # fields: [0]RSYM [6]OPEN [7]HIGH [8]LOW [9]LAST [12]RATE [17]ACML_VOL
+            if tr_id == "HDFSASP0":
+                fields = raw_data.split("^")
+                if len(fields) < 18:
+                    return
+                try:
+                    rsym = fields[0]
+                    ticker = rsym[4:] if len(rsym) > 4 else rsym  # D+3자리거래소+티커
+                    price = float(fields[9])
+                    volume = int(float(fields[17]))
+                    self.on_tick({"ticker": ticker, "time": fields[5], "price": price, "volume": volume})
+                except Exception:
+                    pass
+                return
+
+            # KR 시세 tick
             fields = raw_data.split("^")
             if len(fields) < 13:
                 return

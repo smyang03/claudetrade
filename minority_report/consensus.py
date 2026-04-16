@@ -74,6 +74,9 @@ def _get_weights(market: str) -> dict:
     """
     brain.json에서 분석가별 적중률 → 가중치 반환
     데이터 부족 시 균등 가중치(1/3)
+
+    블렌드 공식: rate*0.30 + r30*0.35 + r7*0.35 (r7 충분 시)
+    최소 하한: 0.1 (기존 0.2 → 최근 성과 나쁜 분석가 더 강하게 할인)
     """
     try:
         from claude_memory import brain as BrainDB
@@ -83,22 +86,30 @@ def _get_weights(market: str) -> dict:
         weights = {}
         for atype in ("bull", "bear", "neutral"):
             total = perf[atype]["total"]
-            rate  = perf[atype]["rate"]  # 0.0 ~ 1.0
-            # 최근 30일 데이터 혼합 — 건수에 따라 가중치 점진 증가
-            # 통계 신뢰도: 5~9건은 30%, 10~19건은 45%, 20건 이상은 60%
-            r30 = perf[atype]["recent_30d"]
+            rate  = perf[atype]["rate"]  # 전체 누적 적중률
+            r30   = perf[atype]["recent_30d"]
+            r7    = perf[atype]["recent_7d"]
             r30_n = r30["total"]
-            if r30_n >= 20:
-                blend_w = 0.60
-            elif r30_n >= 10:
-                blend_w = 0.45
-            elif r30_n >= 5:
-                blend_w = 0.30
+            r7_n  = r7["total"]
+
+            # recent_7d 포함 3-way 블렌드
+            # r7 충분(≥5)하면: rate*0.30 + r30*0.35 + r7*0.35
+            # r7 부족하면 기존 방식: rate*(1-blend_w) + r30*blend_w
+            if r7_n >= 5 and r30_n >= 5:
+                blended = rate * 0.30 + r30["rate"] * 0.35 + r7["rate"] * 0.35
             else:
-                blend_w = 0.0
-            blended = rate * (1 - blend_w) + r30["rate"] * blend_w if blend_w > 0 else rate
-            # 최소 보정: 0% 또는 100% 방지 → [0.2, 0.8] 범위로 클램핑
-            weights[atype] = max(0.2, min(0.8, blended)) if total >= MIN_DATA else None
+                if r30_n >= 20:
+                    blend_w = 0.60
+                elif r30_n >= 10:
+                    blend_w = 0.45
+                elif r30_n >= 5:
+                    blend_w = 0.30
+                else:
+                    blend_w = 0.0
+                blended = rate * (1 - blend_w) + r30["rate"] * blend_w if blend_w > 0 else rate
+
+            # 최소 하한 0.1 (기존 0.2) — 최근 성과 나쁜 분석가 더 강하게 할인
+            weights[atype] = max(0.1, min(0.8, blended)) if total >= MIN_DATA else None
 
         # 데이터 부족 분석가가 하나라도 있으면 균등 가중치
         if any(v is None for v in weights.values()):

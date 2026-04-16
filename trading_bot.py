@@ -47,6 +47,7 @@ from kis_api import (
     screen_market_us,
     save_kr_screen_cache,
     is_trading_halted,
+    _US_SCREEN_CACHE_PATH,
 )
 from indicators import calc_all
 from risk_manager import RiskManager, HARD_RULES
@@ -328,6 +329,7 @@ class TradingBot:
         self._session_open_at: dict[str, float] = {"KR": 0.0, "US": 0.0}  # startup 보호 구간
         self._last_entry_scan_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._last_rescreen_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
+        self._vix_refresh_at: float = 0.0          # VIX 장중 갱신 타임스탬프
         self._task_start_time: dict[str, float] = {"KR": 0.0, "US": 0.0}  # 작업 지연 감지
         self._live_status_written_at: dict[str, float] = {"KR": 0.0, "US": 0.0}  # 중복 쓰기 방지
         self._ticker_no_signal_minutes: dict = {}  # ticker -> 누적 무신호 시간(분), KR 교체 임계에 사용
@@ -490,6 +492,51 @@ class TradingBot:
             }},
         )
 
+    def _build_intraday_context(self, market: str) -> str:
+        """장중 재스크리닝용 실시간 시장 컨텍스트 문자열 생성."""
+        try:
+            from kis_api import get_index_change
+            lines = []
+            now_str = datetime.now(KST).strftime("%H:%M")
+            if market == "KR":
+                kospi_chg = get_index_change("KR")
+                lines.append(f"현재시각 {now_str} KST | 코스피 현재 {kospi_chg:+.2f}%")
+                # 장중 보유 포지션 현황
+                positions = list(self.positions.get(market, {}).values())
+                if positions:
+                    pos_strs = [
+                        f"{p.get('ticker')} {p.get('unrealized_pnl_pct', 0):+.1f}%"
+                        for p in positions[:5]
+                    ]
+                    lines.append(f"현재 보유: {' | '.join(pos_strs)}")
+                # 아침 모드 대비 지수 변화 참고
+                morning_kospi = 0.0
+                try:
+                    morning_kospi = (self.today_judgment or {}).get(
+                        "digest_raw", {}).get("context", {}).get("kospi", {}).get("change_pct", 0.0) or 0.0
+                except Exception:
+                    pass
+                if abs(kospi_chg - morning_kospi) >= 0.5:
+                    direction = "상승" if kospi_chg > morning_kospi else "하락"
+                    lines.append(
+                        f"장전 대비 {abs(kospi_chg - morning_kospi):.1f}%p {direction} "
+                        f"(장전 {morning_kospi:+.2f}% → 현재 {kospi_chg:+.2f}%)"
+                    )
+            else:
+                sp_chg = get_index_change("US")
+                lines.append(f"현재시각 {now_str} ET | S&P500 현재 {sp_chg:+.2f}%")
+                positions = list(self.positions.get(market, {}).values())
+                if positions:
+                    pos_strs = [
+                        f"{p.get('ticker')} {p.get('unrealized_pnl_pct', 0):+.1f}%"
+                        for p in positions[:5]
+                    ]
+                    lines.append(f"현재 보유: {' | '.join(pos_strs)}")
+            return "\n".join(lines)
+        except Exception as e:
+            log.debug(f"[intraday_context 생성 실패] {e}")
+            return ""
+
     def manual_rescreen(self, market: str | None = None) -> list[str]:
         """텔레그램 수동 명령으로 현재 시장 종목만 즉시 재선택."""
         target_market = market or self.current_market or self.today_judgment.get("market")
@@ -521,7 +568,9 @@ class TradingBot:
             candidates = [c for c in candidates if c.get("ticker") not in _manual_cooldown]
             if not candidates:
                 raise RuntimeError("히스토리 필터 통과 후보가 없습니다.")
-            selected, reasons = select_tickers(target_market, digest_prompt, mode, candidates)
+            intraday_ctx = self._build_intraday_context(target_market)
+            selected, reasons = select_tickers(target_market, digest_prompt, mode, candidates,
+                                               intraday_context=intraday_ctx)
             if not selected:
                 raise RuntimeError("최종 선택 종목이 없습니다.")
             self.today_tickers[target_market] = selected
@@ -2299,7 +2348,10 @@ class TradingBot:
                 block_alert("장 중 포지션 점검", ["검토 대상 포지션 없음 (진입 후 60분 미경과)"], market=market, icon="🔍")
             return
 
+        _intraday_ctx = self._build_intraday_context(market)
         digest = self.today_judgment.get("digest_prompt", "")
+        if _intraday_ctx:
+            digest = digest + "\n\n[장중 현재]\n" + _intraday_ctx
         label  = "수동 요청" if force else "1시간 정기"
         lines  = [f"🔍 <b>[장 중 포지션 점검 · {label}] {market}</b>", "━━━━━━━━━━━━━━━━"]
 
@@ -2410,7 +2462,9 @@ class TradingBot:
         else:
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
-                digest = self.today_judgment.get("digest_prompt", "")
+                _d = self.today_judgment.get("digest_prompt", "")
+                _ic = self._build_intraday_context(market)
+                digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
                 advice = advisor_ask(cand, market, digest)
                 action = advice.get("action", "SELL")
                 votes  = advice.get("votes", {})
@@ -2465,7 +2519,9 @@ class TradingBot:
             else:
                 try:
                     from minority_report.hold_advisor import ask as advisor_ask
-                    digest = self.today_judgment.get("digest_prompt", "")
+                    _d = self.today_judgment.get("digest_prompt", "")
+                    _ic = self._build_intraday_context(market)
+                    digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
                     advice = advisor_ask(cand, market, digest)
                     if advice["action"] == "SELL":
                         log.info(f"[TP→분석가합의:SELL] {ticker} — 즉시 청산")
@@ -2803,6 +2859,14 @@ class TradingBot:
             self.current_market = None
             self._leave_market_task(market, "session_open")
             return
+
+        # US 개장 시 스크리너 캐시 무효화 → 신선한 후보로 시작
+        if market == "US":
+            try:
+                _US_SCREEN_CACHE_PATH.unlink(missing_ok=True)
+                log.info("[US] 개장 시 스크리너 캐시 무효화")
+            except Exception as _uce:
+                log.debug(f"[US] 스크리너 캐시 무효화 실패(무시): {_uce}")
 
         self._refresh_token()
         self.session_active = True
@@ -3295,8 +3359,10 @@ class TradingBot:
     def _entry_scan_interval_sec(self, market: str) -> int:
         real_elapsed = self._market_elapsed_min(market)
         if 0 < real_elapsed <= _ENTRY_SCAN_OPENING_MIN:
-            return _ENTRY_SCAN_OPENING_INTERVAL_MIN * 60   # 개장: 2분
-        return _ENTRY_SCAN_REGULAR_INTERVAL_MIN * 60       # 정규: 10분
+            return _ENTRY_SCAN_OPENING_INTERVAL_MIN * 60   # 개장: 2분 (KR/US 동일)
+        if market == "US":
+            return int(os.getenv("US_ENTRY_SCAN_REGULAR_INTERVAL_MIN", "5")) * 60  # US 정규: 5분
+        return _ENTRY_SCAN_REGULAR_INTERVAL_MIN * 60       # KR 정규: 10분
 
     def run_housekeeping(self, market: str):
         if not self._enter_market_task(market, "housekeeping"):
@@ -3562,7 +3628,24 @@ class TradingBot:
             log.info(f"[{market}] 낮은 분석가 confidence ({_avg_conf:.2f} < {_MIN_ENTRY_CONF}) — 신규 진입 전 사이클 스킵")
 
         # Cross-asset 컨텍스트 (VIX/VKOSPI, USD/KRW, 섹터 ETF) — 파라미터 보정용
-        _ca_context = self.today_judgment.get("digest_raw", {}).get("context", {})
+        _ca_context = dict(self.today_judgment.get("digest_raw", {}).get("context", {}))
+
+        # US 전용: VIX 30분마다 장중 갱신 (경계 진동 방지 위해 VIX만 갱신)
+        _VIX_REFRESH_INTERVAL = 1800  # 30분
+        if market == "US" and _ca_context:
+            _now_ts = time.time()
+            if _now_ts - self._vix_refresh_at >= _VIX_REFRESH_INTERVAL:
+                try:
+                    import yfinance as _yf
+                    _vix_live = float(_yf.Ticker("^VIX").history(period="1d")["Close"].iloc[-1])
+                    if _vix_live > 0:
+                        _vix_prev = float(_ca_context.get("vix", 0) or 0)
+                        _ca_context = {**_ca_context, "vix": round(_vix_live, 2)}
+                        self._vix_refresh_at = _now_ts
+                        log.info(f"[VIX 갱신] {_vix_prev:.1f} → {_vix_live:.1f}")
+                except Exception as _ve:
+                    log.debug(f"[VIX 갱신 실패] {_ve}")
+
         self._ca_context_last = _ca_context   # param_tuner가 참조
         _fear_label = get_vix_regime(_ca_context, market)
         if _ca_context:
@@ -3717,7 +3800,8 @@ class TradingBot:
                 self.price_cache_raw[ticker] = price
                 self.price_cache[ticker] = risk_price
                 self.risk.update_prices(self.price_cache, self.price_cache_raw)
-                # US는 WS 시세 미사용이라 opening scan 가격으로 OR를 근사 누적
+                # US는 VTS에서 WS 시세 미사용 / 실전에서는 WS 틱으로 price_cache 업데이트됨
+                # 두 경우 모두 scan 시 polling 가격으로 OR 근사 누적 (실전 WS 틱은 _on_tick에서 별도 누적)
                 if market == "US" and self.session_active and self.current_market == "US":
                     _or_elapsed_us = self._market_elapsed_min("US")
                     _or_minutes_us = 15
@@ -6000,7 +6084,9 @@ class TradingBot:
             advice = None
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
-                digest = self.today_judgment.get("digest_prompt", "")
+                _d = self.today_judgment.get("digest_prompt", "")
+                _ic = self._build_intraday_context(market)
+                digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
                 advice = advisor_ask(pos, market, digest)
                 action = advice.get("action", "SELL")
                 votes  = advice.get("votes", {})

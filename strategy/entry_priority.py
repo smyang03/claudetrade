@@ -80,24 +80,44 @@ def compute(
             "bb_margin": round(bb_margin, 3),
         })
 
+    elif strategy_name == "opening_range_pullback":
+        # 신호 조건: 거래량 + 눌림 깊이 (OR_HIGH 대비 현재가 위치)
+        vol_avg   = float(sig_row.get("vol_avg20", 1) or 1)
+        volume    = float(sig_row.get("volume", 0) or 0)
+        vol_ratio = volume / vol_avg if vol_avg else 0
+        vol_mult  = float(params.get("vol_mult", 1.3))
+        vol_margin = (vol_ratio - vol_mult) / vol_mult if vol_mult > 0 else 0
+
+        # 눌림 깊이: OR_HIGH에서 얼마나 눌렸는지 (0~pullback_max_pct 범위 내 깊을수록 좋음)
+        price     = float(price_info.get("price", 0) or 0)
+        or_high   = float(params.get("or_high", 0.0) or 0.0)
+        pb_max    = float(params.get("pullback_max_pct", 0.010) or 0.010)
+        pullback_depth = ((or_high - price) / or_high) if or_high > 0 and price > 0 else 0.0
+        pullback_score = min(pullback_depth / pb_max, 1.0) if pb_max > 0 else 0.0
+
+        strat_score = max(0, vol_margin) * 0.7 + pullback_score * 0.3
+        detail.update({
+            "vol_ratio":      round(vol_ratio, 2),
+            "vol_mult":       round(vol_mult, 2),
+            "vol_margin":     round(vol_margin, 3),
+            "pullback_depth": round(pullback_depth * 100, 3),
+            "pullback_score": round(pullback_score, 3),
+        })
+
     elif strategy_name == "momentum":
         vol_avg   = float(sig_row.get("vol_avg20", 1) or 1)
         volume    = float(sig_row.get("volume", 0) or 0)
         vol_ratio = volume / vol_avg if vol_avg else 0
         vol_mult  = float(params.get("vol_mult", 1.5))
 
-        change    = float(sig_row.get("change_pct", 0) or 0)
-        change_thr = float(params.get("change_thr", 1.0))
+        # 실제 신호 조건(MA/MACD/vol/신고가)과 일치하도록 거래량 마진만 사용
+        # change_pct 기반 점수는 신호 조건에 없으므로 제거
+        vol_margin = (vol_ratio - vol_mult) / vol_mult if vol_mult > 0 else 0
 
-        vol_margin    = (vol_ratio - vol_mult) / vol_mult if vol_mult > 0 else 0
-        change_margin = (change - change_thr) / change_thr if change_thr > 0 else 0
-
-        strat_score = vol_margin * 0.5 + change_margin * 0.5
+        strat_score = vol_margin
         detail.update({
-            "vol_ratio": round(vol_ratio, 2),
+            "vol_ratio":  round(vol_ratio, 2),
             "vol_margin": round(vol_margin, 3),
-            "change_pct": round(change, 2),
-            "change_margin": round(change_margin, 3),
         })
 
     elif strategy_name == "volatility_breakout":
