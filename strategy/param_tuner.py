@@ -162,23 +162,41 @@ def update_outcomes(
     losses: int,
     avg_pnl_pct: float,
     total_pnl_krw: float,
+    market: str = "",
+    session_date: str = "",
 ) -> None:
-    """세션 종료 후 거래 결과 업데이트."""
-    if not session_ids:
-        return
+    """세션 종료 후 거래 결과 업데이트.
+
+    session_ids가 비어있어도 market+session_date로 당일 NULL 행을 일괄 업데이트.
+    (봇 재시작으로 _session_registry가 유실된 경우 대비)
+    """
     try:
-        placeholders = ",".join("?" * len(session_ids))
         with _get_conn() as conn:
-            conn.execute(
-                f"""
-                UPDATE param_sessions
-                SET signals_count=?, entries_count=?, wins=?, losses=?,
-                    avg_pnl_pct=?, total_pnl_krw=?
-                WHERE id IN ({placeholders})
-                """,
-                [signals, entries, wins, losses, avg_pnl_pct, total_pnl_krw]
-                + list(session_ids),
-            )
+            if session_ids:
+                placeholders = ",".join("?" * len(session_ids))
+                conn.execute(
+                    f"""
+                    UPDATE param_sessions
+                    SET signals_count=?, entries_count=?, wins=?, losses=?,
+                        avg_pnl_pct=?, total_pnl_krw=?
+                    WHERE id IN ({placeholders})
+                    """,
+                    [signals, entries, wins, losses, avg_pnl_pct, total_pnl_krw]
+                    + list(session_ids),
+                )
+            elif market and session_date:
+                # 재시작으로 session_ids 유실 → 날짜+market 기준 NULL 행 일괄 업데이트
+                conn.execute(
+                    """
+                    UPDATE param_sessions
+                    SET signals_count=?, entries_count=?, wins=?, losses=?,
+                        avg_pnl_pct=?, total_pnl_krw=?
+                    WHERE market=? AND session_date=? AND entries_count IS NULL
+                    """,
+                    [signals, entries, wins, losses, avg_pnl_pct, total_pnl_krw,
+                     market, session_date],
+                )
+                log.info(f"[param_tuner] {market} {session_date} outcome 소급 업데이트 (재시작 복구)")
     except Exception as e:
         log.warning("[param_tuner] update_outcomes 오류: %s", e)
 

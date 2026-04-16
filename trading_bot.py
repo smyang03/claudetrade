@@ -6301,27 +6301,28 @@ class TradingBot:
 
         # ── param_tuner outcome 업데이트 ──────────────────────────────────────
         try:
-            _pt_ids = _param_tuner.get_session_ids(market)
-            if _pt_ids:
-                _pt_signals = len([e for e in self._session_events
-                                   if e.get("type") == "signal"])
-                _pt_entries = actual.get("trades", 0)
-                _pt_losses  = len(sell_trades) - wins
-                _pt_avg_pnl = (
-                    sum(t.get("pnl", 0) for t in sell_trades) / len(sell_trades)
-                    if sell_trades else 0.0
-                )
-                _param_tuner.update_outcomes(
-                    session_ids=_pt_ids,
-                    signals=_pt_signals,
-                    entries=_pt_entries,
-                    wins=wins,
-                    losses=_pt_losses,
-                    avg_pnl_pct=_pt_avg_pnl,
-                    total_pnl_krw=float(actual.get("pnl_krw", 0)),
-                )
-                _param_tuner.clear_cache(market)
-                log.info(f"[param_tuner] {market} outcome 기록 완료 ({len(_pt_ids)}개 세션)")
+            _pt_ids     = _param_tuner.get_session_ids(market)
+            _pt_signals = len([e for e in self._session_events
+                               if e.get("type") == "signal"])
+            _pt_entries = actual.get("trades", 0)
+            _pt_losses  = len(sell_trades) - wins
+            _pt_avg_pnl = (
+                sum(t.get("pnl", 0) for t in sell_trades) / len(sell_trades)
+                if sell_trades else 0.0
+            )
+            _param_tuner.update_outcomes(
+                session_ids=_pt_ids,
+                signals=_pt_signals,
+                entries=_pt_entries,
+                wins=wins,
+                losses=_pt_losses,
+                avg_pnl_pct=_pt_avg_pnl,
+                total_pnl_krw=float(actual.get("pnl_krw", 0)),
+                market=market,
+                session_date=today,
+            )
+            _param_tuner.clear_cache(market)
+            log.info(f"[param_tuner] {market} outcome 기록 완료 (ids={len(_pt_ids)}개, 소급 포함)")
         except Exception as _pt_e:
             log.warning(f"[param_tuner] outcome 업데이트 오류: {_pt_e}")
 
