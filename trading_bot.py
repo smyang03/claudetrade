@@ -1604,6 +1604,19 @@ class TradingBot:
         except Exception as e:
             log.warning(f"[브로커 런타임 동기화] US 잔고 조회 실패 — US 포지션 검증 스킵: {e}")
 
+        # US API가 성공 응답이지만 stocks=[] 반환 시 — 내부 US 포지션이 있으면 API 일시 오류로 간주
+        if us_ok and len(broker_us) == 0:
+            _us_internal_count = sum(
+                1 for p in self.risk.positions
+                if self._ticker_market(p.get("ticker", "")) == "US"
+            )
+            if _us_internal_count > 0:
+                log.warning(
+                    f"[브로커 런타임 동기화] US API 빈 잔고 응답 "
+                    f"(내부 {_us_internal_count}개 포지션 존재) → US 포지션 검증 스킵 (False HALT 방지)"
+                )
+                us_ok = False
+
         broker_kr = {s["ticker"]: s for s in bal_kr.get("stocks", [])}
         self._reconcile_pending_orders(broker_kr, broker_us)
         synced_positions = {}
@@ -1712,7 +1725,18 @@ class TradingBot:
             log.warning(f"[브로커 런타임 동기화] 브로커 미보유 포지션 제거: {removed}")
 
         self.risk.positions = list(synced_positions.values())
-        self.risk.cash = float(bal_kr.get("cash", self.risk.cash))
+        # 공유 풀 기준 내부 equity는 KR 현금만이 아니라 US 현금까지 포함해야 한다.
+        # 그렇지 않으면 US 포지션 청산 후 재시작/재동기화 시
+        # "포지션은 제거됐는데 현금은 equity에 미반영" 상태가 되어
+        # 일일 손실 한도(halt)가 가짜로 발동할 수 있다.
+        kr_cash = float(bal_kr.get("cash", 0) or 0)
+        us_cash_krw = 0.0
+        if us_ok:
+            try:
+                us_cash_krw = float(bal_us.get("cash", 0) or 0) * float(self.usd_krw_rate or 0)
+            except Exception:
+                us_cash_krw = 0.0
+        self.risk.cash = kr_cash + us_cash_krw
 
     def _make_position_from_broker(self, order: dict, broker_pos: dict) -> dict:
         market = order.get("market", "KR")
@@ -3295,7 +3319,11 @@ class TradingBot:
         consensus  = self.today_judgment.get("consensus", {})
         mode       = consensus.get("mode", "NEUTRAL")
         conf       = float(consensus.get("confidence", 0.6) or 0.6)
-        ctx        = getattr(self, "_ca_context_last", None) or {}
+        ctx        = (
+            getattr(self, "_ca_context_last", None)
+            or (self.today_judgment.get("digest_raw", {}) or {}).get("context", {})
+            or {}
+        )
         vix        = float(ctx.get("vix") or 0) or None
         usd_krw    = float(self.usd_krw_rate or 0) or None
 
@@ -5003,6 +5031,42 @@ class TradingBot:
                     atr_val = float(sig_df.iloc[i].get("atr", 0) or 0)
                     if risk_price > 0 and atr_val > 0:
                         atr_pct = atr_val / risk_price
+
+                # KR momentum: ATR%가 과도하면 진입 자체를 차단한다.
+                # 손절 폭을 넓히는 것만으로는 갭다운/급락 리스크를 제어하기 어렵기 때문.
+                _kr_mom_atr_cap = float(os.getenv("KR_MOMENTUM_ATR_PCT_MAX", "0.06") or 0.06)
+                if (
+                    market == "KR"
+                    and strategy_name == "momentum"
+                    and atr_pct is not None
+                    and _kr_mom_atr_cap > 0
+                    and atr_pct > _kr_mom_atr_cap
+                ):
+                    log.info(
+                        f"  [{ticker}] KR momentum ATR 차단: "
+                        f"atr_pct={atr_pct:.2%} > {_kr_mom_atr_cap:.2%}"
+                    )
+                    analysis_log.info(
+                        f"[skip {market}] {ticker} momentum_atr_too_high",
+                        extra={"extra": {
+                            "event": "entry_skip",
+                            "market": market,
+                            "ticker": ticker,
+                            "reason": "momentum_atr_too_high",
+                            "strategy": strategy_name,
+                            "price": float(price),
+                            "atr_pct": round(float(atr_pct), 4),
+                            "atr_cap": round(float(_kr_mom_atr_cap), 4),
+                            "mode": mode,
+                        }},
+                    )
+                    if _ML_DB_ENABLED:
+                        _ml_write_eval(
+                            ticker, price, sig_df.iloc[i].to_dict(), "SKIPPED",
+                            block_reason_="momentum_atr_too_high",
+                            diag_json_={"atr_pct": float(atr_pct), "atr_cap": float(_kr_mom_atr_cap)},
+                        )
+                    continue
                 # 전략별 size_mult 적용 (예: momentum 0.4~1.0 → 합의 size_pct 스케일링)
                 size_mult = float(params.get("size_mult", 1.0))
 
