@@ -29,6 +29,7 @@ import strategy.mean_reversion      as _mr
 import strategy.momentum            as _mom
 import strategy.opening_range_pullback as _orp
 import strategy.volatility_breakout as _vb
+import strategy.continuation        as _cont
 
 _PARAMS_FN = {
     "opening_range_pullback": _orp.params,
@@ -36,6 +37,7 @@ _PARAMS_FN = {
     "mean_reversion":      _mr.params,
     "momentum":            _mom.params,
     "volatility_breakout": _vb.params,
+    "continuation":        _cont.params,
 }
 
 # 가드레일 — base 대비 허용 이동 범위

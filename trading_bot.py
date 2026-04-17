@@ -85,6 +85,7 @@ from strategy.mean_reversion import signal as mr_sig, params as mr_params
 from strategy.gap_pullback import signal as gap_sig, params as gap_params
 from strategy.volatility_breakout import signal as vb_sig, params as vb_params
 from strategy.opening_range_pullback import signal as orp_sig
+from strategy.continuation import signal as cont_sig, params as cont_params, diagnostics as cont_diag
 from strategy.cross_asset import apply_cross_asset_adjust, get_vix_regime
 from strategy.adaptive_params import adaptive_params as _adaptive_params
 from strategy.entry_priority import compute as entry_priority_score
@@ -413,6 +414,20 @@ class TradingBot:
         self._ticker_no_signal_cycles: dict = {}   # ticker → 연속 무신호 사이클 수
         self._ticker_exclude_log: dict = {"KR": [], "US": []}  # [{ticker,reason,ts}]
 
+        # ── continuation entry 1회 제한 플래그 (ticker → bool, 세션마다 리셋) ───
+        self._continuation_used: dict = {}   # key: ticker, val: True/False
+
+        # ── 주문 예외(HTTP 500 등) 연속 카운터 — 3회 연속 시 당일 차단 ──────────
+        self._order_error_count: dict = {}   # key: ticker, val: int
+
+        # ── 퍼널 계측 카운터 (selected→signaled→ordered→filled) ──────────────
+        self._funnel: dict = {
+            "KR": {"selected": 0, "signaled": 0, "ordered": 0, "filled": 0,
+                   "rejection_reasons": {}, "volume_states": {}},
+            "US": {"selected": 0, "signaled": 0, "ordered": 0, "filled": 0,
+                   "rejection_reasons": {}, "volume_states": {}},
+        }
+
         # ML DB 초기화
         if _ML_DB_ENABLED:
             try:
@@ -536,6 +551,57 @@ class TradingBot:
         except Exception as e:
             log.debug(f"[intraday_context 생성 실패] {e}")
             return ""
+
+    def _advisor_pos(self, pos: dict, market: str) -> dict:
+        """hold_advisor 호출용 pos 복사본 — mode/entry_time 등 컨텍스트 필드 주입."""
+        mode = ""
+        try:
+            mode = (self.today_judgment or {}).get("consensus", {}).get("mode", "")
+        except Exception:
+            pass
+        return {**pos, "mode": mode}
+
+    def _flush_funnel(self, market: str):
+        """세션 종료 시 퍼널 카운터를 일별 JSON 파일에 저장."""
+        import json as _json
+        from runtime_paths import get_runtime_path as _grp
+        _funnel = self._funnel.get(market, {})
+        if not any(_funnel.get(k, 0) for k in ("selected", "signaled", "ordered")):
+            return  # 아무 활동 없으면 저장 생략
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        log_dir = _grp("logs", "funnel", make_parents=True)
+        log_file = log_dir / f"funnel_{today}_{market}.json"
+        # 기존 파일이 있으면 누적
+        existing = {}
+        if log_file.exists():
+            try:
+                existing = _json.loads(log_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        for k in ("selected", "signaled", "ordered", "filled"):
+            existing[k] = existing.get(k, 0) + _funnel.get(k, 0)
+        # rejection_reasons 누적
+        for reason, cnt in _funnel.get("rejection_reasons", {}).items():
+            existing.setdefault("rejection_reasons", {})[reason] = \
+                existing.get("rejection_reasons", {}).get(reason, 0) + cnt
+        # volume_states 누적
+        for vs, cnt in _funnel.get("volume_states", {}).items():
+            existing.setdefault("volume_states", {})[vs] = \
+                existing.get("volume_states", {}).get(vs, 0) + cnt
+        existing["market"] = market
+        existing["date"] = today
+        log_file.write_text(_json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        log.info(
+            f"[퍼널] {market} {today} "
+            f"selected={existing.get('selected',0)} "
+            f"signaled={existing.get('signaled',0)} "
+            f"ordered={existing.get('ordered',0)}"
+        )
+        # 카운터 초기화 (재시작 대비)
+        self._funnel[market] = {
+            "selected": 0, "signaled": 0, "ordered": 0, "filled": 0,
+            "rejection_reasons": {}, "volume_states": {},
+        }
 
     def manual_rescreen(self, market: str | None = None) -> list[str]:
         """텔레그램 수동 명령으로 현재 시장 종목만 즉시 재선택."""
@@ -1034,7 +1100,12 @@ class TradingBot:
             if pos is None:
                 raise ValueError(f"{ticker} 포지션 없음")
             raw_px = sell_price if sell_price > 0 else self.price_cache_raw.get(ticker, pos.get("current_price", 0))
-            cand = {**pos, "exit_price": pos.get("current_price", 0), "reason": "manual_sell"}
+            exit_px = float(pos.get("current_price", 0) or 0)
+            if market == "US" and raw_px > 0 and self.usd_krw_rate > 0:
+                exit_px = raw_px * self.usd_krw_rate
+            elif market != "US" and raw_px > 0:
+                exit_px = raw_px
+            cand = {**pos, "exit_price": exit_px, "reason": "manual_sell"}
             self.price_cache_raw[ticker] = raw_px
             self._execute_sell(cand, market, reason="manual_sell")
             log.info(f"[즉시 매도] {market} {ticker} @ {raw_px:,.2f} (대시보드 요청)")
@@ -1168,6 +1239,8 @@ class TradingBot:
                 "gap_pullback": "갭눌림",
                 "momentum": "모멘텀",
                 "mean_reversion": "평균회귀",
+                "opening_range_pullback": "OR눌림",
+                "continuation": "연속진입(소사이즈)",
             }.get(strategy, strategy or "-")
             ko_mode = {
                 "NEUTRAL": "중립",
@@ -2171,7 +2244,7 @@ class TradingBot:
                 continue
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
-                advice = advisor_ask(pos, market, digest)
+                advice = advisor_ask(self._advisor_pos(pos, market), market, digest)
             except Exception as e:
                 log.warning(f"[장전 리뷰] {ticker} hold_advisor 오류 → HOLD 유지: {e}")
                 hold_list.append((ticker, "오류 → 기본 홀드"))
@@ -2269,7 +2342,7 @@ class TradingBot:
                 continue
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
-                advice = advisor_ask(pos, market, digest)
+                advice = advisor_ask(self._advisor_pos(pos, market), market, digest)
                 action = advice.get("action", "HOLD")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
@@ -2378,7 +2451,7 @@ class TradingBot:
             action, reason = "HOLD", ""
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
-                advice = advisor_ask(pos, market, digest)
+                advice = advisor_ask(self._advisor_pos(pos, market), market, digest)
                 action = advice.get("action", "HOLD")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
@@ -2465,7 +2538,7 @@ class TradingBot:
                 _d = self.today_judgment.get("digest_prompt", "")
                 _ic = self._build_intraday_context(market)
                 digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
-                advice = advisor_ask(cand, market, digest)
+                advice = advisor_ask(self._advisor_pos(cand, market), market, digest)
                 action = advice.get("action", "SELL")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
@@ -2522,7 +2595,7 @@ class TradingBot:
                     _d = self.today_judgment.get("digest_prompt", "")
                     _ic = self._build_intraday_context(market)
                     digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
-                    advice = advisor_ask(cand, market, digest)
+                    advice = advisor_ask(self._advisor_pos(cand, market), market, digest)
                     if advice["action"] == "SELL":
                         log.info(f"[TP→분석가합의:SELL] {ticker} — 즉시 청산")
                         trailing_alert(market, ticker, "sell", detail="분석가 합의: 즉시 청산")
@@ -2876,6 +2949,7 @@ class TradingBot:
         self.tuning_count = 0
         self._session_events = []          # 세션 이벤트 초기화
         self._entry_blocked = {}           # 새 세션 시작 시 쿨다운 초기화
+        self._order_error_count = {}       # 주문 연속 오류 카운터 초기화
         self.decision_event_log = []
         self._daily_sl_count[market] = 0   # 당일 손절 카운터 초기화
         self._session_closed_tickers[market] = set()  # 매도 완료 티커 초기화
@@ -3082,6 +3156,8 @@ class TradingBot:
             selected, sel_reasons = select_tickers(market, digest_prompt, consensus["mode"], candidates)
             self.today_tickers[market] = selected
             self.today_ticker_reasons[market] = sel_reasons or {}
+            # 퍼널: selected 카운트 (세션 시작 시 선택된 종목 수)
+            self._funnel[market]["selected"] += len(selected)
             log.info(f"[종목선택 확정] {market}: {selected}")
             try:
                 _tsdb_ids = tsdb.insert_batch(
@@ -3197,13 +3273,14 @@ class TradingBot:
         except Exception as _pt_e:
             log.warning(f"[param_tuner session_open] {market}: {_pt_e}")
 
-        # 새 세션 시작 시 장중 H/L 초기화
+        # 새 세션 시작 시 장중 H/L 초기화 + continuation entry 플래그 리셋
         for _t in selected:
             self._intraday_high.pop(_t, None)
             self._intraday_low.pop(_t, None)
             self._or_high.pop(_t, None)
             self._or_low.pop(_t, None)
             self._or_formed.pop(_t, None)
+            self._continuation_used.pop(_t, None)
         # session_open 완료 즉시 대시보드 강제 갱신 — stale live_status 방지
         self._maybe_push_dashboard(force=True)
         self._leave_market_task(market, "session_open")
@@ -3672,22 +3749,22 @@ class TradingBot:
 
         for ticker in tickers:
             try:
-                if market == "US":
-                    blocked_reason = self._us_order_block_reason(ticker)
-                    if blocked_reason:
-                        analysis_log.info(
-                            f"[skip {market}] {ticker} us_order_blocked",
-                            extra={"extra": {
-                                "event": "entry_skip",
-                                "market": market,
-                                "ticker": ticker,
-                                "reason": "us_order_blocked",
-                                "detail": blocked_reason,
-                                "mode": mode,
-                            }},
-                        )
-                        log.info(f"[US 주문차단] {ticker} — {blocked_reason}")
-                        continue
+                # 세션 내 주문 차단 종목 스킵 (KR/US 공통 — 매매불가/3회연속 500오류)
+                _order_blk = self._us_order_block_reason(ticker)
+                if _order_blk:
+                    analysis_log.info(
+                        f"[skip {market}] {ticker} order_blocked",
+                        extra={"extra": {
+                            "event": "entry_skip",
+                            "market": market,
+                            "ticker": ticker,
+                            "reason": "order_blocked",
+                            "detail": _order_blk,
+                            "mode": mode,
+                        }},
+                    )
+                    log.info(f"[주문차단 {market}] {ticker} — {_order_blk}")
+                    continue
                 price_info = get_price(ticker, self.token, market=market)
                 price = price_info["price"]
                 risk_price = self._price_to_krw(price, market)
@@ -3756,47 +3833,80 @@ class TradingBot:
                 # 이전 정상가 대비 30% 초과 괴리 → KIS API outlier 방어
                 _prev_price = self.price_cache_raw.get(ticker, 0)
                 if _prev_price > 0 and abs(price - _prev_price) / _prev_price > 0.30:
-                    self._flag_execution_issue(market, "quote_outlier")
-                    cnt = self._invalid_price_count.get(ticker, 0) + 1
-                    self._invalid_price_count[ticker] = cnt
-                    _MAX_OUTLIER = 2 if market == "US" else 3
-                    log.warning(
-                        f"[outlier {market}] {ticker} price={price:,} vs prev={_prev_price:,} "
-                        f"괴리 {abs(price-_prev_price)/_prev_price*100:.1f}% → 스킵 ({cnt}/{_MAX_OUTLIER}회)"
-                    )
-                    if cnt >= _MAX_OUTLIER:
-                        _universe = self.today_judgment.get("universe_tickers", [])
-                        _current = self.today_tickers.get(market, [])
-                        _replacement = next(
-                            (t for t in _universe if t not in _current and t != ticker), None
+                    # KR: 1회 재조회 시도 — API 노이즈 vs 실제 급등 구분
+                    if market == "KR":
+                        try:
+                            _retry_info = get_price(ticker, self.token, market=market)
+                            _retry_px = _retry_info["price"]
+                            if _retry_px > 0 and abs(_retry_px - _prev_price) / _prev_price <= 0.30:
+                                # 재조회 결과가 정상 → 첫 조회가 오류였음, 정상 가격 사용
+                                log.info(
+                                    f"[outlier_retry OK {market}] {ticker} "
+                                    f"first={price:,} retry={_retry_px:,} → 정상가 사용"
+                                )
+                                price = _retry_px
+                                price_info = _retry_info
+                                risk_price = self._price_to_krw(price, market)
+                                self.price_cache_raw[ticker] = price
+                                self.price_cache[ticker] = risk_price
+                                self._invalid_price_count.pop(ticker, None)
+                                # outlier 아님으로 처리 — 아래 skip 블록 건너뜀
+                                # (continue를 _outer if 안에서 호출할 수 없으므로 플래그 사용)
+                                _outlier_confirmed = False
+                            else:
+                                log.warning(
+                                    f"[outlier_retry FAIL {market}] {ticker} "
+                                    f"retry={_retry_px:,} 도 괴리 → 이상치 확정"
+                                )
+                                _outlier_confirmed = True
+                        except Exception as _re:
+                            log.warning(f"[outlier_retry ERR {market}] {ticker}: {_re}")
+                            _outlier_confirmed = True
+                    else:
+                        _outlier_confirmed = True
+
+                    if _outlier_confirmed:
+                        self._flag_execution_issue(market, "quote_outlier")
+                        cnt = self._invalid_price_count.get(ticker, 0) + 1
+                        self._invalid_price_count[ticker] = cnt
+                        _MAX_OUTLIER = 2 if market == "US" else 3
+                        log.warning(
+                            f"[outlier {market}] {ticker} price={price:,} vs prev={_prev_price:,} "
+                            f"괴리 {abs(price-_prev_price)/_prev_price*100:.1f}% → 스킵 ({cnt}/{_MAX_OUTLIER}회)"
                         )
-                        if _replacement:
-                            _new_tickers = [_replacement if t == ticker else t for t in _current]
-                            self.today_tickers[market] = _new_tickers
-                            self.today_judgment["tickers"] = _new_tickers
-                            self._invalid_price_count.pop(ticker, None)
-                            log.info(f"[종목 교체] {market} {ticker} → {_replacement} (outlier {cnt}회)")
-                            _now_out = datetime.now(KST).replace(tzinfo=None)
-                            self._ticker_exclude_log.setdefault(market, []).append(
-                                {"ticker": ticker, "reason": "outlier_price", "ts": _now_out}
+                        if cnt >= _MAX_OUTLIER:
+                            _universe = self.today_judgment.get("universe_tickers", [])
+                            _current = self.today_tickers.get(market, [])
+                            _replacement = next(
+                                (t for t in _universe if t not in _current and t != ticker), None
                             )
-                        else:
-                            log.warning(f"[종목 교체 실패] {market} {ticker} — 대체 후보 없음")
-                    analysis_log.info(
-                        f"[skip {market}] {ticker} outlier_price",
-                        extra={"extra": {
-                            "event": "entry_skip",
-                            "market": market,
-                            "ticker": ticker,
-                            "reason": "outlier_price",
-                            "invalid_count": cnt,
-                            "invalid_limit": _MAX_OUTLIER,
-                            "price": float(price or 0),
-                            "prev_price": float(_prev_price or 0),
-                            "mode": mode,
-                        }},
-                    )
-                    continue
+                            if _replacement:
+                                _new_tickers = [_replacement if t == ticker else t for t in _current]
+                                self.today_tickers[market] = _new_tickers
+                                self.today_judgment["tickers"] = _new_tickers
+                                self._invalid_price_count.pop(ticker, None)
+                                log.info(f"[종목 교체] {market} {ticker} → {_replacement} (outlier {cnt}회)")
+                                _now_out = datetime.now(KST).replace(tzinfo=None)
+                                self._ticker_exclude_log.setdefault(market, []).append(
+                                    {"ticker": ticker, "reason": "outlier_price", "ts": _now_out}
+                                )
+                            else:
+                                log.warning(f"[종목 교체 실패] {market} {ticker} — 대체 후보 없음")
+                        analysis_log.info(
+                            f"[skip {market}] {ticker} outlier_price",
+                            extra={"extra": {
+                                "event": "entry_skip",
+                                "market": market,
+                                "ticker": ticker,
+                                "reason": "outlier_price",
+                                "invalid_count": cnt,
+                                "invalid_limit": _MAX_OUTLIER,
+                                "price": float(price or 0),
+                                "prev_price": float(_prev_price or 0),
+                                "mode": mode,
+                            }},
+                        )
+                        continue
                 self._invalid_price_count.pop(ticker, None)  # 정상 가격 수신 시 카운터 리셋
                 self.price_cache_raw[ticker] = price
                 self.price_cache[ticker] = risk_price
@@ -4050,6 +4160,27 @@ class TradingBot:
                                     f" prev_close={_prev_close_val} open={_o} → gap_pct 계산용 주입"
                                 )
                             _raw_vol = float(price_info.get("volume", 0) or 0)
+                            # US 모의투자 환경: Finnhub vol=0 또는 vol=1 반환 → 전일 평균으로 대체
+                            _vol_missing = (
+                                market == "US" and (_raw_vol == 0.0 or _raw_vol == 1.0)
+                            )
+                            if _vol_missing:
+                                # 최근 20일 hist vol 평균으로 추정 (세션 진행률 반영)
+                                _hist_vols = candles["volume"].replace(0, float("nan")).dropna()
+                                _hist_avg = float(_hist_vols.tail(20).mean()) if len(_hist_vols) >= 5 else 0.0
+                                _sess_prog = self._intraday_session_progress(market)
+                                # 세션 진행률 × hist_avg → 현재까지 쌓였을 거래량 추정 (하한 20%)
+                                _fallback_vol = _hist_avg * max(0.20, min(1.0, _sess_prog))
+                                log.debug(
+                                    f"[vol_fallback US] {ticker} raw_vol={_raw_vol:.0f}"
+                                    f" → hist_avg={_hist_avg:,.0f} × prog={_sess_prog:.2f}"
+                                    f" = {_fallback_vol:,.0f}"
+                                )
+                                _raw_vol = _fallback_vol
+                                # 퍼널: volume_state=missing 누적
+                                _fv = self._funnel.get(market, {})
+                                _fv.setdefault("volume_states", {})
+                                _fv["volume_states"]["missing"] = _fv["volume_states"].get("missing", 0) + 1
                             _proj_vol = self._project_intraday_volume(market, _raw_vol)
                             _today_bar = _pd2.DataFrame([{
                                 "date":   _today_ts,
@@ -4063,6 +4194,7 @@ class TradingBot:
                             log.debug(
                                 f"[당일봉 주입 {market}] {ticker} "
                                 f"close={_p} raw_vol={_raw_vol:,.0f} proj_vol={(_proj_vol or _raw_vol):,.0f}"
+                                + (" [vol_fallback]" if _vol_missing else "")
                             )
 
                 sig_df = calc_all(candles)
@@ -4200,6 +4332,58 @@ class TradingBot:
                         f" vol={_vol_ratio:.2f}(목표>{_vol_mult:.1f}){'✓' if _vol_ratio > _vol_mult else '✗'}"
                     )
 
+                def _classify_rejection(detail: str) -> tuple[str, str]:
+                    """
+                    none_detail 문자열에서 rejection_reason / volume_state 분류.
+                    Returns: (rejection_reason, volume_state)
+                    - rejection_reason: strategy_disabled | data_missing | pullback_missing
+                                        | gap_insufficient | volume_low | or_forming | signal_not_met
+                    - volume_state: missing | low | ok | unknown
+                    """
+                    import re as _re
+                    reasons = []
+                    vol_state = "unknown"
+
+                    # 전략 비활성
+                    if "전략 비활성" in detail:
+                        reasons.append("strategy_disabled")
+
+                    # OR 형성중 → 아직 OR 미완성
+                    if "OR 형성중" in detail:
+                        reasons.append("or_forming")
+
+                    # 갭 조건 미충족
+                    _gap_m = _re.search(r"갭=([0-9.-]+)%\(목표>[0-9.]+%\)(✗)", detail)
+                    if _gap_m:
+                        reasons.append("gap_insufficient")
+
+                    # 거래량 분석 (갭눌림 기준 vol)
+                    _vol_m = _re.search(r"갭눌림.*?vol=([0-9.]+)\(목표>([0-9.]+)\)(✓|✗)", detail)
+                    if _vol_m:
+                        _v_val = float(_vol_m.group(1))
+                        _v_thr = float(_vol_m.group(2))
+                        _v_ok  = _vol_m.group(3) == "✓"
+                        if _v_val == 0.0 or _v_val == 1.0:
+                            vol_state = "missing"
+                            if not _v_ok:
+                                reasons.append("data_missing")
+                        elif not _v_ok:
+                            vol_state = "low"
+                            reasons.append("volume_low")
+                        else:
+                            vol_state = "ok"
+
+                    # 눌림 조건 미충족
+                    if "눌림=✗" in detail:
+                        reasons.append("pullback_missing")
+
+                    # 신고가/추세 부족
+                    if "신고가부족" in detail:
+                        reasons.append("highpoint_missing")
+
+                    rejection = reasons[0] if reasons else "signal_not_met"
+                    return rejection, vol_state
+
                 def _log_or_probe(_p, _blocked_reason=""):
                     try:
                         _row = sig_df.iloc[i]
@@ -4267,12 +4451,26 @@ class TradingBot:
                                         signal_fired = True
                                         strategy_name = "volatility_breakout"
                                         params = vb_p
+                    # continuation entry — 모든 전략 실패 후 개장 초반 갭 연속 상승 시
+                    if not signal_fired and not self._continuation_used.get(ticker, False):
+                        _cont_p = _ap("continuation")
+                        if cont_sig(sig_df, i, _cont_p):
+                            signal_fired = True
+                            strategy_name = "continuation"
+                            params = _cont_p
+                            self._continuation_used[ticker] = True
+                            log.info(
+                                f"[continuation entry {market}] {ticker} "
+                                f"elapsed={self._market_elapsed_min(market):.1f}min "
+                                f"size_mult={_cont_p.get('size_mult', 0.5)}"
+                            )
                     if not signal_fired:
                         orp_p = locals().get("orp_p") or _ap("opening_range_pullback")
                         gap_p = locals().get("gap_p") or _ap("gap_pullback")
                         mom_p = locals().get("mom_p") or _ap("momentum")
                         mr_p = locals().get("mr_p") or _ap("mean_reversion")
                         vb_p = locals().get("vb_p") or _ap("volatility_breakout")
+                        _cont_p = locals().get("_cont_p") or _ap("continuation")
                         _kr_md = locals().get("kr_momentum_diag") or mom_diag(sig_df, i, mom_p)
                         _kr_mom_str = (
                             f"모멘텀: 전략 비활성({market} {mode})"
@@ -4282,12 +4480,24 @@ class TradingBot:
                             f", 거래량{'충족' if _kr_md.get('vol_ok') else '부족'}"
                             f", 신고가{'충족' if _kr_md.get('high_ok') else '부족'}"
                         )
+                        _cont_d = cont_diag(sig_df, i, _cont_p)
+                        _cont_str = (
+                            f"연속진입: 비활성({market} {mode})"
+                            if _cont_p.get("disabled") else
+                            f"연속진입: 창={'✓' if _cont_d.get('in_window') else '✗'}({_cont_d.get('elapsed_min', 0):.0f}분)"
+                            f" 갭={'✓' if _cont_d.get('gap_ok') else '✗'}({_cont_d.get('gap', 0):.2f}%≥{_cont_d.get('gap_min', 0):.1f}%)"
+                            f" vol={'✓' if _cont_d.get('vol_ok') else '✗'}({_cont_d.get('vol_ratio', 0):.2f})"
+                            f" cont={'✓' if _cont_d.get('cont_ok') else '✗'}({_cont_d.get('cont_ratio', 0):.2f}%)"
+                            f" 과열={'✓' if _cont_d.get('overheat_ok') else '✗'}"
+                            + (" [1회사용]" if self._continuation_used.get(ticker, False) else "")
+                        )
                         none_detail = " | ".join([
                             str(_orp_detail(sig_df, i, orp_p)),
                             str(_gap_detail(sig_df, i, gap_p)),
                             str(_kr_mom_str),
                             str(_mr_detail(sig_df, i, mr_p)),
                             str(_vb_detail(sig_df, i, vb_p)),
+                            str(_cont_str),
                         ])
                 else:
                     _us_orp_p = _ap("opening_range_pullback")
@@ -4309,6 +4519,19 @@ class TradingBot:
                             strategy_name = _strat_name
                             params = _p
                             break
+                    # US continuation entry — 모든 전략 실패 후 개장 초반 갭 연속 상승 시
+                    if not signal_fired and not self._continuation_used.get(ticker, False):
+                        _us_cont_p = _ap("continuation")
+                        if cont_sig(sig_df, i, _us_cont_p):
+                            signal_fired = True
+                            strategy_name = "continuation"
+                            params = _us_cont_p
+                            self._continuation_used[ticker] = True
+                            log.info(
+                                f"[continuation entry {market}] {ticker} "
+                                f"elapsed={self._market_elapsed_min(market):.1f}min "
+                                f"size_mult={_us_cont_p.get('size_mult', 0.5)}"
+                            )
 
                 # 활성도 추적 — 시장별 인라인 교체 기준으로 활용
                 _scan_interval_min = self._entry_scan_interval_sec(market) / 60.0
@@ -4370,12 +4593,25 @@ class TradingBot:
                                 )
 
                 if not signal_fired:
+                    def _cont_detail_str(_p, _ticker):
+                        _d = cont_diag(sig_df, i, _p)
+                        if _p.get("disabled"):
+                            return f"연속진입: 비활성({market} {mode})"
+                        return (
+                            f"연속진입: 창={'✓' if _d.get('in_window') else '✗'}({_d.get('elapsed_min', 0):.0f}분)"
+                            f" 갭={'✓' if _d.get('gap_ok') else '✗'}({_d.get('gap', 0):.2f}%≥{_d.get('gap_min', 0):.1f}%)"
+                            f" vol={'✓' if _d.get('vol_ok') else '✗'}({_d.get('vol_ratio', 0):.2f})"
+                            f" cont={'✓' if _d.get('cont_ok') else '✗'}({_d.get('cont_ratio', 0):.2f}%)"
+                            f" 과열={'✓' if _d.get('overheat_ok') else '✗'}"
+                            + (" [1회사용]" if self._continuation_used.get(_ticker, False) else "")
+                        )
                     if market == "KR":
                         orp_p = _ap("opening_range_pullback")
                         gap_p = _ap("gap_pullback")
                         mr_p = _ap("mean_reversion")
                         vb_p = _ap("volatility_breakout")
                         mom_p = _ap("momentum")
+                        _cont_p2 = _ap("continuation")
                         _mom_diag = kr_momentum_diag or mom_diag(sig_df, i, mom_p)
                         _mom_detail = (
                             f"모멘텀: 전략 비활성({market} {mode})"
@@ -4393,6 +4629,7 @@ class TradingBot:
                             str(_mom_detail),
                             str(_mr_detail(sig_df, i, mr_p)),
                             str(_vb_detail(sig_df, i, vb_p)),
+                            str(_cont_detail_str(_cont_p2, ticker)),
                         ])
                     else:
                         _us_orp_p = _ap("opening_range_pullback")
@@ -4401,6 +4638,7 @@ class TradingBot:
                         _us_mr_p = _ap("mean_reversion")
                         _us_gap_p = _ap("gap_pullback")
                         _us_vb_p = _ap("volatility_breakout")
+                        _us_cont_p2 = locals().get("_us_cont_p") or _ap("continuation")
                         _us_mom_detail = (
                             f"모멘텀: 전략 비활성({market} {mode})"
                             if _us_mom_p.get("disabled") else
@@ -4417,6 +4655,7 @@ class TradingBot:
                             str(_us_mom_detail),
                             str(_mr_detail(sig_df, i, _us_mr_p)),
                             str(_gap_detail(sig_df, i, _us_gap_p)),
+                            str(_cont_detail_str(_us_cont_p2, ticker)),
                         ])
                     if market == "KR" and kr_momentum_diag:
                         log.debug(
@@ -4461,6 +4700,12 @@ class TradingBot:
                     except Exception:
                         pass
 
+                    _rej_reason, _vol_state = _classify_rejection(none_detail)
+                    # 퍼널: rejection_reason / volume_state 누적
+                    _f = self._funnel[market]
+                    _f["rejection_reasons"][_rej_reason] = _f["rejection_reasons"].get(_rej_reason, 0) + 1
+                    if _vol_state != "unknown":
+                        _f["volume_states"][_vol_state] = _f["volume_states"].get(_vol_state, 0) + 1
                     analysis_log.info(
                         f"[signal {market}] {ticker} none | {none_detail}",
                         extra={"extra": {
@@ -4469,6 +4714,8 @@ class TradingBot:
                             "ticker": ticker,
                             "signal": "none",
                             "reason": "no_signal",
+                            "rejection_reason": _rej_reason,
+                            "volume_state": _vol_state,
                             "detail": none_detail,
                             "price": price,
                             "mode": mode,
@@ -4807,6 +5054,8 @@ class TradingBot:
                             "order_cost_krw": order_cost, "tp_pct": _s_tp, "sl_pct": _s_sl,
                         }},
                     )
+                    # 퍼널: signaled
+                    self._funnel[market]["signaled"] += 1
                     self._notify_signal_state_change(
                         "entry_signal", market, _s_tk,
                         strategy=_s_strat, price=float(_s_px), mode=mode,
@@ -4848,6 +5097,13 @@ class TradingBot:
                             price_native=order_px, price_krw=_s_rpx,
                             reason="order_exception", detail=str(e), selected_reason=_s_sr,
                         )
+                        # 연속 오류 카운터 증가 → 3회 이상이면 당일 차단
+                        _err_cnt = self._order_error_count.get(_s_tk, 0) + 1
+                        self._order_error_count[_s_tk] = _err_cnt
+                        if _err_cnt >= 3:
+                            _blk_reason = f"연속오류 {_err_cnt}회: {e}"
+                            self._mark_us_order_blocked(_s_tk, _blk_reason)
+                            log.warning(f"[주문오류차단 {market}] {_s_tk} {_err_cnt}회 연속 → 당일 차단: {e}")
                         if market == "US" and self.is_paper:
                             _reason = f"VTS 주문실패: {e}"
                             self._mark_us_order_blocked(_s_tk, _reason)
@@ -4898,11 +5154,15 @@ class TradingBot:
                         continue
                     if market == "US":
                         self._mark_us_order_supported(_s_tk)
+                    # 주문 성공 시 연속 오류 카운터 초기화
+                    self._order_error_count.pop(_s_tk, None)
                     log.info(
                         f"[{'PAPER' if self.is_paper else 'LIVE'} BUY] "
                         f"{_s_tk} {qty}@{_s_px:,} | {_s_strat} | "
                         f"주문번호={result.get('order_no','')} | score={_s_ep:.3f}"
                     )
+                    # 퍼널: ordered
+                    self._funnel[market]["ordered"] += 1
                     self._record_decision_event(
                         market, "buy_order", _s_tk, strategy=_s_strat, qty=qty,
                         price_native=float(_s_px), price_krw=_s_rpx,
@@ -5879,6 +6139,10 @@ class TradingBot:
             # closed: 종료 요약
             elif action in ("sell_filled", "sell_executed"):
                 record.update({
+                    "qty":         event["qty"],
+                    "order_no":    event["order_no"],
+                    "exit_price":  event["price_krw"],
+                    "exit_price_native": event["price_native"],
                     "exit_reason": event["reason"],
                     "pnl_pct":     event["pnl_pct"],
                     "pnl_krw":     event["pnl_krw"],
@@ -6065,6 +6329,12 @@ class TradingBot:
             self.ws.stop()
             self.ws = None
 
+        # ── 퍼널 집계 저장 ────────────────────────────────────────────────────
+        try:
+            self._flush_funnel(market)
+        except Exception as _fe:
+            log.warning(f"[퍼널 저장 실패] {market}: {_fe}")
+
         # ── 포지션 정리: 장 종료 후에는 주문하지 않고, 다음 세션 행동만 결정 ─────
         market_positions = [
             p for p in list(self.risk.positions)
@@ -6092,7 +6362,7 @@ class TradingBot:
                 _d = self.today_judgment.get("digest_prompt", "")
                 _ic = self._build_intraday_context(market)
                 digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
-                advice = advisor_ask(pos, market, digest)
+                advice = advisor_ask(self._advisor_pos(pos, market), market, digest)
                 action = advice.get("action", "SELL")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
@@ -6189,13 +6459,17 @@ class TradingBot:
                     if _ts != today:
                         continue
                     _ono = str(_rec.get("order_no", "") or "").strip()
-                    _key = _ono if _ono else f"dec_{_rec.get('ticker','')}_{_rec.get('exit_price',0)}"
+                    _key = _ono if _ono else f"dec_{_rec.get('ticker','')}_{_rec.get('timestamp','')}"
                     if _key in _seen_orders:
                         continue
                     _seen_orders.add(_key)
                     _usd_krw = _get_usd_krw_cached()
                     _ep = float(_rec.get("exit_price", 0) or 0)
-                    _ep_disp = round(_ep / _usd_krw, 4) if market == "US" and _usd_krw > 0 else _ep
+                    _ep_native = float(_rec.get("exit_price_native", 0) or 0)
+                    if market == "US":
+                        _ep_disp = _ep_native if _ep_native > 0 else (round(_ep / _usd_krw, 4) if _usd_krw > 0 else 0.0)
+                    else:
+                        _ep_disp = _ep
                     _dec_trades.append({
                         "ticker":    _rec.get("ticker", ""),
                         "side":      "sell",

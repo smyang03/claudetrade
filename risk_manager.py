@@ -150,6 +150,7 @@ class RiskManager:
         self.cash -= total_cost
         self.total_fee += fee
         self.daily_pnl -= fee          # 매수 수수료 즉시 반영
+        from datetime import datetime as _dt
         pos = {
             "ticker": ticker,
             "entry": price,
@@ -163,6 +164,8 @@ class RiskManager:
             "max_hold": max_hold,
             "held_days": 0,
             "entry_date": date.today().isoformat(),
+            "entry_time": _dt.now().isoformat(timespec="seconds"),  # 장중 보유시간 계산용
+            "peak_pnl_pct": 0.0,     # 보유 중 최고 수익률 (hold_advisor 컨텍스트용)
             # 트레일링 스탑
             "trailing": False,       # 트레일링 모드 여부
             "trail_sl": 0.0,         # 트레일링 SL 가격 (KRW/KRW)
@@ -193,6 +196,12 @@ class RiskManager:
             if pos["ticker"] not in prices:
                 continue
             pos["current_price"] = prices[pos["ticker"]]
+            # peak_pnl_pct 갱신
+            _entry = float(pos.get("entry") or 0)
+            if _entry > 0:
+                _cur_pnl = (pos["current_price"] / _entry - 1) * 100
+                if _cur_pnl > float(pos.get("peak_pnl_pct") or 0):
+                    pos["peak_pnl_pct"] = round(_cur_pnl, 3)
             # US 종목: display_current_price(USD)를 raw_prices로 갱신
             if raw_prices and pos["ticker"] in raw_prices and pos.get("display_currency") == "USD":
                 pos["display_current_price"] = float(raw_prices[pos["ticker"]] or 0)

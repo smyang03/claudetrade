@@ -72,6 +72,18 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
     ticker  = pos.get("ticker", "-")
     strat   = pos.get("strategy", "-")
     held    = pos.get("held_days", 0)
+    # 장중 보유시간(분) 계산
+    held_min: int | None = None
+    _entry_time = pos.get("entry_time")
+    if _entry_time:
+        try:
+            from datetime import datetime as _dt
+            _et = _dt.fromisoformat(_entry_time)
+            held_min = max(0, int((_dt.now() - _et).total_seconds() / 60))
+        except Exception:
+            pass
+    peak_pnl_pct = float(pos.get("peak_pnl_pct") or 0)
+    mode_str = pos.get("mode", "")
     tp      = show_tp
     sl      = show_sl
     trailing = bool(pos.get("trailing", False))
@@ -97,6 +109,20 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
         entry_str = f"{show_entry:,.0f}원"
         cp_str    = f"{show_cp:,.0f}원"
 
+    # 보유시간 표시: 장중이면 분 단위, 아니면 일 단위
+    if held_min is not None:
+        held_str = f"{held_min}분" if held_min < 1440 else f"{held}일 {held_min % 1440}분"
+    else:
+        held_str = f"{held}일"
+    # 고점 대비 현재 이격
+    drawdown_str = ""
+    if peak_pnl_pct > 0 and pnl_pct < peak_pnl_pct:
+        dd = peak_pnl_pct - pnl_pct
+        drawdown_str = f"  고점 수익률: {peak_pnl_pct:+.2f}%  (현재 고점 대비 -{dd:.2f}%p 하락)\n"
+    elif peak_pnl_pct > 0:
+        drawdown_str = f"  고점 수익률: {peak_pnl_pct:+.2f}%  (현재 고점 유지)\n"
+    mode_line = f"  시장 모드: {mode_str}\n" if mode_str else ""
+
     prompt = f"""{PERSONAS[analyst_type]}
 
 목표가에 도달한 포지션을 계속 보유할지 판단하세요.
@@ -104,11 +130,11 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
 ━━━ 포지션 ━━━
   종목: {ticker} ({market}, {ccy})  전략: {strat}
   진입가: {entry_str}  현재가: {cp_str}  수익률: {pnl_pct:+.2f}%
-  보유일: {held}일
-  포지션 상태: {status_line}
+  보유시간: {held_str}
+{drawdown_str}{mode_line}  포지션 상태: {status_line}
 
 ━━━ 시장 컨텍스트 ━━━
-{digest_prompt[:250] if digest_prompt else "  (정보 없음)"}
+{digest_prompt[:500] if digest_prompt else "  (정보 없음)"}
 
 HOLD(보유) 또는 SELL(청산) 중 하나를 선택하고,
 HOLD 시 트레일링 폭(trail_pct: 0.02~0.05)을 제안하세요.
