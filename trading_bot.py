@@ -4874,8 +4874,12 @@ class TradingBot:
                             selected_reason=_s_sr,
                         )
                         log.error(f"order failed [{_s_tk}]: {result['msg']}")
-                        if market == "US" and self.is_paper:
-                            _reason = result.get("msg", "") or "VTS 주문거절"
+                        _reason = result.get("msg", "") or "주문거절"
+                        # 매매불가 종목 → 세션 내 재시도 차단 (KR/US 공통)
+                        if "매매불가" in _reason or "주문처리가 안되었습니다" in _reason:
+                            self._mark_us_order_blocked(_s_tk, _reason)
+                            log.warning(f"[매매불가] {_s_tk} 세션 내 진입 차단: {_reason}")
+                        elif market == "US" and self.is_paper:
                             self._mark_us_order_blocked(_s_tk, _reason)
                             analysis_log.info(
                                 f"[signal {market}] {_s_tk} order_rejected",
@@ -5096,8 +5100,8 @@ class TradingBot:
                         if _t2_qty <= 0:
                             continue
                         _t2_result = place_order(
-                            self.token, _t2_ticker, "buy", _t2_qty,
-                            market="KR", order_type="market",
+                            _t2_ticker, _t2_qty, 0, "buy",
+                            self.token, market="KR",
                         )
                         if not _t2_result["success"]:
                             log.error(f"  [KR Tier2] {_t2_ticker} 주문실패: {_t2_result.get('msg')}")
