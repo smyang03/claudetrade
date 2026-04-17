@@ -21,9 +21,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import time
+import uuid
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
@@ -37,6 +39,7 @@ except Exception:
     log = logging.getLogger(__name__)
 
 _DB_PATH  = _ROOT / "data" / "ml" / "decisions.db"
+_SESSION_STATE_PATH = _ROOT / "state" / "param_tuner_sessions.json"
 _ENABLED  = os.getenv("CLAUDE_PARAM_REVIEW", "false").lower() in ("1", "true", "yes")
 
 # ── 가드레일: adaptive_params 출력 대비 허용 이동 범위 ────────────────────────
@@ -109,8 +112,56 @@ def ensure_table() -> None:
     try:
         with _get_conn() as conn:
             conn.executescript(ddl)
+            cols = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(param_sessions)").fetchall()
+            }
+            if "session_key" not in cols:
+                conn.execute("ALTER TABLE param_sessions ADD COLUMN session_key TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ps_session_key "
+                "ON param_sessions (session_date, market, session_key)"
+            )
     except Exception as e:
         log.warning("[param_tuner] DB 테이블 생성 실패: %s", e)
+
+
+def _load_session_state() -> dict:
+    try:
+        with open(_SESSION_STATE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        log.warning("[param_tuner] session state load 오류: %s", e)
+        return {}
+
+
+def _save_session_state(state: dict) -> None:
+    try:
+        _SESSION_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_SESSION_STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log.warning("[param_tuner] session state save 오류: %s", e)
+
+
+def _session_key_for(market: str, session_date: Optional[str] = None, force_new: bool = False) -> str:
+    current_date = session_date or date.today().isoformat()
+    state = _load_session_state()
+    item = state.get(market)
+    if (
+        not force_new
+        and isinstance(item, dict)
+        and item.get("session_date") == current_date
+        and str(item.get("session_key", "")).strip()
+    ):
+        return str(item["session_key"]).strip()
+    session_key = f"{current_date}:{uuid.uuid4().hex[:12]}"
+    state[market] = {"session_date": current_date, "session_key": session_key}
+    _save_session_state(state)
+    return session_key
 
 
 def _save_session(
@@ -128,17 +179,18 @@ def _save_session(
         was_adj = int(base_params != claude_params)
         now     = datetime.now().isoformat(timespec="seconds")
         today   = date.today().isoformat()
+        session_key = _session_key_for(market, today)
         with _get_conn() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO param_sessions
-                  (created_at, session_date, market, brain_mode, trigger,
+                  (created_at, session_date, market, session_key, brain_mode, trigger,
                    vix, usd_krw, analyst_conf, strategy,
                    base_params, claude_params, claude_reason, was_adjusted)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    now, today, market, mode, trigger,
+                    now, today, market, session_key, mode, trigger,
                     context.get("vix"), context.get("usd_krw"),
                     context.get("analyst_conf"),
                     strategy,
@@ -185,16 +237,17 @@ def update_outcomes(
                     + list(session_ids),
                 )
             elif market and session_date:
+                session_key = _session_key_for(market, session_date)
                 # 재시작으로 session_ids 유실 → 날짜+market 기준 NULL 행 일괄 업데이트
                 conn.execute(
                     """
                     UPDATE param_sessions
                     SET signals_count=?, entries_count=?, wins=?, losses=?,
                         avg_pnl_pct=?, total_pnl_krw=?
-                    WHERE market=? AND session_date=? AND entries_count IS NULL
+                    WHERE market=? AND session_date=? AND session_key=? AND entries_count IS NULL
                     """,
                     [signals, entries, wins, losses, avg_pnl_pct, total_pnl_krw,
-                     market, session_date],
+                     market, session_date, session_key],
                 )
                 log.info(f"[param_tuner] {market} {session_date} outcome 소급 업데이트 (재시작 복구)")
     except Exception as e:
@@ -245,6 +298,41 @@ def _apply_guard(proposed: dict, base: dict) -> dict:
             margin = rule[1]
             p[key] = max(bv - margin, min(bv + margin, p[key]))
     return p
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JSON 추출 헬퍼
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_json(raw: str) -> dict:
+    """Claude 응답에서 JSON 객체를 추출. 마크다운 코드블록, 앞뒤 텍스트 등 처리."""
+    # 1. 마크다운 코드블록 내부 시도
+    if "```" in raw:
+        for block in raw.split("```"):
+            block = block.strip()
+            if block.startswith("json"):
+                block = block[4:].strip()
+            if block.startswith("{"):
+                try:
+                    return json.loads(block)
+                except json.JSONDecodeError:
+                    pass
+
+    # 2. 전체 텍스트 직접 파싱 시도
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. 외곽 {...} 추출 — 앞뒤에 설명 텍스트가 붙어있는 경우
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group())
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(f"[param_tuner] JSON 파싱 실패: {raw[:200]!r}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -345,9 +433,7 @@ JSON으로만 응답 (비활성 전략 제외):
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1].replace("json", "").strip()
-        parsed = json.loads(raw)
+        parsed = _extract_json(raw)
 
         # credit tracking
         try:
@@ -494,4 +580,5 @@ def get_session_ids(market: str) -> list[int]:
 def reset_session(market: str) -> None:
     """세션 시작 시 레지스트리 초기화."""
     _session_registry[market] = []
+    _session_key_for(market, force_new=True)
     clear_cache(market)
