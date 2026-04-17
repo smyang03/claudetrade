@@ -4338,32 +4338,40 @@ class TradingBot:
                     """
                     none_detail 문자열에서 rejection_reason / volume_state 분류.
                     Returns: (rejection_reason, volume_state)
-                    - rejection_reason: strategy_disabled | data_missing | pullback_missing
-                                        | gap_insufficient | volume_low | or_forming | signal_not_met
+                    - rejection_reason: or_forming | momentum_wait | data_missing | gap_insufficient
+                                        | volume_low | pullback_missing | highpoint_missing
+                                        | strategy_disabled | signal_not_met
                     - volume_state: missing | low | ok | unknown
+
+                    우선순위 (높은 순):
+                      1. or_forming        — OR 아직 형성 중 (시간 문제, 대기 필요)
+                      2. momentum_wait     — momentum 시간 게이트 미통과 (정상 대기)
+                      3. data_missing      — vol=0/1 등 데이터 누락
+                      4. gap_insufficient  — 갭 조건 미충족
+                      5. volume_low        — 거래량 부족
+                      6. pullback_missing  — 눌림 조건 미충족
+                      7. highpoint_missing — 신고가/추세 부족
+                      8. strategy_disabled — VB 등 전략 비활성 (최하위 — 항상 함께 발생)
+                      9. signal_not_met    — 기타 미충족
                     """
                     import re as _re
                     reasons = []
                     vol_state = "unknown"
 
-                    # 전략 비활성
-                    if "전략 비활성" in detail:
-                        reasons.append("strategy_disabled")
-
-                    # OR 형성중 → 아직 OR 미완성
+                    # 1. OR 형성중 → 아직 OR 미완성 (시간 게이트, 가장 명확한 원인)
                     if "OR 형성중" in detail:
                         reasons.append("or_forming")
 
-                    # 갭 조건 미충족
-                    _gap_m = _re.search(r"갭=([0-9.-]+)%\(목표>[0-9.]+%\)(✗)", detail)
-                    if _gap_m:
-                        reasons.append("gap_insufficient")
+                    # 2. momentum 시간 게이트 대기 중
+                    if "momentum_wait_window" in detail:
+                        reasons.append("momentum_wait")
 
+                    # 3. vol 데이터 누락 (외부 주입 플래그 우선)
                     if volume_missing_detected:
                         vol_state = "missing"
                         reasons.append("data_missing")
 
-                    # 거래량 분석 (갭눌림 기준 vol)
+                    # 거래량 분석 (갭눌림 기준 vol) — 0/1이면 missing으로 처리
                     _vol_m = _re.search(r"갭눌림.*?vol=([0-9.]+)\(목표>([0-9.]+)\)(✓|✗)", detail)
                     if _vol_m:
                         _v_val = float(_vol_m.group(1))
@@ -4375,17 +4383,26 @@ class TradingBot:
                                 reasons.append("data_missing")
                         elif not _v_ok and not volume_missing_detected:
                             vol_state = "low"
-                            reasons.append("volume_low")
+                            reasons.append("volume_low")  # 5.
                         elif not volume_missing_detected:
                             vol_state = "ok"
 
-                    # 눌림 조건 미충족
+                    # 4. 갭 조건 미충족
+                    _gap_m = _re.search(r"갭=([0-9.-]+)%\(목표>[0-9.]+%\)(✗)", detail)
+                    if _gap_m:
+                        reasons.append("gap_insufficient")
+
+                    # 6. 눌림 조건 미충족
                     if "눌림=✗" in detail:
                         reasons.append("pullback_missing")
 
-                    # 신고가/추세 부족
+                    # 7. 신고가/추세 부족
                     if "신고가부족" in detail:
                         reasons.append("highpoint_missing")
+
+                    # 8. 전략 비활성 (VB 등 — 최하위, 항상 none_detail에 포함될 수 있음)
+                    if "전략 비활성" in detail:
+                        reasons.append("strategy_disabled")
 
                     rejection = reasons[0] if reasons else "signal_not_met"
                     return rejection, vol_state
