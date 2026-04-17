@@ -68,13 +68,28 @@ def _extract_json(text: str) -> dict:
             return {"tickers": tickers[:20], "reasons": reasons}
         raise ValueError("tickers 추출 불가")
 
+    # 1차: 닫힌 ```json ... ``` 블록
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if m:
         return _try_parse(m.group(1))
+    # 2차: { ... } 정상 추출
     start = text.find("{")
     end   = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         return _try_parse(text[start:end + 1])
+    # 3차: 응답이 max_tokens로 잘린 경우 — 열린 { 뒤 내용으로 필드 regex 복구
+    if start != -1:
+        partial = text[start:]
+        stance_m = re.search(r'"stance"\s*:\s*"([A-Z_]+)"', partial)
+        conf_m   = re.search(r'"confidence"\s*:\s*([0-9.]+)', partial)
+        reason_m = re.search(r'"key_reason"\s*:\s*"([^"]{1,200})"', partial)
+        if stance_m:
+            log.warning(f"[_extract_json] 잘린 응답 regex 복구: stance={stance_m.group(1)}")
+            return {
+                "stance":     stance_m.group(1),
+                "confidence": float(conf_m.group(1)) if conf_m else 0.5,
+                "key_reason": reason_m.group(1) if reason_m else "응답 잘림",
+            }
     raise ValueError(f"JSON 추출 실패: {text[:200]}")
 ALLOWED_STANCES = set(STANCES.split("|"))
 ALLOWED_STRATEGIES = {"모멘텀", "평균회귀", "갭풀백", "변동성돌파", "관망"}
@@ -228,7 +243,7 @@ JSON으로만 응답 (다른 텍스트 없이):
   "suggested_size_pct":0~100}}"""
 
     try:
-        resp = client.messages.create(model=R1_MODEL, max_tokens=1024,
+        resp = client.messages.create(model=R1_MODEL, max_tokens=2048,
                                       messages=[{"role": "user", "content": prompt}])
         raw = resp.content[0].text.strip()
         result = _sanitize_analyst_result(_extract_json(raw), analyst_type)
