@@ -66,12 +66,22 @@ class RiskManager:
             self.trade_log = []
 
     def check_halt(self) -> bool:
-        if self.daily_return() < HARD_RULES["max_daily_loss_pct"]:
+        ret = self.daily_return()
+        threshold = HARD_RULES["max_daily_loss_pct"]
+        if ret < threshold:
             if not self.halted:
                 log.warning(
-                    f"daily loss limit reached ({self.daily_return():.2f}%) -> halt"
+                    f"daily loss limit reached ({ret:.2f}%) -> halt"
                 )
             self.halted = True
+        elif self.halted and ret > threshold * 0.5:
+            # 손실이 한도의 절반 이상 회복되면 HALT 자동 해제
+            # (False HALT 후 equity 정상화 시 세션 재개 가능하도록)
+            log.warning(
+                f"[HALT 자동 해제] daily_return={ret:.2f}% 회복 "
+                f"(threshold={threshold:.2f}%) → halted=False"
+            )
+            self.halted = False
         return self.halted
 
     def can_open(self, ticker: str, price: float, mode_size_pct: int = 70, market: str = ""):
