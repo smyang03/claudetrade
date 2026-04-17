@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from claude_memory import brain as BrainDB
 from credit_tracker import record as credit_record
 from logger import get_minority_logger
+from minority_report.claude_utils import extract_json
 from minority_report.raw_call_logger import save as save_raw_call
 
 log = get_minority_logger()
@@ -74,9 +75,7 @@ JSON only:
                 messages=[{"role": "user", "content": prompt}],
             )
             raw = resp.content[0].text.strip()
-            if "```" in raw:
-                raw = raw.split("```")[1].replace("json", "").strip()
-            result = json.loads(raw)
+            result = extract_json(raw)
             if result.get("mode") not in _VALID_MODES:
                 result["mode"] = prev_mode
 

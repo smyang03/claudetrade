@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import sqlite3
 import sys
 import time
@@ -37,6 +36,8 @@ try:
     log = get_trading_logger()
 except Exception:
     log = logging.getLogger(__name__)
+
+from minority_report.claude_utils import extract_json as _extract_json_shared
 
 _DB_PATH  = _ROOT / "data" / "ml" / "decisions.db"
 _SESSION_STATE_PATH = _ROOT / "state" / "param_tuner_sessions.json"
@@ -301,41 +302,6 @@ def _apply_guard(proposed: dict, base: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JSON 추출 헬퍼
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _extract_json(raw: str) -> dict:
-    """Claude 응답에서 JSON 객체를 추출. 마크다운 코드블록, 앞뒤 텍스트 등 처리."""
-    # 1. 마크다운 코드블록 내부 시도
-    if "```" in raw:
-        for block in raw.split("```"):
-            block = block.strip()
-            if block.startswith("json"):
-                block = block[4:].strip()
-            if block.startswith("{"):
-                try:
-                    return json.loads(block)
-                except json.JSONDecodeError:
-                    pass
-
-    # 2. 전체 텍스트 직접 파싱 시도
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    # 3. 외곽 {...} 추출 — 앞뒤에 설명 텍스트가 붙어있는 경우
-    m = re.search(r"\{.*\}", raw, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group())
-        except json.JSONDecodeError:
-            pass
-
-    raise ValueError(f"[param_tuner] JSON 파싱 실패: {raw[:200]!r}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Claude 호출
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -433,7 +399,7 @@ JSON으로만 응답 (비활성 전략 제외):
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.content[0].text.strip()
-        parsed = _extract_json(raw)
+        parsed = _extract_json_shared(raw)
 
         # credit tracking
         try:

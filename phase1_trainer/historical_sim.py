@@ -28,6 +28,7 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trainer_logger, log_call, ProgressLogger
+from minority_report.claude_utils import extract_json
 from minority_report.consensus import build_consensus as runtime_build_consensus
 from phase1_trainer.digest_builder import (
     build_kr_digest, build_us_digest,
@@ -135,9 +136,7 @@ def call_claude_analyst(
             messages=[{"role":"user","content":prompt}]
         )
         raw = resp.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1].replace("json","").strip()
-        result = json.loads(raw)
+        result = extract_json(raw)
         log.debug(f"  [{analyst_type}] {result.get('stance','-')} "
                   f"conf={result.get('confidence',0):.2f} | {result.get('key_reason','')[:50]}")
         return result
@@ -208,9 +207,7 @@ def call_claude_postmortem(
             messages=[{"role":"user","content":prompt}]
         )
         raw = resp.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1].replace("json","").strip()
-        return json.loads(raw)
+        return extract_json(raw)
     except Exception as e:
         log.error(f"postmortem 오류: {e}")
         win = actual_result.get("win", False)

@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trading_logger
+from minority_report.claude_utils import extract_json
 from credit_tracker import record as credit_record
 from runtime_paths import get_runtime_path
 from minority_report.raw_call_logger import save as save_raw_call
@@ -153,9 +154,7 @@ JSON으로만 응답:
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1].replace("json", "").strip()
-        result = json.loads(raw)
+        result = extract_json(raw)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor")
         save_raw_call(
             label=f"hold_advisor_{analyst_type}",
