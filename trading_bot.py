@@ -1858,6 +1858,7 @@ class TradingBot:
                         _ml_update_filled(order["decision_id"], "FILLED")
                     except Exception:
                         pass
+                self._funnel[market]["filled"] += 1
                 filled.append(order)
             else:
                 remaining.append(order)
@@ -2955,8 +2956,7 @@ class TradingBot:
         self._session_closed_tickers[market] = set()  # 매도 완료 티커 초기화
         self._normalize_pending_orders()
         self._save_pending_orders()
-        if market == "US":
-            self._reset_us_order_cache()
+        self._reset_us_order_cache()
         self._sync_runtime_with_broker()
         self.risk.increment_holding_days()
 
@@ -3397,6 +3397,7 @@ class TradingBot:
         }
         pos = self._make_position_from_broker(matched, broker_pos)
         self.risk.positions.append(pos)
+        self._funnel[market]["filled"] += 1
 
         # pending에서 제거
         self.pending_orders = [o for o in self.pending_orders if o is not matched]
@@ -4203,6 +4204,7 @@ class TradingBot:
                     continue
                 i = len(sig_df) - 1
 
+                _vol_missing = False
                 signal_fired = False
                 strategy_name = ""
                 params = {}
@@ -4332,7 +4334,7 @@ class TradingBot:
                         f" vol={_vol_ratio:.2f}(목표>{_vol_mult:.1f}){'✓' if _vol_ratio > _vol_mult else '✗'}"
                     )
 
-                def _classify_rejection(detail: str) -> tuple[str, str]:
+                def _classify_rejection(detail: str, volume_missing_detected: bool = False) -> tuple[str, str]:
                     """
                     none_detail 문자열에서 rejection_reason / volume_state 분류.
                     Returns: (rejection_reason, volume_state)
@@ -4357,20 +4359,24 @@ class TradingBot:
                     if _gap_m:
                         reasons.append("gap_insufficient")
 
+                    if volume_missing_detected:
+                        vol_state = "missing"
+                        reasons.append("data_missing")
+
                     # 거래량 분석 (갭눌림 기준 vol)
                     _vol_m = _re.search(r"갭눌림.*?vol=([0-9.]+)\(목표>([0-9.]+)\)(✓|✗)", detail)
                     if _vol_m:
                         _v_val = float(_vol_m.group(1))
                         _v_thr = float(_vol_m.group(2))
                         _v_ok  = _vol_m.group(3) == "✓"
-                        if _v_val == 0.0 or _v_val == 1.0:
+                        if not volume_missing_detected and (_v_val == 0.0 or _v_val == 1.0):
                             vol_state = "missing"
                             if not _v_ok:
                                 reasons.append("data_missing")
-                        elif not _v_ok:
+                        elif not _v_ok and not volume_missing_detected:
                             vol_state = "low"
                             reasons.append("volume_low")
-                        else:
+                        elif not volume_missing_detected:
                             vol_state = "ok"
 
                     # 눌림 조건 미충족
@@ -4434,8 +4440,11 @@ class TradingBot:
                             params = gap_p
                         else:
                             mom_p = _ap("momentum")
-                            kr_momentum_diag = mom_diag(sig_df, i, mom_p)
-                            if mom_sig(sig_df, i, mom_p):
+                            _cont_window_max = float(_ap("continuation").get("cont_entry_max_min", 45) or 45)
+                            _momentum_ready = self._market_elapsed_min(market) >= _cont_window_max
+                            if _momentum_ready:
+                                kr_momentum_diag = mom_diag(sig_df, i, mom_p)
+                            if _momentum_ready and mom_sig(sig_df, i, mom_p):
                                 signal_fired = True
                                 strategy_name = "momentum"
                                 params = mom_p
@@ -4471,7 +4480,9 @@ class TradingBot:
                         mr_p = locals().get("mr_p") or _ap("mean_reversion")
                         vb_p = locals().get("vb_p") or _ap("volatility_breakout")
                         _cont_p = locals().get("_cont_p") or _ap("continuation")
-                        _kr_md = locals().get("kr_momentum_diag") or mom_diag(sig_df, i, mom_p)
+                        _kr_md = locals().get("kr_momentum_diag") or {}
+                        _cont_window_max = float(_cont_p.get("cont_entry_max_min", 45) or 45)
+                        _elapsed_min = self._market_elapsed_min(market)
                         _kr_mom_str = (
                             f"모멘텀: 전략 비활성({market} {mode})"
                             if mom_p.get("disabled") else
@@ -4481,6 +4492,8 @@ class TradingBot:
                             f", 신고가{'충족' if _kr_md.get('high_ok') else '부족'}"
                         )
                         _cont_d = cont_diag(sig_df, i, _cont_p)
+                        if not mom_p.get("disabled") and _elapsed_min < _cont_window_max:
+                            _kr_mom_str = f"momentum_wait_window({_elapsed_min:.0f}m<{_cont_window_max:.0f}m)"
                         _cont_str = (
                             f"연속진입: 비활성({market} {mode})"
                             if _cont_p.get("disabled") else
@@ -4514,6 +4527,12 @@ class TradingBot:
                         _sig_fn, _p = _strat_dispatch.get(
                             _strat_name, (vb_sig, _ap("volatility_breakout"))
                         )
+                        if (
+                            _strat_name == "momentum"
+                            and self._market_elapsed_min(market)
+                            < float(_ap("continuation").get("cont_entry_max_min", 45) or 45)
+                        ):
+                            continue
                         if _sig_fn(sig_df, i, _p):
                             signal_fired = True
                             strategy_name = _strat_name
@@ -4639,6 +4658,8 @@ class TradingBot:
                         _us_gap_p = _ap("gap_pullback")
                         _us_vb_p = _ap("volatility_breakout")
                         _us_cont_p2 = locals().get("_us_cont_p") or _ap("continuation")
+                        _us_cont_window_max2 = float(_us_cont_p2.get("cont_entry_max_min", 45) or 45)
+                        _us_elapsed_min2 = self._market_elapsed_min(market)
                         _us_mom_detail = (
                             f"모멘텀: 전략 비활성({market} {mode})"
                             if _us_mom_p.get("disabled") else
@@ -4649,6 +4670,8 @@ class TradingBot:
                                 f", 신고가{'충족' if _us_mom_diag.get('high_ok') else '부족'}"
                             )
                         )
+                        if not _us_mom_p.get("disabled") and _us_elapsed_min2 < _us_cont_window_max2:
+                            _us_mom_detail = f"momentum_wait_window({_us_elapsed_min2:.0f}m<{_us_cont_window_max2:.0f}m)"
                         none_detail = " | ".join([
                             str(_orp_detail(sig_df, i, _us_orp_p)),
                             str(_vb_detail(sig_df, i, _us_vb_p)),
@@ -4700,7 +4723,10 @@ class TradingBot:
                     except Exception:
                         pass
 
-                    _rej_reason, _vol_state = _classify_rejection(none_detail)
+                    _rej_reason, _vol_state = _classify_rejection(
+                        none_detail,
+                        volume_missing_detected=_vol_missing,
+                    )
                     # 퍼널: rejection_reason / volume_state 누적
                     _f = self._funnel[market]
                     _f["rejection_reasons"][_rej_reason] = _f["rejection_reasons"].get(_rej_reason, 0) + 1
