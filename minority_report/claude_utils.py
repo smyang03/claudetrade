@@ -43,4 +43,7 @@ def extract_json(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
+    # 잘린 응답 감지 (max_tokens 부족 가능성)
+    if raw and not raw.rstrip().endswith("}"):
+        raise ValueError(f"JSON 응답 잘림 (max_tokens 부족 가능): {raw[:200]!r}")
     raise ValueError(f"JSON 파싱 실패: {raw[:200]!r}")

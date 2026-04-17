@@ -395,7 +395,7 @@ JSON으로만 응답 (비활성 전략 제외):
 
     try:
         resp = client.messages.create(
-            model=model, max_tokens=600,
+            model=model, max_tokens=1200,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.content[0].text.strip()
