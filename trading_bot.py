@@ -4120,6 +4120,7 @@ class TradingBot:
                 # 재계산. 장 마감 후 price_collector가 실제 일봉을 CSV에 저장하면
                 # 다음 TTL 갱신 시 자동으로 실제 봉으로 대체됨.
                 # US는 KST 자정을 넘어도 ET 기준 날짜를 사용해 올바른 거래일 반영.
+                _vol_missing = False   # today-bar 주입 전 초기화 — 주입 블록 안에서 True로 덮어씀
                 if self.session_active:
                     import pandas as _pd2
                     _ET = ZoneInfo("America/New_York")
@@ -4204,7 +4205,6 @@ class TradingBot:
                     continue
                 i = len(sig_df) - 1
 
-                _vol_missing = False
                 signal_fired = False
                 strategy_name = ""
                 params = {}
