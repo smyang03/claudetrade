@@ -4137,6 +4137,12 @@ class TradingBot:
                             candles = candles.iloc[:-1].copy()
                             _last_date = candles["date"].max() if not candles.empty else _pd2.Timestamp("2000-01-01")
                             log.debug(f"[당일봉 교체 {market}] {ticker} CSV pre-open 행 제거 → 실시간 주입으로 대체")
+                        else:
+                            # 오늘 봉이 이미 CSV에 있음(price_collector 선기록) — live vol 누락 여부는 별도 확인
+                            if market == "US":
+                                _pi_vol_chk = float(price_info.get("volume", 0) or 0)
+                                if _pi_vol_chk == 0.0 or _pi_vol_chk == 1.0:
+                                    _vol_missing = True
                     if _last_date < _today_ts and price_info.get("price", 0) > 0:
                         _p = price_info["price"]
                         _o = price_info.get("open",   _p)
@@ -4371,20 +4377,48 @@ class TradingBot:
                         vol_state = "missing"
                         reasons.append("data_missing")
 
-                    # 거래량 분석 (갭눌림 기준 vol) — 0/1이면 missing으로 처리
-                    _vol_m = _re.search(r"갭눌림.*?vol=([0-9.]+)\(목표>([0-9.]+)\)(✓|✗)", detail)
-                    if _vol_m:
-                        _v_val = float(_vol_m.group(1))
-                        _v_thr = float(_vol_m.group(2))
-                        _v_ok  = _vol_m.group(3) == "✓"
-                        if not volume_missing_detected and (_v_val == 0.0 or _v_val == 1.0):
+                    # 거래량 분석 — 갭눌림/OR눌림/변돌 공통 패턴 + 연속진입 전용 패턴 모두 스캔
+                    # 전략 하나라도 vol=✗이면 volume_low, 전략 vol=0/1이면 data_missing
+                    _vol_fail = False   # 어느 전략이든 vol 미달
+                    _vol_found = False  # 어느 전략이든 vol 패턴 발견
+                    # 표준 형식: vol=ratio(목표>X)✓/✗  (갭눌림/OR눌림/변돌)
+                    for _vpat in [
+                        r"갭눌림[^|]*?vol=([0-9.]+)\(목표>[0-9.]+\)(✓|✗)",
+                        r"OR눌림[^|]*?vol=([0-9.]+)\(목표>[0-9.]+\)(✓|✗)",
+                        r"변돌[^|]*?vol=([0-9.]+)\(목표>[0-9.]+\)(✓|✗)",
+                    ]:
+                        _vm = _re.search(_vpat, detail)
+                        if not _vm:
+                            continue
+                        _vv = float(_vm.group(1))
+                        _vok = _vm.group(2) == "✓"
+                        _vol_found = True
+                        if not volume_missing_detected and (_vv == 0.0 or _vv == 1.0):
                             vol_state = "missing"
-                            if not _v_ok:
+                            if "data_missing" not in reasons:
                                 reasons.append("data_missing")
-                        elif not _v_ok and not volume_missing_detected:
+                            break  # data_missing이 확정되면 더 볼 필요 없음
+                        if not _vok:
+                            _vol_fail = True
+                    # 연속진입 전용 형식: vol=✓/✗(ratio)
+                    _cvm = _re.search(r"연속진입[^|]*?vol=(✓|✗)\(([0-9.]+)\)", detail)
+                    if _cvm:
+                        _cv_ok    = _cvm.group(1) == "✓"
+                        _cv_ratio = float(_cvm.group(2))
+                        _vol_found = True
+                        if not volume_missing_detected and (_cv_ratio == 0.0 or _cv_ratio == 1.0):
+                            vol_state = "missing"
+                            if "data_missing" not in reasons:
+                                reasons.append("data_missing")
+                        elif not _cv_ok:
+                            _vol_fail = True
+                    # 종합 판정 — volume_missing_detected=True면 이미 처리됨
+                    if not volume_missing_detected and vol_state != "missing":
+                        if _vol_fail:
                             vol_state = "low"
-                            reasons.append("volume_low")  # 5.
-                        elif not volume_missing_detected:
+                            if "volume_low" not in reasons:
+                                reasons.append("volume_low")  # 5.
+                        elif _vol_found:
                             vol_state = "ok"
 
                     # 4. 갭 조건 미충족
@@ -4659,6 +4693,11 @@ class TradingBot:
                                 f", 신고가{'충족' if _mom_diag.get('high_ok') else '부족'}"
                             )
                         )
+                        # KR momentum 시간 게이트 — 첫 번째 블록과 동일하게 덮어씌움
+                        _kr_elapsed_nd = self._market_elapsed_min(market)
+                        _kr_cont_win_nd = float(_cont_p2.get("cont_entry_max_min", 45) or 45)
+                        if not mom_p.get("disabled") and _kr_elapsed_nd < _kr_cont_win_nd:
+                            _mom_detail = f"momentum_wait_window({_kr_elapsed_nd:.0f}m<{_kr_cont_win_nd:.0f}m)"
                         none_detail = " | ".join([
                             str(_orp_detail(sig_df, i, orp_p)),
                             str(_gap_detail(sig_df, i, gap_p)),
