@@ -130,6 +130,7 @@ PENDING_ORDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
 CLAUDE_CONTROL_FILE = get_runtime_path("state", "claude_control.json")
 BOT_PID_FILE = get_runtime_path("state", "trading_bot.pid")
 DECISIONS_FILE = get_runtime_path("state", "decisions.jsonl")  # Claude 판단 이력 영속 DB
+DAILY_BASELINE_FILE = get_runtime_path("state", "daily_baseline.json")
 
 
 def _write_bot_pid_file():
@@ -328,6 +329,7 @@ class TradingBot:
         self.current_market = None
         self._market_task_owner: dict[str, Optional[str]] = {"KR": None, "US": None}
         self._session_open_at: dict[str, float] = {"KR": 0.0, "US": 0.0}  # startup 보호 구간
+        self._daily_baseline_by_market: dict[str, dict] = {"KR": {}, "US": {}}
         self._last_entry_scan_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._last_rescreen_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._vix_refresh_at: float = 0.0          # VIX 장중 갱신 타임스탬프
@@ -389,6 +391,22 @@ class TradingBot:
         self._sell_fail_at:  dict[str, float] = {}
         self._sell_fail_meta: dict[str, dict] = {}
         self._execution_flags: dict[str, set[str]] = {"KR": set(), "US": set()}
+        self._broker_state: dict[str, dict] = {
+            "KR": {
+                "trust_level": "unknown",
+                "last_ok_at": "",
+                "last_error": "",
+                "last_snapshot": {},
+                "last_trusted_snapshot": {},
+            },
+            "US": {
+                "trust_level": "unknown",
+                "last_ok_at": "",
+                "last_error": "",
+                "last_snapshot": {},
+                "last_trusted_snapshot": {},
+            },
+        }
 
         # entry_priority cutoff (Phase 2) — env로 ON/OFF, 텔레그램으로 실시간 토글
         self.entry_priority_cutoff_enabled: bool = (
@@ -437,6 +455,7 @@ class TradingBot:
 
         self._restore_pending_orders()
         self._restore_claude_control()
+        self._load_daily_baselines()
         self._sanitize_live_status_file("KR")
         self._sanitize_live_status_file("US")
         # 재시작 시 이월 포지션 복구
@@ -915,6 +934,53 @@ class TradingBot:
         except Exception as e:
             log.error(f"미체결 주문 복구 실패: {e}")
 
+    def _load_daily_baselines(self):
+        if not DAILY_BASELINE_FILE.exists():
+            return
+        try:
+            with open(DAILY_BASELINE_FILE, encoding="utf-8") as f:
+                saved = json.load(f)
+            if not isinstance(saved, dict):
+                return
+            normalized = {"KR": {}, "US": {}}
+            for market in ("KR", "US"):
+                meta = saved.get(market) or {}
+                if not isinstance(meta, dict):
+                    continue
+                session_date = str(meta.get("session_date", "") or "").strip()
+                base = float(meta.get("base", 0) or 0)
+                source = str(meta.get("source", "") or "").strip()
+                if session_date and base > 0:
+                    normalized[market] = {
+                        "session_date": session_date,
+                        "base": base,
+                        "source": source,
+                    }
+            self._daily_baseline_by_market = normalized
+        except Exception as e:
+            log.warning(f"daily baseline 복구 실패: {e}")
+
+    def _save_daily_baselines(self):
+        payload = {}
+        for market in ("KR", "US"):
+            meta = dict(self._daily_baseline_by_market.get(market, {}) or {})
+            session_date = str(meta.get("session_date", "") or "").strip()
+            base = float(meta.get("base", 0) or 0)
+            source = str(meta.get("source", "") or "").strip()
+            if session_date and base > 0:
+                payload[market] = {
+                    "session_date": session_date,
+                    "base": base,
+                    "source": source,
+                }
+            else:
+                payload[market] = {}
+        try:
+            with open(DAILY_BASELINE_FILE, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            log.warning(f"daily baseline 저장 실패: {e}")
+
     def _default_claude_control(self) -> dict:
         return {
             "enabled": True,
@@ -1333,6 +1399,11 @@ class TradingBot:
         kr_ok = False
         try:
             bal_kr = get_balance(self.token, market="KR")
+            self._set_broker_state(
+                "KR",
+                trust_level="trusted",
+                snapshot=self._broker_snapshot_from_balance("KR", bal_kr),
+            )
             broker_kr = {s["ticker"]: s for s in bal_kr["stocks"]}
             kr_ok = True
         except Exception as e:
@@ -1502,6 +1573,90 @@ class TradingBot:
         if market in self._execution_flags and issue:
             self._execution_flags[market].add(issue)
 
+    def _set_broker_state(self, market: str, *, trust_level: str | None = None,
+                          snapshot: dict | None = None, error: str = "") -> None:
+        state = self._broker_state.setdefault(market, {
+            "trust_level": "unknown",
+            "last_ok_at": "",
+            "last_error": "",
+            "last_snapshot": {},
+            "last_trusted_snapshot": {},
+        })
+        if trust_level:
+            state["trust_level"] = trust_level
+        if error:
+            state["last_error"] = error
+        if snapshot is not None:
+            snap = dict(snapshot)
+            state["last_snapshot"] = snap
+            if trust_level == "trusted":
+                state["last_trusted_snapshot"] = dict(snap)
+                state["last_ok_at"] = datetime.now(KST).isoformat(timespec="seconds")
+                state["last_error"] = ""
+
+    def _broker_snapshot_from_balance(self, market: str, balance: dict | None) -> dict:
+        balance = balance or {}
+        if market == "US":
+            cash_usd = float(balance.get("cash", 0) or 0)
+            eval_usd = float(balance.get("total_eval", 0) or 0)
+            total_krw = (cash_usd + eval_usd) * float(self.usd_krw_rate or 0)
+            return {
+                "market": market,
+                "cash_usd": cash_usd,
+                "eval_usd": eval_usd,
+                "cash_krw": cash_usd * float(self.usd_krw_rate or 0),
+                "eval_krw": eval_usd * float(self.usd_krw_rate or 0),
+                "total_krw": total_krw,
+                "positions": len(balance.get("stocks", []) or []),
+                "fetched_at": datetime.now(KST).isoformat(timespec="seconds"),
+            }
+        cash_krw = float(balance.get("cash", 0) or 0)
+        eval_krw = float(balance.get("total_eval", 0) or 0)
+        return {
+            "market": market,
+            "cash_krw": cash_krw,
+            "eval_krw": eval_krw,
+            "total_krw": cash_krw + eval_krw,
+            "positions": len(balance.get("stocks", []) or []),
+            "fetched_at": datetime.now(KST).isoformat(timespec="seconds"),
+        }
+
+    def _broker_trust_level(self, market: str) -> str:
+        return str(self._broker_state.get(market, {}).get("trust_level", "unknown") or "unknown")
+
+    def _entry_allowed_by_broker_state(self, market: str) -> tuple[bool, str]:
+        trust = self._broker_trust_level(market)
+        if trust == "trusted":
+            return True, "OK"
+        if trust == "degraded":
+            return False, "broker_state_degraded"
+        if trust == "untrusted":
+            return False, "broker_state_untrusted"
+        return False, "broker_state_unknown"
+
+    def _refresh_operational_halt(self, market: str) -> None:
+        trust = self._broker_trust_level(market)
+        if self.risk.halt_reason == "daily_loss":
+            return
+        if trust == "untrusted":
+            self.risk.halted = True
+            self.risk.halt_reason = "broker_sync"
+        elif trust in ("trusted", "degraded") and self.risk.halt_reason == "broker_sync":
+            self.risk.halted = False
+            self.risk.halt_reason = ""
+
+    def _has_broker_sync_risk(self, market: str) -> bool:
+        return self._broker_trust_level(market) in {"degraded", "untrusted"}
+
+    def _should_run_pre_session_review(self, market: str) -> bool:
+        # session_open is also called on restart while the market is already open.
+        # In that case, do not let a restart trigger immediate pre-session sells.
+        if self._market_elapsed_min(market) > 0.5:
+            return False
+        if self._has_broker_sync_risk(market):
+            return False
+        return True
+
     def _build_execution_health(self, market: str, session_trades: list | None = None) -> dict:
         session_trades = session_trades or []
         reasons = set(self._execution_flags.get(market, set()))
@@ -1568,7 +1723,13 @@ class TradingBot:
             bal_kr = get_balance(self.token, market="KR")
             kr_total = float(bal_kr.get("cash", 0)) + float(bal_kr.get("total_eval", 0))
             kr_ok = True
+            self._set_broker_state(
+                "KR",
+                trust_level="trusted",
+                snapshot=self._broker_snapshot_from_balance("KR", bal_kr),
+            )
         except Exception as e:
+            self._set_broker_state("KR", trust_level="degraded", error=str(e))
             log.warning(f"[누적자산 동기화] KR 잔고 조회 실패: {e}")
         try:
             bal_us = get_balance(self.token, market="US")
@@ -1576,22 +1737,84 @@ class TradingBot:
             us_eval_usd = float(bal_us.get("total_eval", 0))
             us_total_krw = (us_cash_usd + us_eval_usd) * self.usd_krw_rate
             us_ok = True
+            self._set_broker_state(
+                "US",
+                trust_level="trusted",
+                snapshot=self._broker_snapshot_from_balance("US", bal_us),
+            )
         except Exception as e:
+            self._set_broker_state("US", trust_level="degraded", error=str(e))
             log.debug(f"[누적자산 동기화] US 잔고 조회 실패: {e}")
         if not kr_ok and not us_ok:
-            return fallback
+            return float(self._equity_reference_context().get("total_krw", fallback) or fallback)
         total = (kr_total if kr_ok else 0.0) + (us_total_krw if us_ok else 0.0)
         log.info(
             f"[누적자산 동기화] 총자산 {total:,.0f}원 "
             f"(KR {kr_total:,.0f}원 + US ${(us_total_krw/self.usd_krw_rate):.0f}≈{us_total_krw:,.0f}원)"
         )
+        if not (kr_ok and us_ok):
+            return float(self._equity_reference_context().get("total_krw", total) or total)
         return total
+
+    def _equity_reference_context(self) -> dict:
+        internal_total = float(self._internal_total_equity_krw())
+        current_total = 0.0
+        current_ok = True
+        last_trusted_total = 0.0
+        has_last_trusted = True
+        for market in ("KR", "US"):
+            state = self._broker_state.get(market, {})
+            current_snap = state.get("last_snapshot") or {}
+            trusted_snap = state.get("last_trusted_snapshot") or {}
+            if self._broker_trust_level(market) == "trusted" and current_snap.get("total_krw") is not None:
+                current_total += float(current_snap.get("total_krw", 0) or 0)
+            else:
+                current_ok = False
+            if trusted_snap.get("total_krw") is not None:
+                last_trusted_total += float(trusted_snap.get("total_krw", 0) or 0)
+            else:
+                has_last_trusted = False
+        if current_ok:
+            return {
+                "total_krw": current_total,
+                "source": "broker_current",
+                "internal_krw": internal_total,
+                "last_trusted_krw": last_trusted_total if has_last_trusted else None,
+            }
+        if has_last_trusted:
+            return {
+                "total_krw": last_trusted_total,
+                "source": "broker_last_trusted",
+                "internal_krw": internal_total,
+                "last_trusted_krw": last_trusted_total,
+            }
+        return {
+            "total_krw": internal_total,
+            "source": "internal_estimate",
+            "internal_krw": internal_total,
+            "last_trusted_krw": None,
+        }
 
     def _sync_runtime_with_broker(self):
         """장중에도 내부 포지션/현금을 브로커 잔고 기준으로 정렬."""
+        _pre_sync_cash = float(self.risk.cash)
+        _pre_sync_us_cost_by_key = {}
+        for _pos in self.risk.positions:
+            _ticker = str(_pos.get("ticker", "") or "").strip()
+            if self._ticker_market(_ticker) != "US":
+                continue
+            _pre_sync_us_cost_by_key[_ticker.upper()] = (
+                float(_pos.get("entry", 0) or 0) * int(_pos.get("qty", 0) or 0)
+            )
         try:
             bal_kr = get_balance(self.token, market="KR")
+            self._set_broker_state(
+                "KR",
+                trust_level="trusted",
+                snapshot=self._broker_snapshot_from_balance("KR", bal_kr),
+            )
         except Exception as e:
+            self._set_broker_state("KR", trust_level="untrusted", error=str(e))
             log.warning(f"[브로커 런타임 동기화] KR 잔고 조회 실패: {e}")
             return
 
@@ -1601,7 +1824,13 @@ class TradingBot:
             bal_us = get_balance(self.token, market="US")
             broker_us = {s["ticker"].upper(): s for s in bal_us.get("stocks", [])}
             us_ok = True
+            self._set_broker_state(
+                "US",
+                trust_level="trusted",
+                snapshot=self._broker_snapshot_from_balance("US", bal_us),
+            )
         except Exception as e:
+            self._set_broker_state("US", trust_level="untrusted", error=str(e))
             log.warning(f"[브로커 런타임 동기화] US 잔고 조회 실패 — US 포지션 검증 스킵: {e}")
 
         # US API가 성공 응답이지만 stocks=[] 반환 시 — 내부 US 포지션이 있으면 API 일시 오류로 간주
@@ -1616,6 +1845,12 @@ class TradingBot:
                     f"(내부 {_us_internal_count}개 포지션 존재) → US 포지션 검증 스킵 (False HALT 방지)"
                 )
                 us_ok = False
+                self._set_broker_state(
+                    "US",
+                    trust_level="untrusted",
+                    snapshot=self._broker_snapshot_from_balance("US", bal_us),
+                    error="empty_balance_with_internal_positions",
+                )
 
         broker_kr = {s["ticker"]: s for s in bal_kr.get("stocks", [])}
         self._reconcile_pending_orders(broker_kr, broker_us)
@@ -1736,7 +1971,25 @@ class TradingBot:
                 us_cash_krw = float(bal_us.get("cash", 0) or 0) * float(self.usd_krw_rate or 0)
             except Exception:
                 us_cash_krw = 0.0
-        self.risk.cash = kr_cash + us_cash_krw
+        # KIS paper US 계좌는 USD 현금을 0으로 반환한다.
+        # broker_sync로 주입한 US paper 포지션은 risk.positions에 들어가지만
+        # 대응 현금 차감이 없어 equity = KR_cash + US_pos_value 로 과대계상된다.
+        # 이를 방지하기 위해 paper 모드에서 US paper 포지션 cost를 KR 현금에서 차감해 회계를 맞춘다.
+        # (실거래 US의 경우 us_cash_krw가 실제 달러 잔고를 반영하므로 기존 로직 유지)
+        if self.is_paper and us_ok and us_cash_krw == 0:
+            synthetic_cash = _pre_sync_cash
+            for _pos in self.risk.positions:
+                _ticker = str(_pos.get("ticker", "") or "").strip()
+                if self._ticker_market(_ticker) != "US":
+                    continue
+                _key = _ticker.upper()
+                _curr_cost = float(_pos.get("entry", 0) or 0) * int(_pos.get("qty", 0) or 0)
+                _prev_cost = float(_pre_sync_us_cost_by_key.get(_key, 0.0) or 0.0)
+                if _curr_cost > _prev_cost:
+                    synthetic_cash -= (_curr_cost - _prev_cost)
+            self.risk.cash = synthetic_cash
+        else:
+            self.risk.cash = kr_cash + us_cash_krw
 
     def _make_position_from_broker(self, order: dict, broker_pos: dict) -> dict:
         market = order.get("market", "KR")
@@ -2246,6 +2499,14 @@ class TradingBot:
         SELL 결정 종목은 _pre_session_sell_queue에 담아두고,
         startup guard 해제 후 run_cycle에서 즉시 매도.
         """
+        if not self._should_run_pre_session_review(market):
+            self._pre_session_sell_queue[market] = []
+            if self._has_broker_sync_risk(market):
+                log.warning(f"[장전 리뷰] {market} 브로커 동기화 불신 상태 → 리뷰/SELL 예약 보류")
+            else:
+                log.info(f"[장전 리뷰] {market} 장중 재시작 감지 → 리뷰/SELL 예약 건너뜀")
+            return
+
         positions = [p for p in self.risk.positions
                      if self._ticker_market(p.get("ticker", "")) == market]
         if not positions:
@@ -2997,11 +3258,6 @@ class TradingBot:
         except Exception as _di_e:
             log.warning(f"[data_integrity] 점검 실패 (무시하고 계속): {_di_e}")
 
-        # ── 장 시작 전 보유 포지션 Claude 점검 ───────────────────────────────
-        try:
-            self._pre_session_position_review(market)
-        except Exception as _psr_e:
-            log.warning(f"[장전 포지션 리뷰 오류] {market}: {_psr_e}")
 
         # ── USD/KRW 환율 자동 갱신 ────────────────────────────────────────────
         try:
@@ -3027,7 +3283,30 @@ class TradingBot:
         # ── session_start_equity: 환율 갱신 + 현재가 반영 이후 기준으로 확정 ──
         # (이전에 reset_daily_state를 먼저 호출하면 구환율 기준으로 base가 잡혀
         #  환율 변동분이 일일 손실로 잘못 계산되는 버그 수정)
-        self.risk.reset_daily_state(clear_trade_log=True)
+        session_date = _market_session_date(market).isoformat()
+        baseline_meta = dict(self._daily_baseline_by_market.get(market, {}) or {})
+        if baseline_meta.get("session_date") == session_date and float(baseline_meta.get("base", 0) or 0) > 0:
+            self.risk.session_start_equity = float(baseline_meta["base"])
+            log.info(
+                f"[일일 기준 유지] {market} session_date={session_date} "
+                f"session_start_equity={self.risk.session_start_equity:,.0f}원"
+            )
+        else:
+            broker_total = float(self._kis_total_equity_krw() or 0)
+            if broker_total <= 0:
+                broker_total = float(self._equity_reference_context().get("total_krw", 0) or 0)
+            self.risk.reset_daily_state(clear_trade_log=True, override_base=broker_total if broker_total > 0 else None)
+            self._daily_baseline_by_market[market] = {
+                "session_date": session_date,
+                "base": float(self.risk.session_start_equity),
+                "source": "broker_total" if broker_total > 0 else "internal_fallback",
+            }
+            self._save_daily_baselines()
+            log.info(
+                f"[일일 기준 확정] {market} session_date={session_date} "
+                f"session_start_equity={self.risk.session_start_equity:,.0f}원 "
+                f"source={self._daily_baseline_by_market[market]['source']}"
+            )
         if self.risk.positions:
             updated_prices = []
             for p in self.risk.positions:
@@ -3266,6 +3545,12 @@ class TradingBot:
 
         # 대시보드가 장 중에도 오늘 판단을 볼 수 있도록 session_open 직후 즉시 기록
         self._persist_live_judgment(market)
+
+        # 장전 보유 포지션 리뷰는 당일 판단이 준비된 뒤에만 수행한다.
+        try:
+            self._pre_session_position_review(market)
+        except Exception as _psr_e:
+            log.warning(f"[장전 포지션 리뷰 오류] {market}: {_psr_e}")
 
         selected = self.today_tickers.get(market, [])
         try:
@@ -3589,13 +3874,18 @@ class TradingBot:
         if self.current_market != market:
             self._leave_market_task(market, "run_cycle")
             return
-        if self.risk.check_halt():
+        self._refresh_operational_halt(market)
+        _allow_halt_auto_release = self._has_broker_sync_risk(market)
+        if self.risk.check_halt(
+            allow_auto_release=_allow_halt_auto_release,
+            auto_release_note="broker_sync_recovery" if _allow_halt_auto_release else "",
+        ):
             analysis_log.info(
                 f"[skip {market}] session_halt",
                 extra={"extra": {
                     "event": "entry_skip",
                     "market": market,
-                    "reason": "daily_halt",
+                    "reason": self.risk.halt_reason or "daily_halt",
                     "mode": self.today_judgment.get("consensus", {}).get("mode", ""),
                 }},
             )
@@ -3613,23 +3903,27 @@ class TradingBot:
         # ── 장전 SELL 예약 큐 처리 (startup guard 해제 직후 1회) ─────────────
         sell_queue = self._pre_session_sell_queue.get(market, [])
         if sell_queue:
-            log.info(f"[장전 SELL 큐] {market} {len(sell_queue)}건 매도 실행")
-            self._pre_session_sell_queue[market] = []
-            for _sq_pos in sell_queue:
-                _sq_tk = _sq_pos.get("ticker", "")
-                try:
-                    # 큐 생성 시점의 current_price는 구환율 기준일 수 있으므로
-                    # 실제 실행 시점의 price_cache(최신 환율 반영) 우선 사용
-                    _sq_cp = (
-                        self.price_cache.get(_sq_tk)
-                        or _sq_pos.get("current_price")
-                        or _sq_pos.get("entry", 0)
-                    )
-                    cand = {**_sq_pos, "exit_price": _sq_cp, "reason": "pre_session_sell"}
-                    self._execute_sell(cand, market, reason="pre_session_sell",
-                                       hold_advice=_sq_pos.get("hold_advice"))
-                except Exception as _sqe:
-                    log.error(f"[장전 SELL 실패] {_sq_tk}: {_sqe}")
+            if self._has_broker_sync_risk(market):
+                log.warning(f"[장전 SELL 큐] {market} 브로커 동기화 불신 상태 → 예약 매도 전부 보류")
+                self._pre_session_sell_queue[market] = []
+            else:
+                log.info(f"[장전 SELL 큐] {market} {len(sell_queue)}건 매도 실행")
+                self._pre_session_sell_queue[market] = []
+                for _sq_pos in sell_queue:
+                    _sq_tk = _sq_pos.get("ticker", "")
+                    try:
+                        # 큐 생성 시점의 current_price는 구환율 기준일 수 있으므로
+                        # 실제 실행 시점의 price_cache(최신 환율 반영) 우선 사용
+                        _sq_cp = (
+                            self.price_cache.get(_sq_tk)
+                            or _sq_pos.get("current_price")
+                            or _sq_pos.get("entry", 0)
+                        )
+                        cand = {**_sq_pos, "exit_price": _sq_cp, "reason": "pre_session_sell"}
+                        self._execute_sell(cand, market, reason="pre_session_sell",
+                                           hold_advice=_sq_pos.get("hold_advice"))
+                    except Exception as _sqe:
+                        log.error(f"[장전 SELL 실패] {_sq_tk}: {_sqe}")
 
         self._refresh_claude_control()
         self._consume_pending_claude_trigger(market)
@@ -4056,7 +4350,9 @@ class TradingBot:
                     log.debug(f"  [{ticker}] 브로커/런타임 보유중 → 재진입 스킵")
                     continue
 
-                ok, reason = self.risk.can_open(ticker, risk_price, size_pct, market=market)
+                ok, reason = self._entry_allowed_by_broker_state(market)
+                if ok:
+                    ok, reason = self.risk.can_open(ticker, risk_price, size_pct, market=market)
                 if not ok:
                     analysis_log.info(
                         f"[skip {market}] {ticker} {reason}",
@@ -6324,7 +6620,9 @@ class TradingBot:
             self._live_status_written_at[market] = _now
         try:
             status = self.risk.get_status()
-            kis_total_equity = round(self._kis_total_equity_krw(), 0)
+            equity_ctx = self._equity_reference_context()
+            broker_state = self._broker_state.get(market, {})
+            kis_total_equity = round(float(equity_ctx.get("total_krw", 0) or 0), 0)
             normalized_claude = self._normalize_claude_control_state(self.claude_control)
             dedup_positions = {}
             for pos in self.risk.positions:
@@ -6397,6 +6695,20 @@ class TradingBot:
                     "daily_pnl_pct":  round(self._daily_pnl_pct(), 4),
                     "cash":           round(self.risk.cash, 0),
                     "total_equity":   kis_total_equity,
+                    "equity_source":  equity_ctx.get("source", ""),
+                    "internal_equity": round(float(equity_ctx.get("internal_krw", 0) or 0), 0),
+                    "last_trusted_equity": round(float(equity_ctx.get("last_trusted_krw", 0) or 0), 0) if equity_ctx.get("last_trusted_krw") is not None else None,
+                    "broker": {
+                        "trust_level": broker_state.get("trust_level", "unknown"),
+                        "last_ok_at": broker_state.get("last_ok_at", ""),
+                        "last_error": broker_state.get("last_error", ""),
+                        "last_snapshot": broker_state.get("last_snapshot", {}),
+                        "last_trusted_snapshot": broker_state.get("last_trusted_snapshot", {}),
+                    },
+                    "halt": {
+                        "active": bool(self.risk.halted),
+                        "reason": self.risk.halt_reason or "",
+                    },
                     "positions":      positions,
                     "position_count": len(positions),
                     "pending_orders": pending_orders,

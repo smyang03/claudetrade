@@ -42,6 +42,7 @@ class RiskManager:
         self.daily_pnl = 0.0
         self.total_fee = 0.0          # 누적 수수료
         self.halted = False
+        self.halt_reason = ""
         self.all_trade_log = []
         self.trade_log = []
 
@@ -57,24 +58,39 @@ class RiskManager:
         base = self.session_start_equity if self.session_start_equity > 0 else self.init_cash
         return (self.equity() - base) / base * 100
 
-    def reset_daily_state(self, clear_trade_log: bool = True):
-        self.session_start_equity = self.equity()
+    def realized_daily_return(self) -> float:
+        base = self.session_start_equity if self.session_start_equity > 0 else self.init_cash
+        return self.daily_pnl / base * 100 if base > 0 else 0.0
+
+    def reset_daily_state(self, clear_trade_log: bool = True, override_base: float | None = None):
+        base = float(override_base) if override_base is not None else self.equity()
+        self.session_start_equity = base if base > 0 else self.equity()
         self.daily_pnl = 0.0
         self.total_fee = 0.0
         self.halted = False
+        self.halt_reason = ""
         if clear_trade_log:
             self.trade_log = []
 
-    def check_halt(self) -> bool:
+    def check_halt(self, allow_auto_release: bool = False, auto_release_note: str = "") -> bool:
         ret = self.daily_return()
+        realized_ret = self.realized_daily_return()
         threshold = HARD_RULES["max_daily_loss_pct"]
-        if ret < threshold:
+        equity_breach = ret < threshold
+        pnl_breach = realized_ret < threshold
+        if equity_breach and pnl_breach:
             if not self.halted:
                 log.warning(
-                    f"daily loss limit reached ({ret:.2f}%) -> halt"
+                    f"daily loss limit reached (equity={ret:.2f}% realized={realized_ret:.2f}%) -> halt"
                 )
             self.halted = True
-        elif self.halted and ret > threshold * 0.5:
+            if not self.halt_reason:
+                self.halt_reason = "daily_loss"
+        elif equity_breach and not pnl_breach:
+            log.warning(
+                f"[HALT 보류] equity breach only (equity={ret:.2f}% realized={realized_ret:.2f}% threshold={threshold:.2f}%)"
+            )
+        elif self.halted and allow_auto_release and ret > threshold * 0.5:
             # 손실이 한도의 절반 이상 회복되면 HALT 자동 해제
             # (False HALT 후 equity 정상화 시 세션 재개 가능하도록)
             log.warning(
@@ -82,11 +98,12 @@ class RiskManager:
                 f"(threshold={threshold:.2f}%) → halted=False"
             )
             self.halted = False
+            self.halt_reason = ""
         return self.halted
 
     def can_open(self, ticker: str, price: float, mode_size_pct: int = 70, market: str = ""):
         if self.halted:
-            return False, "daily loss limit"
+            return False, self.halt_reason or "daily loss limit"
         # 마켓별 포지션 수 제한 (market 지정 시 해당 마켓만, 미지정 시 전체)
         if market:
             def _is_same_market(p: dict) -> bool:
@@ -369,6 +386,7 @@ class RiskManager:
             "positions": len(self.positions),
             "daily_pnl": self.daily_pnl,
             "daily_return": self.daily_return(),
+            "realized_daily_return": self.realized_daily_return(),
             "total_fee": self.total_fee,
             "halted": self.halted,
         }
