@@ -39,15 +39,26 @@ data/news/
 data/supplement/
 data/price/
 
-# State (runtime) — brain.json / claude_control.json 제외하고 무시
+# State (runtime) — brain.json만 버전 관리, 나머지는 무시
 state/*.pid
 state/live_status_*.json
 state/kis_token.json
 state/api_usage.json
 state/us_screen_cache.json
+state/kr_screen_cache.json
 state/restart/
 state/dashboard_server.pid
 state/trading_bot.pid
+# 운영 상태 — 재시작/배포 시 덮어쓰면 안 되는 파일
+state/open_positions.json
+state/claude_control.json
+state/pending_orders.json
+state/decisions.jsonl
+state/param_tuner_sessions.json
+state/_api_summary_*.json
+state/*.bak*
+# 날짜별 유니버스 스냅샷 (재생성 가능)
+data/universe/
 
 # Dashboard tmp/log
 dashboard/_tmp_*.js

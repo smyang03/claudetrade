@@ -185,12 +185,25 @@ state/api_usage.json      ← credit_tracker.py가 토큰/비용 누적
 /credit     AI 토큰/비용 사용량
 ```
 
+## 커밋 전 체크리스트
+
+```bash
+# 코드 변경 외 runtime 파일이 섞였는지 반드시 확인
+git status --short
+git diff --stat
+```
+
+아래 파일은 `.gitignore`로 추적 제외 — 커밋에 포함하지 말 것:
+- `state/open_positions.json`, `state/claude_control.json`, `state/decisions.jsonl`, `state/pending_orders.json`
+- `data/universe/**` — 재생성 가능한 스냅샷
+- `logs/**`, `data/cache/**`, `data/ml/**`
+
+**`state/brain.json`만 예외** — 분석가 적중률/전략 성과 등 누적 학습 자산이므로 의도적으로 버전 관리.  
+brain.json 업데이트 커밋은 코드 변경과 분리해서 "chore: brain.json 학습 누적 업데이트" 로 따로 남길 것.
+
 ## 변경 후 확인
 
 ```bash
-# 런타임 파일이 코드 변경에 섞였는지 확인
-git status --short
-
 # 진입/계측 관련 변경 후 로그 패턴 확인
 grep -rn "rejection_reason\|volume_state\|entry_priority\|continuation\|hold_advisor" logs/analysis/ logs/system/ 2>/dev/null | tail -30
 ```
