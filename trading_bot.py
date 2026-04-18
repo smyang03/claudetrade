@@ -30,7 +30,14 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from logger import get_analysis_logger, get_judgment_logger, get_trading_logger
+from logger import (
+    get_analysis_logger,
+    get_flow_logger,
+    get_judgment_logger,
+    get_normal_logger,
+    get_risk_logger,
+    get_trading_logger,
+)
 from kis_api import (
     get_access_token,
     get_price,
@@ -95,6 +102,13 @@ from claude_memory import brain as BrainDB
 from runtime_paths import get_runtime_path
 import ticker_selection_db as tsdb
 import intraday_strategy_db as isdb
+from bot.market_utils import (
+    MarketUtilsMixin,
+    _market_session_date,
+    _is_trading_day,
+    _EXCHANGE_MAP,
+    _ec_cache,
+)
 
 # ML 의사결정 DB (선택적 — import 실패해도 봇 정상 동작)
 try:
@@ -118,6 +132,9 @@ from universe_manager import (
 log = get_trading_logger()
 analysis_log = get_analysis_logger()
 judgment_log = get_judgment_logger()
+normal_log = get_normal_logger()
+risk_log = get_risk_logger()
+flow_log = get_flow_logger()
 KST = ZoneInfo("Asia/Seoul")
 
 JUDGMENT_DIR = get_runtime_path("logs", "daily_judgment", make_parents=False)
@@ -131,6 +148,23 @@ CLAUDE_CONTROL_FILE = get_runtime_path("state", "claude_control.json")
 BOT_PID_FILE = get_runtime_path("state", "trading_bot.pid")
 DECISIONS_FILE = get_runtime_path("state", "decisions.jsonl")  # Claude 판단 이력 영속 DB
 DAILY_BASELINE_FILE = get_runtime_path("state", "daily_baseline.json")
+
+
+def _split_log(channel_logger, level: str, message: str, *args, **kwargs) -> None:
+    getattr(log, level)(message, *args, **kwargs)
+    getattr(channel_logger, level)(message, *args, **kwargs)
+
+
+def _log_normal(level: str, message: str, *args, **kwargs) -> None:
+    _split_log(normal_log, level, message, *args, **kwargs)
+
+
+def _log_risk(level: str, message: str, *args, **kwargs) -> None:
+    _split_log(risk_log, level, message, *args, **kwargs)
+
+
+def _log_flow(level: str, message: str, *args, **kwargs) -> None:
+    _split_log(flow_log, level, message, *args, **kwargs)
 
 
 def _write_bot_pid_file():
@@ -162,10 +196,6 @@ CLAUDE_CONTROL_FILE.parent.mkdir(parents=True, exist_ok=True)
 # 동적 선택 실패 시 폴백 (기본 3종목)
 _DEFAULT_KR_TICKERS = ["005930", "068270", "035420"]
 _DEFAULT_US_TICKERS = ["NVDA", "TSLA", "GOOGL", "AAPL", "NFLX"]
-
-# 거래소 캘린더 (XKRX=한국거래소, XNYS=NYSE)
-_EXCHANGE_MAP = {"KR": "XKRX", "US": "XNYS"}
-_ec_cache: dict = {}  # 캘린더 객체 캐시
 
 # 진입 차단 쿨다운 (분)
 _STOP_COOLDOWN_MIN = int(os.getenv("STOP_COOLDOWN_MIN", "60"))   # 손절 후 재진입 금지 (20→60: 반복손절 방지)
@@ -226,31 +256,6 @@ def _analyst_strategy_vote(judgments: dict) -> str:
     return top if top_count >= 2 else "volatility_breakout"
 
 
-def _market_session_date(market: str, now_dt=None):
-    """시장 세션 기준 날짜. US는 KST 자정~05:00 구간을 전일 세션으로 본다."""
-    now_dt = now_dt or datetime.now(KST)
-    d = now_dt.date()
-    if market == "US" and now_dt.time() < dt_time(5, 0):
-        return d - timedelta(days=1)
-    return d
-
-
-def _is_trading_day(market: str, check_date=None) -> bool:
-    """오늘이 해당 시장의 정규 거래일인지 확인 (주말·공휴일 모두 처리)"""
-    if check_date is None:
-        check_date = _market_session_date(market)
-    exchange = _EXCHANGE_MAP.get(market, "XNYS")
-    try:
-        import exchange_calendars as ec
-        if exchange not in _ec_cache:
-            _ec_cache[exchange] = ec.get_calendar(exchange)
-        return bool(_ec_cache[exchange].is_session(str(check_date)))
-    except Exception as e:
-        # exchange_calendars 없거나 오류 시 주말만 체크
-        log.warning(f"거래소 캘린더 조회 실패 ({exchange}): {e} — 주말 체크만 적용")
-        return check_date.weekday() < 5
-
-
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -258,7 +263,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
-class TradingBot:
+class TradingBot(MarketUtilsMixin):
     def __init__(self, is_paper: bool = True):
         self.is_paper = is_paper
         self.token = get_access_token()
@@ -273,12 +278,12 @@ class TradingBot:
                 bal_kr = get_balance(self.token, market="KR")
                 break
             except Exception as e:
-                log.warning(f"KIS KR 잔고 조회 실패 ({_attempt}/{_bal_retry_max}): {e}")
+                _log_risk("warning", f"KIS KR 잔고 조회 실패 ({_attempt}/{_bal_retry_max}): {e}")
                 if _attempt < _bal_retry_max:
                     import time as _t; _t.sleep(_bal_retry_delay)
                 else:
                     if is_paper:
-                        log.warning("KIS 서버 응답 없음 — PAPER_CASH 폴백으로 기동")
+                        _log_risk("warning", "KIS 서버 응답 없음 — PAPER_CASH 폴백으로 기동")
                         bal_kr = {"cash": int(os.getenv("PAPER_CASH", "10000000")), "total_eval": 0}
                     else:
                         raise SystemExit(f"KIS 실거래 잔고 조회 {_bal_retry_max}회 실패 — 종료")
@@ -286,7 +291,7 @@ class TradingBot:
         if init_cash <= 0:
             if is_paper:
                 init_cash = int(os.getenv("PAPER_CASH", "10000000"))
-                log.warning(
+                _log_risk(
                     f"모의투자 잔고 0 → PAPER_CASH 폴백({init_cash:,}원) 사용. "
                     f"KIS 앱에서 모의투자 계좌 초기화 필요 (모의투자 메뉴 → 초기화)"
                 )
@@ -295,24 +300,30 @@ class TradingBot:
         env_cap = int(os.getenv("MAX_ORDER_KRW", "500000" if is_paper else "2000000"))
         order_pct = float(os.getenv("MAX_ORDER_PCT", "0.05"))
         max_order = min(env_cap, int(init_cash * order_pct))
-        log.info(f"{mode_label} | KIS KR 잔고 {init_cash:,}원 "
-                 f"(현금 {bal_kr['cash']:,} + 평가 {bal_kr['total_eval']:,}) "
-                 f"| 최대주문 {max_order:,}원")
+        _log_normal(
+            "info",
+            f"{mode_label} | KIS KR 잔고 {init_cash:,}원 "
+            f"(현금 {bal_kr['cash']:,} + 평가 {bal_kr['total_eval']:,}) "
+            f"| 최대주문 {max_order:,}원",
+        )
 
         # US 잔고 조회 (참고용 — KR과 공유 풀이므로 init_cash에는 미포함)
         try:
             bal_us = get_balance(self.token, market="US")
             usd_krw = get_usd_krw()
             us_eval_krw = int(bal_us["total_eval"] * usd_krw)
-            log.info(f"{mode_label} | KIS US 잔고 ${bal_us['total_eval']:.2f} "
-                     f"(≈{us_eval_krw:,}원, 보유종목 {len(bal_us['stocks'])}개)")
+            _log_normal(
+                "info",
+                f"{mode_label} | KIS US 잔고 ${bal_us['total_eval']:.2f} "
+                f"(≈{us_eval_krw:,}원, 보유종목 {len(bal_us['stocks'])}개)",
+            )
         except Exception as e:
-            log.warning(f"KIS US 잔고 조회 실패 (무시): {e}")
+            _log_risk("warning", f"KIS US 잔고 조회 실패 (무시): {e}")
 
         self.risk = RiskManager(init_cash=init_cash, max_order_krw=max_order, market="KR")
 
         # KR/US 공유 풀 — 단일 현금 계좌, 시장 구분 없이 사용
-        log.info(f"공유 풀 | 총자금 {init_cash:,.0f}원 (KR/US 공용)")
+        _log_normal("info", f"공유 풀 | 총자금 {init_cash:,.0f}원 (KR/US 공용)")
 
         self.today_judgment = {}
         self.today_tickers: dict = {}   # {market: [ticker, ...]} — 매일 아침 Claude가 선택
@@ -2317,136 +2328,6 @@ class TradingBot:
         except Exception:
             return 0.0
 
-    def _in_entry_blackout(self, market: str) -> bool:
-        now = datetime.now(KST).time()
-        no_new = HARD_RULES["no_new_entry_min"]
-        no_late = HARD_RULES["close_before_min"]
-
-        if market == "KR":
-            open_t = dt_time(9, 0)
-            close_t = dt_time(16, 0)
-        else:
-            # US session in KST: 22:30 ~ 05:00(next day)
-            open_t = dt_time(22, 30)
-            close_t = dt_time(5, 0)
-
-        if market == "KR":
-            # timezone-aware 비교 (KST 명시)
-            start_block_end = (datetime.combine(date.today(), open_t, tzinfo=KST).timestamp() + no_new * 60)
-            end_block_start = (datetime.combine(date.today(), close_t, tzinfo=KST).timestamp() - no_late * 60)
-            now_ts = datetime.now(KST).timestamp()
-            return now_ts < start_block_end or now_ts > end_block_start
-
-        # US crossing midnight
-        now_dt = datetime.now(KST)
-        open_dt = datetime.combine(now_dt.date(), open_t, tzinfo=KST)
-        close_dt = datetime.combine(now_dt.date(), close_t, tzinfo=KST)
-        if now < close_t:
-            open_dt = open_dt - timedelta(days=1)
-        else:
-            close_dt = close_dt + timedelta(days=1)
-
-        start_block_end = open_dt.timestamp() + no_new * 60
-        end_block_start = close_dt.timestamp() - no_late * 60
-        now_ts = now_dt.timestamp()
-        return now_ts < start_block_end or now_ts > end_block_start
-
-    def _is_order_allowed_now(self, market: str) -> bool:
-        """정규장 외 주문 차단 — 장전/장종료 주문 실패 반복 방지."""
-        now_dt = datetime.now(KST)
-        open_dt = self._market_open_anchor_dt(market)
-        close_dt = self._market_close_anchor_dt(market)
-        if open_dt <= now_dt < close_dt:
-            return True
-        if market == "US" and now_dt < open_dt:
-            log.debug(f"[US 주문차단] 장 시작 전 ({now_dt.strftime('%H:%M')} < 22:30) — 주문 보류")
-        else:
-            log.debug(f"[{market} 주문차단] 정규장 외 시간 ({now_dt.strftime('%H:%M')}) — 주문 보류")
-        return False
-
-    def _intraday_session_progress(self, market: str) -> float:
-        """
-        Returns session progress in [0, 1].
-        KR: 09:00~15:30, US(KST): 22:30~05:00
-        """
-        now_dt = datetime.now(KST)
-        if market == "KR":
-            start_dt = datetime.combine(now_dt.date(), dt_time(9, 0), tzinfo=KST)
-            end_dt = datetime.combine(now_dt.date(), dt_time(15, 30), tzinfo=KST)
-        else:
-            start_dt = datetime.combine(now_dt.date(), dt_time(22, 30), tzinfo=KST)
-            end_dt = datetime.combine(now_dt.date(), dt_time(5, 0), tzinfo=KST)
-            if now_dt.time() < dt_time(5, 0):
-                start_dt -= timedelta(days=1)
-            else:
-                end_dt += timedelta(days=1)
-
-        total_sec = max(1.0, (end_dt - start_dt).total_seconds())
-        elapsed_sec = (now_dt - start_dt).total_seconds()
-        return max(0.0, min(1.0, elapsed_sec / total_sec))
-
-    def _market_open_anchor_dt(self, market: str) -> datetime:
-        """현재 세션의 실제 장 시작 시각(KST)을 반환한다."""
-        now_dt = datetime.now(KST)
-        if market == "KR":
-            return datetime.combine(now_dt.date(), dt_time(9, 0), tzinfo=KST)
-        open_dt = datetime.combine(now_dt.date(), dt_time(22, 30), tzinfo=KST)
-        if now_dt.time() < dt_time(5, 0):
-            open_dt -= timedelta(days=1)
-        return open_dt
-
-    def _market_close_anchor_dt(self, market: str) -> datetime:
-        """현재 세션의 실제 장 종료 시각(KST)을 반환한다."""
-        now_dt = datetime.now(KST)
-        if market == "KR":
-            return datetime.combine(now_dt.date(), dt_time(15, 30), tzinfo=KST)
-        close_dt = datetime.combine(now_dt.date(), dt_time(5, 0), tzinfo=KST)
-        if now_dt.time() >= dt_time(22, 30):
-            close_dt += timedelta(days=1)
-        return close_dt
-
-    def _minutes_to_close(self, market: str) -> float:
-        return (self._market_close_anchor_dt(market) - datetime.now(KST)).total_seconds() / 60.0
-
-    def _next_market_open_dt(self, market: str) -> datetime:
-        now_dt = datetime.now(KST)
-        if market == "KR":
-            open_dt = datetime.combine(now_dt.date(), dt_time(9, 0), tzinfo=KST)
-            if now_dt >= open_dt:
-                open_dt += timedelta(days=1)
-            return open_dt
-        open_dt = datetime.combine(now_dt.date(), dt_time(22, 30), tzinfo=KST)
-        if now_dt >= open_dt:
-            open_dt += timedelta(days=1)
-        return open_dt
-
-    def _market_elapsed_min(self, market: str) -> float:
-        """실제 장 시작 시각 기준 경과 분. 재시작과 무관하게 고정된다."""
-        now_dt = datetime.now(KST)
-        open_dt = self._market_open_anchor_dt(market)
-        return max(0.0, (now_dt - open_dt).total_seconds() / 60.0)
-
-    def _project_intraday_volume(self, market: str, volume: float) -> float:
-        """
-        Project current intraday volume to a full-session estimate.
-        Keeps early-session overprojection bounded.
-        """
-        try:
-            volume = float(volume or 0)
-        except Exception:
-            return 0.0
-        if volume <= 0:
-            return 0.0
-
-        progress = self._intraday_session_progress(market)
-        if progress <= 0 or progress >= 1:
-            return volume
-
-        # Floor progress to 20% and cap multiplier to 3x to avoid open noise.
-        effective_progress = max(progress, 0.20)
-        multiplier = min(3.0, 1.0 / effective_progress)
-        return volume * multiplier
-
     _SELL_FAIL_COOLDOWN_SEC = 90  # 매도 실패 후 재시도 억제 시간
 
     def _process_exit_candidates(self):
@@ -3199,21 +3080,21 @@ class TradingBot:
     def session_open(self, market: str):
         if not self._enter_market_task(market, "session_open"):
             return
-        log.info("=" * 50)
-        log.info(f"[{market}] session_open")
+        _log_flow("info", "=" * 50)
+        _log_flow("info", f"[{market}] session_open")
         self._refresh_claude_control()
         self._backfill_missed_postmortem(market)
 
         # ── 휴장일 체크 (주말 + 공휴일) ─────────────────────────────────────
         if not _is_trading_day(market):
-            log.info(f"[{market}] 휴장일 — 세션 스킵")
+            _log_flow("info", f"[{market}] 휴장일 — 세션 스킵")
             self.session_active = False
             self.current_market = None
             self._leave_market_task(market, "session_open")
             return
 
         if market == "US" and not self.is_paper:
-            log.warning("[US] live mode is not supported yet. session skipped.")
+            _log_risk("warning", "[US] live mode is not supported yet. session skipped.")
             self.session_active = False
             self.current_market = None
             self._leave_market_task(market, "session_open")
@@ -3223,7 +3104,7 @@ class TradingBot:
         if market == "US":
             try:
                 _US_SCREEN_CACHE_PATH.unlink(missing_ok=True)
-                log.info("[US] 개장 시 스크리너 캐시 무효화")
+                _log_flow("info", "[US] 개장 시 스크리너 캐시 무효화")
             except Exception as _uce:
                 log.debug(f"[US] 스크리너 캐시 무효화 실패(무시): {_uce}")
 
@@ -3250,13 +3131,13 @@ class TradingBot:
             from claude_memory.data_integrity import run_pre_session_check
             integrity = run_pre_session_check(market)
             for msg in integrity["fixed"]:
-                log.info(f"[data_integrity] 수정: {msg}")
+                _log_normal("info", f"[data_integrity] 수정: {msg}")
             for msg in integrity["warnings"]:
-                log.warning(f"[data_integrity] 경고: {msg}")
+                _log_risk("warning", f"[data_integrity] 경고: {msg}")
             if integrity["fixed"]:
-                log.info(f"[data_integrity] 총 {len(integrity['fixed'])}건 자동 수정 완료")
+                _log_normal("info", f"[data_integrity] 총 {len(integrity['fixed'])}건 자동 수정 완료")
         except Exception as _di_e:
-            log.warning(f"[data_integrity] 점검 실패 (무시하고 계속): {_di_e}")
+            _log_risk("warning", f"[data_integrity] 점검 실패 (무시하고 계속): {_di_e}")
 
 
         # ── USD/KRW 환율 자동 갱신 ────────────────────────────────────────────
@@ -3265,9 +3146,9 @@ class TradingBot:
             if new_rate > 100:
                 old_rate = self.usd_krw_rate
                 self.usd_krw_rate = new_rate
-                log.info(f"[환율 갱신] USD/KRW {old_rate:,.0f} → {new_rate:,.2f}원")
+                _log_normal("info", f"[환율 갱신] USD/KRW {old_rate:,.0f} → {new_rate:,.2f}원")
         except Exception as e:
-            log.warning(f"[환율 갱신 실패] {e} — 이전 값 {self.usd_krw_rate:,.0f}원 유지")
+            _log_risk("warning", f"[환율 갱신 실패] {e} — 이전 값 {self.usd_krw_rate:,.0f}원 유지")
 
         # 이월 포지션 현재가 갱신 (어제 종가 → 오늘 시가 방향으로 업데이트)
         for pos in self.risk.positions:
@@ -3287,7 +3168,8 @@ class TradingBot:
         baseline_meta = dict(self._daily_baseline_by_market.get(market, {}) or {})
         if baseline_meta.get("session_date") == session_date and float(baseline_meta.get("base", 0) or 0) > 0:
             self.risk.session_start_equity = float(baseline_meta["base"])
-            log.info(
+            _log_normal(
+                "info",
                 f"[일일 기준 유지] {market} session_date={session_date} "
                 f"session_start_equity={self.risk.session_start_equity:,.0f}원"
             )
@@ -3302,7 +3184,8 @@ class TradingBot:
                 "source": "broker_total" if broker_total > 0 else "internal_fallback",
             }
             self._save_daily_baselines()
-            log.info(
+            _log_normal(
+                "info",
                 f"[일일 기준 확정] {market} session_date={session_date} "
                 f"session_start_equity={self.risk.session_start_equity:,.0f}원 "
                 f"source={self._daily_baseline_by_market[market]['source']}"
@@ -3880,6 +3763,12 @@ class TradingBot:
             allow_auto_release=_allow_halt_auto_release,
             auto_release_note="broker_sync_recovery" if _allow_halt_auto_release else "",
         ):
+            _log_risk(
+                "warning",
+                f"[{market}] cycle halt active "
+                f"reason={self.risk.halt_reason or 'daily_halt'} "
+                f"daily_pnl={self.risk.daily_pnl:,.0f}",
+            )
             analysis_log.info(
                 f"[skip {market}] session_halt",
                 extra={"extra": {
@@ -3894,7 +3783,8 @@ class TradingBot:
         # startup 보호 구간 — session_open 완료 후 최소 대기
         _since_open = time.time() - self._session_open_at.get(market, 0.0)
         if _since_open < _STARTUP_GUARD_SEC:
-            log.info(
+            _log_flow(
+                "info",
                 f"[{market}] startup guard — session_open 후 {_since_open:.0f}s 경과 "
                 f"(최소 {_STARTUP_GUARD_SEC:.0f}s 대기 중) — cycle 스킵"
             )
@@ -3904,10 +3794,10 @@ class TradingBot:
         sell_queue = self._pre_session_sell_queue.get(market, [])
         if sell_queue:
             if self._has_broker_sync_risk(market):
-                log.warning(f"[장전 SELL 큐] {market} 브로커 동기화 불신 상태 → 예약 매도 전부 보류")
+                _log_risk("warning", f"[장전 SELL 큐] {market} 브로커 동기화 불신 상태 → 예약 매도 전부 보류")
                 self._pre_session_sell_queue[market] = []
             else:
-                log.info(f"[장전 SELL 큐] {market} {len(sell_queue)}건 매도 실행")
+                _log_flow("info", f"[장전 SELL 큐] {market} {len(sell_queue)}건 매도 실행")
                 self._pre_session_sell_queue[market] = []
                 for _sq_pos in sell_queue:
                     _sq_tk = _sq_pos.get("ticker", "")
@@ -6339,14 +6229,6 @@ class TradingBot:
 
         return False, ""
 
-    def _is_market_session_now(self, market: str) -> bool:
-        """현재 해당 시장의 거래 시간 여부 (KST 기준)"""
-        now_t = datetime.now(KST).time()
-        if market == "KR":
-            return dt_time(8, 40) <= now_t <= dt_time(16, 10)
-        else:  # US
-            return now_t >= dt_time(22, 30) or now_t < dt_time(5, 0)
-
     def _reinvoke_analysts(self, market: str, trigger: str):
         """이상 신호 감지 시 분석가 3명 긴급 재호출 → 판단·합의 갱신"""
         if not self.is_claude_reinvoke_enabled():
@@ -6767,7 +6649,7 @@ class TradingBot:
         self._maybe_push_dashboard(force=True)  # 1시간마다 강제 전송
 
     def session_close(self, market: str):
-        log.info(f"[{market}] session_close")
+        _log_flow("info", f"[{market}] session_close")
         if self.current_market != market:
             return
 
@@ -6778,7 +6660,7 @@ class TradingBot:
             self._reconcile_pending_orders(broker_kr, broker_us)
         except Exception as e:
             self._flag_execution_issue(market, "session_close_sync_failed")
-            log.warning(f"[{market}] session_close 최종 체결 동기화 실패: {e}")
+            _log_risk("warning", f"[{market}] session_close 최종 체결 동기화 실패: {e}")
 
         self._clear_pending_orders_for_market(market, "session_close")
         self.session_active = False
