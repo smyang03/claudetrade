@@ -1,14 +1,15 @@
 {
   "enabled": true,
-  "updated_at": "2026-04-13T13:46:23+09:00",
-  "updated_by": "telegram",
-  "last_trigger_at": "2026-04-13T15:58:14+09:00",
+  "updated_at": "2026-04-15T22:58:29+09:00",
+  "updated_by": "dashboard_review",
+  "last_trigger_at": "2026-04-17T15:00:22+09:00",
   "last_trigger_market": "KR",
-  "last_trigger_source": "REVERSE 권고: 장 마감 7분 전 기준 지수 -0.86% 하락으로 오전 NEUTRAL 판단의 상승 근거가 소멸되었으며, 17",
-  "last_result_at": "2026-04-13T15:59:02+09:00",
+  "last_trigger_source": "튜너 경고: RGTI 고가 매수 구간 진입 여부 확인 필요, 047040·093370 등 중소형주 거래량 정상 수준에서 모멘텀 소진 가능성 모니터링",
+  "last_result_at": "2026-04-17T15:01:36+09:00",
   "last_result_market": "KR",
   "last_result_status": "success",
   "last_error": "",
   "pending_trigger": null,
-  "pending_position_review": null
+  "pending_position_review": null,
+  "pending_sell": null
 }

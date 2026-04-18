@@ -1,15 +1,15 @@
 {
   "meta": {
-    "version": 1837,
+    "version": 1983,
     "created": "2026-03-19",
-    "last_updated": "2026-04-16",
-    "trained_days_kr": 21,
-    "trained_days_us": 21,
+    "last_updated": "2026-04-18",
+    "trained_days_kr": 22,
+    "trained_days_us": 24,
     "description": "Claude 마이너리티 리포트 판단 메모리"
   },
   "markets": {
     "KR": {
-      "trained_days": 21,
+      "trained_days": 22,
       "training_period": {
         "phase1": "2024-10-01 ~ 2024-12-31 (하락장 50일)",
         "phase2": "2025-01-01 ~ 2025-05-31 (반등/횡보 50일)",
@@ -18,53 +18,53 @@
       "current_regime": "unknown",
       "analyst_performance": {
         "bull": {
-          "total": 60,
+          "total": 61,
           "hit": 17,
-          "miss": 43,
-          "rate": 0.283,
+          "miss": 44,
+          "rate": 0.279,
           "recent_7d": {
             "total": 7,
             "hit": 3,
             "rate": 0.429
           },
           "recent_30d": {
-            "total": 20,
-            "hit": 8,
-            "rate": 0.4
+            "total": 21,
+            "hit": 9,
+            "rate": 0.429
           },
           "trend": "stable"
         },
         "bear": {
-          "total": 60,
-          "hit": 32,
+          "total": 61,
+          "hit": 33,
           "miss": 28,
-          "rate": 0.533,
+          "rate": 0.541,
           "recent_7d": {
             "total": 7,
             "hit": 1,
             "rate": 0.143
           },
           "recent_30d": {
-            "total": 20,
+            "total": 21,
             "hit": 6,
-            "rate": 0.3
+            "rate": 0.286
           },
           "trend": "declining"
         },
         "neutral": {
-          "total": 60,
+          "total": 61,
           "hit": 12,
-          "miss": 48,
-          "rate": 0.2,
+          "miss": 49,
+          "rate": 0.197,
           "recent_7d": {
             "total": 7,
             "hit": 2,
             "rate": 0.286
           },
           "recent_30d": {
-            "total": 20,
+            "total": 21,
             "hit": 8,
-            "rate": 0.4
+            "rate": 0.381
           },
           "trend": "declining"
         }
@@ -81,8 +81,8 @@
           "win_rate": 0.0
         },
         "CAUTIOUS": {
-          "count": 0,
-          "avg_pnl": 0.0,
+          "count": 1,
+          "avg_pnl": -0.0571,
           "win_rate": 0.0
         },
         "DEFENSIVE": {
@@ -118,9 +118,9 @@
       },
       "strategy_performance": {
         "momentum": {
-          "count": 33,
-          "win_rate": 0.182,
-          "avg_pnl": -2.9534
+          "count": 39,
+          "win_rate": 0.154,
+          "avg_pnl": -3.7249
         },
         "mean_reversion": {
           "count": 0,
@@ -128,9 +128,9 @@
           "avg_pnl": 0.0
         },
         "gap_pullback": {
-          "count": 12,
-          "win_rate": 0.083,
-          "avg_pnl": -2.2521
+          "count": 13,
+          "win_rate": 0.077,
+          "avg_pnl": -2.2451
         },
         "volatility_breakout": {
           "count": 9,
@@ -1043,6 +1043,21 @@
           "avg_pnl_when_followed": -0.2950618158727697,
           "insight": "오전gap_pullback진입종목은당일급락리스크높음,SL강화필수",
           "examples": []
+        },
+        {
+          "id": "P061",
+          "type": "과잉진입",
+          "description": "CAUTIOUS모드에서오후momentum2건+섹터2건동시진입과다",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": -0.05709848361243972,
+          "insight": "오후14시이후momentum진입금지,고환율+오후장=진입차단",
+          "examples": []
         }
       ],
       "tuning_patterns": {
@@ -1062,60 +1077,60 @@
           "last_seen": "2026-04-16"
         },
         "30min_tune": {
-          "count": 30,
-          "correct": 1,
-          "rate": 0.033,
-          "insight": "Historically low precision (3% over 30 trials); treat as weak context only. Note: low rate may partly reflect prior volume data quality issues (corrected). (Context: 30분 경과 후 지수 변동 없고(+0.00%) 거래량 정상, 알림 없음으로 오전 NEUTRAL 판단 유지가 적절하며 추가 조정 근거 부재)",
-          "last_seen": "2026-04-16"
+          "count": 33,
+          "correct": 2,
+          "rate": 0.061,
+          "insight": "지수 -0.49% 하락 및 거래량 정상 수준으로 모닝 모멘텀 신호 대비 상승 동력 약화, 대형주 주도 랠리 지속 여부 불확실하여 손절선 소폭 조정 및 포지션 일부 축소로 리스크 관리 강화 필요",
+          "last_seen": "2026-04-17"
         },
         "60min_tune": {
-          "count": 23,
-          "correct": 5,
-          "rate": 0.217,
-          "insight": "60분 경과 후 지수 변동 없고 거래량 정상, 아침 MACD 골든크로스 신호는 유효하나 모멘텀 미확인 상태로 중립 유지가 최적(NEUTRAL 모드 평균 수익 최고)",
-          "last_seen": "2026-04-16"
+          "count": 26,
+          "correct": 7,
+          "rate": 0.269,
+          "insight": "지수가 60분 만에 -0.42% 하락하며 오전 강세 시나리오(코스피 +2.07%)와 괴리가 발생했고 거래량도 보통 수준으로 복합신호 모멘텀이 약화되어 손절선을 소폭 조이고 포지션 규모를 축소하는 것이 적절함.",
+          "last_seen": "2026-04-17"
         },
         "120min_tune": {
-          "count": 23,
-          "correct": 6,
-          "rate": 0.261,
-          "insight": "모닝 NEUTRAL 판단 대비 지수 +1.54% 상승 및 보유 포지션 전반 강세 유지로 불 모드 전환 확인, 추가 조정 불필요",
-          "last_seen": "2026-04-16"
+          "count": 24,
+          "correct": 7,
+          "rate": 0.292,
+          "insight": "지수가 모닝 MILD_BULL 전망과 달리 -0.33% 하락 반전하고 거래량도 normal 수준으로 모멘텀이 약화되어 손절선을 소폭 조이고 포지션 비중을 축소하는 것이 적절하다.",
+          "last_seen": "2026-04-17"
         },
         "150min_tune": {
-          "count": 20,
-          "correct": 6,
-          "rate": 0.3,
-          "insight": "코스피 +1.56% 상승세 유지 중이며 MACD 골든크로스 다중 확인 신호가 유효하고 150분 경과 후에도 경보 없이 강세 흐름 지속되어 오전 판단 조건 충족 중",
-          "last_seen": "2026-04-16"
+          "count": 21,
+          "correct": 7,
+          "rate": 0.333,
+          "insight": "모닝 강세 신호에도 불구하고 150분 경과 후 지수 -0.51% 반전 및 거래량 정상 수준으로 모멘텀 약화, 보유 포지션 손실 방어를 위해 손절선 강화 및 신규 진입 축소 필요",
+          "last_seen": "2026-04-17"
         },
         "180min_tune": {
-          "count": 20,
-          "correct": 5,
-          "rate": 0.25,
-          "insight": "인덱스 +2.12% 상승으로 모닝 MACD 골든크로스 강세 시나리오가 유효하게 진행 중이며 180분 경과 후에도 추세 지속 확인, 알람 없음으로 포지션 유지 적절",
-          "last_seen": "2026-04-16"
+          "count": 21,
+          "correct": 6,
+          "rate": 0.286,
+          "insight": "지수 -0.59% 하락 및 거래량 정상화로 오전 강세 모멘텀(거래량 폭증·코스피 강세) 소멸, CAUTIOUS 모드 내 손절선 축소 대응 필요",
+          "last_seen": "2026-04-17"
         },
         "210min_tune": {
-          "count": 18,
-          "correct": 5,
-          "rate": 0.278,
-          "insight": "모닝 NEUTRAL 대비 지수 +2.01% 강세 지속 및 다중 MACD 골든크로스 신호 유효로 BULL 모드 상향 유지 적절",
-          "last_seen": "2026-04-16"
+          "count": 19,
+          "correct": 6,
+          "rate": 0.316,
+          "insight": "지수 -0.94% 하락과 거래량 정상화로 아침 강세 모멘텀이 소멸되어 손절선 하향 조정 및 포지션 축소 필요",
+          "last_seen": "2026-04-17"
         },
         "240min_tune": {
+          "count": 19,
+          "correct": 7,
+          "rate": 0.368,
+          "insight": "지수 -0.69% 하락 및 240분 경과 후 모멘텀 약화로 아침 강세 신호 소진 우려, 손절 기준 소폭 강화 및 포지션 축소 권고",
+          "last_seen": "2026-04-17"
+        },
+        "270min_tune": {
           "count": 18,
           "correct": 6,
           "rate": 0.333,
-          "insight": "인덱스 +2.03% 상승으로 오전 강세 판단이 유효하며 240분 경과 후에도 매수 모멘텀이 지속되고 있어 포지션 유지가 적절함",
-          "last_seen": "2026-04-16"
-        },
-        "270min_tune": {
-          "count": 17,
-          "correct": 6,
-          "rate": 0.353,
-          "insight": "지수 +1.96% 상승으로 오전 NEUTRAL 판단이 유효하며 270분 경과 후에도 추가 알림 없이 정상 거래량 유지 중으로 포지션 조정 불필요",
-          "last_seen": "2026-04-16"
+          "insight": "지수 -0.49% 소폭 하락이나 거래량 정상 수준이며 모닝 NEUTRAL 판단 유지, 포지션 알림 없어 급격한 방향 전환 불필요",
+          "last_seen": "2026-04-17"
         },
         "300min_tune": {
           "count": 17,
@@ -1160,11 +1175,11 @@
           "last_seen": "2026-04-16"
         },
         "90min_tune": {
-          "count": 22,
-          "correct": 4,
-          "rate": 0.182,
-          "insight": "Below-average precision (18% over 22 trials); use with caution. (Context: 지수 +1.37% 상승으로 모닝 NEUTRAL 판단 부합하며 이상 신호 없음, 볼륨 정상·알림 없음으로 현 포지션 유지 적절)",
-          "last_seen": "2026-04-16"
+          "count": 23,
+          "correct": 5,
+          "rate": 0.217,
+          "insight": "지수 -0.32% 하락 전환으로 오전 강세 모멘텀이 약화되었으나 MACD 골든크로스 기조는 유지 중이므로 손절선을 소폭 조여 리스크 축소",
+          "last_seen": "2026-04-17"
         }
       },
       "current_beliefs": {
@@ -1175,7 +1190,6 @@
         "avoid": [],
         "emphasize": [],
         "learned_lessons": [
-          "결과nan=데이터파이프오류,판단보류",
           "시장결과nan=판단적중불판정,NEUTRAL기본값유지",
           "과매도BB하단복합시환율고점에도반등우선고려",
           "RSI<25×3+BB하단×2시환율고점도반등우선고려",
@@ -1184,7 +1198,8 @@
           "오후13시이후momentum진입은고점소진위험,오전진입만허용권고",
           "복합매수신호2개이상+지수상승시환율고점무효화가능",
           "0주@0원체결감지시즉시주문취소및재검증필수",
-          "시장상승일에도momentum당일손절8건=진입필터강화필요"
+          "시장상승일에도momentum당일손절8건=진입필터강화필요",
+          "오후14시이후momentum진입=손절확률90%,금지규칙추가"
         ]
       },
       "recent_days": [
@@ -1649,270 +1664,31 @@
           "worst_trade": "011930",
           "worst_trade_reason": "gap_pullback매수후 500원급락, 손절-89K원",
           "trades": 19
+        },
+        {
+          "date": "2026-04-17",
+          "mode": "CAUTIOUS",
+          "pnl_pct": -0.05709848361243972,
+          "market_change": -0.5481787631509809,
+          "win": false,
+          "bull_result": "MISS",
+          "bear_result": "HIT",
+          "neutral_result": "PARTIAL",
+          "bull_stance": "MODERATE_BULL",
+          "bear_stance": "MILD_BEAR",
+          "neutral_stance": "NEUTRAL",
+          "bull_reason": "5개 종목 전체 MACD 골든크로스 + 거래량 2.2~3.1배 폭증 복합신호 동시 충족, 코스피 +2.07% 강세 배경에서 셀트리온·NAVER·카카오·현대차 RSI 57~62 정상권으로 추가 상승 여력 존재",
+          "bear_reason": "USD/KRW 1,478.81원으로 1,400원 상단을 크게 이탈한 위험 신호 지속 + VKOSPI 데이터 부재(0.0)로 변동성 측정 불가 상태에서 RSI 76.4(삼성전자) 등 과매수 종목 다수 — 기술적 반등만으로 NEUTRAL 이상 판단 불가 원칙 유지",
+          "neutral_reason": "상승신호 우위(MACD 골든크로스 전종목+거래량 폭증)에도 RSI>75 과매수 종목 다수+과거 모닝강세→오후약화 반복 패턴(평균 -0.3~-0.94% 조정)으로 신호 상충, 2:1 기울기 미달 수준의 불확실성 유지",
+          "key_lesson": "오후14시이후momentum진입금지,고환율+오후장=진입차단",
+          "issue_type": "과잉진입",
+          "best_trade": "null",
+          "worst_trade": "038060",
+          "worst_trade_reason": "14:42오후진입,거래량81배급등고점,당일손절-19,810원",
+          "trades": 6
         }
       ],
       "debate_history": [
-        {
-          "date": "2026-04-01",
-          "r1": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.75,
-              "key_reason": "환율 1,504원 + 거래량 0.0배 + 데드크로스 다수(삼성·NAVER·카카오·현대차) = 강한 하락신호 복합, 매수 신호 부재로 현금 보유 "
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.92,
-              "key_reason": "환율 1,504.17원(1,500원 이상 돌파) + 거래량 0.0배 + MACD 데드크로스 4종목(삼성전자, NAVER, 카카오, 현대차) 동시"
-            },
-            "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.52,
-              "key_reason": "상승신호 2개(셀트리온·LG화학 골든크로스) vs 하락신호 4개(삼성·NAVER·카카오·현대차 데드크로스) = 1:2 비율로 약세 우세하나, 전"
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.75,
-              "key_reason": "MACD 데드크로스 4종목(삼성·NAVER·카카오·현대차) 동시 발생 + 거래량 0.0배 + 코스피 -2.97% + 환율 1,504원 = 매수 "
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.92,
-              "key_reason": "환율 1,504.17원(1,500원 돌파) + MACD 데드크로스 4종목 동시 발생(삼성전자·NAVER·카카오·현대차) + 거래량 0.0배 전무"
-            },
-            "neutral": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.65,
-              "key_reason": "거래량 0.0배(데이터 신뢰도 붕괴) + 환율 1,504원 돌파 + 데드크로스 4종목(삼성·NAVER·카카오·현대차) vs 골든크로스 2종목 ="
-            }
-          },
-          "changes": [
-            {
-              "analyst": "neutral",
-              "r1_stance": "NEUTRAL",
-              "r2_stance": "DEFENSIVE",
-              "reason": "BEAR 분석가의 '환율 1,500원 돌파 + 데드크로스 4종목 동시발생' 논거가 통계적으로 유효: 상승신호 2개(셀트리온·LG화학 골든크로스) 대비 하락신호 4개(데드크로스) + 거래량 0.0배 데이터 공백 + 코스피 -2.97% 실현 하락 = 2:1 이상 하락 우세 확인. 단, confidence 0.75 상한 준수 및 거래량 0.0배로 인한 불확실성 반영하여 0.65 설정"
-            }
-          ],
-          "consensus_shifted": true,
-          "outcome": null
-        },
-        {
-          "date": "2026-04-01",
-          "r1": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.72,
-              "key_reason": "코스피 -2.97% 낙폭 + USD/KRW 1,504.17 (환율1500 초과) + 전 종목 거래량 0.0배 + 데드크로스 다수(삼성전자·NAV"
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.82,
-              "key_reason": "USD/KRW 1,504.17 (1,400원 이상 기준값 초과) + 거래량 0.0배 + 데드크로스 4종목(삼성전자, NAVER, 카카오, 현대차"
-            },
-            "neutral": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.62,
-              "key_reason": "코스피 -2.97% 낙폭 + 환율 1,504.17원(1,500근접) + 데드크로스 4종목(삼성·NAVER·카카오·현대차) + 거래량 전무(0.0"
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.72,
-              "key_reason": "코스피 -2.97% + 데드크로스 4종목(삼성전자·NAVER·카카오·현대차) 동시 발생 + BB하단 집중 + 거래량 0.0배(유동성 부재) = "
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.82,
-              "key_reason": "USD/KRW 1,504.17(환율 기준값 1,400원 대비 +7.4% 초과) + 데드크로스 4종목 동시 발생(삼성전자·NAVER·카카오·현대차"
-            },
-            "neutral": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.62,
-              "key_reason": "코스피 -2.97% + USD/KRW 1,504.17(1,500원 돌파) + 데드크로스 4종목(삼성·NAVER·카카오·현대차) + 전 종목 거래"
-            }
-          },
-          "changes": [],
-          "consensus_shifted": false,
-          "outcome": null
-        },
-        {
-          "date": "2026-04-01",
-          "r1": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.75,
-              "key_reason": "코스피 -2.97% 낙폭 + USD/KRW 1,504.17 (임계값 1,500 초과) + 거래량 0.0배 + 6종목 중 4종목 데드크로스(삼성전"
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.92,
-              "key_reason": "USD/KRW 1,504.17 (1,500원 돌파) + 거래량 0.0배 + 데드크로스 4종목(삼성전자·NAVER·카카오·현대차) 동시 발생 → "
-            },
-            "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.42,
-              "key_reason": "데드크로스 4종목(삼성, NAVER, 카카오, 현대차) vs 골든크로스 2종목(셀트리온, LG화학) = 2:1 약한 약세 신호이나, 전일 CAU"
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.75,
-              "key_reason": "코스피 -2.97% + 데드크로스 4종목(삼성전자·NAVER·카카오·현대차) 동시 발생 + BB 하단 터치 종목 다수임에도 거래량 0.0배로 반"
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.92,
-              "key_reason": "USD/KRW 1,504.17(1,500원 돌파) + 코스피 -2.97% + 데드크로스 4종목(삼성전자·NAVER·카카오·현대차) 동시 발생 +"
-            },
-            "neutral": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.65,
-              "key_reason": "데드크로스 4종목 vs 골든크로스 2종목(2:1 약세) + USD/KRW 1,504.17(임계값 1,500 초과) + 전종목 거래량 0.0배(데"
-            }
-          },
-          "changes": [
-            {
-              "analyst": "neutral",
-              "r1_stance": "NEUTRAL",
-              "r2_stance": "DEFENSIVE",
-              "reason": "BULL 분석가의 코스피 -2.97% 낙폭 + 환율 1,500 초과 + 데드크로스 4종목 복합 신호 논거는 통계적으로 2:1 이상 하락 우위를 충족하며, 과거 이력상 환율+데드크로스 복합 시 DEFENSIVE 전환이 반복 확인됨. 단, 전종목 거래량 0.0배로 데이터 신뢰도 불확실성 존재하므로 confidence는 0.65로 제한"
-            }
-          ],
-          "consensus_shifted": true,
-          "outcome": null
-        },
-        {
-          "date": "2026-04-01",
-          "r1": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.75,
-              "key_reason": "환율 1,504원 + 거래량 0.0배 + 데드크로스 다수(삼성전자·NAVER·카카오·현대차) 조합으로 강한 하락 신호 확정 — 매수 진입 절대 "
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.85,
-              "key_reason": "USD/KRW 1,504.17원(1,500원 초과) + 거래량 0.0배 + 데드크로스 4종목(삼성·NAVER·카카오·현대차) + 코스피 -2.9"
-            },
-            "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.52,
-              "key_reason": "데드크로스 4종목 vs 골든크로스 2종목(3:2 비율 근접) + 환율1504.17 상승 + 거래량0.0배 → 신호 상충으로 불확실성 증가, 과거"
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.75,
-              "key_reason": "MACD 데드크로스 4종목(삼성전자·NAVER·카카오·현대차) + BB 하단 터치 후 반등 미확인 + 거래량 0.0배(유의미한 반등 에너지 부재"
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.88,
-              "key_reason": "USD/KRW 1,504.17원(1,500원 초과) + 코스피 -2.97% + 데드크로스 4종목(삼성·NAVER·카카오·현대차) + 전 종목 거"
-            },
-            "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.52,
-              "key_reason": "거래량 0.0배(데이터 신뢰도 심각 훼손) + 데드크로스 4종목 vs 골든크로스 1종목(셀트리온)이나 전 종목 +0.00% 변동률로 실제 가격 "
-            }
-          },
-          "changes": [],
-          "consensus_shifted": false,
-          "outcome": null
-        },
-        {
-          "date": "2026-04-01",
-          "r1": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.72,
-              "key_reason": "코스피 -2.97% 급락 + USD/KRW 1,504.17 (임계 1,500 초과) + 거래량 0.0배 일괄 미확인 + 데드크로스 4종목(삼성·"
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.85,
-              "key_reason": "USD/KRW 1,504.17 (1,400원 기준선 초과) + 코스피 -2.97% 낙폭 + 거래량 0.0배 + 4종목 MACD 데드크로스 (삼성"
-            },
-            "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.52,
-              "key_reason": "데드크로스 4종목(삼성·NAVER·카카오·현대차) vs 골든크로스 2종목(셀트리온·LG화학) = 2:1 약한 약세, 하지만 거래량 0.0배 + "
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.72,
-              "key_reason": "NAVER RSI 34.7·카카오 RSI 32.9·현대차 RSI 32.3 과매도 근접이나 MACD 데드크로스 4종목 + BB 하단 터치 후 반등"
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.88,
-              "key_reason": "USD/KRW 1,504.17(임계선 대비 +7.4% 초과) + 코스피 -2.97% 급락 + 데드크로스 4종목(삼성·NAVER·카카오·현대차) "
-            },
-            "neutral": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.65,
-              "key_reason": "데드크로스 4:골든크로스 2 = 2:1 약세 우위 + USD/KRW 1,504.17(1,500 임계 초과) + 코스피 -2.97% 급락 + 전종"
-            }
-          },
-          "changes": [
-            {
-              "analyst": "neutral",
-              "r1_stance": "NEUTRAL",
-              "r2_stance": "DEFENSIVE",
-              "reason": "BULL/BEAR 분석가 모두 DEFENSIVE 수렴: 환율 1,500원 돌파(임계값 초과)는 매크로 부정 신호로 기술적 반등 가능성을 상쇄하며, 데드크로스 4종목 vs 골든크로스 2종목의 2:1 비율이 판단 기준(2:1 이상 기울 때 방향성 인정)을 충족함. 단, 전종목 거래량 0.0배는 데이터 신뢰도 심각 저하를 의미하므로 confidence를 0.75 한도 내 0.65로 제한"
-            }
-          ],
-          "consensus_shifted": true,
-          "outcome": "wrong"
-        },
-        {
-          "date": "2026-04-02",
-          "r1": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.75,
-              "key_reason": "코스피 -4.26% 급락 + USD/KRW 1,513.28 (1,500 초과) + 전 종목 거래량 0.0배 + MACD 데드크로스(삼성·현대차)"
-            },
-            "bear": {
-              "stance": "HALT",
-              "confidence": 0.95,
-              "key_reason": "USD/KRW 1,513.28원(1,500원 초과) + 코스피 -4.26% 급락 + 거래량 0.0배 동시 발생 → 복수 위험 신호 극심 상태"
-            },
-            "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.52,
-              "key_reason": "거래량 0.0배 + USD/KRW 1,513.28(환율상승) + MACD 신호 3:3 균형(골든크로스3 vs 데드크로스2) → 신호 상충으로 방"
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.75,
-              "key_reason": "코스피 -4.26% 급락 + MACD 데드크로스(삼성·현대차) 동시 발생 + 전 종목 거래량 0.0배(데이터 신뢰도 저하 고려에도) → 기술적 "
-            },
-            "bear": {
-              "stance": "HALT",
-              "confidence": 0.95,
-              "key_reason": "USD/KRW 1,513.28원(1,500원 초과) + 코스피 -4.26% 급락 + 거래량 0.0배(데이터 이상 포함) 복수 위험 신호 극심 →"
-            },
-            "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.52,
-              "key_reason": "거래량 0.0배(데이터 신뢰도 심각 훼손)로 MACD 신호·환율·코스피 낙폭 모두 신뢰 불가 → 기술 신호 3골든:2데드 균형 유지, 방향성 판"
-            }
-          },
-          "changes": [],
-          "consensus_shifted": false,
-          "outcome": null
-        },
         {
           "date": "2026-04-02",
           "r1": {
@@ -2893,6 +2669,246 @@
           "changes": [],
           "consensus_shifted": false,
           "outcome": "wrong"
+        },
+        {
+          "date": "2026-04-17",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 +2.07% 강세 속 MACD 골든크로스(전종목), 거래량 평균 2.6배 이상 폭증, RSI 과매수 다중 확인으로 기술적 신호 3개 이상"
+            },
+            "bear": {
+              "stance": "CAUTIOUS_BEAR",
+              "confidence": 0.62,
+              "key_reason": "코스피 +2.07% 강세에도 불구하고 RSI 과매수(10개 종목 80+), 거래량 폭증(극단값 14.6배), 52주 신고점 집중(4개 100%)"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.3,
+              "key_reason": "오류:JSON 추출 실패: ```json\n{\n  \"stance\": \"MILD_BULL\",\n  \"confidence"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "전 종목 MACD 골든크로스 + 거래량 평균 2.2~3.1배 폭증 + BB 상단 돌파로 기술적 신호 3개 이상 충족, 코스피 +2.07% 강세 "
+            },
+            "bear": {
+              "stance": "CAUTIOUS_BEAR",
+              "confidence": 0.65,
+              "key_reason": "USD/KRW 1,478.81원으로 판단 기준 1,400원을 크게 상회하는 핵심 위험 신호 존재 + VKOSPI 데이터 미확인 상태에서 기술적 "
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.45,
+              "key_reason": "기술적 신호(전종목 MACD 골든크로스, 거래량 2.2~3.1배 폭증)는 강세를 지지하나 RSI 과매수(삼성전자 76.4 등)·VKOSPI 데이"
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": null
+        },
+        {
+          "date": "2026-04-17",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 +2.07% 상승 속 MACD 골든크로스·거래량 1.5배↑ 이상 복합 확인(다중 종목), RSI 과매수 주의하나 신고가 근접 종목 다수("
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.52,
+              "key_reason": "코스피 +2.07% 강세, 다중 MACD 골든크로스 + 거래량 2~3배 증가 확인되나, 과매수(RSI>75) 종목 다수 + 환율 1,478.81"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.52,
+              "key_reason": "코스피 +2.07% 강세에도 MACD 골든크로스 다중 확인(19/20종목)되었으나, 과매수 신호(RSI>75) 7종목 집중 + 거래량 폭증 종목"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 +2.07% 상승 속 19/20종목 MACD 골든크로스 + 현대차·셀트리온·카카오 거래량 2.6~3.1배 폭증으로 기술적 신호 2개 이상"
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.5,
+              "key_reason": "코스피 +2.07% 및 다중 MACD 골든크로스·거래량 폭증은 긍정적이나, USD/KRW 1,478.81원(위험 임계치 1,400원 대폭 초과)"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.54,
+              "key_reason": "코스피 +2.07% 및 MACD 골든크로스 19/20종목 확인으로 상승 신호 다수이나, RSI>75 과매수 7종목·환율 1,478원 고점·거래량"
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": null
+        },
+        {
+          "date": "2026-04-17",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 +2.07% 상승 속 대형주 MACD 골든크로스+거래량 2.1~3.1배 복합신호 2개 이상 충족, RSI 과매수 구간도 상승추세 지속 신"
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.58,
+              "key_reason": "코스피 +2.07% 강세, 다중 MACD 골든크로스 + 거래량 확대 신호 있으나, 과매수 종목 다수(RSI>80) + 개별 변동성 극심(-29%"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "코스피 +2.07% 상승 중 대형주(삼성전자+3.08%, 현대차+5.12%) MACD 골든크로스 다중 확인, 다만 과매수 RSI(76.4~97."
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 +2.07% 상승 속 삼성전자·현대차·NAVER 등 5개 대형주 전원 MACD 골든크로스 + 거래량 2.2~3.1배 복합신호 2개 이상 "
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.52,
+              "key_reason": "USD/KRW 1,478.81로 환율 위험 신호 존재(1,400원 상회)하며 절대 규칙상 CAUTIOUS_BEAR 이하 요건에 해당하나, VKO"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "코스피 +2.07% + 5개 대형주 전체 MACD 골든크로스·BB상단·거래량 확대 복합신호 일치(상승신호 우세)하나, 삼성전자 RSI 76.4 "
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": null
+        },
+        {
+          "date": "2026-04-17",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 +2.07% 강세 속 MACD 골든크로스(전종목) + 거래량 2.1~14.6배 폭증 + RSI 과매수 다수(12/20) = 2개 이상 신"
+            },
+            "bear": {
+              "stance": "CAUTIOUS_BEAR",
+              "confidence": 0.62,
+              "key_reason": "코스피 +2.07% 강세에도 불구하고 RSI 과매수(82.8~97.2) 14개 종목, 거래량 폭증(6.7~14.6배) 동시다발, 52주 신고가 "
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.58,
+              "key_reason": "코스피 +2.07% 상승 + 블루칩 다중 MACD 골든크로스(삼성전자·현대차·LG화학 등 4개 이상) 신호 vs. 극단 과매수 종목 다수(RSI"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "MACD 골든크로스 전종목 + 거래량 2.1~14.6배 폭증(2개 이상 신호 충족) + 코스피 +2.07% 강세로 MODERATE_BULL 유지"
+            },
+            "bear": {
+              "stance": "CAUTIOUS_BEAR",
+              "confidence": 0.65,
+              "key_reason": "USD/KRW 1,478.81(절대적 위험 수준) + VKOSPI 데이터 미확인 상태에서 코스피 +2.07% 반등은 과열 신호(RSI 과매수 다"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.58,
+              "key_reason": "코스피 +2.07% + 블루칩 MACD 골든크로스 다수(삼성전자·현대차·NAVER 등) 상승 신호 우세하나, RSI 과매수 종목 다수·거래량 폭"
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": null
+        },
+        {
+          "date": "2026-04-17",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 +2.07% 상승 속 거래량 폭증(1.5~14.6배) + MACD 골든크로스 + BB 상단 진입이 대다수 종목에서 동시 확인되나, 극도의"
+            },
+            "bear": {
+              "stance": "CAUTIOUS_BEAR",
+              "confidence": 0.62,
+              "key_reason": "코스피 +2.07% 강세에도 과매수(RSI>70) 종목 14개 집중, 거래량 폭증 + 극단적 고점(52주 100% 근접 종목 5개) 조합으로 모"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.58,
+              "key_reason": "시장 +2.07% 강세이나 기술적 신호 과도한 과매수(RSI 70+초과 10종목), 거래량 폭증과 가격 급등의 불일치, 저신뢰도 종목 집중(소형"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "NAVER +8.44%, 현대차 +5.12%, 셀트리온 +4.97% 등 대형주 전반 MACD 골든크로스 + BB상단 돌파 + 거래량 2.2~3."
+            },
+            "bear": {
+              "stance": "CAUTIOUS_BEAR",
+              "confidence": 0.65,
+              "key_reason": "USD/KRW 1,478.81 고환율 지속(위험신호 1개 확정) + RSI 76.4 삼성전자 등 과매수 종목 집중 + 52주 고점 97% 근접으"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.57,
+              "key_reason": "BULL의 MACD 골든크로스·거래량 폭증 신호와 BEAR의 RSI 과매수 14종목·환율 고점 신호가 통계적으로 균등하게 상충하며, 과거 5일 "
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": null
+        },
+        {
+          "date": "2026-04-17",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 +2.07% 강세 속 MACD 골든크로스(전 종목) + 거래량 2.1배~14.6배 폭증 복합신호 2개 충족, 다만 RSI 과매수(>75)"
+            },
+            "bear": {
+              "stance": "MILD_BEAR",
+              "confidence": 0.42,
+              "key_reason": "코스피 +2.07% 강세에도 전일 NEUTRAL이 -0.30% 손실 기록 → 모멘텀 필터 신뢰도 저하; 극단적 과매수(RSI 90+) 다수 종목"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.52,
+              "key_reason": "코스피 +2.07% 강세에도 기술적 신호는 극단적 과매수(RSI>80이 7개 종목, 거래량 폭증)로 반등오판 위험 높음. 상승신호 14개 vs "
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "5개 종목 전체 MACD 골든크로스 + 거래량 2.2~3.1배 폭증 복합신호 동시 충족, 코스피 +2.07% 강세 배경에서 셀트리온·NAVER·"
+            },
+            "bear": {
+              "stance": "MILD_BEAR",
+              "confidence": 0.45,
+              "key_reason": "USD/KRW 1,478.81원으로 1,400원 상단을 크게 이탈한 위험 신호 지속 + VKOSPI 데이터 부재(0.0)로 변동성 측정 불가 상"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.52,
+              "key_reason": "상승신호 우위(MACD 골든크로스 전종목+거래량 폭증)에도 RSI>75 과매수 종목 다수+과거 모닝강세→오후약화 반복 패턴(평균 -0.3~-0."
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": "wrong"
         }
       ],
       "execution_patterns": {
@@ -2948,26 +2964,12 @@
           "action": "buy_order",
           "strategy": "momentum",
           "reason": "momentum 진입",
-          "count": 20,
-          "success": 20,
+          "count": 22,
+          "success": 22,
           "fail": 0,
           "avg_pnl_pct": 0.0,
-          "last_detail": "선택이유: 거래량14.7배, 11% 급등 주목",
+          "last_detail": "선택이유: 거래량30배 +11% 급등 주목",
           "examples": [
-            {
-              "date": "2026-04-16",
-              "ticker": "215790",
-              "detail": "선택이유: 거래량 12.2배, 18% 급등 모멘텀",
-              "selected_reason": "거래량 12.2배, 18% 급등 모멘텀",
-              "pnl_pct": 0.0
-            },
-            {
-              "date": "2026-04-16",
-              "ticker": "047040",
-              "detail": "선택이유: 거래량 5.8배, 18% 급등 건설주 주목",
-              "selected_reason": "거래량 5.8배, 18% 급등 건설주 주목",
-              "pnl_pct": 0.0
-            },
             {
               "date": "2026-04-16",
               "ticker": "069540",
@@ -2988,9 +2990,23 @@
               "detail": "선택이유: 거래량14.7배, 11% 급등 주목",
               "selected_reason": "거래량14.7배, 11% 급등 주목",
               "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-04-17",
+              "ticker": "038060",
+              "detail": "선택이유: 거래량81배 +6% 강한 상승",
+              "selected_reason": "거래량81배 +6% 강한 상승",
+              "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-04-17",
+              "ticker": "027360",
+              "detail": "선택이유: 거래량30배 +11% 급등 주목",
+              "selected_reason": "거래량30배 +11% 급등 주목",
+              "pnl_pct": 0.0
             }
           ],
-          "last_seen": "2026-04-16"
+          "last_seen": "2026-04-17"
         },
         "sell_filled|broker_sync|max_hold": {
           "action": "sell_filled",
@@ -3233,11 +3249,11 @@
           "action": "sell_filled",
           "strategy": "momentum",
           "reason": "stop_loss",
-          "count": 3,
-          "success": 3,
+          "count": 4,
+          "success": 4,
           "fail": 0,
-          "avg_pnl_pct": -10.4653,
-          "last_detail": "entry=7,300 hold_days=0",
+          "avg_pnl_pct": -9.6768,
+          "last_detail": "entry=1,683 hold_days=0",
           "examples": [
             {
               "date": "2026-04-16",
@@ -3259,9 +3275,16 @@
               "detail": "entry=7,300 hold_days=0",
               "selected_reason": "",
               "pnl_pct": -13.320041095890412
+            },
+            {
+              "date": "2026-04-17",
+              "ticker": "038060",
+              "detail": "entry=1,683 hold_days=0",
+              "selected_reason": "",
+              "pnl_pct": -7.311221033868093
             }
           ],
-          "last_seen": "2026-04-16"
+          "last_seen": "2026-04-17"
         },
         "buy_failed|momentum|order_exception": {
           "action": "buy_failed",
@@ -3282,23 +3305,127 @@
             }
           ],
           "last_seen": "2026-04-16"
+        },
+        "sell_filled|broker_sync|stop_loss": {
+          "action": "sell_filled",
+          "strategy": "broker_sync",
+          "reason": "stop_loss",
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "avg_pnl_pct": -2.5594,
+          "last_detail": "entry=13,930 hold_days=1",
+          "last_seen": "2026-04-17",
+          "examples": [
+            {
+              "date": "2026-04-17",
+              "ticker": "010820",
+              "detail": "entry=13,930 hold_days=1",
+              "selected_reason": "",
+              "pnl_pct": -2.559368269921034
+            }
+          ]
+        },
+        "sell_failed|broker_sync|pre_session_sell": {
+          "action": "sell_failed",
+          "strategy": "broker_sync",
+          "reason": "pre_session_sell",
+          "count": 1,
+          "success": 0,
+          "fail": 1,
+          "avg_pnl_pct": 0.0,
+          "last_detail": "보유수량 부족: 0주",
+          "last_seen": "2026-04-17",
+          "examples": [
+            {
+              "date": "2026-04-17",
+              "ticker": "010820",
+              "detail": "보유수량 부족: 0주",
+              "selected_reason": "",
+              "pnl_pct": 0.0
+            }
+          ]
+        },
+        "buy_order|kr_sector_play|KR Tier2 섹터플레이 [091160.KS +1.81%]": {
+          "action": "buy_order",
+          "strategy": "kr_sector_play",
+          "reason": "KR Tier2 섹터플레이 [091160.KS +1.81%]",
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "avg_pnl_pct": 0.0,
+          "last_detail": "반도체 섹터 ETF +1.81% 강세, 009150 +5.63% 상승률로 섹터 모멘텀 동반 상승 중이며, 5일 연속 상승 추세와 1.28배 거래량으로 수급 확인, CAUTIOUS 모드에서 Core의 50% 포지션으로 제한적 진입 적정.",
+          "last_seen": "2026-04-17",
+          "examples": [
+            {
+              "date": "2026-04-17",
+              "ticker": "009150",
+              "detail": "반도체 섹터 ETF +1.81% 강세, 009150 +5.63% 상승률로 섹터 모멘텀 동반 상승 중이며, 5일 연속 상승 추세와 1.28배 거래량으로 수급 확인, CAUTIOUS 모드에서 Core의 50% 포지션으로 제한적 진입 적정.",
+              "selected_reason": "kr_sector_etf=091160.KS",
+              "pnl_pct": 0.0
+            }
+          ]
+        },
+        "buy_order|kr_sector_play|KR Tier2 섹터플레이 [305720.KS +1.64%]": {
+          "action": "buy_order",
+          "strategy": "kr_sector_play",
+          "reason": "KR Tier2 섹터플레이 [305720.KS +1.64%]",
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "avg_pnl_pct": 0.0,
+          "last_detail": "섹터ETF +1.64% 모멘텀 + 003670 +4.47% 강한 상승률 + 거래량 2.08배 + 5일 연속 상승추세, CAUTIOUS 모드에서 Core 50% 사이즈로 진입 적절",
+          "last_seen": "2026-04-17",
+          "examples": [
+            {
+              "date": "2026-04-17",
+              "ticker": "003670",
+              "detail": "섹터ETF +1.64% 모멘텀 + 003670 +4.47% 강한 상승률 + 거래량 2.08배 + 5일 연속 상승추세, CAUTIOUS 모드에서 Core 50% 사이즈로 진입 적절",
+              "selected_reason": "kr_sector_etf=305720.KS",
+              "pnl_pct": 0.0
+            }
+          ]
+        },
+        "sell_failed|kr_sector_play|intraday_review_sell": {
+          "action": "sell_failed",
+          "strategy": "kr_sector_play",
+          "reason": "intraday_review_sell",
+          "count": 1,
+          "success": 0,
+          "fail": 1,
+          "avg_pnl_pct": 0.0,
+          "last_detail": "모의투자 장종료 입니다.",
+          "last_seen": "2026-04-17",
+          "examples": [
+            {
+              "date": "2026-04-17",
+              "ticker": "009150",
+              "detail": "모의투자 장종료 입니다.",
+              "selected_reason": "",
+              "pnl_pct": 0.0
+            }
+          ]
         }
       },
       "execution_lessons": [
         "momentum 진입 실패 패턴: order_rejected",
         "손실 청산 원인 점검: stop_loss",
         "손실 청산 원인 점검: intraday_review_sell",
-        "momentum 진입 실패 패턴: order_exception"
+        "momentum 진입 실패 패턴: order_exception",
+        "손실 청산 원인 점검: stop_loss",
+        "청산 실패 패턴: pre_session_sell",
+        "손실 청산 원인 점검: stop_loss",
+        "청산 실패 패턴: intraday_review_sell"
       ],
       "execution_stats": {
-        "buy_order": 25,
+        "buy_order": 29,
         "buy_failed": 22,
-        "sell_filled": 19,
-        "sell_failed": 117
+        "sell_filled": 21,
+        "sell_failed": 119
       }
     },
     "US": {
-      "trained_days": 21,
+      "trained_days": 24,
       "training_period": {
         "phase1": "2025-01-01 ~ 2025-04-30 (조정장 50일)",
         "phase2": "2025-05-01 ~ 2025-09-30 (강세장 100일)",
@@ -3308,53 +3435,53 @@
       "current_regime": "unknown",
       "analyst_performance": {
         "bull": {
-          "total": 37,
-          "hit": 21,
+          "total": 41,
+          "hit": 25,
           "miss": 16,
-          "rate": 0.568,
+          "rate": 0.61,
           "recent_7d": {
             "total": 7,
             "hit": 5,
             "rate": 0.714
           },
           "recent_30d": {
-            "total": 21,
-            "hit": 11,
-            "rate": 0.524
+            "total": 23,
+            "hit": 13,
+            "rate": 0.565
           },
           "trend": "improving"
         },
         "bear": {
-          "total": 37,
-          "hit": 20,
+          "total": 41,
+          "hit": 24,
           "miss": 17,
-          "rate": 0.541,
+          "rate": 0.585,
           "recent_7d": {
             "total": 7,
-            "hit": 5,
-            "rate": 0.714
+            "hit": 7,
+            "rate": 1.0
           },
           "recent_30d": {
-            "total": 21,
-            "hit": 13,
-            "rate": 0.619
+            "total": 23,
+            "hit": 15,
+            "rate": 0.652
           },
           "trend": "improving"
         },
         "neutral": {
-          "total": 37,
-          "hit": 20,
+          "total": 41,
+          "hit": 24,
           "miss": 17,
-          "rate": 0.541,
+          "rate": 0.585,
           "recent_7d": {
             "total": 7,
             "hit": 5,
             "rate": 0.714
           },
           "recent_30d": {
-            "total": 21,
-            "hit": 10,
-            "rate": 0.476
+            "total": 23,
+            "hit": 12,
+            "rate": 0.522
           },
           "trend": "improving"
         }
@@ -3386,9 +3513,9 @@
           "win_rate": 0.0
         },
         "MILD_BULL": {
-          "count": 7,
-          "avg_pnl": 0.0021,
-          "win_rate": 0.143
+          "count": 11,
+          "avg_pnl": 0.1706,
+          "win_rate": 0.273
         },
         "NEUTRAL": {
           "count": 5,
@@ -3424,9 +3551,9 @@
           "avg_pnl": 2.2046
         },
         "gap_pullback": {
-          "count": 11,
-          "win_rate": 0.636,
-          "avg_pnl": -5.7637
+          "count": 18,
+          "win_rate": 0.722,
+          "avg_pnl": 0.6929
         },
         "mean_reversion": {
           "count": 1,
@@ -3989,6 +4116,66 @@
           "avg_pnl_when_followed": 0.0,
           "insight": "MILD_BULL판단맞아도미진입=손익0%반복",
           "examples": []
+        },
+        {
+          "id": "P038",
+          "type": "미실행",
+          "description": "합의MILD_BULL반복미진입",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "MILD_BULL4연속미실행=손익0%고착,진입필수",
+          "examples": []
+        },
+        {
+          "id": "P039",
+          "type": "추격매수",
+          "description": "RUM14%급등직후진입,모멘텀소진반락패턴",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 1.8335299218223269,
+          "insight": "급등모멘텀추격진입은당일반락위험,갭풀백은하락확인후진입필수",
+          "examples": []
+        },
+        {
+          "id": "P040",
+          "type": "미실행",
+          "description": "정확한판단+미진입=반복손익0%",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "MILD_BULL합의+시장+1.32%에도미진입=5연속손익0%고착,판단정확성무의미",
+          "examples": []
+        },
+        {
+          "id": "P041",
+          "type": "실행부재",
+          "description": "시장상승+1.2% vs 내손익+0.03%,신규진입미실행반복",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.029091332531441333,
+          "insight": "MILD_BULL합의시장+1.2%인데내수익+0.03%=포지션부재가핵심",
+          "examples": []
         }
       ],
       "tuning_patterns": {
@@ -4008,60 +4195,60 @@
           "last_seen": "2026-04-16"
         },
         "30min_tune": {
-          "count": 54,
+          "count": 62,
           "correct": 4,
-          "rate": 0.074,
-          "insight": "Historically low precision (7% over 54 trials); treat as weak context only. (Context: 30분 경과 후 지수 +0.43% 상승으로 모닝 MILD_BULL 판단 유효하며 양자컴퓨팅/AI 포지션([특정종목] 등 ) 모두 모멘텀 유지 중)",
-          "last_seen": "2026-04-16"
+          "rate": 0.065,
+          "insight": "지수 +1.12% 상승으로 모닝 MILD_BULL 판단이 유효하게 확인되며, 거래량 정상·알림 없음으로 추가 조정 불필요",
+          "last_seen": "2026-04-18"
         },
         "60min_tune": {
-          "count": 35,
+          "count": 39,
           "correct": 3,
-          "rate": 0.086,
-          "insight": "Historically low precision (9% over 35 trials); treat as weak context only. (Context: 지수 +0.44% 상승 및 양자컴퓨팅/AI 포지션([특정종목] 등 ) 유지 중으로 모닝 MILD_BULL 시그널 지속 확인, 거래량 normal)",
-          "last_seen": "2026-04-16"
+          "rate": 0.077,
+          "insight": "지수 +1.27% 상승으로 모닝 MILD_BULL 판단이 정확히 실현되고 있으며 거래량 정상·알림 없음으로 추세 지속 가능성 높음",
+          "last_seen": "2026-04-18"
         },
         "90min_tune": {
-          "count": 27,
-          "correct": 2,
-          "rate": 0.074,
-          "insight": "Historically low precision (7% over 27 trials); treat as weak context only. (Context: 지수 +0.32% 소폭 상승에 거래량 정상, [특정종목] 등 등 핵심 포지션 모닝 모멘텀 유지 중으로 MILD_BULL 판단 변경 불필요)",
-          "last_seen": "2026-04-16"
+          "count": 29,
+          "correct": 3,
+          "rate": 0.103,
+          "insight": "지수 +1.19% 상승으로 모닝 MILD_BULL 판단이 정확히 실현되고 있으며 거래량 정상·경보 없음으로 추세 지속 가능성 높음",
+          "last_seen": "2026-04-18"
         },
         "120min_tune": {
-          "count": 21,
-          "correct": 0,
-          "rate": 0.0,
-          "insight": "Zero precision over 21 trials; no predictive value at this window. (Context: 지수 +0.39% 상승 및 [특정종목] 등 포지션 유지 중 거래량 정상으로 아침 MILD_BULL 판단 유효하나 모멘텀 초기 대비 다소 둔화 중)",
-          "last_seen": "2026-04-16"
+          "count": 23,
+          "correct": 1,
+          "rate": 0.043,
+          "insight": "지수 +1.14% 상승으로 아침 MILD_BULL 판단이 유효하게 진행 중이며 경보 없이 거래량 정상 유지로 추세 지속 확인",
+          "last_seen": "2026-04-18"
         },
         "150min_tune": {
-          "count": 17,
-          "correct": 1,
-          "rate": 0.059,
-          "insight": "Historically low precision (6% over 17 trials); treat as weak context only. (Context: 지수 +0.43% 상승과 양자컴퓨팅/AI 섹터([특정종목] 보유 중) 모멘텀이 아침 MILD_BULL 판단과 일치하며 거래량 정상 수준으로 추세)",
-          "last_seen": "2026-04-16"
+          "count": 19,
+          "correct": 2,
+          "rate": 0.105,
+          "insight": "지수 +1.08% 상승으로 오전 MILD_BULL 판단이 유효하게 진행 중이며, 거래량 정상·경고 없음으로 추가 조정 불필요",
+          "last_seen": "2026-04-18"
         },
         "180min_tune": {
-          "count": 14,
-          "correct": 1,
-          "rate": 0.071,
-          "insight": "Historically low precision (7% over 14 trials); treat as weak context only. (Context: 180분 경과 후 지수 +0.59% 상승으로 오전 MILD_BULL 판단 유지되며 [특정종목] 등 등 핵심 포지션 모멘텀 지속, 경보 없음으로 )",
-          "last_seen": "2026-04-16"
+          "count": 16,
+          "correct": 2,
+          "rate": 0.125,
+          "insight": "180분 경과 후 지수 +1.18% 상승으로 모닝 MILD_BULL 판단이 유효하게 검증되었으며, 거래량 정상·알림 없음으로 추가 조정 불필요",
+          "last_seen": "2026-04-18"
         },
         "210min_tune": {
-          "count": 9,
-          "correct": 0,
-          "rate": 0.0,
-          "insight": "Historically low precision (0% over 9 trials); treat as weak context only. (Context: 지수 +0.64% 상승 및 [특정종목] 등 포지션 유지 중으로 오전 판단과 일치하는 기술주 모멘텀 지속 확인, 210분 경과 후에도 알림 없고 )",
-          "last_seen": "2026-04-16"
+          "count": 10,
+          "correct": 1,
+          "rate": 0.1,
+          "insight": "Below-average precision (10% over 10 trials); use with caution. (Context: 210분 경과 후 지수 상승폭이 +0.15%로 아침 MILD_BULL 판단 대비 모멘텀이 크게 약화되었고 거래량도 normal 수준으로 양자컴퓨)",
+          "last_seen": "2026-04-17"
         },
         "240min_tune": {
-          "count": 8,
-          "correct": 0,
-          "rate": 0.0,
-          "insight": "Historically low precision (0% over 8 trials); treat as weak context only. (Context: 인덱스 +0.74% 유지 및 [특정종목] 등 포지션 모두 모닝 모멘텀 방향 일치, 240분 경과 후에도 알림 없고 거래량 정상으로 MILD_BU)",
-          "last_seen": "2026-04-16"
+          "count": 9,
+          "correct": 1,
+          "rate": 0.111,
+          "insight": "Below-average precision (11% over 9 trials); use with caution. (Context: 지수 상승폭이 +0.23%로 아침 예상 대비 모멘텀 둔화, 거래량도 normal 수준으로 [특정종목] 등 핵심 신호 강도 약화 — 이익 보호를 )",
+          "last_seen": "2026-04-17"
         },
         "270min_tune": {
           "count": 5,
@@ -4114,16 +4301,16 @@
         "avoid": [],
         "emphasize": [],
         "learned_lessons": [
-          "급등13%+gap_pullback=고점매수,횡보장무포지션이최적",
-          "VIX미수신+골든크로스3종목=MILD_BULL허용",
-          "횡보+VIX미수신=무포지션최적",
-          "Bear3연속실패,약세단일신호과신금지",
           "횡보장CAUTIOUS무포지션=손익0%방어5연속확인",
           "골든크로스6종+거래량급증도VIX미수신횡보장엔MILD_BULL상한",
           "골든크로스6:1+기술주강세=MILD_BULL유효,진입실행필요",
           "MILD_BULL+기술주강세=진입실행필수",
           "MILD_BULL+기술주강세+골든크로스=진입필수,미실행금지",
-          "MILD_BULL+상승확인=진입미루면손익0%고착"
+          "MILD_BULL+상승확인=진입미루면손익0%고착",
+          "MILD_BULL합의시소규모진입필수,미실행금지",
+          "당일14%이상급등종목갭풀백진입금지,익일눌림목확인후진입",
+          "MILD_BULL적중해도미진입시수익0%,판단=실행전제",
+          "MILD_BULL+시장+1%이상=broker_sync외신규진입필수"
         ]
       },
       "recent_days": [
@@ -4576,129 +4763,75 @@
           "worst_trade": null,
           "worst_trade_reason": "",
           "trades": 0
+        },
+        {
+          "date": "2026-04-16",
+          "mode": "MILD_BULL",
+          "pnl_pct": 0.0,
+          "market_change": 0.3252172251662066,
+          "win": false,
+          "bull_result": "HIT",
+          "bear_result": "HIT",
+          "neutral_result": "HIT",
+          "bull_stance": "MODERATE_BULL",
+          "bear_stance": "MILD_BULL",
+          "neutral_stance": "MILD_BULL",
+          "bull_reason": "양자컴퓨팅/AI 섹터 골든크로스 6종 이상(QBTS +13.14%, RGTI +11.50% 거래량 2.4배↑, QUBT +11.47%, IONQ +9.11%) + NVDA 골든크로스 BB 96% + 나스닥 +0.96% 기술주 모멘텀으로 전문 영역 기준 신호 2개 이상 충족",
+          "bear_reason": "VIX 17.9 안정·위험신호 無 환경에서 나스닥 +0.96%·골든크로스 14종목(QBTS +13.14%, RGTI +11.50% 등 거래량 확대 동반) vs 데드크로스 2종목으로 기술주 모멘텀 유효하나, S&P500 +0.37% 제한적 상승·XLI -1.39%·XLV -0.97% 섹터 분화·HYG -0.08% 크레딧 미약 약세로 시장 전반 확장성 부재",
+          "neutral_reason": "골든크로스 14종목 vs 데드크로스 2종목(7:1 비율) + 나스닥 +0.96% 기술주 우위 확인이나, DXY 98.1 달러약세·HYG -0.08% 신용시장 미세균열·XLI -1.39%·XLV -0.97% 방어섹터 하락 등 매크로 상충신호 존재로 MODERATE_BULL 상향 불충분",
+          "key_lesson": "MILD_BULL4연속미실행=손익0%고착,진입필수",
+          "issue_type": "미실행",
+          "best_trade": null,
+          "worst_trade": null,
+          "worst_trade_reason": "",
+          "trades": 0
+        },
+        {
+          "date": "2026-04-17",
+          "mode": "MILD_BULL",
+          "pnl_pct": 0.0,
+          "market_change": 1.3232027841396519,
+          "win": false,
+          "bull_result": "HIT",
+          "bear_result": "HIT",
+          "neutral_result": "HIT",
+          "bull_stance": "MODERATE_BULL",
+          "bear_stance": "MILD_BULL",
+          "neutral_stance": "MILD_BULL",
+          "bull_reason": "양자컴퓨팅 섹터 6종목 MACD 골든크로스 + RGTI 거래량 2.4배·HOOD 1.6배 급증으로 핵심 신호 2개 이상 충족, 나스닥 +0.96% 기술주 강세(XLK +0.93%, NVDA 골든크로스)가 이를 뒷받침하며 MODERATE_BULL 기준 상회",
+          "bear_reason": "양자컴퓨팅 섹터 6종목 골든크로스(평균 +10.8%, 거래량 2.4배) + VIX 17.9 정상 + 나스닥 +0.96% 기술주 강세 유효하나, TSLA 데드크로스·XLV/XLI 약세 등 혼조 신호로 MODERATE_BULL 상향 불충분",
+          "neutral_reason": "양자컴퓨팅 6종목 골든크로스+거래량 급증 vs TSLA 데드크로스·XLV/XLI 약세·횡보 레짐 = 2.5:1 신호비율로 MILD_BULL 상한 수준이나 MODERATE_BULL 전환 근거 불충분",
+          "key_lesson": "MILD_BULL합의+시장+1.32%에도미진입=5연속손익0%고착,판단정확성무의미",
+          "issue_type": "미실행",
+          "best_trade": null,
+          "worst_trade": null,
+          "worst_trade_reason": "",
+          "trades": 0
+        },
+        {
+          "date": "2026-04-18",
+          "mode": "MILD_BULL",
+          "pnl_pct": 0.029091332531441333,
+          "market_change": 1.196945385058716,
+          "win": true,
+          "bull_result": "HIT",
+          "bear_result": "HIT",
+          "neutral_result": "HIT",
+          "bull_stance": "MODERATE_BULL",
+          "bear_stance": "MILD_BULL",
+          "neutral_stance": "MILD_BULL",
+          "bull_reason": "양자컴퓨팅 섹터 6종목 MACD 골든크로스 + RGTI 거래량 2.4배·HOOD 1.6배 급증으로 핵심 신호 2개 이상 충족, 나스닥 +0.96% 기술주 강세(XLK +0.93%, NVDA 골든크로스)가 이를 뒷받침하며 MODERATE_BULL 기준 상회",
+          "bear_reason": "양자컴퓨팅 섹터 6종목 골든크로스(평균 +10.8%, 거래량 2.4배) + VIX 17.9 정상 + 나스닥 +0.96% 기술주 강세 유효하나, TSLA 데드크로스·XLV/XLI 약세 등 혼조 신호로 MODERATE_BULL 상향 불충분",
+          "neutral_reason": "양자컴퓨팅 6종목 골든크로스+거래량 급증 vs TSLA 데드크로스·XLV/XLI 약세·횡보 레짐 = 2.5:1 신호비율로 MILD_BULL 상한 수준이나 MODERATE_BULL 전환 근거 불충분",
+          "key_lesson": "MILD_BULL합의시장+1.2%인데내수익+0.03%=포지션부재가핵심",
+          "issue_type": "실행부재",
+          "best_trade": "VG",
+          "worst_trade": "VG",
+          "worst_trade_reason": "broker_sync단순청산,시장+1.2%대비수익+0.03%미흡",
+          "trades": 1
         }
       ],
       "debate_history": [
-        {
-          "date": "2026-03-23",
-          "r1": {
-            "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.62,
-              "key_reason": "애플 RSI 23.6 극단적 과매도 + 거래량 2.2배 급증으로 평균회귀 반등 신호 2개 동시 발생"
-            },
-            "bear": {
-              "stance": "HALT",
-              "confidence": 0.85,
-              "key_reason": "VIX 23.8로 위험 임계치(20) 상회 중이며 S&P500 -1.51%, 나스닥 -2.01% 하락에 주요 기술주(엔비디아 -3.09%, 테슬"
-            },
-            "neutral": {
-              "stance": "MILD_BEAR",
-              "confidence": 0.62,
-              "key_reason": "S&P500 -1.51%, 나스닥 -2.01%, VIX 23.8 고조 상태에서 3개 종목 모두 MACD 데드크로스 유지 및 RSI 과매도 구간 "
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.58,
-              "key_reason": "애플 RSI 23.6 극단적 과매도 + 거래량 2.2배 급증으로 평균회귀 반등 신호 2개 동시 발생, 기술적 신호 기준 충족"
-            },
-            "bear": {
-              "stance": "HALT",
-              "confidence": 0.85,
-              "key_reason": "VIX 23.8로 위험 임계치 상회, S&P500·나스닥 동반 하락(-1.51%/-2.01%), 3개 종목 전체 MACD 데드크로스 지속 등 복"
-            },
-            "neutral": {
-              "stance": "MILD_BEAR",
-              "confidence": 0.62,
-              "key_reason": "MACD 데드크로스 3종목 전체 유지 + VIX 23.8 + S&P500·나스닥 동반 하락으로 하락 신호가 상승 신호(애플 RSI 과매도·거래량"
-            }
-          },
-          "changes": [],
-          "consensus_shifted": false,
-          "outcome": null
-        },
-        {
-          "date": "2026-03-24",
-          "r1": {
-            "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.62,
-              "key_reason": "애플 RSI 23.6 극단적 과매도 + 거래량 2.2배 급증으로 핵심 2개 기술 신호 동시 충족, 평균회귀 반등 가능성 높음"
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.82,
-              "key_reason": "VIX 23.8로 위험 임계값(20) 상회, S&P500 -1.51%·나스닥 -2.01% 하락, 주요 3종목 전원 MACD 데드크로스 진행 중으"
-            },
-            "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.52,
-              "key_reason": "애플 RSI 23.6 극단적 과매도+거래량 2.2배로 평균회귀 Bull 신호 존재하나, S&P500 -1.51%·나스닥 -2.01%·VIX 23"
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.62,
-              "key_reason": "애플 RSI 23.6 극단적 과매도(30 이하) + 거래량 2.2배 급증으로 핵심 기술 신호 2개 동시 충족, MACD 데드크로스 존재하나 평균"
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.85,
-              "key_reason": "VIX 23.8로 위험 임계값 상회 + S&P500·나스닥 동반 급락 + 주요 3종목 전원 MACD 데드크로스 복수 위험 신호 동시 발생으로 D"
-            },
-            "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.52,
-              "key_reason": "애플 RSI 23.6+거래량 2.2배 과매도 반등 신호 vs S&P500 -1.51%·나스닥 -2.01%·VIX 23.8·전종목 MACD 데드크"
-            }
-          },
-          "changes": [],
-          "consensus_shifted": false,
-          "outcome": null
-        },
-        {
-          "date": "2026-03-24",
-          "r1": {
-            "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.62,
-              "key_reason": "애플 RSI 23.6 극단적 과매도 + 거래량 2.2배 급증으로 평균회귀 반등 신호 2개 동시 충족"
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.82,
-              "key_reason": "VIX 23.8로 위험 임계값(20) 초과, S&P500 -1.51%·나스닥 -2.01% 급락, 엔비디아·테슬라 MACD 데드크로스 동시 발생으"
-            },
-            "neutral": {
-              "stance": "MILD_BEAR",
-              "confidence": 0.62,
-              "key_reason": "S&P500 -1.51%, 나스닥 -2.01%, VIX 23.8 상승 속 엔비디아·테슬라 MACD 데드크로스 및 3%대 하락으로 기술적 약세 신"
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.62,
-              "key_reason": "애플 RSI 23.6 극단적 과매도 + 거래량 2.2배 급증으로 기술적 반등 신호 2개 동시 충족, BEAR의 VIX·지수 하락 논거는 매크로 "
-            },
-            "bear": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.85,
-              "key_reason": "VIX 23.8로 위험 임계값(20) 초과 + S&P500·나스닥 동반 급락 + 엔비디아·테슬라 MACD 데드크로스 복수 발생으로 판단 기준상 "
-            },
-            "neutral": {
-              "stance": "MILD_BEAR",
-              "confidence": 0.62,
-              "key_reason": "S&P500 -1.51%·나스닥 -2.01%·VIX 23.8·엔비디아·테슬라·애플 MACD 데드크로스 3종 동시 발생으로 하락 신호 우위이나, "
-            }
-          },
-          "changes": [],
-          "consensus_shifted": false,
-          "outcome": "wrong"
-        },
         {
           "date": "2026-03-25",
           "r1": {
@@ -5847,7 +5980,127 @@
           },
           "changes": [],
           "consensus_shifted": false,
+          "outcome": "wrong"
+        },
+        {
+          "date": "2026-04-17",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스(QBTS +13.14%, IONQ +9.11%, QUBT +11.47%, EOSE +9.61%, OKLO +1"
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스(QBTS +13.14%, IONQ +9.11%, QUBT +11.47%, EOSE +9.61%, OKLO +1"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스(QBTS +13.14%, IONQ +9.11%, QUBT +11.47%, EOSE +9.61%, OKLO +1"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "양자컴퓨팅 섹터 6종목 동시 골든크로스(평균 +10.8%, 거래량 2.4배) + MACD 상향 전환 + 나스닥 +0.96% + NVDA/AAPL"
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "VIX 17.9 정상 + 양자컴퓨팅 6종목 골든크로스(거래량 2.4배) + 기술주 모멘텀(XLK +0.93%, 나스닥 +0.96%) 긍정적이나,"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 6종목 골든크로스+거래량 2.4배 및 기술주 강세(XLK +0.93%, 나스닥 +0.96%)로 상승 신호 우위이나, HYG -0.08"
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
           "outcome": null
+        },
+        {
+          "date": "2026-04-17",
+          "r1": {
+            "bull": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스 + RGTI 거래량 2.4배 급증 + 기술주 강세(XLK +0.93%)로 2개 신호 충족하나, S&P +0.3"
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스(QBTS +13.14%, IONQ +9.11%, QUBT +11.47%, EOSE +9.61%, OKLO +1"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스(QBTS +13.14%, IONQ +9.11%, QUBT +11.47%, EOSE +9.61%, OKLO +1"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스(QBTS +13.14%, RGTI +11.50% 거래량 2.4배↑) + 나스닥 +0.96% 기술주 강세로 2개"
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "VIX 17.9 정상 + 양자컴퓨팅 섹터 6종목 골든크로스(RGTI +11.50% 거래량 2.4배) + XLK +0.93% 기술주 강세로 상승 "
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 6종목 골든크로스+거래량 급증(RGTI 2.4배) 기술적 신호 vs S&P +0.37% 약세·HYG -0.08%·XLV/XLI 하락 "
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": null
+        },
+        {
+          "date": "2026-04-17",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스 + 거래량 급증(RGTI 2.4배, HOOD 1.6배, EOSE 1.4배) 동시 확인으로 신호 2개 이상 충족"
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스(QBTS +13.14%, IONQ +9.11%, QUBT +11.47%, EOSE +9.61%, OKLO +1"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스(QBTS +13.14%, IONQ +9.11%, QUBT +11.47%, EOSE +9.61%, OKLO +1"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "양자컴퓨팅 섹터 6종목 MACD 골든크로스 + RGTI 거래량 2.4배·HOOD 1.6배 급증으로 핵심 신호 2개 이상 충족, 나스닥 +0.96"
+            },
+            "bear": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 섹터 6종목 골든크로스(평균 +10.8%, 거래량 2.4배) + VIX 17.9 정상 + 나스닥 +0.96% 기술주 강세 유효하나, "
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "양자컴퓨팅 6종목 골든크로스+거래량 급증 vs TSLA 데드크로스·XLV/XLI 약세·횡보 레짐 = 2.5:1 신호비율로 MILD_BULL 상한"
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": "wrong"
         }
       ],
       "execution_patterns": {
@@ -5963,11 +6216,11 @@
           "action": "buy_order",
           "strategy": "gap_pullback",
           "reason": "gap_pullback 진입",
-          "count": 3,
-          "success": 3,
+          "count": 4,
+          "success": 4,
           "fail": 0,
           "avg_pnl_pct": 0.0,
-          "last_detail": "선택이유: 양자컴퓨팅 테마 추세 동참",
+          "last_detail": "선택이유: 14%급등 미디어 모멘텀",
           "examples": [
             {
               "date": "2026-04-07",
@@ -5989,19 +6242,97 @@
               "detail": "선택이유: 양자컴퓨팅 테마 추세 동참",
               "selected_reason": "양자컴퓨팅 테마 추세 동참",
               "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-04-17",
+              "ticker": "RUM",
+              "detail": "선택이유: 14%급등 미디어 모멘텀",
+              "selected_reason": "14%급등 미디어 모멘텀",
+              "pnl_pct": 0.0
             }
           ],
-          "last_seen": "2026-04-15"
+          "last_seen": "2026-04-17"
+        },
+        "sell_filled|gap_pullback|max_hold_final": {
+          "action": "sell_filled",
+          "strategy": "gap_pullback",
+          "reason": "max_hold_final",
+          "count": 2,
+          "success": 2,
+          "fail": 0,
+          "avg_pnl_pct": 12.9611,
+          "last_detail": "entry=10,233 hold_days=3",
+          "last_seen": "2026-04-17",
+          "examples": [
+            {
+              "date": "2026-04-17",
+              "ticker": "NVDA",
+              "detail": "entry=266,720 hold_days=3",
+              "selected_reason": "",
+              "pnl_pct": 10.06849565644807
+            },
+            {
+              "date": "2026-04-17",
+              "ticker": "SOUN",
+              "detail": "entry=10,233 hold_days=3",
+              "selected_reason": "",
+              "pnl_pct": 15.853710902765558
+            }
+          ]
+        },
+        "sell_filled|gap_pullback|intraday_review_sell": {
+          "action": "sell_filled",
+          "strategy": "gap_pullback",
+          "reason": "intraday_review_sell",
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "avg_pnl_pct": -2.1954,
+          "last_detail": "entry=9,492 hold_days=0",
+          "last_seen": "2026-04-17",
+          "examples": [
+            {
+              "date": "2026-04-17",
+              "ticker": "RUM",
+              "detail": "entry=9,492 hold_days=0",
+              "selected_reason": "",
+              "pnl_pct": -2.195358255451705
+            }
+          ]
+        },
+        "sell_filled|broker_sync|tp_analyst_sell": {
+          "action": "sell_filled",
+          "strategy": "broker_sync",
+          "reason": "tp_analyst_sell",
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "avg_pnl_pct": 0.2569,
+          "last_detail": "entry=16,635 hold_days=1",
+          "last_seen": "2026-04-18",
+          "examples": [
+            {
+              "date": "2026-04-18",
+              "ticker": "VG",
+              "detail": "entry=16,635 hold_days=1",
+              "selected_reason": "",
+              "pnl_pct": 0.25691288709535975
+            }
+          ]
         }
       },
       "execution_lessons": [
         "손실 청산 원인 점검: max_hold",
-        "손실 청산 원인 점검: stop_loss"
+        "손실 청산 원인 점검: stop_loss",
+        "수익 청산 유효 패턴: max_hold_final",
+        "수익 청산 유효 패턴: max_hold_final",
+        "손실 청산 원인 점검: intraday_review_sell",
+        "수익 청산 유효 패턴: tp_analyst_sell"
       ],
       "execution_stats": {
-        "buy_order": 6,
+        "buy_order": 7,
         "buy_failed": 0,
-        "sell_filled": 5,
+        "sell_filled": 9,
         "sell_failed": 0
       }
     }
@@ -6015,182 +6346,44 @@
   "correction_guide": {
     "KR": {
       "bull_adjustments": [
-        "코스피+2%이상이어도개별종목분산매수자제",
-        "momentum진입은오전10시이전만허용"
+        "코스피강세라도오후진입시Bull신호무효처리",
+        "거래량폭증종목은오전9~12시진입만허용"
       ],
       "bear_adjustments": [
-        "거래량0배경고는포지션축소근거로만활용",
-        "지수상승시DEFENSIVE고집말것"
+        "USD/KRW>1,470+오후장=신규진입전면차단",
+        "VKOSPI결측시DEFENSIVE모드강제전환"
       ],
       "tuning_rules": [
-        "gap_pullback진입시SL3%이하설정",
-        "당일momentum손절3건초과시신규진입중단",
-        "027040반복실패종목블랙리스트등록"
+        "30min후지수하락전환시momentum신규진입즉시중단",
+        "CAUTIOUS모드최대진입건수=2건,초과시거부",
+        "당일손절발생후동일전략추가진입금지"
       ],
-      "today_notes": "시장+2.21%에내수익-0.30%,momentum필터전면재검토필요",
-      "generated_date": "2026-04-16"
+      "today_notes": "오후진입2건모두손절,섹터매수미청산리스크잔존",
+      "generated_date": "2026-04-17"
     },
     "US": {
       "bull_adjustments": [
-        "MILD_BULL합의시최소1종목진입필수",
-        "+0.3%이상실제상승시판단신뢰강화"
+        "MILD_BULL합의시최소1종목신규매수실행",
+        "시장+1%이상시 size57%미만이라도진입"
       ],
       "bear_adjustments": [
-        "모멘텀제한신호는진입규모축소근거",
-        "S&P500+0.1%미만시포지션50%감축"
+        "혼조신호있어도시장강세시MILD_BULL유지"
       ],
       "tuning_rules": [
-        "3분석가MILD_BULL합의=진입실행트리거",
-        "거래량0.5~1.0배=포지션규모30%축소",
-        "판단적중+미실행패턴지속시강제진입로직검토"
+        "broker_sync청산후동일세션신규진입검토",
+        "VG청산후대체종목탐색로직추가"
       ],
-      "today_notes": "판단정확도보다실행부재가핵심문제",
-      "generated_date": "2026-04-16"
+      "today_notes": "5일연속MILD_BULL적중실패=판단맞고실행없는구조적문제",
+      "generated_date": "2026-04-18"
     }
   },
   "hold_advisor_performance": {
-    "total": 40,
-    "hold_count": 9,
-    "hold_success": 0,
-    "sell_count": 31,
-    "hold_avg_extra_pnl": -17.7017,
+    "total": 57,
+    "hold_count": 13,
+    "hold_success": 2,
+    "sell_count": 44,
+    "hold_avg_extra_pnl": -12.3421,
     "recent": [
-      {
-        "date": "2026-04-14",
-        "market": "KR",
-        "ticker": "140430",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -3.0917
-      },
-      {
-        "date": "2026-04-14",
-        "market": "KR",
-        "ticker": "026940",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -4.5274
-      },
-      {
-        "date": "2026-04-14",
-        "market": "KR",
-        "ticker": "046970",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -1.7919
-      },
-      {
-        "date": "2026-04-14",
-        "market": "US",
-        "ticker": "TEM",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -1.1207
-      },
-      {
-        "date": "2026-04-15",
-        "market": "KR",
-        "ticker": "008350",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -4.2073
-      },
-      {
-        "date": "2026-04-15",
-        "market": "US",
-        "ticker": "CRWV",
-        "decision": "HOLD",
-        "success": false,
-        "extra_pnl_pct": -1.4637
-      },
-      {
-        "date": "2026-04-15",
-        "market": "US",
-        "ticker": "GSAT",
-        "decision": "HOLD",
-        "success": false,
-        "extra_pnl_pct": -17.8631
-      },
-      {
-        "date": "2026-04-15",
-        "market": "US",
-        "ticker": "CLSK",
-        "decision": "HOLD",
-        "success": false,
-        "extra_pnl_pct": -19.7219
-      },
-      {
-        "date": "2026-04-15",
-        "market": "US",
-        "ticker": "HOOD",
-        "decision": "HOLD",
-        "success": false,
-        "extra_pnl_pct": -6.5743
-      },
-      {
-        "date": "2026-04-16",
-        "market": "US",
-        "ticker": "EOSE",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -1.2614
-      },
-      {
-        "date": "2026-04-16",
-        "market": "US",
-        "ticker": "SEDG",
-        "decision": "SELL",
-        "success": true,
-        "extra_pnl_pct": 1.0399
-      },
-      {
-        "date": "2026-04-16",
-        "market": "KR",
-        "ticker": "035420",
-        "decision": "SELL",
-        "success": true,
-        "extra_pnl_pct": 1.7336
-      },
-      {
-        "date": "2026-04-16",
-        "market": "KR",
-        "ticker": "037030",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -3.9635
-      },
-      {
-        "date": "2026-04-16",
-        "market": "KR",
-        "ticker": "020180",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -2.172
-      },
-      {
-        "date": "2026-04-16",
-        "market": "KR",
-        "ticker": "010170",
-        "decision": "HOLD",
-        "success": false,
-        "extra_pnl_pct": -29.1672
-      },
-      {
-        "date": "2026-04-16",
-        "market": "KR",
-        "ticker": "017900",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -1.3734
-      },
-      {
-        "date": "2026-04-16",
-        "market": "KR",
-        "ticker": "078150",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -1.3249
-      },
       {
         "date": "2026-04-16",
         "market": "KR",
@@ -6214,6 +6407,142 @@
         "decision": "SELL",
         "success": true,
         "extra_pnl_pct": 9.6966
+      },
+      {
+        "date": "2026-04-16",
+        "market": "US",
+        "ticker": "RKLB",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 1.3479
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "NVDA",
+        "decision": "HOLD",
+        "success": true,
+        "extra_pnl_pct": 1.6999
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "SOUN",
+        "decision": "HOLD",
+        "success": false,
+        "extra_pnl_pct": -2.0897
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "NVDA",
+        "decision": "HOLD",
+        "success": true,
+        "extra_pnl_pct": 1.4872
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "SOUN",
+        "decision": "HOLD",
+        "success": false,
+        "extra_pnl_pct": -2.2295
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "RUM",
+        "decision": "SELL",
+        "success": false,
+        "extra_pnl_pct": -2.1954
+      },
+      {
+        "date": "2026-04-17",
+        "market": "KR",
+        "ticker": "001440",
+        "decision": "SELL",
+        "success": false,
+        "extra_pnl_pct": -6.4179
+      },
+      {
+        "date": "2026-04-17",
+        "market": "KR",
+        "ticker": "203650",
+        "decision": "SELL",
+        "success": false,
+        "extra_pnl_pct": -17.228
+      },
+      {
+        "date": "2026-04-17",
+        "market": "KR",
+        "ticker": "271050",
+        "decision": "SELL",
+        "success": false,
+        "extra_pnl_pct": -2.1605
+      },
+      {
+        "date": "2026-04-17",
+        "market": "KR",
+        "ticker": "046970",
+        "decision": "SELL",
+        "success": false,
+        "extra_pnl_pct": -8.7166
+      },
+      {
+        "date": "2026-04-17",
+        "market": "KR",
+        "ticker": "321260",
+        "decision": "SELL",
+        "success": false,
+        "extra_pnl_pct": -0.8247
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "OPEN",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 0.4912
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "PL",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 0.1252
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "QBTS",
+        "decision": "SELL",
+        "success": false,
+        "extra_pnl_pct": -1.1961
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "RKLB",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 0.0669
+      },
+      {
+        "date": "2026-04-17",
+        "market": "US",
+        "ticker": "RGTI",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 17.9189
+      },
+      {
+        "date": "2026-04-18",
+        "market": "US",
+        "ticker": "VG",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 0.2569
       }
     ]
   }

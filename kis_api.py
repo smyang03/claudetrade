@@ -66,10 +66,15 @@ _EXCHANGE_CACHE_FILE = _Path(__file__).resolve().parent / "data" / "exchange_cac
 
 _FINNHUB_EXCHANGE_MAP = {
     "NEW YORK STOCK EXCHANGE": "NYSE",
+    "NYSE":                    "NYSE",
     "NASDAQ NMS":              "NASD",
+    "NASDAQ":                  "NASD",
     "NASDAQ CAPITAL MARKET":   "NASD",
+    "NASDAQ GLOBAL MARKET":    "NASD",
     "NASDAQ GLOBAL SELECT":    "NASD",
     "NYSE AMERICAN":           "AMEX",
+    "AMERICAN STOCK EXCHANGE": "AMEX",
+    "NYSE MKT":                "AMEX",
     "NYSE ARCA":               "AMEX",
 }
 
