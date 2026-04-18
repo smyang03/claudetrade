@@ -13,6 +13,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 모의투자로 먼저 검증하고, 구조가 안정되면 실거래로 전환한다. **안전 우선**
 - 실거래는 KR/US 계좌 분리 구조로 진화할 예정이다
 
+### 핵심 중점 사항 — 데이터 품질과 오염 방어
+
+이 시스템의 본질은 **Claude가 좋은 판단을 내릴 수 있도록 좋은 데이터를 주는 것**이다.
+
+Claude의 판단 품질은 입력 데이터의 품질에 직결된다.
+- 시장 컨텍스트(digest), 분석가 적중률(brain.json), 전략 성과(decisions.db)가 정확해야 판단이 정확하다
+- 잘못된 데이터로 판단한 결과가 다시 brain.json에 쌓이면 **오염이 복리로 확산**된다
+
+**데이터 오염은 절대적으로 방어한다.** 구체적으로:
+
+| 오염 경로 | 방어 방법 |
+|-----------|-----------|
+| 브로커 잔고 오계산 → session_start_equity 왜곡 | `_sync_runtime_with_broker` 수정 시 수치 검증 필수 |
+| 잘못된 체결가/수량 → forward return 오기록 | `update_exit()` 전 포지션 데이터 일관성 확인 |
+| False HALT 후 복구 → 손익 기준선 재설정 오류 | `reset_daily_state()` 호출 시점 명시적 로깅 |
+| brain.json 적중률 계산 오류 → 분석가 가중치 왜곡 | `claude_memory/data_integrity.py` 자동 점검 |
+| 모의투자 데이터가 실거래 학습에 혼입 | `data_source` 컬럼으로 항상 구분, 혼용 금지 |
+
+코드 수정 시 "이 변경이 누적 데이터에 어떤 영향을 주는가"를 반드시 먼저 생각한다.
+
 ---
 
 ## 나아갈 방향 (Roadmap)
