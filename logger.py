@@ -13,6 +13,12 @@ logger.py - 전체 시스템 공용 로깅 모듈
   ├── system/
   │   ├── trading_YYYYMMDD.log     ← 전체 이벤트
   │   └── error_YYYYMMDD.log       ← 오류만 별도
+  ├── normal/
+  │   └── normal_YYYYMMDD.log      ← 정상 운영 로그
+  ├── risk/
+  │   └── risk_YYYYMMDD.log        ← 위험/경고/회계/동기화 로그
+  ├── flow/
+  │   └── flow_YYYYMMDD.log        ← 세션/사이클/처리 경로 로그
   ├── phase1/
   │   ├── collector_YYYYMMDD.log   ← 데이터 수집
   │   └── trainer_YYYYMMDD.log     ← 학습 진행
@@ -63,7 +69,7 @@ else:
 BASE_DIR = Path(__file__).parent
 LOG_DIR  = get_runtime_path("logs", make_parents=False)
 
-for subdir in ["system", "phase1", "brain", "daily", "analysis", "judgment"]:
+for subdir in ["system", "phase1", "brain", "daily", "analysis", "judgment", "normal", "risk", "flow"]:
     (LOG_DIR / subdir).mkdir(parents=True, exist_ok=True)
 
 
@@ -238,6 +244,18 @@ def get_daily_logger() -> logging.Logger:
     """일별 이벤트 로거"""
     today = date.today().strftime("%Y%m%d")
     return get_logger(today, "daily", level="DEBUG")
+
+def get_normal_logger() -> logging.Logger:
+    """정상 운영 로그"""
+    return get_logger("normal", "normal", level="INFO")
+
+def get_risk_logger() -> logging.Logger:
+    """위험/경고/동기화/회계 로그"""
+    return get_logger("risk", "risk", level="INFO")
+
+def get_flow_logger() -> logging.Logger:
+    """세션/사이클/처리 경로 로그"""
+    return get_logger("flow", "flow", level="INFO")
 
 
 # ── 데코레이터: 함수 실행 로깅 ───────────────────────────────────────────────

@@ -22,6 +22,14 @@ APP_KEY = os.getenv("KIS_APP_KEY", "")
 APP_SECRET = os.getenv("KIS_APP_SECRET", "")
 ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")
 IS_PAPER = os.getenv("KIS_IS_PAPER", "true").lower() == "true"
+
+# US 전용 자격증명 — 비어있으면 KR 설정 그대로 fallback
+ACCOUNT_NO_US   = os.getenv("KIS_ACCOUNT_NO_US", "").strip() or ACCOUNT_NO
+APP_KEY_US      = os.getenv("KIS_APP_KEY_US",    "").strip() or APP_KEY
+APP_SECRET_US   = os.getenv("KIS_APP_SECRET_US", "").strip() or APP_SECRET
+_IS_PAPER_US_RAW = os.getenv("KIS_IS_PAPER_US", "").strip()
+IS_PAPER_US     = (_IS_PAPER_US_RAW.lower() == "true") if _IS_PAPER_US_RAW else IS_PAPER
+
 AV_KEY       = os.getenv("ALPHA_VANTAGE_KEY", "")
 AV_KEY_2     = os.getenv("ALPHA_VANTAGE_KEY_2", "")
 FINNHUB_KEY  = os.getenv("FINNHUB_API_KEY", "")
@@ -890,8 +898,8 @@ def _get_balance_us(token, force_refresh: bool = False) -> dict:
     NASD로 조회하면 모의투자에서 미국 전체 잔고 반환.
     외화(USD) 기준 → KRW 환산은 호출자가 처리.
     """
-    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
-    tr_id = "VTTS3012R" if IS_PAPER else "TTTS3012R"
+    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    tr_id = "VTTS3012R" if IS_PAPER_US else "TTTS3012R"
     cache_key = ("US",)
 
     def _fetch():
@@ -1214,15 +1222,15 @@ def inquire_ccnl_us(token: str,
                     side_code: str = "00",
                     filled_code: str = "00",
                     sort_sqn: str = "DS") -> list[dict]:
-    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
-    tr_id = "VTTS3035R" if IS_PAPER else "TTTS3035R"
+    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    tr_id = "VTTS3035R" if IS_PAPER_US else "TTTS3035R"
     headers = _headers(token, tr_id)
     headers["custtype"] = "P"
-    pdno = "" if IS_PAPER else (ticker or "%")
-    ovrs_excg_cd = "" if IS_PAPER else "%"
-    sll_buy_dvsn = "00" if IS_PAPER else side_code
-    ccld_nccs_dvsn = "00" if IS_PAPER else filled_code
-    sort_value = "DS" if IS_PAPER else sort_sqn
+    pdno = "" if IS_PAPER_US else (ticker or "%")
+    ovrs_excg_cd = "" if IS_PAPER_US else "%"
+    sll_buy_dvsn = "00" if IS_PAPER_US else side_code
+    ccld_nccs_dvsn = "00" if IS_PAPER_US else filled_code
+    sort_value = "DS" if IS_PAPER_US else sort_sqn
 
     def _fetch():
         resp = _kis_get(
@@ -1440,7 +1448,7 @@ _US_EXCHANGE_MAP = {
 
 
 def _place_order_us(ticker, qty, price, side, token):
-    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
     tr_map = {
         ("buy",  True):  "VTTT1002U",
         ("sell", True):  "VTTT1001U",
@@ -1460,7 +1468,7 @@ def _place_order_us(ticker, qty, price, side, token):
         "ORD_DVSN":        "00",   # 모의투자는 지정가(00)만 가능
         "SLL_TYPE":        "" if side == "buy" else "00",
     }
-    headers = _headers(token, tr_map[(side, IS_PAPER)])
+    headers = _headers(token, tr_map[(side, IS_PAPER_US)])
     headers["custtype"] = "P"
     headers["hashkey"]  = get_hashkey(body, token)
     resp = _kis_post(

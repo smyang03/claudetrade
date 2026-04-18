@@ -129,14 +129,10 @@ class TradingBot(
   - `_EXCHANGE_MAP`, `_ec_cache` 함께 이동, trading_bot.py에서 re-export
   - `TradingBot(MarketUtilsMixin)` 상속 추가
 
-- [ ] **`bot/state.py`** (~380줄)
-  - 이동할 메서드:
-    `_save_positions`, `_restore_pending_orders`, `_normalize_pending_orders`,
-    `_load_daily_baselines`, `_save_daily_baselines`,
-    `_default_claude_control`, `_save_claude_control`, `_normalize_claude_control_state`,
-    `_restore_claude_control`, `_refresh_claude_control`, `_sanitize_live_status_file`,
-    `_save_pending_orders`, `_parse_pending_created_at`
-  - 의존성: `runtime_paths`, `json`, `os`
+- [x] **`bot/state.py`** ✅ 완료
+  - 이동: 클래스 메서드 13개
+  - path 상수 4개(`POSITIONS_FILE`, `PENDING_ORDERS_FILE`, `CLAUDE_CONTROL_FILE`, `DAILY_BASELINE_FILE`) state.py로 이동 + trading_bot.py re-export
+  - `TradingBot(MarketUtilsMixin, StateMixin)` 상속 추가
 
 - [ ] **`bot/ops.py`** (~390줄)
   - ※ 기존 계획의 `health.py`에서 역할 재정의. startup + 운영 보조 + 후보 필터

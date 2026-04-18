@@ -109,6 +109,13 @@ from bot.market_utils import (
     _EXCHANGE_MAP,
     _ec_cache,
 )
+from bot.state import (
+    StateMixin,
+    POSITIONS_FILE,
+    PENDING_ORDERS_FILE,
+    CLAUDE_CONTROL_FILE,
+    DAILY_BASELINE_FILE,
+)
 
 # ML 의사결정 DB (선택적 — import 실패해도 봇 정상 동작)
 try:
@@ -140,14 +147,8 @@ KST = ZoneInfo("Asia/Seoul")
 JUDGMENT_DIR = get_runtime_path("logs", "daily_judgment", make_parents=False)
 JUDGMENT_DIR.mkdir(parents=True, exist_ok=True)
 
-POSITIONS_FILE = get_runtime_path("state", "open_positions.json")  # 포지션 영속성 파일
-POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-PENDING_ORDERS_FILE = get_runtime_path("state", "pending_orders.json")
-PENDING_ORDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-CLAUDE_CONTROL_FILE = get_runtime_path("state", "claude_control.json")
 BOT_PID_FILE = get_runtime_path("state", "trading_bot.pid")
 DECISIONS_FILE = get_runtime_path("state", "decisions.jsonl")  # Claude 판단 이력 영속 DB
-DAILY_BASELINE_FILE = get_runtime_path("state", "daily_baseline.json")
 
 
 def _split_log(channel_logger, level: str, message: str, *args, **kwargs) -> None:
@@ -191,7 +192,6 @@ def _clear_bot_pid_file():
             BOT_PID_FILE.unlink()
     except Exception:
         pass
-CLAUDE_CONTROL_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # 동적 선택 실패 시 폴백 (기본 3종목)
 _DEFAULT_KR_TICKERS = ["005930", "068270", "035420"]
@@ -263,7 +263,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
-class TradingBot(MarketUtilsMixin):
+class TradingBot(MarketUtilsMixin, StateMixin):
     def __init__(self, is_paper: bool = True):
         self.is_paper = is_paper
         self.token = get_access_token()
@@ -877,235 +877,6 @@ class TradingBot(MarketUtilsMixin):
     def _market_budget_available(self, market: str) -> float:
         """사용 가능한 현금 잔액 (KR/US 공유 풀)"""
         return max(0.0, self.risk.cash)
-
-    # ── 포지션 영속성 ──────────────────────────────────────────────────────────
-
-    def _save_positions(self):
-        """이월 포지션을 파일에 저장 (봇 재시작 복구용)
-        max_hold>1 장기 보유 뿐 아니라 당일 미청산 포지션(max_hold==1)도 저장:
-        VTS 잔고 API 미반영 시 재시작 후 복구 가능하도록.
-        """
-        carry = list(self.risk.positions)  # 보유 중인 모든 포지션 저장
-        with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
-            json.dump(carry, f, ensure_ascii=False, indent=2, default=str)
-        if carry:
-            log.info(f"[포지션 저장] {[p['ticker'] for p in carry]} ({len(carry)}개) → {POSITIONS_FILE}")
-
-    def _save_pending_orders(self):
-        self._normalize_pending_orders()
-        with open(PENDING_ORDERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(self.pending_orders, f, ensure_ascii=False, indent=2, default=str)
-
-    def _parse_pending_created_at(self, order: dict):
-        raw = order.get("created_at", "")
-        if not raw:
-            return None
-        try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except Exception:
-            return None
-
-    def _normalize_pending_orders(self):
-        if not self.pending_orders:
-            return
-        today_kst = datetime.now(KST).date()
-        latest_by_ticker = {}
-        for order in self.pending_orders:
-            ticker = (order.get("ticker", "") or "").strip()
-            market = order.get("market", "")
-            if not ticker or market not in ("KR", "US"):
-                continue
-            created_at = self._parse_pending_created_at(order)
-            if created_at and created_at.astimezone(KST).date() < today_kst:
-                continue
-            key = (market, ticker.upper())
-            prev = latest_by_ticker.get(key)
-            if prev is None:
-                latest_by_ticker[key] = order
-                continue
-            prev_dt = self._parse_pending_created_at(prev)
-            cur_dt = created_at
-            if prev_dt is None or (cur_dt is not None and cur_dt > prev_dt):
-                latest_by_ticker[key] = order
-        self.pending_orders = sorted(
-            latest_by_ticker.values(),
-            key=lambda o: self._parse_pending_created_at(o) or datetime.min.replace(tzinfo=KST)
-        )
-
-    def _restore_pending_orders(self):
-        if not PENDING_ORDERS_FILE.exists():
-            return
-        try:
-            with open(PENDING_ORDERS_FILE, encoding="utf-8") as f:
-                saved = json.load(f)
-            if isinstance(saved, list):
-                self.pending_orders = saved
-                self._normalize_pending_orders()
-                self._save_pending_orders()
-        except Exception as e:
-            log.error(f"미체결 주문 복구 실패: {e}")
-
-    def _load_daily_baselines(self):
-        if not DAILY_BASELINE_FILE.exists():
-            return
-        try:
-            with open(DAILY_BASELINE_FILE, encoding="utf-8") as f:
-                saved = json.load(f)
-            if not isinstance(saved, dict):
-                return
-            normalized = {"KR": {}, "US": {}}
-            for market in ("KR", "US"):
-                meta = saved.get(market) or {}
-                if not isinstance(meta, dict):
-                    continue
-                session_date = str(meta.get("session_date", "") or "").strip()
-                base = float(meta.get("base", 0) or 0)
-                source = str(meta.get("source", "") or "").strip()
-                if session_date and base > 0:
-                    normalized[market] = {
-                        "session_date": session_date,
-                        "base": base,
-                        "source": source,
-                    }
-            self._daily_baseline_by_market = normalized
-        except Exception as e:
-            log.warning(f"daily baseline 복구 실패: {e}")
-
-    def _save_daily_baselines(self):
-        payload = {}
-        for market in ("KR", "US"):
-            meta = dict(self._daily_baseline_by_market.get(market, {}) or {})
-            session_date = str(meta.get("session_date", "") or "").strip()
-            base = float(meta.get("base", 0) or 0)
-            source = str(meta.get("source", "") or "").strip()
-            if session_date and base > 0:
-                payload[market] = {
-                    "session_date": session_date,
-                    "base": base,
-                    "source": source,
-                }
-            else:
-                payload[market] = {}
-        try:
-            with open(DAILY_BASELINE_FILE, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            log.warning(f"daily baseline 저장 실패: {e}")
-
-    def _default_claude_control(self) -> dict:
-        return {
-            "enabled": True,
-            "updated_at": "",
-            "updated_by": "default",
-            "last_trigger_at": "",
-            "last_trigger_market": "",
-            "last_trigger_source": "",
-            "last_result_at": "",
-            "last_result_market": "",
-            "last_result_status": "idle",
-            "last_error": "",
-            "pending_trigger": None,
-            "pending_position_review": None,
-            "pending_sell": None,
-        }
-
-    def _save_claude_control(self):
-        with open(CLAUDE_CONTROL_FILE, "w", encoding="utf-8") as f:
-            json.dump(self.claude_control, f, ensure_ascii=False, indent=2, default=str)
-
-    def _normalize_claude_control_state(self, data: dict | None = None) -> dict:
-        control = self._default_claude_control()
-        control.update(data or {})
-        status = str(control.get("last_result_status", "idle") or "idle").lower()
-        if status != "running":
-            return control
-        ts = control.get("last_result_at") or control.get("last_trigger_at") or ""
-        if not ts:
-            control["last_result_status"] = "error"
-            control["last_error"] = control.get("last_error") or "이전 Claude 재판단이 비정상 종료되어 상태를 정리했습니다."
-            return control
-        try:
-            last_dt = datetime.fromisoformat(ts)
-            if last_dt.tzinfo is None:
-                last_dt = KST.localize(last_dt)
-        except Exception:
-            control["last_result_status"] = "error"
-            control["last_error"] = control.get("last_error") or "이전 Claude 재판단 시각이 손상되어 상태를 정리했습니다."
-            return control
-        if datetime.now(KST) - last_dt > timedelta(minutes=10):
-            control["last_result_status"] = "error"
-            control["last_error"] = control.get("last_error") or "이전 Claude 재판단이 10분 이상 완료되지 않아 stale 상태로 정리했습니다."
-        return control
-
-    def _restore_claude_control(self):
-        data = self._default_claude_control()
-        if CLAUDE_CONTROL_FILE.exists():
-            try:
-                with open(CLAUDE_CONTROL_FILE, encoding="utf-8") as f:
-                    saved = json.load(f)
-                if isinstance(saved, dict):
-                    data.update(saved)
-            except Exception as e:
-                log.warning(f"Claude 제어 상태 복구 실패: {e}")
-        data["enabled"] = True
-        self.claude_control = self._normalize_claude_control_state(data)
-        self._save_claude_control()
-
-    def _refresh_claude_control(self):
-        if not CLAUDE_CONTROL_FILE.exists():
-            self._restore_claude_control()
-            return
-        try:
-            with open(CLAUDE_CONTROL_FILE, encoding="utf-8") as f:
-                saved = json.load(f)
-            if isinstance(saved, dict):
-                data = self._default_claude_control()
-                data.update(saved)
-                self.claude_control = self._normalize_claude_control_state(data)
-                if self.claude_control != data:
-                    self._save_claude_control()
-        except Exception as e:
-            log.warning(f"Claude 제어 상태 새로고침 실패: {e}")
-
-    def _sanitize_live_status_file(self, market: str):
-        path = get_runtime_path("state", f"live_status_{market}.json")
-        if not path.exists():
-            return
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return
-        changed = False
-        positions = []
-        for pos in data.get("positions", []) or []:
-            ticker = str(pos.get("ticker", "") or "")
-            if ticker and self._ticker_market(ticker) == market:
-                positions.append(pos)
-            else:
-                changed = True
-        pending_orders = []
-        for order in data.get("pending_orders", []) or []:
-            ticker = str(order.get("ticker", "") or "")
-            order_market = str(order.get("market", "") or "")
-            inferred_market = order_market or self._ticker_market(ticker)
-            if ticker and inferred_market == market:
-                order["market"] = market
-                pending_orders.append(order)
-            else:
-                changed = True
-        if data.get("market") != market:
-            data["market"] = market
-            changed = True
-        if positions != (data.get("positions", []) or []):
-            data["positions"] = positions
-            data["position_count"] = len(positions)
-            changed = True
-        if pending_orders != (data.get("pending_orders", []) or []):
-            data["pending_orders"] = pending_orders
-            data["pending_count"] = len(pending_orders)
-            changed = True
-        if changed:
-            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     def is_claude_reinvoke_enabled(self) -> bool:
         self._refresh_claude_control()
@@ -3088,13 +2859,6 @@ class TradingBot(MarketUtilsMixin):
         # ── 휴장일 체크 (주말 + 공휴일) ─────────────────────────────────────
         if not _is_trading_day(market):
             _log_flow("info", f"[{market}] 휴장일 — 세션 스킵")
-            self.session_active = False
-            self.current_market = None
-            self._leave_market_task(market, "session_open")
-            return
-
-        if market == "US" and not self.is_paper:
-            _log_risk("warning", "[US] live mode is not supported yet. session skipped.")
             self.session_active = False
             self.current_market = None
             self._leave_market_task(market, "session_open")
