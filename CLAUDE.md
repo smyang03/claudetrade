@@ -201,6 +201,24 @@ OHLCV 로드 → calc_all() [indicators.py]
   └─ ml/db_writer.write_decision() → BUY_SIGNAL / NO_SIGNAL / BLOCKED
 ```
 
+### 판단 재사용 로직 — 봇 재시작 시 주의
+
+`session_open()` 실행 시 해당 날짜의 `logs/daily_judgment/YYYYMMDD_{MARKET}.json` 이 존재하면:
+- 기존 `judgments` / `consensus` (모드, 분석가 판단) 를 **그대로 재사용**
+- 종목만 새로 스크리닝
+
+즉 봇을 장중에 재시작해도 Claude 토론은 다시 하지 않는다. 이 파일이 오염되거나 잘못된 상태면 잘못된 모드로 하루 종일 운영된다. 수동으로 판단을 초기화하려면 해당 파일을 삭제 후 재시작.
+
+### 매수 차단 조건
+
+아래 조건 중 하나라도 해당하면 해당 종목은 진입하지 않는다:
+- 이미 보유 중인 종목 (중복 매수)
+- 쿨다운 중인 종목 (최근 손절/TP 후 대기)
+- 장 시작 직후 블랙아웃 구간 (`NO_NEW_ENTRY_MIN`)
+- 장 마감 전 블랙아웃 구간 (`CLOSE_BEFORE_MIN`)
+- 일일 손실 한도 초과 (HALT 상태)
+- 분석가 평균 confidence 기준 미달
+
 ### `_sync_runtime_with_broker()` 주의사항
 
 매 `run_cycle` 시작 시 `self.risk.cash`를 브로커 잔고로 **덮어씀**.
@@ -211,12 +229,24 @@ OHLCV 로드 → calc_all() [indicators.py]
 ### 주요 데이터 흐름
 
 ```
-state/brain.json          ← postmortem/tuner 업데이트, analysts 프롬프트에 요약 전달
-data/ml/decisions.db      ← 매 사이클 write_decision(), 청산 시 update_exit()
-                            adaptive_params _perf_overlay가 읽어서 파라미터 보정
-state/open_positions.json ← 봇 재시작 시 포지션 복구 (runtime, git 추적 제외)
-logs/daily_judgment/      ← 세션별 판단 전문 JSON (파인튜닝 raw 데이터)
+state/brain.json               ← postmortem/tuner 업데이트, analysts 프롬프트에 요약 전달
+data/ml/decisions.db           ← 매 사이클 write_decision(), 청산 시 update_exit()
+                                  adaptive_params _perf_overlay가 읽어서 파라미터 보정
+data/ticker_selection_log.db   ← Claude 종목 선택 이력 추적
+state/open_positions.json      ← 봇 재시작 시 포지션 복구 (runtime, git 추적 제외)
+logs/daily_judgment/           ← 세션별 판단 전문 JSON — 봇 재시작 시 판단 재사용 소스
 ```
+
+**운영 이슈 분석 시 반드시 3종 세트를 함께 본다:**
+`state/brain.json` + `data/ml/decisions.db` + `data/ticker_selection_log.db`
+하나만 보면 전체 그림이 안 나온다.
+
+**`data_source` 컬럼 구분 — 데이터 오염 방어:**
+- `data_source='live'`: 실제 장중 실행 데이터
+- `data_source='backfill'`: 과거 가격 CSV 기반 시뮬레이션 (`is_simulated=1`)
+
+adaptive_params의 `_perf_overlay`는 기본적으로 `live` 데이터만 참조한다.
+backfill 데이터를 live 성과에 섞으면 파라미터 보정이 오염된다. 절대 혼용 금지.
 
 ### 모듈 역할
 
@@ -242,6 +272,19 @@ logs/daily_judgment/      ← 세션별 판단 전문 JSON (파인튜닝 raw 데
 | `dashboard/dashboard_server.py` | Flask 웹 대시보드 |
 
 ---
+
+## 문서 구조
+
+| 경로 | 용도 |
+|------|------|
+| `README.md` | 프로젝트 개요, 실행 예시 |
+| `DATA.md` | 상태/로그/DB 파일 전체 설명 |
+| `docs/trading_process.md` | 세션 시작·장중·청산 흐름 기준 문서 |
+| `docs/KIS_API_TODO.md` | KIS API 확인/보완 작업 목록 |
+| `docs/plans/` | **아직 적용하지 않은 설계안** — 코드에 반영된 것이 아님 |
+| `docs/archive/` | 과거 개발 로그 (DEVLOG, DEBUG 기록 등) |
+
+`docs/plans/` 안의 문서는 "구현 예정 아이디어"이지 현재 코드 동작이 아니다. 혼동 주의.
 
 ## 전략 추가/수정 시
 
