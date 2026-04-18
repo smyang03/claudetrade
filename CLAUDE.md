@@ -52,12 +52,32 @@ Claude의 판단 품질은 입력 데이터의 품질에 직결된다.
 
 **에러 로그와 실행 로그는 충분히 작성되어야 한다. 로그가 없으면 분석할 수 없다.**
 
+#### 로그 3분류 — 모든 로그는 아래 중 하나로 분류해서 작성한다
+
+| 분류 | 레벨 | 의미 | 예시 |
+|------|------|------|------|
+| **위험** | `ERROR` / `WARNING` | 즉시 확인 필요하거나 비정상 상태. 방치하면 손실·오염·halt로 이어짐 | False HALT, 브로커 응답 오류, 포지션 불일치, cash 음수, 주문 실패 |
+| **경과** | `INFO` | 정상 흐름 중 주요 이벤트. 나중에 타임라인 재구성에 쓰임 | 세션 시작/종료, 종목 선택, 신호 발화, 매수/매도 체결, 파라미터 변경 |
+| **정상** | `DEBUG` | 반복 루프 내부, 상세 수치, 조건 체크. 평상시엔 노이즈지만 디버깅 시 필수 | 각 사이클 종목별 RSI/BB 값, adaptive_params 계산 상세, tick 수신 |
+
+```python
+# 위험 — 즉시 확인 필요
+log.error("[HALT] daily_return=%.2f%% → halt 발동", daily_ret)
+log.warning("[BROKER] US 잔고 0 반환 — 내부 포지션 유지", )
+
+# 경과 — 주요 이벤트 타임라인
+log.info("[SESSION] KR 세션 시작 | mode=%s size=%d%%", mode, size)
+log.info("[BUY] %s 매수 체결 | qty=%d price=%d", ticker, qty, price)
+
+# 정상 — 루프 내부 상세
+log.debug("[SCAN] %s RSI=%.1f BB=%.1f vol_ratio=%.2f", ticker, rsi, bb, vol)
+```
+
 - 예외 발생 시 `log.exception(...)` 또는 `log.error(..., exc_info=True)`로 스택트레이스를 남긴다
-- 브로커 API 호출 결과(성공/실패/응답값)는 반드시 로깅한다
-- 진입 차단 사유(`rejection_reason`), 신호 발화 조건, 파라미터 결정 과정은 `logs/analysis/`에 기록한다
+- 브로커 API 호출 결과(성공/실패/응답값)는 반드시 로깅한다 — **위험 또는 경과**로 분류
+- 진입 차단 사유(`rejection_reason`), 신호 발화 조건, 파라미터 결정 과정은 `logs/analysis/`에 **경과**로 기록한다
 - 판단 로그(`logs/daily_judgment/`, `logs/judgment/`)는 Claude가 왜 그 결정을 했는지 추적할 수 있어야 한다
 - 로그를 줄이는 방향으로 수정하지 않는다. 운영 중 이슈를 사후에 재현할 수 있어야 한다
-- 로그 레벨 기준: `DEBUG` 반복 루프 내부 / `INFO` 주요 이벤트 / `WARNING` 비정상 but 복구 가능 / `ERROR` 즉시 확인 필요
 - **로그는 추가하든 삭제하든, 먼저 왜 해야 하는지 개발자에게 물어보고 확인받은 후 작성한다**
   - "불필요해 보이는 로그"도 Claude의 사후 분석·파라미터 보정·데이터 수집에 쓰일 수 있다
   - 삭제하기 전에 "이 로그가 decisions.db / brain.json / postmortem 어디에도 안 쓰이는가"를 먼저 확인한다
