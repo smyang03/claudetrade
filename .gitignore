@@ -18,7 +18,6 @@ logs/
 
 # Local docs / notes
 docs/archive/
-docs/plans/
 
 # Local databases
 *.db
@@ -59,6 +58,8 @@ state/_api_summary_*.json
 state/*.bak*
 # 날짜별 유니버스 스냅샷 (재생성 가능)
 data/universe/
+# 거래소 resolve 캐시 (런타임 갱신)
+data/exchange_cache.json
 
 # Dashboard tmp/log
 dashboard/_tmp_*.js
