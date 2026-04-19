@@ -94,7 +94,7 @@ MAX_PYRAMID = int(os.getenv("MAX_PYRAMID", "8") or 8)
 SYSTEM_LOG_DIR = get_runtime_path("logs", "system", make_parents=False)
 
 
-def _normalize_mode(mode: str | None) -> str:
+def _normalize_mode(mode: Optional[str]) -> str:
     value = str(mode or "paper").strip().lower()
     return value if value in ("paper", "live") else "paper"
 
@@ -1558,7 +1558,7 @@ def _save_open_positions(items: list, mode: str = "paper") -> None:
     )
 
 
-def _merge_position_context(base: dict, overlay: dict | None) -> dict:
+def _merge_position_context(base: dict, overlay: Optional[dict]) -> dict:
     merged = dict(base or {})
     if not overlay:
         if merged.get("avg_price") in (None, "", 0) and merged.get("entry"):
@@ -1614,7 +1614,7 @@ def _merge_positions_for_display(market: str, broker_positions: list, live_posit
     return merged
 
 
-def _resolve_review_position(market: str, ticker: str, mode: str = "paper") -> tuple[str, dict | None, dict, list]:
+def _resolve_review_position(market: str, ticker: str, mode: str = "paper") -> tuple[str, Optional[dict], dict, list]:
     ticker = str(ticker or "").strip().upper()
     markets = [market]
     other = "US" if market == "KR" else "KR"
