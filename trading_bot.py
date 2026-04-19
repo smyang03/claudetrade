@@ -317,23 +317,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"| 최대주문 {max_order:,}원",
         )
 
-        # US 잔고 조회 (참고용 — KR과 공유 풀이므로 init_cash에는 미포함)
+        # US 잔고 조회 — 환전 현금 + 보유종목 표시, 공유 풀에 합산
+        us_cash_init_krw = 0
         try:
             bal_us = get_balance(self.token, market="US")
             usd_krw = get_usd_krw()
-            us_eval_krw = int(bal_us["total_eval"] * usd_krw)
+            us_cash_usd    = float(bal_us.get("cash", 0) or 0)
+            us_cash_krw_   = int(us_cash_usd * usd_krw)
+            us_eval_usd    = float(bal_us.get("total_eval", 0) or 0)
+            us_eval_krw    = int(us_eval_usd * usd_krw)
             _log_normal(
                 "info",
-                f"{mode_label} | KIS US 잔고 ${bal_us['total_eval']:.2f} "
-                f"(≈{us_eval_krw:,}원, 보유종목 {len(bal_us['stocks'])}개)",
+                f"{mode_label} | KIS US 잔고 ${us_cash_usd:.2f} 현금(≈{us_cash_krw_:,}원)"
+                f" + ${us_eval_usd:.2f} 주식평가(≈{us_eval_krw:,}원)"
+                f" | 보유종목 {len(bal_us['stocks'])}개",
             )
+            if not self.is_paper:
+                us_cash_init_krw = us_cash_krw_
         except Exception as e:
             _log_risk("warning", f"KIS US 잔고 조회 실패 (무시): {e}")
 
-        self.risk = RiskManager(init_cash=init_cash, max_order_krw=max_order, market="KR")
+        init_cash_total = init_cash + us_cash_init_krw
+        self.risk = RiskManager(init_cash=init_cash_total, max_order_krw=max_order, market="KR")
 
         # KR/US 공유 풀 — 단일 현금 계좌, 시장 구분 없이 사용
-        _log_normal("info", f"공유 풀 | 총자금 {init_cash:,.0f}원 (KR/US 공용)")
+        if us_cash_init_krw > 0:
+            _log_normal("info", f"공유 풀 | 총자금 {init_cash_total:,.0f}원 (KR {init_cash:,} + US ≈{us_cash_init_krw:,}원)")
+        else:
+            _log_normal("info", f"공유 풀 | 총자금 {init_cash_total:,.0f}원 (KR/US 공용)")
 
         self.today_judgment = {}
         self.today_tickers: dict = {}   # {market: [ticker, ...]} — 매일 아침 Claude가 선택
