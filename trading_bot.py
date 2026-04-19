@@ -3030,7 +3030,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     log.info(f"[유니버스] {market} 스냅샷 로드 {len(universe_tickers)}개")
 
         # ── 재시작 시 당일 판단 재사용 ────────────────────────────────────────
-        live_path = JUDGMENT_DIR / f"{today.replace('-', '')}_{market}.json"
+        live_path = _judgment_runtime_path(self._mode, today, market)
+        legacy_live_path = JUDGMENT_DIR / f"{today.replace('-', '')}_{market}.json"
         reused = False
         digest = None
         digest_prompt = ""
@@ -3061,6 +3062,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     log.info(f"[재시작 판단 재사용] {today} {market} consensus={consensus['mode']}")
             except Exception as e:
                 log.warning(f"저장된 판단 로드 실패: {e}")
+
+        if (not reused) and legacy_live_path.exists():
+            try:
+                with open(legacy_live_path, "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+                saved_mode = saved.get("mode", "")
+                if saved_mode not in ("historical_sim",) and saved.get("judgments") and saved.get("consensus"):
+                    self.today_judgment = {
+                        "date": today,
+                        "market": market,
+                        "judgments": saved["judgments"],
+                        "consensus": saved["consensus"],
+                        "digest_prompt": saved.get("digest_prompt", ""),
+                        "digest_raw": saved.get("digest_raw", {}),
+                        "tickers": saved.get("tickers", []),
+                        "universe_tickers": saved.get("universe_tickers", []),
+                        "round1_judgments": saved.get("round1_judgments", {}),
+                        "debate_changes": saved.get("debate_changes", []),
+                    }
+                    self.today_tickers[market] = saved.get("tickers", [])
+                    judgments = saved["judgments"]
+                    consensus = saved["consensus"]
+                    digest_prompt = saved.get("digest_prompt", "")
+                    reused = True
+                    log.info(f"[session reuse fallback] {today} {market} consensus={consensus['mode']}")
+            except Exception as e:
+                log.warning(f"[session reuse fallback] load failed: {e}")
 
         if not reused:
             digest = build_kr_digest(today, universe_tickers=universe_tickers) if market == "KR" \
@@ -6677,7 +6705,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "session_events": self._session_events,   # 튜닝/긴급재판단 전체 이력
             "mode": "paper" if self.is_paper else "live",
         }
-        path = JUDGMENT_DIR / f"{today.replace('-', '')}_{market}.json"
+        path = _judgment_runtime_path(self._mode, today, market)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(record, f, ensure_ascii=False, indent=2)
         log.info(f"[training record 저장] {path.name} "

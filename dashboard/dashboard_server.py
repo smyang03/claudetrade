@@ -84,10 +84,7 @@ LOG_DIR    = get_runtime_path("logs", "daily_judgment", make_parents=False)
 BRAIN_PATH = get_runtime_path("state", "brain.json")
 DIGEST_DIR = BASE_DIR / "data" / "daily_digest"
 JUDGMENT_LOG_DIR = get_runtime_path("logs", "judgment", make_parents=False)
-CLAUDE_CONTROL_PATH = get_runtime_path("state", "claude_control.json")
-BOT_PID_PATH = get_runtime_path("state", "trading_bot.pid")
 DASHBOARD_PID_PATH = get_runtime_path("state", "dashboard_server.pid")
-OPEN_POSITIONS_PATH = get_runtime_path("state", "open_positions.json")
 RESTART_DIR = get_runtime_path("state", "restart", make_parents=False)
 RESTART_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -95,6 +92,58 @@ PAPER_CASH = float(os.getenv("PAPER_CASH", "10000000"))
 MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "10") or 10)
 MAX_PYRAMID = int(os.getenv("MAX_PYRAMID", "8") or 8)
 SYSTEM_LOG_DIR = get_runtime_path("logs", "system", make_parents=False)
+
+
+def _normalize_mode(mode: str | None) -> str:
+    value = str(mode or "paper").strip().lower()
+    return value if value in ("paper", "live") else "paper"
+
+
+def _request_mode(default: str = "paper") -> str:
+    mode = request.args.get("mode")
+    if mode is None and request.is_json:
+        body = request.get_json(silent=True) or {}
+        mode = body.get("mode")
+    return _normalize_mode(mode or default)
+
+
+def _claude_control_path(mode: str) -> Path:
+    return get_runtime_path("state", f"{_normalize_mode(mode)}_claude_control.json")
+
+
+def _bot_pid_path(mode: str) -> Path:
+    return get_runtime_path("state", f"{_normalize_mode(mode)}_trading_bot.pid")
+
+
+def _open_positions_path(mode: str) -> Path:
+    return get_runtime_path("state", f"{_normalize_mode(mode)}_open_positions.json")
+
+
+def _live_status_path(mode: str, market: str) -> Path:
+    return get_runtime_path("state", f"{_normalize_mode(mode)}_live_status_{market}.json")
+
+
+def _decisions_path(mode: str) -> Path:
+    return get_runtime_path("state", f"{_normalize_mode(mode)}_decisions.jsonl")
+
+
+def _judgment_path(market: str, trade_date: str, mode: str) -> Path:
+    day = str(trade_date or "").replace("-", "")
+    return LOG_DIR / f"{_normalize_mode(mode)}_{day}_{market}.json"
+
+
+def _judgment_candidates(market: str, mode: str) -> list[Path]:
+    runtime_mode = _normalize_mode(mode)
+    preferred = sorted(LOG_DIR.glob(f"{runtime_mode}_*_{market}.json"))
+    legacy = sorted(LOG_DIR.glob(f"*_{market}.json"))
+    seen = set()
+    ordered = []
+    for path in preferred + legacy:
+        if path in seen:
+            continue
+        seen.add(path)
+        ordered.append(path)
+    return ordered
 
 
 # ?? ?곗씠??濡쒕뜑 ????????????????????????????????????????????????????????????????
@@ -111,12 +160,21 @@ def _market_log_date_str(market: str, now_dt=None) -> str:
 
 
 def best_market_with_data() -> str:
+    mode = _normalize_mode(request.args.get("mode")) if request else "paper"
     for mkt in ("US", "KR"):
         today = _market_log_date_str(mkt)
-        p = LOG_DIR / f"{today}_{mkt}.json"
+        p = _judgment_path(mkt, today, mode)
         if p.exists():
             try:
                 d = json.load(open(p, encoding="utf-8"))
+                if d.get("mode") != "historical_sim":
+                    return mkt
+            except Exception:
+                pass
+        legacy = LOG_DIR / f"{today}_{mkt}.json"
+        if legacy.exists():
+            try:
+                d = json.load(open(legacy, encoding="utf-8"))
                 if d.get("mode") != "historical_sim":
                     return mkt
             except Exception:
@@ -128,7 +186,7 @@ def load_records(days: int = 9999, market: str = "KR") -> list:
     if not LOG_DIR.exists():
         return []
     records = []
-    for path in sorted(LOG_DIR.glob(f"*_{market}.json")):
+    for path in _judgment_candidates(market, _request_mode()):
         try:
             with open(path, encoding="utf-8") as f:
                 rec = json.load(f)
@@ -238,15 +296,17 @@ def _restart_dashboard_process() -> None:
 
 
 def _restart_bot_process_legacy() -> tuple[bool, str]:
-    info = _read_pid_file(BOT_PID_PATH)
+    mode = _request_mode()
+    info = _read_pid_file(_bot_pid_path(mode))
     pid = int(info.get("pid", 0) or 0)
     if not pid or not _pid_alive(pid):
         return False, "봇 PID 파일이 없거나 프로세스가 실행 중이 아닙니다"
+    bot_args = [str(BASE_DIR / "trading_bot.py")] + ([] if mode == "paper" else ["--live"])
     helper = (
         "import subprocess,time,sys; "
         f"subprocess.run(['taskkill','/PID','{pid}','/T','/F'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
         "time.sleep(1.2); "
-        f"subprocess.Popen(['cmd','/c','start','','{sys.executable}','{str(BASE_DIR / 'trading_bot.py')}'], "
+        f"subprocess.Popen(['cmd','/c','start','','{sys.executable}',*{repr(bot_args)}], "
         f"cwd={repr(str(BASE_DIR))}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
     )
     _spawn_detached([sys.executable, "-c", helper], BASE_DIR)
@@ -254,20 +314,26 @@ def _restart_bot_process_legacy() -> tuple[bool, str]:
 
 
 def _restart_bot_process() -> tuple[bool, str]:
-    info = _read_pid_file(BOT_PID_PATH)
+    mode = _request_mode()
+    info = _read_pid_file(_bot_pid_path(mode))
     pid = int(info.get("pid", 0) or 0)
     if not pid or not _pid_alive(pid):
         return False, "봇 PID 파일이 없거나 프로세스가 실행 중이 아닙니다"
     bot_path = BASE_DIR / "trading_bot.py"
+    bot_cmd = (
+        f'start "" "{sys.executable}" "{bot_path}"'
+        if mode == "paper"
+        else f'start "" "{sys.executable}" "{bot_path}" --live'
+    )
     script_path = _write_launcher(
-        RESTART_DIR / "restart_bot.cmd",
+        RESTART_DIR / f"restart_{mode}_bot.cmd",
         [
             "@echo off",
             "setlocal",
             f"taskkill /PID {pid} /T /F >nul 2>nul",
             "timeout /t 2 /nobreak >nul",
             f'cd /d "{BASE_DIR}"',
-            f'start "" "{sys.executable}" "{bot_path}"',
+            bot_cmd,
             "endlocal",
         ],
     )
@@ -293,7 +359,8 @@ def _is_fresh_live_status(live: dict, today_rec: dict) -> bool:
 
 def load_today(market: str = "KR") -> dict:
     today = _market_log_date_str(market)
-    path  = LOG_DIR / f"{today}_{market}.json"
+    mode = _request_mode()
+    path = _judgment_path(market, today, mode)
     if path.exists():
         try:
             with open(path, encoding="utf-8") as f:
@@ -302,9 +369,18 @@ def load_today(market: str = "KR") -> dict:
                 return rec
         except Exception:
             pass
+    legacy = LOG_DIR / f"{today}_{market}.json"
+    if legacy.exists():
+        try:
+            with open(legacy, encoding="utf-8") as f:
+                rec = json.load(f)
+            if rec.get("mode") != "historical_sim":
+                return rec
+        except Exception:
+            pass
     if not LOG_DIR.exists():
         return {}
-    for path in reversed(sorted(LOG_DIR.glob(f"*_{market}.json"))):
+    for path in reversed(_judgment_candidates(market, mode)):
         try:
             with open(path, encoding="utf-8") as f:
                 rec = json.load(f)
@@ -679,7 +755,7 @@ def _record_metrics(rec: dict, market: str) -> dict:
 
 
 def _live_trades(market: str) -> list:
-    live = _load_live_status(market)
+    live = _load_live_status(market, mode=_request_mode())
     if not live or not live.get("session_active"):
         return []
     trade_date = live.get("trading_date", "")
@@ -1285,9 +1361,9 @@ def group_by_month(records: list) -> dict:
 
 # ?? API ?붾뱶?ъ씤???????????????????????????????????????????????????????????????
 
-def _load_live_status(market: str) -> dict:
+def _load_live_status(market: str, mode: str = "paper") -> dict:
     """trading_bot???ъ씠?대쭏??湲곕줉?섎뒗 ?쇱씠釉??곹깭 ?뚯씪 ?쎄린"""
-    path = BASE_DIR / "state" / f"live_status_{market}.json"
+    path = _live_status_path(mode, market)
     if path.exists():
         try:
             return json.loads(path.read_text(encoding="utf-8"))
@@ -1312,11 +1388,12 @@ def _default_claude_control() -> dict:
     }
 
 
-def _load_claude_control() -> dict:
+def _load_claude_control(mode: str = "paper") -> dict:
     data = _default_claude_control()
-    if CLAUDE_CONTROL_PATH.exists():
+    path = _claude_control_path(mode)
+    if path.exists():
         try:
-            saved = json.loads(CLAUDE_CONTROL_PATH.read_text(encoding="utf-8"))
+            saved = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(saved, dict):
                 data.update(saved)
         except Exception:
@@ -1324,18 +1401,18 @@ def _load_claude_control() -> dict:
     return data
 
 
-def _save_claude_control(data: dict):
+def _save_claude_control(data: dict, mode: str = "paper"):
     merged = _default_claude_control()
     merged.update(data or {})
-    CLAUDE_CONTROL_PATH.write_text(
+    _claude_control_path(mode).write_text(
         json.dumps(merged, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
 
-def _load_live_status(market: str) -> dict:
+def _load_live_status(market: str, mode: str = "paper") -> dict:
     """Override: sanitize cross-market rows inside live status."""
-    path = BASE_DIR / "state" / f"live_status_{market}.json"
+    path = _live_status_path(mode, market)
     if not path.exists():
         return {}
     try:
@@ -1376,12 +1453,13 @@ def _load_live_status(market: str) -> dict:
     return data
 
 
-def _load_claude_control() -> dict:
+def _load_claude_control(mode: str = "paper") -> dict:
     """Override: recover stale running state to error."""
     data = _default_claude_control()
-    if CLAUDE_CONTROL_PATH.exists():
+    path = _claude_control_path(mode)
+    if path.exists():
         try:
-            saved = json.loads(CLAUDE_CONTROL_PATH.read_text(encoding="utf-8"))
+            saved = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(saved, dict):
                 data.update(saved)
         except Exception:
@@ -1404,7 +1482,7 @@ def _load_claude_control() -> dict:
             data["last_result_status"] = "error"
             data["last_error"] = data.get("last_error") or "이전 Claude 재판단 결과가 오래되어 상태를 초기화했습니다"
             try:
-                _save_claude_control(data)
+                _save_claude_control(data, mode=mode)
             except Exception:
                 pass
     return data
@@ -1440,19 +1518,19 @@ def _load_broker_positions(market: str) -> list:
     return positions
 
 
-def _saved_positions_for_market(market: str) -> list:
+def _saved_positions_for_market(market: str, mode: str = "paper") -> list:
     # open_positions.json + live_status를 함께 사용.
     # 우선순위는 open_positions < live_status 로 두어 수동 재판단/실시간 상태가 이김.
     merged: dict[str, dict] = {}
 
-    for pos in _load_open_positions():
+    for pos in _load_open_positions(mode):
         ticker = str(pos.get("ticker", "") or "").strip().upper()
         if ticker and _ticker_market(ticker) == market:
             merged[ticker] = dict(pos)
 
     for source in (
-        _load_live_status(market) or {},
-        _load_live_status("US" if market == "KR" else "KR") or {},
+        _load_live_status(market, mode=mode) or {},
+        _load_live_status("US" if market == "KR" else "KR", mode=mode) or {},
     ):
         for pos in source.get("positions", []) or []:
             ticker = str(pos.get("ticker", "") or "").strip().upper()
@@ -1463,17 +1541,18 @@ def _saved_positions_for_market(market: str) -> list:
     return list(merged.values())
 
 
-def _load_open_positions() -> list:
-    if not OPEN_POSITIONS_PATH.exists():
+def _load_open_positions(mode: str = "paper") -> list:
+    path = _open_positions_path(mode)
+    if not path.exists():
         return []
     try:
-        return json.loads(OPEN_POSITIONS_PATH.read_text(encoding="utf-8")) or []
+        return json.loads(path.read_text(encoding="utf-8")) or []
     except Exception:
         return []
 
 
-def _save_open_positions(items: list) -> None:
-    OPEN_POSITIONS_PATH.write_text(
+def _save_open_positions(items: list, mode: str = "paper") -> None:
+    _open_positions_path(mode).write_text(
         json.dumps(items or [], ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
@@ -1535,7 +1614,7 @@ def _merge_positions_for_display(market: str, broker_positions: list, live_posit
     return merged
 
 
-def _resolve_review_position(market: str, ticker: str) -> tuple[str, dict | None, dict, list]:
+def _resolve_review_position(market: str, ticker: str, mode: str = "paper") -> tuple[str, dict | None, dict, list]:
     ticker = str(ticker or "").strip().upper()
     markets = [market]
     other = "US" if market == "KR" else "KR"
@@ -1543,7 +1622,7 @@ def _resolve_review_position(market: str, ticker: str) -> tuple[str, dict | None
         markets.append(other)
 
     for mkt in markets:
-        live = _load_live_status(mkt) or {}
+        live = _load_live_status(mkt, mode=mode) or {}
         positions = live.get("positions", []) or []
         pos = next((p for p in positions if str(p.get("ticker", "") or "").strip().upper() == ticker), None)
         if pos is not None:
@@ -1556,23 +1635,23 @@ def _resolve_review_position(market: str, ticker: str) -> tuple[str, dict | None
             if broker_pos is None:
                 continue
             saved = next(
-                (p for p in _saved_positions_for_market(mkt)
+                (p for p in _saved_positions_for_market(mkt, mode=mode)
                  if str(p.get("ticker", "") or "").strip().upper() == ticker),
                 None,
             )
             merged = _merge_position_context(broker_pos, saved)
-            live = _load_live_status(mkt) or {}
+            live = _load_live_status(mkt, mode=mode) or {}
             positions = live.get("positions", []) or []
             return mkt, merged, live, positions
 
     for mkt in markets:
         saved = next(
-            (p for p in _saved_positions_for_market(mkt)
+            (p for p in _saved_positions_for_market(mkt, mode=mode)
              if str(p.get("ticker", "") or "").strip().upper() == ticker),
             None,
         )
         if saved is not None:
-            live = _load_live_status(mkt) or {}
+            live = _load_live_status(mkt, mode=mode) or {}
             positions = live.get("positions", []) or []
             return mkt, saved, live, positions
 
@@ -1682,7 +1761,7 @@ def _broker_realized_pnl_krw(market: str, trade_date: str) -> float:
 
 
 def _live_asset_fallback(market: str, usd_krw: float) -> dict:
-    live = _load_live_status(market)
+    live = _load_live_status(market, mode=_request_mode())
     if not live or not live.get("positions"):
         return {"asset_krw": 0.0, "unrealized_krw": 0.0}
     asset = 0.0
@@ -1751,7 +1830,7 @@ def _ticker_name_map(market: str, include_broker: bool = True) -> dict[str, str]
             name = str(pos.get("name", "") or "").strip()
             if t and name and name != t:
                 name_map[t] = name
-    live = _load_live_status(market) or {}
+    live = _load_live_status(market, mode=_request_mode()) or {}
     for bucket in ("positions", "pending_orders"):
         for item in live.get(bucket, []) or []:
             t = str(item.get("ticker", "") or "").strip().upper()
@@ -2352,7 +2431,7 @@ def api_summary():
 
     today_rec   = load_today(market)
     result      = today_rec.get("actual_result", {})
-    live        = _load_live_status(market)   # ??以??ㅼ떆媛??곹깭
+    live        = _load_live_status(market, mode=_request_mode())   # ??以??ㅼ떆媛??곹깭
 
     # ??以묒씠硫??쇱씠釉??곹깭 ?곗꽑, ?놁쑝硫??쇰퀎 湲곕줉 ?ъ슜
     if not _is_fresh_live_status(live, today_rec):
@@ -2370,7 +2449,7 @@ def api_summary():
     cum_base = float(result.get("cumulative", 0) or PAPER_CASH)
     cum_asset = float((live.get("total_equity", 0) if live else 0) or cum_base or PAPER_CASH)
     broker_positions = _filter_items_for_market(_load_broker_positions(market), market)
-    saved_positions = _saved_positions_for_market(market)
+    saved_positions = _saved_positions_for_market(market, mode=_request_mode())
     positions = _merge_positions_for_display(market, broker_positions, saved_positions)
     pending_orders = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
     name_map = _ticker_name_map(market)
@@ -2508,13 +2587,15 @@ def api_summary():
 @app.route("/api/claude/status")
 def api_claude_status():
     market = request.args.get("market", best_market_with_data())
-    control = _load_claude_control()
+    mode = _request_mode()
+    control = _load_claude_control(mode=mode)
     session = _session_status(market)
-    live = _load_live_status(market)
+    live = _load_live_status(market, mode=mode)
     claude = live.get("claude", {}) if isinstance(live, dict) else {}
     stats = _claude_reinvoke_stats_today(market)
     return jsonify({
         "market": market,
+        "mode": mode,
         "enabled": bool(control.get("enabled", True)),
         "updated_at": control.get("updated_at", ""),
         "updated_by": control.get("updated_by", ""),
@@ -2534,23 +2615,25 @@ def api_claude_status():
 @app.route("/api/claude/toggle", methods=["POST"])
 def api_claude_toggle():
     body = request.get_json(silent=True) or {}
+    mode = _normalize_mode(body.get("mode"))
     enabled = bool(body.get("enabled", True))
-    control = _load_claude_control()
+    control = _load_claude_control(mode=mode)
     control["enabled"] = enabled
     control["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
     control["updated_by"] = "dashboard"
     if not enabled:
         control["pending_trigger"] = None
-    _save_claude_control(control)
-    return jsonify({"ok": True, "enabled": enabled})
+    _save_claude_control(control, mode=mode)
+    return jsonify({"ok": True, "enabled": enabled, "mode": mode})
 
 
 @app.route("/api/claude/trigger", methods=["POST"])
 def api_claude_trigger():
     body = request.get_json(silent=True) or {}
+    mode = _normalize_mode(body.get("mode"))
     market = body.get("market", best_market_with_data())
     session = _session_status(market)
-    control = _load_claude_control()
+    control = _load_claude_control(mode=mode)
     if not bool(control.get("enabled", True)):
         return jsonify({"ok": False, "error": "Claude 재판단 기능이 OFF 상태입니다"}), 400
     if not session.get("active"):
@@ -2562,8 +2645,8 @@ def api_claude_trigger():
     }
     control["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
     control["updated_by"] = "dashboard"
-    _save_claude_control(control)
-    return jsonify({"ok": True, "queued": True, "market": market})
+    _save_claude_control(control, mode=mode)
+    return jsonify({"ok": True, "queued": True, "market": market, "mode": mode})
 
 
 @app.route("/api/judgments")
@@ -2797,26 +2880,33 @@ def api_credits():
 @app.route("/api/control/status")
 def api_control_status():
     dashboard_info = _read_pid_file(DASHBOARD_PID_PATH)
-    bot_info = _read_pid_file(BOT_PID_PATH)
     dashboard_pid = int(dashboard_info.get("pid", os.getpid()) or os.getpid())
-    bot_pid = int(bot_info.get("pid", 0) or 0)
     dashboard_alive = _pid_alive(dashboard_pid)
-    bot_alive = _pid_alive(bot_pid)
     if dashboard_info and not dashboard_alive and dashboard_pid != os.getpid():
         _clear_pid_file(DASHBOARD_PID_PATH)
-    if bot_info and not bot_alive:
-        _clear_pid_file(BOT_PID_PATH)
+    mode = _request_mode()
+    runtimes = {}
+    for runtime_mode in ("paper", "live"):
+        bot_path = _bot_pid_path(runtime_mode)
+        bot_info = _read_pid_file(bot_path)
+        bot_pid = int(bot_info.get("pid", 0) or 0)
+        bot_alive = _pid_alive(bot_pid)
+        if bot_info and not bot_alive:
+            _clear_pid_file(bot_path)
+        runtimes[runtime_mode] = {
+            "pid": bot_pid,
+            "alive": bot_alive,
+            "started_at": bot_info.get("started_at", ""),
+        }
     return jsonify({
+        "mode": mode,
         "dashboard": {
             "pid": dashboard_pid,
             "alive": dashboard_alive,
             "started_at": dashboard_info.get("started_at", ""),
         },
-        "bot": {
-            "pid": bot_pid,
-            "alive": bot_alive,
-            "started_at": bot_info.get("started_at", ""),
-        },
+        "bot": runtimes.get(mode, {}),
+        "bots": runtimes,
     })
 
 
@@ -2998,7 +3088,7 @@ def api_history_equity():
         modes.append(r.get("consensus", {}).get("mode", ""))
         metric_rows.append(result)
     today_label = date.today().isoformat()
-    live = _load_live_status(market)
+    live = _load_live_status(market, mode=_request_mode())
     broker = _broker_snapshot()
     current_equity = float((broker or {}).get("cumulative", 0) or 0)
     if _is_fresh_live_status(live, load_today(market)):
@@ -3304,7 +3394,7 @@ def api_signals_recent():
             continue
         seen.add(key)
         dedup.append(item)
-    live = _load_live_status(market) or {}
+    live = _load_live_status(market, mode=_request_mode()) or {}
     broker_positions = _filter_items_for_market(_load_broker_positions(market), market)
     price_map = {}
     for pos in _filter_items_for_market(live.get("positions", []) or [], market):
@@ -3371,12 +3461,13 @@ def api_signals_recent():
 @app.route("/api/decisions")
 def api_decisions():
     """Claude 매수/매도/홀드 판단 이력 (state/decisions.jsonl)"""
+    mode = _request_mode()
     market = request.args.get("market", "")
     action = request.args.get("action", "")
     ticker = request.args.get("ticker", "")
     limit  = int(request.args.get("limit", "100"))
 
-    decisions_path = BASE_DIR / "state" / "decisions.jsonl"
+    decisions_path = _decisions_path(mode)
     rows = []
     if decisions_path.exists():
         try:
@@ -3414,9 +3505,10 @@ def _is_live_market(market: str) -> bool:
 def api_refresh_prices():
     """포지션 현재가 갱신: 장 중이면 KIS API 실시간, 장 외이면 저장 데이터 반환"""
     body   = request.get_json(silent=True) or {}
+    mode   = _normalize_mode(body.get("mode"))
     market = body.get("market", "KR").upper()
 
-    live = _load_live_status(market) or {}
+    live = _load_live_status(market, mode=mode) or {}
     positions = live.get("positions", [])
     if not positions:
         return jsonify({"ok": True, "market": market, "live": False, "positions": []})
@@ -3444,7 +3536,7 @@ def api_refresh_prices():
                     pass  # 개별 종목 실패 시 기존값 유지
             if updated:
                 live["positions"] = positions
-                live_path = BASE_DIR / "state" / f"live_status_{market}.json"
+                live_path = _live_status_path(mode, market)
                 live_path.write_text(json.dumps(live, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
             is_live = False  # 토큰 오류 등 → 저장 데이터 반환
@@ -3474,19 +3566,20 @@ def api_refresh_prices():
 def api_review_position():
     """종목별 Claude 즉시 재판단 (대시보드 버튼 → hold_advisor 호출)"""
     body   = request.get_json(silent=True) or {}
+    mode   = _normalize_mode(body.get("mode"))
     market = body.get("market", "KR").upper()
     ticker = body.get("ticker", "").strip().upper()
     if not ticker:
         return jsonify({"error": "ticker required"}), 400
 
-    market, pos, live, positions = _resolve_review_position(market, ticker)
+    market, pos, live, positions = _resolve_review_position(market, ticker, mode=mode)
     if pos is None:
         return jsonify({"error": f"{ticker} 포지션을 찾을 수 없습니다"}), 404
 
     # live_status position은 entry=None/0일 수 있음 → open_positions.json의 KRW entry로 보완
     if float(pos.get("entry", 0) or 0) <= 0:
         saved = next(
-            (p for p in _load_open_positions()
+            (p for p in _load_open_positions(mode)
              if str(p.get("ticker", "") or "").strip().upper() == ticker),
             None,
         )
@@ -3520,11 +3613,11 @@ def api_review_position():
             positions.append(pos)
         live["positions"] = positions
         live["position_count"] = len(positions)
-        live_path = BASE_DIR / "state" / f"live_status_{market}.json"
+        live_path = _live_status_path(mode, market)
         live_path.write_text(json.dumps(live, ensure_ascii=False), encoding="utf-8")
 
         # open_positions.json도 같이 갱신해 재시작/오프마켓 후에도 유지
-        saved_positions = _load_open_positions()
+        saved_positions = _load_open_positions(mode)
         saved_updated = False
         for p2 in saved_positions:
             if str(p2.get("ticker", "") or "").strip().upper() == ticker:
@@ -3539,11 +3632,11 @@ def api_review_position():
                 "hold_advice": advice,
                 "last_hold_update": now_iso[:10],
             })
-        _save_open_positions(saved_positions)
+        _save_open_positions(saved_positions, mode=mode)
 
         queued_sell = False
         if advice.get("action") == "SELL":
-            control = _load_claude_control()
+            control = _load_claude_control(mode=mode)
             control["pending_position_review"] = {
                 "market": market,
                 "ticker": ticker,
@@ -3552,14 +3645,15 @@ def api_review_position():
             }
             control["updated_at"] = now_iso
             control["updated_by"] = "dashboard_review"
-            _save_claude_control(control)
+            _save_claude_control(control, mode=mode)
             queued_sell = True
 
         # decisions.jsonl 기록
         from datetime import datetime as _dt
-        decisions_path = BASE_DIR / "state" / "decisions.jsonl"
+        decisions_path = _decisions_path(mode)
         event = {
             "timestamp": now_iso,
+            "mode":      mode,
             "market":    market,
             "ticker":    ticker,
             "action":    "HOLD_REVIEW",
@@ -3584,12 +3678,13 @@ def api_immediate_sell():
     """즉시 매도: Claude에게 적정 매도가 물어보고 pending_sell에 기록"""
     import anthropic as _anthropic
     body   = request.get_json(silent=True) or {}
+    mode   = _normalize_mode(body.get("mode"))
     market = body.get("market", "KR").upper()
     ticker = body.get("ticker", "").strip().upper()
     if not ticker:
         return jsonify({"error": "ticker required"}), 400
 
-    market, pos, live, positions = _resolve_review_position(market, ticker)
+    market, pos, live, positions = _resolve_review_position(market, ticker, mode=mode)
     if pos is None:
         return jsonify({"error": f"{ticker} 포지션을 찾을 수 없습니다"}), 404
 
@@ -3633,12 +3728,13 @@ def api_immediate_sell():
 
     # pending_sell 기록
     try:
-        ctrl_path = Path(BASE_DIR) / "state" / "claude_control.json"
+        ctrl_path = _claude_control_path(mode)
         ctrl = {}
         if ctrl_path.exists():
             with open(ctrl_path, encoding="utf-8") as f:
                 ctrl = json.load(f)
         ctrl["pending_sell"] = {
+            "mode": mode,
             "market": market,
             "ticker": ticker,
             "sell_price": sell_price,
@@ -3660,7 +3756,8 @@ def api_tickers_today():
     tickers  = rec.get("tickers", [])
     universe = rec.get("universe_tickers", [])
     consensus = rec.get("consensus", {})
-    live = _load_live_status(market) or {}
+    mode = _request_mode()
+    live = _load_live_status(market, mode=mode) or {}
     broker_positions = _filter_items_for_market(_load_broker_positions(market), market)
     live_positions = _filter_items_for_market(live.get("positions", []) if live else [], market)
     live_pending = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
@@ -4280,8 +4377,10 @@ def _header_html(active_page: str) -> str:
   <nav>{nav_links}</nav>
   <div class="header-right">
     <span class="status-dot"></span>
-    <button class="mkt-btn" id="btn-kr" onclick="setMarket('KR')">한국장 KR</button>
-    <button class="mkt-btn" id="btn-us" onclick="setMarket('US')">미국장 US</button>
+    <button class="mkt-btn" data-group="market" id="btn-kr" onclick="setMarket('KR')">한국장 KR</button>
+    <button class="mkt-btn" data-group="market" id="btn-us" onclick="setMarket('US')">미국장 US</button>
+    <button class="mkt-btn" data-group="mode" id="btn-paper" onclick="setMode('paper')">Paper</button>
+    <button class="mkt-btn" data-group="mode" id="btn-live" onclick="setMode('live')">Live</button>
     <span id="clock"></span>
   </div>
 </header>
@@ -4309,6 +4408,7 @@ COMMON_JS_BLOCK = """
 <script>
 // ?? 怨듯넻 ?곹깭 ??????????????????????????????????????????????????????????????????
 let MARKET = localStorage.getItem('market') || 'KR';
+let MODE   = localStorage.getItem('runtime_mode') || 'paper';
 let PERIOD = localStorage.getItem('period') || 'month';
 let DATE_START = localStorage.getItem('date_start') || '';
 let DATE_END   = localStorage.getItem('date_end')   || '';
@@ -4318,8 +4418,17 @@ let charts = {};
 function setMarket(m) {
   MARKET = m;
   localStorage.setItem('market', m);
-  document.querySelectorAll('.mkt-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.mkt-btn[data-group="market"]').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('btn-' + m.toLowerCase());
+  if (btn) btn.classList.add('active');
+  if (typeof loadAll === 'function') loadAll();
+}
+
+function setMode(mode) {
+  MODE = (mode === 'live') ? 'live' : 'paper';
+  localStorage.setItem('runtime_mode', MODE);
+  document.querySelectorAll('.mkt-btn[data-group="mode"]').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('btn-' + MODE);
   if (btn) btn.classList.add('active');
   if (typeof loadAll === 'function') loadAll();
 }
@@ -4349,6 +4458,7 @@ function applyCustomDate() {
 function marketParam(extra = '') {
   const p  = new URLSearchParams();
   p.set('market', MARKET);
+  p.set('mode', MODE);
   if (PERIOD) p.set('period', PERIOD);
   if (PERIOD === 'custom') {
     if (DATE_START) p.set('start', DATE_START);
@@ -4362,6 +4472,27 @@ function marketParam(extra = '') {
   }
   return '?' + p.toString();
 }
+
+function apiGet(path, extra = '') {
+  const sep = path.includes('?') ? '&' : '?';
+  const suffix = extra ? `${extra}&mode=${encodeURIComponent(MODE)}` : `mode=${encodeURIComponent(MODE)}`;
+  return fetch(path + sep + suffix);
+}
+
+function apiPost(path, body = {}) {
+  return fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({...body, mode: MODE}),
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const marketBtn = document.getElementById('btn-' + MARKET.toLowerCase());
+  if (marketBtn) marketBtn.classList.add('active');
+  const modeBtn = document.getElementById('btn-' + MODE);
+  if (modeBtn) modeBtn.classList.add('active');
+});
 
 // ?? ?щ㎎???????????????????????????????????????????????????????????????????????
 const fmt = {
@@ -4692,7 +4823,7 @@ async function loadSummary() {
 }
 
 async function loadJudgments() {
-  const d = await fetch('/api/judgments?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/judgments', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.bull) return;
 
   function analystCard(info, label, iconClass, stanceClass) {
@@ -4735,7 +4866,7 @@ async function loadJudgments() {
 }
 
 async function loadEquityChart() {
-  const d = await fetch('/api/chart/equity?market=' + MARKET + '&period=3month').then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/chart/equity', 'market=' + encodeURIComponent(MARKET) + '&period=3month').then(r => r.json()).catch(() => ({}));
   if (!d.labels) return;
 
   const colors = (d.wins || []).map(w => w ? 'rgba(16,185,129,0.8)' : 'rgba(239,68,68,0.8)');
@@ -4774,7 +4905,7 @@ async function loadEquityChart() {
 }
 
 async function loadMarketContext() {
-  const d = await fetch('/api/chart/market-context?market=' + MARKET + '&period=3month').then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/chart/market-context', 'market=' + encodeURIComponent(MARKET) + '&period=3month').then(r => r.json()).catch(() => ({}));
   if (!d.labels || d.labels.length === 0) return;
 
   if (charts.marketLevel) charts.marketLevel.destroy();
@@ -4992,7 +5123,7 @@ async function loadMonitorTickers() {
   const fmtNoneReason = (txt) => String(txt || '')
     .replace(/✓/g, '<span style="color:#22c55e;font-weight:700">✓</span>')
     .replace(/✗/g, '<span style="color:#ef4444;font-weight:700">✗</span>');
-  const d = await fetch('/api/tickers/today?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/tickers/today', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   const tickers = d.tickers || [];
   if (meta) {
     meta.textContent = tickers.length
@@ -5174,8 +5305,8 @@ async function loadSignalFeed() {
   const cards = document.getElementById('signal-feed-cards');
   if (!feed) return;
   const [d, tickerData] = await Promise.all([
-    fetch('/api/signals/recent?market=' + MARKET + '&n=60').then(r => r.json()).catch(() => ([])),
-    fetch('/api/tickers/today?market=' + MARKET).then(r => r.json()).catch(() => ({})),
+    apiGet('/api/signals/recent', 'market=' + encodeURIComponent(MARKET) + '&n=60').then(r => r.json()).catch(() => ([])),
+    apiGet('/api/tickers/today', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({})),
   ]);
   const summary = window.__todaySummary || {};
   const tickerMap = {};
@@ -5338,7 +5469,7 @@ async function loadSignalFeed() {
 }
 
 async function loadSummary() {
-  const d = await fetch('/api/summary?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/summary', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.today) return;
   const t = d.today, p = d.period;
 
@@ -5545,11 +5676,7 @@ async function loadSummary() {
 
 async function refreshPrices(market) {
   try {
-    await fetch('/api/refresh_prices', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({market})
-    });
+    await apiPost('/api/refresh_prices', {market});
   } catch(e) {}
 }
 
@@ -5566,11 +5693,7 @@ async function reviewPosition(market, ticker, cardId) {
   if (btn) { btn.disabled = true; btn.textContent = '분석 중...'; }
   if (status) status.textContent = '';
   try {
-    const res = await fetch('/api/review_position', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({market, ticker})
-    });
+    const res = await apiPost('/api/review_position', {market, ticker});
     const data = await res.json();
     if (!res.ok || data.error) {
       if (status) status.textContent = '❌ ' + (data.error || '오류');
@@ -5601,11 +5724,7 @@ async function immediatelySell(market, ticker, cardId) {
   if (btn) { btn.disabled = true; btn.textContent = '가격 산정 중...'; }
   if (status) status.textContent = '';
   try {
-    const res = await fetch('/api/immediate_sell', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({market, ticker})
-    });
+    const res = await apiPost('/api/immediate_sell', {market, ticker});
     const data = await res.json();
     if (!res.ok || data.error) {
       if (status) status.textContent = '❌ ' + (data.error || '오류');
@@ -5773,7 +5892,7 @@ async function loadHistEquity() {
 }
 
 async function loadMonthly() {
-  const rows = await fetch('/api/history/monthly?market=' + MARKET).then(r => r.json()).catch(() => []);
+  const rows = await apiGet('/api/history/monthly', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => []);
 
   const historyTitles = document.querySelectorAll('/**/'.replace('/**/','main .grid-2 .section-title, main .card .section-title'));
   if (historyTitles.length >= 3) {
@@ -6208,7 +6327,7 @@ TODAY_SUMMARY_OVERRIDE_JS = """
 TODAY_SUMMARY_OVERRIDE_JS_V2 = """
 <script>
 async function loadSummary() {
-  const d = await fetch('/api/summary?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/summary', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.today) return;
   const t = d.today;
   const p = d.period || {};
@@ -6416,7 +6535,7 @@ TODAY_SIGNAL_DIGEST_JS = """
   const _origLoadSummary = loadSummary;
   loadSummary = async function() {
     await _origLoadSummary();
-    const d = await fetch('/api/summary?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+    const d = await apiGet('/api/summary', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
     if (!d.today) return;
     const t = d.today || {};
     const sig = t.signal_digest || {};
@@ -6445,7 +6564,7 @@ TODAY_SIGNAL_DIGEST_JS = """
 CLAUDE_CONTROL_JS = """
 <script>
 async function loadClaudeControl() {
-  const d = await fetch('/api/claude/status?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/claude/status', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   const badge = document.getElementById('claude-status-badge');
   const stateLine = document.getElementById('claude-state-line');
   const metaLine = document.getElementById('claude-meta-line');
@@ -6481,7 +6600,7 @@ async function loadClaudeControl() {
 }
 
 async function loadProcessControl() {
-  const d = await fetch('/api/control/status').then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/control/status').then(r => r.json()).catch(() => ({}));
   const stateLine = document.getElementById('control-state-line');
   const metaLine = document.getElementById('control-meta-line');
   const errLine = document.getElementById('control-error-line');
@@ -6502,12 +6621,12 @@ async function loadProcessControl() {
 async function restartDashboardServer() {
   const errLine = document.getElementById('control-error-line');
   if (errLine) errLine.textContent = '대시보드 서버 재시작 요청 중..';
-  fetch('/api/control/restart-dashboard', { method: 'POST' }).catch(() => ({}));
+  apiPost('/api/control/restart-dashboard').catch(() => ({}));
 }
 
 async function restartTradingBot() {
   const errLine = document.getElementById('control-error-line');
-  const res = await fetch('/api/control/restart-bot', { method: 'POST' })
+  const res = await apiPost('/api/control/restart-bot')
     .then(async r => ({ ok: r.ok, data: await r.json() }))
     .catch(() => ({ ok: false, data: {} }));
   if (errLine) errLine.textContent = res.data.message || (res.ok ? '봇 재시작 요청 완료' : '봇 재시작 요청 실패');
@@ -6515,23 +6634,15 @@ async function restartTradingBot() {
 }
 
 async function toggleClaudeReinvoke() {
-  const current = await fetch('/api/claude/status?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const current = await apiGet('/api/claude/status', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   const nextEnabled = !current.enabled;
-  const res = await fetch('/api/claude/toggle', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled: nextEnabled })
-  }).then(r => r.json()).catch(() => ({ ok: false }));
+  const res = await apiPost('/api/claude/toggle', { enabled: nextEnabled }).then(r => r.json()).catch(() => ({ ok: false }));
   if (!res.ok) return;
   await loadClaudeControl();
 }
 
 async function triggerClaudeReinvoke() {
-  const res = await fetch('/api/claude/trigger', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ market: MARKET })
-  }).then(async r => ({ ok: r.ok, data: await r.json() })).catch(() => ({ ok: false, data: {} }));
+  const res = await apiPost('/api/claude/trigger', { market: MARKET }).then(async r => ({ ok: r.ok, data: await r.json() })).catch(() => ({ ok: false, data: {} }));
   if (!res.ok) {
     const errLine = document.getElementById('claude-error-line');
     if (errLine) errLine.textContent = res.data.error || 'Claude 판단 요청 실패';
@@ -6559,9 +6670,9 @@ async function loadClaudeNarrative() {
   const box = document.getElementById('claude-timeline');
   if (!box) return;
   const [judgments, tickers, signals, trades] = await Promise.all([
-    fetch('/api/judgments?market=' + MARKET).then(r => r.json()).catch(() => ({})),
-    fetch('/api/tickers/today?market=' + MARKET).then(r => r.json()).catch(() => ({})),
-    fetch('/api/signals/recent?market=' + MARKET + '&n=8').then(r => r.json()).catch(() => ([])),
+    apiGet('/api/judgments', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({})),
+    apiGet('/api/tickers/today', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({})),
+    apiGet('/api/signals/recent', 'market=' + encodeURIComponent(MARKET) + '&n=8').then(r => r.json()).catch(() => ([])),
     fetch('/api/trades/list' + marketParam('limit=8')).then(r => r.json()).catch(() => ([])),
   ]);
   const EVENT_KO = {
@@ -6785,7 +6896,7 @@ PAGE_ANALYTICS_HTML = """
 <script>
 
 async function loadAnalystChart() {
-  const d = await fetch('/api/chart/analyst?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/chart/analyst', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.labels) return;
 
   if (charts.analyst) charts.analyst.destroy();
@@ -6813,7 +6924,7 @@ async function loadAnalystChart() {
 }
 
 async function loadPatterns() {
-  const d = await fetch('/api/patterns?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/patterns', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
 
   // 모드별 테이블
   const modes = d.modes || {};
@@ -6850,7 +6961,7 @@ async function loadPatterns() {
 }
 
 async function loadBrain() {
-  const d = await fetch('/api/brain?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/brain', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   const a = d.analyst || {};
 
   // Brain 상태 카드
@@ -6965,7 +7076,7 @@ async function loadBrain() {
 }
 
 async function loadBrainHistory() {
-  const d = await fetch('/api/brain/history?market=' + MARKET).then(r => r.json()).catch(() => ({}));
+  const d = await apiGet('/api/brain/history', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   const days = d.recent_days || [];
 
   // 메타 헤더
