@@ -105,6 +105,7 @@ import strategy.param_tuner as _param_tuner
 
 from claude_memory import brain as BrainDB
 from runtime_paths import get_runtime_path
+import shared_judgment_cache
 import ticker_selection_db as tsdb
 import intraday_strategy_db as isdb
 from bot.market_utils import (
@@ -3033,6 +3034,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         live_path = _judgment_runtime_path(self._mode, today, market)
         legacy_live_path = JUDGMENT_DIR / f"{today.replace('-', '')}_{market}.json"
         reused = False
+        _from_shared_cache = False
         digest = None
         digest_prompt = ""
         if live_path.exists():
@@ -3090,29 +3092,49 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception as e:
                 log.warning(f"[session reuse fallback] load failed: {e}")
 
+        # ── 공유 판단 캐시 확인 (paper/live Claude 중복 호출 방지) ─────────────
+        # 같은 날 같은 장에서 한 쪽 프로세스가 이미 판단을 생성했으면
+        # get_three_judgments 재호출 없이 결과를 재사용한다.
+        # 스크리너 + select_tickers 는 포트폴리오 맥락이 달라 각자 실행한다.
+        _from_shared_cache = False
+        if not reused:
+            _shared = shared_judgment_cache.load(market, today)
+            if _shared:
+                judgments = _shared["judgments"]
+                consensus = _shared["consensus"]
+                digest_prompt = _shared.get("digest_prompt", "")
+                _from_shared_cache = True
+                log.info(
+                    f"[공유판단캐시] {today} {market} consensus={consensus['mode']} "
+                    f"(Claude 재호출 생략, {self._mode} 런타임 재사용)"
+                )
+
         if not reused:
             digest = build_kr_digest(today, universe_tickers=universe_tickers) if market == "KR" \
                 else build_us_digest(today, universe_tickers=universe_tickers)
-            digest_prompt = digest_to_prompt(digest)
+            if not _from_shared_cache:
+                digest_prompt = digest_to_prompt(digest)
 
-            brain_summary = BrainDB.generate_prompt_summary(market)
-            brain_data = BrainDB.load()
-            correction = json.dumps(brain_data.get("correction_guide", {}).get(market, {}), ensure_ascii=False)
+            if not _from_shared_cache:
+                # ── Claude 판단 (신규 생성) ──────────────────────────────────
+                brain_summary = BrainDB.generate_prompt_summary(market)
+                brain_data = BrainDB.load()
+                correction = json.dumps(brain_data.get("correction_guide", {}).get(market, {}), ensure_ascii=False)
 
-            portfolio_info = {
-                "cash":          round(self.risk.cash),
-                "total_equity":  round(self._kis_total_equity_krw()),
-                "max_order_krw": round(self.risk.max_order_krw),
-                "n_positions":   len(self.risk.positions),
-                "max_positions": HARD_RULES["max_positions"],
-            }
-            judgments = get_three_judgments(
-                digest_prompt, brain_summary, correction,
-                market=market, portfolio_info=portfolio_info,
-            )
-            consensus = build_consensus(judgments, market=market)
+                portfolio_info = {
+                    "cash":          round(self.risk.cash),
+                    "total_equity":  round(self._kis_total_equity_krw()),
+                    "max_order_krw": round(self.risk.max_order_krw),
+                    "n_positions":   len(self.risk.positions),
+                    "max_positions": HARD_RULES["max_positions"],
+                }
+                judgments = get_three_judgments(
+                    digest_prompt, brain_summary, correction,
+                    market=market, portfolio_info=portfolio_info,
+                )
+                consensus = build_consensus(judgments, market=market)
 
-            # ── VIX 동적 사이즈 보정 (US 전용) ───────────────────────────────
+            # ── VIX 동적 사이즈 보정 (US 전용, 항상 최신 digest 기준) ─────────
             if market == "US":
                 vix = float((digest.get("context") or {}).get("vix") or 0)
                 if vix > 0:
@@ -3131,25 +3153,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             f"{orig_size}% → {consensus['size']}%"
                         )
 
-            judgment_log.info(
-                f"[open {today} {market}] consensus={consensus['mode']} size={consensus['size']}%",
-                extra={"extra": {
-                    "event": "session_open_judgment",
-                    "date": today,
-                    "market": market,
-                    "consensus": consensus,
-                    "judgments": judgments,
-                }},
-            )
+            if not _from_shared_cache:
+                judgment_log.info(
+                    f"[open {today} {market}] consensus={consensus['mode']} size={consensus['size']}%",
+                    extra={"extra": {
+                        "event": "session_open_judgment",
+                        "date": today,
+                        "market": market,
+                        "consensus": consensus,
+                        "judgments": judgments,
+                    }},
+                )
 
             # 오늘 집중 종목: 스크리너 → 히스토리 필터 → Claude 선택
             log.info(f"[스크리너] {market} 시장 스캔 중...")
             if market == "KR":
-                candidates = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                candidates = screen_market_kr(self.token, mode=consensus.get("mode", "NEUTRAL"))
                 if candidates:
                     self._last_kr_candidates = candidates
             else:
-                candidates = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                candidates = screen_market_us(mode=consensus.get("mode", "NEUTRAL"))
             self._log_screen_candidates(market, candidates, "session_open")
             candidates = self._prefill_history_sync(candidates, market)
             candidates = self._filter_candidates_by_history(candidates, market)
@@ -3184,7 +3207,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             mode_order_limit_krw=_mode_order_limit)
 
             # _debate 메타데이터 분리 후 today_judgment에 함께 보관
-            debate_meta = judgments.pop("_debate", {})
+            if _from_shared_cache:
+                debate_meta = {
+                    "r1": _shared.get("round1_judgments", {}),
+                    "changes": _shared.get("debate_changes", []),
+                }
+            else:
+                debate_meta = judgments.pop("_debate", {})
             self.today_judgment = {
                 "date": today,
                 "market": market,
@@ -3197,6 +3226,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "round1_judgments": debate_meta.get("r1", {}),
                 "debate_changes":   debate_meta.get("changes", []),
             }
+
+            # ── 신규 생성 판단을 공유 캐시에 저장 (상대 프로세스가 재사용) ──────
+            if not _from_shared_cache:
+                shared_judgment_cache.save(market, today, self.today_judgment)
         else:
             # 판단은 재사용하되 종목은 항상 새로 스크리닝
             # (reused=True 시 전날 저장된 종목이 그대로 고정되는 문제 방지)
@@ -3256,12 +3289,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as e:
             log.warning(f"balance lookup failed [{market}]: {e}")
             balance = {"stocks": [], "total_eval": 0, "cash": 0, "total_profit": 0, "profit_rate": 0.0}
-        if not reused:
+        if not reused and not _from_shared_cache:
             morning_briefing(market, judgments, consensus, balance, digest,
                              round1_judgments=debate_meta.get("r1", {}),
                              debate_changes=debate_meta.get("changes", []))
         else:
-            log.info(f"[재시작] 브리핑 스킵 (당일 판단 재사용) consensus={consensus['mode']}")
+            reason = "공유캐시 재사용" if _from_shared_cache else "당일 판단 재사용"
+            log.info(f"[{reason}] 브리핑 스킵 consensus={consensus['mode']}")
         log.info(f"consensus: {consensus['mode']} size={consensus['size']}%")
 
         self.ws = KISWebSocket(
