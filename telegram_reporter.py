@@ -23,6 +23,9 @@ BASE_DIR = Path(__file__).resolve().parent
 TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+_IS_PAPER = str(os.getenv("KIS_IS_PAPER", "true")).strip().lower() != "false"
+MODE_LABEL = "모의" if _IS_PAPER else "실전"
+
 
 def _env_flag(name: str, default: bool = False) -> bool:
     raw = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
@@ -261,7 +264,7 @@ def morning_briefing(
 
     text = (
         f"━━━━━━━━━━━\n"
-        f"🌅 <b>[세션 시작 브리핑] {now}</b>\n"
+        f"🌅 <b>[{MODE_LABEL}][세션 시작 브리핑] {now}</b>\n"
         f"━━━━━━━━━━━\n"
         f"{r1_section}{debate_section}"
         f"🎯 <b>최종 합의: {_ko_mode(mode)}</b>  비중 {size}%\n"
@@ -299,7 +302,7 @@ def tuning_report(elapsed_min: int, tuning_result: dict, prev_mode: str, positio
     )
     text = (
         f"━━━━━━━━━━━\n"
-        f"{icon} <b>[{elapsed_min}분 튜닝]</b>\n"
+        f"{icon} <b>[{MODE_LABEL}][{elapsed_min}분 튜닝]</b>\n"
         f"{line}\n"
         f"사유: {tuning_result.get('reason', '')}\n"
         f"보유:\n{pos_txt}\n"
@@ -310,7 +313,7 @@ def tuning_report(elapsed_min: int, tuning_result: dict, prev_mode: str, positio
 
 
 def emergency_alert(msg: str) -> str:
-    text = f"🚨 <b>[긴급 알림]</b>\n{msg}"
+    text = f"🚨 <b>[{MODE_LABEL}][긴급 알림]</b>\n{msg}"
     send(text)
     return text
 
@@ -378,7 +381,7 @@ def analyst_reinvoke_alert(
 
     text = (
         f"━━━━━━━━━━━\n"
-        f"🔁 <b>[{market} {trigger_ko} 재판단] {now}</b>\n"
+        f"🔁 <b>[{MODE_LABEL}][{market} {trigger_ko} 재판단] {now}</b>\n"
         f"━━━━━━━━━━━\n"
         f"모드: {mode_line}\n"
         f"사이즈: {size}%"
@@ -410,19 +413,19 @@ def signal_alert(
     if event == "entry_signal":
         cost_str = f"  주문금액 {order_cost_krw:,}원" if order_cost_krw else ""
         text = (
-            f"🟢 <b>[진입신호] {ticker_disp}</b>  {mkt_icon}{market} {now}\n"
+            f"🟢 <b>[{MODE_LABEL}][진입신호] {ticker_disp}</b>  {mkt_icon}{market} {now}\n"
             f"전략: {_ko_strategy(strategy)}  가격 {price_str}{cost_str}\n"
             f"모드: {_ko_mode(mode)}"
         )
     elif event == "signal_blocked":
         text = (
-            f"⛔ <b>[신호차단] {ticker_disp}</b>  {mkt_icon}{market} {now}\n"
+            f"⛔ <b>[{MODE_LABEL}][신호차단] {ticker_disp}</b>  {mkt_icon}{market} {now}\n"
             f"전략: {_ko_strategy(strategy)}  가격 {price_str}\n"
             f"모드: <b>{_ko_mode(mode)}</b> | {_ko_reason(reason)}"
         )
     elif event == "entry_skip" and reason == "already_holding":
         text = (
-            f"⏭ <b>[보유중 스킵] {ticker_disp}</b>  {mkt_icon}{market} {now}\n"
+            f"⏭ <b>[{MODE_LABEL}][보유중 스킵] {ticker_disp}</b>  {mkt_icon}{market} {now}\n"
             f"신호: {_ko_strategy(strategy)}  가격 {price_str}\n"
             f"{_ko_reason(reason)} | 중복 진입 차단"
         )
@@ -494,7 +497,7 @@ def block_alert(
     market_txt = f" {market}" if market else ""
     body = "\n".join([str(x) for x in (lines or []) if str(x).strip()]) or "내용 없음"
     text = (
-        f"{icon} <b>[{title}{market_txt}]</b>{now}\n"
+        f"{icon} <b>[{MODE_LABEL}][{title}{market_txt}]</b>{now}\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"{body}"
     )
@@ -605,7 +608,7 @@ def watchlist_alert(
     if excluded:
         excl_line = f"\n제외: {', '.join(excluded[:10])}" + ("..." if len(excluded) > 10 else "")
     text = (
-        f"{icon} <b>[{market} {trigger_label}]</b>  {now}\n"
+        f"{icon} <b>[{MODE_LABEL}][{market} {trigger_label}]</b>  {now}\n"
         f"━━━━━━━━\n"
         f"모드: <b>{_ko_mode(mode)}</b>"
         + (f" | 최대매수 {int(mode_order_limit_krw):,}원" if mode_order_limit_krw and mode_order_limit_krw > 0 else "")
@@ -652,7 +655,7 @@ def daily_summary(
     ) if lesson else ""
     text = (
         f"━━━━━━━━━━━\n"
-        f"{icon} <b>[일일 결산] {date} {market}</b>\n"
+        f"{icon} <b>[{MODE_LABEL}][일일 결산] {date} {market}</b>\n"
         f"━━━━━━━━━━━\n"
         f"오늘: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원\n"
         f"거래: {trades}건  승률: {win_rate*100:.1f}%\n"
@@ -719,7 +722,7 @@ def status_report(
     pos_lines = "\n".join(_position_line(p, market) for p in positions) if positions else "  없음"
     watch = f"\n감시종목: {', '.join(_display_ticker(t, market) for t in (tickers or []))}" if tickers else ""
     text = (
-        f"📣 <b>[상태 보고 {now}] {market}</b>\n"
+        f"📣 <b>[{MODE_LABEL}][상태 보고 {now}] {market}</b>\n"
         f"모드: <b>{_ko_mode(mode)}</b>\n"
         f"보유 포지션:\n{pos_lines}\n"
         f"예산 가능: {budget_avail:,.0f}원 | 현금: {cash:,.0f}원 | "
