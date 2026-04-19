@@ -9,9 +9,11 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
 from runtime_paths import get_runtime_path
+from filelock import FileLock
 
 REPO_BRAIN_PATH = Path(__file__).parent / "brain.json"
 BRAIN_PATH = get_runtime_path("state", "brain.json")
+_BRAIN_LOCK = FileLock(str(BRAIN_PATH) + ".lock", timeout=10)
 
 
 def _ensure_extensions(brain: dict):
@@ -31,17 +33,19 @@ def _ensure_extensions(brain: dict):
 # ── 기본 읽기/쓰기 ────────────────────────────────────────────────────────────
 
 def load() -> dict:
-    source = BRAIN_PATH if BRAIN_PATH.exists() else REPO_BRAIN_PATH
-    with open(source, "r", encoding="utf-8") as f:
-        return _ensure_extensions(json.load(f))
+    with _BRAIN_LOCK:
+        source = BRAIN_PATH if BRAIN_PATH.exists() else REPO_BRAIN_PATH
+        with open(source, "r", encoding="utf-8") as f:
+            return _ensure_extensions(json.load(f))
 
 
 def save(brain: dict):
-    brain = _ensure_extensions(brain)
-    brain["meta"]["last_updated"] = date.today().isoformat()
-    brain["meta"]["version"] += 1
-    with open(BRAIN_PATH, "w", encoding="utf-8") as f:
-        json.dump(brain, f, ensure_ascii=False, indent=2)
+    with _BRAIN_LOCK:
+        brain = _ensure_extensions(brain)
+        brain["meta"]["last_updated"] = date.today().isoformat()
+        brain["meta"]["version"] += 1
+        with open(BRAIN_PATH, "w", encoding="utf-8") as f:
+            json.dump(brain, f, ensure_ascii=False, indent=2)
 
 
 # ── 분석가 성과 업데이트 ──────────────────────────────────────────────────────
