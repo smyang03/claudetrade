@@ -541,13 +541,19 @@ class DualRuntimeCoordinator:
 
 ## 16. 구현 우선순위
 
-### P0 — Phase 0 (지금 바로)
+### P0 — Phase 0 ✅ 완료 (2026-04-19)
 
-- [ ] 상태 파일 경로 분리 (`paper_` / `live_` prefix)
+- [x] 상태 파일 경로 분리 (`paper_` / `live_` prefix) — `bot/state.py`
   - `open_positions`, `pending_orders`, `daily_baseline`, `claude_control`
-- [ ] `--paper` / `--live` 실행 플래그 추가
-- [ ] daily baseline 분리 (paper PnL이 live 기준을 오염하지 않도록)
-- [ ] dashboard status 분리 (`paper_live_status.json` / `live_live_status.json`)
+- [x] `--paper` / `--live` 실행 플래그 추가 + `.env.paper` / `.env.live` 분리
+- [x] daily baseline 분리 (paper PnL이 live 기준을 오염하지 않도록)
+- [x] dashboard status 분리 (`paper_live_status.json` / `live_live_status.json`)
+- [x] `shared_judgment_cache.py` — 두 프로세스 간 아침 Claude 판단 1회 공유 (FileLock)
+- [x] `telegram_reporter.py` — `[모의]`/`[실전]` 모드 라벨 추가
+- [x] DB 4종 paper/live 분리:
+  - `ticker_selection_db` / `intraday_strategy_db` — `bot_mode` 컬럼
+  - `credit_tracker` — `{mode}_api_usage.json`
+  - `decisions.db` — `is_simulated` / `data_source` 필드
 
 ### P1 — Phase 1 (MODULARIZATION P1~P3 완료 후)
 

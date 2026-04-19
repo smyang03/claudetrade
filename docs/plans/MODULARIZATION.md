@@ -8,7 +8,7 @@
 ## 현재 상태
 
 ```
-trading_bot.py  7,261줄 / 118개 메서드 / 클래스 1개
+trading_bot.py  6,999줄 / 클래스 1개 (bot/market_utils, bot/state 분리 완료 후)
 ```
 
 단일 파일이라 특정 기능 수정 시 전체 컨텍스트를 로드해야 함.
