@@ -12,6 +12,9 @@ from typing import Any
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "intraday_strategy_log.db")
 
+_IS_PAPER = str(os.getenv("KIS_IS_PAPER", "true")).strip().lower() != "false"
+_BOT_MODE = "paper" if _IS_PAPER else "live"
+
 
 def _conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -24,6 +27,7 @@ def init() -> None:
             """
             CREATE TABLE IF NOT EXISTS intraday_strategy_log (
                 id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_mode               TEXT NOT NULL DEFAULT 'paper',
                 ts                     TEXT NOT NULL,
                 session_date           TEXT NOT NULL,
                 market                 TEXT NOT NULL,
@@ -59,6 +63,10 @@ def init() -> None:
             )
             """
         )
+        # 기존 DB 마이그레이션
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(intraday_strategy_log)")}
+        if "bot_mode" not in existing:
+            conn.execute("ALTER TABLE intraday_strategy_log ADD COLUMN bot_mode TEXT NOT NULL DEFAULT 'paper'")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_intraday_log_date_market "
             "ON intraday_strategy_log(session_date, market)"
@@ -78,6 +86,7 @@ def insert_probe(
 ) -> int:
     now = kwargs.pop("ts", None) or datetime.now().isoformat()
     payload = {
+        "bot_mode": _BOT_MODE,
         "ts": now,
         "session_date": session_date,
         "market": market,
@@ -108,12 +117,12 @@ def insert_probe(
         cur = conn.execute(
             """
             INSERT INTO intraday_strategy_log (
-                ts, session_date, market, ticker, strategy_name, stage,
+                bot_mode, ts, session_date, market, ticker, strategy_name, stage,
                 or_formed, or_high, or_low, or_range_pct, pullback_depth_pct, entry_window_elapsed_min,
                 vwap, vwap_deviation_pct, vwap_confirm_candles, vwap_zscore,
                 price, volume, vol_ratio, from_high_pct,
                 signal_fired, traded, blocked_reason, pnl_pct, note
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             tuple(payload.values()),
         )

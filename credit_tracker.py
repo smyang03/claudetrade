@@ -19,7 +19,9 @@ from runtime_paths import get_runtime_path
 PRICE_INPUT_PER_M  = 3.00   # $ per million input tokens
 PRICE_OUTPUT_PER_M = 15.00  # $ per million output tokens
 
-USAGE_PATH = get_runtime_path("state", "api_usage.json")
+_IS_PAPER = str(os.getenv("KIS_IS_PAPER", "true")).strip().lower() != "false"
+_MODE     = "paper" if _IS_PAPER else "live"
+USAGE_PATH = get_runtime_path("state", f"{_MODE}_api_usage.json")
 USAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 

@@ -10,6 +10,9 @@ from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "ticker_selection_log.db")
 
+_IS_PAPER = str(os.getenv("KIS_IS_PAPER", "true")).strip().lower() != "false"
+_BOT_MODE = "paper" if _IS_PAPER else "live"
+
 
 def _conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -22,6 +25,7 @@ def init() -> None:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ticker_selection_log (
                 id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_mode             TEXT NOT NULL DEFAULT 'paper',
                 date                 TEXT NOT NULL,
                 market               TEXT NOT NULL,
                 ticker               TEXT NOT NULL,
@@ -50,6 +54,10 @@ def init() -> None:
                 created_at           TEXT DEFAULT (datetime('now'))
             )
         """)
+        # 기존 DB 마이그레이션 (bot_mode 컬럼 없으면 추가)
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(ticker_selection_log)")}
+        if "bot_mode" not in existing:
+            conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN bot_mode TEXT NOT NULL DEFAULT 'paper'")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tslog_date_market "
             "ON ticker_selection_log(date, market)"
@@ -88,13 +96,14 @@ def insert_batch(
             row_id = conn.execute(
                 """
                 INSERT INTO ticker_selection_log
-                    (date, market, ticker, consensus_mode, selection_rank,
+                    (bot_mode, date, market, ticker, consensus_mode, selection_rank,
                      source_type, selection_batch_id, selected_reason,
                      selected_reason_tag, selected_at,
                      change_pct, vol_ratio, gap_pct, from_high_pct, above_ma60, sector)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
+                    _BOT_MODE,
                     date, market, ticker, consensus_mode, rank,
                     source_type, batch_id, reason,
                     None,           # selected_reason_tag: 향후 파싱

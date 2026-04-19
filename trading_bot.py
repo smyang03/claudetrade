@@ -3113,7 +3113,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if _shared:
                 judgments = _shared["judgments"]
                 consensus = _shared["consensus"]
-                digest_prompt = _shared.get("digest_prompt", "")
                 _from_shared_cache = True
                 log.info(
                     f"[공유판단캐시] {today} {market} consensus={consensus['mode']} "
@@ -3123,25 +3122,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not reused:
             digest = build_kr_digest(today, universe_tickers=universe_tickers) if market == "KR" \
                 else build_us_digest(today, universe_tickers=universe_tickers)
-            if not _from_shared_cache:
-                digest_prompt = digest_to_prompt(digest)
+            # select_tickers / watchlist_alert 는 현재 런타임에서 다시 만든 최신 digest를 사용한다.
+            digest_prompt = digest_to_prompt(digest)
 
             if not _from_shared_cache:
                 # ── Claude 판단 (신규 생성) ──────────────────────────────────
                 brain_summary = BrainDB.generate_prompt_summary(market)
                 brain_data = BrainDB.load()
                 correction = json.dumps(brain_data.get("correction_guide", {}).get(market, {}), ensure_ascii=False)
-
-                portfolio_info = {
-                    "cash":          round(self.risk.cash),
-                    "total_equity":  round(self._kis_total_equity_krw()),
-                    "max_order_krw": round(self.risk.max_order_krw),
-                    "n_positions":   len(self.risk.positions),
-                    "max_positions": HARD_RULES["max_positions"],
-                }
                 judgments = get_three_judgments(
                     digest_prompt, brain_summary, correction,
-                    market=market, portfolio_info=portfolio_info,
+                    market=market,
                 )
                 consensus = build_consensus(judgments, market=market)
 
@@ -3700,6 +3691,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return {
                 "market":       market,
                 "ticker":       ticker_,
+                "is_simulated": 1 if self.is_paper else 0,
+                "data_source":  "paper" if self.is_paper else "live",
                 "session_date": _market_session_date(market).isoformat(),
                 "mode":         mode,
                 "mode_score":   self.today_judgment.get("consensus", {}).get("score"),
