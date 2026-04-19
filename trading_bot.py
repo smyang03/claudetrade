@@ -109,13 +109,7 @@ from bot.market_utils import (
     _EXCHANGE_MAP,
     _ec_cache,
 )
-from bot.state import (
-    StateMixin,
-    POSITIONS_FILE,
-    PENDING_ORDERS_FILE,
-    CLAUDE_CONTROL_FILE,
-    DAILY_BASELINE_FILE,
-)
+from bot.state import StateMixin
 
 # ML 의사결정 DB (선택적 — import 실패해도 봇 정상 동작)
 try:
@@ -147,8 +141,8 @@ KST = ZoneInfo("Asia/Seoul")
 JUDGMENT_DIR = get_runtime_path("logs", "daily_judgment", make_parents=False)
 JUDGMENT_DIR.mkdir(parents=True, exist_ok=True)
 
-BOT_PID_FILE = get_runtime_path("state", "trading_bot.pid")
-DECISIONS_FILE = get_runtime_path("state", "decisions.jsonl")  # Claude 판단 이력 영속 DB
+BOT_PID_FILE = get_runtime_path("state", "trading_bot.pid")  # main()에서 mode별로 교체됨
+DECISIONS_FILE = get_runtime_path("state", "decisions.jsonl")  # main()에서 mode별로 교체됨
 
 
 def _split_log(channel_logger, level: str, message: str, *args, **kwargs) -> None:
@@ -168,12 +162,15 @@ def _log_flow(level: str, message: str, *args, **kwargs) -> None:
     _split_log(flow_log, level, message, *args, **kwargs)
 
 
-def _write_bot_pid_file():
+def _write_bot_pid_file(is_paper: bool = True):
     try:
-        BOT_PID_FILE.write_text(
+        _mode = "paper" if is_paper else "live"
+        _pid_file = get_runtime_path("state", f"{_mode}_trading_bot.pid")
+        _pid_file.write_text(
             json.dumps(
                 {
                     "pid": os.getpid(),
+                    "mode": _mode,
                     "started_at": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
                     "command": [sys.executable, str(Path(__file__).resolve())],
                 },
@@ -186,10 +183,12 @@ def _write_bot_pid_file():
         pass
 
 
-def _clear_bot_pid_file():
+def _clear_bot_pid_file(is_paper: bool = True):
     try:
-        if BOT_PID_FILE.exists():
-            BOT_PID_FILE.unlink()
+        _mode = "paper" if is_paper else "live"
+        _pid_file = get_runtime_path("state", f"{_mode}_trading_bot.pid")
+        if _pid_file.exists():
+            _pid_file.unlink()
     except Exception:
         pass
 
@@ -1151,10 +1150,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     def _restore_positions(self):
         """저장된 이월 포지션 복구"""
-        if not POSITIONS_FILE.exists():
+        _positions_file = get_runtime_path("state", f"{self._mode}_open_positions.json")
+        if not _positions_file.exists():
             return
         try:
-            with open(POSITIONS_FILE, encoding="utf-8") as f:
+            with open(_positions_file, encoding="utf-8") as f:
                 saved = json.load(f)
             if not saved:
                 return
@@ -1646,9 +1646,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             key = ticker.upper() if market == "US" else ticker
             pending_by_key[(market, key)] = order
         saved_templates = {}
+        _positions_file = get_runtime_path("state", f"{self._mode}_open_positions.json")
         try:
-            if POSITIONS_FILE.exists():
-                with open(POSITIONS_FILE, encoding="utf-8") as _spf:
+            if _positions_file.exists():
+                with open(_positions_file, encoding="utf-8") as _spf:
                     for _saved_pos in json.load(_spf) or []:
                         _tk = str(_saved_pos.get("ticker", "") or "").strip()
                         if not _tk:
@@ -6327,7 +6328,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 for order in self.pending_orders
                 if order.get("market", market) == market
             ]
-            path = get_runtime_path("state", f"live_status_{market}.json")
+            path = get_runtime_path("state", f"{self._mode}_live_status_{market}.json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({
                     "market":         market,
@@ -6727,8 +6728,11 @@ def _in_session_now(market: str) -> bool:
 
 
 def main(is_paper: bool = True):
-    _write_bot_pid_file()
-    atexit.register(_clear_bot_pid_file)
+    global DECISIONS_FILE
+    _mode = "paper" if is_paper else "live"
+    DECISIONS_FILE = get_runtime_path("state", f"{_mode}_decisions.jsonl")
+    _write_bot_pid_file(is_paper)
+    atexit.register(_clear_bot_pid_file, is_paper)
     bot = TradingBot(is_paper=is_paper)
     log.info("=== Trading Bot Start ===")
     # 대시보드용: 재시작 시점 기록 → 이전 세션의 미체결 사유 초기화

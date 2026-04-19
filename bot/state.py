@@ -33,20 +33,27 @@ DAILY_BASELINE_FILE = get_runtime_path("state", "daily_baseline.json")
 
 class StateMixin:
 
+    @property
+    def _mode(self) -> str:
+        """실행 모드 — 상태 파일 prefix로 사용 ('paper' | 'live')"""
+        return "paper" if self.is_paper else "live"
+
     def _save_positions(self):
         """이월 포지션을 파일에 저장 (봇 재시작 복구용)
         max_hold>1 장기 보유 뿐 아니라 당일 미청산 포지션(max_hold==1)도 저장:
         VTS 잔고 API 미반영 시 재시작 후 복구 가능하도록.
         """
         carry = list(self.risk.positions)  # 보유 중인 모든 포지션 저장
-        with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
+        _path = get_runtime_path("state", f"{self._mode}_open_positions.json")
+        with open(_path, "w", encoding="utf-8") as f:
             json.dump(carry, f, ensure_ascii=False, indent=2, default=str)
         if carry:
-            log.info(f"[포지션 저장] {[p['ticker'] for p in carry]} ({len(carry)}개) → {POSITIONS_FILE}")
+            log.info(f"[포지션 저장] {[p['ticker'] for p in carry]} ({len(carry)}개) → {_path}")
 
     def _save_pending_orders(self):
         self._normalize_pending_orders()
-        with open(PENDING_ORDERS_FILE, "w", encoding="utf-8") as f:
+        _path = get_runtime_path("state", f"{self._mode}_pending_orders.json")
+        with open(_path, "w", encoding="utf-8") as f:
             json.dump(self.pending_orders, f, ensure_ascii=False, indent=2, default=str)
 
     def _parse_pending_created_at(self, order: dict):
@@ -86,10 +93,11 @@ class StateMixin:
         )
 
     def _restore_pending_orders(self):
-        if not PENDING_ORDERS_FILE.exists():
+        _path = get_runtime_path("state", f"{self._mode}_pending_orders.json")
+        if not _path.exists():
             return
         try:
-            with open(PENDING_ORDERS_FILE, encoding="utf-8") as f:
+            with open(_path, encoding="utf-8") as f:
                 saved = json.load(f)
             if isinstance(saved, list):
                 self.pending_orders = saved
@@ -99,10 +107,11 @@ class StateMixin:
             log.error(f"미체결 주문 복구 실패: {e}")
 
     def _load_daily_baselines(self):
-        if not DAILY_BASELINE_FILE.exists():
+        _path = get_runtime_path("state", f"{self._mode}_daily_baseline.json")
+        if not _path.exists():
             return
         try:
-            with open(DAILY_BASELINE_FILE, encoding="utf-8") as f:
+            with open(_path, encoding="utf-8") as f:
                 saved = json.load(f)
             if not isinstance(saved, dict):
                 return
@@ -140,7 +149,8 @@ class StateMixin:
             else:
                 payload[market] = {}
         try:
-            with open(DAILY_BASELINE_FILE, "w", encoding="utf-8") as f:
+            _path = get_runtime_path("state", f"{self._mode}_daily_baseline.json")
+            with open(_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
         except Exception as e:
             log.warning(f"daily baseline 저장 실패: {e}")
@@ -163,7 +173,8 @@ class StateMixin:
         }
 
     def _save_claude_control(self):
-        with open(CLAUDE_CONTROL_FILE, "w", encoding="utf-8") as f:
+        _path = get_runtime_path("state", f"{self._mode}_claude_control.json")
+        with open(_path, "w", encoding="utf-8") as f:
             json.dump(self.claude_control, f, ensure_ascii=False, indent=2, default=str)
 
     def _normalize_claude_control_state(self, data: dict | None = None) -> dict:
@@ -191,10 +202,11 @@ class StateMixin:
         return control
 
     def _restore_claude_control(self):
+        _path = get_runtime_path("state", f"{self._mode}_claude_control.json")
         data = self._default_claude_control()
-        if CLAUDE_CONTROL_FILE.exists():
+        if _path.exists():
             try:
-                with open(CLAUDE_CONTROL_FILE, encoding="utf-8") as f:
+                with open(_path, encoding="utf-8") as f:
                     saved = json.load(f)
                 if isinstance(saved, dict):
                     data.update(saved)
@@ -205,11 +217,12 @@ class StateMixin:
         self._save_claude_control()
 
     def _refresh_claude_control(self):
-        if not CLAUDE_CONTROL_FILE.exists():
+        _path = get_runtime_path("state", f"{self._mode}_claude_control.json")
+        if not _path.exists():
             self._restore_claude_control()
             return
         try:
-            with open(CLAUDE_CONTROL_FILE, encoding="utf-8") as f:
+            with open(_path, encoding="utf-8") as f:
                 saved = json.load(f)
             if isinstance(saved, dict):
                 data = self._default_claude_control()
@@ -221,7 +234,7 @@ class StateMixin:
             log.warning(f"Claude 제어 상태 새로고침 실패: {e}")
 
     def _sanitize_live_status_file(self, market: str):
-        path = get_runtime_path("state", f"live_status_{market}.json")
+        path = get_runtime_path("state", f"{self._mode}_live_status_{market}.json")
         if not path.exists():
             return
         try:

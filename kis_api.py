@@ -7,6 +7,7 @@ import os
 import json
 import time
 import logging
+import hashlib
 import requests
 import threading
 import pandas as pd
@@ -54,7 +55,7 @@ WS_URL = (
     if IS_PAPER
     else "ws://ops.koreainvestment.com:21000"
 )
-TOKEN_FILE = get_runtime_path("state", "kis_token.json")
+TOKEN_FILE = get_runtime_path("state", f"{'paper' if IS_PAPER else 'live'}_kis_token.json")
 KIS_HTTP_TIMEOUT = float(os.getenv("KIS_HTTP_TIMEOUT", "10"))
 KIS_TOKEN_RETRY = int(os.getenv("KIS_TOKEN_RETRY", "3"))
 KIS_QUERY_RETRY = int(os.getenv("KIS_QUERY_RETRY", "3"))
@@ -189,11 +190,22 @@ def _kis_post(url: str, **kwargs):
     return requests.post(url, timeout=timeout, **kwargs)
 
 
+def _token_cache_context() -> dict:
+    app_key_fingerprint = hashlib.sha256((APP_KEY or "").encode("utf-8")).hexdigest()[:12]
+    return {
+        "base_url": BASE_URL,
+        "app_key_fingerprint": app_key_fingerprint,
+        "is_paper": bool(IS_PAPER),
+    }
+
+
 def load_token():
     if not TOKEN_FILE.exists():
         return None
     with open(TOKEN_FILE, encoding="utf-8") as f:
         data = json.load(f)
+    if data.get("context") != _token_cache_context():
+        return None
     if datetime.now() < datetime.fromisoformat(data["expires_at"]) - timedelta(minutes=10):
         return data
     return None
@@ -202,7 +214,14 @@ def load_token():
 def save_token(token, expires_in):
     expires_at = (datetime.now() + timedelta(seconds=expires_in)).isoformat()
     with open(TOKEN_FILE, "w", encoding="utf-8") as f:
-        json.dump({"access_token": token, "expires_at": expires_at}, f)
+        json.dump(
+            {
+                "access_token": token,
+                "expires_at": expires_at,
+                "context": _token_cache_context(),
+            },
+            f,
+        )
 
 
 def get_access_token():
@@ -245,6 +264,7 @@ def _headers(token, tr_id=""):
         "authorization": f"Bearer {token}",
         "appkey": APP_KEY,
         "appsecret": APP_SECRET,
+        "custtype": "P",
     }
     if tr_id:
         h["tr_id"] = tr_id
@@ -893,6 +913,129 @@ def _require_kis_success(data: dict, label: str):
         raise RuntimeError(f"{label} 실패: {data.get('msg1') or data.get('msg_cd') or '응답 오류'}")
 
 
+def _get_us_cash_snapshot(token: str) -> dict:
+    """해외주식 외화예수금/주문가능금액 조회.
+
+    실거래에서는 inquire-balance의 현금 필드가 충분하지 않아
+    foreign-margin 기준 외화예수금과 일반 주문가능금액을 함께 읽는다.
+    """
+    if IS_PAPER_US:
+        return {"cash": 0.0, "orderable_cash": 0.0, "currency": "USD"}
+
+    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    def _fetch():
+        resp = _kis_get(
+            f"{BASE_URL}/uapi/overseas-stock/v1/trading/foreign-margin",
+            headers=_headers(token, "TTTC2101R"),
+            params={
+                "CANO": acnt_no,
+                "ACNT_PRDT_CD": acnt_prdt,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _require_kis_success(data, "해외외화예수금 조회")
+        return data
+
+    data = _retry_kis("US foreign cash", _fetch, retries=4, delay_sec=1.2)
+
+    usd_rows = [
+        row
+        for row in (data.get("output", []) or [])
+        if str(row.get("crcy_cd", "") or "").upper() == "USD"
+    ]
+
+    preferred_rows = [
+        row for row in usd_rows
+        if str(row.get("natn_name", "") or "").strip() == "미국"
+    ]
+
+    def _row_score(row: dict) -> tuple[float, float]:
+        return (
+            _to_float(row.get("frcr_gnrl_ord_psbl_amt"), 0.0),
+            _to_float(row.get("frcr_dncl_amt1"), 0.0),
+        )
+
+    pool = preferred_rows or usd_rows
+    usd_row = max(pool, key=_row_score) if pool else {}
+    cash = _to_float(usd_row.get("frcr_dncl_amt1"), 0.0)
+    orderable = _to_float(usd_row.get("frcr_gnrl_ord_psbl_amt"), cash)
+    return {
+        "cash": round(cash, 6),
+        "orderable_cash": round(orderable, 6),
+        "currency": "USD",
+    }
+
+
+def _get_balance_us_present_fallback(token: str) -> dict:
+    """해외 체결기준현재잔고 폴백.
+
+    inquire-balance가 실전에서 간헐적으로 500을 반환할 때 사용한다.
+    """
+    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    tr_id = "VTRP6504R" if IS_PAPER_US else "CTRP6504R"
+    def _fetch():
+        resp = _kis_get(
+            f"{BASE_URL}/uapi/overseas-stock/v1/trading/inquire-present-balance",
+            headers=_headers(token, tr_id),
+            params={
+                "CANO": acnt_no,
+                "ACNT_PRDT_CD": acnt_prdt,
+                "WCRC_FRCR_DVSN_CD": "02",
+                "NATN_CD": "840",
+                "TR_MKET_CD": "00",
+                "INQR_DVSN_CD": "00",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _require_kis_success(data, "해외현재잔고 조회")
+        return data
+
+    data = _retry_kis("US present balance", _fetch, retries=4, delay_sec=1.2)
+
+    stocks = []
+    for row in data.get("output1", []) or []:
+        qty = int(_to_float(row.get("cblc_qty13"), 0))
+        if qty <= 0:
+            continue
+        avg_price = _to_float(row.get("avg_unpr3"), 0)
+        eval_price = _to_float(row.get("ovrs_now_pric1"), avg_price)
+        eval_profit = _to_float(row.get("evlu_pfls_amt2"), 0)
+        stocks.append(
+            {
+                "ticker": str(row.get("pdno", "") or "").upper(),
+                "name": str(row.get("prdt_name", "") or row.get("ovrs_item_name", "") or "").strip(),
+                "qty": qty,
+                "avg_price": avg_price,
+                "eval_price": eval_price,
+                "eval_profit": eval_profit,
+                "profit_rate": _to_float(row.get("evlu_pfls_rt1"), 0),
+            }
+        )
+
+    cash_snapshot = _get_us_cash_snapshot(token)
+    summary = _first_record(data.get("output2", {}))
+    total_eval_usd = sum(s["qty"] * s["eval_price"] for s in stocks)
+    total_profit = sum(_to_float(s.get("eval_profit"), 0) for s in stocks)
+    if summary:
+        total_eval_usd = _to_float(summary.get("frcr_evlu_amt2"), total_eval_usd)
+
+    total_cost_usd = sum(s["qty"] * s["avg_price"] for s in stocks)
+    profit_rate = (total_profit / total_cost_usd * 100.0) if total_cost_usd > 0 else 0.0
+    return {
+        "stocks": stocks,
+        "total_eval": round(total_eval_usd, 2),
+        "cash": float(cash_snapshot.get("cash", 0.0) or 0.0),
+        "orderable_cash": float(cash_snapshot.get("orderable_cash", 0.0) or 0.0),
+        "total_profit": round(total_profit, 2),
+        "profit_rate": round(profit_rate, 4),
+        "currency": "USD",
+    }
+
+
 def _get_balance_us(token, force_refresh: bool = False) -> dict:
     """해외주식 잔고 조회 (v1_해외주식-006, TR: VTTS3012R/TTTS3012R)
     NASD로 조회하면 모의투자에서 미국 전체 잔고 반환.
@@ -943,10 +1086,13 @@ def _get_balance_us(token, force_refresh: bool = False) -> dict:
             (total_profit / total_cost_usd * 100.0) if total_cost_usd > 0 else 0.0,
         )
 
+        cash_snapshot = _get_us_cash_snapshot(token)
+
         return {
             "stocks":       stocks,
             "total_eval":   round(total_eval_usd, 2),
-            "cash":         0,
+            "cash":         float(cash_snapshot.get("cash", 0.0) or 0.0),
+            "orderable_cash": float(cash_snapshot.get("orderable_cash", 0.0) or 0.0),
             "total_profit": round(total_profit, 2),
             "profit_rate":  profit_rate,
             "currency":     "USD",
@@ -956,13 +1102,18 @@ def _get_balance_us(token, force_refresh: bool = False) -> dict:
         _cache_invalidate(_BALANCE_CACHE, cache_key)
 
     try:
-        return _cache_set(_BALANCE_CACHE, cache_key, _retry_kis("US balance", _fetch))
-    except Exception:
-        cached = _cache_get(_BALANCE_CACHE, cache_key)
-        if cached is not None:
-            _log_cache_use_throttled("balance_us", "KIS US 잔고 캐시 사용")
-            return cached
-        raise
+        return _cache_set(_BALANCE_CACHE, cache_key, _retry_kis("US balance", _fetch, retries=4, delay_sec=1.2))
+    except Exception as primary_error:
+        try:
+            fallback = _get_balance_us_present_fallback(token)
+            log.warning(f"KIS US 잔고 현재잔고 폴백 사용: {primary_error}")
+            return _cache_set(_BALANCE_CACHE, cache_key, fallback)
+        except Exception:
+            cached = _cache_get(_BALANCE_CACHE, cache_key)
+            if cached is not None:
+                _log_cache_use_throttled("balance_us", "KIS US 잔고 캐시 사용")
+                return cached
+            raise primary_error
 
 
 def get_balance(token, market="KR", force_refresh: bool = False):
@@ -1386,18 +1537,17 @@ def precheck_order(
             "cash": float(bal_us.get("cash", 0) or 0),
         }
 
-    # 통합계좌 특성상 US 가용현금은 KR 잔고 총액을 참고해 1차 방어만 수행한다.
-    bal_kr = get_balance(token, market="KR", force_refresh=force_refresh)
-    cash_krw = float(bal_kr.get("cash", 0) or 0)
-    usd_krw = get_usd_krw()
-    order_value_krw = price * qty * usd_krw
-    allowed_qty = int(cash_krw // max(price * usd_krw, 1)) if price > 0 else qty
+    cash_usd = float(
+        bal_us.get("orderable_cash", bal_us.get("cash", 0)) or 0
+    )
+    order_value_usd = price * qty
+    allowed_qty = int(cash_usd // max(price, 1e-9)) if price > 0 else qty
     return {
-        "ok": price > 0 and cash_krw >= order_value_krw,
-        "reason": "ok" if price > 0 and cash_krw >= order_value_krw else ("invalid_price" if price <= 0 else "insufficient_cash"),
-        "msg": "주문 가능" if price > 0 and cash_krw >= order_value_krw else ("주문단가가 0 이하입니다." if price <= 0 else f"원화 가용현금 부족: {cash_krw:,.0f}원"),
+        "ok": price > 0 and cash_usd >= order_value_usd,
+        "reason": "ok" if price > 0 and cash_usd >= order_value_usd else ("invalid_price" if price <= 0 else "insufficient_cash"),
+        "msg": "주문 가능" if price > 0 and cash_usd >= order_value_usd else ("주문단가가 0 이하입니다." if price <= 0 else f"달러 주문가능금액 부족: ${cash_usd:,.2f}"),
         "allowed_qty": allowed_qty,
-        "cash": cash_krw,
+        "cash": cash_usd,
     }
 
 
@@ -1437,13 +1587,13 @@ _US_EXCHANGE_MAP = {
     "NASD": [
         "AAPL", "ADBE", "AMD", "AMZN", "AVGO", "COST", "CRM", "CSCO", "GOOG",
         "GOOGL", "INTC", "META", "MSFT", "NFLX", "NVDA", "ORCL", "PEP", "PLTR",
-        "QCOM", "SBUX", "SMCI", "SNOW", "TSLA", "TXN", "UBER",
+        "QCOM", "QQQ", "SBUX", "SMCI", "SNOW", "TSLA", "TXN", "UBER",
         "ARM", "BRZE", "CORT", "PAYS", "SRPT",
     ],
     "NYSE": ["BRK.B","JPM","BAC","WFC","GS","MS","C","USB","BLK","AXP",
              "XOM","CVX","COP","SLB","WMT","HD","MCD","NKE","PG","KO",
              "PFE","JNJ","MRK","ABT","UNH","V","MA","HIMS"],
-    "AMEX": ["SPY","QQQ","IWM","GLD","SLV","USO"],
+    "AMEX": ["SPY","IWM","GLD","SLV","USO"],
 }
 
 

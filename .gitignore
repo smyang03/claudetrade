@@ -56,6 +56,11 @@ state/decisions.jsonl
 state/param_tuner_sessions.json
 state/_api_summary_*.json
 state/*.bak*
+# Dual runtime — paper/live 분리 파일 (모두 runtime 생성, git 제외)
+state/paper_*.json
+state/paper_*.jsonl
+state/live_*.json
+state/live_*.jsonl
 # 날짜별 유니버스 스냅샷 (재생성 가능)
 data/universe/
 # 거래소 resolve 캐시 (런타임 갱신)
