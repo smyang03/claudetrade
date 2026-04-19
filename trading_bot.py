@@ -150,6 +150,11 @@ BOT_PID_FILE = get_runtime_path("state", "trading_bot.pid")  # main()에서 mode
 DECISIONS_FILE = get_runtime_path("state", "decisions.jsonl")  # main()에서 mode별로 교체됨
 
 
+def _judgment_runtime_path(mode: str, trade_date: str, market: str) -> Path:
+    day = str(trade_date or "").replace("-", "")
+    return JUDGMENT_DIR / f"{mode}_{day}_{market}.json"
+
+
 def _split_log(channel_logger, level: str, message: str, *args, **kwargs) -> None:
     getattr(log, level)(message, *args, **kwargs)
     getattr(channel_logger, level)(message, *args, **kwargs)
@@ -516,7 +521,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         """장중 판단 변경을 즉시 저장해 재시작/대시보드가 최신 상태를 보게 한다."""
         if not self.today_judgment or self.today_judgment.get("market") != market:
             return
-        live_path = JUDGMENT_DIR / f"{date.today().strftime('%Y%m%d')}_{market}.json"
+        live_path = _judgment_runtime_path(self._mode, date.today().strftime('%Y%m%d'), market)
         try:
             with open(live_path, "w", encoding="utf-8") as f:
                 json.dump({
@@ -637,7 +642,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "rejection_reasons": {}, "volume_states": {},
         }
 
-    def manual_rescreen(self, market: str | None = None) -> list[str]:
+    def manual_rescreen(self, market: Optional[str] = None) -> list[str]:
         """텔레그램 수동 명령으로 현재 시장 종목만 즉시 재선택."""
         target_market = market or self.current_market or self.today_judgment.get("market")
         if target_market not in ("KR", "US"):
@@ -1308,7 +1313,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "decision_id": template.get("decision_id") or self._recover_decision_id(ticker, market),
         }
 
-    def _recover_decision_id(self, ticker: str, market: str) -> int | None:
+    def _recover_decision_id(self, ticker: str, market: str) -> Optional[int]:
         """브로커 복구 포지션에 대해 ML DB에서 decision_id를 best-effort로 조회.
         오늘 날짜 BUY_SIGNAL 중 아직 filled=0인 행을 찾아 연결한다."""
         if not _ML_DB_ENABLED:
@@ -1340,7 +1345,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _daily_pnl_pct(self) -> float:
         return float(self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100.0)
 
-    def _normalize_broker_balance(self, balance: dict | None, market: str) -> dict:
+    def _normalize_broker_balance(self, balance: Optional[dict], market: str) -> dict:
         """get_balance() 응답을 ticker -> position dict 형태로 정규화."""
         if not isinstance(balance, dict):
             return {}
@@ -1360,8 +1365,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if market in self._execution_flags and issue:
             self._execution_flags[market].add(issue)
 
-    def _set_broker_state(self, market: str, *, trust_level: str | None = None,
-                          snapshot: dict | None = None, error: str = "") -> None:
+    def _set_broker_state(self, market: str, *, trust_level: Optional[str] = None,
+                          snapshot: Optional[dict] = None, error: str = "") -> None:
         state = self._broker_state.setdefault(market, {
             "trust_level": "unknown",
             "last_ok_at": "",
@@ -1381,7 +1386,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 state["last_ok_at"] = datetime.now(KST).isoformat(timespec="seconds")
                 state["last_error"] = ""
 
-    def _broker_snapshot_from_balance(self, market: str, balance: dict | None) -> dict:
+    def _broker_snapshot_from_balance(self, market: str, balance: Optional[dict]) -> dict:
         balance = balance or {}
         if market == "US":
             cash_usd = float(balance.get("cash", 0) or 0)
@@ -1444,7 +1449,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False
         return True
 
-    def _build_execution_health(self, market: str, session_trades: list | None = None) -> dict:
+    def _build_execution_health(self, market: str, session_trades: Optional[list] = None) -> dict:
         session_trades = session_trades or []
         reasons = set(self._execution_flags.get(market, set()))
         market_events = [e for e in self.decision_event_log if e.get("market") == market]
@@ -1844,7 +1849,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             pass
         try:
+            for fname in sorted(JUDGMENT_DIR.glob(f"{self._mode}_*_{market}.json"), reverse=True):
+                with open(fname, encoding="utf-8") as f:
+                    rec = json.load(f)
+                technicals = ((rec.get("digest_raw") or {}).get("technicals") or {})
+                info = technicals.get(raw_ticker) or technicals.get(str(ticker or "").strip()) or {}
+                name = str((info or {}).get("name", "") or "").strip()
+                if name and name != raw_ticker:
+                    return name
             for fname in sorted(JUDGMENT_DIR.glob(f"*_{market}.json"), reverse=True):
+                if fname.name.startswith(f"{self._mode}_"):
+                    continue
                 with open(fname, encoding="utf-8") as f:
                     rec = json.load(f)
                 technicals = ((rec.get("digest_raw") or {}).get("technicals") or {})
@@ -2817,7 +2832,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         """재시작·비정상종료로 session_close 미실행 → actual_result 공백인 날 postmortem 소급"""
         for delta in range(1, 4):
             target_date = (date.today() - timedelta(days=delta)).isoformat()
-            fname = JUDGMENT_DIR / f"{target_date.replace('-', '')}_{market}.json"
+            fname = _judgment_runtime_path(self._mode, target_date, market)
+            if not fname.exists():
+                fname = JUDGMENT_DIR / f"{target_date.replace('-', '')}_{market}.json"
             if not fname.exists():
                 continue
             try:
@@ -3643,8 +3660,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             block_reason_: str = None,
             strategy_used_: str = None,
             fired_strategy_: str = None,
-            diag_json_: dict | None = None,
-            extra_fields_: dict | None = None,
+            diag_json_: Optional[dict] = None,
+            extra_fields_: Optional[dict] = None,
         ) -> int:
             if not _ML_DB_ENABLED:
                 return -1

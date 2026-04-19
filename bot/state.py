@@ -6,6 +6,7 @@ trading_bot.py에서 이동 (로직 변경 없음)
 
 import json
 from datetime import datetime, timedelta, time as dt_time
+from typing import Optional
 
 try:
     from zoneinfo import ZoneInfo
@@ -177,7 +178,7 @@ class StateMixin:
         with open(_path, "w", encoding="utf-8") as f:
             json.dump(self.claude_control, f, ensure_ascii=False, indent=2, default=str)
 
-    def _normalize_claude_control_state(self, data: dict | None = None) -> dict:
+    def _normalize_claude_control_state(self, data: Optional[dict] = None) -> dict:
         control = self._default_claude_control()
         control.update(data or {})
         status = str(control.get("last_result_status", "idle") or "idle").lower()

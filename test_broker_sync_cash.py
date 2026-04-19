@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import kis_api
 import trading_bot as trading_bot_module
 from risk_manager import RiskManager
 
@@ -10,14 +11,23 @@ from risk_manager import RiskManager
 class BrokerSyncCashTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self._orig_positions_file = trading_bot_module.POSITIONS_FILE
-        self._orig_daily_baseline_file = trading_bot_module.DAILY_BASELINE_FILE
-        trading_bot_module.POSITIONS_FILE = Path(self._tmp.name) / "open_positions.json"
-        trading_bot_module.DAILY_BASELINE_FILE = Path(self._tmp.name) / "daily_baseline.json"
+        self._tmp_path = Path(self._tmp.name)
+
+        def _mock_grp(*args, **kwargs):
+            if args and args[0] == "state":
+                fname = args[1] if len(args) > 1 else ""
+                return self._tmp_path / fname
+            from runtime_paths import get_runtime_path as _orig
+            return _orig(*args, **kwargs)
+
+        self._grp_patch1 = patch("bot.state.get_runtime_path", side_effect=_mock_grp)
+        self._grp_patch2 = patch("trading_bot.get_runtime_path", side_effect=_mock_grp)
+        self._grp_patch1.start()
+        self._grp_patch2.start()
 
     def tearDown(self):
-        trading_bot_module.POSITIONS_FILE = self._orig_positions_file
-        trading_bot_module.DAILY_BASELINE_FILE = self._orig_daily_baseline_file
+        self._grp_patch1.stop()
+        self._grp_patch2.stop()
         self._tmp.cleanup()
 
     def _make_bot(self):
@@ -110,6 +120,55 @@ class BrokerSyncCashTests(unittest.TestCase):
         restored._load_daily_baselines()
         self.assertEqual(restored._daily_baseline_by_market["US"]["session_date"], "2026-04-18")
         self.assertEqual(restored._daily_baseline_by_market["US"]["base"], 53_394_848.0)
+
+    @patch.object(kis_api, "IS_PAPER_US", False)
+    @patch.object(kis_api, "ACCOUNT_NO_US", "12345678-01")
+    def test_us_live_cash_snapshot_reads_foreign_margin_usd(self):
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "rt_cd": "0",
+                    "output": [
+                        {
+                            "natn_name": "미국",
+                            "crcy_cd": "USD",
+                            "frcr_dncl_amt1": "33.850000",
+                            "frcr_gnrl_ord_psbl_amt": "33.66",
+                        },
+                        {
+                            "natn_name": "독일",
+                            "crcy_cd": "USD",
+                            "frcr_dncl_amt1": "33.850000",
+                            "frcr_gnrl_ord_psbl_amt": "33.85",
+                        },
+                    ],
+                }
+
+        with patch.object(kis_api, "_kis_get", return_value=_Resp()):
+            snap = kis_api._get_us_cash_snapshot("token")
+
+        self.assertEqual(snap["currency"], "USD")
+        self.assertAlmostEqual(snap["cash"], 33.85, places=6)
+        self.assertAlmostEqual(snap["orderable_cash"], 33.66, places=6)
+
+    def test_us_order_feasibility_uses_usd_orderable_cash(self):
+        us_balance = {
+            "stocks": [],
+            "cash": 33.85,
+            "orderable_cash": 33.66,
+            "total_eval": 0.0,
+        }
+        with patch.object(kis_api, "get_balance", return_value=us_balance):
+            ok = kis_api.precheck_order("QQQ", qty=10, price=3.0, side="buy", token="t", market="US")
+            fail = kis_api.precheck_order("QQQ", qty=12, price=3.0, side="buy", token="t", market="US")
+
+        self.assertTrue(ok["ok"])
+        self.assertEqual(ok["allowed_qty"], 11)
+        self.assertFalse(fail["ok"])
+        self.assertEqual(fail["reason"], "insufficient_cash")
 
 
 if __name__ == "__main__":
