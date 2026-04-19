@@ -26,7 +26,12 @@ except Exception:  # pragma: no cover - python<3.9 fallback
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# --live 플래그로 env 파일 분기 (argparse 이전에 sys.argv 직접 확인)
+# .env.live / .env.paper 없으면 .env fallback
+_dotenv_path = ".env.live" if "--live" in sys.argv else ".env.paper"
+if not Path(_dotenv_path).exists():
+    _dotenv_path = ".env"
+load_dotenv(dotenv_path=_dotenv_path, override=True)
 
 sys.path.insert(0, str(Path(__file__).parent))
 

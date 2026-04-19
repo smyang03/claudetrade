@@ -12,6 +12,8 @@ env/
 
 # Environment variables
 .env
+.env.paper
+.env.live
 
 # Logs
 logs/
