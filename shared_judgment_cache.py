@@ -1,10 +1,14 @@
 """
 shared_judgment_cache.py
-paper/live 두 프로세스 간 아침 Claude 판단 공유 캐시.
+paper/live 두 프로세스 간 아침 시장판단 공유 캐시.
 
-같은 날, 같은 장에 대해 get_three_judgments + build_consensus 는 1회만 호출하고
-결과를 이 캐시를 통해 공유한다.  종목 선택(select_tickers) 및 스크리너는
-각 런타임이 개별 실행한다 (포트폴리오 맥락이 다르므로).
+같은 날, 같은 장에 대해 market-only Claude 판단(get_three_judgments + build_consensus)
+을 1회만 호출하고 결과를 공유한다.
+종목 선택(select_tickers) 및 스크리너는 각 런타임이 개별 실행한다.
+
+중요:
+- portfolio_info(현금/보유종목/주문가능금액) 의존 판단은 공유하지 않는다.
+- cache_version 으로 포맷을 관리해 이전 포맷 캐시는 자동 무효화한다.
 
 파일 위치: state/shared_judgment_{market}_{yyyymmdd}.json
 동시 쓰기 보호: filelock (timeout=10s)
@@ -25,6 +29,8 @@ from runtime_paths import get_runtime_path
 
 log = logging.getLogger("trading")
 
+CACHE_VERSION = 2
+
 
 def _cache_path(market: str, trade_date: str) -> Path:
     day = str(trade_date or "").replace("-", "")
@@ -36,7 +42,7 @@ def load(market: str, trade_date: str) -> Optional[dict]:
 
     Returns:
         dict with keys: judgments, consensus, digest_prompt, digest_raw,
-                        round1_judgments, debate_changes, session_date
+                        round1_judgments, debate_changes, session_date, cache_version
         None if cache is missing, stale, or invalid.
     """
     path = _cache_path(market, trade_date)
@@ -56,6 +62,8 @@ def load(market: str, trade_date: str) -> Optional[dict]:
 
     if not isinstance(data, dict):
         return None
+    if int(data.get("cache_version", 0) or 0) != CACHE_VERSION:
+        return None
     if data.get("session_date") != trade_date:
         return None
     if not data.get("judgments") or not data.get("consensus"):
@@ -67,12 +75,13 @@ def load(market: str, trade_date: str) -> Optional[dict]:
 def save(market: str, trade_date: str, judgment: dict) -> None:
     """공유 판단 캐시 저장.
 
-    judgment 딕셔너리에서 캐시 가능한 필드만 추출해 저장한다.
+    judgment 딕셔너리에서 캐시 가능한 market-only 필드만 추출해 저장한다.
     tickers / universe_tickers 는 런타임별로 다르므로 저장하지 않는다.
     """
     path = _cache_path(market, trade_date)
 
     payload = {
+        "cache_version":    CACHE_VERSION,
         "session_date":     trade_date,
         "market":           market,
         "judgments":        judgment.get("judgments", {}),
