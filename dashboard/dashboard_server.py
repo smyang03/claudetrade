@@ -17,14 +17,15 @@ from pathlib import Path
 from datetime import datetime, date, timedelta, time as dt_time
 import json, sys, os, re, subprocess, threading, atexit, time as _time
 from collections import Counter
+from contextlib import contextmanager
 from typing import Optional
 
 # .env 濡쒕뱶 (trading_bot怨??숈씪???섍꼍蹂???ъ슜)
 try:
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv, dotenv_values
     load_dotenv(Path(__file__).parent.parent / ".env")
 except ImportError:
-    pass
+    dotenv_values = None
 
 try:
     from zoneinfo import ZoneInfo
@@ -38,6 +39,7 @@ KST = ZoneInfo("Asia/Seoul")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from runtime_paths import get_runtime_path
 from credit_tracker import summary as credit_summary
+import kis_api as _kis_api_module
 from kis_api import (
     get_access_token,
     get_balance,
@@ -70,6 +72,7 @@ except Exception:
 app = Flask(__name__)
 
 _BROKER_REALIZED_CACHE: dict[tuple[str, str], dict] = {}
+_KIS_RUNTIME_LOCK = threading.Lock()
 
 
 @app.after_request
@@ -144,6 +147,80 @@ def _judgment_candidates(market: str, mode: str) -> list[Path]:
         seen.add(path)
         ordered.append(path)
     return ordered
+
+
+def _runtime_env_path(mode: str) -> Path:
+    runtime_mode = _normalize_mode(mode)
+    candidate = BASE_DIR / f".env.{runtime_mode}"
+    return candidate if candidate.exists() else BASE_DIR / ".env"
+
+
+def _runtime_env(mode: str) -> dict:
+    path = _runtime_env_path(mode)
+    if dotenv_values is None or not path.exists():
+        return {}
+    try:
+        data = dotenv_values(path)
+    except Exception:
+        return {}
+    return {str(k): v for k, v in (data or {}).items() if v is not None}
+
+
+def _runtime_bool(values: dict, key: str, default: bool) -> bool:
+    raw = str(values.get(key, "") or "").strip()
+    if not raw:
+        return default
+    return raw.lower() == "true"
+
+
+@contextmanager
+def _kis_runtime(mode: str):
+    runtime_mode = _normalize_mode(mode)
+    env = _runtime_env(runtime_mode)
+    attrs = [
+        "APP_KEY", "APP_SECRET", "ACCOUNT_NO", "IS_PAPER",
+        "ACCOUNT_NO_US", "APP_KEY_US", "APP_SECRET_US", "IS_PAPER_US",
+        "BASE_URL", "WS_URL", "TOKEN_FILE",
+    ]
+    with _KIS_RUNTIME_LOCK:
+        previous = {name: getattr(_kis_api_module, name) for name in attrs}
+        try:
+            app_key = str(env.get("KIS_APP_KEY", previous["APP_KEY"]) or "")
+            app_secret = str(env.get("KIS_APP_SECRET", previous["APP_SECRET"]) or "")
+            account_no = str(env.get("KIS_ACCOUNT_NO", previous["ACCOUNT_NO"]) or "")
+            is_paper = _runtime_bool(env, "KIS_IS_PAPER", runtime_mode == "paper")
+            account_no_us = str(env.get("KIS_ACCOUNT_NO_US", "") or account_no)
+            app_key_us = str(env.get("KIS_APP_KEY_US", "") or app_key)
+            app_secret_us = str(env.get("KIS_APP_SECRET_US", "") or app_secret)
+            raw_is_paper_us = str(env.get("KIS_IS_PAPER_US", "") or "").strip()
+            is_paper_us = (raw_is_paper_us.lower() == "true") if raw_is_paper_us else is_paper
+            base_url = str(
+                env.get(
+                    "KIS_BASE_URL",
+                    "https://openapivts.koreainvestment.com:29443" if is_paper else "https://openapi.koreainvestment.com:9443",
+                ) or ""
+            )
+            ws_url = (
+                "ws://ops.koreainvestment.com:31000"
+                if is_paper
+                else "ws://ops.koreainvestment.com:21000"
+            )
+
+            _kis_api_module.APP_KEY = app_key
+            _kis_api_module.APP_SECRET = app_secret
+            _kis_api_module.ACCOUNT_NO = account_no
+            _kis_api_module.IS_PAPER = is_paper
+            _kis_api_module.ACCOUNT_NO_US = account_no_us
+            _kis_api_module.APP_KEY_US = app_key_us
+            _kis_api_module.APP_SECRET_US = app_secret_us
+            _kis_api_module.IS_PAPER_US = is_paper_us
+            _kis_api_module.BASE_URL = base_url
+            _kis_api_module.WS_URL = ws_url
+            _kis_api_module.TOKEN_FILE = get_runtime_path("state", f"{runtime_mode}_kis_token.json")
+            yield
+        finally:
+            for name, value in previous.items():
+                setattr(_kis_api_module, name, value)
 
 
 # ?? ?곗씠??濡쒕뜑 ????????????????????????????????????????????????????????????????
@@ -1247,7 +1324,7 @@ def _resolve_period_bounds(period: str, start: str, end: str) -> tuple[date, dat
     return date(2026, 1, 1), today
 
 
-def _load_broker_trade_bundle(market: str, period: str, start: str, end: str) -> dict:
+def _load_broker_trade_bundle(market: str, period: str, start: str, end: str, mode: str = "paper") -> dict:
     d_start, d_end = _resolve_period_bounds(period, start, end)
     meta = {
         "ok": False,
@@ -1260,30 +1337,26 @@ def _load_broker_trade_bundle(market: str, period: str, start: str, end: str) ->
         "error": "",
     }
 
-    try:
-        token = get_access_token()
-    except Exception as e:
-        meta["error"] = str(e)
-        return meta
-
     start_s = d_start.strftime("%Y%m%d")
     end_s = d_end.strftime("%Y%m%d")
     rows: list[dict] = []
     try:
-        if market == "KR":
-            broker_rows = inquire_daily_ccld_kr(
-                token,
-                start_date=start_s,
-                end_date=end_s,
-                filled_code="01",
-            )
-        else:
-            broker_rows = inquire_ccnl_us(
-                token,
-                start_date=start_s,
-                end_date=end_s,
-                filled_code="01",
-            )
+        with _kis_runtime(mode):
+            token = get_access_token()
+            if market == "KR":
+                broker_rows = inquire_daily_ccld_kr(
+                    token,
+                    start_date=start_s,
+                    end_date=end_s,
+                    filled_code="01",
+                )
+            else:
+                broker_rows = inquire_ccnl_us(
+                    token,
+                    start_date=start_s,
+                    end_date=end_s,
+                    filled_code="01",
+                )
     except Exception as e:
         meta["error"] = str(e)
         return meta
@@ -1347,8 +1420,8 @@ def _load_broker_trade_bundle(market: str, period: str, start: str, end: str) ->
     return meta
 
 
-def _load_broker_trade_rows(market: str, period: str, start: str, end: str) -> list[dict]:
-    return _load_broker_trade_bundle(market, period, start, end)["rows"]
+def _load_broker_trade_rows(market: str, period: str, start: str, end: str, mode: str = "paper") -> list[dict]:
+    return _load_broker_trade_bundle(market, period, start, end, mode=mode)["rows"]
 
 
 def group_by_month(records: list) -> dict:
@@ -1488,11 +1561,12 @@ def _load_claude_control(mode: str = "paper") -> dict:
     return data
 
 
-def _load_broker_positions(market: str) -> list:
+def _load_broker_positions(market: str, mode: str = "paper") -> list:
     """KIS 釉뚮줈而??붽퀬?먯꽌 ?꾩옱 蹂댁쑀 ?ъ??섏쓣 吏곸젒 ?쎌뼱 ??쒕낫?쒖뿉 ?쒖떆."""
     try:
-        token = get_access_token()
-        bal = get_balance(token, market=market)
+        with _kis_runtime(mode):
+            token = get_access_token()
+            bal = get_balance(token, market=market, force_refresh=True)
     except Exception:
         return []
 
@@ -1630,7 +1704,7 @@ def _resolve_review_position(market: str, ticker: str, mode: str = "paper") -> t
 
     if _is_live_market(market):
         for mkt in markets:
-            broker_positions = _load_broker_positions(mkt)
+            broker_positions = _load_broker_positions(mkt, mode=mode)
             broker_pos = next((p for p in broker_positions if str(p.get("ticker", "") or "").strip().upper() == ticker), None)
             if broker_pos is None:
                 continue
@@ -1658,28 +1732,48 @@ def _resolve_review_position(market: str, ticker: str, mode: str = "paper") -> t
     return market, None, {}, []
 
 
-def _broker_snapshot() -> dict:
-    """KIS 釉뚮줈而?湲곗? KR/US ?듯빀 ?ㅻ깄??"""
+def _broker_snapshot(mode: str = "paper") -> dict:
+    """KIS 브로커 기준 KR/US 통합 스냅샷."""
     try:
-        token = get_access_token()
+        with _kis_runtime(mode):
+            token = get_access_token()
+            try:
+                kr = get_balance(token, market="KR", force_refresh=True)
+            except Exception:
+                kr = {}
+            try:
+                us = get_balance(token, market="US", force_refresh=True)
+            except Exception:
+                us = {}
     except Exception:
         return {}
-    try:
-        kr = get_balance(token, market="KR")
-    except Exception:
-        kr = {}
-    try:
-        us = get_balance(token, market="US")
-    except Exception:
-        us = {}
 
+    runtime_mode = _normalize_mode(mode)
     usd_krw = _get_usd_krw_cached()
 
     kr_cash = float(kr.get("cash", 0) or 0)
+    kr_orderable = float(kr.get("orderable_cash", kr_cash) or kr_cash)
     kr_eval = float(kr.get("total_eval", 0) or 0)
+    us_cash_usd = float(us.get("cash", 0) or 0)
+    us_orderable_cash_usd = float(us.get("orderable_cash", us_cash_usd) or us_cash_usd)
     us_eval_usd = float(us.get("total_eval", 0) or 0)
+    us_cash_krw = us_cash_usd * usd_krw
+    us_orderable_cash_krw = us_orderable_cash_usd * usd_krw
     us_eval_krw = us_eval_usd * usd_krw
-    cumulative = kr_cash + kr_eval + us_eval_krw
+    source = "broker"
+
+    # KIS US paper는 달러 현금을 0으로 반환하는 경우가 있어 KR 현금이 과대계상될 수 있다.
+    kr_cash_effective = kr_cash
+    if runtime_mode == "paper" and us_cash_usd == 0 and (us.get("stocks") or []):
+        us_cost_krw = sum(
+            float(stock.get("avg_price", 0) or 0) * float(stock.get("qty", 0) or 0) * usd_krw
+            for stock in (us.get("stocks") or [])
+        )
+        if us_cost_krw > 0:
+            kr_cash_effective = max(kr_cash - us_cost_krw, 0.0)
+            source = "broker+paper_us_cash_estimated"
+
+    cumulative = kr_cash_effective + kr_eval + us_cash_krw + us_eval_krw
 
     def _unrealized_krw(stocks: list, market: str) -> float:
         total = 0.0
@@ -1692,9 +1786,16 @@ def _broker_snapshot() -> dict:
         return total
 
     return {
+        "source": source,
         "usd_krw": usd_krw,
         "kr_cash": kr_cash,
+        "kr_cash_effective": kr_cash_effective,
+        "kr_orderable_cash": kr_orderable,
         "kr_eval": kr_eval,
+        "us_cash_usd": us_cash_usd,
+        "us_cash_krw": us_cash_krw,
+        "us_orderable_cash_usd": us_orderable_cash_usd,
+        "us_orderable_cash_krw": us_orderable_cash_krw,
         "us_eval_usd": us_eval_usd,
         "us_eval_krw": us_eval_krw,
         "cumulative": cumulative,
@@ -1705,9 +1806,9 @@ def _broker_snapshot() -> dict:
     }
 
 
-def _broker_realized_pnl_krw(market: str, trade_date: str) -> float:
+def _broker_realized_pnl_krw(market: str, trade_date: str, mode: str = "paper") -> float:
     """브로커 체결 원장 기준 실현손익을 FIFO로 계산한다."""
-    cache_key = (market, trade_date)
+    cache_key = (_normalize_mode(mode), market, trade_date)
     now_ts = _time.time()
     cached = _BROKER_REALIZED_CACHE.get(cache_key)
     if cached and now_ts - float(cached.get("ts", 0) or 0) < 60:
@@ -1716,11 +1817,12 @@ def _broker_realized_pnl_krw(market: str, trade_date: str) -> float:
     realized = 0.0
     usd_krw = _get_usd_krw_cached()
     try:
-        token = get_access_token()
-        if market == "KR":
-            rows = inquire_daily_ccld_kr(token, start_date=trade_date, end_date=trade_date)
-        else:
-            rows = inquire_ccnl_us(token, start_date=trade_date, end_date=trade_date)
+        with _kis_runtime(mode):
+            token = get_access_token()
+            if market == "KR":
+                rows = inquire_daily_ccld_kr(token, start_date=trade_date, end_date=trade_date)
+            else:
+                rows = inquire_ccnl_us(token, start_date=trade_date, end_date=trade_date)
     except Exception:
         rows = []
 
@@ -1790,7 +1892,7 @@ def _filter_items_for_market(items: list, market: str) -> list:
     return filtered
 
 
-def _ticker_name_map(market: str, include_broker: bool = True) -> dict[str, str]:
+def _ticker_name_map(market: str, include_broker: bool = True, mode: str = "paper") -> dict[str, str]:
     name_map: dict[str, str] = {}
     if market == "KR":
         for t, name in (_KR_TICKERS_STATIC or {}).items():
@@ -1825,7 +1927,7 @@ def _ticker_name_map(market: str, include_broker: bool = True) -> dict[str, str]
                 if t and name and name != t:
                     name_map[t] = name
     if include_broker:
-        for pos in _load_broker_positions(market):
+        for pos in _load_broker_positions(market, mode=mode):
             t = str(pos.get("ticker", "") or "").strip().upper()
             name = str(pos.get("name", "") or "").strip()
             if t and name and name != t:
@@ -2429,9 +2531,10 @@ def api_summary():
     if not records:
         return jsonify({})
 
+    mode        = _request_mode()
     today_rec   = load_today(market)
     result      = today_rec.get("actual_result", {})
-    live        = _load_live_status(market, mode=_request_mode())   # ??以??ㅼ떆媛??곹깭
+    live        = _load_live_status(market, mode=mode)   # ??以??ㅼ떆媛??곹깭
 
     # ??以묒씠硫??쇱씠釉??곹깭 ?곗꽑, ?놁쑝硫??쇰퀎 湲곕줉 ?ъ슜
     if not _is_fresh_live_status(live, today_rec):
@@ -2439,7 +2542,7 @@ def api_summary():
 
     metrics_today = _record_metrics(today_rec, market)
     broker_trade_date = _session_trade_date(market).strftime("%Y%m%d")
-    broker_realized_pnl_krw = _broker_realized_pnl_krw(market, broker_trade_date)
+    broker_realized_pnl_krw = _broker_realized_pnl_krw(market, broker_trade_date, mode=mode)
     realized_pnl_krw = broker_realized_pnl_krw
     if abs(float(realized_pnl_krw or 0)) < 1e-9:
         realized_pnl_krw = live.get("daily_pnl", metrics_today.get("pnl_krw", result.get("pnl_krw", 0)))
@@ -2448,34 +2551,35 @@ def api_summary():
     pnl_pct  = live.get("daily_pnl_pct", result.get("pnl_pct", 0))
     cum_base = float(result.get("cumulative", 0) or PAPER_CASH)
     cum_asset = float((live.get("total_equity", 0) if live else 0) or cum_base or PAPER_CASH)
-    broker_positions = _filter_items_for_market(_load_broker_positions(market), market)
-    saved_positions = _saved_positions_for_market(market, mode=_request_mode())
+    broker_positions = _filter_items_for_market(_load_broker_positions(market, mode=mode), market)
+    saved_positions = _saved_positions_for_market(market, mode=mode)
     positions = _merge_positions_for_display(market, broker_positions, saved_positions)
     pending_orders = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
-    name_map = _ticker_name_map(market)
+    name_map = _ticker_name_map(market, mode=mode)
     for pos in positions:
         pos["display_ticker"] = _display_ticker_label(pos.get("ticker", ""), pos.get("name", ""), name_map)
     for order in pending_orders:
         order["display_ticker"] = _display_ticker_label(order.get("ticker", ""), order.get("name", ""), name_map)
-    broker = _broker_snapshot()
+    broker = _broker_snapshot(mode=mode)
     kr_asset = 0.0
     us_asset = 0.0
     usd_krw = float(os.getenv("USD_KRW_RATE", "1350") or 1350)
+    asset_source = "internal_fallback"
+    engine_equity_krw = float((live.get("total_equity", 0) if live else 0) or 0)
+    engine_cash_krw = float((live.get("cash", 0) if live else 0) or 0)
 
     if broker:
         usd_krw = float(broker.get("usd_krw", 0) or usd_krw)
-        kr_asset = float(broker.get("kr_cash", 0) or 0) + float(broker.get("kr_eval", 0) or 0)
-        us_asset = float(broker.get("us_eval_krw", 0) or 0)
+        kr_asset = float(broker.get("kr_cash_effective", broker.get("kr_cash", 0)) or 0) + float(broker.get("kr_eval", 0) or 0)
+        us_asset = float(broker.get("us_cash_krw", 0) or 0) + float(broker.get("us_eval_krw", 0) or 0)
         market_unrealized = float(broker.get("unrealized_krw", {}).get(market, 0) or 0)
+        asset_source = str(broker.get("source", "broker") or "broker")
         if market == "US" and us_asset <= 0:
             fallback = _live_asset_fallback("US", usd_krw or float(os.getenv("USD_KRW_RATE", "1350") or 1350))
             us_asset = float(fallback.get("asset_krw", 0) or 0)
             market_unrealized = float(fallback.get("unrealized_krw", 0) or 0)
-        if market == "US" and kr_asset <= 0 and cum_base > us_asset:
-            kr_asset = max(float(cum_base) - us_asset, 0.0)
-        if market == "KR" and kr_asset <= 0 and cum_base > 0:
-            kr_asset = cum_base
-        cum_asset = max(float(cum_base or 0), kr_asset + us_asset)
+            asset_source = asset_source + "+live_fallback"
+        cum_asset = float(kr_asset + us_asset)
         unrealized_pnl_krw = market_unrealized
         pnl_krw = float(realized_pnl_krw) + unrealized_pnl_krw
         if cum_asset:
@@ -2539,10 +2643,11 @@ def api_summary():
     return jsonify({
         "today": {
             "date":           summary_date,
-            "pnl_pct":        round(pnl_pct, 4),
+                    "pnl_pct":        round(pnl_pct, 4),
             "pnl_krw":        round(pnl_krw, 0),
             "realized_pnl_krw": round(realized_pnl_krw, 0),
             "unrealized_pnl_krw": round(unrealized_pnl_krw, 0),
+            "asset_source":   asset_source,
             "win":            metrics_today.get("win", result.get("win", False)),
             "trades":         metrics_today.get("trades", result.get("trades", 0)),
             "execution_contaminated": bool(metrics_today.get("execution_contaminated", False)),
@@ -2554,6 +2659,10 @@ def api_summary():
             "cumulative":     cum_asset,
             "asset_krw_kr":   round(kr_asset, 0),
             "asset_krw_us":   round(us_asset, 0),
+            "broker_cash_krw": round(float((broker or {}).get("kr_cash_effective", (broker or {}).get("kr_cash", 0)) or 0) + float((broker or {}).get("us_cash_krw", 0) or 0), 0),
+            "broker_orderable_cash_krw": round(float((broker or {}).get("kr_orderable_cash", 0) or 0) + float((broker or {}).get("us_orderable_cash_krw", 0) or 0), 0),
+            "engine_equity_krw": round(engine_equity_krw, 0),
+            "engine_cash_krw": round(engine_cash_krw, 0),
             "usd_krw":        usd_krw,
             "positions":      positions,
             "position_count": len(positions),
@@ -3089,7 +3198,7 @@ def api_history_equity():
         metric_rows.append(result)
     today_label = date.today().isoformat()
     live = _load_live_status(market, mode=_request_mode())
-    broker = _broker_snapshot()
+    broker = _broker_snapshot(mode=_request_mode())
     current_equity = float((broker or {}).get("cumulative", 0) or 0)
     if _is_fresh_live_status(live, load_today(market)):
         if current_equity > 0:
@@ -3131,6 +3240,7 @@ def api_history_equity():
 
 @app.route("/api/trades/list")
 def api_trades_list():
+    mode         = _request_mode()
     market       = request.args.get("market", best_market_with_data())
     period       = request.args.get("period", "all")
     start        = request.args.get("start", "")
@@ -3143,7 +3253,7 @@ def api_trades_list():
     include_live = request.args.get("include_live", "true").lower() != "false"
 
     records = load_records_filtered(market, period, start, end)
-    broker_rows = _load_broker_trade_rows(market, period, start, end)
+    broker_rows = _load_broker_trade_rows(market, period, start, end, mode=mode)
     # 理쒖떊?쒖쑝濡?泥섎━?섎떎媛 異⑸텇??嫄곕옒 ???뺣낫 ??議곌린 醫낅즺
     # ?덉퐫??1媛쒕떦 ?됯퇏 2~3嫄???limit*2諛??덉퐫?쒕쭔 泥섎━?대룄 異⑸텇
     max_records = max(30, limit * 2)
@@ -3205,7 +3315,7 @@ def api_trades_list():
             seen.add(key)
             trades.append(t)
 
-    name_map = _ticker_name_map(market, include_broker=False)
+    name_map = _ticker_name_map(market, include_broker=False, mode=mode)
     trades = [_enrich_trade_row(t, market, name_map=name_map) for t in trades]
 
     def _trade_score(row: dict) -> tuple:
@@ -3255,6 +3365,7 @@ def api_trades_list():
 
 @app.route("/api/trades/broker")
 def api_trades_broker():
+    mode = _request_mode()
     market = request.args.get("market", best_market_with_data())
     period = request.args.get("period", "all")
     start = request.args.get("start", "")
@@ -3264,7 +3375,7 @@ def api_trades_broker():
     match_status = request.args.get("match_status", "")
     limit = int(request.args.get("limit", "100"))
 
-    trades = _load_broker_trade_rows(market, period, start, end)
+    trades = _load_broker_trade_rows(market, period, start, end, mode=mode)
     strategy_rows = []
     records = load_records_filtered(market, period, start, end)
     max_records = max(30, limit * 2)
@@ -3288,11 +3399,12 @@ def api_trades_broker():
 
 @app.route("/api/trades/broker/status")
 def api_trades_broker_status():
+    mode = _request_mode()
     market = request.args.get("market", best_market_with_data())
     period = request.args.get("period", "all")
     start = request.args.get("start", "")
     end = request.args.get("end", "")
-    bundle = _load_broker_trade_bundle(market, period, start, end)
+    bundle = _load_broker_trade_bundle(market, period, start, end, mode=mode)
     return jsonify({
         "ok": bool(bundle.get("ok")),
         "market": market,
@@ -3394,8 +3506,9 @@ def api_signals_recent():
             continue
         seen.add(key)
         dedup.append(item)
-    live = _load_live_status(market, mode=_request_mode()) or {}
-    broker_positions = _filter_items_for_market(_load_broker_positions(market), market)
+    mode = _request_mode()
+    live = _load_live_status(market, mode=mode) or {}
+    broker_positions = _filter_items_for_market(_load_broker_positions(market, mode=mode), market)
     price_map = {}
     for pos in _filter_items_for_market(live.get("positions", []) or [], market):
         ticker = str(pos.get("ticker", "") or "").upper()
@@ -3518,27 +3631,28 @@ def api_refresh_prices():
 
     if is_live:
         try:
-            token = get_access_token()
-            for pos in positions:
-                ticker = pos.get("ticker", "")
-                if not ticker:
-                    continue
-                try:
-                    px_data = get_price(ticker, token, market=market)
-                    cp = float(px_data.get("current_price") or px_data.get("price") or 0)
-                    if cp > 0:
-                        pos["current_price"] = cp
-                        # display 필드도 갱신
-                        if "display_current_price" in pos:
-                            pos["display_current_price"] = cp
-                        updated = True
-                except Exception:
-                    pass  # 개별 종목 실패 시 기존값 유지
-            if updated:
-                live["positions"] = positions
-                live_path = _live_status_path(mode, market)
-                live_path.write_text(json.dumps(live, ensure_ascii=False), encoding="utf-8")
-        except Exception as e:
+            with _kis_runtime(mode):
+                token = get_access_token()
+                for pos in positions:
+                    ticker = pos.get("ticker", "")
+                    if not ticker:
+                        continue
+                    try:
+                        px_data = get_price(ticker, token, market=market)
+                        cp = float(px_data.get("current_price") or px_data.get("price") or 0)
+                        if cp > 0:
+                            pos["current_price"] = cp
+                            # display 필드도 갱신
+                            if "display_current_price" in pos:
+                                pos["display_current_price"] = cp
+                            updated = True
+                    except Exception:
+                        pass  # 개별 종목 실패 시 기존값 유지
+                if updated:
+                    live["positions"] = positions
+                    live_path = _live_status_path(mode, market)
+                    live_path.write_text(json.dumps(live, ensure_ascii=False), encoding="utf-8")
+        except Exception:
             is_live = False  # 토큰 오류 등 → 저장 데이터 반환
 
     return jsonify({
@@ -3758,10 +3872,10 @@ def api_tickers_today():
     consensus = rec.get("consensus", {})
     mode = _request_mode()
     live = _load_live_status(market, mode=mode) or {}
-    broker_positions = _filter_items_for_market(_load_broker_positions(market), market)
+    broker_positions = _filter_items_for_market(_load_broker_positions(market, mode=mode), market)
     live_positions = _filter_items_for_market(live.get("positions", []) if live else [], market)
     live_pending = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
-    name_map = _ticker_name_map(market)
+    name_map = _ticker_name_map(market, mode=mode)
 
     held_entries: dict[str, int] = {}
     held_qty_map: dict[str, int] = {}
@@ -5472,14 +5586,26 @@ async function loadSummary() {
   const d = await apiGet('/api/summary', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.today) return;
   const t = d.today, p = d.period;
+  const assetSourceLabel = {
+    broker: '브로커 기준',
+    'broker+paper_us_cash_estimated': '브로커 기준 · US 모의현금 추정',
+    'broker+paper_us_cash_estimated+live_fallback': '브로커 기준 · US 모의보정',
+    'broker+live_fallback': '브로커 기준 · 라이브 보정',
+    internal_fallback: '엔진 추정',
+  }[t.asset_source || ''] || (t.asset_source || '기준 미상');
 
   const pnlEl = document.getElementById('today-pnl');
   pnlEl.textContent = fmt.pct(t.pnl_pct);
   pnlEl.className = 'card-value ' + colorClass(t.pnl_pct);
   document.getElementById('today-krw').textContent = fmt.krw(t.pnl_krw);
   document.getElementById('cumulative').textContent = fmt.asset(t.cumulative);
+  const cumulativePnl = document.getElementById('cumulative-pnl');
+  if (cumulativePnl) {
+    cumulativePnl.textContent =
+      `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)} · 자산 ${assetSourceLabel}`;
+  }
   document.getElementById('today-mode').innerHTML =
-    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.krw(t.mode_order_limit_krw)}` : ''}${t.execution_contaminated ? ` <span style="color:#f59e0b">| 실행오염 ${((t.execution_issues||[]).slice(0,2)).join(', ')}</span>` : ''}`;
+    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.krw(t.mode_order_limit_krw)}` : ''}${t.broker_orderable_cash_krw ? ` | 주문가능 ${fmt.krw(t.broker_orderable_cash_krw)}` : ''}${t.execution_contaminated ? ` <span style="color:#f59e0b">| 실행오염 ${((t.execution_issues||[]).slice(0,2)).join(', ')}</span>` : ''}`;
 
   const wrEl = document.getElementById('win-rate');
   wrEl.textContent = p.win_rate + '%';
@@ -6343,7 +6469,16 @@ async function loadSummary() {
   const cumulative = document.getElementById('cumulative');
   if (cumulative) cumulative.textContent = fmt.asset(t.cumulative || 0);
   const cumulativePnl = document.getElementById('cumulative-pnl');
-  if (cumulativePnl) cumulativePnl.textContent = `누적 손익: ${fmt.pct(p.total_pnl || 0)}`;
+  if (cumulativePnl) {
+    const assetSourceLabel = {
+      broker: '브로커 기준',
+      'broker+paper_us_cash_estimated': '브로커 기준 · US 모의현금 추정',
+      'broker+paper_us_cash_estimated+live_fallback': '브로커 기준 · US 모의보정',
+      'broker+live_fallback': '브로커 기준 · 라이브 보정',
+      internal_fallback: '엔진 추정',
+    }[t.asset_source || ''] || (t.asset_source || '기준 미상');
+    cumulativePnl.textContent = `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)} · 자산 ${assetSourceLabel}`;
+  }
 
   const sess = t.session || {};
   const riskText = t.risk_value ? ` | ${t.risk_label} ${Number(t.risk_value).toFixed(1)} ${t.risk_status || ''}` : '';
@@ -6351,8 +6486,9 @@ async function loadSummary() {
   const todayMode = document.getElementById('today-mode');
   if (todayMode) {
     const orderTxt = t.mode_order_limit_krw ? ` | 최대매수 ${fmt.krw(t.mode_order_limit_krw)}` : '';
+    const cashTxt = t.broker_orderable_cash_krw ? ` | 주문가능 ${fmt.krw(t.broker_orderable_cash_krw)}` : '';
     const descTxt = modeDescription(t.mode) ? `<div style="margin-top:6px;color:var(--muted);font-size:12px">${modeDescription(t.mode)}</div>` : '';
-    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${sessTxt}${riskText}${descTxt}`;
+    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${cashTxt}${sessTxt}${riskText}${descTxt}`;
   }
 
   const wrEl = document.getElementById('win-rate');
