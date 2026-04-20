@@ -1641,7 +1641,7 @@ def _place_order_us(ticker, qty, price, side, token):
         "OVRS_EXCG_CD":    _get_ovrs_excg_cd(ticker, token=token),
         "PDNO":            ticker.upper(),
         "ORD_QTY":         str(qty),
-        "OVRS_ORD_UNPR":   str(price),
+        "OVRS_ORD_UNPR":   f"{float(price):.2f}",
         "CTAC_TLNO":       "",
         "MGCO_APTM_ODNO":  "",
         "ORD_SVR_DVSN_CD": "0",
@@ -2362,6 +2362,12 @@ _NOTICE_COLS_US = [
 _NOTICE_COLS = _NOTICE_COLS_KR
 
 
+class _Namespace:
+    pass
+
+_hdfsasp0_logged = _Namespace()
+
+
 class KISWebSocket:
     def __init__(self, token, tickers, on_tick=None, on_notice=None, market="KR"):
         self.token = token
@@ -2562,22 +2568,26 @@ class KISWebSocket:
 
             # US 실시간 시세 tick (HDFSASP0, 실전 전용)
             # RSYM 포맷: D{NAS/NYS/AMS}{ticker}  예) DNYSHIMS
-            # fields: [0]RSYM [6]OPEN [7]HIGH [8]LOW [9]LAST [12]RATE [17]ACML_VOL
+            # fields: [0]RSYM [1]TICKER [2]ZDIV [3]TYMD [4]XHMS [5]KYMD [6]KHMS
+            #         [7]? [8]? [9]? [10]DIFF [11]LAST [12]ASK [13]BID_SZ
+            #         [14]? [15]ASK_SZ [16]? [17]BID [18]ASK2 [19]TICK_VOL
             if tr_id == "HDFSASP0":
                 fields = raw_data.split("^")
-                if len(fields) < 18:
+                if len(fields) < 20:
                     return
                 try:
                     rsym = fields[0]
                     ticker = rsym[4:] if len(rsym) > 4 else rsym  # D+3자리거래소+티커
-                    price = float(fields[9])
-                    volume = int(float(fields[17]))
-                    self.on_tick({"ticker": ticker, "time": fields[5], "price": price, "volume": volume})
+                    price = float(fields[11])
+                    volume = int(float(fields[19]))
+                    self.on_tick({"ticker": ticker, "time": fields[6], "price": price, "volume": volume})
                 except Exception:
                     pass
                 return
 
-            # KR 시세 tick
+            # KR 시세 tick (H0STCNT0 외 TR ID는 무시)
+            if tr_id != "H0STCNT0":
+                return
             fields = raw_data.split("^")
             if len(fields) < 13:
                 return

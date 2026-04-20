@@ -3421,15 +3421,23 @@ def api_signals_recent():
     """理쒓렐 ?좏샇 ?대깽??紐⑸줉 (analysis JSONL?먯꽌 ?쎄린)"""
     market = request.args.get("market", "KR")
     n      = min(int(request.args.get("n", "60")), 200)
+    mode   = _request_mode()
     today  = _market_log_date_str(market)
-    log_path = BASE_DIR / "logs" / "analysis" / f"analysis_{today}.jsonl"
+    _analysis_dir = BASE_DIR / "logs" / "analysis"
+    # mode-prefixed 파일 우선, 없으면 legacy 파일
+    _mode_prefix = _normalize_mode(mode) + "_" if mode and _normalize_mode(mode) != "paper" else ""
+    log_path = _analysis_dir / f"{_mode_prefix}analysis_{today}.jsonl"
+    if not log_path.exists():
+        log_path = _analysis_dir / f"analysis_{today}.jsonl"
     # 봇이 전날 시작된 경우 로거가 전날 파일에 기록 → 어제 파일에서 오늘 타임스탬프 보완
     if not log_path.exists():
         from datetime import datetime as _dt, timedelta as _td
         _yesterday = (_dt.strptime(today, "%Y%m%d") - _td(days=1)).strftime("%Y%m%d")
-        _fallback = BASE_DIR / "logs" / "analysis" / f"analysis_{_yesterday}.jsonl"
-        if _fallback.exists():
-            log_path = _fallback
+        for _pfx in (_mode_prefix, ""):
+            _fallback = _analysis_dir / f"{_pfx}analysis_{_yesterday}.jsonl"
+            if _fallback.exists():
+                log_path = _fallback
+                break
     # 날짜 필터 prefix (어제 파일에서 오늘 항목만 읽기 위해)
     today_prefix = today[:4] + "-" + today[4:6] + "-" + today[6:]  # "20260413" → "2026-04-13"
     # US 자정 세션: session date = 어제인데 봇이 자정 넘어 오늘 파일에 기록 → 오늘 파일도 추가
@@ -3905,10 +3913,15 @@ def api_tickers_today():
 
     # ?ㅻ뒛 analysis 濡쒓렇?먯꽌 醫낅ぉ蹂?理쒓렐 ?대깽??+ ?좏깮 ?댁쑀 吏묎퀎
     today_str = _market_log_date_str(market)
-    log_path  = BASE_DIR / "logs" / "analysis" / f"analysis_{today_str}.jsonl"
+    _adir = BASE_DIR / "logs" / "analysis"
+    _amode = _normalize_mode(mode)
+    _apfx = (_amode + "_") if _amode != "paper" else ""
+    log_path = _adir / f"{_apfx}analysis_{today_str}.jsonl"
+    if not log_path.exists():
+        log_path = _adir / f"analysis_{today_str}.jsonl"
     ticker_last: dict[str, dict] = {}
     ticker_sig_count: dict[str, int] = {}
-    ticker_skip_reasons: dict[str, list] = {}   # 誘몄껜寃??댁쑀 ?꾩쟻
+    ticker_skip_reasons: dict[str, list] = {}
     selection_reasons: dict[str, str] = {}
     candidates_list: list[str] = []
     def _prefer_ticker_event(prev: dict, cand: dict) -> dict:
@@ -4138,7 +4151,7 @@ def api_tickers_today():
             "last_reason":     last.get("reason", ""),
             "none_reason":     last.get("detail", ""),
             "sig_count":       ticker_sig_count.get(t, 0),
-            "select_reason":   selection_reasons.get(t, ""),
+            "select_reason":   selection_reasons.get(t, "") or rec.get("ticker_reasons", {}).get(t, ""),
             "skip_reasons":    skip_reasons_ko,   # ?ㅻ뒛 ?꾩쟻 誘몄껜寃??댁쑀
         })
     # ?좏깮?섏? ?딆? ?꾨낫 紐⑸줉 (異뺤빟)

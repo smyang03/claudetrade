@@ -729,8 +729,12 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
         try:
             # 이미 최신 상태면 스킵
             if path.exists():
-                existing = pd.read_csv(path).sort_values("date")
-                existing["date"] = pd.to_datetime(existing["date"])
+                existing = pd.read_csv(path)
+                existing = existing[
+                    existing["date"].notna() &
+                    (existing["date"].astype(str).str.strip() != ".0")
+                ].sort_values("date")
+                existing["date"] = pd.to_datetime(existing["date"], format="%Y-%m-%d")
                 last_date = existing["date"].max()
                 if (end_dt - last_date).days <= 3:
                     skipped += 1

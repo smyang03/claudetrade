@@ -557,6 +557,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 json.dump({
                     **self.today_judgment,
                     "mode": "paper" if self.is_paper else "live",
+                    "ticker_reasons": self.today_ticker_reasons.get(market, {}),
                 }, f, ensure_ascii=False, indent=2)
         except Exception as e:
             log.warning(f"판단 임시저장 실패: {e}")
@@ -3064,6 +3065,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._reset_us_order_cache()
         self._sync_runtime_with_broker()
         self.risk.increment_holding_days()
+
+        # 시장별 max_order_krw 재계산 — KR: 원화잔고 기준, US: USD 현금 기준
+        try:
+            env_cap   = int(os.getenv("MAX_ORDER_KRW", "500000" if self.is_paper else "2000000"))
+            order_pct = float(os.getenv("MAX_ORDER_PCT", "0.05"))
+            if market == "US":
+                bal_us    = get_balance(self.token, market="US")
+                us_cash   = float(bal_us.get("cash", 0) or 0) * self.usd_krw_rate
+                new_max   = min(env_cap, int(us_cash * order_pct))
+            else:
+                bal_kr    = get_balance(self.token, market="KR")
+                kr_cash   = float(bal_kr.get("cash", 0) or 0) + float(bal_kr.get("total_eval", 0) or 0)
+                new_max   = min(env_cap, int(kr_cash * order_pct))
+            if new_max > 0:
+                self.risk.max_order_krw = float(new_max)
+                _log_normal("info", f"[max_order 갱신] {market} {new_max:,}원")
+        except Exception as _mo_e:
+            _log_risk("warning", f"[max_order 갱신 실패] {market}: {_mo_e}")
 
         # ── 데이터 무결성 자동 점검 ──────────────────────────────────────────
         try:
