@@ -3958,12 +3958,14 @@ def api_tickers_today():
         except Exception:
             pass
     if _watch_sysdate != today_str:
-        _ep2 = BASE_DIR / "logs" / "analysis" / f"analysis_{_watch_sysdate}.jsonl"
-        if _ep2.exists():
-            try:
-                _watch_all_lines.extend(_ep2.read_text(encoding="utf-8").splitlines())
-            except Exception:
-                pass
+        for _pfx2 in (_apfx, ""):
+            _ep2 = BASE_DIR / "logs" / "analysis" / f"{_pfx2}analysis_{_watch_sysdate}.jsonl"
+            if _ep2.exists():
+                try:
+                    _watch_all_lines.extend(_ep2.read_text(encoding="utf-8").splitlines())
+                except Exception:
+                    pass
+                break
     for line in _watch_all_lines:
             try:
                 r = json.loads(line)
