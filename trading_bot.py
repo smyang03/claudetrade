@@ -16,6 +16,10 @@ from pathlib import Path
 from datetime import date, datetime, timedelta, time as dt_time
 from typing import Optional
 try:
+    import psutil
+except Exception:  # pragma: no cover - optional dependency
+    psutil = None
+try:
     from zoneinfo import ZoneInfo
 except Exception:  # pragma: no cover - python<3.9 fallback
     from datetime import timezone
@@ -366,6 +370,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.current_market = None
         self._market_task_owner: dict[str, Optional[str]] = {"KR": None, "US": None}
         self._session_open_at: dict[str, float] = {"KR": 0.0, "US": 0.0}  # startup 보호 구간
+        self._session_startup_guard_sec: dict[str, float] = {"KR": _STARTUP_GUARD_SEC, "US": _STARTUP_GUARD_SEC}
         self._daily_baseline_by_market: dict[str, dict] = {"KR": {}, "US": {}}
         self._last_entry_scan_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._last_rescreen_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
@@ -2946,7 +2951,56 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception as e:
                 log.warning(f"[postmortem 소급 실패] {target_date} {market}: {e}")
 
-    def session_open(self, market: str):
+    def _seconds_until_session_close(self, market: str) -> float:
+        now_kst = datetime.now(KST)
+        if market == "KR":
+            close_dt = now_kst.replace(hour=16, minute=0, second=0, microsecond=0)
+        else:
+            close_dt = now_kst.replace(hour=5, minute=0, second=0, microsecond=0)
+            if now_kst.time() >= dt_time(22, 20):
+                close_dt += timedelta(days=1)
+        return max(0.0, (close_dt - now_kst).total_seconds())
+
+    def _compute_startup_guard_sec(self, market: str, trigger: str) -> float:
+        remaining_to_close = self._seconds_until_session_close(market)
+        if remaining_to_close <= _STARTUP_GUARD_SEC:
+            return 0.0
+        if trigger == "startup_mid_session":
+            return 0.0
+        return _STARTUP_GUARD_SEC
+
+    def _restore_daily_pnl_from_decisions(self, market: str) -> None:
+        if not DECISIONS_FILE.exists():
+            return
+        today = _market_session_date(market).isoformat()
+        restored_pnl = 0.0
+        restored_count = 0
+        seen_keys = set()
+        try:
+            for line in DECISIONS_FILE.read_text(encoding="utf-8").splitlines():
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("type") != "closed" or rec.get("market") != market:
+                    continue
+                if str(rec.get("timestamp", "") or "")[:10] != today:
+                    continue
+                order_no = str(rec.get("order_no", "") or "").strip()
+                dedup_key = order_no or f"{rec.get('ticker', '')}_{rec.get('timestamp', '')}"
+                if dedup_key in seen_keys:
+                    continue
+                seen_keys.add(dedup_key)
+                restored_pnl += float(rec.get("pnl_krw", 0) or 0)
+                restored_count += 1
+        except Exception as e:
+            log.warning(f"[{market}] decisions.jsonl daily_pnl 복구 실패: {e}")
+            return
+        self.risk.daily_pnl = restored_pnl
+        if restored_count > 0:
+            log.info(f"[{market}] daily_pnl 복구: {restored_pnl:,.0f}원 ({restored_count}건)")
+
+    def session_open(self, market: str, trigger: str = "schedule"):
         if not self._enter_market_task(market, "session_open"):
             return
         _log_flow("info", "=" * 50)
@@ -3030,6 +3084,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         baseline_meta = dict(self._daily_baseline_by_market.get(market, {}) or {})
         if baseline_meta.get("session_date") == session_date and float(baseline_meta.get("base", 0) or 0) > 0:
             self.risk.session_start_equity = float(baseline_meta["base"])
+            if trigger == "startup_mid_session":
+                self._restore_daily_pnl_from_decisions(market)
             _log_normal(
                 "info",
                 f"[일일 기준 유지] {market} session_date={session_date} "
@@ -3371,6 +3427,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         self.ws.start()
         self._session_open_at[market] = time.time()  # startup guard 기준점
+        self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)
+        if self._session_startup_guard_sec[market] <= 0:
+            _log_flow(
+                "info",
+                f"[{market}] startup guard bypass "
+                f"(trigger={trigger}, close_in={self._seconds_until_session_close(market):.0f}s)"
+            )
 
         # ── Claude 파라미터 검토 (4th layer) — session_open 1회 ──────────────
         try:
@@ -3696,11 +3759,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         # startup 보호 구간 — session_open 완료 후 최소 대기
         _since_open = time.time() - self._session_open_at.get(market, 0.0)
-        if _since_open < _STARTUP_GUARD_SEC:
+        _guard_sec = float(self._session_startup_guard_sec.get(market, _STARTUP_GUARD_SEC) or 0.0)
+        if _since_open < _guard_sec:
             _log_flow(
                 "info",
                 f"[{market}] startup guard — session_open 후 {_since_open:.0f}s 경과 "
-                f"(최소 {_STARTUP_GUARD_SEC:.0f}s 대기 중) — cycle 스킵"
+                f"(최소 {_guard_sec:.0f}s 대기 중) — cycle 스킵"
             )
             self._leave_market_task(market, "run_cycle")
             return
@@ -6888,11 +6952,15 @@ def _check_duplicate_bot(is_paper: bool = True) -> bool:
         data = json.loads(_pid_file.read_text(encoding="utf-8"))
         existing_pid = int(data.get("pid", 0))
         if existing_pid and existing_pid != os.getpid():
-            try:
-                os.kill(existing_pid, 0)  # 신호 0: 프로세스 존재 여부만 확인
-                return True               # 프로세스 살아있음
-            except (ProcessLookupError, PermissionError):
-                pass                      # 이미 종료됨 → PID 파일 stale
+            if psutil is not None:
+                if psutil.pid_exists(existing_pid):
+                    return True
+            else:
+                try:
+                    os.kill(existing_pid, 0)
+                    return True
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
     except Exception:
         pass
     return False
@@ -7010,10 +7078,10 @@ def main(is_paper: bool = True):
 
     if kr_mid_session:
         log.info("[startup] KR 세션 진행 중 — session_open 즉시 실행")
-        bot.session_open("KR")
+        bot.session_open("KR", trigger="startup_mid_session")
     if us_mid_session:
         log.info("[startup] US 세션 진행 중 — session_open 즉시 실행")
-        bot.session_open("US")
+        bot.session_open("US", trigger="startup_mid_session")
 
     while True:
         schedule.run_pending()

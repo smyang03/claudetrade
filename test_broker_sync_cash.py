@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -120,6 +121,71 @@ class BrokerSyncCashTests(unittest.TestCase):
         restored._load_daily_baselines()
         self.assertEqual(restored._daily_baseline_by_market["US"]["session_date"], "2026-04-18")
         self.assertEqual(restored._daily_baseline_by_market["US"]["base"], 53_394_848.0)
+
+    def test_startup_mid_session_bypasses_startup_guard(self):
+        bot = self._make_bot()
+        with patch.object(bot, "_seconds_until_session_close", return_value=300.0):
+            self.assertEqual(bot._compute_startup_guard_sec("KR", "startup_mid_session"), 0.0)
+            self.assertEqual(
+                bot._compute_startup_guard_sec("KR", "schedule"),
+                trading_bot_module._STARTUP_GUARD_SEC,
+            )
+
+    def test_restore_daily_pnl_from_decisions_uses_closed_records_of_today_only(self):
+        bot = self._make_bot()
+        today = trading_bot_module._market_session_date("KR").isoformat()
+        records = [
+            {
+                "type": "closed",
+                "timestamp": f"{today}T13:13:39+09:00",
+                "market": "KR",
+                "ticker": "047040",
+                "order_no": "0001",
+                "pnl_krw": 5944.8,
+            },
+            {
+                "type": "closed",
+                "timestamp": f"{today}T13:13:39+09:00",
+                "market": "KR",
+                "ticker": "047040",
+                "order_no": "0001",
+                "pnl_krw": 5944.8,
+            },
+            {
+                "type": "closed",
+                "timestamp": f"{today}T15:13:04+09:00",
+                "market": "KR",
+                "ticker": "009150",
+                "order_no": "0002",
+                "pnl_krw": 9012.3,
+            },
+            {
+                "type": "closed",
+                "timestamp": f"{today}T15:13:04+09:00",
+                "market": "US",
+                "ticker": "QQQ",
+                "order_no": "0003",
+                "pnl_krw": 7777.0,
+            },
+            {
+                "type": "open",
+                "timestamp": f"{today}T15:13:04+09:00",
+                "market": "KR",
+                "ticker": "AAA",
+                "order_no": "0004",
+                "pnl_krw": 9999.0,
+            },
+        ]
+        decisions_path = self._tmp_path / "paper_decisions.jsonl"
+        decisions_path.write_text(
+            "\n".join(json.dumps(rec, ensure_ascii=False) for rec in records) + "\n",
+            encoding="utf-8",
+        )
+
+        with patch.object(trading_bot_module, "DECISIONS_FILE", decisions_path):
+            bot._restore_daily_pnl_from_decisions("KR")
+
+        self.assertAlmostEqual(bot.risk.daily_pnl, 5944.8 + 9012.3, places=3)
 
     @patch.object(kis_api, "IS_PAPER_US", False)
     @patch.object(kis_api, "ACCOUNT_NO_US", "12345678-01")
