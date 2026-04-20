@@ -12,6 +12,7 @@ import queue as _queue_mod
 import argparse
 import threading
 import schedule
+from collections import deque
 from pathlib import Path
 from datetime import date, datetime, timedelta, time as dt_time
 from typing import Optional
@@ -360,6 +361,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.today_ticker_reasons: dict = {}
         self.today_universe: dict = {}
         self.tuning_count = 0
+        # 30분 간격 지수 변동률 히스토리 (시장별, 최대 8개 = 4시간)
+        self._index_history: dict[str, deque] = {
+            "KR": deque(maxlen=8),
+            "US": deque(maxlen=8),
+        }
         self.ws = None
         self.price_cache = {}
         self.price_cache_raw = {}
@@ -3030,6 +3036,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._execution_flags[market] = set()
         self.risk.market = market          # 수수료율 시장에 맞게 설정
         self.tuning_count = 0
+        self._index_history[market].clear()   # 세션마다 지수 히스토리 초기화
         self._session_events = []          # 세션 이벤트 초기화
         self._entry_blocked = {}           # 새 세션 시작 시 쿨다운 초기화
         self._order_error_count = {}       # 주문 연속 오류 카운터 초기화
@@ -5747,13 +5754,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.tuning_count += 1
         elapsed = self.tuning_count * 30
 
+        # 지수 변동률 히스토리 기록 (30분 기울기 계산용)
+        _idx_now = get_index_change(market)
+        _hist    = self._index_history[market]
+        _hist.append(_idx_now)
+        # 직전 튜닝 대비 기울기: 현재 - 30분 전 (버퍼 2개 이상 있을 때만)
+        _slope_30m = round(_idx_now - _hist[-2], 2) if len(_hist) >= 2 else None
+
         def _pos_pnl(p):
             entry = float(p.get("entry", 0) or 0)
             cp    = float(p.get("current_price", entry) or entry)
             return round((cp / entry - 1) * 100, 2) if entry else 0.0
 
         current_state = {
-            "index_change": get_index_change(market),
+            "index_change":    _idx_now,
+            "index_slope_30m": _slope_30m,   # None = 첫 튜닝 (이전 기준값 없음)
             "volume_trend": "normal",
             "positions": [
                 {

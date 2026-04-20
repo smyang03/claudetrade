@@ -208,10 +208,9 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
     rt_ctx = ""
     if _RT_CTX_AVAILABLE:
         try:
-            raw = _build_rt_ctx(market)
-            # 실패 메시지가 아닌 실제 데이터일 때만 사용
-            if raw and "실패" not in raw and "조회" not in raw:
-                rt_ctx = raw
+            result = _build_rt_ctx(market)
+            if isinstance(result, dict) and result.get("ok"):
+                rt_ctx = result["text"]
         except Exception:
             pass
 

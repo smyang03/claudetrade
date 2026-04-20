@@ -70,6 +70,17 @@ def tune(market: str, elapsed_min: int, current_state: dict,
     """
     prev_mode = morning_judgment.get("consensus", {}).get("mode", "CAUTIOUS")
     positions_text = _format_positions_summary(current_state.get("positions", []))
+
+    _slope = current_state.get("index_slope_30m")
+    if _slope is None:
+        _slope_str = "N/A (첫 튜닝)"
+    elif _slope > 0:
+        _slope_str = f"+{_slope:.2f}%p (상승 중)"
+    elif _slope < 0:
+        _slope_str = f"{_slope:.2f}%p (하락 중)"
+    else:
+        _slope_str = "0.00%p (횡보)"
+
     prompt = f"""당신은 장중 튜닝 분석가입니다. 아침 판단과 현재 상태를 비교하고 JSON으로만 응답하세요.
 
 아침 모드: {prev_mode}
@@ -78,7 +89,8 @@ def tune(market: str, elapsed_min: int, current_state: dict,
 {brain_summary[:300]}
 
 현재 상태 (경과 {elapsed_min}분):
-  지수 변동: {current_state.get('index_change', 0):+.2f}%
+  지수 변동 (개장 대비): {current_state.get('index_change', 0):+.2f}%
+  최근 30분 기울기: {_slope_str}
   거래량 추세: {current_state.get('volume_trend', 'normal')}
   경고: {current_state.get('alerts', []) or '없음'}
 
@@ -86,10 +98,10 @@ def tune(market: str, elapsed_min: int, current_state: dict,
 {positions_text}
 
 판단 기준:
-- 지수 변동이 아침 판단과 같은 방향이면 MAINTAIN
-- 지수가 아침 판단과 반대 방향으로 1% 이상이면 REVERSE 검토
+- 30분 기울기가 아침 판단과 같은 방향이면 MAINTAIN
+- 지수 변동이 아침 판단과 반대이고 30분 기울기도 반대 방향이면 REVERSE 검토
+- 단, 30분 기울기 N/A(첫 튜닝)이면 지수 변동(개장 대비)만으로 판단
 - 포지션에 손실이 있고 지수도 약세면 TIGHTEN (SL 조정)
-- 포지션 없으면 지수 방향 기반으로만 판단
 
 JSON으로만 응답:
 {{"action":"MAINTAIN|TIGHTEN|REVERSE","mode":"{prev_mode} 또는 조정된 모드",

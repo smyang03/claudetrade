@@ -423,55 +423,66 @@ def fetch_live_context_kr() -> dict:
     }
 
 
-def build_intraday_advisor_context(market: str = "KR") -> str:
-    """hold_advisor용 장중 실시간 시장 컨텍스트 — 간략 형식 (200자 내외)"""
-    if market == "KR":
-        ctx = fetch_live_context_kr()
-        if not ctx:
-            return "(실시간 지표 조회 실패)"
-        kospi  = ctx.get("kospi", {})
-        kosdaq = ctx.get("kosdaq", {})
-        usd    = ctx.get("usd_krw")
-        trend  = ctx.get("usd_krw_trend", {})
-        vkospi = ctx.get("vkospi")
-        ktrend = ctx.get("kospi_trend", {})
+def build_intraday_advisor_context(market: str = "KR") -> dict:
+    """hold_advisor용 장중 실시간 시장 컨텍스트.
 
-        _k5d = ktrend.get("change_5d")
-        _k5d_str = f" / 5d {_k5d:+.1f}%" if _k5d is not None else ""
-        kospi_str  = (f"코스피 {kospi.get('close', 0):,.0f} "
-                      f"({kospi.get('change_pct', 0):+.2f}%{_k5d_str})")
-        kosdaq_str = (f"코스닥 {kosdaq.get('close', 0):,.0f} "
-                      f"({kosdaq.get('change_pct', 0):+.2f}%)")
-        usd_str    = ""
-        if usd:
-            usd_str = f"USD/KRW {usd:,.0f}"
-            if trend.get("change_1d") is not None:
-                usd_str += f" (1d {trend['change_1d']:+.1f}%"
-                if trend.get("from_20d_high_pct") is not None:
-                    usd_str += f", 20일고점대비 {trend['from_20d_high_pct']:+.1f}%"
-                usd_str += ")"
-        vk_str = f"VKOSPI {vkospi:.1f}" if vkospi else "VKOSPI 결측"
-        parts = [kospi_str, kosdaq_str]
-        if usd_str:
-            parts.append(usd_str)
-        parts.append(vk_str)
-        return " | ".join(parts)
+    Returns
+    -------
+    {"ok": bool, "text": str}
+      ok=True  : 실제 데이터 조회 성공
+      ok=False : 조회 실패 (text는 빈 문자열)
+    """
+    try:
+        if market == "KR":
+            ctx = fetch_live_context_kr()
+            if not ctx:
+                return {"ok": False, "text": ""}
+            kospi  = ctx.get("kospi", {})
+            kosdaq = ctx.get("kosdaq", {})
+            usd    = ctx.get("usd_krw")
+            trend  = ctx.get("usd_krw_trend", {})
+            vkospi = ctx.get("vkospi")
+            ktrend = ctx.get("kospi_trend", {})
 
-    if market == "US":
-        ctx = fetch_live_context_us()
-        if not ctx:
-            return "(실시간 지표 조회 실패)"
-        sp500  = ctx.get("sp500", {})
-        nasdaq = ctx.get("nasdaq", {})
-        vix    = ctx.get("vix")
-        sp_str = (f"S&P500 {sp500.get('close', 0):,.0f} "
-                  f"({sp500.get('change_pct', 0):+.2f}%)")
-        nq_str = (f"NASDAQ {nasdaq.get('close', 0):,.0f} "
-                  f"({nasdaq.get('change_pct', 0):+.2f}%)")
-        vix_str = f"VIX {vix:.1f}" if vix else "VIX N/A"
-        return f"{sp_str} | {nq_str} | {vix_str}"
+            _k5d = ktrend.get("change_5d")
+            _k5d_str = f" / 5d {_k5d:+.1f}%" if _k5d is not None else ""
+            kospi_str  = (f"코스피 {kospi.get('close', 0):,.0f} "
+                          f"({kospi.get('change_pct', 0):+.2f}%{_k5d_str})")
+            kosdaq_str = (f"코스닥 {kosdaq.get('close', 0):,.0f} "
+                          f"({kosdaq.get('change_pct', 0):+.2f}%)")
+            usd_str = ""
+            if usd:
+                usd_str = f"USD/KRW {usd:,.0f}"
+                if trend.get("change_1d") is not None:
+                    usd_str += f" (1d {trend['change_1d']:+.1f}%"
+                    if trend.get("from_20d_high_pct") is not None:
+                        usd_str += f", 20일고점대비 {trend['from_20d_high_pct']:+.1f}%"
+                    usd_str += ")"
+            vk_str = f"VKOSPI {vkospi:.1f}" if vkospi else "VKOSPI 결측"
+            parts = [kospi_str, kosdaq_str]
+            if usd_str:
+                parts.append(usd_str)
+            parts.append(vk_str)
+            return {"ok": True, "text": " | ".join(parts)}
 
-    return ""
+        if market == "US":
+            ctx = fetch_live_context_us()
+            if not ctx:
+                return {"ok": False, "text": ""}
+            sp500  = ctx.get("sp500", {})
+            nasdaq = ctx.get("nasdaq", {})
+            vix    = ctx.get("vix")
+            sp_str = (f"S&P500 {sp500.get('close', 0):,.0f} "
+                      f"({sp500.get('change_pct', 0):+.2f}%)")
+            nq_str = (f"NASDAQ {nasdaq.get('close', 0):,.0f} "
+                      f"({nasdaq.get('change_pct', 0):+.2f}%)")
+            vix_str = f"VIX {vix:.1f}" if vix else "VIX N/A"
+            return {"ok": True, "text": f"{sp_str} | {nq_str} | {vix_str}"}
+
+    except Exception:
+        pass
+
+    return {"ok": False, "text": ""}
 
 
 def load_supplement(market: str, target_date: str) -> dict:
