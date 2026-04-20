@@ -78,14 +78,16 @@ def _safe_float(v, default=0.0) -> float:
 def load_records(market: str) -> list[dict]:
     """daily_judgment 파일에서 유효 레코드 로드.
 
-    - market_change=0 또는 None인 레코드는 제외 (재채점 불가)
-    - 같은 날짜에 live_*/paper_* 중복이 있으면 가장 최근 파일 우선
+    - market_change=None (결측)인 레코드만 제외. 0.0은 실제 횡보로 유효.
+    - 같은 날짜에 live_*/paper_* 중복 시: live 우선, 그 다음 mtime 최신 파일
     """
     pattern = str(ROOT / "logs" / "daily_judgment" / f"*_{market}.json")
-    records: dict[str, dict] = {}
+    # {date: (record_dict, is_live, mtime)} — live/mtime 기반 우선순위 결정용
+    records: dict[str, tuple] = {}
 
     for fpath in sorted(glob.glob(pattern)):
         try:
+            p = Path(fpath)
             with open(fpath, encoding="utf-8") as fp:
                 d = json.load(fp)
 
@@ -97,13 +99,32 @@ def load_records(market: str) -> list[dict]:
             neutral_stance = j.get("neutral", {}).get("stance", "")
             market_change  = _safe_float(ar.get("market_change"), default=None)
 
-            if not bull_stance or market_change is None or market_change == 0.0:
+            if not bull_stance or market_change is None:
+                continue
+            # 0.0% + 전원 NEUTRAL = 휴장일/결측 플레이스홀더 제외
+            # (실제 횡보일은 bull/bear 중 하나가 NEUTRAL이 아닌 stance를 가짐)
+            if (market_change == 0.0
+                    and bull_stance == "NEUTRAL"
+                    and bear_stance == "NEUTRAL"
+                    and neutral_stance == "NEUTRAL"):
                 continue
 
-            date = d.get("date") or Path(fpath).stem.split("_")[0]
+            date = d.get("date") or p.stem.split("_")[0]
             date = str(date)[:10]
 
-            records[date] = {
+            is_live = p.stem.startswith("live_")
+            mtime   = p.stat().st_mtime
+
+            # 우선순위: live > paper, 동일 유형이면 mtime 최신
+            existing = records.get(date)
+            if existing is not None:
+                _, ex_live, ex_mtime = existing
+                if ex_live and not is_live:
+                    continue          # 기존 live → paper 무시
+                if not ex_live and not is_live and mtime <= ex_mtime:
+                    continue          # paper vs paper → 더 오래된 것 무시
+
+            rec = {
                 "date":              date,
                 "market_change":     market_change,
                 "bull_stance":       bull_stance,
@@ -122,10 +143,11 @@ def load_records(market: str) -> list[dict]:
                 "worst_trade":       (d.get("postmortem") or {}).get("worst_trade",        None),
                 "worst_trade_reason":(d.get("postmortem") or {}).get("worst_trade_reason", ""),
             }
+            records[date] = (rec, is_live, mtime)
         except Exception as e:
             print(f"  [skip] {fpath}: {e}")
 
-    return sorted(records.values(), key=lambda x: x["date"])
+    return sorted((v[0] for v in records.values()), key=lambda x: x["date"])
 
 
 def rebuild_analyst_performance(records: list[dict]) -> dict:

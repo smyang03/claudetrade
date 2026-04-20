@@ -426,6 +426,11 @@ def fetch_live_context_kr() -> dict:
 def get_market_vol_trend(market: str = "KR") -> str:
     """오늘 시장 거래량을 20일 평균과 비교해 "high"/"normal"/"low" 반환.
 
+    장중 호출 시 세션 진행률로 외삽(extrapolation)해 구조적 저평가를 보정.
+    - KR 세션: 09:00~15:30 KST (390분)
+    - US 세션: 09:30~16:00 ET  (390분)
+    - 세션 시작 후 30분 미만이면 "normal" 반환 (초반 노이즈 회피)
+
     yfinance 실패 시 "normal" 반환 (safe default).
     """
     if not _YF_OK:
@@ -433,6 +438,7 @@ def get_market_vol_trend(market: str = "KR") -> str:
     symbol = "^KS11" if market == "KR" else "^GSPC"
     try:
         import yfinance as _yf
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         hist = _yf.Ticker(symbol).history(period="25d")
         if hist.empty or len(hist) < 5:
             return "normal"
@@ -440,6 +446,33 @@ def get_market_vol_trend(market: str = "KR") -> str:
         today_vol = float(hist["Volume"].iloc[-1])
         if avg_vol <= 0:
             return "normal"
+
+        # ── 세션 진행률 계산 ────────────────────────────────────────────────
+        _SESSION_MINUTES = 390  # KR/US 모두 6.5h
+        if market == "KR":
+            from zoneinfo import ZoneInfo as _ZI
+            _now = _dt.now(_ZI("Asia/Seoul"))
+            _sess_start = _now.replace(hour=9, minute=0, second=0, microsecond=0)
+            _sess_end   = _now.replace(hour=15, minute=30, second=0, microsecond=0)
+        else:
+            try:
+                from zoneinfo import ZoneInfo as _ZI
+                _now = _dt.now(_ZI("America/New_York"))
+            except Exception:
+                _now = _dt.now(_tz.utc).replace(tzinfo=None)
+            _sess_start = _now.replace(hour=9, minute=30, second=0, microsecond=0)
+            _sess_end   = _now.replace(hour=16, minute=0, second=0, microsecond=0)
+
+        _elapsed = (_now - _sess_start).total_seconds() / 60
+        _total   = (_sess_end - _sess_start).total_seconds() / 60
+
+        if _elapsed < 30:
+            return "normal"  # 개장 초반 — 외삽 노이즈 큼
+
+        if 0 < _elapsed < _total:
+            # 세션 진행 중: 전체 일간 거래량으로 외삽
+            today_vol = today_vol / (_elapsed / _total)
+
         ratio = today_vol / avg_vol
         if ratio >= 1.5:
             return "high"
