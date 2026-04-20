@@ -729,7 +729,8 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
         try:
             # 이미 최신 상태면 스킵
             if path.exists():
-                existing = pd.read_csv(path, parse_dates=["date"]).sort_values("date")
+                existing = pd.read_csv(path).sort_values("date")
+                existing["date"] = pd.to_datetime(existing["date"])
                 last_date = existing["date"].max()
                 if (end_dt - last_date).days <= 3:
                     skipped += 1
@@ -774,8 +775,9 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
 
             # 기존 CSV와 머지
             if path.exists():
-                existing = pd.read_csv(path, parse_dates=["date"])
+                existing = pd.read_csv(path)
                 existing.columns = [c.lower() for c in existing.columns]
+                existing["date"] = pd.to_datetime(existing["date"])
                 df_new = pd.concat([existing, df_new])
 
             _save(path, df_new, start_dt, end_dt, f"{market}:{ticker}")

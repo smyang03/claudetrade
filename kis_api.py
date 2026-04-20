@@ -199,12 +199,20 @@ def _token_cache_context() -> dict:
     }
 
 
+class KISTokenExpiredError(RuntimeError):
+    """KIS API가 EGW00123(토큰 만료)을 반환한 경우."""
+
+
 def load_token():
     if not TOKEN_FILE.exists():
         return None
     with open(TOKEN_FILE, encoding="utf-8") as f:
         data = json.load(f)
     if data.get("context") != _token_cache_context():
+        return None
+    # 발급일이 오늘이 아니면 재발급 (KIS 토큰은 당일 자정 이후 무효화됨)
+    issued_at = data.get("issued_at", "")
+    if issued_at[:10] != datetime.today().strftime("%Y-%m-%d"):
         return None
     if datetime.now() < datetime.fromisoformat(data["expires_at"]) - timedelta(minutes=10):
         return data
@@ -213,18 +221,22 @@ def load_token():
 
 def save_token(token, expires_in):
     expires_at = (datetime.now() + timedelta(seconds=expires_in)).isoformat()
+    issued_at = datetime.now().isoformat()
     with open(TOKEN_FILE, "w", encoding="utf-8") as f:
         json.dump(
             {
                 "access_token": token,
                 "expires_at": expires_at,
+                "issued_at": issued_at,
                 "context": _token_cache_context(),
             },
             f,
         )
 
 
-def get_access_token():
+def get_access_token(force_refresh: bool = False):
+    if force_refresh and TOKEN_FILE.exists():
+        TOKEN_FILE.unlink()
     cached = load_token()
     if cached:
         return cached["access_token"]
@@ -908,8 +920,26 @@ def _first_record(value):
     return value if isinstance(value, dict) else {}
 
 
+def _check_token_expiry(resp) -> None:
+    """500 응답에서 EGW00123(토큰 만료)을 먼저 확인 후 raise_for_status 호출."""
+    if resp.status_code == 500:
+        try:
+            body = resp.json()
+            if body.get("msg_cd") == "EGW00123":
+                raise KISTokenExpiredError(
+                    f"KIS 토큰 만료(EGW00123): {body.get('msg1', '')} — get_access_token(force_refresh=True) 로 갱신 필요"
+                )
+        except (ValueError, KeyError):
+            pass
+    resp.raise_for_status()
+
+
 def _require_kis_success(data: dict, label: str):
     if data.get("rt_cd") != "0":
+        if data.get("msg_cd") == "EGW00123":
+            raise KISTokenExpiredError(
+                f"KIS 토큰 만료(EGW00123): {data.get('msg1', '')} — get_access_token(force_refresh=True) 로 갱신 필요"
+            )
         raise RuntimeError(f"{label} 실패: {data.get('msg1') or data.get('msg_cd') or '응답 오류'}")
 
 
@@ -1148,7 +1178,7 @@ def get_balance(token, market="KR", force_refresh: bool = False):
             },
             timeout=15,
         )
-        resp.raise_for_status()
+        _check_token_expiry(resp)
         data = resp.json()
         _require_kis_success(data, "국내잔고 조회")
 

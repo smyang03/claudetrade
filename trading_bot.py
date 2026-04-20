@@ -33,6 +33,10 @@ if not Path(_dotenv_path).exists():
     _dotenv_path = ".env"
 load_dotenv(dotenv_path=_dotenv_path, override=True)
 
+# 로거 파일명 분리: import 전에 모드 설정 → 모든 서브모듈 로거 자동 적용
+import os as _os
+_os.environ["TRADING_BOT_MODE"] = "live" if "--live" in sys.argv else "paper"
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from logger import (
@@ -60,6 +64,7 @@ from kis_api import (
     save_kr_screen_cache,
     is_trading_halted,
     _US_SCREEN_CACHE_PATH,
+    KISTokenExpiredError,
 )
 from indicators import calc_all
 from risk_manager import RiskManager, HARD_RULES
@@ -430,6 +435,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "last_error": "",
                 "last_snapshot": {},
                 "last_trusted_snapshot": {},
+                "consecutive_failures": 0,
             },
             "US": {
                 "trust_level": "unknown",
@@ -437,6 +443,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "last_error": "",
                 "last_snapshot": {},
                 "last_trusted_snapshot": {},
+                "consecutive_failures": 0,
             },
         }
 
@@ -1385,8 +1392,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "last_error": "",
             "last_snapshot": {},
             "last_trusted_snapshot": {},
+            "consecutive_failures": 0,
         })
         if trust_level:
+            if trust_level == "trusted":
+                state["consecutive_failures"] = 0
+            elif trust_level in ("degraded", "untrusted"):
+                state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
             state["trust_level"] = trust_level
         if error:
             state["last_error"] = error
@@ -1432,9 +1444,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         trust = self._broker_trust_level(market)
         if trust == "trusted":
             return True, "OK"
+        # 포지션이 없을 때는 degraded 상태에서도 신규 진입 허용
+        # (보호할 기존 포지션이 없으므로 브로커 불신이 진입을 막을 이유 없음)
+        has_positions = any(
+            self._ticker_market(p.get("ticker", "")) == market
+            for p in self.risk.positions
+        )
         if trust == "degraded":
+            if not has_positions:
+                return True, "OK"
             return False, "broker_state_degraded"
         if trust == "untrusted":
+            if not has_positions:
+                return True, "OK"
             return False, "broker_state_untrusted"
         return False, "broker_state_unknown"
 
@@ -1443,8 +1465,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if self.risk.halt_reason == "daily_loss":
             return
         if trust == "untrusted":
-            self.risk.halted = True
-            self.risk.halt_reason = "broker_sync"
+            # 포지션이 있을 때만 halt — 없으면 브로커 불신이 운영을 막을 이유 없음
+            has_positions = any(
+                self._ticker_market(p.get("ticker", "")) == market
+                for p in self.risk.positions
+            )
+            if has_positions:
+                self.risk.halted = True
+                self.risk.halt_reason = "broker_sync"
         elif trust in ("trusted", "degraded") and self.risk.halt_reason == "broker_sync":
             self.risk.halted = False
             self.risk.halt_reason = ""
@@ -1617,9 +1645,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 trust_level="trusted",
                 snapshot=self._broker_snapshot_from_balance("KR", bal_kr),
             )
+        except KISTokenExpiredError as e:
+            log.warning(f"[브로커 런타임 동기화] KR 토큰 만료 감지 → 강제 갱신 후 재시도: {e}")
+            try:
+                self.token = get_access_token(force_refresh=True)
+                bal_kr = get_balance(self.token, market="KR")
+                self._set_broker_state(
+                    "KR",
+                    trust_level="trusted",
+                    snapshot=self._broker_snapshot_from_balance("KR", bal_kr),
+                )
+                log.info("[브로커 런타임 동기화] KR 토큰 갱신 성공")
+            except Exception as retry_e:
+                _kr_fails = self._broker_state.get("KR", {}).get("consecutive_failures", 0) + 1
+                _kr_level = "untrusted" if _kr_fails >= 3 else "degraded"
+                self._set_broker_state("KR", trust_level=_kr_level, error=str(retry_e))
+                log.error(f"[브로커 런타임 동기화] KR 토큰 갱신 후 재시도 실패({_kr_fails}회): {retry_e}")
+                return
         except Exception as e:
-            self._set_broker_state("KR", trust_level="untrusted", error=str(e))
-            log.warning(f"[브로커 런타임 동기화] KR 잔고 조회 실패: {e}")
+            _kr_fails = self._broker_state.get("KR", {}).get("consecutive_failures", 0) + 1
+            _kr_level = "untrusted" if _kr_fails >= 3 else "degraded"
+            self._set_broker_state("KR", trust_level=_kr_level, error=str(e))
+            log.warning(f"[브로커 런타임 동기화] KR 잔고 조회 실패({_kr_fails}회): {e}")
             return
 
         broker_us: dict = {}
@@ -1633,6 +1680,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 trust_level="trusted",
                 snapshot=self._broker_snapshot_from_balance("US", bal_us),
             )
+        except KISTokenExpiredError as e:
+            log.warning(f"[브로커 런타임 동기화] US 토큰 만료 감지 → 강제 갱신 후 재시도: {e}")
+            try:
+                self.token = get_access_token(force_refresh=True)
+                bal_us = get_balance(self.token, market="US")
+                broker_us = {s["ticker"].upper(): s for s in bal_us.get("stocks", [])}
+                us_ok = True
+                self._set_broker_state(
+                    "US",
+                    trust_level="trusted",
+                    snapshot=self._broker_snapshot_from_balance("US", bal_us),
+                )
+                log.info("[브로커 런타임 동기화] US 토큰 갱신 성공")
+            except Exception as retry_e:
+                self._set_broker_state("US", trust_level="untrusted", error=str(retry_e))
+                log.warning(f"[브로커 런타임 동기화] US 토큰 갱신 후 재시도 실패: {retry_e}")
         except Exception as e:
             self._set_broker_state("US", trust_level="untrusted", error=str(e))
             log.warning(f"[브로커 런타임 동기화] US 잔고 조회 실패 — US 포지션 검증 스킵: {e}")
@@ -6778,7 +6841,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             _pt_entries = actual.get("trades", 0)
             _pt_losses  = len(sell_trades) - wins
             _pt_avg_pnl = (
-                sum(t.get("pnl", 0) for t in sell_trades) / len(sell_trades)
+                sum(t.get("pnl_pct", 0) for t in sell_trades) / len(sell_trades)
                 if sell_trades else 0.0
             )
             _param_tuner.update_outcomes(
@@ -6815,9 +6878,34 @@ def _in_session_now(market: str) -> bool:
         return now >= dt_time(22, 20) or now < dt_time(5, 0)
 
 
+def _check_duplicate_bot(is_paper: bool = True) -> bool:
+    """동일 모드 봇이 이미 실행 중이면 True"""
+    _mode = "paper" if is_paper else "live"
+    _pid_file = get_runtime_path("state", f"{_mode}_trading_bot.pid")
+    if not _pid_file.exists():
+        return False
+    try:
+        data = json.loads(_pid_file.read_text(encoding="utf-8"))
+        existing_pid = int(data.get("pid", 0))
+        if existing_pid and existing_pid != os.getpid():
+            try:
+                os.kill(existing_pid, 0)  # 신호 0: 프로세스 존재 여부만 확인
+                return True               # 프로세스 살아있음
+            except (ProcessLookupError, PermissionError):
+                pass                      # 이미 종료됨 → PID 파일 stale
+    except Exception:
+        pass
+    return False
+
+
 def main(is_paper: bool = True):
     global DECISIONS_FILE
     _mode = "paper" if is_paper else "live"
+
+    if _check_duplicate_bot(is_paper):
+        log.error(f"[중복 실행 차단] {_mode} 봇이 이미 실행 중입니다. 기존 프로세스를 먼저 종료하세요.")
+        sys.exit(1)
+
     DECISIONS_FILE = get_runtime_path("state", f"{_mode}_decisions.jsonl")
     _write_bot_pid_file(is_paper)
     atexit.register(_clear_bot_pid_file, is_paper)

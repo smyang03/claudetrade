@@ -72,6 +72,11 @@ LOG_DIR  = get_runtime_path("logs", make_parents=False)
 for subdir in ["system", "phase1", "brain", "daily", "analysis", "judgment", "normal", "risk", "flow"]:
     (LOG_DIR / subdir).mkdir(parents=True, exist_ok=True)
 
+# ── 봇 모드 (paper / live) — 로그 파일명 prefix ───────────────────────────────
+# trading_bot.py가 import 전에 os.environ["TRADING_BOT_MODE"] 를 설정하면
+# 여기서 읽어서 모든 로거 파일명에 prefix를 붙인다.
+_BOT_MODE: str = os.environ.get("TRADING_BOT_MODE", "")
+
 
 # ── 컬러 포매터 (터미널 출력용) ───────────────────────────────────────────────
 
@@ -138,8 +143,9 @@ def get_logger(
     level:    로그 레벨 ('DEBUG'|'INFO'|'WARNING'|'ERROR')
     """
     today = date.today().strftime("%Y%m%d")
-    # 날짜를 캐시 키에 포함 → 자정 이후에도 새 파일로 자동 전환
-    cache_key = f"{name}_{log_type}_{today}"
+    mode_prefix = f"{_BOT_MODE}_" if _BOT_MODE else ""
+    # 날짜 + 모드를 캐시 키에 포함 → 자정/모드 변경 시 새 파일로 자동 전환
+    cache_key = f"{mode_prefix}{name}_{log_type}_{today}"
     if cache_key in _loggers:
         return _loggers[cache_key]
 
@@ -159,7 +165,7 @@ def get_logger(
 
     # 텍스트 로그 파일 (읽기 쉬운 형식)
     if to_file:
-        log_path = LOG_DIR / log_type / f"{name}_{today}.log"
+        log_path = LOG_DIR / log_type / f"{mode_prefix}{name}_{today}.log"
         fh = RotatingFileHandler(
             log_path, maxBytes=10*1024*1024,  # 10MB
             backupCount=30, encoding="utf-8"
@@ -173,7 +179,7 @@ def get_logger(
 
     # JSON 로그 파일 (프로그램 파싱용)
     if json_file:
-        json_path = LOG_DIR / log_type / f"{name}_{today}.jsonl"
+        json_path = LOG_DIR / log_type / f"{mode_prefix}{name}_{today}.jsonl"
         jh = RotatingFileHandler(
             json_path, maxBytes=10*1024*1024,
             backupCount=30, encoding="utf-8"
@@ -183,7 +189,7 @@ def get_logger(
         logger.addHandler(jh)
 
     # 에러 전용 파일
-    err_path = LOG_DIR / "system" / f"error_{today}.log"
+    err_path = LOG_DIR / "system" / f"{mode_prefix}error_{today}.log"
     eh = RotatingFileHandler(
         err_path, maxBytes=5*1024*1024,
         backupCount=30, encoding="utf-8"
@@ -196,7 +202,7 @@ def get_logger(
     ))
     logger.addHandler(eh)
 
-    err_json_path = LOG_DIR / "system" / f"error_{today}.jsonl"
+    err_json_path = LOG_DIR / "system" / f"{mode_prefix}error_{today}.jsonl"
     ejh = RotatingFileHandler(
         err_json_path, maxBytes=5*1024*1024,
         backupCount=30, encoding="utf-8"
