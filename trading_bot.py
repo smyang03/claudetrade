@@ -3494,7 +3494,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             market=market,
             mode=mode,
             all_params=all_params,
-            context={"vix": vix, "usd_krw": usd_krw, "analyst_conf": conf},
+            context={
+                "vix":          vix,
+                "usd_krw":      usd_krw,
+                "analyst_conf": conf,
+                "asof":         datetime.now(KST).strftime("%H:%M"),
+            },
             trigger=trigger,
             force=(trigger in ("reverse", "mode_change")),
         )
@@ -5742,14 +5747,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.tuning_count += 1
         elapsed = self.tuning_count * 30
 
+        def _pos_pnl(p):
+            entry = float(p.get("entry", 0) or 0)
+            cp    = float(p.get("current_price", entry) or entry)
+            return round((cp / entry - 1) * 100, 2) if entry else 0.0
+
         current_state = {
             "index_change": get_index_change(market),
             "volume_trend": "normal",
             "positions": [
                 {
-                    "ticker": p["ticker"],
-                    "qty": p["qty"],
-                    "current_price": p["current_price"],
+                    "ticker":        p["ticker"],
+                    "qty":           p["qty"],
+                    "entry":         p.get("entry", 0),
+                    "current_price": p.get("current_price", p.get("entry", 0)),
+                    "pnl_pct":       _pos_pnl(p),
+                    "strategy":      p.get("strategy", "-"),
+                    "sl":            p.get("sl", 0),
+                    "tp":            p.get("tp", 0),
                 }
                 for p in self.risk.positions
             ],

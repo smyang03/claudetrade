@@ -18,6 +18,12 @@ from credit_tracker import record as credit_record
 from runtime_paths import get_runtime_path
 from minority_report.raw_call_logger import save as save_raw_call
 
+try:
+    from phase1_trainer.digest_builder import build_intraday_advisor_context as _build_rt_ctx
+    _RT_CTX_AVAILABLE = True
+except Exception:
+    _RT_CTX_AVAILABLE = False
+
 log    = get_trading_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 MODEL  = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
@@ -124,6 +130,16 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
         drawdown_str = f"  고점 수익률: {peak_pnl_pct:+.2f}%  (현재 고점 유지)\n"
     mode_line = f"  시장 모드: {mode_str}\n" if mode_str else ""
 
+    # 실시간 지수/환율 컨텍스트 (장중 스냅샷)
+    if _RT_CTX_AVAILABLE:
+        try:
+            rt_context = _build_rt_ctx(market)
+        except Exception:
+            rt_context = ""
+    else:
+        rt_context = ""
+    context_text = rt_context or (digest_prompt[:300] if digest_prompt else "  (정보 없음)")
+
     prompt = f"""{PERSONAS[analyst_type]}
 
 목표가에 도달한 포지션을 계속 보유할지 판단하세요.
@@ -134,8 +150,8 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
   보유시간: {held_str}
 {drawdown_str}{mode_line}  포지션 상태: {status_line}
 
-━━━ 시장 컨텍스트 ━━━
-{digest_prompt[:500] if digest_prompt else "  (정보 없음)"}
+━━━ 현재 시장 (실시간) ━━━
+{context_text}
 
 HOLD(보유) 또는 SELL(청산) 중 하나를 선택하고,
 HOLD 시 트레일링 폭(trail_pct: 0.02~0.05)을 제안하세요.

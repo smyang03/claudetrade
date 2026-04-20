@@ -90,32 +90,45 @@ _NEUTRAL_STANCES = {"NEUTRAL"}
 _BEAR_STANCES    = {"MILD_BEAR", "CAUTIOUS_BEAR", "DEFENSIVE", "HALT"}
 
 
+_HIT_THRESHOLD  = 0.5   # 방향성 판단이 HIT가 되려면 최소 ±0.5% 이상 움직여야 함
+_FLAT_THRESHOLD = 0.5   # NEUTRAL HIT: 절대값 0.5% 이내
+_FLAT_PARTIAL   = 1.5   # NEUTRAL PARTIAL: 0.5~1.5% (그 이상은 MISS)
+
+
 def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
     """
     분석가 스탠스 + 실제 시장 등락률로 HIT/MISS/PARTIAL 객관 판정.
     Claude 자기평가 편향 제거용.
 
     기준:
-    - 방향 일치 → HIT
-    - 방향 반대 → MISS
-    - NEUTRAL 또는 작은 등락(±0.5% 이하) → PARTIAL
+    - BULL HIT:    시장 >= +0.5%
+    - BULL PARTIAL: 0% < 시장 < +0.5% (방향 맞지만 미미한 상승)
+    - BULL MISS:   시장 <= 0%
+    - BEAR HIT:    시장 <= -0.5%
+    - BEAR PARTIAL: -0.5% < 시장 < 0%
+    - BEAR MISS:   시장 >= 0%
+    - NEUTRAL HIT:    |시장| <= 0.5%
+    - NEUTRAL PARTIAL: 0.5% < |시장| <= 1.5%
+    - NEUTRAL MISS:   |시장| > 1.5%
     """
     chg = market_change_pct
     predicted_up   = stance in _BULL_STANCES
     predicted_down = stance in _BEAR_STANCES
     predicted_flat = stance in _NEUTRAL_STANCES
+    abs_chg = abs(chg)
 
-    if chg > 0:   # 시장 상승
-        if predicted_up:   return "HIT"
-        if predicted_flat: return "PARTIAL"   # NEUTRAL은 방향 틀림이지만 극단 아님
+    if predicted_up:
+        if chg >= _HIT_THRESHOLD:   return "HIT"
+        if chg > 0:                  return "PARTIAL"
         return "MISS"
-    elif chg < 0:  # 시장 하락
-        if predicted_down: return "HIT"
-        if predicted_flat: return "PARTIAL"
+    elif predicted_down:
+        if chg <= -_HIT_THRESHOLD:  return "HIT"
+        if chg < 0:                  return "PARTIAL"
         return "MISS"
-    else:  # 정확히 0% (또는 abs < epsilon)
-        if predicted_flat: return "HIT"
-        return "PARTIAL"
+    else:  # NEUTRAL
+        if abs_chg <= _FLAT_THRESHOLD:  return "HIT"
+        if abs_chg <= _FLAT_PARTIAL:    return "PARTIAL"
+        return "MISS"
 
 
 def _format_decision_event_log(decision_event_log: list) -> str:
@@ -239,11 +252,11 @@ def run(market: str, date: str, today_judgment: dict,
 }}"""
     else:
         # ── 거래 있는 날: 전체 프롬프트 ─────────────────────────────────────
-        best  = max(sells, key=lambda t: t["pnl"], default=None)
-        worst = min(sells, key=lambda t: t["pnl"], default=None)
-        best_s  = (f"{best['ticker']} {best['pnl']:+,}원 ({best.get('strategy','-')})"
+        best  = max(sells, key=lambda t: t.get("pnl_pct", t.get("pnl", 0)), default=None)
+        worst = min(sells, key=lambda t: t.get("pnl_pct", t.get("pnl", 0)), default=None)
+        best_s  = (f"{best['ticker']} {best.get('pnl_pct', 0):+.2f}% ({best['pnl']:+,}원) ({best.get('strategy','-')})"
                    if best else "없음")
-        worst_s = (f"{worst['ticker']} {worst['pnl']:+,}원 ({worst.get('strategy','-')})"
+        worst_s = (f"{worst['ticker']} {worst.get('pnl_pct', 0):+.2f}% ({worst['pnl']:+,}원) ({worst.get('strategy','-')})"
                    if worst else "없음")
 
         prompt = f"""당신은 트레이딩 AI의 사후 분석가입니다.

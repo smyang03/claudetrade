@@ -352,6 +352,7 @@ def _call_claude(
     vix     = context.get("vix", "-")
     usd_krw = context.get("usd_krw", "-")
     conf    = context.get("analyst_conf", "-")
+    asof    = context.get("asof", "-")
 
     hist_block = "\n".join(hist_lines) if hist_lines else "  (이력 없음)"
     param_block = "\n".join(param_lines)
@@ -362,7 +363,7 @@ def _call_claude(
     prompt = f"""당신은 퀀트 리스크 매니저입니다. 오늘의 시장 환경을 고려해
 전략 파라미터를 미세 조정(또는 유지)하세요.
 
-━━━ 현재 상황 ━━━
+━━━ 현재 상황 (기준 {asof}) ━━━
   시장: {market}  모드: {mode}
   VIX: {vix}  USD/KRW: {usd_krw}  분석가 평균 confidence: {conf}
 

@@ -39,6 +39,29 @@ def _is_overloaded_error(exc: Exception) -> bool:
     return "529" in text or "overloaded" in text or "overload" in text
 
 
+def _format_positions_summary(positions: list) -> str:
+    """튜너 프롬프트용 포지션 요약 텍스트"""
+    if not positions:
+        return "  (보유 포지션 없음)"
+    lines = []
+    for p in positions:
+        ticker  = p.get("ticker", "-")
+        qty     = int(p.get("qty", 0) or 0)
+        entry   = float(p.get("entry", 0) or 0)
+        cp      = float(p.get("current_price", entry) or entry)
+        pnl_pct = float(p.get("pnl_pct", 0) or 0)
+        strat   = p.get("strategy", "-")
+        sl      = float(p.get("sl", 0) or 0)
+        tp      = float(p.get("tp", 0) or 0)
+        sl_str  = f" SL={sl:,.0f}" if sl > 0 else ""
+        tp_str  = f" TP={tp:,.0f}" if tp > 0 else ""
+        lines.append(
+            f"  {ticker} {qty}주 진입={entry:,.0f} 현재={cp:,.0f} "
+            f"수익률={pnl_pct:+.1f}% 전략={strat}{sl_str}{tp_str}"
+        )
+    return "\n".join(lines)
+
+
 def tune(market: str, elapsed_min: int, current_state: dict,
          morning_judgment: dict, brain_summary: str) -> dict:
     """
@@ -46,23 +69,32 @@ def tune(market: str, elapsed_min: int, current_state: dict,
     Returns: {action, mode, size_adj, sl_adj, reason, warning}
     """
     prev_mode = morning_judgment.get("consensus", {}).get("mode", "CAUTIOUS")
-    prompt = f"""You are an intraday tuning analyst.
-Compare the morning judgment with the current state and return JSON only.
+    positions_text = _format_positions_summary(current_state.get("positions", []))
+    prompt = f"""당신은 장중 튜닝 분석가입니다. 아침 판단과 현재 상태를 비교하고 JSON으로만 응답하세요.
 
-Morning mode: {prev_mode}
-Morning bull reason: {morning_judgment.get('judgments', {}).get('bull', {}).get('key_reason', '')}
+아침 모드: {prev_mode}
+아침 Bull 근거: {morning_judgment.get('judgments', {}).get('bull', {}).get('key_reason', '')}
+아침 Bear 근거: {morning_judgment.get('judgments', {}).get('bear', {}).get('key_reason', '')}
 {brain_summary[:300]}
 
-Current state ({elapsed_min} minutes elapsed):
-  Index move: {current_state.get('index_change', 0):+.2f}%
-  Volume trend: {current_state.get('volume_trend', 'normal')}
-  Positions: {json.dumps(current_state.get('positions', []), ensure_ascii=False)}
-  Alerts: {current_state.get('alerts', [])}
+현재 상태 (경과 {elapsed_min}분):
+  지수 변동: {current_state.get('index_change', 0):+.2f}%
+  거래량 추세: {current_state.get('volume_trend', 'normal')}
+  경고: {current_state.get('alerts', []) or '없음'}
 
-JSON only:
-{{"action":"MAINTAIN|TIGHTEN|REVERSE","mode":"adjusted mode",
-  "size_adj":0,"sl_adj":0.0,"reason":"one sentence reason",
-  "warning":"warning or null"}}"""
+보유 포지션:
+{positions_text}
+
+판단 기준:
+- 지수 변동이 아침 판단과 같은 방향이면 MAINTAIN
+- 지수가 아침 판단과 반대 방향으로 1% 이상이면 REVERSE 검토
+- 포지션에 손실이 있고 지수도 약세면 TIGHTEN (SL 조정)
+- 포지션 없으면 지수 방향 기반으로만 판단
+
+JSON으로만 응답:
+{{"action":"MAINTAIN|TIGHTEN|REVERSE","mode":"{prev_mode} 또는 조정된 모드",
+  "size_adj":0,"sl_adj":0.0,"reason":"한 문장 근거 (수치 포함)",
+  "warning":"경고 또는 null"}}"""
 
     started = time.monotonic()
     attempt = 0
