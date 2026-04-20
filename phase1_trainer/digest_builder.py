@@ -436,9 +436,10 @@ def build_intraday_advisor_context(market: str = "KR") -> str:
         vkospi = ctx.get("vkospi")
         ktrend = ctx.get("kospi_trend", {})
 
+        _k5d = ktrend.get("change_5d")
+        _k5d_str = f" / 5d {_k5d:+.1f}%" if _k5d is not None else ""
         kospi_str  = (f"코스피 {kospi.get('close', 0):,.0f} "
-                      f"({kospi.get('change_pct', 0):+.2f}%"
-                      f"{f' / 5d {ktrend[\"change_5d\"]:+.1f}%' if ktrend.get('change_5d') is not None else ''})")
+                      f"({kospi.get('change_pct', 0):+.2f}%{_k5d_str})")
         kosdaq_str = (f"코스닥 {kosdaq.get('close', 0):,.0f} "
                       f"({kosdaq.get('change_pct', 0):+.2f}%)")
         usd_str    = ""

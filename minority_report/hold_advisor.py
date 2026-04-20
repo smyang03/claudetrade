@@ -35,7 +35,8 @@ PERSONAS = {
 }
 
 
-def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> dict:
+def _ask_one(analyst_type: str, pos: dict, market: str,
+             digest_prompt: str, rt_context: str = "") -> dict:
     # entry: open_positions(KRW) 우선, 없으면 display_avg_price(USD) 폴백
     entry = float(pos.get("entry", 0) or 0)
     if entry <= 0:
@@ -130,14 +131,6 @@ def _ask_one(analyst_type: str, pos: dict, market: str, digest_prompt: str) -> d
         drawdown_str = f"  고점 수익률: {peak_pnl_pct:+.2f}%  (현재 고점 유지)\n"
     mode_line = f"  시장 모드: {mode_str}\n" if mode_str else ""
 
-    # 실시간 지수/환율 컨텍스트 (장중 스냅샷)
-    if _RT_CTX_AVAILABLE:
-        try:
-            rt_context = _build_rt_ctx(market)
-        except Exception:
-            rt_context = ""
-    else:
-        rt_context = ""
     context_text = rt_context or (digest_prompt[:300] if digest_prompt else "  (정보 없음)")
 
     prompt = f"""{PERSONAS[analyst_type]}
@@ -211,9 +204,20 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
         log.warning(f"[hold_advisor] {ticker} entry=0 → 호출 차단 (진입가 미확정), HOLD 반환")
         return {"action": "HOLD", "trail_pct": 0.03, "votes": {}}
 
+    # 실시간 컨텍스트 1회만 조회 (3명이 공유)
+    rt_ctx = ""
+    if _RT_CTX_AVAILABLE:
+        try:
+            raw = _build_rt_ctx(market)
+            # 실패 메시지가 아닌 실제 데이터일 때만 사용
+            if raw and "실패" not in raw and "조회" not in raw:
+                rt_ctx = raw
+        except Exception:
+            pass
+
     votes   = {}
     for atype in ("bull", "bear", "neutral"):
-        votes[atype] = _ask_one(atype, pos, market, digest_prompt)
+        votes[atype] = _ask_one(atype, pos, market, digest_prompt, rt_ctx)
         time.sleep(delay)
 
     hold_score = sum(

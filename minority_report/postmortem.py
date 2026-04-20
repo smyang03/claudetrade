@@ -87,12 +87,13 @@ def _strategy_pnl(trade_log: list) -> dict:
 
 _BULL_STANCES    = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL", "CAUTIOUS"}
 _NEUTRAL_STANCES = {"NEUTRAL"}
-_BEAR_STANCES    = {"MILD_BEAR", "CAUTIOUS_BEAR", "DEFENSIVE", "HALT"}
+_BEAR_STANCES    = {"MILD_BEAR", "CAUTIOUS_BEAR"}
+_AVOID_STANCES   = {"DEFENSIVE", "HALT"}   # 방향 예측 아님 — 노출 회피가 맞았는가로 판정
 
-
-_HIT_THRESHOLD  = 0.5   # 방향성 판단이 HIT가 되려면 최소 ±0.5% 이상 움직여야 함
-_FLAT_THRESHOLD = 0.5   # NEUTRAL HIT: 절대값 0.5% 이내
-_FLAT_PARTIAL   = 1.5   # NEUTRAL PARTIAL: 0.5~1.5% (그 이상은 MISS)
+_HIT_THRESHOLD   = 0.5   # 방향성 판단 HIT 최소 임계값
+_FLAT_THRESHOLD  = 0.5   # NEUTRAL HIT: |시장| <= 0.5%
+_FLAT_PARTIAL    = 1.5   # NEUTRAL PARTIAL: 0.5~1.5%
+_AVOID_MISS      = 1.0   # DEFENSIVE MISS: 시장 >= +1.0% (놓친 상승 기회)
 
 
 def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
@@ -100,30 +101,36 @@ def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
     분석가 스탠스 + 실제 시장 등락률로 HIT/MISS/PARTIAL 객관 판정.
     Claude 자기평가 편향 제거용.
 
-    기준:
+    BULL/BEAR: 방향 예측 정확도
     - BULL HIT:    시장 >= +0.5%
-    - BULL PARTIAL: 0% < 시장 < +0.5% (방향 맞지만 미미한 상승)
+    - BULL PARTIAL: 0% < 시장 < +0.5%
     - BULL MISS:   시장 <= 0%
     - BEAR HIT:    시장 <= -0.5%
     - BEAR PARTIAL: -0.5% < 시장 < 0%
     - BEAR MISS:   시장 >= 0%
-    - NEUTRAL HIT:    |시장| <= 0.5%
-    - NEUTRAL PARTIAL: 0.5% < |시장| <= 1.5%
-    - NEUTRAL MISS:   |시장| > 1.5%
+
+    NEUTRAL: 횡보 예측 정확도
+    - HIT: |시장| <= 0.5%, PARTIAL: <= 1.5%, MISS: > 1.5%
+
+    DEFENSIVE/HALT: 노출 회피 적절성 ("낮은 노출이 유리했는가")
+    - HIT:    시장 < -0.5%  (리스크 현실화, 회피 정당)
+    - PARTIAL: -0.5% <= 시장 < +1.0% (애매, 회피도 나쁘지 않음)
+    - MISS:   시장 >= +1.0% (강한 상승 놓침, 회피가 잘못된 판단)
     """
     chg = market_change_pct
-    predicted_up   = stance in _BULL_STANCES
-    predicted_down = stance in _BEAR_STANCES
-    predicted_flat = stance in _NEUTRAL_STANCES
     abs_chg = abs(chg)
 
-    if predicted_up:
-        if chg >= _HIT_THRESHOLD:   return "HIT"
-        if chg > 0:                  return "PARTIAL"
+    if stance in _BULL_STANCES:
+        if chg >= _HIT_THRESHOLD:  return "HIT"
+        if chg > 0:                 return "PARTIAL"
         return "MISS"
-    elif predicted_down:
-        if chg <= -_HIT_THRESHOLD:  return "HIT"
-        if chg < 0:                  return "PARTIAL"
+    elif stance in _BEAR_STANCES:
+        if chg <= -_HIT_THRESHOLD: return "HIT"
+        if chg < 0:                 return "PARTIAL"
+        return "MISS"
+    elif stance in _AVOID_STANCES:
+        if chg < -_HIT_THRESHOLD:  return "HIT"
+        if chg < _AVOID_MISS:       return "PARTIAL"
         return "MISS"
     else:  # NEUTRAL
         if abs_chg <= _FLAT_THRESHOLD:  return "HIT"
