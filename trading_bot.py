@@ -7121,6 +7121,17 @@ def main(is_paper: bool = True):
     schedule.every().day.at("08:30").do(_screener_collect, "KR")
     schedule.every().day.at("21:30").do(_screener_collect, "US")
 
+    def _midnight_token_refresh():
+        """KIS 토큰 자정 무효화 대응 — 00:01에 강제 갱신 후 브로커 상태 복구"""
+        try:
+            bot.token = get_access_token(force_refresh=True)
+            bot._sync_runtime_with_broker()
+            log.info("[자정 토큰 갱신] 완료")
+        except Exception as e:
+            log.warning(f"[자정 토큰 갱신] 실패: {e}")
+
+    schedule.every().day.at("00:01").do(_midnight_token_refresh)
+
     schedule.every().day.at("08:50").do(bot.session_open, "KR")
     schedule.every().day.at("16:00").do(bot.session_close, "KR")
     schedule.every().day.at("16:10").do(_data_update, "KR")          # KR 장 후 종가 확정
