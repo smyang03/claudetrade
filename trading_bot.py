@@ -561,11 +561,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as e:
             log.warning(f"판단 임시저장 실패: {e}")
 
-    def _get_market_change_pct(self, market: str, digest: dict = None) -> float:
-        """digest_raw 또는 전달된 digest에서 시장 지수 등락률 추출 (select_tickers 상대강도용)."""
+    def _get_market_change_pct(self, market: str, digest: dict = None) -> Optional[float]:
+        """digest_raw에서 주 지수 등락률 추출 — KR=KOSPI, US=S&P500. 데이터 없으면 None."""
         ctx = (digest or self.today_judgment.get("digest_raw") or {}).get("context") or {}
         key = "kospi" if market == "KR" else "sp500"
-        return float((ctx.get(key) or {}).get("change_pct", 0) or 0)
+        v = (ctx.get(key) or {}).get("change_pct")
+        return float(v) if v is not None else None
+
+    def _get_secondary_change_pct(self, market: str, digest: dict = None) -> Optional[float]:
+        """보조 지수 등락률 — KR=KOSDAQ, US=NASDAQ. 데이터 없으면 None."""
+        ctx = (digest or self.today_judgment.get("digest_raw") or {}).get("context") or {}
+        key = "kosdaq" if market == "KR" else "nasdaq"
+        v = (ctx.get(key) or {}).get("change_pct")
+        return float(v) if v is not None else None
 
     def _log_screen_candidates(self, market: str, candidates: list, source: str):
         """대시보드가 최신 후보 집합을 알 수 있도록 재스크리닝도 analysis 로그에 남긴다."""
@@ -712,7 +720,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             intraday_ctx = self._build_intraday_context(target_market)
             selected, reasons = select_tickers(target_market, digest_prompt, mode, candidates,
                                                intraday_context=intraday_ctx,
-                                               market_change_pct=self._get_market_change_pct(target_market))
+                                               market_change_pct=self._get_market_change_pct(target_market),
+                                               secondary_change_pct=self._get_secondary_change_pct(target_market))
             if not selected:
                 raise RuntimeError("최종 선택 종목이 없습니다.")
             self.today_tickers[target_market] = selected
@@ -3313,7 +3322,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             candidates = self._filter_candidates_by_history(candidates, market)
             log.info(f"[스크리너] {market} 후보 {len(candidates)}개 → Claude 선택 중...")
             selected, sel_reasons = select_tickers(market, digest_prompt, consensus["mode"], candidates,
-                                                    market_change_pct=self._get_market_change_pct(market, digest))
+                                                    market_change_pct=self._get_market_change_pct(market, digest),
+                                                    secondary_change_pct=self._get_secondary_change_pct(market, digest))
             self.today_tickers[market] = selected
             self.today_ticker_reasons[market] = sel_reasons or {}
             # 퍼널: selected 카운트 (세션 시작 시 선택된 종목 수)
@@ -3381,7 +3391,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 fresh_candidates = self._prefill_history_sync(fresh_candidates, market)
                 fresh_candidates = self._filter_candidates_by_history(fresh_candidates, market)
                 fresh_selected, fresh_reasons = select_tickers(market, digest_prompt, consensus["mode"], fresh_candidates,
-                                                               market_change_pct=self._get_market_change_pct(market))
+                                                               market_change_pct=self._get_market_change_pct(market),
+                                                               secondary_change_pct=self._get_secondary_change_pct(market))
                 self.today_tickers[market] = fresh_selected
                 self.today_ticker_reasons[market] = fresh_reasons or {}
                 self.today_judgment["tickers"] = fresh_selected
@@ -5828,7 +5839,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         self._log_screen_candidates(market, tune_cands, "tuning_rescreen")
                         digest_p = self.today_judgment.get("digest_prompt", "")
                         tune_tickers, tune_reasons = select_tickers(market, digest_p, new_mode, tune_cands,
-                                                                    market_change_pct=self._get_market_change_pct(market))
+                                                                    market_change_pct=self._get_market_change_pct(market),
+                                                                    secondary_change_pct=self._get_secondary_change_pct(market))
                         self.today_tickers[market] = tune_tickers
                         self.today_ticker_reasons[market] = tune_reasons or {}
                         self.today_judgment["tickers"] = tune_tickers
@@ -6180,7 +6192,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         mode = self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL")
         digest_p = self.today_judgment.get("digest_prompt", "")
         new_selected, new_reasons = select_tickers(market, digest_p, mode, new_cands[:20],
-                                                    market_change_pct=self._get_market_change_pct(market))
+                                                    market_change_pct=self._get_market_change_pct(market),
+                                                    secondary_change_pct=self._get_secondary_change_pct(market))
 
         replace_in = [t for t in new_selected if t not in set(current_tickers)][:n_replace]
         if replace_in:
@@ -6372,7 +6385,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         digest_p = self.today_judgment.get("digest_prompt", "")
                         new_tickers, new_ticker_reasons = select_tickers(market, digest_p,
                                                      new_consensus["mode"], reinvoke_cands,
-                                                     market_change_pct=self._get_market_change_pct(market))
+                                                     market_change_pct=self._get_market_change_pct(market),
+                                                     secondary_change_pct=self._get_secondary_change_pct(market))
                         self.today_tickers[market] = new_tickers
                         self.today_ticker_reasons[market] = new_ticker_reasons or {}
                         self.today_judgment["tickers"] = new_tickers

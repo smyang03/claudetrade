@@ -1750,11 +1750,13 @@ def _load_kr_screen_cache() -> list:
         return []
 
 
-def _kis_volume_rank(token: str, vol_cnt: str, top_n: int) -> list:
-    """KIS 거래량순위 API 호출 공통 함수."""
+def _kis_volume_rank(token: str, vol_cnt: str, top_n: int, market_div: str = "J") -> list:
+    """KIS 거래량순위 API 호출 공통 함수.
+    market_div: "J"=KOSPI, "Q"=KOSDAQ
+    """
     url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/volume-rank"
     params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_MRKT_DIV_CODE": market_div,
         "FID_COND_SCR_DIV_CODE":  "20171",
         "FID_INPUT_ISCD":         "0000",
         "FID_DIV_CLS_CODE":       "0",
@@ -1774,6 +1776,7 @@ def _kis_volume_rank(token: str, vol_cnt: str, top_n: int) -> list:
     )
     resp.raise_for_status()
     items = resp.json().get("output", [])
+    _mkt_type = "KOSDAQ" if market_div == "Q" else "KOSPI"
     result = []
     for it in items[:top_n]:
         ticker = it.get("mksc_shrn_iscd", "").strip()
@@ -1781,12 +1784,13 @@ def _kis_volume_rank(token: str, vol_cnt: str, top_n: int) -> list:
             continue
         try:
             result.append({
-                "ticker": ticker,
-                "name": it.get("hts_kor_isnm", ticker),
-                "price": int(it.get("stck_prpr", 0)),
+                "ticker":      ticker,
+                "name":        it.get("hts_kor_isnm", ticker),
+                "price":       int(it.get("stck_prpr", 0)),
                 "change_rate": float(it.get("prdy_ctrt", 0)),
-                "volume": int(it.get("acml_vol", 0)),
-                "vol_ratio": float(it.get("vol_tnrt", 1.0)),
+                "volume":      int(it.get("acml_vol", 0)),
+                "vol_ratio":   float(it.get("vol_tnrt", 1.0)),
+                "market_type": _mkt_type,
             })
         except (ValueError, TypeError):
             continue
@@ -1853,6 +1857,7 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
                             "ticker": ticker, "name": ticker,
                             "price": 0, "change_rate": 0.0,
                             "volume": 0, "vol_ratio": 1.0,
+                            "market_type": "KOSPI",
                         })
                         seen.add(ticker)
                     if len(merged) >= top_n:
@@ -1869,7 +1874,20 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
             preset = get_screening_preset("KR", mode)
             _kr_vol_cnt = str(preset["kr_min_volume"])
             _logger.info(f"[KR 스크리너] mode={mode} → FID_VOL_CNT={_kr_vol_cnt}")
-            result = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=top_n)
+            result = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=top_n,
+                                      market_div="J")
+
+            # KOSDAQ 보강: Q 호출로 시장구분 태그 업데이트
+            try:
+                _kq = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=top_n,
+                                       market_div="Q")
+                _kq_tickers = {c["ticker"] for c in _kq}
+                for c in result:
+                    if c["ticker"] in _kq_tickers:
+                        c["market_type"] = "KOSDAQ"
+                _logger.info(f"[KR 스크리너] KOSDAQ 태그 보강: {len(_kq_tickers)}종목")
+            except Exception as _e:
+                _logger.debug(f"[KR 스크리너] KOSDAQ 태그 보강 실패(무시): {_e}")
 
             if len(result) >= 10:
                 # 충분한 결과면 캐시 저장 (다음 날 장전 A로 사용)
@@ -1883,6 +1901,7 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
                             "ticker": ticker, "name": ticker,
                             "price": 0, "change_rate": 0.0,
                             "volume": 0, "vol_ratio": 1.0,
+                            "market_type": "KOSPI",
                         })
                     if len(result) >= 20:
                         break

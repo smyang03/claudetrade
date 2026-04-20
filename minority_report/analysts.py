@@ -6,6 +6,7 @@
   3. 2라운드 토론  - 1차 판단 후 상대 의견 보고 최종 수정
 """
 import os, json, re, time, sys
+from typing import Optional
 import anthropic
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -447,7 +448,8 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
 
 def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
                    intraday_context: str = "",
-                   market_change_pct: float = 0.0) -> list:
+                   market_change_pct: Optional[float] = None,
+                   secondary_change_pct: Optional[float] = None) -> list:
     """
     오늘 집중 모니터링할 종목을 Claude가 선택 (최소 8개, 최대 10개)
     candidates: screen_market_kr/us 결과
@@ -483,9 +485,20 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             vol_str = ""   # 장전 KR: vol_ratio 의미없음 → Claude 입력에서 제거
         else:
             vol_str = f"거래량{vr:.1f}배" if vr > 0 else ""
-        # 상대 강도: 개별 종목 등락률 - 시장 지수 등락률
-        rs = rate - market_change_pct
-        rs_str = f"RS{rs:+.1f}%" if market_change_pct != 0.0 else ""
+        # 상대 강도 (RS)
+        if market == "KR":
+            mkt_type = c.get("market_type", "KOSPI")
+            base_pct = (secondary_change_pct if mkt_type == "KOSDAQ" and secondary_change_pct is not None
+                        else market_change_pct)
+            rs = rate - base_pct if base_pct is not None else None
+            rs_str = f"RS{rs:+.1f}%({mkt_type[:2]})" if rs is not None else ""
+        else:  # US: S&P500 + NASDAQ 이중 RS
+            rs_sp = rate - market_change_pct if market_change_pct is not None else None
+            rs_nq = rate - secondary_change_pct if secondary_change_pct is not None else None
+            _rs_parts = []
+            if rs_sp is not None: _rs_parts.append(f"SP{rs_sp:+.1f}%")
+            if rs_nq is not None: _rs_parts.append(f"NQ{rs_nq:+.1f}%")
+            rs_str = "RS(" + "/".join(_rs_parts) + ")" if _rs_parts else ""
         cand_lines.append(
             f"  {c.get('ticker')} {c.get('name','')} {rate_str} {rs_str} {vol_str}".strip()
         )
