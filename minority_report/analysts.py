@@ -446,7 +446,8 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
 
 
 def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
-                   intraday_context: str = "") -> list:
+                   intraday_context: str = "",
+                   market_change_pct: float = 0.0) -> list:
     """
     오늘 집중 모니터링할 종목을 Claude가 선택 (최소 8개, 최대 10개)
     candidates: screen_market_kr/us 결과
@@ -475,13 +476,19 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 
     cand_lines = []
     for c in candidates[:50]:
-        rate_str = f"{float(c.get('change_rate', 0.0)):+.2f}%"
+        rate = float(c.get('change_rate', 0.0))
+        rate_str = f"{rate:+.2f}%"
         vr = float(c.get("vol_ratio", 0.0))
         if _kr_premarket:
             vol_str = ""   # 장전 KR: vol_ratio 의미없음 → Claude 입력에서 제거
         else:
             vol_str = f"거래량{vr:.1f}배" if vr > 0 else ""
-        cand_lines.append(f"  {c.get('ticker')} {c.get('name','')} {rate_str} {vol_str}".strip())
+        # 상대 강도: 개별 종목 등락률 - 시장 지수 등락률
+        rs = rate - market_change_pct
+        rs_str = f"RS{rs:+.1f}%" if market_change_pct != 0.0 else ""
+        cand_lines.append(
+            f"  {c.get('ticker')} {c.get('name','')} {rate_str} {rs_str} {vol_str}".strip()
+        )
     cand_text = "\n".join(cand_lines)
 
     n_cands  = len([c for c in candidates if c.get("ticker")])

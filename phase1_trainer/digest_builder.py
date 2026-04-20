@@ -423,6 +423,33 @@ def fetch_live_context_kr() -> dict:
     }
 
 
+def get_market_vol_trend(market: str = "KR") -> str:
+    """오늘 시장 거래량을 20일 평균과 비교해 "high"/"normal"/"low" 반환.
+
+    yfinance 실패 시 "normal" 반환 (safe default).
+    """
+    if not _YF_OK:
+        return "normal"
+    symbol = "^KS11" if market == "KR" else "^GSPC"
+    try:
+        import yfinance as _yf
+        hist = _yf.Ticker(symbol).history(period="25d")
+        if hist.empty or len(hist) < 5:
+            return "normal"
+        avg_vol   = float(hist["Volume"].iloc[:-1].mean())
+        today_vol = float(hist["Volume"].iloc[-1])
+        if avg_vol <= 0:
+            return "normal"
+        ratio = today_vol / avg_vol
+        if ratio >= 1.5:
+            return "high"
+        if ratio <= 0.7:
+            return "low"
+        return "normal"
+    except Exception:
+        return "normal"
+
+
 def build_intraday_advisor_context(market: str = "KR") -> dict:
     """hold_advisor용 장중 실시간 시장 컨텍스트.
 
