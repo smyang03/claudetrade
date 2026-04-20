@@ -491,7 +491,8 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             base_pct = (secondary_change_pct if mkt_type == "KOSDAQ" and secondary_change_pct is not None
                         else market_change_pct)
             rs = rate - base_pct if base_pct is not None else None
-            rs_str = f"RS{rs:+.1f}%({mkt_type[:2]})" if rs is not None else ""
+            _rs_tag = "KQ" if mkt_type == "KOSDAQ" else "KP"
+            rs_str = f"RS{rs:+.1f}%({_rs_tag})" if rs is not None else ""
         else:  # US: S&P500 + NASDAQ 이중 RS
             rs_sp = rate - market_change_pct if market_change_pct is not None else None
             rs_nq = rate - secondary_change_pct if secondary_change_pct is not None else None

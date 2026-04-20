@@ -1877,17 +1877,20 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
             result = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=top_n,
                                       market_div="J")
 
-            # KOSDAQ 보강: Q 호출로 시장구분 태그 업데이트
+            # KOSDAQ 보강: Q 호출 결과를 후보 풀에 추가 (KOSPI와 ticker 겹침 없음)
             try:
                 _kq = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=top_n,
                                        market_div="Q")
-                _kq_tickers = {c["ticker"] for c in _kq}
-                for c in result:
-                    if c["ticker"] in _kq_tickers:
-                        c["market_type"] = "KOSDAQ"
-                _logger.info(f"[KR 스크리너] KOSDAQ 태그 보강: {len(_kq_tickers)}종목")
+                _seen = {c["ticker"] for c in result}
+                _added = 0
+                for c in _kq:
+                    if c["ticker"] not in _seen:
+                        result.append(c)
+                        _seen.add(c["ticker"])
+                        _added += 1
+                _logger.info(f"[KR 스크리너] KOSDAQ 후보 추가: {_added}종목")
             except Exception as _e:
-                _logger.debug(f"[KR 스크리너] KOSDAQ 태그 보강 실패(무시): {_e}")
+                _logger.debug(f"[KR 스크리너] KOSDAQ 추가 실패(무시): {_e}")
 
             if len(result) >= 10:
                 # 충분한 결과면 캐시 저장 (다음 날 장전 A로 사용)
