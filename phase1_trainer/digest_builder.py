@@ -249,6 +249,34 @@ def _yf_last(symbol: str, period: str = "5d") -> float:
         return 0.0
 
 
+def _yf_multi_change(symbol: str) -> dict:
+    """1d / 5d / 20일고점대비 변화율 계산 — 추세 컨텍스트용"""
+    if not _YF_OK:
+        return {}
+    try:
+        import logging as _logging
+        _logging.getLogger("yfinance").setLevel(_logging.CRITICAL)
+        df = yf.Ticker(symbol).history(period="30d")
+        if df.empty or len(df) < 2:
+            return {}
+        closes = df["Close"].dropna()
+        last = float(closes.iloc[-1])
+        def _pct(n: int):
+            if len(closes) > n:
+                prev = float(closes.iloc[-(n + 1)])
+                return round((last - prev) / prev * 100, 2) if prev else None
+            return None
+        high_20d = float(closes.tail(20).max()) if len(closes) >= 5 else None
+        from_high = round((last - high_20d) / high_20d * 100, 2) if high_20d else None
+        return {
+            "change_1d":         _pct(1),
+            "change_5d":         _pct(5),
+            "from_20d_high_pct": from_high,
+        }
+    except Exception:
+        return {}
+
+
 def detect_market_regime(sp500_change: float, vix: float, trend_5d: float = 0.0) -> str:
     """
     시장 레짐 자동 감지.
@@ -382,12 +410,16 @@ def fetch_live_context_kr() -> dict:
         except Exception:
             pass
 
+    _vkospi_raw = _yf_last("^KS200VOL") or _yf_last("^VKOSPI") or None
+    _usd_krw_val = _yf_last("KRW=X") or None
     return {
-        "kospi":      {"change_pct": _yf_change("^KS11"), "close": _yf_last("^KS11")},
-        "kosdaq":     {"change_pct": _yf_change("^KQ11"), "close": _yf_last("^KQ11")},
-        "usd_krw":    _yf_last("KRW=X"),
-        "vkospi":     _yf_last("^KS200VOL") or _yf_last("^VKOSPI") or 0,
-        "kr_sectors": kr_sectors,  # KR Tier2 섹터 트리거
+        "kospi":          {"change_pct": _yf_change("^KS11"), "close": _yf_last("^KS11")},
+        "kosdaq":         {"change_pct": _yf_change("^KQ11"), "close": _yf_last("^KQ11")},
+        "kospi_trend":    _yf_multi_change("^KS11"),
+        "usd_krw":        _usd_krw_val,
+        "usd_krw_trend":  _yf_multi_change("KRW=X") if _usd_krw_val else {},
+        "vkospi":         _vkospi_raw,
+        "kr_sectors":     kr_sectors,
     }
 
 
@@ -460,22 +492,29 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         supp = {**live, **supp}  # supp 기존값 우선
 
     # ── Layer A: 시장 컨텍스트 (~150 토큰) ───────────────────────────────────
+    _vkospi_val = supp.get("vkospi")
+    if _vkospi_val == 0:
+        _vkospi_val = None  # 0은 결측으로 처리
+    _usd_krw_val = supp.get("usd_krw") or None
     layer_a = {
-        "kospi": supp.get("kospi", {}),
-        "kosdaq": supp.get("kosdaq", {}),
-        "usd_krw": supp.get("usd_krw", 0),
-        "vkospi": supp.get("vkospi", 0),
+        "kospi":           supp.get("kospi", {}),
+        "kosdaq":          supp.get("kosdaq", {}),
+        "kospi_trend":     supp.get("kospi_trend", {}),
+        "usd_krw":         _usd_krw_val,
+        "usd_krw_trend":   supp.get("usd_krw_trend", {}),
+        "vkospi":          _vkospi_val,
         "foreign_futures": supp.get("foreign_futures", 0),
-        "us_prev": supp.get("us_prev", {}),  # 전날 미국장
-        "fomc": target_date in FOMC_DATES,
-        "options_expiry": supp.get("options_expiry", False),
-        "kr_sectors": supp.get("kr_sectors", {}),  # KR Tier2 섹터 ETF 등락
+        "us_prev":         supp.get("us_prev", {}),
+        "fomc":            target_date in FOMC_DATES,
+        "options_expiry":  supp.get("options_expiry", False),
+        "kr_sectors":      supp.get("kr_sectors", {}),
+        "day_of_week":     datetime.strptime(target_date, "%Y-%m-%d").strftime("%A"),
     }
 
     # ── Layer B: 종목 핵심 지표 (~300 토큰) ──────────────────────────────────
-    # VKOSPI 20+ 이면 인버스 ETF 포함 (약세 헤지 구간)
-    _vkospi = supp.get("vkospi", 0) or 0
-    ticker_map = _ticker_map("KR", universe_tickers, include_inverse=float(_vkospi) >= 20)
+    # VKOSPI 20+ 이면 인버스 ETF 포함 (결측(None)은 0으로 처리)
+    _vkospi = float(_vkospi_val or 0)
+    ticker_map = _ticker_map("KR", universe_tickers, include_inverse=_vkospi >= 20)
     layer_b = {}
     for ticker, name in ticker_map.items():
         df = load_price_with_cache("KR", ticker)
@@ -526,25 +565,39 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
             except (TypeError, ValueError):
                 return default
 
+        _flows = supp.get("flows", {}).get(ticker, {})
+        _ff   = _flows.get("foreign")    # None = 결측 (0과 구분)
+        _inst = _flows.get("institution")
+        _short = supp.get("short", {}).get(ticker)  # None = 결측
+
+        # MACD 히스토그램 방향 (확장/축소)
+        _macd_hist = _safe_float(row.get("macd", 0)) - _safe_float(row.get("signal", 0))
+        _prev_rows = df[df["date"] < pd.Timestamp(target_date)]
+        if len(_prev_rows) >= 2:
+            _prev_r = _prev_rows.iloc[-2]
+            _prev_hist = _safe_float(_prev_r.get("macd", 0)) - _safe_float(_prev_r.get("signal", 0))
+            macd_expanding = abs(_macd_hist) > abs(_prev_hist)
+        else:
+            macd_expanding = None
+
         layer_b[ticker] = {
-            "name":        name,
-            "close":       _safe_int(row.get("close", 0)),
-            "change_pct":  round(_safe_float(row.get("change_pct", 0)), 2),
-            "rsi":         round(_safe_float(row.get("rsi", 50), 50), 1),
-            "macd":        macd_sig,
-            "bb_pos":      bb_pos,
-            "bb_pct":      round(_safe_float(bb_pct, 50), 1),
-            "ma_align":    ma_align,
-            "vol_ratio":   round(_safe_float(vol_r, 1.0), 2),
-            "vol_signal":  vol_signal,
-            "pos_52w":     round(_safe_float(row.get("pos52", 50), 50), 1),
-            "gap_pct":     round(_safe_float(row.get("gap", 0)), 2),
-            # 수급 (supplement에서)
-            "foreign_flow": supp.get("flows", {}).get(ticker, {}).get("foreign", 0),
-            "inst_flow":    supp.get("flows", {}).get(ticker, {}).get("institution", 0),
-            "short_ratio":  supp.get("short", {}).get(ticker, 0),
-            # 공시 여부
-            "disclosure":  bool(news.get("disclosures", {}).get(ticker, [])),
+            "name":           name,
+            "close":          _safe_int(row.get("close", 0)),
+            "change_pct":     round(_safe_float(row.get("change_pct", 0)), 2),
+            "rsi":            round(_safe_float(row.get("rsi", 50), 50), 1),
+            "macd":           macd_sig,
+            "macd_expanding": macd_expanding,  # True=확대, False=축소, None=알수없음
+            "bb_pos":         bb_pos,
+            "bb_pct":         round(_safe_float(bb_pct, 50), 1),
+            "ma_align":       ma_align,
+            "vol_ratio":      round(_safe_float(vol_r, 1.0), 2),
+            "vol_signal":     vol_signal,
+            "pos_52w":        round(_safe_float(row.get("pos52", 50), 50), 1),
+            "gap_pct":        round(_safe_float(row.get("gap", 0)), 2),
+            "foreign_flow":   _ff,    # None = 데이터 없음
+            "inst_flow":      _inst,  # None = 데이터 없음
+            "short_ratio":    _short, # None = 데이터 없음
+            "disclosure":     bool(news.get("disclosures", {}).get(ticker, [])),
         }
 
     # ── Layer C: 뉴스 선별 (~200 토큰) ───────────────────────────────────────
@@ -776,9 +829,44 @@ def digest_to_prompt(digest: dict) -> str:
     if market == "KR":
         kospi = ctx.get("kospi", {})
         if kospi:
-            lines.append(f"  코스피 {kospi.get('change_pct',0):+.2f}% | "
-                         f"USD/KRW {ctx.get('usd_krw',0):,} | "
-                         f"VKOSPI {ctx.get('vkospi',0):.1f}")
+            # 코스피 1d + 5d 추세
+            kospi_5d = ctx.get("kospi_trend", {}).get("change_5d")
+            kospi_str = f"코스피 1d {kospi.get('change_pct',0):+.2f}%"
+            if kospi_5d is not None:
+                kospi_str += f" / 5d {kospi_5d:+.2f}%"
+
+            # 환율 추세 포함
+            usd_krw = ctx.get("usd_krw")
+            usd_trend = ctx.get("usd_krw_trend", {})
+            if usd_krw:
+                trend_parts = []
+                if usd_trend.get("change_1d") is not None:
+                    trend_parts.append(f"1d {usd_trend['change_1d']:+.1f}%")
+                if usd_trend.get("change_5d") is not None:
+                    trend_parts.append(f"5d {usd_trend['change_5d']:+.1f}%")
+                if usd_trend.get("from_20d_high_pct") is not None:
+                    trend_parts.append(f"20일고점대비 {usd_trend['from_20d_high_pct']:+.1f}%")
+                trend_str = f" ({', '.join(trend_parts)})" if trend_parts else ""
+                usd_str = f"USD/KRW {usd_krw:,.0f}{trend_str}"
+            else:
+                usd_str = "USD/KRW N/A"
+
+            # VKOSPI 결측 처리
+            vkospi = ctx.get("vkospi")
+            vkospi_str = f"VKOSPI {vkospi:.1f}" if vkospi is not None else "VKOSPI 결측"
+
+            lines.append(f"  {kospi_str} | {usd_str} | {vkospi_str}")
+
+        # 요일 컨텍스트
+        day_of_week = ctx.get("day_of_week", "")
+        if day_of_week:
+            _day_ko = {
+                "Monday": "월요일", "Tuesday": "화요일", "Wednesday": "수요일",
+                "Thursday": "목요일", "Friday": "금요일",
+                "Saturday": "토요일", "Sunday": "일요일",
+            }
+            lines.append(f"  오늘: {_day_ko.get(day_of_week, day_of_week)}")
+
         if ctx.get("foreign_futures"):
             lines.append(f"  외국인 선물: {ctx['foreign_futures']:+,}억원")
         us = ctx.get("us_prev", {})
@@ -839,12 +927,28 @@ def digest_to_prompt(digest: dict) -> str:
             f"거래량 {t['vol_ratio']:.1f}배{vol_mark} | "
             f"52주위치 {t['pos_52w']:.0f}%"
         )
-        # 수급 (KR만)
-        ff = t.get("foreign_flow", 0)
-        inst = t.get("inst_flow", 0)
-        if ff or inst:
-            lines.append(f"    수급: 외국인 {ff:+,}억 | 기관 {inst:+,}억 | "
-                         f"공매도 {t.get('short_ratio',0):.1f}%")
+        # 수급 (KR만) — None=결측, 0=실제0으로 구분
+        ff   = t.get("foreign_flow")
+        inst = t.get("inst_flow")
+        short = t.get("short_ratio")
+        if ff is not None or inst is not None:
+            ff_str   = f"외국인 {ff:+,}억"   if ff   is not None else "외국인 N/A"
+            inst_str = f"기관 {inst:+,}억"   if inst  is not None else "기관 N/A"
+            short_str = f" | 공매도 {short:.1f}%" if short is not None else ""
+            lines.append(f"    수급: {ff_str} | {inst_str}{short_str}")
+        # MACD 방향 보강
+        macd_exp = t.get("macd_expanding")
+        if macd_exp is not None:
+            exp_str = "확대중" if macd_exp else "축소중"
+            lines[-1] = lines[-1]  # 종목 라인 유지
+            # MACD 라인에 방향 추가 (기존 라인 수정)
+            for i in range(len(lines) - 1, -1, -1):
+                if f"MACD {t['macd']}" in lines[i]:
+                    lines[i] = lines[i].replace(
+                        f"MACD {t['macd']}",
+                        f"MACD {t['macd']}({exp_str})"
+                    )
+                    break
         if t.get("disclosure"):
             lines.append(f"    ⭐ 공시 있음")
         # US 추가 지표
