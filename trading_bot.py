@@ -390,6 +390,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.enable_slippage_guard = _env_bool("ENABLE_SLIPPAGE_GUARD", False)
         self.max_est_slippage_bps = float(os.getenv("MAX_EST_SLIPPAGE_BPS", "25"))
         self.enable_atr_position_sizing = _env_bool("ENABLE_ATR_POSITION_SIZING", True)
+        self.continuation_atr_position_sizing = _env_bool("CONTINUATION_ATR_POSITION_SIZING", True)
+        self.gap_pullback_atr_position_sizing = _env_bool("GAP_PULLBACK_ATR_POSITION_SIZING", True)
         self.atr_target_pct = float(os.getenv("ATR_TARGET_PCT", "0.015"))
         self.enable_dynamic_universe = _env_bool("ENABLE_DYNAMIC_UNIVERSE", False)
         self.dynamic_universe_top_n = int(os.getenv("DYNAMIC_UNIVERSE_TOP_N", "20"))
@@ -5244,45 +5246,67 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     else:
                         tp_pct = params.get("tp_pct", HARD_RULES["take_profit_pct"] / 100.0)
                 atr_pct = None
-                if self.enable_atr_position_sizing:
+                _atr_sizing_on = self.enable_atr_position_sizing and (
+                    strategy_name != "continuation" or self.continuation_atr_position_sizing
+                ) and (
+                    strategy_name != "gap_pullback" or self.gap_pullback_atr_position_sizing
+                )
+                if _atr_sizing_on:
                     atr_val = float(sig_df.iloc[i].get("atr", 0) or 0)
                     if risk_price > 0 and atr_val > 0:
                         atr_pct = atr_val / risk_price
 
                 # KR momentum: ATR%가 과도하면 진입 자체를 차단한다.
-                # 손절 폭을 넓히는 것만으로는 갭다운/급락 리스크를 제어하기 어렵기 때문.
-                _kr_mom_atr_cap = float(os.getenv("KR_MOMENTUM_ATR_PCT_MAX", "0.06") or 0.06)
+                # score >= KR_MOMENTUM_ATR_SCORE_MIN 이면 완화 cap(KR_MOMENTUM_ATR_PCT_HIGH)까지 허용하되
+                # effective_size를 KR_MOMENTUM_ATR_HIGH_SIZE_CAP으로 제한해 리스크를 통제한다.
+                _kr_mom_atr_cap      = float(os.getenv("KR_MOMENTUM_ATR_PCT_MAX",      "0.06") or 0.06)
+                _kr_mom_atr_cap_high = float(os.getenv("KR_MOMENTUM_ATR_PCT_HIGH",     "0.10") or 0.10)
+                _kr_mom_atr_score    = float(os.getenv("KR_MOMENTUM_ATR_SCORE_MIN",    "5.0")  or 5.0)
+                _kr_mom_atr_size_cap =   int(os.getenv("KR_MOMENTUM_ATR_HIGH_SIZE_CAP","50")   or 50)
+                _momentum_atr_block  = False
+                _momentum_atr_size_cap = None  # None이면 cap 없음
                 if (
                     market == "KR"
                     and strategy_name == "momentum"
                     and atr_pct is not None
-                    and _kr_mom_atr_cap > 0
                     and atr_pct > _kr_mom_atr_cap
                 ):
-                    log.info(
-                        f"  [{ticker}] KR momentum ATR 차단: "
-                        f"atr_pct={atr_pct:.2%} > {_kr_mom_atr_cap:.2%}"
-                    )
-                    analysis_log.info(
-                        f"[skip {market}] {ticker} momentum_atr_too_high",
-                        extra={"extra": {
-                            "event": "entry_skip",
-                            "market": market,
-                            "ticker": ticker,
-                            "reason": "momentum_atr_too_high",
-                            "strategy": strategy_name,
-                            "price": float(price),
-                            "atr_pct": round(float(atr_pct), 4),
-                            "atr_cap": round(float(_kr_mom_atr_cap), 4),
-                            "mode": mode,
-                        }},
-                    )
-                    if _ML_DB_ENABLED:
-                        _ml_write_eval(
-                            ticker, price, sig_df.iloc[i].to_dict(), "SKIPPED",
-                            block_reason_="momentum_atr_too_high",
-                            diag_json_={"atr_pct": float(atr_pct), "atr_cap": float(_kr_mom_atr_cap)},
+                    if atr_pct <= _kr_mom_atr_cap_high and _ep_score >= _kr_mom_atr_score:
+                        # 완화 허용: size cap 적용
+                        _momentum_atr_size_cap = _kr_mom_atr_size_cap
+                        log.info(
+                            f"  [{ticker}] KR momentum ATR 완화 허용: "
+                            f"atr_pct={atr_pct:.2%} score={_ep_score:.3f}>={_kr_mom_atr_score} "
+                            f"→ size_cap={_kr_mom_atr_size_cap}%"
                         )
+                    else:
+                        _momentum_atr_block = True
+                        log.info(
+                            f"  [{ticker}] KR momentum ATR 차단: "
+                            f"atr_pct={atr_pct:.2%} > {_kr_mom_atr_cap:.2%}"
+                            + (f" (score={_ep_score:.3f} < {_kr_mom_atr_score})" if atr_pct <= _kr_mom_atr_cap_high else "")
+                        )
+                        analysis_log.info(
+                            f"[skip {market}] {ticker} momentum_atr_too_high",
+                            extra={"extra": {
+                                "event": "entry_skip",
+                                "market": market,
+                                "ticker": ticker,
+                                "reason": "momentum_atr_too_high",
+                                "strategy": strategy_name,
+                                "price": float(price),
+                                "atr_pct": round(float(atr_pct), 4),
+                                "atr_cap": round(float(_kr_mom_atr_cap), 4),
+                                "mode": mode,
+                            }},
+                        )
+                        if _ML_DB_ENABLED:
+                            _ml_write_eval(
+                                ticker, price, sig_df.iloc[i].to_dict(), "SKIPPED",
+                                block_reason_="momentum_atr_too_high",
+                                diag_json_={"atr_pct": float(atr_pct), "atr_cap": float(_kr_mom_atr_cap)},
+                            )
+                if _momentum_atr_block:
                     continue
                 # 전략별 size_mult 적용 (예: momentum 0.4~1.0 → 합의 size_pct 스케일링)
                 size_mult = float(params.get("size_mult", 1.0))
@@ -5332,6 +5356,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         continue
 
                 effective_size = max(10, min(100, int(size_pct * size_mult)))
+                if _momentum_atr_size_cap is not None:
+                    effective_size = min(effective_size, _momentum_atr_size_cap)
                 # ── 신호 수집 → 사이클 완료 후 score 정렬 후 주문 실행 ────────
                 _pending_signals.append({
                     "ticker":          ticker,

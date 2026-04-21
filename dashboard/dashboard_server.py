@@ -1681,9 +1681,12 @@ def _merge_positions_for_display(market: str, broker_positions: list, live_posit
         merged.append(_merge_position_context(pos, live_map.get(ticker)))
         seen.add(ticker)
 
-    for ticker, pos in live_map.items():
-        if ticker not in seen:
-            merged.append(_merge_position_context(pos, None))
+    # broker_positions가 있으면 broker를 ground truth로 사용 (매도 후 유령 포지션 방지)
+    # broker API 실패(빈 리스트)일 때만 live_map 폴백
+    if not broker_positions:
+        for ticker, pos in live_map.items():
+            if ticker not in seen:
+                merged.append(_merge_position_context(pos, None))
 
     return merged
 
