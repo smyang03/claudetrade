@@ -580,7 +580,7 @@ def _parse_trade_log_lines(rec_date: str, market: str) -> list:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except Exception:
-        return []
+        return None
 
     rows = []
     pending_sell = None
@@ -1561,14 +1561,14 @@ def _load_claude_control(mode: str = "paper") -> dict:
     return data
 
 
-def _load_broker_positions(market: str, mode: str = "paper") -> list:
+def _load_broker_positions(market: str, mode: str = "paper"):
     """KIS 釉뚮줈而??붽퀬?먯꽌 ?꾩옱 蹂댁쑀 ?ъ??섏쓣 吏곸젒 ?쎌뼱 ??쒕낫?쒖뿉 ?쒖떆."""
     try:
         with _kis_runtime(mode):
             token = get_access_token()
             bal = get_balance(token, market=market, force_refresh=True)
     except Exception:
-        return []
+        return None
 
     positions = []
     for stock in bal.get("stocks", []):
@@ -1665,7 +1665,9 @@ def _merge_position_context(base: dict, overlay: Optional[dict]) -> dict:
     return merged
 
 
-def _merge_positions_for_display(market: str, broker_positions: list, live_positions: list) -> list:
+def _merge_positions_for_display(
+    market: str, broker_positions: list, live_positions: list, broker_ok: bool = True
+) -> list:
     live_map = {}
     for pos in live_positions or []:
         ticker = str(pos.get("ticker", "") or "").strip().upper()
@@ -1681,9 +1683,9 @@ def _merge_positions_for_display(market: str, broker_positions: list, live_posit
         merged.append(_merge_position_context(pos, live_map.get(ticker)))
         seen.add(ticker)
 
-    # broker_positions가 있으면 broker를 ground truth로 사용 (매도 후 유령 포지션 방지)
-    # broker API 실패(빈 리스트)일 때만 live_map 폴백
-    if not broker_positions:
+    # broker API 성공 시 broker를 ground truth로 사용 (보유 0개 포함)
+    # broker API 실패(broker_ok=False)일 때만 live_map 폴백
+    if not broker_ok:
         for ticker, pos in live_map.items():
             if ticker not in seen:
                 merged.append(_merge_position_context(pos, None))
@@ -1707,7 +1709,7 @@ def _resolve_review_position(market: str, ticker: str, mode: str = "paper") -> t
 
     if _is_live_market(market):
         for mkt in markets:
-            broker_positions = _load_broker_positions(mkt, mode=mode)
+            broker_positions = _load_broker_positions(mkt, mode=mode) or []
             broker_pos = next((p for p in broker_positions if str(p.get("ticker", "") or "").strip().upper() == ticker), None)
             if broker_pos is None:
                 continue
@@ -1930,7 +1932,7 @@ def _ticker_name_map(market: str, include_broker: bool = True, mode: str = "pape
                 if t and name and name != t:
                     name_map[t] = name
     if include_broker:
-        for pos in _load_broker_positions(market, mode=mode):
+        for pos in (_load_broker_positions(market, mode=mode) or []):
             t = str(pos.get("ticker", "") or "").strip().upper()
             name = str(pos.get("name", "") or "").strip()
             if t and name and name != t:
@@ -2554,9 +2556,11 @@ def api_summary():
     pnl_pct  = live.get("daily_pnl_pct", result.get("pnl_pct", 0))
     cum_base = float(result.get("cumulative", 0) or PAPER_CASH)
     cum_asset = float((live.get("total_equity", 0) if live else 0) or cum_base or PAPER_CASH)
-    broker_positions = _filter_items_for_market(_load_broker_positions(market, mode=mode), market)
+    _raw_broker = _load_broker_positions(market, mode=mode)
+    broker_ok = _raw_broker is not None
+    broker_positions = _filter_items_for_market(_raw_broker or [], market)
     saved_positions = _saved_positions_for_market(market, mode=mode)
-    positions = _merge_positions_for_display(market, broker_positions, saved_positions)
+    positions = _merge_positions_for_display(market, broker_positions, saved_positions, broker_ok=broker_ok)
     pending_orders = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
     name_map = _ticker_name_map(market, mode=mode)
     for pos in positions:
