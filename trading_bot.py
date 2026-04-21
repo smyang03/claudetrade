@@ -69,6 +69,8 @@ from kis_api import (
     save_kr_screen_cache,
     is_trading_halted,
     _US_SCREEN_CACHE_PATH,
+    _daily_ohlcv_us_alpha,
+    _daily_ohlcv_us_yf,
     KISTokenExpiredError,
 )
 from indicators import calc_all
@@ -96,7 +98,7 @@ from telegram_reporter import (
     signal_state_alert,
 )
 from telegram_commander import commander as tg_commander
-from minority_report.analysts import get_three_judgments, select_tickers
+from minority_report.analysts import get_last_selection_meta, get_three_judgments, select_tickers
 from minority_report.consensus import build_consensus
 from minority_report.tuner import tune
 from minority_report.postmortem import run as run_postmortem
@@ -115,6 +117,8 @@ import strategy.param_tuner as _param_tuner
 
 from claude_memory import brain as BrainDB
 from runtime_paths import get_runtime_path
+from bot.candidate_policy import filter_tradable_candidates
+from bot.log_sanitizer import mask_secrets
 import shared_judgment_cache
 import ticker_selection_db as tsdb
 import intraday_strategy_db as isdb
@@ -249,31 +253,96 @@ _VIX_SIZE_TIERS = [
 
 # 분석가 suggested_strategy(한글) → 코드 전략명 매핑
 _STRATEGY_NAME_MAP = {
-    "모멘텀":    "momentum",
-    "평균회귀":  "mean_reversion",
-    "갭풀백":    "gap_pullback",
+    "momentum": "momentum",
+    "모멘텀": "momentum",
+    "mean_reversion": "mean_reversion",
+    "평균회귀": "mean_reversion",
+    "gap_pullback": "gap_pullback",
+    "갭풀백": "gap_pullback",
+    "갭+눌림": "gap_pullback",
+    "갭눌림": "gap_pullback",
+    "opening_range_pullback": "opening_range_pullback",
+    "or_pullback": "opening_range_pullback",
+    "or눌림": "opening_range_pullback",
+    "OR눌림": "opening_range_pullback",
+    "volatility_breakout": "volatility_breakout",
     "변동성돌파": "volatility_breakout",
-    "관망":      "",
+    "continuation": "continuation",
+    "연속진입": "continuation",
+    "observe": "",
+    "관망": "",
 }
+
+_SELECTION_RISK_TAG_CAPS = (
+    (("저유동성", "유동성", "슬리피지"), 35),
+    (("과열", "추격", "손절폭", "급등"), 50),
+    (("변동성", "뉴스", "테마"), 70),
+)
+
+_WATCH_ONLY_RECOVERY_FALLBACKS = {"selection_partial", "safe_watch", "ticker_regex"}
+_WATCH_ONLY_HARD_KEYWORDS = (
+    "저유동성",
+    "유동성 제한",
+    "유동성 부족",
+    "거래대금",
+    "etf",
+    "etn",
+    "구조화",
+    "레버리지",
+    "인버스",
+    "데이터 부족",
+    "데이터부족",
+    "거래소 코드",
+    "가격 오류",
+    "invalid",
+    "outlier",
+)
+_WATCH_ONLY_SOFT_KEYWORDS = (
+    "rs 약",
+    "rs 약세",
+    "약세",
+    "pullback",
+    "눌림",
+    "반등",
+    "watch",
+    "감시",
+    "관찰",
+    "ma60",
+    "deep",
+    "회복",
+    "추세 약",
+    "부적합",
+)
+
+
+def _normalize_strategy_name(raw: str) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    normalized = _STRATEGY_NAME_MAP.get(value)
+    if normalized is not None:
+        return normalized
+    normalized = _STRATEGY_NAME_MAP.get(value.lower())
+    if normalized is not None:
+        return normalized
+    return ""
 
 
 def _analyst_strategy_vote(judgments: dict) -> str:
     """
     3명 분석가 suggested_strategy 다수결 → 코드 전략명.
-    2표 이상 일치 없으면 "volatility_breakout" 반환.
+    2표 이상 일치 없으면 빈 문자열 반환.
     """
     from collections import Counter
     votes = [
-        _STRATEGY_NAME_MAP.get(
-            judgments.get(a, {}).get("suggested_strategy", ""), ""
-        )
+        _normalize_strategy_name(judgments.get(a, {}).get("suggested_strategy", ""))
         for a in ("bull", "bear", "neutral")
     ]
     valid = [v for v in votes if v]
     if not valid:
-        return "volatility_breakout"
+        return ""
     top, top_count = Counter(valid).most_common(1)[0]
-    return top if top_count >= 2 else "volatility_breakout"
+    return top if top_count >= 2 else ""
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -359,6 +428,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.today_judgment = {}
         self.today_tickers: dict = {}   # {market: [ticker, ...]} — 매일 아침 Claude가 선택
         self.today_ticker_reasons: dict = {}
+        self.trade_ready_tickers: dict[str, list[str]] = {"KR": [], "US": []}
+        self.selection_meta: dict[str, dict] = {"KR": {}, "US": {}}
         self.today_universe: dict = {}
         self.tuning_count = 0
         # 30분 간격 지수 변동률 히스토리 (시장별, 최대 8개 = 4시간)
@@ -366,6 +437,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "KR": deque(maxlen=8),
             "US": deque(maxlen=8),
         }
+        self._active_session_date: dict[str, Optional[date]] = {"KR": None, "US": None}
         self.ws = None
         self.price_cache = {}
         self.price_cache_raw = {}
@@ -462,7 +534,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
         # entry_priority cutoff (Phase 2) — env로 ON/OFF, 텔레그램으로 실시간 토글
         self.entry_priority_cutoff_enabled: bool = (
-            os.getenv("ENTRY_PRIORITY_CUTOFF_ENABLED", "false").lower() == "true"
+            os.getenv("ENTRY_PRIORITY_CUTOFF_ENABLED", "true").lower() == "true"
         )
         self.entry_priority_cutoff: float = float(os.getenv("ENTRY_PRIORITY_CUTOFF", "0.20"))
 
@@ -553,16 +625,289 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         """장중 판단 변경을 즉시 저장해 재시작/대시보드가 최신 상태를 보게 한다."""
         if not self.today_judgment or self.today_judgment.get("market") != market:
             return
-        live_path = _judgment_runtime_path(self._mode, date.today().strftime('%Y%m%d'), market)
+        live_path = _judgment_runtime_path(self._mode, self._current_session_date_str(market), market)
         try:
             with open(live_path, "w", encoding="utf-8") as f:
                 json.dump({
                     **self.today_judgment,
                     "mode": "paper" if self.is_paper else "live",
                     "ticker_reasons": self.today_ticker_reasons.get(market, {}),
+                    "selection_meta": self.selection_meta.get(market, {}),
+                    "trade_ready_tickers": self.trade_ready_tickers.get(market, []),
                 }, f, ensure_ascii=False, indent=2)
         except Exception as e:
             log.warning(f"판단 임시저장 실패: {e}")
+
+    def _set_active_session_date(self, market: str, session_date: Optional[date] = None) -> date:
+        resolved = session_date or _market_session_date(market)
+        if not hasattr(self, "_active_session_date") or not isinstance(self._active_session_date, dict):
+            self._active_session_date = {"KR": None, "US": None}
+        self._active_session_date[market] = resolved
+        return resolved
+
+    def _current_session_date(self, market: str) -> date:
+        active = getattr(self, "_active_session_date", {}) or {}
+        resolved = active.get(market)
+        if isinstance(resolved, date):
+            return resolved
+        return _market_session_date(market)
+
+    def _current_session_date_str(self, market: str) -> str:
+        return self._current_session_date(market).isoformat()
+
+    def _apply_selection_meta(self, market: str, selected: list[str]) -> dict:
+        """Persist Claude WATCH/TRADE_READY split while keeping legacy tickers intact."""
+        meta = get_last_selection_meta() or {}
+        if not meta.get("watchlist"):
+            meta = {
+                "watchlist": list(selected or []),
+                "trade_ready": list(selected or [])[:10],
+                "reasons": {},
+                "veto": {},
+                "risk_tags": {},
+                "recommended_strategy": {},
+                "max_position_pct": {},
+            }
+        self.selection_meta[market] = meta
+        self.trade_ready_tickers[market] = list(meta.get("trade_ready") or [])
+        if self.today_judgment.get("market") == market:
+            self.today_judgment["selection_meta"] = meta
+            self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
+        return meta
+
+    def _trade_ready_set(self, market: str) -> set[str]:
+        raw = self.trade_ready_tickers.get(market, []) or []
+        if market == "US":
+            return {str(t).upper() for t in raw}
+        return {str(t) for t in raw}
+
+    def _build_portfolio_info(self) -> dict[str, int]:
+        return {
+            "cash": round(self.risk.cash),
+            "total_equity": round(self._kis_total_equity_krw()),
+            "max_order_krw": round(self.risk.max_order_krw),
+            "n_positions": len(self.risk.positions),
+            "max_positions": HARD_RULES["max_positions"],
+        }
+
+    def _selection_meta_value(self, market: str, ticker: str, key: str):
+        meta = self.selection_meta.get(market, {}) or {}
+        values = meta.get(key) or {}
+        if not isinstance(values, dict):
+            return None
+        lookup = str(ticker).upper() if market == "US" else str(ticker)
+        if lookup in values:
+            return values.get(lookup)
+        if market == "US":
+            for raw_key, raw_value in values.items():
+                if str(raw_key).upper() == lookup:
+                    return raw_value
+        return None
+
+    def _recommended_strategy_for_ticker(self, market: str, ticker: str) -> str:
+        return _normalize_strategy_name(
+            self._selection_meta_value(market, ticker, "recommended_strategy") or ""
+        )
+
+    def _risk_tags_for_ticker(self, market: str, ticker: str) -> list[str]:
+        raw = self._selection_meta_value(market, ticker, "risk_tags")
+        if isinstance(raw, (list, tuple, set)):
+            return [str(tag).strip() for tag in raw if str(tag).strip()]
+        if raw:
+            value = str(raw).strip()
+            return [value] if value else []
+        return []
+
+    def _selection_meta_flag(self, market: str, key: str):
+        meta = self.selection_meta.get(market, {}) or {}
+        return meta.get(key)
+
+    def _watch_only_text_has_any(self, text: str, keywords: tuple[str, ...]) -> bool:
+        haystack = str(text or "").strip()
+        if not haystack:
+            return False
+        lower_haystack = haystack.lower()
+        for keyword in keywords:
+            raw = str(keyword or "").strip()
+            if not raw:
+                continue
+            if raw in haystack or raw.lower() in lower_haystack:
+                return True
+        return False
+
+    def _watch_only_bucket(self, market: str, ticker: str) -> str:
+        fallback_mode = str(self._selection_meta_flag(market, "_fallback_mode") or "").strip()
+        if bool(self._selection_meta_flag(market, "_parse_recovered")) or fallback_mode in _WATCH_ONLY_RECOVERY_FALLBACKS:
+            return "RECOVERY"
+
+        reason_map = self.today_ticker_reasons.get(market, {}) or {}
+        lookup = str(ticker).upper() if market == "US" else str(ticker)
+        selected_reason = str(reason_map.get(lookup, "") or reason_map.get(ticker, "") or "").strip()
+        if market == "US" and not selected_reason:
+            for raw_key, raw_value in reason_map.items():
+                if str(raw_key).upper() == lookup:
+                    selected_reason = str(raw_value or "").strip()
+                    break
+        veto_reason = str(self._selection_meta_value(market, ticker, "veto") or "").strip()
+        risk_tags = self._risk_tags_for_ticker(market, ticker)
+        combined = " | ".join(filter(None, [selected_reason, veto_reason, " ".join(risk_tags)]))
+
+        if veto_reason:
+            return "HARD"
+        if self._watch_only_text_has_any(combined, _WATCH_ONLY_HARD_KEYWORDS):
+            return "HARD"
+        if self._watch_only_text_has_any(combined, _WATCH_ONLY_SOFT_KEYWORDS):
+            return "SOFT"
+        if selected_reason or risk_tags:
+            return "SOFT"
+        if not self._trade_ready_set(market):
+            return "RECOVERY"
+        return "SOFT"
+
+    def _can_recheck_soft_watch_only(self, market: str, ticker: str, mode: str) -> bool:
+        if self._watch_only_bucket(market, ticker) != "SOFT":
+            return False
+        if str(mode or "").upper() in {"DEFENSIVE", "HALT"}:
+            return False
+        return True
+
+    def _promote_trade_ready_ticker(
+        self,
+        market: str,
+        ticker: str,
+        strategy_name: str = "",
+        trigger: str = "soft_watch_signal",
+    ) -> bool:
+        normalized = str(ticker).upper() if market == "US" else str(ticker)
+        if normalized in self._trade_ready_set(market):
+            return False
+
+        current_ready = list(self.trade_ready_tickers.get(market, []) or [])
+        current_ready.append(normalized)
+        self.trade_ready_tickers[market] = list(dict.fromkeys(current_ready))
+
+        meta = dict(self.selection_meta.get(market) or {})
+        meta_ready = list(meta.get("trade_ready") or [])
+        meta_ready.append(normalized)
+        meta["trade_ready"] = list(dict.fromkeys(meta_ready))
+        self.selection_meta[market] = meta
+        self.today_judgment["selection_meta"] = meta
+        self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
+
+        analysis_log.info(
+            f"[trade_ready promote] {market} {normalized} trigger={trigger}",
+            extra={"extra": {
+                "event": "trade_ready_promote",
+                "market": market,
+                "ticker": normalized,
+                "strategy": strategy_name,
+                "trigger": trigger,
+                "trade_ready": list(self.trade_ready_tickers[market]),
+            }},
+        )
+        log.info(
+            f"[trade_ready 승격] {market} {normalized}"
+            + (f" strategy={strategy_name}" if strategy_name else "")
+            + f" trigger={trigger}"
+        )
+        try:
+            self._persist_live_judgment(market)
+        except Exception:
+            pass
+        return True
+
+    def _selection_replace_candidates(self, selection_meta: dict, selected: list[str]) -> list[str]:
+        trade_ready = selection_meta.get("trade_ready")
+        if isinstance(trade_ready, list):
+            return list(trade_ready)
+        return list(selected or [])
+
+    def _watch_only_reason_text(self, market: str, ticker: str) -> str:
+        parts: list[str] = []
+
+        reason_map = self.today_ticker_reasons.get(market, {}) or {}
+        lookup = str(ticker).upper() if market == "US" else str(ticker)
+        selected_reason = str(reason_map.get(lookup, "") or reason_map.get(ticker, "") or "").strip()
+        if market == "US" and not selected_reason:
+            for raw_key, raw_value in reason_map.items():
+                if str(raw_key).upper() == lookup:
+                    selected_reason = str(raw_value or "").strip()
+                    break
+        if selected_reason:
+            parts.append(selected_reason)
+
+        veto_reason = str(self._selection_meta_value(market, ticker, "veto") or "").strip()
+        if veto_reason:
+            parts.append(f"제외사유 {veto_reason}")
+
+        risk_tags = self._risk_tags_for_ticker(market, ticker)
+        if risk_tags:
+            parts.append(f"리스크 {', '.join(risk_tags[:3])}")
+
+        recommended = self._recommended_strategy_for_ticker(market, ticker)
+        if recommended:
+            parts.append(f"권장전략 {recommended}")
+
+        raw_cap = self._selection_meta_value(market, ticker, "max_position_pct")
+        try:
+            cap_pct = float(raw_cap)
+        except (TypeError, ValueError):
+            cap_pct = None
+        if cap_pct is not None and cap_pct > 0:
+            parts.append(f"비중상한 {int(round(cap_pct))}%")
+
+        if parts:
+            return " | ".join(parts)
+
+        bucket = self._watch_only_bucket(market, ticker)
+        if bucket == "RECOVERY":
+            return "selection 복구 상태 - trade_ready 확정 전"
+        if bucket == "HARD":
+            return "명시적 제외 사유 - watch_only 유지"
+        if not self._trade_ready_set(market):
+            return "trade_ready 비어 있음 - watch_only 유지"
+        return "trade_ready 제외 종목 - 장중 재평가 대상"
+
+    def _selection_size_cap_pct(self, market: str, ticker: str) -> tuple[Optional[int], list[str]]:
+        caps: list[int] = []
+        reasons: list[str] = []
+
+        raw_max_position_pct = self._selection_meta_value(market, ticker, "max_position_pct")
+        try:
+            max_position_pct = float(raw_max_position_pct)
+        except (TypeError, ValueError):
+            max_position_pct = None
+        if max_position_pct is not None and max_position_pct > 0:
+            cap = max(1, min(100, int(round(max_position_pct))))
+            caps.append(cap)
+            reasons.append(f"max_position_pct={cap}%")
+
+        risk_tags = self._risk_tags_for_ticker(market, ticker)
+        risk_tag_cap = None
+        for tag in risk_tags:
+            for keywords, candidate_cap in _SELECTION_RISK_TAG_CAPS:
+                if any(keyword in tag for keyword in keywords):
+                    risk_tag_cap = candidate_cap if risk_tag_cap is None else min(risk_tag_cap, candidate_cap)
+                    break
+        if risk_tag_cap is not None:
+            caps.append(risk_tag_cap)
+            reasons.append(f"risk_tags={','.join(risk_tags)}")
+
+        return (min(caps), reasons) if caps else (None, reasons)
+
+    def _prioritize_strategy_order(self, market: str, ticker: str, base_order: list[str]) -> list[str]:
+        order = list(base_order or [])
+        recommended = self._recommended_strategy_for_ticker(market, ticker)
+        if not recommended:
+            return order
+        return [recommended] + [strategy for strategy in order if strategy != recommended]
+
+    def _is_trade_ready_ticker(self, market: str, ticker: str) -> bool:
+        normalized = str(ticker).upper() if market == "US" else str(ticker)
+        return normalized in self._trade_ready_set(market)
+
+    def _is_entry_priority_blocked(self, score: float) -> bool:
+        return bool(self.entry_priority_cutoff_enabled and float(score or 0.0) < self.entry_priority_cutoff)
 
     def _get_market_change_pct(self, market: str, digest: dict = None) -> Optional[float]:
         """digest_raw에서 주 지수 등락률 추출 — KR=KOSPI, US=S&P500. 데이터 없으면 None."""
@@ -580,7 +925,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     def _log_screen_candidates(self, market: str, candidates: list, source: str):
         """대시보드가 최신 후보 집합을 알 수 있도록 재스크리닝도 analysis 로그에 남긴다."""
-        today = date.today().isoformat()
+        today = self._current_session_date_str(market)
         analysis_log.info(
             f"[screen {today} {market}] source={source} candidates={len(candidates)}",
             extra={"extra": {
@@ -654,7 +999,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _funnel = self._funnel.get(market, {})
         if not any(_funnel.get(k, 0) for k in ("selected", "signaled", "ordered")):
             return  # 아무 활동 없으면 저장 생략
-        today = datetime.now(KST).strftime("%Y-%m-%d")
+        today = self._current_session_date_str(market)
         log_dir = _grp("logs", "funnel", make_parents=True)
         log_file = log_dir / f"funnel_{today}_{market}.json"
         # 기존 파일이 있으면 누적
@@ -704,7 +1049,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             consensus = dict((self.today_judgment or {}).get("consensus") or {})
             mode = consensus.get("mode", "NEUTRAL")
             digest_prompt = (self.today_judgment or {}).get("digest_prompt", "")
-            today = date.today().isoformat()
+            today = self._current_session_date_str(target_market)
             if target_market == "KR":
                 candidates = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                 if candidates:
@@ -727,13 +1072,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                secondary_change_pct=self._get_secondary_change_pct(target_market))
             if not selected:
                 raise RuntimeError("최종 선택 종목이 없습니다.")
+            sel_meta = self._apply_selection_meta(target_market, selected)
             self.today_tickers[target_market] = selected
             self.today_ticker_reasons[target_market] = reasons or {}
             self.today_judgment["tickers"] = selected
             self.today_judgment["universe_tickers"] = [
                 c.get("ticker") for c in candidates if c.get("ticker")
             ]
-            log.info(f"[수동 종목 재선택 완료] {target_market}: {selected}")
+            log.info(
+                f"[수동 종목 재선택 완료] {target_market}: watch={selected} "
+                f"trade_ready={sel_meta.get('trade_ready', [])}"
+            )
             judgment_log.info(
                 f"[manual_rescreen {today} {target_market}] {selected}",
                 extra={"extra": {
@@ -741,6 +1090,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "date": today,
                     "market": target_market,
                     "selected": selected,
+                    "trade_ready": sel_meta.get("trade_ready", []),
                     "consensus_mode": mode,
                     "trigger": "telegram_manual",
                 }},
@@ -759,14 +1109,104 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     _MIN_SIGNAL_ROWS = 65  # calc_all 후 유효 행 최소치 (ma60=60봉 + 여유 5봉)
 
+    def _signal_usable_rows(self, df) -> int:
+        if df is None or getattr(df, "empty", True):
+            return 0
+        try:
+            return len(calc_all(df))
+        except Exception:
+            return 0
+
+    def _merge_ohlcv_frames(self, *frames):
+        import pandas as _pd
+
+        valid = []
+        for frame in frames:
+            if frame is None or getattr(frame, "empty", True):
+                continue
+            normalized = frame.copy()
+            normalized.columns = [str(col).lower() for col in normalized.columns]
+            if "date" not in normalized.columns:
+                continue
+            valid.append(normalized)
+        if not valid:
+            return _pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+        return (
+            _pd.concat(valid, ignore_index=True)
+            .drop_duplicates("date")
+            .sort_values("date")
+            .reset_index(drop=True)
+        )
+
+    def _fetch_signal_ready_ohlcv(self, ticker: str, market: str, lookback_days: Optional[int] = None):
+        target_usable = self._MIN_SIGNAL_ROWS
+        if lookback_days is None:
+            lookback_days = 365 if market == "KR" else max(260, target_usable + 120)
+
+        df = get_daily_ohlcv(ticker, self.token, lookback_days=lookback_days, market=market)
+        usable = self._signal_usable_rows(df)
+        source = "primary"
+
+        if market == "US" and usable < target_usable:
+            fallback_lookback = max(int(lookback_days), 365)
+            for fallback_name, fetcher in (
+                ("yfinance", _daily_ohlcv_us_yf),
+                ("alpha", _daily_ohlcv_us_alpha),
+            ):
+                try:
+                    fallback_df = fetcher(ticker, lookback_days=fallback_lookback)
+                except Exception:
+                    fallback_df = None
+                merged = self._merge_ohlcv_frames(df, fallback_df)
+                merged_usable = self._signal_usable_rows(merged)
+                if merged_usable > usable:
+                    df = merged
+                    usable = merged_usable
+                    source = fallback_name
+                if usable >= target_usable:
+                    break
+
+        return df, usable, source
+
+    def _enrich_candidate_with_history(self, candidate: dict, candles, sig_df) -> dict:
+        enriched = dict(candidate or {})
+        if candles is None or getattr(candles, "empty", True) or sig_df is None or getattr(sig_df, "empty", True):
+            return enriched
+        try:
+            last_candle = candles.iloc[-1]
+            last_sig = sig_df.iloc[-1]
+        except Exception:
+            return enriched
+
+        price_ref = float(enriched.get("price", 0) or 0) or float(last_candle.get("close", 0) or 0)
+        day_high = float(last_candle.get("high", 0) or 0)
+        ma60 = float(last_sig.get("ma60", 0) or 0)
+        if enriched.get("gap_pct") is None:
+            try:
+                gap_pct = last_sig.get("gap_pct")
+                if gap_pct is not None:
+                    enriched["gap_pct"] = float(gap_pct)
+            except (TypeError, ValueError):
+                pass
+        if enriched.get("from_high_pct") is None and price_ref > 0 and day_high > 0:
+            enriched["from_high_pct"] = round((price_ref - day_high) / day_high * 100.0, 4)
+        if enriched.get("above_ma60") is None and price_ref > 0 and ma60 > 0:
+            enriched["above_ma60"] = bool(price_ref >= ma60)
+        return enriched
+
     def _filter_candidates_by_history(self, candidates: list, market: str) -> list:
         """
         스크리너 후보 중 신호 계산에 필요한 히스토리가 부족한 종목 제거.
+        - 계좌/전략에서 매매하지 않을 파생/레버리지/인버스 ETF 후보를 먼저 제거
         - calc_all() 후 유효 행(ma60 기준 dropna) < _MIN_SIGNAL_ROWS 인 종목 제외
         - 가격 데이터 자체가 없는 종목도 제외
         """
+        candidates, product_removed = filter_tradable_candidates(candidates, market)
         filtered = []
-        removed = []
+        removed = [
+            (c.get("ticker", ""), c.get("blocked_reason", "product_blocked"))
+            for c in product_removed
+        ]
         for c in candidates:
             ticker = c.get("ticker", "")
             if not ticker:
@@ -780,7 +1220,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if len(sig_df) < self._MIN_SIGNAL_ROWS:
                     removed.append((ticker, f"데이터부족({len(sig_df)}행)"))
                     continue
-                filtered.append(c)
+                filtered.append(self._enrich_candidate_with_history(c, candles, sig_df))
             except Exception as e:
                 removed.append((ticker, f"오류:{e}"))
                 continue
@@ -891,7 +1331,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 bot_name = resp.json()["result"].get("username", "?")
                 results["Telegram"] = f"OK | @{bot_name}"
             except Exception as e:
-                results["Telegram"] = f"FAIL - {e}"
+                results["Telegram"] = f"FAIL - {mask_secrets(e)}"
         else:
             results["Telegram"] = "SKIP - TELEGRAM_TOKEN 없음"
 
@@ -1067,13 +1507,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     def _has_same_day_trade(self, ticker: str, market: str) -> bool:
         """당일 동일 종목 체결 이력이 있으면 재진입 금지."""
-        today_iso = date.today().isoformat()
+        today_iso = self._current_session_date_str(market)
         normalized = ticker.upper() if market == "US" else ticker
         for evt in reversed(self.risk.all_trade_log):
             evt_ticker = evt.get("ticker", "")
             evt_market = evt.get("market") or self._ticker_market(evt_ticker)
             evt_norm = evt_ticker.upper() if evt_market == "US" else evt_ticker
-            if evt.get("date") != today_iso:
+            evt_session_date = str(evt.get("session_date") or evt.get("date") or "")
+            if evt_session_date != today_iso:
                 continue
             if evt_market != market:
                 continue
@@ -1223,7 +1664,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for pos in saved:
                 # date 필드가 문자열로 저장됐을 수 있으므로 타입 보정
                 pos.setdefault("held_days", 0)
-                pos.setdefault("entry_date", date.today().isoformat())
+                pos.setdefault("entry_date", self._current_session_date_str(self._ticker_market(pos.get("ticker", ""))))
+                pos.setdefault("session_date", pos.get("entry_date") or self._current_session_date_str(self._ticker_market(pos.get("ticker", ""))))
                 cost = pos["entry"] * pos["qty"]
                 self.risk.cash -= cost
                 self.risk.positions.append(pos)
@@ -1352,7 +1794,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "sl": avg_price * (1 - sl_pct),
             "max_hold": int(template.get("max_hold", 1)),
             "held_days": int(template.get("held_days", 0)),
-            "entry_date": template.get("entry_date", date.today().isoformat()),
+            "entry_date": template.get("entry_date", self._current_session_date_str(market)),
+            "session_date": template.get("session_date", self._current_session_date_str(market)),
             "trailing": bool(template.get("trailing", False)),
             "trail_sl": float(template.get("trail_sl", 0.0)),
             "trail_pct": float(template.get("trail_pct", 0.03)),
@@ -1930,7 +2373,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "sl_pct": sl_pct,
             "max_hold": int(order.get("max_hold", 1)),
             "held_days": 0,
-            "entry_date": date.today().isoformat(),
+            "entry_date": self._current_session_date_str(market),
+            "session_date": order.get("session_date", self._current_session_date_str(market)),
             "trailing": False,
             "trail_sl": 0.0,
             "trail_sl_usd": 0.0,     # US 트레일링 SL (USD 기준)
@@ -2069,6 +2513,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "qty": int(order.get("qty", 0) or 0),
                     "strategy": order.get("strategy", "broker_fill"),
                     "date": date.today().isoformat(),
+                    "session_date": self._current_session_date_str(market),
                     "order_no": order.get("order_no", ""),
                     "price_source": "order_fill" if order.get("filled_price_native") else "broker_balance",
                     "currency": "USD" if market == "US" else "KRW",
@@ -2935,8 +3380,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     def _backfill_missed_postmortem(self, market: str):
         """재시작·비정상종료로 session_close 미실행 → actual_result 공백인 날 postmortem 소급"""
+        base_date = self._current_session_date(market)
         for delta in range(1, 4):
-            target_date = (date.today() - timedelta(days=delta)).isoformat()
+            target_date = (base_date - timedelta(days=delta)).isoformat()
             fname = _judgment_runtime_path(self._mode, target_date, market)
             if not fname.exists():
                 fname = JUDGMENT_DIR / f"{target_date.replace('-', '')}_{market}.json"
@@ -2997,7 +3443,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _restore_daily_pnl_from_decisions(self, market: str) -> None:
         if not DECISIONS_FILE.exists():
             return
-        today = _market_session_date(market).isoformat()
+        today = self._current_session_date_str(market)
         restored_pnl = 0.0
         restored_count = 0
         seen_keys = set()
@@ -3009,7 +3455,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
                 if rec.get("type") != "closed" or rec.get("market") != market:
                     continue
-                if str(rec.get("timestamp", "") or "")[:10] != today:
+                rec_session_date = str(rec.get("session_date") or str(rec.get("timestamp", "") or "")[:10] or "")
+                if rec_session_date != today:
                     continue
                 order_no = str(rec.get("order_no", "") or "").strip()
                 dedup_key = order_no or f"{rec.get('ticker', '')}_{rec.get('timestamp', '')}"
@@ -3031,17 +3478,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _log_flow("info", "=" * 50)
         _log_flow("info", f"[{market}] session_open")
         self._refresh_claude_control()
-        self._backfill_missed_postmortem(market)
+        session_date_obj = _market_session_date(market)
 
         # ── 휴장일 체크 (주말 + 공휴일) ─────────────────────────────────────
-        if not _is_trading_day(market):
+        if not _is_trading_day(market, session_date_obj):
             _log_flow("info", f"[{market}] 휴장일 — 세션 스킵")
             self.session_active = False
             self.current_market = None
+            if hasattr(self, "_active_session_date") and isinstance(self._active_session_date, dict):
+                self._active_session_date[market] = None
             self._leave_market_task(market, "session_open")
             return
 
         # US 개장 시 스크리너 캐시 무효화 → 신선한 후보로 시작
+        self._set_active_session_date(market, session_date_obj)
+        self._backfill_missed_postmortem(market)
         if market == "US":
             try:
                 _US_SCREEN_CACHE_PATH.unlink(missing_ok=True)
@@ -3066,7 +3517,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._save_pending_orders()
         self._reset_us_order_cache()
         self._sync_runtime_with_broker()
-        self.risk.increment_holding_days()
+        self.risk.increment_holding_days(today_iso=self._current_session_date_str(market))
 
         # 시장별 max_order_krw 재계산 — KR: 원화잔고 기준, US: USD 현금 기준
         try:
@@ -3124,7 +3575,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # ── session_start_equity: 환율 갱신 + 현재가 반영 이후 기준으로 확정 ──
         # (이전에 reset_daily_state를 먼저 호출하면 구환율 기준으로 base가 잡혀
         #  환율 변동분이 일일 손실로 잘못 계산되는 버그 수정)
-        session_date = _market_session_date(market).isoformat()
+        session_date = self._current_session_date_str(market)
         baseline_meta = dict(self._daily_baseline_by_market.get(market, {}) or {})
         if baseline_meta.get("session_date") == session_date and float(baseline_meta.get("base", 0) or 0) > 0:
             self.risk.session_start_equity = float(baseline_meta["base"])
@@ -3170,7 +3621,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if updated_prices:
                 log.info(f"[이월 포지션 현재가 갱신] {updated_prices}")
 
-        today = date.today().strftime("%Y-%m-%d")
+        today = self._current_session_date_str(market)
 
         pre_candidates = None
         universe_tickers = None
@@ -3226,11 +3677,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "digest_raw": saved.get("digest_raw", {}),
                         "tickers": saved.get("tickers", []),
                         "universe_tickers": saved.get("universe_tickers", []),
+                        "selection_meta": saved.get("selection_meta", {}),
+                        "trade_ready_tickers": saved.get("trade_ready_tickers", []),
                         # debate 필드 복원 (파인튜닝 데이터 연속성 유지)
                         "round1_judgments": saved.get("round1_judgments", {}),
                         "debate_changes": saved.get("debate_changes", []),
                     }
                     self.today_tickers[market] = saved.get("tickers", [])
+                    self.selection_meta[market] = saved.get("selection_meta", {}) or {}
+                    self.trade_ready_tickers[market] = (
+                        saved.get("trade_ready_tickers")
+                        or self.selection_meta[market].get("trade_ready")
+                        or saved.get("tickers", [])[:10]
+                    )
+                    self.today_judgment["selection_meta"] = self.selection_meta[market]
+                    self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
                     judgments = saved["judgments"]
                     consensus = saved["consensus"]
                     digest_prompt = saved.get("digest_prompt", "")
@@ -3254,10 +3715,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "digest_raw": saved.get("digest_raw", {}),
                         "tickers": saved.get("tickers", []),
                         "universe_tickers": saved.get("universe_tickers", []),
+                        "selection_meta": saved.get("selection_meta", {}),
+                        "trade_ready_tickers": saved.get("trade_ready_tickers", []),
                         "round1_judgments": saved.get("round1_judgments", {}),
                         "debate_changes": saved.get("debate_changes", []),
                     }
                     self.today_tickers[market] = saved.get("tickers", [])
+                    self.selection_meta[market] = saved.get("selection_meta", {}) or {}
+                    self.trade_ready_tickers[market] = (
+                        saved.get("trade_ready_tickers")
+                        or self.selection_meta[market].get("trade_ready")
+                        or saved.get("tickers", [])[:10]
+                    )
+                    self.today_judgment["selection_meta"] = self.selection_meta[market]
+                    self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
                     judgments = saved["judgments"]
                     consensus = saved["consensus"]
                     digest_prompt = saved.get("digest_prompt", "")
@@ -3296,6 +3767,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 judgments = get_three_judgments(
                     digest_prompt, brain_summary, correction,
                     market=market,
+                    portfolio_info=self._build_portfolio_info(),
                 )
                 consensus = build_consensus(judgments, market=market)
 
@@ -3345,14 +3817,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             selected, sel_reasons = select_tickers(market, digest_prompt, consensus["mode"], candidates,
                                                     market_change_pct=self._get_market_change_pct(market, digest),
                                                     secondary_change_pct=self._get_secondary_change_pct(market, digest))
+            sel_meta = self._apply_selection_meta(market, selected)
             self.today_tickers[market] = selected
             self.today_ticker_reasons[market] = sel_reasons or {}
             # 퍼널: selected 카운트 (세션 시작 시 선택된 종목 수)
             self._funnel[market]["selected"] += len(selected)
-            log.info(f"[종목선택 확정] {market}: {selected}")
+            log.info(f"[종목선택 확정] {market}: watch={selected} trade_ready={sel_meta.get('trade_ready', [])}")
             try:
                 _tsdb_ids = tsdb.insert_batch(
-                    today, market, "initial", selected, candidates, sel_reasons, consensus["mode"]
+                    today, market, "initial", selected, candidates, sel_reasons, consensus["mode"],
+                    selection_meta=sel_meta,
                 )
                 self._tsdb_selection_ids[market] = _tsdb_ids
             except Exception as _te:
@@ -3365,6 +3839,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "date": today,
                     "market": market,
                     "selected": selected,
+                    "trade_ready": sel_meta.get("trade_ready", []),
                     "consensus_mode": consensus["mode"],
                 }},
             )
@@ -3389,6 +3864,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "digest_prompt": digest_prompt,
                 "digest_raw": digest,          # VIX 등 원본 데이터 재판단 경로에서 참조
                 "tickers": selected,
+                "selection_meta": sel_meta,
+                "trade_ready_tickers": sel_meta.get("trade_ready", []),
                 "universe_tickers": [c.get("ticker") for c in candidates if c.get("ticker")],
                 "round1_judgments": debate_meta.get("r1", {}),
                 "debate_changes":   debate_meta.get("changes", []),
@@ -3414,12 +3891,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 fresh_selected, fresh_reasons = select_tickers(market, digest_prompt, consensus["mode"], fresh_candidates,
                                                                market_change_pct=self._get_market_change_pct(market),
                                                                secondary_change_pct=self._get_secondary_change_pct(market))
+                fresh_meta = self._apply_selection_meta(market, fresh_selected)
                 self.today_tickers[market] = fresh_selected
                 self.today_ticker_reasons[market] = fresh_reasons or {}
                 self.today_judgment["tickers"] = fresh_selected
                 try:
                     _tsdb_ids = tsdb.insert_batch(
-                        today, market, "rescreen", fresh_selected, fresh_candidates, fresh_reasons, consensus["mode"]
+                        today, market, "rescreen", fresh_selected, fresh_candidates, fresh_reasons, consensus["mode"],
+                        selection_meta=fresh_meta,
                     )
                     self._tsdb_selection_ids[market].update(_tsdb_ids)
                 except Exception as _te:
@@ -3427,7 +3906,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self.today_judgment["universe_tickers"] = [
                     c.get("ticker") for c in fresh_candidates if c.get("ticker")
                 ]
-                log.info(f"[종목 재선택 완료] {market}: {fresh_selected}")
+                log.info(
+                    f"[종목 재선택 완료] {market}: watch={fresh_selected} "
+                    f"trade_ready={fresh_meta.get('trade_ready', [])}"
+                )
                 judgment_log.info(
                     f"[rescreen {today} {market}] {fresh_selected}",
                     extra={"extra": {
@@ -3435,6 +3917,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "date": today,
                         "market": market,
                         "selected": fresh_selected,
+                        "trade_ready": fresh_meta.get("trade_ready", []),
                         "consensus_mode": consensus["mode"],
                     }},
                 )
@@ -3749,18 +4232,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 # CSV가 너무 오래됐거나 행 수가 부족하면 on-demand fetch로 보완
                 _last = df["date"].max()
                 _today = _pd.Timestamp(datetime.now().date())
-                if (_today - _last).days <= 7 and len(df) >= self._MIN_SIGNAL_ROWS:
+                usable = 0
+                if len(df) >= self._MIN_SIGNAL_ROWS + 60:
+                    usable = self._MIN_SIGNAL_ROWS
+                elif len(df) >= self._MIN_SIGNAL_ROWS:
+                    usable = self._signal_usable_rows(df)
+                if (_today - _last).days <= 7 and usable >= self._MIN_SIGNAL_ROWS:
                     self._ohlcv_cache[ticker] = df
                     self._ohlcv_cache_time[ticker] = now
                     return df
-                if len(df) < self._MIN_SIGNAL_ROWS:
+                if usable < self._MIN_SIGNAL_ROWS:
                     log.debug(f"[OHLCV] {ticker} CSV {len(df)}행 부족 → on-demand 보완")
             except Exception:
                 pass
 
         # on-demand 조회
-        lookback_days = 365 if market == "KR" else 180
-        df = get_daily_ohlcv(ticker, self.token, lookback_days=lookback_days, market=market)
+        lookback_days = 365 if market == "KR" else max(260, self._MIN_SIGNAL_ROWS + 120)
+        df, usable, source = self._fetch_signal_ready_ohlcv(ticker, market, lookback_days=lookback_days)
         if not df.empty:
             # CSV 영속 저장 (다음 실행부터 파일에서 읽음)
             try:
@@ -3768,7 +4256,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if _csv_path.exists():
                     existing = _pd.read_csv(_csv_path, parse_dates=["date"])
                     existing.columns = [c.lower() for c in existing.columns]
-                    df = _pd.concat([existing, df]).drop_duplicates("date").sort_values("date").reset_index(drop=True)
+                    df = self._merge_ohlcv_frames(existing, df)
                 df.to_csv(_csv_path, index=False, encoding="utf-8-sig")
                 log.info(f"[OHLCV on-demand 저장] {market} {ticker} → {len(df)}일")
             except Exception as _e:
@@ -3976,10 +4464,29 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.debug(f"[{market}] cross-asset 보정 적용 | {_fear_label} | "
                       f"USD/KRW {_ca_context.get('usd_krw', 0):,.0f}")
 
+        _voted_strat = _analyst_strategy_vote(_judgments)
+
+        # KR 전략 우선순위: 분석가 다수결 전략을 맨 앞으로 올린 뒤 기본 순서 유지.
+        # continuation은 개장 초반 예외 신호라 기본 순서에 넣지 않고 별도 조건으로만 허용한다.
+        if market == "KR":
+            _kr_base = [
+                "opening_range_pullback",
+                "gap_pullback",
+                "momentum",
+                "mean_reversion",
+                "volatility_breakout",
+            ]
+            if _voted_strat and _voted_strat in _kr_base:
+                _kr_strat_list = [_voted_strat] + [s for s in _kr_base if s != _voted_strat]
+            else:
+                _kr_strat_list = _kr_base
+            log.debug(f"[KR 전략] 투표={_voted_strat} 시도순서={_kr_strat_list}")
+        else:
+            _kr_strat_list = []
+
         # US 전략 우선순위: 분석가 투표 전략 → mean_reversion → gap_pullback
         # momentum/VB 모두 disabled이므로 base는 mean_reversion, gap_pullback 고정
         if market == "US":
-            _voted_strat = _analyst_strategy_vote(_judgments)
             _us_base = ["opening_range_pullback", "mean_reversion", "gap_pullback"]
             if _voted_strat and _voted_strat not in _us_base:
                 _us_strat_list = [_voted_strat] + _us_base
@@ -4189,6 +4696,47 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                     log.debug(f"  [{ticker}] HALT 모드 — 신규진입 스킵")
                     continue
+
+                _norm_trade_ready = self._trade_ready_set(market)
+                _watch_bucket = "TRADE_READY"
+                _watch_only_reason = ""
+                _soft_watch_candidate = False
+                if not self._is_trade_ready_ticker(market, ticker):
+                    _watch_bucket = self._watch_only_bucket(market, ticker)
+                    _watch_only_reason = self._watch_only_reason_text(market, ticker)
+                    if self._can_recheck_soft_watch_only(market, ticker, mode):
+                        _soft_watch_candidate = True
+                    else:
+                        analysis_log.info(
+                            f"[skip {market}] {ticker} watch_only",
+                            extra={"extra": {
+                                "event": "entry_skip",
+                                "market": market,
+                                "ticker": ticker,
+                                "reason": "watch_only",
+                                "price": float(price),
+                                "mode": mode,
+                                "detail": _watch_only_reason,
+                                "select_reason": _watch_only_reason,
+                                "watch_status": f"WATCH_ONLY_{_watch_bucket}",
+                                "watch_bucket": _watch_bucket,
+                                "trade_ready": list(_norm_trade_ready),
+                            }},
+                        )
+                        if _ML_DB_ENABLED:
+                            _ml_write_eval(
+                                ticker, price, {}, "SKIPPED",
+                                block_reason_="watch_only",
+                                diag_json_={
+                                    "trade_ready": list(_norm_trade_ready),
+                                    "watch_only_reason": _watch_only_reason,
+                                    "watch_bucket": _watch_bucket,
+                                },
+                            )
+                        log.debug(
+                            f"  [{ticker}] WATCH_ONLY({ _watch_bucket }) — trade_ready 아님 → 신규진입 스킵"
+                        )
+                        continue
 
                 # 인버스 ETF는 약세(MILD_BEAR 이하) 모드에서만 매수 허용
                 _INVERSE = {"SQQQ", "114800"}
@@ -4488,6 +5036,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         p["or_formed"] = bool(self._or_formed.get(ticker, False))
                     return p
 
+                _recommended_strategy = self._recommended_strategy_for_ticker(market, ticker)
+                _ticker_kr_strat_list = self._prioritize_strategy_order(market, ticker, _kr_strat_list)
+                _ticker_us_strat_list = self._prioritize_strategy_order(market, ticker, _us_strat_list)
+                if _recommended_strategy:
+                    _selected_order = _ticker_kr_strat_list if market == "KR" else _ticker_us_strat_list
+                    log.debug(
+                        f"[selection_meta] {market} {ticker} recommended_strategy={_recommended_strategy} "
+                        f"order={_selected_order}"
+                    )
+
                 def _orp_detail(_df, _i, _p):
                     if _p.get("disabled"):
                         return f"OR눌림: 전략 비활성({market} {mode})"
@@ -4538,12 +5096,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     _vol_avg = float(_row.get("vol_avg20", 0) or 0)
                     _gap = float(_row.get("gap_pct", 0) or 0) / 100.0
                     _vol_ratio = float(_row.get("volume", 0) or 0) / _vol_avg if _vol_avg else 0.0
-                    _pullback = float(_row.get("low", 0) or 0) >= float(_row.get("open", 0) or 0) * 0.995
+                    _o = float(_row.get("open", 0) or 0)
+                    _h = float(_row.get("high", 0) or 0)
+                    _l = float(_row.get("low", 0) or 0)
+                    _c = float(_row.get("close", 0) or 0)
+                    _pb_min = float(_p.get("opening_pullback_min_pct", 0.006) if _in_opening
+                                    else _p.get("pullback_min_pct", 0.010))
+                    _pb_max = float(_p.get("opening_pullback_max_pct", 0.050) if _in_opening
+                                    else _p.get("pullback_max_pct", 0.040))
+                    _pb_depth = ((_h - _l) / _h) if _h > 0 else 0.0
+                    _open_dd = ((_o - _l) / _o) if _o > 0 and _l < _o else 0.0
+                    _open_dd_max = float(_p.get("open_drawdown_max_pct", 0.025))
+                    _recovered = (
+                        _l > 0
+                        and _c >= _l * (1 + float(_p.get("recovery_min_pct", 0.003)))
+                        and _c >= _o * (1 - float(_p.get("open_reclaim_buffer_pct", 0.003)))
+                    )
+                    _pullback = _pb_min <= _pb_depth <= _pb_max and _open_dd <= _open_dd_max and _recovered
                     _prefix = "갭눌림(장초)" if _in_opening else "갭눌림"
                     return (
                         f"{_prefix}: 갭={_gap*100:.2f}%(목표>{_gap_min*100:.1f}%){'✓' if _gap > _gap_min else '✗'}"
                         f" vol={_vol_ratio:.2f}(목표>{_vol_mult:.1f}){'✓' if _vol_ratio > _vol_mult else '✗'}"
-                        f" 눌림={'✓' if _pullback else '✗'}"
+                        f" 눌림={_pb_depth*100:.2f}%"
+                        f"(목표 {_pb_min*100:.1f}~{_pb_max*100:.1f}%){'✓' if _pullback else '✗'}"
+                        f" 회복={'✓' if _recovered else '✗'}"
                     )
 
                 def _mr_detail(_df, _i, _p):
@@ -4674,7 +5250,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         reasons.append("gap_insufficient")
 
                     # 6. 눌림 조건 미충족
-                    if "눌림=✗" in detail:
+                    if _re.search(r"눌림=[^|]*✗", detail):
                         reasons.append("pullback_missing")
 
                     # 7. 신고가/추세 부족
@@ -4726,38 +5302,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if market == "KR":
                     orp_p = _ap("opening_range_pullback")
                     _intraday_log_row_id = _log_or_probe(orp_p)
-                    if orp_sig(sig_df, i, orp_p):
-                        signal_fired = True
-                        strategy_name = "opening_range_pullback"
-                        params = orp_p
-                    else:
-                        gap_p = _ap("gap_pullback")
-                        if gap_sig(sig_df, i, gap_p):
-                            signal_fired = True
-                            strategy_name = "gap_pullback"
-                            params = gap_p
-                        else:
-                            mom_p = _ap("momentum")
-                            _cont_window_max = float(_ap("continuation").get("cont_entry_max_min", 45) or 45)
+                    gap_p = _ap("gap_pullback")
+                    mom_p = _ap("momentum")
+                    mr_p = _ap("mean_reversion")
+                    vb_p = _ap("volatility_breakout")
+                    _kr_dispatch = {
+                        "opening_range_pullback": (orp_sig, orp_p),
+                        "gap_pullback": (gap_sig, gap_p),
+                        "momentum": (mom_sig, mom_p),
+                        "mean_reversion": (mr_sig, mr_p),
+                        "volatility_breakout": (vb_sig, vb_p),
+                    }
+                    _cont_window_max = float(_ap("continuation").get("cont_entry_max_min", 45) or 45)
+                    for _strat_name in _ticker_kr_strat_list:
+                        _sig_fn, _p = _kr_dispatch[_strat_name]
+                        if _strat_name == "momentum":
                             _momentum_ready = self._market_elapsed_min(market) >= _cont_window_max
                             if _momentum_ready:
                                 kr_momentum_diag = mom_diag(sig_df, i, mom_p)
-                            if _momentum_ready and mom_sig(sig_df, i, mom_p):
-                                signal_fired = True
-                                strategy_name = "momentum"
-                                params = mom_p
-                            else:
-                                mr_p = _ap("mean_reversion")
-                                if mr_sig(sig_df, i, mr_p):
-                                    signal_fired = True
-                                    strategy_name = "mean_reversion"
-                                    params = mr_p
-                                else:
-                                    vb_p = _ap("volatility_breakout")
-                                    if vb_sig(sig_df, i, vb_p):
-                                        signal_fired = True
-                                        strategy_name = "volatility_breakout"
-                                        params = vb_p
+                            if not _momentum_ready:
+                                continue
+                        if _sig_fn(sig_df, i, _p):
+                            signal_fired = True
+                            strategy_name = _strat_name
+                            params = _p
+                            break
                     # continuation entry — 모든 전략 실패 후 개장 초반 갭 연속 상승 시
                     if not signal_fired and not self._continuation_used.get(ticker, False):
                         _cont_p = _ap("continuation")
@@ -4821,7 +5390,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "gap_pullback":       (gap_sig,  _ap("gap_pullback")),
                         "volatility_breakout":(vb_sig,   _ap("volatility_breakout")),
                     }
-                    for _strat_name in _us_strat_list:
+                    for _strat_name in _ticker_us_strat_list:
                         _sig_fn, _p = _strat_dispatch.get(
                             _strat_name, (vb_sig, _ap("volatility_breakout"))
                         )
@@ -4853,6 +5422,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 # 활성도 추적 — 시장별 인라인 교체 기준으로 활용
                 _scan_interval_min = self._entry_scan_interval_sec(market) / 60.0
                 if signal_fired:
+                    if _soft_watch_candidate:
+                        self._promote_trade_ready_ticker(
+                            market,
+                            ticker,
+                            strategy_name=strategy_name,
+                            trigger="soft_watch_signal",
+                        )
                     self._ticker_no_signal_cycles[ticker] = 0
                     self._ticker_no_signal_minutes[ticker] = 0.0
                     if strategy_name == "opening_range_pullback":
@@ -4870,6 +5446,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         if market == "KR"
                         else self._ticker_no_signal_cycles[ticker] >= _US_NO_SIGNAL_SWAP_CYCLES
                     )
+                    if _watch_bucket in ("SOFT", "RECOVERY"):
+                        _swap_due = False
                     if (not _holding and _swap_due):
                         _universe = self.today_judgment.get("universe_tickers", [])
                         _current  = set(self.today_tickers.get(market, []))
@@ -5209,7 +5787,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     _ep_detail = {}
 
                 # ── entry_priority cutoff (Phase 2 — env/텔레그램 ON/OFF) ────
-                if self.entry_priority_cutoff_enabled and _ep_score < self.entry_priority_cutoff:
+                if self._is_entry_priority_blocked(_ep_score):
                     log.info(
                         f"  [{ticker}] entry_priority cutoff: "
                         f"score={_ep_score:.3f} < {self.entry_priority_cutoff} → 진입 보류"
@@ -5219,6 +5797,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             ticker, price, sig_df.iloc[i].to_dict(), "SKIPPED",
                             block_reason_="entry_priority_cutoff",
                             diag_json_={"score": _ep_score, "cutoff": self.entry_priority_cutoff},
+                            extra_fields_={"entry_priority_score": float(_ep_score)},
                         )
                     continue
 
@@ -5358,6 +5937,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 effective_size = max(10, min(100, int(size_pct * size_mult)))
                 if _momentum_atr_size_cap is not None:
                     effective_size = min(effective_size, _momentum_atr_size_cap)
+                _selection_size_cap, _selection_size_reasons = self._selection_size_cap_pct(market, ticker)
+                if _selection_size_cap is not None and effective_size > _selection_size_cap:
+                    log.info(
+                        f"  [{ticker}] selection_meta cap: "
+                        f"{effective_size}% -> {_selection_size_cap}% "
+                        f"({', '.join(_selection_size_reasons)})"
+                    )
+                    effective_size = max(1, min(100, _selection_size_cap))
                 # ── 신호 수집 → 사이클 완료 후 score 정렬 후 주문 실행 ────────
                 _pending_signals.append({
                     "ticker":          ticker,
@@ -5563,15 +6150,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     _ml_decision_id = -1
                     if _ML_DB_ENABLED:
                         try:
-                            _ml_decision_id = _ml_write_eval(
-                                _s_tk, _s_px, _s_row, "BUY_SIGNAL",
-                                strategy_used_=_s_strat, fired_strategy_=_s_strat,
-                                diag_json_={
-                                    "selected_reason": _s_sr or "",
-                                    "tp_pct": float(_s_tp), "sl_pct": float(_s_sl),
-                                    "entry_priority_score": _s_ep,
-                                },
-                            )
+                                _ml_decision_id = _ml_write_eval(
+                                    _s_tk, _s_px, _s_row, "BUY_SIGNAL",
+                                    strategy_used_=_s_strat, fired_strategy_=_s_strat,
+                                    diag_json_={
+                                        "selected_reason": _s_sr or "",
+                                        "tp_pct": float(_s_tp), "sl_pct": float(_s_sl),
+                                        "entry_priority_score": _s_ep,
+                                        "selection_recommended_strategy": self._recommended_strategy_for_ticker(market, _s_tk),
+                                        "selection_risk_tags": self._risk_tags_for_ticker(market, _s_tk),
+                                        "selection_size_cap_pct": self._selection_size_cap_pct(market, _s_tk)[0],
+                                    },
+                                    extra_fields_={"entry_priority_score": float(_s_ep)},
+                                )
                         except Exception:
                             pass
                     try:
@@ -5882,17 +6473,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         tune_cands = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     if tune_cands:
                         self._log_screen_candidates(market, tune_cands, "tuning_rescreen")
+                        tune_cands = self._filter_candidates_by_history(tune_cands, market)
                         digest_p = self.today_judgment.get("digest_prompt", "")
                         tune_tickers, tune_reasons = select_tickers(market, digest_p, new_mode, tune_cands,
                                                                     market_change_pct=self._get_market_change_pct(market),
                                                                     secondary_change_pct=self._get_secondary_change_pct(market))
+                        tune_meta = self._apply_selection_meta(market, tune_tickers)
                         self.today_tickers[market] = tune_tickers
                         self.today_ticker_reasons[market] = tune_reasons or {}
                         self.today_judgment["tickers"] = tune_tickers
                         self.today_judgment["universe_tickers"] = [
                             c.get("ticker") for c in tune_cands if c.get("ticker")
                         ]
-                        log.info(f"[튜너 종목갱신 완료] {market}: {tune_tickers}")
+                        log.info(
+                            f"[튜너 종목갱신 완료] {market}: watch={tune_tickers} "
+                            f"trade_ready={tune_meta.get('trade_ready', [])}"
+                        )
                         tune_excluded = [c.get("ticker", "") for c in tune_cands if c.get("ticker", "") not in tune_tickers]
                         _mode_order_limit = self.risk.calc_order_budget(self.today_judgment.get("consensus", {}).get("size", 50))
                         watchlist_alert(market, new_mode, tune_tickers, tune_reasons, tune_excluded, trigger="rescreen",
@@ -6002,8 +6598,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
             # 1순위: 메모리 캐시
             cached = self._ohlcv_cache.get(ticker)
-            if cached is not None and len(cached) >= _MIN:
-                continue
+            if cached is not None:
+                if len(cached) >= _MIN + 60:
+                    continue
+                if self._signal_usable_rows(cached) >= _MIN:
+                    continue
             # 2순위: CSV 행 수 직접 확인 (헤더 포함 N+1행만 읽음)
             _csv = _price_base / market.lower() / f"{market.lower()}_{ticker}.csv"
             if _csv.exists():
@@ -6034,26 +6633,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             """
             try:
                 _csv_path = _price_base / market.lower() / f"{market.lower()}_{ticker}.csv"
-                df = get_daily_ohlcv(ticker, self.token, lookback_days=500, market=market)
+                df, usable, source = self._fetch_signal_ready_ohlcv(
+                    ticker,
+                    market,
+                    lookback_days=max(500, _MIN + 120),
+                )
                 if df.empty or len(df) < 10:
                     return ticker, "failed"
                 _csv_path.parent.mkdir(parents=True, exist_ok=True)
                 if _csv_path.exists():
                     existing = _pd.read_csv(_csv_path, parse_dates=["date"])
                     existing.columns = [c_.lower() for c_ in existing.columns]
-                    df = (_pd.concat([existing, df])
-                          .drop_duplicates("date")
-                          .sort_values("date")
-                          .reset_index(drop=True))
+                    df = self._merge_ohlcv_frames(existing, df)
                 df.to_csv(_csv_path, index=False, encoding="utf-8-sig")
                 self._ohlcv_cache.pop(ticker, None)
                 self._ohlcv_cache_time.pop(ticker, None)
                 self._hist_fill_last_ts[ticker] = time.time()
                 # 저장 후 실제 신호 계산 가능 여부 확인
-                usable = len(calc_all(df))
                 if usable >= self._MIN_SIGNAL_ROWS:
-                    return ticker, "ok"
-                return ticker, f"saved_insufficient({usable}usable/{len(df)}raw)"
+                    return ticker, f"ok({source},{usable}usable/{len(df)}raw)"
+                return ticker, f"saved_insufficient({source},{usable}usable/{len(df)}raw)"
             except Exception as e:
                 log.debug(f"[동기 보강 실패] {ticker}: {e}")
                 return ticker, "failed"
@@ -6081,7 +6680,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 break
             try:
                 ticker, status = result_q.get(timeout=remaining)
-                if status == "ok":
+                if status.startswith("ok"):
                     filled_ok.add(ticker)
                     log.info(f"[동기 보강 신호가능] {market} {ticker}")
                 elif status.startswith("saved_insufficient"):
@@ -6132,7 +6731,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self._hist_fill_last_ts[ticker] = time.time()
                 _price_base = _Path(__file__).parent / "data" / "price"
                 _csv_path = _price_base / market.lower() / f"{market.lower()}_{ticker}.csv"
-                df = get_daily_ohlcv(ticker, self.token, lookback_days=500, market=market)
+                df, usable, source = self._fetch_signal_ready_ohlcv(
+                    ticker,
+                    market,
+                    lookback_days=max(500, self._MIN_SIGNAL_ROWS + 120),
+                )
                 if df.empty or len(df) < 10:
                     log.debug(f"[히스토리 보강 실패] {market} {ticker} — {len(df)}raw행")
                 else:
@@ -6141,10 +6744,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         if _csv_path.exists():
                             existing = _pd.read_csv(_csv_path, parse_dates=["date"])
                             existing.columns = [c.lower() for c in existing.columns]
-                            df = (_pd.concat([existing, df])
-                                  .drop_duplicates("date")
-                                  .sort_values("date")
-                                  .reset_index(drop=True))
+                            df = self._merge_ohlcv_frames(existing, df)
                         df.to_csv(_csv_path, index=False, encoding="utf-8-sig")
                         self._ohlcv_cache.pop(ticker, None)
                         self._ohlcv_cache_time.pop(ticker, None)
@@ -6194,8 +6794,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             """높을수록 교체 우선 (무신호 지속 + invalid price 누적)"""
             if t in protected:
                 return -999
-            return (self._ticker_no_signal_cycles.get(t, 0)
-                    + self._invalid_price_count.get(t, 0) * 2)
+            score = (
+                self._ticker_no_signal_cycles.get(t, 0)
+                + self._invalid_price_count.get(t, 0) * 2
+            )
+            bucket = self._watch_only_bucket(market, t)
+            if bucket == "HARD":
+                score += 4
+            elif bucket == "SOFT":
+                score -= 2
+            elif bucket == "RECOVERY":
+                score -= 4
+            return score
 
         non_protected = [t for t in current_tickers if t not in protected]
         if not non_protected:
@@ -6240,12 +6850,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     market_change_pct=self._get_market_change_pct(market),
                                                     secondary_change_pct=self._get_secondary_change_pct(market))
 
-        replace_in = [t for t in new_selected if t not in set(current_tickers)][:n_replace]
+        new_meta = get_last_selection_meta() or {}
+        candidate_trade_ready = self._selection_replace_candidates(new_meta, new_selected)
+        replace_in = [t for t in candidate_trade_ready if t not in set(current_tickers)][:n_replace]
         if replace_in:
             try:
                 _pr_date = datetime.now(KST).strftime("%Y-%m-%d")
                 _tsdb_ids = tsdb.insert_batch(
-                    _pr_date, market, "partial", replace_in, new_cands, new_reasons, mode
+                    _pr_date, market, "partial", replace_in, new_cands, new_reasons, mode,
+                    selection_meta=new_meta,
                 )
                 self._tsdb_selection_ids.setdefault(market, {}).update(_tsdb_ids)
             except Exception as _te:
@@ -6257,6 +6870,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         final = [t for t in current_tickers if t not in set(replace_out)] + replace_in
         self.today_tickers[market] = final
         self.today_judgment["tickers"] = final
+        current_ready = [
+            t for t in self.trade_ready_tickers.get(market, [])
+            if t in final and t not in set(replace_out)
+        ]
+        final_ready = list(dict.fromkeys(current_ready + [t for t in replace_in if t in final]))
+        final_meta = {
+            **(self.selection_meta.get(market) or {}),
+            "watchlist": final,
+            "trade_ready": final_ready,
+            "reasons": {**(self.today_ticker_reasons.get(market, {}) or {}), **(new_reasons or {})},
+            "veto": new_meta.get("veto", {}),
+            "risk_tags": new_meta.get("risk_tags", {}),
+            "recommended_strategy": new_meta.get("recommended_strategy", {}),
+            "max_position_pct": new_meta.get("max_position_pct", {}),
+        }
+        self.selection_meta[market] = final_meta
+        self.trade_ready_tickers[market] = final_ready
+        self.today_ticker_reasons[market] = final_meta["reasons"]
+        self.today_judgment["selection_meta"] = final_meta
+        self.today_judgment["trade_ready_tickers"] = final_ready
 
         # 교체된 종목 쿨다운 등록 (60분)
         for t in replace_out:
@@ -6341,13 +6974,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 ensure_ascii=False,
             )
 
-            portfolio_info = {
-                "cash":          round(self.risk.cash),
-                "total_equity":  round(self._kis_total_equity_krw()),
-                "max_order_krw": round(self.risk.max_order_krw),
-                "n_positions":   len(self.risk.positions),
-                "max_positions": HARD_RULES["max_positions"],
-            }
+            portfolio_info = self._build_portfolio_info()
             new_judgments = get_three_judgments(
                 digest_prompt, brain_summary, correction,
                 market=market, portfolio_info=portfolio_info,
@@ -6432,13 +7059,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                      new_consensus["mode"], reinvoke_cands,
                                                      market_change_pct=self._get_market_change_pct(market),
                                                      secondary_change_pct=self._get_secondary_change_pct(market))
+                        reinvoke_meta = self._apply_selection_meta(market, new_tickers)
                         self.today_tickers[market] = new_tickers
                         self.today_ticker_reasons[market] = new_ticker_reasons or {}
                         self.today_judgment["tickers"] = new_tickers
                         self.today_judgment["universe_tickers"] = [
                             c.get("ticker") for c in reinvoke_cands if c.get("ticker")
                         ]
-                        log.info(f"[종목 재선택 완료] {market}: {new_tickers}")
+                        log.info(
+                            f"[종목 재선택 완료] {market}: watch={new_tickers} "
+                            f"trade_ready={reinvoke_meta.get('trade_ready', [])}"
+                        )
                         reinvoke_excluded = [c.get("ticker", "") for c in reinvoke_cands if c.get("ticker", "") not in new_tickers]
                         _mode_order_limit = self.risk.calc_order_budget(new_consensus.get("size", 50))
                         watchlist_alert(market, new_consensus["mode"], new_tickers, new_ticker_reasons, reinvoke_excluded, trigger="rescreen",
@@ -6502,6 +7133,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         mode = self.today_judgment.get("consensus", {}).get("mode", "")
         event = {
             "timestamp": datetime.now(KST).isoformat(timespec="seconds"),
+            "session_date": self._current_session_date_str(market),
             "market": market,
             "action": action,
             "ticker": ticker,
@@ -6534,6 +7166,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             record = {
                 "type":      _type_map.get(action, action),
                 "timestamp": event["timestamp"],
+                "session_date": event["session_date"],
                 "market":    market,
                 "ticker":    ticker,
                 "mode":      mode,
@@ -6654,7 +7287,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 json.dump({
                     "market":         market,
                     "updated_at":     datetime.now(KST).strftime("%H:%M:%S"),
-                    "trading_date":   datetime.now(KST).strftime("%Y-%m-%d"),
+                    "trading_date":   self._current_session_date_str(market),
                     "mode":           self.today_judgment.get("consensus", {}).get("mode", ""),
                     "mode_size_pct":  self.today_judgment.get("consensus", {}).get("size", 0),
                     "max_order_krw":  round(self.risk.max_order_krw, 0),
@@ -6738,6 +7371,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _log_flow("info", f"[{market}] session_close")
         if self.current_market != market:
             return
+        today = self._current_session_date_str(market)
 
         # 장 마감 직전 마지막으로 브로커 잔고/체결을 동기화해 미체결 오판을 줄인다.
         try:
@@ -6852,7 +7486,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as _pse:
             log.warning(f"[장후 포지션 리뷰 오류] {market}: {_pse}")
 
-        today = date.today().strftime("%Y-%m-%d")
         session_trades = self._filter_trades_for_market(self.risk.trade_log, market)
         # order_no 기준 중복 제거 (재시작 등으로 trade_log에 동일 체결이 2회 기록되는 케이스)
         _seen_orders: set = set()
@@ -6881,7 +7514,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         continue
                     if _rec.get("market") != market:
                         continue
-                    _ts = str(_rec.get("timestamp", "") or "")[:10]
+                    _ts = str(_rec.get("session_date") or str(_rec.get("timestamp", "") or "")[:10] or "")
                     if _ts != today:
                         continue
                     _ono = str(_rec.get("order_no", "") or "").strip()
@@ -7014,6 +7647,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 sum(t.get("pnl_pct", 0) for t in sell_trades) / len(sell_trades)
                 if sell_trades else 0.0
             )
+            _pt_strategy_outcomes = {}
+            for _trade in sell_trades:
+                _strat = str(_trade.get("strategy") or "unknown")
+                _bucket = _pt_strategy_outcomes.setdefault(
+                    _strat,
+                    {"signals": 0, "entries": 0, "wins": 0, "losses": 0, "_pnls": [], "total_pnl_krw": 0.0},
+                )
+                _pnl = float(_trade.get("pnl", 0) or 0)
+                _bucket["entries"] += 1
+                _bucket["signals"] += 1
+                _bucket["wins"] += 1 if _pnl > 0 else 0
+                _bucket["losses"] += 0 if _pnl > 0 else 1
+                _bucket["_pnls"].append(float(_trade.get("pnl_pct", 0) or 0))
+                _bucket["total_pnl_krw"] += _pnl
+            for _bucket in _pt_strategy_outcomes.values():
+                _pnls = _bucket.pop("_pnls", [])
+                _bucket["avg_pnl_pct"] = (sum(_pnls) / len(_pnls)) if _pnls else 0.0
             _param_tuner.update_outcomes(
                 session_ids=_pt_ids,
                 signals=_pt_signals,
@@ -7024,6 +7674,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 total_pnl_krw=float(actual.get("pnl_krw", 0)),
                 market=market,
                 session_date=today,
+                strategy_outcomes=_pt_strategy_outcomes,
             )
             _param_tuner.clear_cache(market)
             log.info(f"[param_tuner] {market} outcome 기록 완료 (ids={len(_pt_ids)}개, 소급 포함)")
@@ -7038,6 +7689,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception as _e:
                 log.warning(f"[KR 스크리너 캐시] session_close 저장 실패: {_e}")
 
+
+        if hasattr(self, "_active_session_date") and isinstance(self._active_session_date, dict):
+            self._active_session_date[market] = None
 
 def _in_session_now(market: str) -> bool:
     """현재 KST 시각이 해당 시장 세션 중인지 확인"""

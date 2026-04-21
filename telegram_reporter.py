@@ -15,6 +15,7 @@ import requests
 
 from credit_tracker import summary as credit_summary
 from logger import get_trading_logger
+from bot.log_sanitizer import mask_secrets
 
 log = get_trading_logger()
 KST = ZoneInfo("Asia/Seoul")
@@ -172,10 +173,10 @@ def send(text: str, parse_mode: str = "HTML") -> bool:
             return True
         except Exception as e:
             if attempt == 0:
-                log.debug(f"텔레그램 전송 재시도: {e}")
+                log.debug(f"텔레그램 전송 재시도: {mask_secrets(e)}")
                 time.sleep(3)
             else:
-                log.error(f"텔레그램 전송 실패: {e}")
+                log.error(f"텔레그램 전송 실패: {mask_secrets(e)}")
     return False
 
 

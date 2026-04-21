@@ -217,15 +217,47 @@ def update_outcomes(
     total_pnl_krw: float,
     market: str = "",
     session_date: str = "",
+    strategy_outcomes: dict[str, dict] | None = None,
 ) -> None:
     """세션 종료 후 거래 결과 업데이트.
 
     session_ids가 비어있어도 market+session_date로 당일 NULL 행을 일괄 업데이트.
     (봇 재시작으로 _session_registry가 유실된 경우 대비)
     """
+    def _vals(outcome: dict | None) -> list:
+        if not outcome:
+            return [0, 0, 0, 0, 0.0, 0.0]
+        o_entries = int(outcome.get("entries", 0) or 0)
+        o_wins = int(outcome.get("wins", 0) or 0)
+        o_losses = int(outcome.get("losses", 0) or 0)
+        return [
+            int(outcome.get("signals", o_entries) or 0),
+            o_entries,
+            o_wins,
+            o_losses,
+            float(outcome.get("avg_pnl_pct", 0.0) or 0.0),
+            float(outcome.get("total_pnl_krw", 0.0) or 0.0),
+        ]
+
     try:
         with _get_conn() as conn:
-            if session_ids:
+            if session_ids and strategy_outcomes:
+                placeholders = ",".join("?" * len(session_ids))
+                rows = conn.execute(
+                    f"SELECT id, strategy FROM param_sessions WHERE id IN ({placeholders})",
+                    list(session_ids),
+                ).fetchall()
+                for sid, strategy in rows:
+                    conn.execute(
+                        """
+                        UPDATE param_sessions
+                        SET signals_count=?, entries_count=?, wins=?, losses=?,
+                            avg_pnl_pct=?, total_pnl_krw=?
+                        WHERE id=?
+                        """,
+                        _vals(strategy_outcomes.get(strategy)) + [sid],
+                    )
+            elif session_ids:
                 placeholders = ",".join("?" * len(session_ids))
                 conn.execute(
                     f"""
@@ -239,17 +271,38 @@ def update_outcomes(
                 )
             elif market and session_date:
                 session_key = _session_key_for(market, session_date)
-                # 재시작으로 session_ids 유실 → 날짜+market 기준 NULL 행 일괄 업데이트
-                conn.execute(
-                    """
-                    UPDATE param_sessions
-                    SET signals_count=?, entries_count=?, wins=?, losses=?,
-                        avg_pnl_pct=?, total_pnl_krw=?
-                    WHERE market=? AND session_date=? AND session_key=? AND entries_count IS NULL
-                    """,
-                    [signals, entries, wins, losses, avg_pnl_pct, total_pnl_krw,
-                     market, session_date, session_key],
-                )
+                if strategy_outcomes:
+                    rows = conn.execute(
+                        """
+                        SELECT id, strategy
+                        FROM param_sessions
+                        WHERE market=? AND session_date=? AND session_key=?
+                          AND entries_count IS NULL
+                        """,
+                        [market, session_date, session_key],
+                    ).fetchall()
+                    for sid, strategy in rows:
+                        conn.execute(
+                            """
+                            UPDATE param_sessions
+                            SET signals_count=?, entries_count=?, wins=?, losses=?,
+                                avg_pnl_pct=?, total_pnl_krw=?
+                            WHERE id=?
+                            """,
+                            _vals(strategy_outcomes.get(strategy)) + [sid],
+                        )
+                else:
+                    # 재시작으로 session_ids 유실 → 날짜+market 기준 NULL 행 일괄 업데이트
+                    conn.execute(
+                        """
+                        UPDATE param_sessions
+                        SET signals_count=?, entries_count=?, wins=?, losses=?,
+                            avg_pnl_pct=?, total_pnl_krw=?
+                        WHERE market=? AND session_date=? AND session_key=? AND entries_count IS NULL
+                        """,
+                        [signals, entries, wins, losses, avg_pnl_pct, total_pnl_krw,
+                         market, session_date, session_key],
+                    )
                 log.info(f"[param_tuner] {market} {session_date} outcome 소급 업데이트 (재시작 복구)")
     except Exception as e:
         log.warning("[param_tuner] update_outcomes 오류: %s", e)

@@ -1,12 +1,32 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, time as dt_time
+from typing import Optional
 from dotenv import load_dotenv
 from logger import get_trading_logger
 
 load_dotenv()
 log = get_trading_logger()
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover - python<3.9 fallback
+    from datetime import timezone
+
+    class ZoneInfo:  # type: ignore
+        def __new__(cls, _name: str):
+            return timezone(timedelta(hours=9))
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+def _market_session_date_local(market: str):
+    now_dt = datetime.now(KST)
+    d = now_dt.date()
+    if market == "US" and now_dt.time() < dt_time(5, 0):
+        return d - timedelta(days=1)
+    return d
 
 # 수수료율 (근사값)
 # KR 매수: 0.015%, KR 매도: 0.015% + 증권거래세 0.18% = 0.195%
@@ -15,6 +35,16 @@ FEE_RATES = {
     "KR": {"buy": 0.00015, "sell": 0.00195},
     "US": {"buy": 0.00015, "sell": 0.00015},
 }
+
+AUTO_PROFIT_TRAILING_ENABLED = os.getenv("AUTO_PROFIT_TRAILING_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+AUTO_TRAIL_TRIGGER_PCT = float(os.getenv("AUTO_TRAIL_TRIGGER_PCT", "3.0"))
+AUTO_TRAIL_PCT = float(os.getenv("AUTO_TRAIL_PCT", "0.04"))
+AUTO_BREAKEVEN_BUFFER_PCT = float(os.getenv("AUTO_BREAKEVEN_BUFFER_PCT", "0.002"))
 
 HARD_RULES = {
     "max_daily_loss_pct":   float(os.getenv("MAX_DAILY_LOSS_PCT",   "-3.0")),   # 일일 최대 손실 (%)
@@ -166,6 +196,7 @@ class RiskManager:
         tp_pct: float,
         sl_pct: float,
         max_hold: int = 1,
+        session_date: Optional[str] = None,
     ):
         cost = price * qty
         fee  = self._fee("buy", cost)
@@ -178,6 +209,7 @@ class RiskManager:
         self.total_fee += fee
         self.daily_pnl -= fee          # 매수 수수료 즉시 반영
         from datetime import datetime as _dt
+        session_date = session_date or _market_session_date_local(self.market).isoformat()
         pos = {
             "ticker": ticker,
             "entry": price,
@@ -191,6 +223,7 @@ class RiskManager:
             "max_hold": max_hold,
             "held_days": 0,
             "entry_date": date.today().isoformat(),
+            "session_date": session_date,
             "entry_time": _dt.now().isoformat(timespec="seconds"),  # 장중 보유시간 계산용
             "peak_pnl_pct": 0.0,     # 보유 중 최고 수익률 (hold_advisor 컨텍스트용)
             # 트레일링 스탑
@@ -211,6 +244,7 @@ class RiskManager:
             "qty": qty,
             "strategy": strategy,
             "date": date.today().isoformat(),
+            "session_date": session_date,
         }
         self.trade_log.append(evt)
         self.all_trade_log.append(evt)
@@ -225,6 +259,7 @@ class RiskManager:
             pos["current_price"] = prices[pos["ticker"]]
             # peak_pnl_pct 갱신
             _entry = float(pos.get("entry") or 0)
+            _cur_pnl = None
             if _entry > 0:
                 _cur_pnl = (pos["current_price"] / _entry - 1) * 100
                 if _cur_pnl > float(pos.get("peak_pnl_pct") or 0):
@@ -232,6 +267,37 @@ class RiskManager:
             # US 종목: display_current_price(USD)를 raw_prices로 갱신
             if raw_prices and pos["ticker"] in raw_prices and pos.get("display_currency") == "USD":
                 pos["display_current_price"] = float(raw_prices[pos["ticker"]] or 0)
+
+            # 수익 보호: +3% 이상이면 TP 도달 이벤트를 기다리지 않고 본전 위 트레일링 전환.
+            if (
+                AUTO_PROFIT_TRAILING_ENABLED
+                and _cur_pnl is not None
+                and _cur_pnl >= AUTO_TRAIL_TRIGGER_PCT
+                and not pos.get("trailing")
+                and pos["current_price"] > 0
+            ):
+                trail_pct = max(0.005, min(0.08, AUTO_TRAIL_PCT))
+                breakeven_sl = _entry * (1 + AUTO_BREAKEVEN_BUFFER_PCT)
+                trail_sl = pos["current_price"] * (1 - trail_pct)
+                pos["trailing"] = True
+                pos["trail_pct"] = trail_pct
+                pos["trail_sl"] = max(float(pos.get("trail_sl") or 0), breakeven_sl, trail_sl)
+                pos["tp_triggered"] = True
+                pos["tp_price"] = pos["current_price"]
+                if pos.get("display_currency") == "USD":
+                    avg_usd = float(pos.get("display_avg_price") or 0)
+                    cp_usd = float(pos.get("display_current_price") or 0)
+                    if avg_usd > 0 and cp_usd > 0:
+                        pos["trail_sl_usd"] = max(
+                            float(pos.get("trail_sl_usd") or 0),
+                            avg_usd * (1 + AUTO_BREAKEVEN_BUFFER_PCT),
+                            cp_usd * (1 - trail_pct),
+                        )
+                log.info(
+                    f"[AUTO TRAILING] {pos['ticker']} pnl={_cur_pnl:+.2f}% "
+                    f"trail={trail_pct*100:.1f}% sl={pos['trail_sl']:,.0f}"
+                )
+
             # 트레일링 모드: SL을 현재가 기준으로 끌어올림 (내려가지 않음)
             if pos.get("trailing") and pos["current_price"] > 0:
                 new_trail = pos["current_price"] * (1 - pos["trail_pct"])
@@ -327,7 +393,7 @@ class RiskManager:
                 return True
         return False
 
-    def close_position(self, ticker: str, exit_price: float, reason: str):
+    def close_position(self, ticker: str, exit_price: float, reason: str, session_date: Optional[str] = None):
         for pos in list(self.positions):
             if pos["ticker"] != ticker:
                 continue
@@ -341,6 +407,7 @@ class RiskManager:
             self.total_fee += sell_fee
             self.daily_pnl += gross_pnl - sell_fee
             self.positions.remove(pos)
+            session_date = session_date or str(pos.get("session_date") or _market_session_date_local(self.market).isoformat())
 
             closed = {
                 **pos,
@@ -356,6 +423,7 @@ class RiskManager:
                 "qty": pos["qty"],
                 "strategy": pos["strategy"],
                 "date": date.today().isoformat(),
+                "session_date": session_date,
                 "reason": reason,
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,

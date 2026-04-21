@@ -55,23 +55,31 @@ _LOG_KEYS = ("rsi_thr", "bb_thr", "vol_mult", "gap_min")
 # ── 1. 성과 통계 조회 ──────────────────────────────────────────────────────────
 
 def _query_perf(market: str, like: str, source_filter: str, days: int) -> tuple[int, int]:
-    """decisions.db에서 (win_count, total_count) 조회."""
+    """decisions.db에서 (win_count, total_count) 조회.
+
+    우선 실거래 청산 결과(pnl_pct)를 사용하고, 아직 청산 결과가 없으면
+    forward_1d를 보조 지표로 사용한다. 이렇게 해야 live BUY_SIGNAL이 적어도
+    adaptive overlay가 실제 손익을 바로 반영할 수 있다.
+    """
     try:
         with sqlite3.connect(str(_DB), timeout=5) as conn:
             rows = conn.execute(
                 f"""
-                SELECT forward_1d
+                SELECT CASE
+                         WHEN pnl_pct IS NOT NULL THEN pnl_pct
+                         ELSE forward_1d
+                       END AS perf_value
                 FROM decisions
                 WHERE market = ?
                   AND strategy_used LIKE ?
                   AND decision = 'BUY_SIGNAL'
-                  AND forward_1d IS NOT NULL
+                  AND (pnl_pct IS NOT NULL OR forward_1d IS NOT NULL)
                   AND data_source {source_filter}
                   AND session_date >= date('now', '-{days} days')
                 """,
                 (market, like),
             ).fetchall()
-        wins = sum(1 for (fwd,) in rows if fwd > 0)
+        wins = sum(1 for (perf_value,) in rows if (perf_value or 0) > 0)
         return wins, len(rows)
     except Exception:
         return 0, 0
@@ -83,7 +91,8 @@ def get_perf_stats(strategy: str, market: str, days: int = 30) -> dict:
     혼합 규칙:
       live >= 30       → live only
       10 <= live < 30  → live × 2 + backfill × 1 (가중 혼합)
-      live < 10        → backfill only
+      0 < live < 10    → backfill 우선, 없으면 live_small
+      live = 0         → backfill only
       데이터 없음      → win_rate=None, n=0
     """
     if not _DB.exists():
@@ -98,12 +107,12 @@ def get_perf_stats(strategy: str, market: str, days: int = 30) -> dict:
 
     bf_wins, bf_n = _query_perf(market, like, "= 'backfill'", days * 3)
 
-    if live_n < 10 and bf_n == 0:
-        return {"win_rate": None, "n": 0, "source": "none"}
-
     if live_n < 10:
         if bf_n == 0:
-            return {"win_rate": None, "n": 0, "source": "none"}
+            if live_n == 0:
+                return {"win_rate": None, "n": 0, "source": "none"}
+            wr = live_wins / live_n * 100
+            return {"win_rate": round(wr, 1), "n": live_n, "source": "live_small"}
         wr = bf_wins / bf_n * 100
         return {"win_rate": round(wr, 1), "n": bf_n, "source": "backfill"}
 

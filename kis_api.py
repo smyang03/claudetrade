@@ -1813,7 +1813,20 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
     """
     import logging as _log
     import time as _time
+    from bot.candidate_policy import filter_tradable_candidates
     _logger = _log.getLogger("trading_system")
+
+    def _apply_product_filter(candidates: list[dict], label: str) -> list[dict]:
+        filtered, removed = filter_tradable_candidates(candidates, "KR")
+        if removed:
+            _logger.info(
+                f"[KR 스크리너 상품필터 {label}] 제외 {len(removed)}개: "
+                + ", ".join(
+                    f"{c.get('ticker')}({c.get('name','')}/{c.get('blocked_reason','')})"
+                    for c in removed[:12]
+                )
+            )
+        return filtered
 
     from datetime import datetime as _dt
     from zoneinfo import ZoneInfo
@@ -1867,7 +1880,7 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
                 f"[KR 스크리너 장전] 최종 {len(merged[:top_n])}종목 "
                 f"(B라이브={len(live)}, A캐시={len(cached)})"
             )
-            return merged[:top_n]
+            return _apply_product_filter(merged, "premarket")[:top_n]
 
         else:
             # ── 장중: 정상 스크리닝 + 캐시 저장 ─────────────────────────────
@@ -1909,18 +1922,18 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
                     if len(result) >= 20:
                         break
 
-            return result
+            return _apply_product_filter(result, "intraday")[:top_n]
 
     except Exception as e:
         _logger.warning(f"[KR 스크리너] API 실패 → 캐시·폴백: {e}")
         # API 완전 실패 시 캐시 → 하드코딩 순
         cached = _load_kr_screen_cache()
         if cached:
-            return cached[:top_n]
-        return [
+            return _apply_product_filter(cached, "cache")[:top_n]
+        return _apply_product_filter([
             {"ticker": t, "name": t, "price": 0, "change_rate": 0.0, "volume": 0, "vol_ratio": 1.0}
             for t in _KR_FALLBACK_UNIVERSE
-        ]
+        ], "fallback")[:top_n]
 
 
 _US_SCREEN_CACHE_PATH = get_runtime_path("state", "us_screen_cache.json")

@@ -113,7 +113,7 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     d["pos52"]    = (d["close"] - d["low52"]) / denom52 * 100
     d["gap"]      = (d["open"] - d["close"].shift(1)) / d["close"].shift(1) * 100
     d["vol_ratio"]= d["volume"] / d["vol_avg"]
-    d["change_pct"]= d["close"].pct_change() * 100
+    d["change_pct"]= d["close"].pct_change(fill_method=None) * 100
     return d
 
 

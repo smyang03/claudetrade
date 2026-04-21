@@ -1,32 +1,16 @@
 """
-update_data.py - 매일 장 시작 전 데이터 최신화 마스터 스크립트
+Daily data refresh entrypoint.
 
-실행 시점 권장 (각 시장 하루 2회):
-  KR 장 시작 전: 08:30  → 전일 종가까지 업데이트 + forward return 채우기
-  KR 장 종료 후: 16:00  → 당일 종가 확정 + forward return 채우기
-  US 장 시작 전: 22:00  → 전일 종가까지 업데이트 + forward return 채우기
-  US 장 종료 후: 07:00  → 당일 종가 확정 + forward return 채우기
-
-Windows 작업 스케줄러 등록 (conda upbit 환경 사용):
-  schtasks /create /tn "claudetrade_kr_open"  /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market KR" /sc daily /st 08:30
-  schtasks /create /tn "claudetrade_kr_close" /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market KR" /sc daily /st 16:00
-  schtasks /create /tn "claudetrade_us_open"  /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market US" /sc daily /st 22:00
-  schtasks /create /tn "claudetrade_us_close" /tr "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe E:\\code\\claudetrade\\update_data.py --market US" /sc daily /st 07:00
-
-  기존 태스크 삭제 후 재등록:
-  schtasks /delete /tn "claudetrade_kr" /f
-  schtasks /delete /tn "claudetrade_us" /f
-
-수동 실행:
-  python update_data.py          # 전체
-  python update_data.py --market KR
-  python update_data.py --market US
+Recommended schedule:
+- KR open: 08:30
+- KR close: 16:00
+- US open: 22:00
+- US close: 07:00
 """
 
-import sys
 import argparse
-import time
-from datetime import date, timedelta
+import sys
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -38,97 +22,128 @@ log = get_trading_logger()
 
 def run_kr_update():
     today = date.today().strftime("%Y-%m-%d")
-    log.info("=== KR 데이터 최신화 시작 ===")
+    log.info("=== KR data update start ===")
 
-    # 1. 주가 최신화 (KR만)
-    log.info("[1/3] 주가 최신화")
+    log.info("[1/5] KR price update")
     try:
-        from phase1_trainer.price_collector import collect_kr_incremental
         import pandas as pd
-        from datetime import datetime
-        # 16:00 이전(장 전/장중) 실행 시 당일 미확정 데이터 제외 → 전일까지만 수집
-        # KIS API는 장중에 당일 volume=0 또는 1을 반환해 vol_ratio 오염을 일으킴
-        end_dt   = pd.Timestamp(date.today() if datetime.now().hour >= 16 else date.today() - timedelta(days=1))
+
+        from phase1_trainer.price_collector import collect_kr_incremental
+
+        end_dt = pd.Timestamp(
+            date.today() if datetime.now().hour >= 16 else date.today() - timedelta(days=1)
+        )
         start_dt = pd.Timestamp(date.today() - timedelta(days=500))
         collect_kr_incremental(start_dt, end_dt)
     except Exception as e:
-        log.error(f"주가 최신화 실패: {e}")
+        log.error(f"KR price update failed: {e}")
 
-    # 2. 뉴스 수집
-    log.info("[2/3] KR 뉴스 수집")
+    log.info("[2/5] KR news update")
     try:
         from phase1_trainer.kr_news_collector import collect_day
+
         collect_day(today)
     except Exception as e:
-        log.error(f"KR 뉴스 수집 실패: {e}")
+        log.error(f"KR news update failed: {e}")
 
-    # 3. supplement (수급/환율)
-    log.info("[3/3] KR supplement")
+    log.info("[3/5] KR supplement update")
     try:
         from phase1_trainer.supplement_collector import collect_kr_supplement
-        yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-        collect_kr_supplement(yesterday)  # 어제 수급 (오늘은 장 마감 후 업데이트됨)
-    except Exception as e:
-        log.error(f"KR supplement 실패: {e}")
 
-    # 4. ML forward return 업데이트 (주가 CSV 갱신 직후 실행)
-    log.info("[4/4] KR ML forward return 업데이트")
+        yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+        collect_kr_supplement(yesterday)
+    except Exception as e:
+        log.error(f"KR supplement update failed: {e}")
+
+    log.info("[4/5] KR ML forward return update")
     try:
         from ml.forward_updater import run as forward_run
+
         forward_run(market="KR")
     except Exception as e:
-        log.error(f"KR forward_updater 실패: {e}")
+        log.error(f"KR forward_updater failed: {e}")
 
-    log.info("=== KR 데이터 최신화 완료 ===")
+    log.info("[5/5] KR ticker_selection_log forward return update")
+    try:
+        import ticker_selection_db as tsdb
+
+        stats = tsdb.update_forward_returns(market="KR")
+        log.info(
+            "[ticker_selection_log KR] "
+            f"pending={stats['pending']} updated={stats['updated']} "
+            f"skipped={stats['skipped']} missing_csv={stats['missing_csv']}"
+        )
+    except Exception as e:
+        log.error(f"KR ticker_selection_log updater failed: {e}")
+
+    log.info("=== KR data update done ===")
 
 
 def run_us_update():
     today = date.today().strftime("%Y-%m-%d")
-    log.info("=== US 데이터 최신화 시작 ===")
+    log.info("=== US data update start ===")
 
-    # 1. 주가 최신화 (US만) - compact 100일 fetch 후 머지
-    log.info("[1/3] US 주가 최신화")
+    log.info("[1/5] US price update")
     try:
-        from phase1_trainer.price_collector import collect_us_incremental
         import pandas as pd
-        end_dt   = pd.Timestamp(date.today())
+
+        from phase1_trainer.price_collector import collect_us_incremental
+
+        end_dt = pd.Timestamp(date.today())
         start_dt = pd.Timestamp(date.today() - timedelta(days=500))
         collect_us_incremental(start_dt, end_dt)
     except Exception as e:
-        log.error(f"US 주가 최신화 실패: {e}")
+        log.error(f"US price update failed: {e}")
 
-    # 2. 뉴스 수집
-    log.info("[2/3] US 뉴스 수집")
+    log.info("[2/5] US news update")
     try:
         from phase1_trainer.us_news_collector import collect_day
+
         collect_day(today)
     except Exception as e:
-        log.error(f"US 뉴스 수집 실패: {e}")
+        log.error(f"US news update failed: {e}")
 
-    # 3. supplement (VIX)
-    log.info("[3/3] US supplement")
+    log.info("[3/5] US supplement update")
     try:
         from phase1_trainer.supplement_collector import collect_us_supplement
+
         yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
         collect_us_supplement(yesterday)
     except Exception as e:
-        log.error(f"US supplement 실패: {e}")
+        log.error(f"US supplement update failed: {e}")
 
-    # 4. ML forward return 업데이트 (주가 CSV 갱신 직후 실행)
-    log.info("[4/4] US ML forward return 업데이트")
+    log.info("[4/5] US ML forward return update")
     try:
         from ml.forward_updater import run as forward_run
+
         forward_run(market="US")
     except Exception as e:
-        log.error(f"US forward_updater 실패: {e}")
+        log.error(f"US forward_updater failed: {e}")
 
-    log.info("=== US 데이터 최신화 완료 ===")
+    log.info("[5/5] US ticker_selection_log forward return update")
+    try:
+        import ticker_selection_db as tsdb
+
+        stats = tsdb.update_forward_returns(market="US")
+        log.info(
+            "[ticker_selection_log US] "
+            f"pending={stats['pending']} updated={stats['updated']} "
+            f"skipped={stats['skipped']} missing_csv={stats['missing_csv']}"
+        )
+    except Exception as e:
+        log.error(f"US ticker_selection_log updater failed: {e}")
+
+    log.info("=== US data update done ===")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="일일 데이터 최신화")
-    parser.add_argument("--market", choices=["KR", "US", "ALL"], default="ALL",
-                        help="수집 대상 시장 (기본: ALL)")
+    parser = argparse.ArgumentParser(description="Refresh price/news/supplement data and forward returns")
+    parser.add_argument(
+        "--market",
+        choices=["KR", "US", "ALL"],
+        default="ALL",
+        help="target market",
+    )
     args = parser.parse_args()
 
     if args.market in ("KR", "ALL"):

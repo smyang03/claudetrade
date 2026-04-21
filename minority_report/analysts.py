@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_analysis_logger, get_judgment_logger, get_minority_logger
 from credit_tracker import record as credit_record
 from minority_report.raw_call_logger import save as save_raw_call
+from bot.candidate_policy import normalize_selection_result, selection_limits
 
 log          = get_minority_logger()
 analysis_log = get_analysis_logger()
@@ -23,6 +24,69 @@ MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 # R1_MODEL 환경변수로 오버라이드 가능 (기본 Haiku 4.5)
 R1_MODEL     = os.getenv("R1_MODEL", "claude-haiku-4-5-20251001")
 STANCES = "AGGRESSIVE|MODERATE_BULL|MILD_BULL|NEUTRAL|MILD_BEAR|CAUTIOUS_BEAR|DEFENSIVE|HALT"
+_SELECTION_RECOVERY_FIELDS = (
+    "watchlist",
+    "trade_ready",
+    "reasons",
+    "veto",
+    "recommended_strategy",
+    "risk_tags",
+    "max_position_pct",
+    "tickers",
+)
+
+
+def _selection_field_section(text: str, field: str) -> str:
+    start = text.find(f'"{field}"')
+    if start == -1:
+        return ""
+    tail = text[start:]
+    next_positions = []
+    for name in _SELECTION_RECOVERY_FIELDS:
+        if name == field:
+            continue
+        idx = tail.find(f'"{name}"')
+        if idx > 0:
+            next_positions.append(idx)
+    end = min(next_positions) if next_positions else len(tail)
+    return tail[:end]
+
+
+def _recover_partial_ticker_array(section: str) -> list[str]:
+    if not section:
+        return []
+    return list(dict.fromkeys(re.findall(r'"([A-Z0-9]{2,10})"', section)))
+
+
+def _recover_partial_reason_map(section: str) -> dict[str, str]:
+    if not section:
+        return {}
+    pairs = re.findall(r'"([A-Z0-9]{2,10})"\s*:\s*"([^"]{1,80})"', section)
+    return {k: v.strip() for k, v in pairs}
+
+
+def _recover_partial_selection_json(s: str) -> dict:
+    watchlist = _recover_partial_ticker_array(_selection_field_section(s, "watchlist"))
+    legacy_tickers = _recover_partial_ticker_array(_selection_field_section(s, "tickers"))
+    trade_ready = _recover_partial_ticker_array(_selection_field_section(s, "trade_ready"))
+    reasons = _recover_partial_reason_map(_selection_field_section(s, "reasons"))
+    veto = _recover_partial_reason_map(_selection_field_section(s, "veto"))
+    watchlist = watchlist or legacy_tickers
+    if not (watchlist or trade_ready or reasons or veto):
+        return {}
+    recovered = {
+        "_parse_recovered": True,
+        "_fallback_mode": "selection_partial",
+    }
+    if watchlist:
+        recovered["watchlist"] = watchlist
+    if trade_ready:
+        recovered["trade_ready"] = trade_ready
+    if reasons:
+        recovered["reasons"] = reasons
+    if veto:
+        recovered["veto"] = veto
+    return recovered
 
 
 def _extract_json(text: str) -> dict:
@@ -53,20 +117,33 @@ def _extract_json(text: str) -> dict:
             return json.loads(_fix(s))
         except json.JSONDecodeError:
             pass
+        recovered = _recover_partial_selection_json(s)
+        if recovered:
+            log.warning(
+                "[_extract_json] JSON 파싱 실패 — partial 복구: "
+                f"watch={recovered.get('watchlist', [])[:20]} "
+                f"trade={recovered.get('trade_ready', [])[:12]} "
+                f"reasons={len(recovered.get('reasons', {}))}개"
+            )
+            return recovered
         # tickers 배열 추출
         reasons_start = s.find('"reasons"')
         tickers_section = s[:reasons_start] if reasons_start != -1 else s
-        tickers = re.findall(r'"([A-Z0-9]{1,10})"', tickers_section)
-        tickers = [t for t in tickers if len(t) >= 2]
+        tickers = list(dict.fromkeys(re.findall(r'"([A-Z0-9]{2,10})"', tickers_section)))
         # reasons 개별 key:value 쌍 regex 추출 시도
         reasons = {}
         if reasons_start != -1:
             reasons_section = s[reasons_start:]
-            pairs = re.findall(r'"([A-Z0-9]{1,10})"\s*:\s*"([^"]{1,60})"', reasons_section)
+            pairs = re.findall(r'"([A-Z0-9]{2,10})"\s*:\s*"([^"]{1,60})"', reasons_section)
             reasons = {k: v for k, v in pairs}
         if tickers:
             log.warning(f"[_extract_json] JSON 파싱 실패 — regex 복구: tickers={tickers[:20]} reasons={len(reasons)}개")
-            return {"tickers": tickers[:20], "reasons": reasons}
+            return {
+                "tickers": tickers[:20],
+                "reasons": reasons,
+                "_parse_recovered": True,
+                "_fallback_mode": "ticker_regex",
+            }
         raise ValueError("tickers 추출 불가")
 
     # 1차: 닫힌 ```json ... ``` 블록
@@ -93,7 +170,290 @@ def _extract_json(text: str) -> dict:
             }
     raise ValueError(f"JSON 추출 실패: {text[:200]}")
 ALLOWED_STANCES = set(STANCES.split("|"))
-ALLOWED_STRATEGIES = {"모멘텀", "평균회귀", "갭풀백", "변동성돌파", "관망"}
+ALLOWED_STRATEGIES = {"모멘텀", "평균회귀", "갭풀백", "갭+눌림", "갭눌림", "변동성돌파", "관망"}
+_LAST_SELECTION_META: dict = {}
+
+
+def get_last_selection_meta() -> dict:
+    return dict(_LAST_SELECTION_META)
+
+
+def _extract_json(text: str) -> dict:
+    """Claude 응답에서 JSON을 추출한다. 잘린 selection 응답은 부분 복구를 시도한다."""
+
+    def _fix(s: str) -> str:
+        s = re.sub(r",(\s*[}\]])", r"\1", s)
+        s = re.sub(r"\bNaN\b", '"NaN"', s)
+        s = re.sub(r"\bInfinity\b", "999", s)
+        s = re.sub(r"\b-Infinity\b", "-999", s)
+        s = re.sub(r"\bnan\b", "0", s)
+        s = re.sub(r"\binf\b", "999", s)
+        s = re.sub(r"\b-inf\b", "-999", s)
+        s = s.replace("\u201c", '"').replace("\u201d", '"')
+        s = s.replace("\u2018", "'").replace("\u2019", "'")
+        s = s.replace("\uff1a", ":")
+        s = re.sub(r'(?<=":)(\s*"[^"]*?)\n([^"]*?")', lambda m: m.group(0).replace("\n", " "), s)
+        s = s.replace("\r\n", " ").replace("\r", " ")
+        s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", s)
+        return s
+
+    def _try_parse(s: str) -> dict:
+        try:
+            return json.loads(_fix(s))
+        except json.JSONDecodeError:
+            pass
+
+        recovered = _recover_partial_selection_json(s)
+        if recovered:
+            log.warning(
+                "[_extract_json] JSON 파싱 실패 — partial 복구: "
+                f"watch={recovered.get('watchlist', [])[:20]} "
+                f"trade={recovered.get('trade_ready', [])[:12]} "
+                f"reasons={len(recovered.get('reasons', {}))}개"
+            )
+            return recovered
+
+        reasons_start = s.find('"reasons"')
+        tickers_section = s[:reasons_start] if reasons_start != -1 else s
+        tickers = list(dict.fromkeys(re.findall(r'"([A-Z0-9]{2,10})"', tickers_section)))
+        reasons = {}
+        if reasons_start != -1:
+            reasons_section = s[reasons_start:]
+            pairs = re.findall(r'"([A-Z0-9]{2,10})"\s*:\s*"([^"]{1,60})"', reasons_section)
+            reasons = {k: v for k, v in pairs}
+        if tickers:
+            log.warning(f"[_extract_json] JSON 파싱 실패 — regex 복구: tickers={tickers[:20]} reasons={len(reasons)}개")
+            return {
+                "tickers": tickers[:20],
+                "reasons": reasons,
+                "_parse_recovered": True,
+                "_fallback_mode": "ticker_regex",
+            }
+        raise ValueError("tickers 추출 불가")
+
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+    if m:
+        return _try_parse(m.group(1))
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return _try_parse(text[start:end + 1])
+
+    if start != -1:
+        partial = text[start:]
+        recovered = _recover_partial_selection_json(partial)
+        if recovered:
+            log.warning(
+                "[_extract_json] 잘린 selection 응답 복구: "
+                f"watch={recovered.get('watchlist', [])[:20]} "
+                f"trade={recovered.get('trade_ready', [])[:12]}"
+            )
+            return recovered
+        stance_m = re.search(r'"stance"\s*:\s*"([A-Z_]+)"', partial)
+        conf_m = re.search(r'"confidence"\s*:\s*([0-9.]+)', partial)
+        reason_m = re.search(r'"key_reason"\s*:\s*"([^"]{1,200})"', partial)
+        if stance_m:
+            log.warning(f"[_extract_json] 잘린 응답 regex 복구: stance={stance_m.group(1)}")
+            return {
+                "stance": stance_m.group(1),
+                "confidence": float(conf_m.group(1)) if conf_m else 0.5,
+                "key_reason": reason_m.group(1) if reason_m else "응답 잘림",
+            }
+    raise ValueError(f"JSON 추출 실패: {text[:200]}")
+
+
+def _recent_selection_feedback_section(market: str) -> str:
+    try:
+        import ticker_selection_db as _tsdb
+
+        recent_feedback = _tsdb.format_recent_selection_feedback(market, days=20)
+        if recent_feedback:
+            return "\nrecent selection feedback:\n" + recent_feedback[:900] + "\n"
+    except Exception as _e:
+        log.debug(f"[ticker-selection] selection feedback skipped: {_e}")
+    return ""
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _candidate_liquidity_bucket(turnover: float, ranked_turnovers: list[float]) -> str:
+    if turnover <= 0 or not ranked_turnovers:
+        return "unknown"
+    if len(ranked_turnovers) == 1:
+        return "high"
+    higher = sum(1 for value in ranked_turnovers if value > turnover)
+    percentile = 1.0 - (higher / len(ranked_turnovers))
+    if percentile >= 0.67:
+        return "high"
+    if percentile >= 0.34:
+        return "mid"
+    return "low"
+
+
+def _candidate_pullback_bucket(from_high_pct) -> str:
+    if from_high_pct is None:
+        return "unknown"
+    value = _safe_float(from_high_pct, 0.0)
+    if value <= -5.0:
+        return "deep"
+    if value <= -2.0:
+        return "pullback"
+    if value <= -0.5:
+        return "near_high"
+    return "at_high"
+
+
+def _annotate_candidate_prompt_features(candidates: list[dict]) -> list[float]:
+    ranked_turnovers: list[float] = []
+    for candidate in candidates or []:
+        price = _safe_float(candidate.get("price", 0), 0.0)
+        volume = _safe_float(candidate.get("volume", 0), 0.0)
+        turnover = price * volume
+        if turnover > 0:
+            ranked_turnovers.append(turnover)
+    ranked_turnovers.sort()
+
+    for candidate in candidates or []:
+        price = _safe_float(candidate.get("price", 0), 0.0)
+        volume = _safe_float(candidate.get("volume", 0), 0.0)
+        turnover = price * volume
+        if not candidate.get("liquidity_bucket"):
+            candidate["liquidity_bucket"] = _candidate_liquidity_bucket(turnover, ranked_turnovers)
+        if not candidate.get("from_high_bucket"):
+            candidate["from_high_bucket"] = _candidate_pullback_bucket(candidate.get("from_high_pct"))
+    return ranked_turnovers
+
+
+def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
+    hard_cap = 24 if market == "US" else 18
+    target = max(trade_max + 8, min(watch_max + 4, hard_cap))
+    return max(trade_max, min(target, hard_cap))
+
+
+def _safe_watch_fallback(candidates: list[dict], market: str) -> list[str]:
+    limits = selection_limits(market)
+    safe_max = min(limits["watch_max"], 12 if market == "US" else 8)
+    watch: list[str] = []
+    for candidate in candidates or []:
+        ticker = str(candidate.get("ticker", "") or "").strip()
+        if not ticker:
+            continue
+        ticker = ticker.upper() if market == "US" else ticker
+        if ticker not in watch:
+            watch.append(ticker)
+        if len(watch) >= safe_max:
+            break
+    return watch
+
+
+def _pick_selection_retry_candidates(candidates: list[dict], result: dict, market: str) -> list[dict]:
+    retry_cap = min(10 if market == "US" else 8, len(candidates))
+    candidate_map: dict[str, dict] = {}
+    for candidate in candidates or []:
+        ticker = str(candidate.get("ticker", "") or "").strip()
+        if not ticker:
+            continue
+        key = ticker.upper() if market == "US" else ticker
+        candidate_map[key] = candidate
+
+    ordered: list[str] = []
+    for source in (
+        result.get("trade_ready", []),
+        result.get("watchlist", []),
+        result.get("tickers", []),
+        _safe_watch_fallback(candidates, market),
+    ):
+        if not isinstance(source, list):
+            continue
+        for ticker in source:
+            key = str(ticker or "").strip()
+            key = key.upper() if market == "US" else key
+            if key in candidate_map and key not in ordered:
+                ordered.append(key)
+            if len(ordered) >= retry_cap:
+                break
+        if len(ordered) >= retry_cap:
+            break
+
+    if not ordered:
+        return list(candidates[:retry_cap])
+    return [candidate_map[key] for key in ordered]
+
+
+def _build_selection_retry_prompt(
+    market: str,
+    consensus_mode: str,
+    retry_candidates: list[dict],
+    market_change_pct: Optional[float] = None,
+    secondary_change_pct: Optional[float] = None,
+) -> str:
+    lines = []
+    for candidate in retry_candidates:
+        rate = _safe_float(candidate.get("change_rate", 0.0), 0.0)
+        turnover = _safe_float(candidate.get("price", 0), 0.0) * _safe_float(candidate.get("volume", 0), 0.0)
+        liq = str(candidate.get("liquidity_bucket", "") or "").strip() or "unknown"
+        pullback = str(candidate.get("from_high_bucket", "") or "").strip() or _candidate_pullback_bucket(candidate.get("from_high_pct"))
+        ma60 = candidate.get("above_ma60")
+        if market == "KR":
+            market_type = candidate.get("market_type", "KOSPI")
+            base_pct = (
+                secondary_change_pct
+                if market_type == "KOSDAQ" and secondary_change_pct is not None
+                else market_change_pct
+            )
+            rs = rate - base_pct if base_pct is not None else None
+            rs_text = f"rs={rs:+.1f}%" if rs is not None else ""
+        else:
+            rs_parts = []
+            if market_change_pct is not None:
+                rs_parts.append(f"SP{rate - market_change_pct:+.1f}%")
+            if secondary_change_pct is not None:
+                rs_parts.append(f"NQ{rate - secondary_change_pct:+.1f}%")
+            rs_text = f"rs=({'/'.join(rs_parts)})" if rs_parts else ""
+        line = " ".join(
+            part for part in [
+                str(candidate.get("ticker", "") or "").strip(),
+                f"chg={rate:+.2f}%",
+                rs_text,
+                f"liq={liq}",
+                f"pullback={pullback}",
+                "ma60=above" if ma60 is True else ("ma60=below" if ma60 is False else ""),
+                (
+                    f"turn=${turnover/1e6:.1f}M"
+                    if market == "US" and turnover > 0 else
+                    (f"turn={turnover/1e8:.1f}억" if market == "KR" and turnover > 0 else "")
+                ),
+            ] if part
+        )
+        lines.append(line)
+
+    watch_max = min(selection_limits(market)["watch_max"], len(retry_candidates))
+    trade_max = min(selection_limits(market)["trade_max"], len(retry_candidates))
+    return f"""이전 종목선정 응답이 잘려서 다시 묻습니다. 이번에는 아주 짧게 답하세요.
+시장: {market}
+모드: {consensus_mode}
+후보:
+{chr(10).join(lines)}
+
+규칙:
+- 후보 중에서만 선택
+- watchlist 최대 {watch_max}개
+- trade_ready 최대 {trade_max}개
+- JSON만 반환
+- 필수 필드만 반환: watchlist, trade_ready, reasons
+- reasons는 짧게
+
+{{
+  "watchlist":["code1","code2"],
+  "trade_ready":["code1"],
+  "reasons":{{"code1":"짧은 이유"}}
+}}"""
 
 
 def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
@@ -113,6 +473,11 @@ def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
     suggested_strategy = str(result.get("suggested_strategy", "관망")).strip()
     if suggested_strategy not in ALLOWED_STRATEGIES:
         suggested_strategy = "관망"
+    suggested_size_pct = result.get("suggested_size_pct")
+    try:
+        suggested_size_pct = max(0.0, min(100.0, float(suggested_size_pct)))
+    except Exception:
+        suggested_size_pct = None
     return {
         "stance": stance,
         "confidence": confidence,
@@ -120,6 +485,7 @@ def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
         "full_reasoning": str(result.get("full_reasoning", ""))[:2000],
         "top_risks": top_risks,
         "suggested_strategy": suggested_strategy,
+        "suggested_size_pct": suggested_size_pct,
     }
 
 
@@ -451,16 +817,27 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                    market_change_pct: Optional[float] = None,
                    secondary_change_pct: Optional[float] = None) -> list:
     """
-    오늘 집중 모니터링할 종목을 Claude가 선택 (최소 8개, 최대 10개)
+    오늘 집중 모니터링할 WATCH와 실제 매수 권한 TRADE_READY를 Claude가 분리 선택.
     candidates: screen_market_kr/us 결과
     """
+    global _LAST_SELECTION_META
     if not candidates:
         log.warning("[종목선택] 후보 없음 → 기본값 사용")
         defaults = {
             "KR": ["005930", "000660", "035420", "005380", "051910", "068270", "207940", "012450"],
             "US": ["NVDA", "TSLA", "AAPL", "GOOGL", "NFLX", "AMD", "INTC", "PLTR"],
         }
-        return defaults.get(market, []), {}
+        fallback = defaults.get(market, [])
+        _LAST_SELECTION_META = {
+            "watchlist": fallback,
+            "trade_ready": [],
+            "reasons": {},
+            "veto": {},
+            "risk_tags": {},
+            "recommended_strategy": {},
+            "max_position_pct": {},
+        }
+        return fallback, {}
 
     # KR 장전(08:30~09:05 KST) vol_ratio 마스킹 — 개장 전 거래량회전율은 신뢰 불가
     from datetime import datetime as _dt
@@ -476,11 +853,19 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
     if _kr_premarket:
         log.debug("[종목선택] KR 장전 — vol_ratio Claude 입력 마스킹 적용")
 
+    ranked_turnovers = _annotate_candidate_prompt_features(candidates[:50])
     cand_lines = []
     for c in candidates[:50]:
-        rate = float(c.get('change_rate', 0.0))
+        rate = _safe_float(c.get('change_rate', 0.0), 0.0)
         rate_str = f"{rate:+.2f}%"
-        vr = float(c.get("vol_ratio", 0.0))
+        vr = _safe_float(c.get("vol_ratio", 0.0), 0.0)
+        price = _safe_float(c.get("price", 0), 0.0)
+        volume = _safe_float(c.get("volume", 0), 0.0)
+        turnover = price * volume
+        price_str = f"가격{price:,.0f}" if price > 0 else ""
+        turnover_str = f"거래대금{turnover/1e8:.1f}억" if market == "KR" and turnover > 0 else (
+            f"달러거래${turnover/1e6:.1f}M" if market == "US" and turnover > 0 else ""
+        )
         if _kr_premarket:
             vol_str = ""   # 장전 KR: vol_ratio 의미없음 → Claude 입력에서 제거
         else:
@@ -500,37 +885,111 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             if rs_sp is not None: _rs_parts.append(f"SP{rs_sp:+.1f}%")
             if rs_nq is not None: _rs_parts.append(f"NQ{rs_nq:+.1f}%")
             rs_str = "RS(" + "/".join(_rs_parts) + ")" if _rs_parts else ""
+        market_type = str(c.get("market_type", "") or "").strip()
+        category = str(c.get("category", "") or "").strip()
+        sector = str(c.get("sector", "") or "").strip()
+        above_ma60 = c.get("above_ma60")
+        from_high_pct = c.get("from_high_pct")
+        liquidity_bucket = str(c.get("liquidity_bucket", "") or "").strip() or _candidate_liquidity_bucket(turnover, ranked_turnovers)
+        from_high_bucket = str(c.get("from_high_bucket", "") or "").strip() or _candidate_pullback_bucket(from_high_pct)
+        feature_parts = []
+        if market_type:
+            feature_parts.append(f"board={market_type}")
+        if category:
+            feature_parts.append(f"category={category}")
+        if sector:
+            feature_parts.append(f"sector={sector}")
+        feature_parts.append(f"liq={liquidity_bucket}")
+        if from_high_pct is not None:
+            feature_parts.append(
+                f"from_high={_safe_float(from_high_pct, 0.0):+.1f}%({from_high_bucket})"
+            )
+        else:
+            feature_parts.append("from_high=unknown")
+        if above_ma60 is not None:
+            feature_parts.append("ma60=above" if bool(above_ma60) else "ma60=below")
         cand_lines.append(
-            f"  {c.get('ticker')} {c.get('name','')} {rate_str} {rs_str} {vol_str}".strip()
+            f"  {c.get('ticker')} {c.get('name','')} {price_str} {rate_str} {rs_str} {vol_str} {turnover_str} {' '.join(feature_parts)}".strip()
         )
     cand_text = "\n".join(cand_lines)
 
     n_cands  = len([c for c in candidates if c.get("ticker")])
-    req_min  = min(16, n_cands)
-    req_max  = min(20, n_cands)
+    limits = selection_limits(market)
+    watch_max = min(limits["watch_max"], n_cands)
+    trade_max = min(limits["trade_max"], n_cands)
 
     intraday_section = (
         f"\n장중 현재 상황:\n{intraday_context}\n"
         if intraday_context else ""
     )
+    brain_section = ""
+    try:
+        from claude_memory import brain as BrainDB
+        brain_summary = BrainDB.generate_prompt_summary(market)
+        correction = json.dumps(
+            BrainDB.load().get("correction_guide", {}).get(market, {}),
+            ensure_ascii=False,
+        )
+        if brain_summary or correction != "{}":
+            brain_section = (
+                "\n학습/교정 요약:\n"
+                f"{brain_summary[:900]}\n"
+                f"correction_guide: {correction[:600]}\n"
+            )
+    except Exception as _e:
+        log.debug(f"[종목선택] brain context 생략: {_e}")
 
-    prompt = f"""오늘 {market} 세션에서 집중 모니터링할 종목을 최소 {req_min}개, 최대 {req_max}개 선택하세요.
+    tuner_section = ""
+    try:
+        from strategy import param_tuner as _param_tuner
+        recent = _param_tuner.get_recent_history(market, days=5)[:8]
+        if recent:
+            slim = [
+                {
+                    "strategy": r.get("strategy"),
+                    "entries": r.get("entries"),
+                    "wins": r.get("wins"),
+                    "losses": r.get("losses"),
+                    "avg_pnl_pct": r.get("avg_pnl", r.get("avg_pnl_pct")),
+                }
+                for r in recent
+            ]
+            tuner_section = "\n최근 전략 튜닝 성과:\n" + json.dumps(slim, ensure_ascii=False)[:900] + "\n"
+    except Exception as _e:
+        log.debug(f"[종목선택] tuner context 생략: {_e}")
+
+    prompt = f"""오늘 {market} 세션에서 후보를 WATCH와 TRADE_READY로 분리하세요.
 합의 모드: {consensus_mode}
 후보 종목:
 {cand_text}
 
 시장 컨텍스트 (장전 분석):
-{digest_prompt[:400]}{intraday_section}
+{digest_prompt[:400]}{intraday_section}{brain_section}{tuner_section}{_recent_selection_feedback_section(market)}
 규칙:
 - 후보 종목 중에서만 선택. 중복 없이 선택할 것.
-- 최소 {req_min}개 이상 선택할 것. 후보가 충분하면 {req_max}개까지 선택 가능.
-- reasons는 반드시 한국어로 작성 (30자 이내).
+- watchlist는 넓은 감시 목록입니다. 최대 {watch_max}개까지 선택하세요.
+- trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개까지 선택하세요.
+- 좋은 후보가 부족하면 trade_ready는 0개도 허용됩니다.
+- 파생/레버리지/인버스 ETF, 저유동성, 초과열, 손절폭 과대 후보는 trade_ready에서 제외하세요.
+- Use recent selection feedback to calibrate trade_ready aggressiveness.
+- If a group shows high missed watch_only and today's candidate matches that group, do not leave it watch_only without a clear veto.
+- If a group shows high weak trade_ready, require stronger RS, liquidity, and intraday quality before marking trade_ready.
+- recommended_strategy and max_position_pct must reflect conviction and risk, not generic defaults.
+- reasons/veto/risk_tags는 반드시 한국어로 짧게 작성하세요.
 - JSON만 반환.
 
-{{"tickers":["code1","code2","code3"],"reasons":{{"code1":"선택 이유 한국어"}}}}"""
+{{
+  "watchlist":["code1","code2"],
+  "trade_ready":["code1"],
+  "reasons":{{"code1":"선택 이유"}},
+  "veto":{{"code2":"매수 제외 사유"}},
+  "recommended_strategy":{{"code1":"momentum|gap_pullback|mean_reversion|opening_range_pullback|observe"}},
+  "risk_tags":{{"code1":["태그1"]}},
+  "max_position_pct":{{"code1":20}}
+}}"""
 
-    valid    = {c["ticker"] for c in candidates if c.get("ticker")}
-    fallback = [c["ticker"] for c in candidates[:req_min] if c.get("ticker")]
+    fallback_meta = normalize_selection_result({"_parse_recovered": True}, candidates, market)
+    fallback = fallback_meta["watchlist"]
 
     # US DEFENSIVE/HALT 모드 시 인버스 ETF만 남지 않도록 안정 종목 보호 목록
     US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
@@ -560,59 +1019,48 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             raise last_err
         raw = resp.content[0].text.strip()
         result  = _extract_json(raw)
+        selection_meta = normalize_selection_result(result, candidates, market)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers")
         save_raw_call(
             label="select_tickers",
-            prompt=prompt, raw_response=raw, parsed=result,
+            prompt=prompt, raw_response=raw, parsed={**result, "_normalized": selection_meta},
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
         )
-        tickers = list(dict.fromkeys(t for t in result.get("tickers", []) if t in valid))[:20]
+        tickers = selection_meta["watchlist"]
         if not tickers:
             raise ValueError("no valid tickers")
 
-        reasons = result.get("reasons", {})
-
-        # 16개 미만이면 상위 후보로 보충
-        if len(tickers) < 16:
-            if _kr_premarket:
-                top_fill = sorted(
-                    candidates,
-                    key=lambda c: (
-                        abs(float(c.get("change_rate", 0) or 0)),
-                        float(c.get("price", 0) or 0),
-                    ),
-                    reverse=True,
-                )
-            else:
-                top_fill = sorted(candidates, key=lambda c: float(c.get("vol_ratio", 0) or 0), reverse=True)
-            for _c in top_fill:
-                _t = _c.get("ticker")
-                if _t and _t in valid and _t not in tickers:
-                    tickers.append(_t)
-                    reasons[_t] = "장전후보 보충" if _kr_premarket else "거래량 상위 보충"
-                if len(tickers) >= 16:
-                    break
+        reasons = selection_meta.get("reasons", {})
 
         # US DEFENSIVE/HALT 모드: 인버스 ETF만 선택된 경우 안정 종목 보완
         if market == "US" and consensus_mode in ("DEFENSIVE", "HALT"):
             non_inverse = [t for t in tickers if t not in US_INVERSE_ETFS]
             if not non_inverse:
                 # 후보에서 안정 종목 찾기
+                valid = {str(c.get("ticker", "")).upper() for c in candidates if c.get("ticker")}
                 stable_in_candidates = [t for t in US_STABLE_ANCHORS if t in valid]
                 if stable_in_candidates:
-                    # 인버스 1개 유지, 나머지를 안정 종목으로 교체 (최소 16개 맞춤)
-                    tickers = tickers[:1] + stable_in_candidates[:15]
+                    tickers = tickers[:1] + stable_in_candidates[: max(0, watch_max - 1)]
+                    selection_meta["watchlist"] = tickers
+                    selection_meta["trade_ready"] = [t for t in selection_meta["trade_ready"] if t in tickers]
                     log.info(f"[ticker-selection] DEFENSIVE/HALT — 안정 종목 보완: {tickers}")
-        log.info(f"[ticker-selection] {market} -> {tickers}")
+        _LAST_SELECTION_META = selection_meta
+        log.info(
+            f"[ticker-selection] {market} watch={tickers} "
+            f"trade_ready={selection_meta.get('trade_ready', [])}"
+        )
         analysis_log.info(
-            f"[selection] {market} {tickers}",
+            f"[selection] {market} watch={tickers} trade_ready={selection_meta.get('trade_ready', [])}",
             extra={
                 "extra": {
                     "event": "ticker_selection",
                     "market": market,
                     "consensus_mode": consensus_mode,
                     "selected": tickers,
+                    "trade_ready": selection_meta.get("trade_ready", []),
+                    "veto": selection_meta.get("veto", {}),
+                    "risk_tags": selection_meta.get("risk_tags", {}),
                     "candidate_count": len(candidates),
                     "reasons": reasons,
                 }
@@ -620,5 +1068,324 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         )
         return tickers, reasons
     except Exception as e:
+        _LAST_SELECTION_META = fallback_meta
         log.error(f"[ticker-selection] error: {e} -> fallback")
+        return fallback, fallback_meta.get("reasons", {})
+
+
+def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
+                   intraday_context: str = "",
+                   market_change_pct: Optional[float] = None,
+                   secondary_change_pct: Optional[float] = None) -> list:
+    """Claude가 WATCH와 TRADE_READY를 분리 선택한다."""
+    global _LAST_SELECTION_META
+    if not candidates:
+        log.warning("[ticker-selection] no candidates -> defaults")
+        defaults = {
+            "KR": ["005930", "000660", "035420", "005380", "051910", "068270", "207940", "012450"],
+            "US": ["NVDA", "TSLA", "AAPL", "GOOGL", "NFLX", "AMD", "INTC", "PLTR"],
+        }
+        fallback = defaults.get(market, [])
+        _LAST_SELECTION_META = {
+            "watchlist": fallback,
+            "trade_ready": [],
+            "reasons": {},
+            "veto": {},
+            "risk_tags": {},
+            "recommended_strategy": {},
+            "max_position_pct": {},
+        }
         return fallback, {}
+
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+
+    _now_kr = _dt.now(_ZI("Asia/Seoul"))
+    _kr_premarket = (
+        market == "KR"
+        and (
+            (_now_kr.hour == 8 and _now_kr.minute >= 30)
+            or (_now_kr.hour == 9 and _now_kr.minute <= 5)
+        )
+    )
+
+    limits = selection_limits(market)
+    prompt_cap = _selection_candidate_cap(market, limits["watch_max"], limits["trade_max"])
+    prompt_candidates = candidates[:prompt_cap]
+    if len(candidates) > len(prompt_candidates):
+        log.info(f"[ticker-selection] {market} prompt candidates trimmed: {len(candidates)} -> {len(prompt_candidates)}")
+
+    ranked_turnovers = _annotate_candidate_prompt_features(prompt_candidates)
+    cand_lines = []
+    for candidate in prompt_candidates:
+        rate = _safe_float(candidate.get("change_rate", 0.0), 0.0)
+        vr = _safe_float(candidate.get("vol_ratio", 0.0), 0.0)
+        price = _safe_float(candidate.get("price", 0), 0.0)
+        volume = _safe_float(candidate.get("volume", 0), 0.0)
+        turnover = price * volume
+
+        if market == "KR":
+            market_type = candidate.get("market_type", "KOSPI")
+            base_pct = (
+                secondary_change_pct
+                if market_type == "KOSDAQ" and secondary_change_pct is not None
+                else market_change_pct
+            )
+            rs = rate - base_pct if base_pct is not None else None
+            rs_str = f"rs={rs:+.1f}%({'KQ' if market_type == 'KOSDAQ' else 'KP'})" if rs is not None else ""
+        else:
+            rs_parts = []
+            if market_change_pct is not None:
+                rs_parts.append(f"SP{rate - market_change_pct:+.1f}%")
+            if secondary_change_pct is not None:
+                rs_parts.append(f"NQ{rate - secondary_change_pct:+.1f}%")
+            rs_str = f"rs=({'/'.join(rs_parts)})" if rs_parts else ""
+
+        market_type = str(candidate.get("market_type", "") or "").strip()
+        category = str(candidate.get("category", "") or "").strip()
+        sector = str(candidate.get("sector", "") or "").strip()
+        above_ma60 = candidate.get("above_ma60")
+        from_high_pct = candidate.get("from_high_pct")
+        liquidity_bucket = str(candidate.get("liquidity_bucket", "") or "").strip() or _candidate_liquidity_bucket(turnover, ranked_turnovers)
+        from_high_bucket = str(candidate.get("from_high_bucket", "") or "").strip() or _candidate_pullback_bucket(from_high_pct)
+        parts = [
+            str(candidate.get("ticker", "") or "").strip(),
+            f"chg={rate:+.2f}%",
+            rs_str,
+            f"p={price:,.2f}".rstrip("0").rstrip(".") if price > 0 else "",
+            "" if _kr_premarket else (f"vol={vr:.1f}x" if vr > 0 else ""),
+            (
+                f"turn={turnover/1e8:.1f}억"
+                if market == "KR" and turnover > 0 else
+                (f"turn=${turnover/1e6:.1f}M" if market == "US" and turnover > 0 else "")
+            ),
+            f"board={market_type}" if market_type else "",
+            f"category={category}" if category else "",
+            f"sector={sector}" if sector else "",
+            f"liq={liquidity_bucket}",
+            (
+                f"from_high={_safe_float(from_high_pct, 0.0):+.1f}%({from_high_bucket})"
+                if from_high_pct is not None else
+                "from_high=unknown"
+            ),
+            "ma60=above" if above_ma60 is True else ("ma60=below" if above_ma60 is False else ""),
+        ]
+        cand_lines.append(" ".join([part for part in parts if part]))
+
+    cand_text = "\n".join(cand_lines)
+    n_cands = len([c for c in prompt_candidates if c.get("ticker")])
+    watch_max = min(limits["watch_max"], n_cands)
+    trade_max = min(limits["trade_max"], n_cands)
+
+    intraday_section = f"\n장중 컨텍스트:\n{intraday_context[:400]}\n" if intraday_context else ""
+    brain_section = ""
+    try:
+        from claude_memory import brain as BrainDB
+        brain_summary = BrainDB.generate_prompt_summary(market)
+        correction = json.dumps(
+            BrainDB.load().get("correction_guide", {}).get(market, {}),
+            ensure_ascii=False,
+        )
+        if brain_summary or correction != "{}":
+            brain_section = (
+                "\n학습/교정 요약:\n"
+                f"{brain_summary[:700]}\n"
+                f"correction_guide: {correction[:450]}\n"
+            )
+    except Exception as _e:
+        log.debug(f"[ticker-selection] brain context skipped: {_e}")
+
+    tuner_section = ""
+    try:
+        from strategy import param_tuner as _param_tuner
+        recent = _param_tuner.get_recent_history(market, days=5)[:8]
+        if recent:
+            slim = [
+                {
+                    "strategy": row.get("strategy"),
+                    "entries": row.get("entries"),
+                    "wins": row.get("wins"),
+                    "losses": row.get("losses"),
+                    "avg_pnl_pct": row.get("avg_pnl", row.get("avg_pnl_pct")),
+                }
+                for row in recent
+            ]
+            tuner_section = "\n최근 전략 성과:\n" + json.dumps(slim, ensure_ascii=False)[:600] + "\n"
+    except Exception as _e:
+        log.debug(f"[ticker-selection] tuner context skipped: {_e}")
+
+    selection_feedback = _recent_selection_feedback_section(market)
+    prompt = f"""오늘 {market} 세션에서 후보를 WATCH와 TRADE_READY로 분리하세요.
+합의 모드: {consensus_mode}
+후보 종목:
+{cand_text}
+
+시장 컨텍스트:
+{digest_prompt[:220]}{intraday_section}{brain_section}{tuner_section}{selection_feedback[:700]}
+규칙:
+- 후보 종목 중에서만 고르세요.
+- watchlist는 선별 목록입니다. 최대 {watch_max}개, 보통 8~18개 수준으로 제한하세요.
+- trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개이며 0개도 허용됩니다.
+- 저유동성, 구조화 상품, 과열, 손절폭 과대 후보는 trade_ready에서 제외하세요.
+- Use recent selection feedback to calibrate trade_ready aggressiveness.
+- recent selection feedback을 반영해 missed watch_only가 높은 그룹은 명확한 veto 없이 watch_only로만 두지 마세요.
+- weak trade_ready가 높은 그룹은 더 강한 RS, 유동성, 장중 품질이 있을 때만 trade_ready로 올리세요.
+- reasons와 veto는 짧게 쓰세요.
+- recommended_strategy and max_position_pct must reflect conviction and risk, not generic defaults.
+- recommended_strategy, risk_tags, max_position_pct는 trade_ready 종목에 대해서만 채우세요.
+- 응답이 길어질 것 같으면 watchlist를 줄이고 watch_only 종목의 optional field는 생략하세요.
+- JSON만 반환하세요.
+
+{{
+  "watchlist":["code1","code2"],
+  "trade_ready":["code1"],
+  "reasons":{{"code1":"선정 이유"}},
+  "veto":{{"code2":"제외 이유"}},
+  "recommended_strategy":{{"code1":"momentum|gap_pullback|mean_reversion|opening_range_pullback|observe"}},
+  "risk_tags":{{"code1":["tag1"]}},
+  "max_position_pct":{{"code1":20}}
+}}"""
+
+    fallback_meta = normalize_selection_result(
+        {
+            "watchlist": _safe_watch_fallback(prompt_candidates, market),
+            "trade_ready": [],
+            "_parse_recovered": True,
+            "_fallback_mode": "safe_watch",
+        },
+        prompt_candidates,
+        market,
+    )
+    fallback = fallback_meta["watchlist"]
+
+    US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
+    US_STABLE_ANCHORS = ["T", "VZ", "XLU", "KO", "JNJ", "PG", "O", "VYM", "SCHD"]
+
+    import time as _time
+    last_err = None
+    resp = None
+    for _attempt in range(3):
+        try:
+            resp = client.messages.create(
+                model=MODEL,
+                max_tokens=1400,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            last_err = None
+            break
+        except Exception as _e:
+            last_err = _e
+            _emsg = str(_e)
+            if ("529" in _emsg or "overloaded" in _emsg.lower()) and _attempt < 2:
+                _wait = 2 ** (_attempt + 1)
+                log.warning(f"[ticker-selection] Claude overloaded -> { _wait }s retry ({_attempt + 1}/3)")
+                _time.sleep(_wait)
+            else:
+                break
+
+    try:
+        if last_err is not None:
+            raise last_err
+        raw = resp.content[0].text.strip()
+        result = _extract_json(raw)
+        selection_meta = normalize_selection_result(result, prompt_candidates, market)
+        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers")
+        save_raw_call(
+            label="select_tickers",
+            prompt=prompt,
+            raw_response=raw,
+            parsed={**result, "_normalized": selection_meta},
+            input_tokens=resp.usage.input_tokens,
+            output_tokens=resp.usage.output_tokens,
+            market=market,
+        )
+        if result.get("_fallback_mode") == "selection_partial":
+            retry_candidates = _pick_selection_retry_candidates(prompt_candidates, result, market)
+            if retry_candidates:
+                retry_prompt = _build_selection_retry_prompt(
+                    market,
+                    consensus_mode,
+                    retry_candidates,
+                    market_change_pct=market_change_pct,
+                    secondary_change_pct=secondary_change_pct,
+                )
+                log.info(
+                    f"[ticker-selection] {market} partial recovery -> lightweight retry "
+                    f"({len(retry_candidates)} candidates)"
+                )
+                try:
+                    retry_resp = client.messages.create(
+                        model=MODEL,
+                        max_tokens=700,
+                        messages=[{"role": "user", "content": retry_prompt}],
+                    )
+                    retry_raw = retry_resp.content[0].text.strip()
+                    retry_result = _extract_json(retry_raw)
+                    retry_meta = normalize_selection_result(retry_result, retry_candidates, market)
+                    credit_record(retry_resp.usage.input_tokens, retry_resp.usage.output_tokens, "select_tickers_retry")
+                    save_raw_call(
+                        label="select_tickers_retry",
+                        prompt=retry_prompt,
+                        raw_response=retry_raw,
+                        parsed={**retry_result, "_normalized": retry_meta},
+                        input_tokens=retry_resp.usage.input_tokens,
+                        output_tokens=retry_resp.usage.output_tokens,
+                        market=market,
+                    )
+                    if not retry_result.get("_parse_recovered") and retry_meta.get("watchlist"):
+                        result = retry_result
+                        selection_meta = retry_meta
+                        log.info(
+                            f"[ticker-selection] {market} lightweight retry accepted: "
+                            f"watch={retry_meta.get('watchlist', [])} "
+                            f"trade_ready={retry_meta.get('trade_ready', [])}"
+                        )
+                    else:
+                        log.warning(
+                            f"[ticker-selection] {market} lightweight retry unresolved -> "
+                            "keeping partial recovery result"
+                        )
+                except Exception as retry_exc:
+                    log.warning(f"[ticker-selection] {market} lightweight retry failed: {retry_exc}")
+        tickers = selection_meta["watchlist"]
+        if not tickers:
+            raise ValueError("no valid tickers")
+
+        reasons = selection_meta.get("reasons", {})
+        if market == "US" and consensus_mode in ("DEFENSIVE", "HALT"):
+            non_inverse = [ticker for ticker in tickers if ticker not in US_INVERSE_ETFS]
+            if not non_inverse:
+                valid = {str(c.get("ticker", "")).upper() for c in prompt_candidates if c.get("ticker")}
+                stable_in_candidates = [ticker for ticker in US_STABLE_ANCHORS if ticker in valid]
+                if stable_in_candidates:
+                    tickers = tickers[:1] + stable_in_candidates[: max(0, watch_max - 1)]
+                    selection_meta["watchlist"] = tickers
+                    selection_meta["trade_ready"] = [ticker for ticker in selection_meta["trade_ready"] if ticker in tickers]
+                    log.info(f"[ticker-selection] DEFENSIVE/HALT anchors added: {tickers}")
+
+        _LAST_SELECTION_META = selection_meta
+        log.info(
+            f"[ticker-selection] {market} watch={tickers} "
+            f"trade_ready={selection_meta.get('trade_ready', [])}"
+        )
+        analysis_log.info(
+            f"[selection] {market} watch={tickers} trade_ready={selection_meta.get('trade_ready', [])}",
+            extra={
+                "extra": {
+                    "event": "ticker_selection",
+                    "market": market,
+                    "consensus_mode": consensus_mode,
+                    "selected": tickers,
+                    "trade_ready": selection_meta.get("trade_ready", []),
+                    "veto": selection_meta.get("veto", {}),
+                    "risk_tags": selection_meta.get("risk_tags", {}),
+                    "candidate_count": len(prompt_candidates),
+                    "reasons": reasons,
+                }
+            },
+        )
+        return tickers, reasons
+    except Exception as e:
+        _LAST_SELECTION_META = fallback_meta
+        log.error(f"[ticker-selection] error: {e} -> fallback")
+        return fallback, fallback_meta.get("reasons", {})

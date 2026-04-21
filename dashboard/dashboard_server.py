@@ -1,15 +1,15 @@
 ﻿"""
 dashboard_server.py
-Flask 湲곕컲 ?몃젅?대뵫 ??쒕낫???쒕쾭 (4-page edition)
+Flask 기반 트레이딩 대시보드 웹서버 (4-page edition)
 
-?섏씠吏:
-  /            ???ㅻ뒛 ?꾪솴
-  /history     ??湲곌컙蹂??깃낵
-  /trades      ??留ㅻℓ ?먯옣
-  /analytics   ??遺꾩꽍
+페이지:
+  /            오늘 현황
+  /history     기간별 성과
+  /trades      매매 원장
+  /analytics   분석
 
-?ㅽ뻾: python dashboard_server.py
-?묒냽: http://localhost:5000
+실행: python dashboard_server.py
+접속: http://localhost:5000
 """
 
 from flask import Flask, jsonify, render_template_string, request
@@ -20,7 +20,7 @@ from collections import Counter
 from contextlib import contextmanager
 from typing import Optional
 
-# .env 濡쒕뱶 (trading_bot怨??숈씪???섍꼍蹂???ъ슜)
+# .env 로드 (trading_bot과 동일한 환경변수 사용)
 try:
     from dotenv import load_dotenv, dotenv_values
     load_dotenv(Path(__file__).parent.parent / ".env")
@@ -223,7 +223,7 @@ def _kis_runtime(mode: str):
                 setattr(_kis_api_module, name, value)
 
 
-# ?? ?곗씠??濡쒕뜑 ????????????????????????????????????????????????????????????????
+# 데이터 로더
 
 def current_market() -> str:
     now = datetime.now(KST).time()
@@ -234,6 +234,62 @@ def current_market() -> str:
 
 def _market_log_date_str(market: str, now_dt=None) -> str:
     return _session_trade_date(market, now_dt).strftime("%Y%m%d")
+
+
+def _date_str_prefix(date_str: str) -> str:
+    day = str(date_str or "").replace("-", "")
+    if len(day) != 8:
+        return ""
+    return day[:4] + "-" + day[4:6] + "-" + day[6:]
+
+
+def _preferred_analysis_log_path(date_str: str, mode: str) -> Optional[Path]:
+    analysis_dir = BASE_DIR / "logs" / "analysis"
+    mode_name = _normalize_mode(mode)
+    prefixes = ((mode_name + "_") if mode_name != "paper" else "", "")
+    for prefix in prefixes:
+        candidate = analysis_dir / f"{prefix}analysis_{date_str}.jsonl"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _load_analysis_records_for_session(market: str, mode: str) -> list[dict]:
+    session_date = _market_log_date_str(market)
+    system_date = datetime.now(KST).strftime("%Y%m%d")
+    day_candidates = [session_date]
+    if system_date != session_date:
+        day_candidates.append(system_date)
+    allowed_prefixes = {
+        prefix
+        for prefix in (_date_str_prefix(session_date), _date_str_prefix(system_date))
+        if prefix
+    }
+
+    records: list[dict] = []
+    seen_paths: set[str] = set()
+    for day_str in day_candidates:
+        path = _preferred_analysis_log_path(day_str, mode)
+        if not path:
+            continue
+        path_key = str(path)
+        if path_key in seen_paths:
+            continue
+        seen_paths.add(path_key)
+        try:
+            raw_lines = path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
+        for line in raw_lines:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            ts = str(rec.get("timestamp", "") or "")
+            if ts and allowed_prefixes and not any(ts.startswith(prefix) for prefix in allowed_prefixes):
+                continue
+            records.append(rec)
+    return records
 
 
 def best_market_with_data() -> str:
@@ -519,17 +575,17 @@ def _log_path_for_date(rec_date: str) -> Path:
     return SYSTEM_LOG_DIR / f"trading_{ymd}.log"
 
 
-# 濡쒓렇 ?뚯떛 寃곌낵 罹먯떆: {(date, market): (ts, result)}
-# ?ㅻ뒛 ?좎쭨??30珥?TTL, 怨쇨굅 ?좎쭨???곴뎄 罹먯떆
+# 로그 파싱 결과 캐시: {(date, market): (ts, result)}
+# 오늘 날짜는 30초 TTL, 과거 날짜는 영구 캐시
 _log_parse_cache: dict = {}
 
-# USD/KRW ?섏쑉 罹먯떆 ??request path?먯꽌 KIS API ?몄텧 ?꾩쟾 李⑤떒
-# 諛깃렇?쇱슫???ㅻ젅?쒓? 10遺꾨쭏??媛깆떊, request??留덉?留?媛?利됱떆 諛섑솚
+# USD/KRW 환율 캐시 - request path에서 KIS API 호출 완전 차단
+# 백그라운드 스레드가 10분마다 갱신, request는 마지막 값 즉시 반환
 _usd_krw_cache: list = [0.0, 0.0]   # [value, monotonic_ts]
 _usd_krw_lock  = threading.Lock()
 
 def _usd_krw_bg_refresh():
-    """諛깃렇?쇱슫?쒖뿉??10遺꾨쭏???섏쑉 媛깆떊 ??request path 釉붾줈???놁쓬"""
+    """백그라운드에서 10분마다 환율을 갱신한다. request path 블로킹은 없다."""
     while True:
         try:
             val = float(get_usd_krw())
@@ -545,7 +601,7 @@ _usd_krw_thread = threading.Thread(target=_usd_krw_bg_refresh, daemon=True)
 _usd_krw_thread.start()
 
 def _get_usd_krw_cached() -> float:
-    """??긽 利됱떆 諛섑솚 ??釉붾줈???놁쓬. 諛깃렇?쇱슫???ㅻ젅?쒓? 媛믪쓣 梨꾩슱 ?뚭퉴吏???섍꼍蹂??湲곕낯媛?"""
+    """항상 즉시 반환한다. 캐시가 비어 있으면 환경변수 기본값을 사용한다."""
     with _usd_krw_lock:
         val = _usd_krw_cache[0]
     return val if val > 0 else float(os.getenv("USD_KRW_RATE", "1400") or 1400)
@@ -1432,10 +1488,10 @@ def group_by_month(records: list) -> dict:
     return groups
 
 
-# ?? API ?붾뱶?ъ씤???????????????????????????????????????????????????????????????
+# API 로드/상태
 
 def _load_live_status(market: str, mode: str = "paper") -> dict:
-    """trading_bot???ъ씠?대쭏??湲곕줉?섎뒗 ?쇱씠釉??곹깭 ?뚯씪 ?쎄린"""
+    """trading_bot이 사이클마다 기록하는 라이브 상태 파일을 읽는다."""
     path = _live_status_path(mode, market)
     if path.exists():
         try:
@@ -1562,7 +1618,7 @@ def _load_claude_control(mode: str = "paper") -> dict:
 
 
 def _load_broker_positions(market: str, mode: str = "paper"):
-    """KIS 釉뚮줈而??붽퀬?먯꽌 ?꾩옱 蹂댁쑀 ?ъ??섏쓣 吏곸젒 ?쎌뼱 ??쒕낫?쒖뿉 ?쒖떆."""
+    """KIS 브로커 잔고에서 현재 보유 포지션을 직접 읽어 대시보드에 표시한다."""
     try:
         with _kis_runtime(mode):
             token = get_access_token()
@@ -2358,15 +2414,69 @@ def _fallback_select_reason(ticker: str, market: str, mode: str, item: dict) -> 
     held_qty = int(item.get("held_qty", 0) or 0)
     pending_count = int(item.get("pending_count", 0) or 0)
     last_event = item.get("last_event", "") or ""
+    selection_status = str(item.get("selection_status", "") or "").strip().upper()
     if held_qty > 0 and pending_count > 0:
         return f"{mode_ko} 환경에서 보유 종목 추적 중 · 미체결 주문 {pending_count}건 관리"
     if held_qty > 0:
         return f"{mode_ko} 환경에서 보유 종목 추적 관리 중"
     if pending_count > 0:
         return f"{mode_ko} 환경에서 미체결 주문 추적 중"
+    if selection_status == "WATCH_ONLY":
+        return f"{mode_ko} 환경에서 WATCH_ONLY · TRADE_READY 제외"
     if last_event == "signal_check":
         return f"{mode_ko} 환경에서 스크리너 통과 종목 · 신호 대기"
     return f"{mode_ko} 환경에서 스크리너 통과 종목"
+
+
+def _selection_meta_lookup(values: dict, ticker: str, market: str):
+    if not isinstance(values, dict):
+        return None
+    lookup = str(ticker).upper() if market == "US" else str(ticker)
+    if lookup in values:
+        return values.get(lookup)
+    if market == "US":
+        for raw_key, raw_value in values.items():
+            if str(raw_key).upper() == lookup:
+                return raw_value
+    return None
+
+
+def _selection_status_for_ticker(rec: dict, ticker: str, market: str) -> str:
+    meta = rec.get("selection_meta", {}) or {}
+    trade_ready = rec.get("trade_ready_tickers") or meta.get("trade_ready") or []
+    lookup = str(ticker).upper() if market == "US" else str(ticker)
+    trade_ready_set = {
+        str(item).upper() if market == "US" else str(item)
+        for item in trade_ready
+        if str(item).strip()
+    }
+    return "TRADE_READY" if lookup in trade_ready_set else "WATCH_ONLY"
+
+
+def _resolve_ticker_select_reason(
+    ticker: str,
+    market: str,
+    mode: str,
+    item: dict,
+    rec: dict,
+    base_reason: str = "",
+    watch_only_detail: str = "",
+) -> str:
+    for candidate in (base_reason, watch_only_detail):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+
+    meta = rec.get("selection_meta", {}) or {}
+    veto_reason = str(_selection_meta_lookup(meta.get("veto", {}), ticker, market) or "").strip()
+    if veto_reason:
+        return f"TRADE_READY 제외 · {veto_reason}"
+
+    trade_ready = rec.get("trade_ready_tickers") or meta.get("trade_ready") or []
+    if str(item.get("selection_status", "") or "").upper() == "WATCH_ONLY" and not trade_ready:
+        return "trade_ready 비어 있음 · 개별 사유 미기록"
+
+    return _fallback_select_reason(ticker, market, mode, item)
 
 
 def _format_hhmm(value: str) -> str:
@@ -2539,9 +2649,9 @@ def api_summary():
     mode        = _request_mode()
     today_rec   = load_today(market)
     result      = today_rec.get("actual_result", {})
-    live        = _load_live_status(market, mode=mode)   # ??以??ㅼ떆媛??곹깭
+    live        = _load_live_status(market, mode=mode)   # 장중 실시간 상태
 
-    # ??以묒씠硫??쇱씠釉??곹깭 ?곗꽑, ?놁쑝硫??쇰퀎 湲곕줉 ?ъ슜
+    # 장중이면 라이브 상태를 우선 사용하고, 없으면 일별 기록을 쓴다
     if not _is_fresh_live_status(live, today_rec):
         live = {}
 
@@ -2666,7 +2776,18 @@ def api_summary():
             "cumulative":     cum_asset,
             "asset_krw_kr":   round(kr_asset, 0),
             "asset_krw_us":   round(us_asset, 0),
+            "asset_krw_cash": round(float((broker or {}).get("kr_cash_effective", (broker or {}).get("kr_cash", 0)) or 0), 0),
+            "asset_krw_eval": round(float((broker or {}).get("kr_eval", 0) or 0), 0),
+            "asset_usd_cash": round(float((broker or {}).get("us_cash_usd", 0) or 0), 2),
+            "asset_usd_eval": round(float((broker or {}).get("us_eval_usd", 0) or 0), 2),
+            "asset_usd_total": round(
+                float((broker or {}).get("us_cash_usd", 0) or 0) + float((broker or {}).get("us_eval_usd", 0) or 0),
+                2,
+            ),
             "broker_cash_krw": round(float((broker or {}).get("kr_cash_effective", (broker or {}).get("kr_cash", 0)) or 0) + float((broker or {}).get("us_cash_krw", 0) or 0), 0),
+            "broker_orderable_cash_kr": round(float((broker or {}).get("kr_orderable_cash", 0) or 0), 0),
+            "broker_orderable_cash_usd": round(float((broker or {}).get("us_orderable_cash_usd", 0) or 0), 2),
+            "broker_orderable_cash_us_krw": round(float((broker or {}).get("us_orderable_cash_krw", 0) or 0), 0),
             "broker_orderable_cash_krw": round(float((broker or {}).get("kr_orderable_cash", 0) or 0) + float((broker or {}).get("us_orderable_cash_krw", 0) or 0), 0),
             "engine_equity_krw": round(engine_equity_krw, 0),
             "engine_cash_krw": round(engine_cash_krw, 0),
@@ -3261,8 +3382,8 @@ def api_trades_list():
 
     records = load_records_filtered(market, period, start, end)
     broker_rows = _load_broker_trade_rows(market, period, start, end, mode=mode)
-    # 理쒖떊?쒖쑝濡?泥섎━?섎떎媛 異⑸텇??嫄곕옒 ???뺣낫 ??議곌린 醫낅즺
-    # ?덉퐫??1媛쒕떦 ?됯퇏 2~3嫄???limit*2諛??덉퐫?쒕쭔 泥섎━?대룄 異⑸텇
+    # 최신 데이터부터 처리하되 거래 매칭 정보를 위해 여유 있게 읽는다
+    # 레코드 1개당 평균 2~3건이므로 limit*2 정도만 처리해도 충분하다
     max_records = max(30, limit * 2)
     records_to_process = records[-max_records:] if len(records) > max_records else records
 
@@ -3425,63 +3546,15 @@ def api_trades_broker_status():
 
 @app.route("/api/signals/recent")
 def api_signals_recent():
-    """理쒓렐 ?좏샇 ?대깽??紐⑸줉 (analysis JSONL?먯꽌 ?쎄린)"""
+    """최근 신호 이벤트 목록을 analysis JSONL에서 읽는다."""
     market = request.args.get("market", "KR")
     n      = min(int(request.args.get("n", "60")), 200)
     mode   = _request_mode()
-    today  = _market_log_date_str(market)
-    _analysis_dir = BASE_DIR / "logs" / "analysis"
-    # mode-prefixed 파일 우선, 없으면 legacy 파일
-    _mode_prefix = _normalize_mode(mode) + "_" if mode and _normalize_mode(mode) != "paper" else ""
-    log_path = _analysis_dir / f"{_mode_prefix}analysis_{today}.jsonl"
-    if not log_path.exists():
-        log_path = _analysis_dir / f"analysis_{today}.jsonl"
-    # 봇이 전날 시작된 경우 로거가 전날 파일에 기록 → 어제 파일에서 오늘 타임스탬프 보완
-    if not log_path.exists():
-        from datetime import datetime as _dt, timedelta as _td
-        _yesterday = (_dt.strptime(today, "%Y%m%d") - _td(days=1)).strftime("%Y%m%d")
-        for _pfx in (_mode_prefix, ""):
-            _fallback = _analysis_dir / f"{_pfx}analysis_{_yesterday}.jsonl"
-            if _fallback.exists():
-                log_path = _fallback
-                break
-    # 날짜 필터 prefix (어제 파일에서 오늘 항목만 읽기 위해)
-    today_prefix = today[:4] + "-" + today[4:6] + "-" + today[6:]  # "20260413" → "2026-04-13"
-    # US 자정 세션: session date = 어제인데 봇이 자정 넘어 오늘 파일에 기록 → 오늘 파일도 추가
-    _sysdate_str = datetime.now(KST).strftime("%Y%m%d")
-    _extra_log_paths: list = []
-    if _sysdate_str != today:
-        _extra_path = BASE_DIR / "logs" / "analysis" / f"analysis_{_sysdate_str}.jsonl"
-        if _extra_path.exists():
-            _extra_log_paths.append(_extra_path)
     events: list[dict] = []
-
-    def _read_analysis_lines(path, prefix_filter=None):
-        try:
-            raw = path.read_text(encoding="utf-8").splitlines()
-        except Exception:
-            return []
-        result = []
-        for _line in raw:
-            try:
-                _rec = json.loads(_line)
-            except Exception:
-                continue
-            if prefix_filter:
-                _ts = _rec.get("timestamp", "")
-                if _ts and not _ts.startswith(prefix_filter):
-                    continue
-            result.append(_rec)
-        return result
-
-    all_recs = []
-    if log_path.exists():
-        all_recs.extend(_read_analysis_lines(log_path, prefix_filter=today_prefix))
-    for _ep in _extra_log_paths:
-        all_recs.extend(_read_analysis_lines(_ep))
+    all_recs = _load_analysis_records_for_session(market, mode)
 
     for rec in all_recs:
-        # extra 以묒꺽 援ъ“ 泥섎━: {"extra": {"extra": {...}}} ?먮뒗 {"extra": {...}}
+        # extra 중첩 구조 처리: {"extra": {"extra": {...}}} 또는 {"extra": {...}}
         extra = rec.get("extra", {})
         if "extra" in extra:
             extra = extra["extra"]
@@ -3491,7 +3564,7 @@ def api_signals_recent():
         ev_market = extra.get("market", "")
         if market and ev_market and ev_market != market:
             continue
-        # signal_check?먯꽌 signal=none??寃쎌슦留??ы븿 (?좏샇 ?놁쓬)
+        # signal_check에서는 signal=none인 경우만 포함한다 (신호 없음)
         if ev == "signal_check" and extra.get("signal", "") != "none":
             continue
         events.append({
@@ -3504,7 +3577,8 @@ def api_signals_recent():
             "mode":      extra.get("mode", ""),
             "detail":    extra.get("detail", ""),
         })
-    # 理쒖떊?쒖쑝濡?n媛?    events.reverse()
+    # 최신순으로 뒤집는다
+    events.reverse()
     runtime_events = _parse_runtime_events(market, limit=n)
     merged = events + runtime_events
     merged.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
@@ -3879,7 +3953,7 @@ def api_immediate_sell():
 
 @app.route("/api/tickers/today")
 def api_tickers_today():
-    """?ㅻ뒛 Claude媛 ?좏깮??紐⑤땲?곕쭅 醫낅ぉ + 理쒓렐 ?좏샇 ?붿빟"""
+    """오늘 Claude가 선택한 모니터링 종목과 최근 신호를 요약한다."""
     market = request.args.get("market", best_market_with_data())
     rec    = load_today(market)
     tickers  = rec.get("tickers", [])
@@ -3918,18 +3992,12 @@ def api_tickers_today():
             continue
         pending_map[ticker] = pending_map.get(ticker, 0) + 1
 
-    # ?ㅻ뒛 analysis 濡쒓렇?먯꽌 醫낅ぉ蹂?理쒓렐 ?대깽??+ ?좏깮 ?댁쑀 吏묎퀎
-    today_str = _market_log_date_str(market)
-    _adir = BASE_DIR / "logs" / "analysis"
-    _amode = _normalize_mode(mode)
-    _apfx = (_amode + "_") if _amode != "paper" else ""
-    log_path = _adir / f"{_apfx}analysis_{today_str}.jsonl"
-    if not log_path.exists():
-        log_path = _adir / f"analysis_{today_str}.jsonl"
+    # 오늘 analysis 로그에서 종목별 최근 이벤트와 선택 사유를 집계한다
     ticker_last: dict[str, dict] = {}
     ticker_sig_count: dict[str, int] = {}
     ticker_skip_reasons: dict[str, list] = {}
     selection_reasons: dict[str, str] = {}
+    watch_only_details: dict[str, str] = {}
     candidates_list: list[str] = []
     def _prefer_ticker_event(prev: dict, cand: dict) -> dict:
         if not prev:
@@ -3947,37 +4015,7 @@ def api_tickers_today():
         prev_score = (1 if prev_price > 0 else 0) + (1 if prev_detail else 0)
         cand_score = (1 if cand_price > 0 else 0) + (1 if cand_detail else 0)
         return cand if cand_score >= prev_score else prev
-    # US 자정 세션: session date != system date → 오늘 파일도 함께 읽기
-    _watch_sysdate = datetime.now(KST).strftime("%Y%m%d")
-    _watch_all_lines: list[str] = []
-    if log_path.exists():
-        _analysis_today_prefix = today_str[:4] + "-" + today_str[4:6] + "-" + today_str[6:]
-        try:
-            for _wl in log_path.read_text(encoding="utf-8").splitlines():
-                try:
-                    _wr = json.loads(_wl)
-                    _wts = _wr.get("timestamp", "")
-                    if _wts and not _wts.startswith(_analysis_today_prefix):
-                        continue
-                    _watch_all_lines.append(_wl)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-    if _watch_sysdate != today_str:
-        for _pfx2 in (_apfx, ""):
-            _ep2 = BASE_DIR / "logs" / "analysis" / f"{_pfx2}analysis_{_watch_sysdate}.jsonl"
-            if _ep2.exists():
-                try:
-                    _watch_all_lines.extend(_ep2.read_text(encoding="utf-8").splitlines())
-                except Exception:
-                    pass
-                break
-    for line in _watch_all_lines:
-            try:
-                r = json.loads(line)
-            except Exception:
-                continue
+    for r in _load_analysis_records_for_session(market, mode):
             extra = r.get("extra", {})
             if "extra" in extra:
                 extra = extra["extra"]
@@ -3991,6 +4029,7 @@ def api_tickers_today():
                 ticker_sig_count.clear()
                 ticker_skip_reasons.clear()
                 selection_reasons.clear()
+                watch_only_details.clear()
                 candidates_list.clear()
                 continue
             # ?좏깮 ?댁쑀 ?섏쭛 (ticker_selection / ticker_rescreen)
@@ -4020,6 +4059,14 @@ def api_tickers_today():
                     reasons_list = ticker_skip_reasons.setdefault(t, [])
                     if reason not in reasons_list:
                         reasons_list.append(reason)
+                if reason == "watch_only":
+                    watch_detail = str(
+                        extra.get("detail", "") or extra.get("select_reason", "") or ""
+                    ).strip()
+                    if watch_detail:
+                        watch_only_details[t] = watch_detail
+                        if not selection_reasons.get(t):
+                            selection_reasons[t] = watch_detail
 
     runtime_events = _parse_runtime_events(market, limit=200)
     for ev in reversed(runtime_events):
@@ -4044,7 +4091,7 @@ def api_tickers_today():
             continue
         recent_trade_map[ticker] = trade
 
-    # ?댁쑀 ?쒓? 留ㅽ븨
+    # 사유 한글 매핑
     _REASON_KO = {
         "already_holding":      "이미 보유중",
         "budget_exhausted":     "예산 소진",
@@ -4055,6 +4102,7 @@ def api_tickers_today():
         "entry_failed":         "주문 실패",
         "signal_blocked":       "모드 차단",
         "pending_order":        "미체결 주문",
+        "watch_only":           "TRADE_READY 제외",
     }
 
     def _today_watchlist_history(_market: str) -> dict:
@@ -4151,6 +4199,8 @@ def api_tickers_today():
         last = ticker_last.get(t, {})
         raw_reasons = ticker_skip_reasons.get(t, [])
         skip_reasons_ko = [_REASON_KO.get(r, r) for r in raw_reasons]
+        selection_status = _selection_status_for_ticker(rec, t, market)
+        select_reason = selection_reasons.get(t, "") or rec.get("ticker_reasons", {}).get(t, "")
         result.append({
             "ticker":          t,
             "display_ticker":  _display_ticker_label(t, "", name_map),
@@ -4160,10 +4210,13 @@ def api_tickers_today():
             "last_reason":     last.get("reason", ""),
             "none_reason":     last.get("detail", ""),
             "sig_count":       ticker_sig_count.get(t, 0),
-            "select_reason":   selection_reasons.get(t, "") or rec.get("ticker_reasons", {}).get(t, ""),
-            "skip_reasons":    skip_reasons_ko,   # ?ㅻ뒛 ?꾩쟻 誘몄껜寃??댁쑀
+            "select_reason":   select_reason,
+            "selection_status": selection_status,
+            "selection_status_ko": "매수 가능" if selection_status == "TRADE_READY" else "감시 전용",
+            "watch_only_detail": watch_only_details.get(t, ""),
+            "skip_reasons":    skip_reasons_ko,   # 오늘 누적 미체결 사유
         })
-    # ?좏깮?섏? ?딆? ?꾨낫 紐⑸줉 (異뺤빟)
+    # 선택되지 않은 후보 목록 (축약)
     for item in result:
         ticker = item.get("ticker", "")
         broker = broker_map.get(ticker, {})
@@ -4206,8 +4259,15 @@ def api_tickers_today():
             if item.get("last_price", 0) <= 0:
                 item["last_price"] = float(recent_trade.get("display_price", recent_trade.get("price", 0)) or 0)
         item["last_event_ko"] = _ko_event_name(item.get("last_event", "waiting"))
-        if not item.get("select_reason"):
-            item["select_reason"] = _fallback_select_reason(ticker, market, consensus.get("mode", ""), item)
+        item["select_reason"] = _resolve_ticker_select_reason(
+            ticker,
+            market,
+            consensus.get("mode", ""),
+            item,
+            rec,
+            base_reason=item.get("select_reason", ""),
+            watch_only_detail=item.get("watch_only_detail", ""),
+        )
     not_selected = [t for t in candidates_list if t not in tickers]
     return jsonify({
         "market":         market,
@@ -4307,7 +4367,7 @@ nav a.active {{ color: var(--cyan); background: rgba(6,182,212,0.12);
 }}
 .mkt-btn:hover {{ color: var(--text); }}
 
-/* ?? 湲곌컙 ?꾪꽣 諛??? */
+/* 기간 필터 바 */
 .period-bar {{
   background: var(--surface2); border-bottom: 1px solid var(--border);
   padding: 10px 24px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -4334,7 +4394,7 @@ nav a.active {{ color: var(--cyan); background: rgba(6,182,212,0.12);
 }}
 .apply-btn:hover {{ background: rgba(59,130,246,0.3); }}
 
-/* ?? ?덉씠?꾩썐 ?? */
+/* 레이아웃 */
 main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 
 .grid-5 {{ display: grid; grid-template-columns: repeat(5,1fr); gap: 16px; margin-bottom: 20px; }}
@@ -4342,7 +4402,7 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 .grid-3 {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-bottom: 20px; }}
 .grid-2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }}
 
-/* ?? 移대뱶 ?? */
+/* 카드 */
 .card {{
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 20px; position: relative; overflow: hidden;
@@ -4370,7 +4430,7 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 .down {{ color: var(--red); }}
 .neutral-color {{ color: var(--yellow); }}
 
-/* ?? ?뱀뀡 ??댄? ?? */
+/* 섹션 타이틀 */
 .section-title {{
   font-size: 11px; font-weight: 600; letter-spacing: 2px; color: var(--muted);
   text-transform: uppercase; margin-bottom: 14px;
@@ -4378,10 +4438,10 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 }}
 .section-title::after {{ content: ''; flex: 1; height: 1px; background: var(--border); }}
 
-/* ?? 李⑦듃 ?? */
+/* 차트 */
 .chart-container {{ position: relative; height: 220px; }}
 
-/* ?? ?뚯씠釉??? */
+/* 테이블 */
 .table-wrap {{ overflow-x: auto; }}
 table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
 th {{
@@ -4396,7 +4456,7 @@ td {{
 }}
 tr:hover td {{ background: rgba(255,255,255,0.02); }}
 
-/* ?? 諛곗? / 諭껋? ?? */
+/* 배지 */
 .mode-badge {{
   padding: 2px 8px; border-radius: 4px;
   font-family: var(--mono); font-size: 11px; font-weight: 600; white-space: nowrap;
@@ -4415,7 +4475,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 .side-buy  {{ color: var(--green); }}
 .side-sell {{ color: var(--red); }}
 
-/* ?? 遺꾩꽍媛 移대뱶 ?? */
+/* 분석가 카드 */
 .analyst-grid {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-bottom: 20px; }}
 .analyst-card {{
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px;
@@ -4450,7 +4510,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
   border-radius: 8px; padding: 12px 16px; font-size: 13px; line-height: 1.6; color: var(--yellow);
 }}
 
-/* ?? 援먰썕 ?? */
+/* 교훈 */
 .lesson-item {{ display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }}
 .lesson-count {{
   background: rgba(59,130,246,0.2); color: var(--blue); border-radius: 4px;
@@ -4459,11 +4519,11 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 }}
 .lesson-text {{ font-size: 13px; line-height: 1.5; }}
 
-/* ?? 吏꾪뻾 諛??? */
+/* 진행 바 */
 .mini-bar-wrap {{ background: var(--border); border-radius: 2px; height: 4px; width: 80px; display: inline-block; vertical-align: middle; overflow: hidden; }}
 .mini-bar-fill  {{ height: 100%; border-radius: 2px; }}
 
-/* ?? 嫄곕옒 ?먯옣 ?좎쭨 洹몃９ ?ㅻ뜑 ?? */
+/* 거래 원장 날짜 그룹 헤더 */
 .date-group-row td {{
   background: var(--surface2); color: var(--muted); font-size: 11px;
   letter-spacing: 2px; padding: 6px 12px; border-bottom: 1px solid var(--border);
@@ -4639,6 +4699,36 @@ const fmt = {
   num:   v => Number(v).toLocaleString(),
 };
 
+function fmtUsd(v) {
+  return '$' + Number(v || 0).toFixed(2);
+}
+
+function formatUsdKrwSplit(usd, krw, label = 'US') {
+  const usdNum = Number(usd || 0);
+  const krwNum = Number(krw || 0);
+  if (usdNum > 0) return `${label} ${fmtUsd(usdNum)} (≈${fmt.asset(krwNum)})`;
+  if (krwNum > 0) return `${label} ${fmt.asset(krwNum)}`;
+  return '';
+}
+
+function formatAssetBreakdown(today) {
+  const parts = [];
+  const krAsset = Number(today.asset_krw_kr || 0);
+  const usText = formatUsdKrwSplit(today.asset_usd_total, today.asset_krw_us);
+  if (krAsset > 0) parts.push(`KR ${fmt.asset(krAsset)}`);
+  if (usText) parts.push(usText);
+  return parts.join(' | ');
+}
+
+function formatOrderableBreakdown(today) {
+  const parts = [];
+  const krOrderable = Number(today.broker_orderable_cash_kr || 0);
+  const usText = formatUsdKrwSplit(today.broker_orderable_cash_usd, today.broker_orderable_cash_us_krw, 'US');
+  if (krOrderable > 0) parts.push(`KR ${fmt.asset(krOrderable)}`);
+  if (usText) parts.push(usText);
+  return parts.join(' | ');
+}
+
 const MODE_KO = {
   AGGRESSIVE: '공격매수',
   MODERATE_BULL: '강한상승',
@@ -4767,25 +4857,25 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
-// ?? 珥덇린???????????????????????????????????????????????????????????????????????
+// 초기 상태 복원
 (function initState() {
-  // 留덉폆 踰꾪듉
+  // 마켓 버튼
   const btn = document.getElementById('btn-' + MARKET.toLowerCase());
   if (btn) btn.classList.add('active');
 
-  // 湲곌컙 踰꾪듉
+  // 기간 버튼
   document.querySelectorAll('.period-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.p === PERIOD);
   });
 
-  // ?좎쭨 ?명뭼 蹂듭썝
+  // 날짜 입력 복원
   const ds = document.getElementById('date-start');
   const de = document.getElementById('date-end');
   if (ds && DATE_START) ds.value = DATE_START;
   if (de && DATE_END)   de.value = DATE_END;
 })();
 
-// ?? ?먮룞 ?덈줈怨좎묠 ??????????????????????????????????????????????????????????????
+// 자동 새로고침
 setTimeout(() => {
   if (typeof loadAll === 'function') setInterval(loadAll, 30000);
 }, 1000);
@@ -4793,7 +4883,7 @@ setTimeout(() => {
 """
 
 
-# ?? ?섏씠吏 1: ?ㅻ뒛 ?꾪솴 ?????????????????????????????????????????????????????????
+# 페이지 1: 오늘 현황
 
 PAGE_TODAY_HTML = """
 <main>
@@ -5296,7 +5386,8 @@ async function loadMonitorTickers() {
       const priceText = displayPrice > 0
         ? (MARKET === 'KR' ? Math.round(displayPrice).toLocaleString() + '원' : '$' + displayPrice.toFixed(2))
         : '--';
-      const statusText = Number(t.sig_count || 0) > 0 ? `신호 ${t.sig_count}` : ev.label;
+      const pickStatus = t.selection_status_ko ? ` · ${t.selection_status_ko}` : '';
+      const statusText = Number(t.sig_count || 0) > 0 ? `신호 ${t.sig_count}` : `${ev.label}${pickStatus}`;
       return `
         <div class="card" style="padding:10px 12px;min-width:132px;flex:0 0 auto;border-color:${ev.color}33">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
@@ -5376,6 +5467,9 @@ async function loadMonitorTickers() {
     const sigBadge = t.sig_count > 0
       ? `<span style="background:#10b981;color:#000;border-radius:3px;padding:1px 5px;font-size:10px;margin-left:4px">신호 ${t.sig_count}</span>`
       : '';
+    const selectBadge = t.selection_status
+      ? `<span style="margin-left:6px;background:${t.selection_status === 'TRADE_READY' ? 'rgba(16,185,129,0.18)' : 'rgba(245,158,11,0.18)'};color:${t.selection_status === 'TRADE_READY' ? '#34d399' : '#fbbf24'};border-radius:999px;padding:1px 6px;font-size:10px;font-weight:700">${t.selection_status_ko || t.selection_status}</span>`
+      : '';
     const heldEntries = Number(t.held_entries || 0);
     const heldQty = Number(t.held_qty || 0);
     const pendingCount = Number(t.pending_count || 0);
@@ -5414,7 +5508,7 @@ async function loadMonitorTickers() {
       : '';
     const skipHtmlFinal = skipHtml;
     return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:160px;max-width:280px;cursor:default">
-      <div style="font-family:var(--mono);font-weight:700;font-size:14px;color:#e2e8f0">${t.display_ticker || t.ticker}${sigBadge}</div>
+      <div style="font-family:var(--mono);font-weight:700;font-size:14px;color:#e2e8f0">${t.display_ticker || t.ticker}${sigBadge}${selectBadge}</div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${shownPriceStr}</div>
       <div style="margin-top:6px;font-size:12px;color:${ev.color}">${ev.icon} ${ev.label}</div>
       <div style="font-size:10px;color:#475569;margin-top:2px">${t.last_ts}${t.last_reason ? ' · ' + t.last_reason : ''}</div>
@@ -5623,11 +5717,13 @@ async function loadSummary() {
   document.getElementById('cumulative').textContent = fmt.asset(t.cumulative);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
+    const assetBreakdown = formatAssetBreakdown(t);
     cumulativePnl.textContent =
-      `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)} · 자산 ${assetSourceLabel}`;
+      `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}${assetBreakdown ? ` · ${assetBreakdown}` : ''} · 자산 ${assetSourceLabel}`;
   }
+  const orderBreakdown = formatOrderableBreakdown(t);
   document.getElementById('today-mode').innerHTML =
-    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.krw(t.mode_order_limit_krw)}` : ''}${t.broker_orderable_cash_krw ? ` | 주문가능 ${fmt.krw(t.broker_orderable_cash_krw)}` : ''}${t.execution_contaminated ? ` <span style="color:#f59e0b">| 실행오염 ${((t.execution_issues||[]).slice(0,2)).join(', ')}</span>` : ''}`;
+    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.asset(t.mode_order_limit_krw)}` : ''}${orderBreakdown ? ` | 주문가능 ${orderBreakdown}` : ''}${t.execution_contaminated ? ` <span style="color:#f59e0b">| 실행오염 ${((t.execution_issues||[]).slice(0,2)).join(', ')}</span>` : ''}`;
 
   const wrEl = document.getElementById('win-rate');
   wrEl.textContent = p.win_rate + '%';
@@ -5897,12 +5993,12 @@ setInterval(async () => { await refreshPrices(MARKET); loadSummary(); }, 30000);
 """
 
 
-# ?? ?섏씠吏 2: 湲곌컙蹂??깃낵 ??????????????????????????????????????????????????????
+# 페이지 2: 기간별 성과
 
 PAGE_HISTORY_HTML = """
 <main>
 
-<!-- 4 ?듦퀎 移대뱶 -->
+<!-- 4 통계 카드 -->
 <div class="grid-4" id="stat-cards">
   <div class="card green">
     <div class="card-label">청산 승률</div>
@@ -5926,7 +6022,7 @@ PAGE_HISTORY_HTML = """
   </div>
 </div>
 
-<!-- 2 李⑦듃 -->
+<!-- 2 차트 -->
 <div class="grid-2">
   <div class="card blue">
     <div class="section-title">손익 곡선</div>
@@ -5938,7 +6034,7 @@ PAGE_HISTORY_HTML = """
   </div>
 </div>
 
-<!-- ?붾퀎 ?뚯씠釉?-->
+<!-- 월별 테이블 -->
 <div class="card">
   <div class="section-title">월별 청산 성과 요약</div>
   <div class="table-wrap">
@@ -6112,12 +6208,12 @@ loadAll();
 """
 
 
-# ?? ?섏씠吏 3: 留ㅻℓ ?먯옣 ????????????????????????????????????????????????????????
+# 페이지 3: 매매 원장
 
 PAGE_TRADES_HTML = """
 <main>
 
-<!-- 4 ?붿빟 移대뱶 -->
+<!-- 4 요약 카드 -->
 <div class="grid-4">
   <div class="card blue">
     <div class="card-label">총 거래 수</div>
@@ -6164,7 +6260,7 @@ PAGE_TRADES_HTML = """
   </div>
 </div>
 
-<!-- 嫄곕옒 ?뚯씠釉?-->
+<!-- 거래 테이블 -->
 <div class="card">
   <div class="section-title" style="justify-content:space-between">
     <span>매매 원장</span>
@@ -6464,7 +6560,7 @@ loadBrokerTradeStatus();
 """
 
 
-# ?? ?섏씠吏 4: 遺꾩꽍 ????????????????????????????????????????????????????????????
+# 페이지 4: 분석
 
 TODAY_SUMMARY_OVERRIDE_JS = """
 <script>
@@ -6492,6 +6588,7 @@ async function loadSummary() {
   if (cumulative) cumulative.textContent = fmt.asset(t.cumulative || 0);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
+    const assetBreakdown = formatAssetBreakdown(t);
     const assetSourceLabel = {
       broker: '브로커 기준',
       'broker+paper_us_cash_estimated': '브로커 기준 · US 모의현금 추정',
@@ -6499,7 +6596,7 @@ async function loadSummary() {
       'broker+live_fallback': '브로커 기준 · 라이브 보정',
       internal_fallback: '엔진 추정',
     }[t.asset_source || ''] || (t.asset_source || '기준 미상');
-    cumulativePnl.textContent = `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)} · 자산 ${assetSourceLabel}`;
+    cumulativePnl.textContent = `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}${assetBreakdown ? ` · ${assetBreakdown}` : ''} · 자산 ${assetSourceLabel}`;
   }
 
   const sess = t.session || {};
@@ -6507,8 +6604,9 @@ async function loadSummary() {
   const sessTxt = sess.label ? ` | ${sess.label} (${sess.open_time || '--:--'}~${sess.close_time || '--:--'})` : '';
   const todayMode = document.getElementById('today-mode');
   if (todayMode) {
-    const orderTxt = t.mode_order_limit_krw ? ` | 최대매수 ${fmt.krw(t.mode_order_limit_krw)}` : '';
-    const cashTxt = t.broker_orderable_cash_krw ? ` | 주문가능 ${fmt.krw(t.broker_orderable_cash_krw)}` : '';
+    const orderTxt = t.mode_order_limit_krw ? ` | 최대매수 ${fmt.asset(t.mode_order_limit_krw)}` : '';
+    const cashBreakdown = formatOrderableBreakdown(t);
+    const cashTxt = cashBreakdown ? ` | 주문가능 ${cashBreakdown}` : '';
     const descTxt = modeDescription(t.mode) ? `<div style="margin-top:6px;color:var(--muted);font-size:12px">${modeDescription(t.mode)}</div>` : '';
     todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${cashTxt}${sessTxt}${riskText}${descTxt}`;
   }
@@ -6964,7 +7062,7 @@ loadClaudeNarrative();
 PAGE_ANALYTICS_HTML = """
 <main>
 
-<!-- Row 1: 遺꾩꽍媛 ?곸쨷瑜?異붿씠 + 紐⑤뱶蹂??깃낵 -->
+<!-- Row 1: 분석가 영향률 추이 + 모드별 성과 -->
 <div class="grid-2">
   <div class="card purple">
     <div class="section-title">분석가 영향률 추이 (7일 이동평균)</div>
@@ -6981,7 +7079,7 @@ PAGE_ANALYTICS_HTML = """
   </div>
 </div>
 
-<!-- Row 2: ?꾨왂蹂??깃낵 + 諛섎났 援먰썕 -->
+<!-- Row 2: 전략별 성과 + 반복 교훈 -->
 <div class="grid-2">
   <div class="card cyan">
     <div class="section-title">전략별 성과</div>
@@ -6998,7 +7096,7 @@ PAGE_ANALYTICS_HTML = """
   </div>
 </div>
 
-<!-- Row 3: Brain ?곹깭 + 遺꾩꽍媛 ?곸꽭 -->
+<!-- Row 3: Brain 상태 + 분석가 성과 상세 -->
 <div class="grid-3">
   <div class="card">
     <div class="section-title">Brain 상태</div>
@@ -7010,7 +7108,7 @@ PAGE_ANALYTICS_HTML = """
   </div>
 </div>
 
-<!-- Row 4: Brain ?쇰퀎 ?숈뒿 ?대젰 -->
+<!-- Row 4: Brain 일별 학습 이력 -->
 <div class="card" style="margin-top:0">
   <div class="section-title" style="display:flex;align-items:center;gap:12px">
     Brain 일별 학습 이력
@@ -7036,7 +7134,7 @@ PAGE_ANALYTICS_HTML = """
       <tbody id="brain-history-tbody"></tbody>
     </table>
   </div>
-  <!-- ?꾩쟻 援먰썕 + correction_guide -->
+  <!-- 누적 교훈 + correction_guide -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
     <div>
       <div style="font-size:11px;font-weight:600;letter-spacing:1.2px;color:var(--muted);margin-bottom:8px">누적 교훈</div>

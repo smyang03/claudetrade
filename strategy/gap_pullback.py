@@ -11,7 +11,12 @@ def signal(df: pd.DataFrame, i: int, params: dict) -> bool:
     vol_avg = row.get("vol_avg20", 1)
     gap     = float(row.get("gap_pct", 0)) / 100
     vol_ratio = float(row.get("volume", 0)) / vol_avg if vol_avg else 0
-    pullback  = float(row.get("low", 0)) >= float(row.get("open", 0)) * 0.995
+    o = float(row.get("open", 0) or 0)
+    h = float(row.get("high", 0) or 0)
+    l = float(row.get("low", 0) or 0)
+    c = float(row.get("close", 0) or 0)
+    if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+        return False
 
     # 장초반 여부 판단 — trading_bot이 session_elapsed_min 주입
     elapsed_min  = params.get("session_elapsed_min", 999)
@@ -21,17 +26,30 @@ def signal(df: pd.DataFrame, i: int, params: dict) -> bool:
     if in_opening:
         gap_min  = params.get("opening_gap_min", 0.030)
         vol_mult = params.get("opening_vol_mult", 0.15)
+        pullback_min = params.get("opening_pullback_min_pct", 0.006)
+        pullback_max = params.get("opening_pullback_max_pct", 0.050)
 
         # 장초 단일가봉 진입 억제 — open=high=low이면 실제 눌림이 없는 첫 틱 상태
         # gap_pct 주입 후 pullback=True가 trivially 충족되므로 고점추격 방지
-        _h = float(row.get("high", 0))
-        _l = float(row.get("low", 0))
-        _o = float(row.get("open", 0))
-        if _o > 0 and _h == _l == _o:
+        if h == l == o:
             return False  # 단일가봉 — 눌림 미확인, 진입 보류
     else:
         gap_min  = params.get("gap_min", 0.015)
         vol_mult = params.get("vol_mult", 1.8)
+        pullback_min = params.get("pullback_min_pct", 0.010)
+        pullback_max = params.get("pullback_max_pct", 0.040)
+
+    pullback_depth = (h - l) / h if h > 0 else 0.0
+    open_drawdown = (o - l) / o if o > 0 and l < o else 0.0
+    open_drawdown_max = params.get("open_drawdown_max_pct", 0.025)
+    recovery_min = params.get("recovery_min_pct", 0.003)
+    open_reclaim_buffer = params.get("open_reclaim_buffer_pct", 0.003)
+    recovered = c >= l * (1 + recovery_min) and c >= o * (1 - open_reclaim_buffer)
+    pullback = (
+        pullback_min <= pullback_depth <= pullback_max
+        and open_drawdown <= open_drawdown_max
+        and recovered
+    )
 
     return gap > gap_min and vol_ratio > vol_mult and pullback
 
@@ -86,4 +104,11 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
             "opening_gap_min": opening_gap_min,   # 3.0% 이상 갭만 허용 (노이즈 방지)
             "opening_vol_mult": opening_vol_mult, # 장초 vol_ratio 완화
             "opening_window_min": 30,   # 장 시작 후 30분 이내
+            "pullback_min_pct": 0.010,
+            "pullback_max_pct": 0.040,
+            "opening_pullback_min_pct": 0.006,
+            "opening_pullback_max_pct": 0.050,
+            "open_drawdown_max_pct": 0.025,
+            "recovery_min_pct": 0.003,
+            "open_reclaim_buffer_pct": 0.003,
             }

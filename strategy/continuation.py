@@ -71,13 +71,17 @@ def signal(df: pd.DataFrame, i: int, params: dict) -> bool:
 def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
     """
     brain_mode / market별 파라미터.
-    HALT/DEFENSIVE/CAUTIOUS_BEAR 에서는 disabled=True.
+    MILD_BULL 미만 모드에서는 disabled=True.
     """
-    _disabled_modes = {"HALT", "DEFENSIVE"}
-    if market.upper() == "US":
-        _disabled_modes.add("CAUTIOUS_BEAR")
-    if market.upper() == "KR":
-        _disabled_modes.add("CAUTIOUS_BEAR")
+    _disabled_modes = {
+        "HALT",
+        "DEFENSIVE",
+        "CAUTIOUS_BEAR",
+        "MILD_BEAR",
+        "NEUTRAL",
+        "CAUTIOUS",
+        "CAUTIOUS_BULL",
+    }
 
     if brain_mode in _disabled_modes:
         return {"disabled": True, "cont_gap_min": 9.9, "cont_vol_mult": 9.9,
