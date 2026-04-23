@@ -110,6 +110,10 @@ def _request_mode(default: str = "paper") -> str:
     return _normalize_mode(mode or default)
 
 
+def _is_live_mode(mode: Optional[str]) -> bool:
+    return _normalize_mode(mode) == "live"
+
+
 def _claude_control_path(mode: str) -> Path:
     return get_runtime_path("state", f"{_normalize_mode(mode)}_claude_control.json")
 
@@ -120,6 +124,10 @@ def _bot_pid_path(mode: str) -> Path:
 
 def _open_positions_path(mode: str) -> Path:
     return get_runtime_path("state", f"{_normalize_mode(mode)}_open_positions.json")
+
+
+def _broker_equity_history_path(mode: str) -> Path:
+    return get_runtime_path("state", f"{_normalize_mode(mode)}_broker_equity_history.jsonl")
 
 
 def _live_status_path(mode: str, market: str) -> Path:
@@ -299,7 +307,8 @@ def best_market_with_data() -> str:
         p = _judgment_path(mkt, today, mode)
         if p.exists():
             try:
-                d = json.load(open(p, encoding="utf-8"))
+                with open(p, encoding="utf-8") as f:
+                    d = json.load(f)
                 if d.get("mode") != "historical_sim":
                     return mkt
             except Exception:
@@ -307,7 +316,8 @@ def best_market_with_data() -> str:
         legacy = LOG_DIR / f"{today}_{mkt}.json"
         if legacy.exists():
             try:
-                d = json.load(open(legacy, encoding="utf-8"))
+                with open(legacy, encoding="utf-8") as f:
+                    d = json.load(f)
                 if d.get("mode") != "historical_sim":
                     return mkt
             except Exception:
@@ -334,8 +344,11 @@ def load_records(days: int = 9999, market: str = "KR") -> list:
 def load_brain() -> dict:
     source = BRAIN_PATH if BRAIN_PATH.exists() else (BASE_DIR / "claude_memory" / "brain.json")
     if source.exists():
-        with open(source, encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(source, encoding="utf-8-sig") as f:
+                return json.load(f)
+        except Exception as e:
+            app.logger.warning(f"[dashboard] load_brain failed: {source} ({e})")
     return {}
 
 
@@ -610,7 +623,7 @@ def _parse_trade_log_lines(rec_date: str, market: str) -> list:
     cache_key = (rec_date, market)
     now_ts = _time.monotonic()
     today_str = date.today().strftime("%Y-%m-%d")
-    # 怨쇨굅 ?좎쭨: ?곴뎄 罹먯떆 / ?ㅻ뒛 ?좎쭨: 30珥?TTL
+    # 과거 날짜는 영구 캐시, 오늘 날짜만 30초 TTL
     if cache_key in _log_parse_cache:
         cached_ts, cached_result = _log_parse_cache[cache_key]
         is_today = rec_date.replace("-", "")[:8] == today_str.replace("-", "")
@@ -624,10 +637,10 @@ def _parse_trade_log_lines(rec_date: str, market: str) -> list:
         return []
 
     buy_re = re.compile(
-        r"\[PAPER BUY\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<qty>\d+)@(?P<price>[0-9,]+(?:\.[0-9]+)?)\s+\|\s+(?P<strategy>[^|]+?)\s+\|\s+二쇰Ц踰덊샇=(?P<order_no>\d+)"
+        r"\[PAPER BUY\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<qty>\d+)@(?P<price>[0-9,]+(?:\.[0-9]+)?)\s+\|\s+(?P<strategy>[^|]+?)\s+\|\s+주문번호=(?P<order_no>\d+)"
     )
     sell_re = re.compile(
-        r"\[PAPER SELL\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<qty>\d+)@(?P<price>[0-9,]+(?:\.[0-9]+)?)\s+\|\s+二쇰Ц踰덊샇=(?P<order_no>\d+)"
+        r"\[PAPER SELL\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<qty>\d+)@(?P<price>[0-9,]+(?:\.[0-9]+)?)\s+\|\s+주문번호=(?P<order_no>\d+)"
     )
     close_re = re.compile(
         r"\[(?P<reason>[a-zA-Z_]+)\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<pnl>[+\-]?[0-9,]+(?:\.[0-9]+)?)\s+\((?P<pnl_pct>[+\-]?[0-9.]+)%\)"
@@ -892,7 +905,7 @@ def _live_trades(market: str) -> list:
     if not live or not live.get("session_active"):
         return []
     trade_date = live.get("trading_date", "")
-    if trade_date[:10] != date.today().isoformat():
+    if trade_date[:10] != _session_trade_date(market).isoformat():
         return []
     rows = []
     seen = set()
@@ -1115,10 +1128,12 @@ def _annotate_trade_matches(strategy_rows: list[dict], broker_rows: list[dict]) 
 
 def _trade_stats_from_rows(trades: list, days: int) -> dict:
     sells = [t for t in trades if t.get("side") == "sell"]
-    wins = [t for t in sells if float(t.get("pnl", 0) or 0) > 0]
-    losses = [t for t in sells if float(t.get("pnl", 0) or 0) < 0]
-    total_pnl = sum(float(t.get("pnl_pct", 0) or 0) for t in sells)
-    trade_count = len(sells)
+    known_sells = [t for t in sells if bool(t.get("pnl_known", True))]
+    unknown_sells = [t for t in sells if not bool(t.get("pnl_known", True))]
+    wins = [t for t in known_sells if float(t.get("pnl", 0) or 0) > 0]
+    losses = [t for t in known_sells if float(t.get("pnl", 0) or 0) < 0]
+    total_pnl = sum(float(t.get("pnl_pct", 0) or 0) for t in known_sells)
+    trade_count = len(known_sells)
     return {
         "days": days,
         "wins": len(wins),
@@ -1127,12 +1142,13 @@ def _trade_stats_from_rows(trades: list, days: int) -> dict:
         "total_pnl": round(total_pnl, 2),
         "avg_pnl": round(total_pnl / trade_count, 2) if trade_count else 0,
         "trades": trade_count,
+        "unknown_trades": len(unknown_sells),
         "basis": "closed_trades",
     }
 
 
 def _parse_runtime_events(market: str, limit: int = 200) -> list:
-    path = _log_path_for_date(date.today().isoformat())
+    path = _log_path_for_date(_session_trade_date(market).isoformat())
     if not path.exists():
         return []
 
@@ -1671,6 +1687,11 @@ def _saved_positions_for_market(market: str, mode: str = "paper") -> list:
     return list(merged.values())
 
 
+def _live_position_context_for_market(market: str, mode: str = "paper") -> list:
+    live = _load_live_status(market, mode=mode) or {}
+    return _filter_items_for_market(live.get("positions", []) or [], market)
+
+
 def _load_open_positions(mode: str = "paper") -> list:
     path = _open_positions_path(mode)
     if not path.exists():
@@ -1747,6 +1768,72 @@ def _merge_positions_for_display(
                 merged.append(_merge_position_context(pos, None))
 
     return merged
+
+
+def _broker_trade_rows_with_pnl(market: str, period: str, start: str, end: str, mode: str = "paper") -> list[dict]:
+    d_start, d_end = _resolve_period_bounds(period, start, end)
+    seed_start = date(d_start.year, 1, 1)
+    seeded_rows = _load_broker_trade_rows(
+        market,
+        "custom",
+        seed_start.isoformat(),
+        d_end.isoformat(),
+        mode=mode,
+    )
+    usd_krw = _get_usd_krw_cached()
+    try:
+        from collections import defaultdict, deque
+    except Exception:
+        defaultdict = dict  # type: ignore[assignment]
+        deque = list  # type: ignore[assignment]
+
+    queues = defaultdict(deque)
+    enriched: list[dict] = []
+    for raw in sorted(seeded_rows, key=lambda r: (str(r.get("date", "")), str(r.get("time", "")), str(r.get("order_no", "")))):
+        row = dict(raw or {})
+        ticker = str(row.get("ticker", "") or "").strip().upper()
+        side = str(row.get("side", "") or "").lower()
+        qty = int(row.get("qty", 0) or 0)
+        price = float(row.get("display_price", row.get("price", 0)) or 0)
+        if not ticker or qty <= 0 or price <= 0:
+            continue
+        row["pnl_known"] = True
+        row["buy_price_native"] = 0.0
+        row["pnl"] = 0.0
+        row["pnl_pct"] = 0.0
+        if side == "buy":
+            queues[ticker].append([qty, price])
+        elif side == "sell":
+            remaining = qty
+            matched_qty = 0
+            total_cost = 0.0
+            while remaining > 0 and queues[ticker]:
+                buy_qty, buy_px = queues[ticker][0]
+                take = min(remaining, buy_qty)
+                total_cost += take * buy_px
+                matched_qty += take
+                buy_qty -= take
+                remaining -= take
+                if buy_qty <= 0:
+                    queues[ticker].popleft()
+                else:
+                    queues[ticker][0][0] = buy_qty
+            if matched_qty > 0:
+                avg_buy = total_cost / matched_qty
+                pnl_native = price * matched_qty - total_cost
+                row["buy_price_native"] = round(avg_buy, 6)
+                row["pnl"] = round(pnl_native if market == "KR" else pnl_native * usd_krw, 6)
+                if avg_buy > 0:
+                    row["pnl_pct"] = round((price / avg_buy - 1.0) * 100.0, 6)
+            if matched_qty != qty:
+                row["pnl_known"] = False
+                row["reason"] = "broker_fill_cost_basis_partial"
+        else:
+            row["pnl_known"] = False
+        trade_day = _parse_date(str(row.get("date", "") or ""))
+        if d_start <= trade_day <= d_end:
+            enriched.append(_enrich_trade_row(row, market))
+    return enriched
 
 
 def _resolve_review_position(market: str, ticker: str, mode: str = "paper") -> tuple[str, Optional[dict], dict, list]:
@@ -1865,6 +1952,81 @@ def _broker_snapshot(mode: str = "paper") -> dict:
             "US": _unrealized_krw(us.get("stocks", []), "US"),
         },
     }
+
+
+def _market_asset_krw_from_broker_snapshot(broker: dict, market: str) -> float:
+    broker = broker or {}
+    if market == "US":
+        return float(broker.get("us_cash_krw", 0) or 0) + float(broker.get("us_eval_krw", 0) or 0)
+    return float(broker.get("kr_cash_effective", broker.get("kr_cash", 0)) or 0) + float(broker.get("kr_eval", 0) or 0)
+
+
+def _persist_broker_equity_snapshot(broker: dict, mode: str = "paper") -> None:
+    if not broker:
+        return
+    path = _broker_equity_history_path(mode)
+    today_kr = _session_trade_date("KR").isoformat()
+    today_us = _session_trade_date("US").isoformat()
+    updates = {
+        ("KR", today_kr): {
+            "market": "KR",
+            "date": today_kr,
+            "asset_krw": round(_market_asset_krw_from_broker_snapshot(broker, "KR"), 6),
+            "unrealized_krw": round(float((broker.get("unrealized_krw", {}) or {}).get("KR", 0) or 0), 6),
+            "source": str(broker.get("source", "broker") or "broker"),
+            "captured_at": datetime.now(KST).isoformat(),
+        },
+        ("US", today_us): {
+            "market": "US",
+            "date": today_us,
+            "asset_krw": round(_market_asset_krw_from_broker_snapshot(broker, "US"), 6),
+            "unrealized_krw": round(float((broker.get("unrealized_krw", {}) or {}).get("US", 0) or 0), 6),
+            "source": str(broker.get("source", "broker") or "broker"),
+            "captured_at": datetime.now(KST).isoformat(),
+        },
+    }
+    rows_by_key: dict[tuple[str, str], dict] = {}
+    if path.exists():
+        try:
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                item = json.loads(raw)
+                key = (str(item.get("market", "") or "").upper(), str(item.get("date", "") or ""))
+                if key[0] and key[1]:
+                    rows_by_key[key] = item
+        except Exception:
+            rows_by_key = {}
+    rows_by_key.update(updates)
+    ordered = sorted(rows_by_key.values(), key=lambda r: (str(r.get("market", "")), str(r.get("date", ""))))
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in ordered) + ("\n" if ordered else ""),
+        encoding="utf-8",
+    )
+
+
+def _load_broker_equity_snapshots(market: str, period: str, start: str, end: str, mode: str = "paper") -> list[dict]:
+    path = _broker_equity_history_path(mode)
+    if not path.exists():
+        return []
+    d_start, d_end = _resolve_period_bounds(period, start, end)
+    rows = []
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            item = json.loads(raw)
+            if str(item.get("market", "") or "").upper() != market:
+                continue
+            d = _parse_date(str(item.get("date", "") or ""))
+            if d_start <= d <= d_end:
+                rows.append(item)
+    except Exception:
+        return []
+    rows.sort(key=lambda r: str(r.get("date", "")))
+    return rows
 
 
 def _broker_realized_pnl_krw(market: str, trade_date: str, mode: str = "paper") -> float:
@@ -2669,8 +2831,12 @@ def api_summary():
     _raw_broker = _load_broker_positions(market, mode=mode)
     broker_ok = _raw_broker is not None
     broker_positions = _filter_items_for_market(_raw_broker or [], market)
-    saved_positions = _saved_positions_for_market(market, mode=mode)
-    positions = _merge_positions_for_display(market, broker_positions, saved_positions, broker_ok=broker_ok)
+    position_context = (
+        _live_position_context_for_market(market, mode=mode)
+        if _is_live_mode(mode)
+        else _saved_positions_for_market(market, mode=mode)
+    )
+    positions = _merge_positions_for_display(market, broker_positions, position_context, broker_ok=broker_ok)
     pending_orders = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
     name_map = _ticker_name_map(market, mode=mode)
     for pos in positions:
@@ -2678,6 +2844,8 @@ def api_summary():
     for order in pending_orders:
         order["display_ticker"] = _display_ticker_label(order.get("ticker", ""), order.get("name", ""), name_map)
     broker = _broker_snapshot(mode=mode)
+    if broker:
+        _persist_broker_equity_snapshot(broker, mode=mode)
     kr_asset = 0.0
     us_asset = 0.0
     usd_krw = float(os.getenv("USD_KRW_RATE", "1350") or 1350)
@@ -2801,9 +2969,9 @@ def api_summary():
             "pending_count":  len(pending_orders),
             "live_updated":   live.get("updated_at", ""),
             "session":        _session_status(market),
-            "risk_label":     risk["risk_label"],
-            "risk_value":     risk["risk_value"],
-            "risk_status":    risk["risk_status"],
+            "risk_label":     risk.get("risk_label", ""),
+            "risk_value":     risk.get("risk_value", ""),
+            "risk_status":    risk.get("risk_status", "normal"),
             "signal_digest":  signal_digest,
             "ml_db":          ml_digest,
             "adaptive":       adaptive_digest,
@@ -3254,11 +3422,18 @@ def api_stats_period():
     period = request.args.get("period", "month")
     start  = request.args.get("start", "")
     end    = request.args.get("end", "")
-    records = load_records_filtered(market, period, start, end)
+    mode = _request_mode()
+    if _is_live_mode(mode):
+        trades = _broker_trade_rows_with_pnl(market, period, start, end, mode=mode)
+        active_days = len({str(t.get("date", "") or "")[:10] for t in trades})
+        stats = _trade_stats_from_rows(trades, active_days)
+        stats["basis"] = "broker_closed_trades"
+        return jsonify(stats)
 
+    records = load_records_filtered(market, period, start, end)
     if not records:
         return jsonify({"days": 0, "wins": 0, "losses": 0,
-                        "win_rate": 0, "total_pnl": 0, "avg_pnl": 0, "trades": 0})
+                        "win_rate": 0, "total_pnl": 0, "avg_pnl": 0, "trades": 0, "unknown_trades": 0})
 
     trades = _trade_rows_for_records(records, market)
     stats = _trade_stats_from_rows(trades, len(records))
@@ -3268,6 +3443,48 @@ def api_stats_period():
 @app.route("/api/history/monthly")
 def api_history_monthly():
     market  = request.args.get("market", best_market_with_data())
+    mode = _request_mode()
+    if _is_live_mode(mode):
+        trades = _broker_trade_rows_with_pnl(market, "all", "", "", mode=mode)
+        month_groups: dict[str, list[dict]] = {}
+        for trade in trades:
+            month = str(trade.get("date", "") or "")[:7]
+            if month:
+                month_groups.setdefault(month, []).append(trade)
+        result = []
+        for month in sorted(month_groups.keys(), reverse=True):
+            month_trades = month_groups[month]
+            active_days = len({str(t.get("date", "") or "")[:10] for t in month_trades})
+            stats = _trade_stats_from_rows(month_trades, active_days)
+            day_groups = {}
+            for t in month_trades:
+                if t.get("side") != "sell" or not bool(t.get("pnl_known", True)):
+                    continue
+                d = t.get("date", "")
+                day_groups[d] = day_groups.get(d, 0.0) + float(t.get("pnl_pct", 0) or 0)
+            best_day = {"date": "", "pnl": 0}
+            worst_day = {"date": "", "pnl": 0}
+            if day_groups:
+                best_date, best_pnl = max(day_groups.items(), key=lambda x: x[1])
+                worst_date, worst_pnl = min(day_groups.items(), key=lambda x: x[1])
+                best_day = {"date": best_date, "pnl": round(best_pnl, 2)}
+                worst_day = {"date": worst_date, "pnl": round(worst_pnl, 2)}
+            result.append({
+                "month": month,
+                "days": stats["days"],
+                "wins": stats["wins"],
+                "losses": stats["losses"],
+                "win_rate": stats["win_rate"],
+                "total_pnl": stats["total_pnl"],
+                "avg_pnl": stats["avg_pnl"],
+                "trades": stats["trades"],
+                "unknown_trades": stats.get("unknown_trades", 0),
+                "basis": "broker_closed_trades",
+                "best_day": best_day,
+                "worst_day": worst_day,
+            })
+        return jsonify(result)
+
     records = load_records(9999, market)
     groups  = group_by_month(records)
 
@@ -3300,6 +3517,7 @@ def api_history_monthly():
             "total_pnl":  stats["total_pnl"],
             "avg_pnl":    stats["avg_pnl"],
             "trades":     stats["trades"],
+            "unknown_trades": stats.get("unknown_trades", 0),
             "best_day":   best_day,
             "worst_day":  worst_day,
         })
@@ -3312,6 +3530,59 @@ def api_history_equity():
     period  = request.args.get("period", "all")
     start   = request.args.get("start", "")
     end     = request.args.get("end", "")
+    mode = _request_mode()
+    if _is_live_mode(mode):
+        broker = _broker_snapshot(mode=mode)
+        if broker:
+            _persist_broker_equity_snapshot(broker, mode=mode)
+        current_asset = _market_asset_krw_from_broker_snapshot(broker, market)
+        broker_rows = _broker_trade_rows_with_pnl(market, period, start, end, mode=mode)
+        pnl_by_date: dict[str, float] = {}
+        pct_by_date: dict[str, float] = {}
+        for row in broker_rows:
+            if row.get("side") != "sell" or not bool(row.get("pnl_known", True)):
+                continue
+            trade_date = str(row.get("date", "") or "")[:10]
+            pnl_by_date[trade_date] = pnl_by_date.get(trade_date, 0.0) + float(row.get("pnl", 0) or 0)
+            pct_by_date[trade_date] = pct_by_date.get(trade_date, 0.0) + float(row.get("pnl_pct", 0) or 0)
+        snapshot_rows = _load_broker_equity_snapshots(market, period, start, end, mode=mode)
+        snapshot_map = {
+            str(item.get("date", "") or "")[:10]: float(item.get("asset_krw", 0) or 0)
+            for item in snapshot_rows
+        }
+        labels = sorted(set(list(pnl_by_date.keys()) + list(snapshot_map.keys())))
+        trade_today = _session_trade_date(market).isoformat()
+        if current_asset > 0 and trade_today not in labels:
+            labels.append(trade_today)
+        labels = sorted(set(labels))
+        if not labels and current_asset > 0:
+            labels = [trade_today]
+        equity = [0.0] * len(labels)
+        pnl = [round(pct_by_date.get(label, 0.0), 4) for label in labels]
+        wins = [pnl_by_date.get(label, 0.0) > 0 for label in labels]
+        modes = ["" for _ in labels]
+        if labels:
+            if labels[-1] in snapshot_map and snapshot_map[labels[-1]] > 0:
+                equity[-1] = snapshot_map[labels[-1]]
+            elif labels[-1] == trade_today and current_asset > 0:
+                equity[-1] = current_asset
+            else:
+                equity[-1] = current_asset
+            for i in range(len(labels) - 2, -1, -1):
+                next_label = labels[i + 1]
+                if labels[i] in snapshot_map and snapshot_map[labels[i]] > 0:
+                    equity[i] = snapshot_map[labels[i]]
+                else:
+                    equity[i] = equity[i + 1] - float(pnl_by_date.get(next_label, 0.0) or 0.0)
+        return jsonify({
+            "labels": labels,
+            "equity": equity,
+            "pnl": pnl,
+            "wins": wins,
+            "modes": modes,
+            "basis": "broker_asset_reconstructed",
+        })
+
     records = load_records_filtered(market, period, start, end)
 
     labels, equity, pnl, wins, modes = [], [], [], [], []
@@ -3324,9 +3595,9 @@ def api_history_equity():
         wins.append(result.get("win", False))
         modes.append(r.get("consensus", {}).get("mode", ""))
         metric_rows.append(result)
-    today_label = date.today().isoformat()
-    live = _load_live_status(market, mode=_request_mode())
-    broker = _broker_snapshot(mode=_request_mode())
+    today_label = _session_trade_date(market).isoformat()
+    live = _load_live_status(market, mode=mode)
+    broker = _broker_snapshot(mode=mode)
     current_equity = float((broker or {}).get("cumulative", 0) or 0)
     if _is_fresh_live_status(live, load_today(market)):
         if current_equity > 0:
@@ -3381,46 +3652,45 @@ def api_trades_list():
     include_live = request.args.get("include_live", "true").lower() != "false"
 
     records = load_records_filtered(market, period, start, end)
-    broker_rows = _load_broker_trade_rows(market, period, start, end, mode=mode)
-    # 최신 데이터부터 처리하되 거래 매칭 정보를 위해 여유 있게 읽는다
-    # 레코드 1개당 평균 2~3건이므로 limit*2 정도만 처리해도 충분하다
-    max_records = max(30, limit * 2)
-    records_to_process = records[-max_records:] if len(records) > max_records else records
+    broker_rows = _broker_trade_rows_with_pnl(market, period, start, end, mode=mode)
 
-    trades  = []
-    for r in records_to_process:
-        for t in _trades_for_record(r, market):
-            t_side     = t.get("side", "")
-            t_ticker   = t.get("ticker", "")
-            t_strategy = t.get("strategy", "")
-            if ticker   and ticker   not in t_ticker.upper():
-                continue
-            if strategy and strategy != t_strategy:
-                continue
-            if side     and side     != t_side:
-                continue
-            trades.append(t)
+    if _is_live_mode(mode):
+        strategy_rows = []
+        max_records = max(30, limit * 2)
+        records_to_process = records[-max_records:] if len(records) > max_records else records
+        for r in records_to_process:
+            strategy_rows.extend(_trades_for_record(r, market))
+        _, trades = _annotate_trade_matches(strategy_rows, broker_rows)
+    else:
+        max_records = max(30, limit * 2)
+        records_to_process = records[-max_records:] if len(records) > max_records else records
+        trades = []
+        for r in records_to_process:
+            for t in _trades_for_record(r, market):
+                trades.append(t)
 
-    seen = set()
-    deduped = []
-    for t in trades:
-        key = (
-            t.get("date", ""),
-            t.get("time", ""),
-            t.get("side", ""),
-            t.get("ticker", ""),
-            t.get("order_no", ""),
-            int(t.get("qty", 0) or 0),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(t)
-    trades = deduped
+        seen = set()
+        deduped = []
+        for t in trades:
+            key = (
+                t.get("date", ""),
+                t.get("time", ""),
+                t.get("side", ""),
+                t.get("ticker", ""),
+                t.get("order_no", ""),
+                int(t.get("qty", 0) or 0),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(t)
+        trades = deduped
 
-    # pending/live ?ъ??? include_live=false硫??ㅽ궢 (寃쎈웾 紐⑤뱶)
     if include_live:
-        for t in _live_trades(market):
+        live_rows = _live_trades(market)
+        if _is_live_mode(mode):
+            live_rows = [row for row in live_rows if row.get("source_kind") == "pending_order"]
+        for t in live_rows:
             t_side     = t.get("side", "")
             t_ticker   = t.get("ticker", "")
             t_strategy = t.get("strategy", "")
@@ -3442,6 +3712,20 @@ def api_trades_list():
                 continue
             seen.add(key)
             trades.append(t)
+
+    filtered = []
+    for t in trades:
+        t_side     = t.get("side", "")
+        t_ticker   = t.get("ticker", "")
+        t_strategy = t.get("strategy", "")
+        if ticker   and ticker   not in t_ticker.upper():
+            continue
+        if strategy and strategy != t_strategy:
+            continue
+        if side     and side     != t_side:
+            continue
+        filtered.append(t)
+    trades = filtered
 
     name_map = _ticker_name_map(market, include_broker=False, mode=mode)
     trades = [_enrich_trade_row(t, market, name_map=name_map) for t in trades]
@@ -3503,7 +3787,7 @@ def api_trades_broker():
     match_status = request.args.get("match_status", "")
     limit = int(request.args.get("limit", "100"))
 
-    trades = _load_broker_trade_rows(market, period, start, end, mode=mode)
+    trades = _broker_trade_rows_with_pnl(market, period, start, end, mode=mode)
     strategy_rows = []
     records = load_records_filtered(market, period, start, end)
     max_records = max(30, limit * 2)
@@ -4032,12 +4316,12 @@ def api_tickers_today():
                 watch_only_details.clear()
                 candidates_list.clear()
                 continue
-            # ?좏깮 ?댁쑀 ?섏쭛 (ticker_selection / ticker_rescreen)
+            # 선택 이유 수집 (ticker_selection / ticker_rescreen)
             if ev in ("ticker_selection", "ticker_rescreen"):
                 reasons = extra.get("reasons", {})
                 if reasons:
                     selection_reasons.update(reasons)
-            # ?ㅽ겕由щ꼫 ?꾨낫 ?섏쭛
+            # 스크리너 후보 수집
             if ev == "screen_candidates":
                 candidates_list = extra.get("tickers", [])
             t = extra.get("ticker", "")
@@ -4052,7 +4336,7 @@ def api_tickers_today():
             )
             if ev == "entry_signal":
                 ticker_sig_count[t] = ticker_sig_count.get(t, 0) + 1
-            # 誘몄껜寃??댁쑀 ?꾩쟻 (entry_skip / signal_blocked / entry_failed)
+            # 미체결/차단 사유 추적 (entry_skip / signal_blocked / entry_failed)
             if ev in ("entry_skip", "signal_blocked", "entry_failed"):
                 reason = extra.get("reason", "") or extra.get("mode", "") or ev
                 if reason:
@@ -4538,7 +4822,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 .brain-stat-val {{ font-family: var(--mono); font-size: 20px; font-weight: 700; margin-bottom: 4px; }}
 .brain-stat-label {{ font-size: 11px; color: var(--muted); }}
 
-/* ?? 諛섏쓳???? */
+/* 반응형 레이아웃 */
 @media (max-width: 1200px) {{
   .grid-5 {{ grid-template-columns: repeat(3,1fr); }}
   .grid-4 {{ grid-template-columns: repeat(2,1fr); }}
@@ -4602,7 +4886,7 @@ def _period_bar_html(extra_filters: str = "") -> str:
 
 COMMON_JS_BLOCK = """
 <script>
-// ?? 怨듯넻 ?곹깭 ??????????????????????????????????????????????????????????????????
+// 공통 상태
 let MARKET = localStorage.getItem('market') || 'KR';
 let MODE   = localStorage.getItem('runtime_mode') || 'paper';
 let PERIOD = localStorage.getItem('period') || 'month';
@@ -4768,7 +5052,7 @@ const MODE_DESC = {
   AGGRESSIVE: '강한 리스크온, 진입 적극',
   MODERATE_BULL: '상승 우위, 공격성 높음',
   MILD_BULL: '완만한 상승 우위',
-  CAUTIOUS_BULL: '상승 쪽이지만 변동성 경계',
+  CAUTIOUS: '상승 쪽이지만 변동성 경계',
   NEUTRAL: '방향성 혼조, 기본 모드',
   MILD_BEAR: '약한 하락 우위',
   CAUTIOUS_BEAR: '하락·변동성 확대 경계',
@@ -6171,7 +6455,8 @@ async function loadMonthly() {
     }
   });
 
-  // ?뚯씠釉?  const tbody = document.getElementById('monthly-tbody');
+  // 테이블
+  const tbody = document.getElementById('monthly-tbody');
   tbody.innerHTML = rows.map(r => {
     const wrPct = r.win_rate;
     const wrColor = wrPct >= 55 ? 'var(--green)' : wrPct >= 45 ? 'var(--yellow)' : 'var(--red)';

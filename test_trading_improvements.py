@@ -13,6 +13,7 @@ import pandas as pd
 import ticker_selection_db as tsdb
 import kis_api as kis_api_module
 from phase1_trainer import digest_builder as digest_builder_module
+from claude_memory import brain as brain_module
 from bot import candidate_policy
 from bot.log_sanitizer import mask_secrets
 from dashboard import dashboard_server as dashboard_server_module
@@ -1787,6 +1788,150 @@ class DashboardBrainLoadTests(unittest.TestCase):
                 brain = dashboard_server_module.load_brain()
 
         self.assertEqual(brain, {})
+
+
+class BrainIntegrityTests(unittest.TestCase):
+    def test_normalize_brain_dedupes_recent_days_debate_history_and_rules(self):
+        brain = {
+            "meta": {"version": 1, "trained_days_kr": 0, "trained_days_us": 0},
+            "markets": {
+                "KR": {
+                    "recent_days": [
+                        {"date": "2026-04-22", "mode": "MILD_BULL"},
+                        {"date": "2026-04-22", "mode": "CAUTIOUS"},
+                    ],
+                    "debate_history": [
+                        {"date": "2026-04-22", "r1": {"bull": {"stance": "A"}}, "r2": {"bull": {"stance": "A"}}, "changes": [], "consensus_shifted": False, "outcome": None},
+                        {"date": "2026-04-22", "r1": {"bull": {"stance": "B"}}, "r2": {"bull": {"stance": "B"}}, "changes": [{"analyst": "bull"}], "consensus_shifted": True, "outcome": "correct"},
+                    ],
+                    "trained_days": 0,
+                },
+                "US": {
+                    "recent_days": [],
+                    "debate_history": [],
+                    "trained_days": 0,
+                },
+            },
+            "correction_guide": {
+                "KR": {"tuning_rules": ["규칙A", "규칙A", ""]},
+                "US": {"tuning_rules": []},
+            },
+            "cross_market": {},
+            "hold_advisor_performance": {},
+        }
+
+        normalized = brain_module._normalize_brain(brain)
+
+        self.assertEqual(len(normalized["markets"]["KR"]["recent_days"]), 1)
+        self.assertEqual(normalized["markets"]["KR"]["recent_days"][0]["mode"], "CAUTIOUS")
+        self.assertEqual(len(normalized["markets"]["KR"]["debate_history"]), 1)
+        self.assertEqual(normalized["markets"]["KR"]["debate_history"][0]["outcome"], "correct")
+        self.assertEqual(normalized["correction_guide"]["KR"]["tuning_rules"], ["규칙A"])
+        self.assertEqual(normalized["markets"]["KR"]["trained_days"], 1)
+
+
+class DashboardLiveBrokerTruthTests(unittest.TestCase):
+    def setUp(self):
+        self.client = dashboard_server_module.app.test_client()
+
+    def test_api_summary_live_uses_broker_positions_not_legacy_saved_positions(self):
+        with patch.object(dashboard_server_module, "load_records", return_value=[{"date": "2026-04-24"}]), \
+             patch.object(dashboard_server_module, "load_today", return_value={"date": "2026-04-24", "actual_result": {"cumulative": 1_000_000}, "consensus": {"mode": "MILD_BULL", "size": 55}}), \
+             patch.object(dashboard_server_module, "_load_live_status", return_value={"pending_orders": [], "mode": "MILD_BULL", "max_order_krw": 500_000}), \
+             patch.object(dashboard_server_module, "_is_fresh_live_status", return_value=False), \
+             patch.object(dashboard_server_module, "_record_metrics", return_value={"pnl_krw": 0.0, "pnl_pct": 0.0, "win": False, "trades": 0}), \
+             patch.object(dashboard_server_module, "_load_broker_positions", return_value=[{"ticker": "OKLO", "name": "Oklo", "qty": 1, "avg_price": 75.0, "current_price": 76.0, "pnl_pct": 1.33, "strategy": "broker_balance", "price_source": "broker_balance", "currency": "USD"}]), \
+             patch.object(dashboard_server_module, "_live_position_context_for_market", return_value=[{"ticker": "OKLO", "strategy": "gap_pullback"}]), \
+             patch.object(dashboard_server_module, "_saved_positions_for_market", return_value=[{"ticker": "STALE", "strategy": "momentum"}]), \
+             patch.object(dashboard_server_module, "_broker_snapshot", return_value={"source": "broker", "usd_krw": 1400.0, "kr_cash_effective": 1000000.0, "kr_cash": 1000000.0, "kr_eval": 0.0, "us_cash_krw": 0.0, "us_eval_krw": 106400.0, "us_cash_usd": 0.0, "us_eval_usd": 76.0, "unrealized_krw": {"US": 1400.0, "KR": 0.0}, "cumulative": 1_106_400.0}), \
+             patch.object(dashboard_server_module, "_persist_broker_equity_snapshot", return_value=None), \
+             patch.object(dashboard_server_module, "_broker_realized_pnl_krw", return_value=0.0), \
+             patch.object(dashboard_server_module, "_ticker_name_map", return_value={}), \
+             patch.object(dashboard_server_module, "_today_signal_digest", return_value={}), \
+             patch.object(dashboard_server_module, "_ml_db_digest", return_value={}), \
+             patch.object(dashboard_server_module, "_adaptive_param_digest", return_value={}), \
+             patch.object(dashboard_server_module, "_current_risk_snapshot", return_value={}):
+            response = self.client.get("/api/summary?market=US&mode=live")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        tickers = [item["ticker"] for item in payload["today"]["positions"]]
+        self.assertEqual(tickers, ["OKLO"])
+        self.assertEqual(payload["today"]["positions"][0]["strategy"], "gap_pullback")
+
+    def test_api_trades_list_live_returns_broker_rows_only(self):
+        broker_rows = [
+            {
+                "date": "2026-04-24",
+                "time": "02:30",
+                "side": "sell",
+                "ticker": "OKLO",
+                "strategy": "broker_sync",
+                "price": 76.0,
+                "display_price": 76.0,
+                "qty": 1,
+                "pnl": 1400.0,
+                "pnl_pct": 1.33,
+                "reason": "broker_fill",
+                "order_no": "123",
+                "price_source": "order_fill",
+                "currency": "USD",
+                "source_kind": "broker_fill",
+                "pnl_known": True,
+            }
+        ]
+        with patch.object(dashboard_server_module, "load_records_filtered", return_value=[{"date": "2026-04-24"}]), \
+             patch.object(dashboard_server_module, "_trades_for_record", return_value=[{"date": "2026-04-24", "time": "02:31", "side": "sell", "ticker": "GHOST", "strategy": "momentum", "price": 10.0, "display_price": 10.0, "qty": 1, "pnl": 500.0, "pnl_pct": 5.0, "reason": "tp_analyst_sell", "order_no": "x"}]), \
+             patch.object(dashboard_server_module, "_broker_trade_rows_with_pnl", return_value=broker_rows), \
+             patch.object(dashboard_server_module, "_ticker_name_map", return_value={}), \
+             patch.object(dashboard_server_module, "_live_trades", return_value=[]):
+            response = self.client.get("/api/trades/list?market=US&mode=live&include_live=false")
+
+        self.assertEqual(response.status_code, 200)
+        rows = response.get_json()
+        self.assertEqual([row["ticker"] for row in rows], ["OKLO"])
+
+    def test_api_stats_period_live_uses_broker_trade_rows(self):
+        broker_rows = [
+            {"side": "sell", "date": "2026-04-24", "ticker": "OKLO", "pnl": 1400.0, "pnl_pct": 1.33, "pnl_known": True},
+            {"side": "sell", "date": "2026-04-24", "ticker": "NVTS", "pnl": -700.0, "pnl_pct": -0.66, "pnl_known": True},
+        ]
+        with patch.object(dashboard_server_module, "load_records_filtered", return_value=[{"date": "2026-04-24"}]), \
+             patch.object(dashboard_server_module, "_broker_trade_rows_with_pnl", return_value=broker_rows):
+            response = self.client.get("/api/stats/period?market=US&mode=live&period=month")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["basis"], "broker_closed_trades")
+        self.assertEqual(payload["trades"], 2)
+        self.assertAlmostEqual(payload["total_pnl"], 0.67, places=2)
+
+    def test_api_history_equity_live_uses_broker_asset_reconstruction(self):
+        broker_rows = [
+            {"side": "sell", "date": "2026-04-23", "ticker": "OKLO", "pnl": 1000.0, "pnl_pct": 1.0, "pnl_known": True},
+            {"side": "sell", "date": "2026-04-24", "ticker": "NVTS", "pnl": -500.0, "pnl_pct": -0.5, "pnl_known": True},
+        ]
+        broker_snapshot = {
+            "source": "broker",
+            "kr_cash_effective": 1_000_000.0,
+            "kr_cash": 1_000_000.0,
+            "kr_eval": 0.0,
+            "us_cash_krw": 0.0,
+            "us_eval_krw": 105_000.0,
+            "unrealized_krw": {"US": 500.0, "KR": 0.0},
+            "cumulative": 1_105_000.0,
+        }
+        with patch.object(dashboard_server_module, "_broker_snapshot", return_value=broker_snapshot), \
+             patch.object(dashboard_server_module, "_persist_broker_equity_snapshot", return_value=None), \
+             patch.object(dashboard_server_module, "_load_broker_equity_snapshots", return_value=[]), \
+             patch.object(dashboard_server_module, "_broker_trade_rows_with_pnl", return_value=broker_rows):
+            response = self.client.get("/api/history/equity?market=US&mode=live&period=month")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["basis"], "broker_asset_reconstructed")
+        self.assertEqual(payload["labels"][-1], "2026-04-24")
+        self.assertEqual(payload["equity"][-1], 105000.0)
 
 
 class AdaptiveParamsTests(unittest.TestCase):

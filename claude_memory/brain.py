@@ -1,6 +1,6 @@
-﻿"""
-brain.py - Claude ?먮떒 硫붾え由?愿由?
-brain.json ?쎄린 / ?낅뜲?댄듃 / ?붿빟 ?앹꽦
+"""
+brain.py - Claude 판단 메모리 관리
+brain.json 읽기 / 업데이트 / 요약 생성
 """
 
 import json
@@ -30,18 +30,111 @@ def _ensure_extensions(brain: dict):
     return brain
 
 
-# ?? 湲곕낯 ?쎄린/?곌린 ????????????????????????????????????????????????????????????
+def _normalize_recent_days(rows: list, max_items: int = 60) -> list:
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for row in rows or []:
+        date_key = str((row or {}).get("date", "") or "").strip()
+        if not date_key:
+            continue
+        if date_key not in merged:
+            order.append(date_key)
+        merged[date_key] = dict(row or {})
+    return [merged[key] for key in order][-max_items:]
+
+
+def _merge_debate_entry(base: dict, overlay: dict) -> dict:
+    merged = dict(base or {})
+    overlay = dict(overlay or {})
+    for key in ("date", "r1", "r2", "changes", "consensus_shifted"):
+        value = overlay.get(key)
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    if overlay.get("outcome") is not None:
+        merged["outcome"] = overlay.get("outcome")
+    else:
+        merged.setdefault("outcome", (base or {}).get("outcome"))
+    return merged
+
+
+def _normalize_debate_history(rows: list, max_items: int = 30) -> list:
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for row in rows or []:
+        date_key = str((row or {}).get("date", "") or "").strip()
+        if not date_key:
+            continue
+        if date_key not in merged:
+            order.append(date_key)
+            merged[date_key] = dict(row or {})
+        else:
+            merged[date_key] = _merge_debate_entry(merged[date_key], row or {})
+    return [merged[key] for key in order][-max_items:]
+
+
+def _normalize_tuning_rules(rules: list, max_items: int = 12) -> list:
+    normalized = []
+    seen = set()
+    for rule in rules or []:
+        text = str(rule or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized[:max_items]
+
+
+def _normalize_brain(brain: dict) -> dict:
+    brain = _ensure_extensions(brain)
+    meta = brain.setdefault("meta", {})
+    correction_guide = brain.setdefault("correction_guide", {})
+    for market in ("KR", "US"):
+        market_payload = brain["markets"][market]
+        recent_days = _normalize_recent_days(market_payload.get("recent_days", []) or [])
+        market_payload["recent_days"] = recent_days
+        market_payload["debate_history"] = _normalize_debate_history(
+            market_payload.get("debate_history", []) or []
+        )
+        market_payload["trained_days"] = max(
+            int(market_payload.get("trained_days", 0) or 0),
+            len(recent_days),
+        )
+        guide = correction_guide.setdefault(market, {})
+        guide["tuning_rules"] = _normalize_tuning_rules(guide.get("tuning_rules", []) or [])
+    meta_key_map = {"KR": "trained_days_kr", "US": "trained_days_us"}
+    for market, meta_key in meta_key_map.items():
+        meta[meta_key] = max(
+            int(meta.get(meta_key, 0) or 0),
+            int(brain["markets"][market].get("trained_days", 0) or 0),
+        )
+    return brain
+
+
+# ── 기본 읽기/쓰기 ────────────────────────────────────────────────────────────
 
 def load() -> dict:
     with _BRAIN_LOCK:
-        source = BRAIN_PATH if BRAIN_PATH.exists() else REPO_BRAIN_PATH
-        with open(source, "r", encoding="utf-8") as f:
-            return _ensure_extensions(json.load(f))
+        candidates = []
+        if BRAIN_PATH.exists():
+            candidates.append(BRAIN_PATH)
+        if REPO_BRAIN_PATH.exists() and REPO_BRAIN_PATH not in candidates:
+            candidates.append(REPO_BRAIN_PATH)
+        last_error = None
+        for source in candidates:
+            try:
+                with open(source, "r", encoding="utf-8-sig") as f:
+                    return _normalize_brain(json.load(f))
+            except Exception as e:
+                last_error = e
+                continue
+        if last_error is not None:
+            raise last_error
+        raise FileNotFoundError("brain.json not found")
 
 
 def save(brain: dict):
     with _BRAIN_LOCK:
-        brain = _ensure_extensions(brain)
+        brain = _normalize_brain(brain)
         brain["meta"]["last_updated"] = date.today().isoformat()
         brain["meta"]["version"] += 1
         with open(BRAIN_PATH, "w", encoding="utf-8") as f:
@@ -81,7 +174,7 @@ def update_analyst(market: str, analyst: str, hit: bool, recent_days: list):
         perf["recent_30d"] = {"total": len(r30), "hit": h30,
                                "rate": round(h30 / len(r30), 3)}
 
-    # ?몃젋???먮떒 (理쒓렐 30??湲곗? 鍮꾧탳)
+    # 최근 추세 판단 (최근 30일 기준과 비교)
     recent_30d_rate = perf.get("recent_30d", {}).get("rate", perf["rate"])
     if perf["recent_7d"]["rate"] > recent_30d_rate + 0.05:
         perf["trend"] = "improving"
@@ -196,7 +289,7 @@ def update_execution_pattern(market: str, event: dict):
     elif action == "sell_failed":
         lessons.append(f"泥?궛 ?ㅽ뙣 ?⑦꽩: {reason}")
     elif action == "sell_filled" and pnl_pct < 0:
-        lessons.append(f"?먯떎 泥?궛 ?먯씤 ?먭?: {reason}")
+        lessons.append(f"손실 매도 주요 사유: {reason}")
     elif action == "sell_filled" and pnl_pct > 0:
         lessons.append(f"?섏씡 泥?궛 ?좏슚 ?⑦꽩: {reason}")
     m["execution_lessons"] = lessons[-12:]
@@ -238,18 +331,18 @@ def _build_execution_summary(market_data: dict) -> tuple[str, str]:
                 f"{item.get('action', 'unknown')} | "
                 f"{item.get('strategy', 'unknown')} | "
                 f"{item.get('reason', 'unknown')} | "
-                f"?꾩쟻 {item.get('count', 0)}??"
-                f"(留덉?留? {recency}) "
+                f"누적 {item.get('count', 0)}건 "
+                f"(최근 {recency}) "
                 f"avg_pnl={item.get('avg_pnl_pct', 0):+.2f}%"
             )
         pattern_text = "\n".join(pattern_lines)
     else:
-        pattern_text = "  ?꾩쭅 ?놁쓬 (?숈뒿 以?"
+        pattern_text = "  아직 없음 (학습 중)"
 
     if lessons:
         lesson_text = "\n".join(f"  - {lesson}" for lesson in lessons[-8:])
     else:
-        lesson_text = "  ?꾩쭅 ?놁쓬"
+        lesson_text = "  아직 없음"
 
     return pattern_text, lesson_text
 
@@ -270,19 +363,19 @@ def get_recent_selection_feedback_text(
     except Exception:
         return ""
 
-# ?? ?댁뒋 ?⑦꽩 ?낅뜲?댄듃 ????????????????????????????????????????????????????????
+# 이슈 패턴 업데이트
 
 def update_issue_pattern(market: str, pattern_update: dict):
     """
-    Claude postmortem??諛섑솚???⑦꽩 ?낅뜲?댄듃 ?곸슜
-    pattern_update ?덉떆:
+    Claude postmortem 반환값으로 이슈 패턴 업데이트를 적용한다.
+    pattern_update 예시:
     {
-      "matched_id": "P001",       ??湲곗〈 ?⑦꽩 ID (?놁쑝硫??좉퇋)
-      "type": "媛쒕퀎湲곗뾽_?뺤젙?몄옱",
+      "matched_id": "P001",       # 기존 패턴 ID (없으면 신규)
+      "type": "개별기업_긍정뉴스",
       "description": "...",
       "bull_hit": true,
       "pnl_pct": 1.8,
-      "insight_update": "..."     ??insight ?섏젙 (optional)
+      "insight_update": "..."     # insight 수정 (optional)
     }
     """
     brain = load()
@@ -292,7 +385,7 @@ def update_issue_pattern(market: str, pattern_update: dict):
     existing   = next((p for p in patterns if p["id"] == matched_id), None)
 
     if existing:
-        # 湲곗〈 ?⑦꽩 ?낅뜲?댄듃
+        # 기존 패턴 업데이트
         existing["count"] += 1
         field = "bull_hit" if pattern_update.get("bull_hit") else "bear_hit"
         existing[field] = existing.get(field, 0) + 1
@@ -398,7 +491,7 @@ def add_daily_record(market: str, record: dict):
         brain["meta"][f"trained_days_{'kr' if market == 'KR' else 'us'}"] += 1
         brain["markets"][market]["trained_days"] += 1
 
-    brain["markets"][market]["recent_days"] = recent[-60:]  # 理쒓렐 60?쇰쭔 蹂닿?
+    brain["markets"][market]["recent_days"] = recent[-60:]  # 최근 60일만 보관
     save(brain)
 
 
@@ -462,115 +555,106 @@ def _count_consecutive_result(recent_days: list, analyst_type: str,
 
 def generate_analyst_summary(market: str, analyst_type: str) -> str:
     """
-    媛?遺꾩꽍媛?먭쾶 ?먯떊??怨쇨굅 ?곸쨷瑜좊쭔 ?곕줈 ?쇰뱶諛?
+    개별 분석가에게 최근 성과와 주의점을 짧게 요약해 돌려준다.
     analyst_type: 'bull' | 'bear' | 'neutral'
     """
     brain = load()
-    m     = brain["markets"][market]
-    perf  = m["analyst_performance"][analyst_type]
+    m = brain["markets"][market]
+    perf = m["analyst_performance"][analyst_type]
     total = perf["total"]
-    rate  = perf["rate"] * 100
-    r7    = perf["recent_7d"]["rate"] * 100
-    r7n   = perf["recent_7d"]["total"]
+    rate = perf["rate"] * 100
+    r7 = perf["recent_7d"]["rate"] * 100
+    r7n = perf["recent_7d"]["total"]
     trend = perf["trend"]
     recent_days = m.get("recent_days", [])
 
     if total < 5:
-        return (f"[媛쒖씤 ?ㅼ쟻] ?곗씠??遺議?({total}?? ??"
-                f"?꾩쭅 ?듦퀎媛 ?놁쑝??湲곕낯 ?깊뼢?쇰줈 ?먮떒?섏꽭??")
+        return (
+            f"[개인 성과] 데이터 부족({total}건). "
+            f"아직 통계가 약하니 기본 성향 위주로 판단하세요."
+        )
 
-    # ?곗냽 ?ㅽ뙣/?깃났 媛먯?
     consec_miss = _count_consecutive_result(recent_days, analyst_type, "MISS")
-    consec_hit  = _count_consecutive_result(recent_days, analyst_type, "HIT")
+    consec_hit = _count_consecutive_result(recent_days, analyst_type, "HIT")
 
-    # ?곗냽 ?ㅽ뙣 寃쎄퀬 (3???댁긽)
     if consec_miss >= 5:
         consec_msg = (
-            f"??寃쎄퀬: 理쒓렐 {consec_miss}???곗냽 ?ㅽ뙣. "
-            f"?꾩옱 ?쒖옣?먯꽌 ?뱀떊??{analyst_type.upper()} ?깊뼢? 泥닿퀎?곸쑝濡??由ш퀬 ?덉뒿?덈떎. "
-            f"?ㅻ뒛? 諛섎뱶??NEUTRAL ?댄븯濡?stance瑜???텛?몄슂. "
-            f"AGGRESSIVE/MODERATE_BULL ?좏깮 ??諛섎뱶??紐낇솗??洹쇨굅瑜??붽뎄?⑸땲??"
+            f"강한 경고: 최근 {consec_miss}회 연속 실패입니다. "
+            f"현재 시장에서 {analyst_type.upper()} 성향이 체계적으로 빗나가고 있습니다. "
+            f"오늘은 최소 NEUTRAL 이하로 낮춰서 판단하고, "
+            f"공격적 stance는 명확한 근거가 있을 때만 사용하세요."
         )
     elif consec_miss >= 3:
         consec_msg = (
-            f"?좑툘 二쇱쓽: 理쒓렐 {consec_miss}???곗냽 ?ㅽ뙣. "
-            f"stance瑜?1~2?④퀎 蹂댁닔?곸쑝濡?議곗젙?섏꽭??"
+            f"주의: 최근 {consec_miss}회 연속 실패입니다. "
+            f"stance를 1~2단계 보수적으로 조정하세요."
         )
     elif consec_hit >= 3:
         consec_msg = (
-            f"??理쒓렐 {consec_hit}???곗냽 ?곸쨷. ?꾩옱 ?먮떒 湲곗????좊ː?섏꽭??"
+            f"최근 {consec_hit}회 연속 적중입니다. 현재 판단 기조를 유지하세요."
         )
     else:
         consec_msg = ""
 
-    # ?꾩껜 ?곸쨷瑜좊퀎 硫붿떆吏
     if rate < 25:
         rate_msg = (
-            f"?꾨컲 ?곸쨷瑜?留ㅼ슦 ??쓬({rate:.0f}%) ??"
-            f"?ㅻ뒛? 諛섎뱶??NEUTRAL 諛⑺뼢?쇰줈 1?④퀎 ?꾪솕?섏꽭??"
+            f"누적 적중률이 매우 낮습니다({rate:.0f}%). "
+            f"오늘은 기본적으로 NEUTRAL 방향으로 한 단계 완화하세요."
         )
     elif rate < 40:
-        rate_msg = "?꾨컲 ?곸쨷瑜???쓬 ???뺤떊???놁쑝硫?NEUTRAL 履쎌쑝濡????④퀎 ?꾪솕?섏꽭??"
+        rate_msg = "누적 적중률이 낮습니다. 확신이 약하면 NEUTRAL 쪽으로 한 단계 완화하세요."
     elif rate > 65:
-        rate_msg = "?꾨컲 ?곸쨷瑜??믪쓬 ???먯떊???먮떒???좊ː?섏꽭??"
+        rate_msg = "누적 적중률이 높습니다. 자신 있는 판단은 현재 기조를 유지하세요."
     else:
-        rate_msg = "?곸쨷瑜?蹂댄넻 ???좏샇媛 紐낇솗???뚮쭔 媛뺥븳 stance瑜??좏깮?섏꽭??"
+        rate_msg = "적중률이 보통 수준입니다. 신호가 명확할 때만 강한 stance를 선택하세요."
 
-    # ?몃젋??硫붿떆吏 (?곗냽 ?ㅽ뙣媛 ?덉쑝硫?trend "stable" ?ㅽ뙋 諛⑹?)
     if consec_miss >= 3:
-        trend_msg = ""   # ?곗냽 ?ㅽ뙣 硫붿떆吏濡?異⑸텇
+        trend_msg = ""
     elif trend == "declining":
-        trend_msg = "理쒓렐 ?먮떒??鍮쀫굹媛??異붿꽭 ??stance瑜?1?④퀎 蹂댁닔?곸쑝濡?議곗젙?섏꽭??"
+        trend_msg = "최근 판단이 빗나가는 추세입니다. stance를 한 단계 보수적으로 조정하세요."
     elif trend == "improving":
-        trend_msg = "理쒓렐 ?먮떒????留욊퀬 ?덉뒿?덈떎 ???꾩옱 ?깊뼢???좊ː?섏꽭??"
+        trend_msg = "최근 판단이 좋아지고 있습니다. 현재 성향을 유지하세요."
     else:
-        trend_msg = "?먮떒 ?뺥솗?꾧? ?덉젙?곸엯?덈떎 ???꾩옱 湲곗????좎??섏꽭??"
+        trend_msg = "판단 정확도가 안정적입니다. 현재 기조를 유지하세요."
 
     parts = [
-        f"[{analyst_type.upper()} 媛쒖씤 ?ㅼ쟻] "
-        f"?꾩쟻 {rate:.1f}% ({total}?? | 理쒓렐7??{r7:.1f}% ({r7n}嫄?",
+        f"[{analyst_type.upper()} 개인 성과] 누적 {rate:.1f}% ({total}건) | 최근7일 {r7:.1f}% ({r7n}건)",
     ]
     if consec_msg:
         parts.append(consec_msg)
     if trend_msg:
-        parts.append(f"??{trend_msg}")
+        parts.append(trend_msg)
     parts.append(rate_msg)
 
     return "\n".join(parts)
 
-
-# ?? Claude ?꾨＼?꾪듃???붿빟 ?앹꽦 ???????????????????????????????????????????????
-
 def generate_prompt_summary(market: str) -> str:
     """
-    留ㅼ씪 ?꾩묠 釉뚮━????Claude?먭쾶 二쇱엯???붿빟 ?띿뒪???앹꽦
+    매일 장 시작 전 Claude에 주입할 브레인 요약 텍스트를 만든다.
     """
     brain = load()
-    m     = brain["markets"][market]
-    meta  = brain["meta"]
+    m = brain["markets"][market]
 
     if m["trained_days"] == 0:
-        return f"[{market}] ?꾩쭅 ?숈뒿 ?곗씠???놁쓬. 湲곕낯媛믪쑝濡??먮떒?섏꽭??"
+        return f"[{market}] 아직 학습 데이터가 없습니다. 기본 규칙 중심으로 판단하세요."
 
-    perf     = m["analyst_performance"]
-    modes    = m["mode_performance"]
-    beliefs  = m["current_beliefs"]
+    perf = m["analyst_performance"]
+    modes = m["mode_performance"]
+    beliefs = m["current_beliefs"]
     patterns = m["issue_patterns"]
-    recent   = m["recent_days"][-5:]
-    tuning   = m["tuning_patterns"]
+    recent = m["recent_days"][-5:]
+    tuning = m["tuning_patterns"]
     execution_txt, execution_lessons_txt = _build_execution_summary(m)
     selection_feedback_txt = get_recent_selection_feedback_text(market, days=20, max_chars=900)
 
-    # 理쒓렐 5???붿빟
     recent_txt = ""
     for r in reversed(recent):
         win_mark = "WIN" if r.get("win") else "LOSS"
         recent_txt += (
             f"  {r['date']} {r['mode']:<18} "
-            f"?ㅼ젣 {r.get('pnl_pct', 0):+.2f}%  {win_mark}\n"
+            f"실현 {r.get('pnl_pct', 0):+.2f}%  {win_mark}\n"
         )
 
-    # ?⑦꽩 ?곸쐞 3媛???description ?녿뒗 ??ぉ(誘몃텇瑜? ?쒖쇅
     top_patterns = sorted(
         [p for p in patterns if p.get("description", "").strip()],
         key=lambda x: x["count"], reverse=True
@@ -578,13 +662,12 @@ def generate_prompt_summary(market: str) -> str:
     pattern_txt = ""
     for p in top_patterns:
         pattern_txt += (
-            f"  [{p['id']}] {p['type']} ({p['count']}??\n"
-            f"    Bull?곸쨷 {p['bull_accuracy']*100:.0f}%  "
-            f"?됯퇏?섏씡 {p.get('avg_pnl_when_followed',0):+.2f}%\n"
-            f"    ?몄궗?댄듃: {p['insight']}\n"
+            f"  [{p['id']}] {p['type']} ({p['count']}건)\n"
+            f"    Bull 적중률 {p['bull_accuracy']*100:.0f}%  "
+            f"평균수익 {p.get('avg_pnl_when_followed', 0):+.2f}%\n"
+            f"    인사이트: {p['insight']}\n"
         )
 
-    # ?쒕떇 ?⑦꽩
     tuning_txt = ""
     today_dt = datetime.now().date()
     for k, v in tuning.items():
@@ -595,55 +678,52 @@ def generate_prompt_summary(market: str) -> str:
         correct = v["correct"]
         insight = v.get("insight", "")
 
-        # last_seen 湲곕컲 recency ?쒖떆
         last_seen_str = v.get("last_seen", "")
         if last_seen_str:
             try:
                 days_ago = (today_dt - datetime.strptime(last_seen_str, "%Y-%m-%d").date()).days
-                recency_tag = "" if days_ago <= 7 else f" [??{days_ago}?????대젰]"
+                recency_tag = "" if days_ago <= 7 else f" [{days_ago}일 전]"
             except Exception:
                 recency_tag = ""
         else:
-            recency_tag = " [???좎쭨 誘명솗??"
+            recency_tag = " [최근일 미확인]"
 
         tuning_txt += (
-            f"  {k}{recency_tag}: {cnt}??以?{correct}???곸쨷 "
-            f"({rate*100:.0f}%) ??{insight}\n"
+            f"  {k}{recency_tag}: {cnt}건 중 {correct}건 적중 "
+            f"({rate*100:.0f}%) | {insight}\n"
         )
 
-    # 紐⑤뱶蹂??깃낵 ?곸쐞
-    best_mode = max(modes.items(),
-                    key=lambda x: x[1]["avg_pnl"]
-                    if x[1]["count"] > 0 else -99)
+    best_mode = max(
+        modes.items(),
+        key=lambda x: x[1]["avg_pnl"] if x[1]["count"] > 0 else -99,
+    )
 
-    # ?곗냽 ?ㅽ뙣 諛곗?
     def _consec_badge(atype: str) -> str:
         n = _count_consecutive_result(m.get("recent_days", []), atype, "MISS")
         return f" {n}x_miss" if n >= 3 else ""
 
-    # 紐⑤뱶蹂??깃낵 ?띿뒪??(f-string ??\n 湲덉? ?고쉶)
-    _nl = "\n"
     mode_perf_lines = []
     for _mode, _v in modes.items():
         if _v["count"] > 0:
             mode_perf_lines.append(
-                f"  {_mode:<14}{_v['count']:>3}?? ?됯퇏 {_v['avg_pnl']:+.2f}%  ?밸쪧 {_v['win_rate']*100:.0f}%"
+                f"  {_mode:<14}{_v['count']:>3}건  평균 {_v['avg_pnl']:+.2f}%  승률 {_v['win_rate']*100:.0f}%"
             )
         else:
-            mode_perf_lines.append(f"  {_mode:<14}  ?? (?곗씠???놁쓬)")
-    mode_perf_txt = _nl.join(mode_perf_lines)
+            mode_perf_lines.append(f"  {_mode:<14}  - (데이터 없음)")
+    mode_perf_txt = "\n".join(mode_perf_lines)
+    learned_lessons = "\n".join(f"  - {l}" for l in beliefs.get("learned_lessons", [])) or "  none"
 
     summary = f"""
-?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺
-[{market} ?쒖옣 ?먮떒 硫붾え由???{m['trained_days']}???숈뒿]
-?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺
+============================================================
+[{market} 시장 판단 메모리 | 학습 {m['trained_days']}일]
+============================================================
 
-?뱤 遺꾩꽍媛 ?꾩쟻 ?좊ː??
-  ?윟 Bull:    {perf['bull']['rate']*100:.1f}%  (理쒓렐7??{perf['bull']['recent_7d']['rate']*100:.1f}%  {perf['bull']['trend']}){_consec_badge('bull')}
-  ?뵶 Bear:    {perf['bear']['rate']*100:.1f}%  (理쒓렐7??{perf['bear']['recent_7d']['rate']*100:.1f}%  {perf['bear']['trend']}){_consec_badge('bear')}
-  ??Neutral: {perf['neutral']['rate']*100:.1f}%  (理쒓렐7??{perf['neutral']['recent_7d']['rate']*100:.1f}%  {perf['neutral']['trend']}){_consec_badge('neutral')}
+분석가 적중률 요약
+  Bull:    {perf['bull']['rate']*100:.1f}%  (최근7일 {perf['bull']['recent_7d']['rate']*100:.1f}%  {perf['bull']['trend']}){_consec_badge('bull')}
+  Bear:    {perf['bear']['rate']*100:.1f}%  (최근7일 {perf['bear']['recent_7d']['rate']*100:.1f}%  {perf['bear']['trend']}){_consec_badge('bear')}
+  Neutral: {perf['neutral']['rate']*100:.1f}%  (최근7일 {perf['neutral']['recent_7d']['rate']*100:.1f}%  {perf['neutral']['trend']}){_consec_badge('neutral')}
 
-?룇 紐⑤뱶蹂??됯퇏 ?섏씡 (理쒖쟻: {best_mode[0]} {best_mode[1]['avg_pnl']:+.2f}%)
+모드별 평균 수익 (최상위: {best_mode[0]} {best_mode[1]['avg_pnl']:+.2f}%)
 {mode_perf_txt}
 
 Recent issue patterns
@@ -661,9 +741,9 @@ Current beliefs
   emphasize: {', '.join(beliefs.get('emphasize', [])) or 'none'}
 
 Learned lessons
-{chr(10).join(f'  - {l}' for l in beliefs.get('learned_lessons', [])) or '  none'}
-?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺
-???뺣낫瑜?諛뷀깢?쇰줈 ?ㅻ뒛 ?먮떒 ??媛以묒튂瑜?議곗젙?섏꽭??
+{learned_lessons}
+============================================================
+위 정보를 바탕으로 오늘 판단과 가중치를 조정하세요.
 """
     summary += f"""
 
@@ -672,16 +752,13 @@ Learned lessons
 """
     summary += f"""
 
-?숋툘 ?ㅽ뻾 ?⑦꽩
+최근 실행 패턴
 {execution_txt}
 
-?쭬 ?ㅽ뻾 援먰썕
+최근 실행 교훈
 {execution_lessons_txt}
 """
     return summary
-
-
-# ?? ?좊줎 湲곕줉 愿由?????????????????????????????????????????????????????????????
 
 def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
     """
@@ -716,7 +793,7 @@ def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
         "outcome":           None,   # postmortem ??梨꾩?
     }
 
-    # 理쒓렐 30?쇱튂留?蹂댁〈
+    # 최근 30개만 보관
     m["debate_history"].append(entry)
     m["debate_history"] = m["debate_history"][-30:]
     save(brain)
@@ -724,8 +801,8 @@ def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
 
 def get_debate_summary(market: str, n: int = 5) -> str:
     """
-    理쒓렐 n???좊줎 ?⑦꽩 ?붿빟 ??R2 ?꾨＼?꾪듃??二쇱엯
-    '蹂寃????곸쨷瑜?, '?대뼡 ?쇨굅媛 ?ㅻ뱷???덉뿀?? ??
+    최근 토론 기록 요약을 만들어 R2 프롬프트에 주입한다.
+    핵심은 변경 후 성과와 변경 사유를 짧게 보여주는 것이다.
     """
     brain = load()
     history = brain["markets"][market].get("debate_history", [])
@@ -733,20 +810,26 @@ def get_debate_summary(market: str, n: int = 5) -> str:
         return ""
 
     recent = history[-n:]
-    lines  = []
+    lines = []
 
-    # 蹂寃?vs ?좎? ?곸쨷瑜?
-    change_results  = [h for h in history if h["consensus_shifted"] and h["outcome"] is not None]
-    keep_results    = [h for h in history if not h["consensus_shifted"] and h["outcome"] is not None]
-    change_hit_rate = (sum(1 for h in change_results if h["outcome"] == "correct") / len(change_results)
-                       if change_results else None)
-    keep_hit_rate   = (sum(1 for h in keep_results if h["outcome"] == "correct") / len(keep_results)
-                       if keep_results else None)
+    change_results = [h for h in history if h["consensus_shifted"] and h["outcome"] is not None]
+    keep_results = [h for h in history if not h["consensus_shifted"] and h["outcome"] is not None]
+    change_hit_rate = (
+        sum(1 for h in change_results if h["outcome"] == "correct") / len(change_results)
+        if change_results else None
+    )
+    keep_hit_rate = (
+        sum(1 for h in keep_results if h["outcome"] == "correct") / len(keep_results)
+        if keep_results else None
+    )
 
     stat_line = ""
     if change_hit_rate is not None:
-        stat_line = (f"?섍껄 蹂寃????곸쨷瑜?{change_hit_rate*100:.0f}% ({len(change_results)}嫄? | "
-                     f"?좎? ??{keep_hit_rate*100:.0f}% ({len(keep_results)}嫄?")
+        keep_rate_text = f"{keep_hit_rate*100:.0f}%" if keep_hit_rate is not None else "n/a"
+        stat_line = (
+            f"변경 후 적중률 {change_hit_rate*100:.0f}% ({len(change_results)}건) | "
+            f"유지 시 적중률 {keep_rate_text} ({len(keep_results)}건)"
+        )
 
     lines.append(f"[Debate history | recent {len(recent)}]")
     if stat_line:
@@ -765,7 +848,6 @@ def get_debate_summary(market: str, n: int = 5) -> str:
             lines.append(f"  {h['date']} {outcome_mark} kept: {r1_modes}")
 
     return "\n".join(lines)
-
 
 def update_debate_outcome(market: str, target_date: str, correct: bool):
     """
@@ -819,7 +901,7 @@ def update_hold_advisor_performance(
     else:
         hp["sell_count"] += 1
 
-    # 理쒓렐 20嫄?蹂닿?
+    # 최근 20건만 보관
     hp["recent"].append({
         "date":          date.today().isoformat(),
         "market":        market,
@@ -847,13 +929,13 @@ def update_cross_market(correlation: float, insight: str):
 
 def update_correction_guide(market: str, guide: dict):
     """
-    留ㅼ씪 postmortem ???댁씪 Claude?먭쾶 以?蹂댁젙 吏移??먮룞 ?앹꽦
-    guide ?덉떆:
+    최신 postmortem 결과를 바탕으로 Claude용 보정 지침을 업데이트한다.
+    guide 예시:
     {
-      "bull_adjustments": ["?뺤젙?몄옱 ?멸툒 ???좊ː??1.3諛?],
-      "bear_adjustments": ["愿???⑤룆 寃쎄퀬 ?좊ː??0.7諛?],
-      "tuning_rules":     ["泥??쒕떇? -0.5% ?댁긽???뚮쭔"],
-      "today_notes":      "FOMC 諛쒗몴 ?덉젙, 蹂?숈꽦 二쇱쓽"
+      "bull_adjustments": ["강한 추세일 때 모멘텀 가중치 1.3배"],
+      "bear_adjustments": ["하락 변동성 확대 시 리스크 가중치 0.7배"],
+      "tuning_rules":     ["첫 손절은 -0.5% 이상일 때만"],
+      "today_notes":      "FOMC 발표 일정, 변동성 주의"
     }
     """
     brain = load()
@@ -863,125 +945,24 @@ def update_correction_guide(market: str, guide: dict):
     }
     save(brain)
 
-
-# ?? 諛곗튂 ?낅뜲?댄듃 (?몄뀡 醫낅즺 ????踰덉뿉 ??? ????????????????????????????????
-
 def batch_update_all(market: str, updates: dict):
     """
-    ?몄뀡 醫낅즺 postmortem 寃곌낵瑜???踰덉뿉 brain.json??諛섏쁺?⑸땲??
-    updates ?덉떆:
+    하루치 postmortem 결과를 한 번에 받아 brain.json을 업데이트한다.
+    updates 예시:
     {
       "analyst_hits": {"bull": True, "bear": False, "neutral": True},
-      "recent_days": [...],          # update_analyst??
+      "recent_days": [...],          # update_analyst_record용
       "mode": "MODERATE_BULL",
       "pnl_pct": 1.2,
       "win": True,
       "strategy": "momentum",
-      "daily_record": {...},         # add_daily_record??
+      "daily_record": {...},         # add_daily_record용
       "beliefs_update": {...},       # optional
       "correction_guide": {...},     # optional
     }
     """
     brain = load()
     recent_days = updates.get("recent_days", [])
-
-    # 遺꾩꽍媛 ?깃낵
-    analyst_hits = updates.get("analyst_hits", {})
-    for analyst, hit in analyst_hits.items():
-        perf = brain["markets"][market]["analyst_performance"][analyst]
-        perf["total"] += 1
-        if hit:
-            perf["hit"] += 1
-        else:
-            perf["miss"] += 1
-        perf["rate"] = round(perf["hit"] / perf["total"], 3)
-
-        r7 = [d for d in recent_days[-7:] if f"{analyst}_result" in d]
-        if r7:
-            h7 = sum(1 for d in r7 if d.get(f"{analyst}_result") == "HIT")
-            perf["recent_7d"] = {"total": len(r7), "hit": h7,
-                                  "rate": round(h7 / len(r7), 3)}
-        r30 = [d for d in recent_days[-30:] if f"{analyst}_result" in d]
-        if r30:
-            h30 = sum(1 for d in r30 if d.get(f"{analyst}_result") == "HIT")
-            perf["recent_30d"] = {"total": len(r30), "hit": h30,
-                                   "rate": round(h30 / len(r30), 3)}
-        recent_30d_rate = perf.get("recent_30d", {}).get("rate", perf["rate"])
-        if perf["recent_7d"]["rate"] > recent_30d_rate + 0.05:
-            perf["trend"] = "improving"
-        elif perf["recent_7d"]["rate"] < recent_30d_rate - 0.05:
-            perf["trend"] = "declining"
-        else:
-            perf["trend"] = "stable"
-
-    # 紐⑤뱶 ?깃낵
-    mode = updates.get("mode")
-    pnl_pct = updates.get("pnl_pct", 0.0)
-    win = updates.get("win", False)
-    if mode:
-        mode_map = brain["markets"][market]["mode_performance"]
-        if mode not in mode_map:
-            mode_map[mode] = {"count": 0, "avg_pnl": 0.0, "win_rate": 0.0}
-        mp = mode_map[mode]
-        prev_count = mp["count"]
-        mp["count"] += 1
-        mp["avg_pnl"] = round((mp["avg_pnl"] * prev_count + pnl_pct) / mp["count"], 4)
-        prev_wins = round(mp["win_rate"] * prev_count)
-        mp["win_rate"] = round((prev_wins + (1 if win else 0)) / mp["count"], 3)
-
-    # ?꾨왂 ?깃낵
-    strategy = updates.get("strategy")
-    if strategy:
-        sp = brain["markets"][market]["strategy_performance"]
-        if strategy not in sp:
-            sp[strategy] = {"count": 0, "win_rate": 0.0, "avg_pnl": 0.0}
-        s = sp[strategy]
-        prev_count = s["count"]
-        s["count"] += 1
-        s["avg_pnl"] = round((s["avg_pnl"] * prev_count + pnl_pct) / s["count"], 4)
-        prev_wins = round(s["win_rate"] * prev_count)
-        s["win_rate"] = round((prev_wins + (1 if win else 0)) / s["count"], 3)
-
-    # ?쇰퀎 湲곕줉
-    daily_record = updates.get("daily_record")
-    if daily_record:
-        recent = brain["markets"][market]["recent_days"]
-        recent.append(daily_record)
-        brain["markets"][market]["recent_days"] = recent[-60:]
-        brain["meta"][f"trained_days_{'kr' if market == 'KR' else 'us'}"] += 1
-        brain["markets"][market]["trained_days"] += 1
-
-    # beliefs ?낅뜲?댄듃
-    beliefs_update = updates.get("beliefs_update")
-    if beliefs_update:
-        beliefs = brain["markets"][market]["current_beliefs"]
-        for key in ["market_regime", "bull_reliability", "bear_reliability", "best_strategy"]:
-            if key in beliefs_update:
-                beliefs[key] = beliefs_update[key]
-        if "new_lesson" in beliefs_update:
-            beliefs.setdefault("learned_lessons", []).append(beliefs_update["new_lesson"])
-            beliefs["learned_lessons"] = beliefs["learned_lessons"][-10:]
-        if "add_avoid" in beliefs_update:
-            beliefs.setdefault("avoid", [])
-            if beliefs_update["add_avoid"] not in beliefs["avoid"]:
-                beliefs["avoid"].append(beliefs_update["add_avoid"])
-        if "add_emphasize" in beliefs_update:
-            beliefs.setdefault("emphasize", [])
-            if beliefs_update["add_emphasize"] not in beliefs["emphasize"]:
-                beliefs["emphasize"].append(beliefs_update["add_emphasize"])
-
-    # correction_guide
-    correction_guide = updates.get("correction_guide")
-    if correction_guide:
-        brain["correction_guide"][market] = {
-            **correction_guide,
-            "generated_date": date.today().isoformat()
-        }
-
-    save(brain)
-
-
-# ?? ?곹깭 異쒕젰 ?????????????????????????????????????????????????????????????????
 
 def print_status():
     brain = load()
