@@ -2,19 +2,25 @@
 import sqlite3
 import tempfile
 import unittest
+import json
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
 import ticker_selection_db as tsdb
+import kis_api as kis_api_module
+from phase1_trainer import digest_builder as digest_builder_module
 from bot import candidate_policy
 from bot.log_sanitizer import mask_secrets
 from dashboard import dashboard_server as dashboard_server_module
+from minority_report import consensus as consensus_module
+from minority_report import tuner as tuner_module
 import risk_manager
 import trading_bot as trading_bot_module
+import universe_manager as universe_manager_module
 from risk_manager import RiskManager
 from strategy import adaptive_params, continuation, gap_pullback, param_tuner
 
@@ -167,6 +173,150 @@ class LogSanitizerTests(unittest.TestCase):
         self.assertIn("crtfc_key=***", masked)
 
 
+class ScreenerPolicyTests(unittest.TestCase):
+    def test_kr_market_bucket_merge_preserves_kosdaq_quota(self):
+        kospi = [
+            {"ticker": f"P{i}", "price": 1000 + i, "volume": 1_000_000 + i, "change_rate": 12 - i, "vol_ratio": 8 - i * 0.1, "market_type": "KOSPI"}
+            for i in range(8)
+        ]
+        kosdaq = [
+            {"ticker": f"Q{i}", "price": 500 + i, "volume": 100_000 + i, "change_rate": 2 + i, "vol_ratio": 1.1, "market_type": "KOSDAQ"}
+            for i in range(5)
+        ]
+
+        with patch.dict("os.environ", {"KR_SCREEN_KOSDAQ_MIN_RATIO": "0.5"}):
+            merged = kis_api_module._merge_kr_market_buckets(kospi, kosdaq, top_n=6)
+
+        self.assertEqual(len(merged), 6)
+        self.assertGreaterEqual(
+            len([row for row in merged if row.get("market_type") == "KOSDAQ"]),
+            3,
+        )
+
+    def test_selection_candidate_cap_starts_kr_at_28_without_changing_us_default(self):
+        try:
+            from minority_report import analysts as analysts_module
+        except Exception as exc:
+            self.skipTest(f"analysts import unavailable: {exc}")
+
+        with patch.dict("os.environ", {"KR_SELECTION_PROMPT_CAP": "28", "US_SELECTION_PROMPT_CAP": "24"}, clear=False):
+            self.assertEqual(analysts_module._selection_candidate_cap("KR", 20, 10), 28)
+            self.assertEqual(analysts_module._selection_candidate_cap("US", 30, 12), 24)
+
+
+class DigestBuilderPeadTests(unittest.TestCase):
+    def test_classify_earnings_window_handles_pre_and_post_ranges(self):
+        self.assertEqual(
+            digest_builder_module._classify_earnings_window("2026-04-24", "2026-04-27"),
+            "pre",
+        )
+        self.assertEqual(
+            digest_builder_module._classify_earnings_window("2026-04-24", "2026-04-23"),
+            "post_1",
+        )
+        self.assertEqual(
+            digest_builder_module._classify_earnings_window("2026-04-24", "2026-04-21"),
+            "post_3",
+        )
+
+    def test_build_earnings_event_payload_derives_surprise_and_bias(self):
+        with patch.object(digest_builder_module, "_ticker_symbol_candidates", return_value=["AAPL"]), \
+             patch.object(
+                 digest_builder_module,
+                 "_load_yf_earnings_events",
+                 return_value=[{"event_date": "2026-04-23", "reported_eps": 1.10, "eps_estimate": 1.00}],
+             ), \
+             patch.object(digest_builder_module, "_yf_earnings_date", return_value="2026-07-23"):
+            payload = digest_builder_module._build_earnings_event_payload(
+                "US",
+                "AAPL",
+                "2026-04-24",
+                include_surprise=True,
+            )
+
+        self.assertEqual(payload["earnings_date"], "2026-04-23")
+        self.assertEqual(payload["earnings_window"], "post_1")
+        self.assertEqual(payload["surprise_sign"], "beat")
+        self.assertEqual(payload["surprise_strength"], "medium")
+        self.assertEqual(payload["confidence_tier"], "high")
+        self.assertEqual(payload["pead_bias"], "positive_drift")
+
+    def test_digest_to_prompt_shows_window_without_shadow_surprise(self):
+        digest = {
+            "market": "US",
+            "date": "2026-04-24",
+            "context": {},
+            "technicals": {
+                "AAPL": {
+                    "name": "Apple",
+                    "close": 190.0,
+                    "change_pct": 1.2,
+                    "rsi": 58.0,
+                    "macd": "골든크로스",
+                    "bb_pct": 64.0,
+                    "vol_ratio": 1.5,
+                    "pos_52w": 82.0,
+                    "atr_pct": 4.1,
+                    "trend_5d": 0.8,
+                    "premarket_pct": 0.6,
+                    "earnings_date": "2026-04-23",
+                    "earnings_window": "post_1",
+                    "surprise_sign": "beat",
+                    "surprise_strength": "medium",
+                    "prompt_applied": False,
+                }
+            },
+            "top_news": [],
+            "prev_result": {},
+        }
+
+        prompt = digest_builder_module.digest_to_prompt(digest)
+
+        self.assertIn("실적 2026-04-23", prompt)
+        self.assertIn("실적창 post_1", prompt)
+        self.assertNotIn("surprise beat/medium", prompt)
+
+
+class TradingBotPeadEnrichmentTests(unittest.TestCase):
+    def test_annotate_selection_execution_features_inherits_digest_earnings_fields(self):
+        bot = trading_bot_module.TradingBot.__new__(trading_bot_module.TradingBot)
+        bot.today_judgment = {
+            "digest_raw": {
+                "context": {},
+                "technicals": {
+                    "NVDA": {
+                        "earnings_date": "2026-04-23",
+                        "earnings_window": "post_1",
+                        "confidence_tier": "medium",
+                        "pead_bias": "positive_drift",
+                        "prompt_applied": False,
+                        "surprise_sign": "beat",
+                        "surprise_strength": "medium",
+                    }
+                },
+            },
+            "consensus": {"confidence": 0.6},
+        }
+        bot._ca_context_last = None
+        bot._selection_active_strategies = lambda market, mode="": []
+        bot._selection_session_phase = lambda market: {
+            "phase": "mid",
+            "minutes_to_close": 120.0,
+            "entry_blackout": False,
+            "elapsed_min": 90.0,
+        }
+        bot._or_formed = {}
+        bot._get_ohlcv_cached = lambda ticker, market: pd.DataFrame()
+        bot.enable_kr_momentum_shrink = True
+
+        rows = bot._annotate_selection_execution_features("US", [{"ticker": "NVDA", "price": 100.0}], "NEUTRAL")
+
+        self.assertEqual(rows[0]["earnings_window"], "post_1")
+        self.assertEqual(rows[0]["earnings_date"], "2026-04-23")
+        self.assertEqual(rows[0]["pead_bias"], "positive_drift")
+        self.assertEqual(rows[0]["surprise_sign"], "beat")
+
+
 class GapPullbackTests(unittest.TestCase):
     def test_opening_signal_requires_real_pullback_and_recovery(self):
         df = _make_signal_df(
@@ -204,8 +354,8 @@ class GapPullbackTests(unittest.TestCase):
 
 
 class ContinuationTests(unittest.TestCase):
-    def test_cautious_bull_mode_is_disabled(self):
-        params = continuation.params("CAUTIOUS_BULL", market="KR")
+    def test_cautious_mode_is_disabled(self):
+        params = continuation.params("CAUTIOUS", market="KR")
         self.assertTrue(params["disabled"])
 
     def test_signal_accepts_valid_continuation_setup(self):
@@ -227,6 +377,13 @@ class ContinuationTests(unittest.TestCase):
 
 
 class RiskManagerTests(unittest.TestCase):
+    def test_calc_order_budget_applies_atr_volatility_scaling(self):
+        rm = RiskManager(init_cash=1_000_000, max_order_krw=200_000, market="KR")
+
+        budget = rm.calc_order_budget(50, atr_pct=0.075, atr_target_pct=0.015)
+
+        self.assertEqual(budget, 20_000)
+
     def test_auto_trailing_uses_breakeven_floor_and_usd_stop(self):
         rm = RiskManager(init_cash=1_000_000, max_order_krw=500_000, market="US")
         opened = rm.open_position("AAPL", price=100_000.0, qty=1, strategy="test", tp_pct=0.06, sl_pct=0.03)
@@ -260,6 +417,111 @@ class RiskManagerTests(unittest.TestCase):
         self.assertEqual(len(exits), 1)
         self.assertEqual(exits[0]["reason"], "trail_stop")
 
+    def test_auto_trailing_uses_native_usd_trigger_not_krw_drift(self):
+        rm = RiskManager(init_cash=1_000_000, max_order_krw=500_000, market="US")
+        rm.positions.append(
+            {
+                "ticker": "NVTS",
+                "entry": 100_000.0,
+                "qty": 1,
+                "current_price": 100_000.0,
+                "display_avg_price": 100.0,
+                "display_current_price": 100.0,
+                "display_currency": "USD",
+                "tp": 106_000.0,
+                "sl": 97_000.0,
+                "tp_pct": 0.06,
+                "sl_pct": 0.03,
+                "max_hold": 1,
+                "held_days": 0,
+                "trailing": False,
+                "trail_sl": 0.0,
+                "trail_sl_usd": 0.0,
+                "trail_pct": 0.03,
+                "tp_triggered": False,
+                "hold_advice": None,
+                "tp_price": 0.0,
+                "management_protected": False,
+            }
+        )
+
+        rm.update_prices({"NVTS": 108_000.0}, raw_prices={"NVTS": 98.0})
+
+        self.assertFalse(rm.positions[0]["trailing"])
+
+    def test_management_protected_position_skips_strategy_exit_but_keeps_stop_loss(self):
+        rm = RiskManager(init_cash=1_000_000, max_order_krw=500_000, market="US")
+        rm.positions.append(
+            {
+                "ticker": "NVTS",
+                "entry": 100_000.0,
+                "qty": 1,
+                "current_price": 100_000.0,
+                "display_avg_price": 100.0,
+                "display_current_price": 100.0,
+                "display_currency": "USD",
+                "tp": 106_000.0,
+                "sl": 97_000.0,
+                "tp_pct": 0.06,
+                "sl_pct": 0.03,
+                "max_hold": 1,
+                "held_days": 5,
+                "trailing": False,
+                "trail_sl": 0.0,
+                "trail_sl_usd": 0.0,
+                "trail_pct": 0.03,
+                "tp_triggered": False,
+                "hold_advice": None,
+                "tp_price": 0.0,
+                "management_protected": True,
+            }
+        )
+
+        rm.update_prices({"NVTS": 105_000.0}, raw_prices={"NVTS": 105.0})
+        self.assertFalse(rm.positions[0]["trailing"])
+        self.assertEqual(rm.get_exit_candidates(), [])
+
+        rm.update_prices({"NVTS": 96_000.0}, raw_prices={"NVTS": 96.0})
+        exits = rm.get_exit_candidates()
+        self.assertEqual(len(exits), 1)
+        self.assertEqual(exits[0]["reason"], "stop_loss")
+
+
+class ConsensusGuardTests(unittest.TestCase):
+    def test_apply_unanimous_override_blocks_opposite_consensus(self):
+        judgments = {
+            "bull": {"stance": "CAUTIOUS_BEAR", "confidence": 0.7},
+            "bear": {"stance": "CAUTIOUS_BEAR", "confidence": 0.7},
+            "neutral": {"stance": "CAUTIOUS_BEAR", "confidence": 0.7},
+        }
+        consensus = {"mode": "MILD_BULL", "size": 23, "tp_mult": 1.0}
+
+        guarded = consensus_module.apply_unanimous_override(judgments, consensus)
+
+        self.assertEqual(guarded["mode"], "CAUTIOUS_BEAR")
+        self.assertEqual(guarded["size"], consensus_module._e("SIZE_CAUTIOUS_BEAR", 20))
+        self.assertTrue(guarded["unanimous_override_applied"])
+        self.assertEqual(guarded["unanimous_direction"], "bear")
+
+    def test_build_judgment_eval_persists_directional_atomic_fields(self):
+        judgments = {
+            "bull": {"stance": "MILD_BULL"},
+            "bear": {"stance": "MILD_BEAR"},
+            "neutral": {"stance": "NEUTRAL"},
+        }
+        consensus = {"mode": "NEUTRAL"}
+
+        result = consensus_module.build_judgment_eval(judgments, consensus, 1.2)
+
+        self.assertEqual(result["actual_dir"], "UP")
+        self.assertEqual(result["consensus_dir"], "FLAT")
+        self.assertFalse(result["consensus_hit"])
+        self.assertTrue(result["analyst_hits"]["bull"])
+        self.assertFalse(result["analyst_hits"]["bear"])
+        self.assertTrue(result["best_analyst_outperformed_consensus"])
+        self.assertIsNone(result["unanimous_direction"])
+        self.assertFalse(result["unanimous_consensus_mismatch"])
+
 
 class TradingBotGateTests(unittest.TestCase):
     def _make_bot(self):
@@ -267,11 +529,25 @@ class TradingBotGateTests(unittest.TestCase):
         bot.is_paper = True
         bot.trade_ready_tickers = {"KR": [], "US": []}
         bot.selection_meta = {"KR": {}, "US": {}}
+        bot.selection_stages = {"KR": {}, "US": {}}
         bot.today_ticker_reasons = {"KR": {}, "US": {}}
         bot.today_judgment = {}
         bot._active_session_date = {"KR": None, "US": None}
         bot.entry_priority_cutoff_enabled = True
         bot.entry_priority_cutoff = 0.20
+        bot.enable_continuation_live = False
+        bot.enable_soft_watch_promotion = False
+        bot.enable_kr_momentum_shrink = True
+        bot._claude_runtime_overrides = {"KR": {}, "US": {}}
+        bot._ticker_runtime_blocked_reasons = {"KR": {}, "US": {}}
+        bot._ticker_runtime_rejection_reasons = {"KR": {}, "US": {}}
+        bot._ticker_no_signal_cycles = {}
+        bot._invalid_price_count = {}
+        bot.positions = {"KR": {}, "US": {}}
+        bot._or_formed = {}
+        bot._or_high = {}
+        bot._or_low = {}
+        bot.risk = SimpleNamespace(positions=[])
         bot.token = "test-token"
         bot._persist_live_judgment = lambda market: None
         return bot
@@ -304,6 +580,364 @@ class TradingBotGateTests(unittest.TestCase):
         bot.entry_priority_cutoff_enabled = False
 
         self.assertFalse(bot._is_entry_priority_blocked(0.0))
+
+    def test_entry_priority_cutoff_uses_runtime_override_by_market(self):
+        bot = self._make_bot()
+        bot._claude_runtime_overrides["KR"] = {"entry_priority_cutoff_adjust": -0.05}
+
+        self.assertAlmostEqual(bot._effective_entry_priority_cutoff("KR"), 0.15)
+        self.assertTrue(bot._is_entry_priority_blocked(0.14, "KR"))
+        self.assertFalse(bot._is_entry_priority_blocked(0.16, "KR"))
+
+    def test_effective_momentum_wait_window_clamps_runtime_adjustment(self):
+        bot = self._make_bot()
+        bot._claude_runtime_overrides["US"] = {"momentum_wait_adjust_min": -20}
+
+        self.assertEqual(bot._effective_momentum_wait_window("US", 15), 5.0)
+        self.assertEqual(bot._effective_momentum_wait_window("US", 45), 30.0)
+
+    def test_effective_kr_momentum_atr_caps_use_runtime_override(self):
+        bot = self._make_bot()
+        bot._claude_runtime_overrides["KR"] = {
+            "kr_momentum_atr_cap_adjust": 0.015,
+            "kr_momentum_atr_cap_high_adjust": 0.02,
+        }
+
+        self.assertEqual(bot._effective_kr_momentum_atr_caps(), (0.075, 0.12))
+
+    def test_effective_kr_momentum_atr_stage_uses_stepwise_size_caps(self):
+        bot = self._make_bot()
+
+        self.assertEqual(bot._effective_kr_momentum_atr_stage(0.055)["size_cap"], None)
+        self.assertEqual(bot._effective_kr_momentum_atr_stage(0.065)["size_cap"], 70)
+        self.assertEqual(bot._effective_kr_momentum_atr_stage(0.075)["size_cap"], 50)
+        self.assertEqual(bot._effective_kr_momentum_atr_stage(0.085)["size_cap"], 35)
+        self.assertTrue(bot._effective_kr_momentum_atr_stage(0.105)["blocked"])
+
+    def test_order_size_too_small_blocks_sub_minimum_kr_order(self):
+        bot = self._make_bot()
+
+        blocked, minimum = bot._is_order_size_too_small(
+            "KR",
+            qty=1,
+            order_cost_krw=7_980,
+            order_budget_krw=13_500,
+        )
+
+        self.assertTrue(blocked)
+        self.assertEqual(minimum, 30_000)
+
+    def test_order_size_too_small_uses_usd_minimum_for_us_orders(self):
+        bot = self._make_bot()
+        bot.usd_krw_rate = 1_500
+
+        blocked, minimum = bot._is_order_size_too_small(
+            "US",
+            qty=1,
+            order_cost_krw=40_000,
+            order_budget_krw=40_000,
+        )
+
+        self.assertTrue(blocked)
+        self.assertEqual(minimum, 45_000)
+
+    def test_risk_off_mr_exception_allows_single_low_volume_setup(self):
+        bot = self._make_bot()
+        bot.today_judgment = {
+            "digest_raw": {
+                "context": {
+                    "sp500": {"change_pct": -0.8},
+                    "nasdaq": {"change_pct": -1.2},
+                }
+            }
+        }
+
+        result = bot._risk_off_mr_exception(
+            "US",
+            "CAUTIOUS_BEAR",
+            "mean_reversion",
+            {"vol_ratio": 1.4},
+        )
+
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["size_cap"], 40)
+
+    def test_risk_off_mr_exception_blocks_panic_and_position_overlap(self):
+        bot = self._make_bot()
+        bot.today_judgment = {
+            "digest_raw": {
+                "context": {
+                    "sp500": {"change_pct": -3.1},
+                    "nasdaq": {"change_pct": -4.0},
+                }
+            }
+        }
+        blocked = bot._risk_off_mr_exception(
+            "US",
+            "CAUTIOUS_BEAR",
+            "mean_reversion",
+            {"vol_ratio": 1.1},
+        )
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["reason"], "panic_primary")
+
+        bot.today_judgment["digest_raw"]["context"]["sp500"]["change_pct"] = -0.5
+        bot.today_judgment["digest_raw"]["context"]["nasdaq"]["change_pct"] = -0.8
+        bot.risk = SimpleNamespace(positions=[{"ticker": "AAPL"}])
+        blocked = bot._risk_off_mr_exception(
+            "US",
+            "CAUTIOUS_BEAR",
+            "mean_reversion",
+            {"vol_ratio": 1.1},
+        )
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["reason"], "risk_off_position_limit")
+
+    def test_build_intraday_context_includes_execution_profile_and_ops_review(self):
+        bot = self._make_bot()
+        bot.today_judgment = {
+            "consensus": {"mode": "MILD_BULL"},
+            "ops_review_snapshot": {
+                "market": "KR",
+                "metrics": {
+                    "consensus_directional_hit_rate": {"value": 42.0, "sample": 10, "breached": True},
+                    "trade_ready_signal_conversion": {"value": 12.0, "sample": 24, "breached": True},
+                },
+            },
+        }
+
+        with patch.object(bot, "_market_elapsed_min", return_value=32.0), \
+             patch.object(bot, "_minutes_to_close", return_value=180.0), \
+             patch.object(bot, "_in_entry_blackout", return_value=False), \
+             patch("kis_api.get_index_change", return_value=0.55):
+            text = bot._build_intraday_context("KR")
+
+        self.assertIn("session_phase=early", text)
+        self.assertIn("active_strategies=opening_range_pullback,gap_pullback,momentum,mean_reversion", text)
+        self.assertIn("gates=wait=", text)
+        self.assertIn("ops review: consensus_hit=42.0% n=10 breach", text)
+        self.assertIn("tr_ready_to_signal=12.0% n=24 breach", text)
+
+    def test_annotate_selection_execution_features_adds_exec_fields(self):
+        bot = self._make_bot()
+        bot.today_judgment = {
+            "consensus": {"mode": "MILD_BULL", "confidence": 0.7},
+            "digest_raw": {"context": {}},
+        }
+
+        ohlcv = _make_ohlcv_df(3)
+        signal_df = pd.DataFrame([{"close": 100.0, "atr": 7.0}])
+
+        def _fake_entry_priority_score(**kwargs):
+            if kwargs.get("strategy_name") == "momentum":
+                return 1.6, {}
+            return 0.5, {}
+
+        with patch.object(bot, "_market_elapsed_min", return_value=35.0), \
+             patch.object(bot, "_minutes_to_close", return_value=205.0), \
+             patch.object(bot, "_in_entry_blackout", return_value=False), \
+             patch.object(bot, "_get_ohlcv_cached", return_value=ohlcv), \
+             patch.object(trading_bot_module, "calc_all", return_value=signal_df), \
+             patch.object(trading_bot_module, "_adaptive_params", return_value={}), \
+             patch.object(trading_bot_module, "entry_priority_score", side_effect=_fake_entry_priority_score):
+            rows = bot._annotate_selection_execution_features(
+                "KR",
+                [{"ticker": "005930", "price": 100.0}],
+                mode="MILD_BULL",
+            )
+
+        row = rows[0]
+        self.assertEqual(row["or_state"], "missing")
+        self.assertEqual(row["entry_priority_bucket"], "high")
+        self.assertEqual(row["execution_fit_strategy"], "momentum")
+        self.assertEqual(row["minutes_to_close"], 205.0)
+        self.assertAlmostEqual(row["atr_pct"], 7.0)
+        self.assertTrue(str(row["atr_stage"]).startswith("atr_"))
+
+    def test_annotate_selection_execution_features_biases_risky_kr_momentum_to_watch_only(self):
+        bot = self._make_bot()
+        bot.today_judgment = {
+            "consensus": {"mode": "MILD_BULL", "confidence": 0.7},
+            "digest_raw": {"context": {}},
+        }
+
+        ohlcv = _make_ohlcv_df(3)
+        signal_df = pd.DataFrame([{"close": 100.0, "atr": 8.0}])
+
+        def _fake_entry_priority_score(**kwargs):
+            if kwargs.get("strategy_name") == "momentum":
+                return 1.7, {}
+            return 0.4, {}
+
+        with patch.object(bot, "_market_elapsed_min", return_value=35.0), \
+             patch.object(bot, "_minutes_to_close", return_value=205.0), \
+             patch.object(bot, "_in_entry_blackout", return_value=False), \
+             patch.object(bot, "_get_ohlcv_cached", return_value=ohlcv), \
+             patch.object(trading_bot_module, "calc_all", return_value=signal_df), \
+             patch.object(trading_bot_module, "_adaptive_params", return_value={}), \
+             patch.object(trading_bot_module, "entry_priority_score", side_effect=_fake_entry_priority_score):
+            rows = bot._annotate_selection_execution_features(
+                "KR",
+                [{
+                    "ticker": "005930",
+                    "price": 100.0,
+                    "change_rate": 9.2,
+                    "liquidity_bucket": "mid",
+                    "from_high_bucket": "near_high",
+                    "from_high_pct": -0.8,
+                }],
+                mode="MILD_BULL",
+            )
+
+        row = rows[0]
+        self.assertEqual(row["raw_execution_fit_strategy"], "momentum")
+        self.assertEqual(row["execution_fit_strategy"], "observe")
+        self.assertEqual(row["selection_bias"], "watch_only")
+        self.assertEqual(row["entry_priority_bucket"], "low")
+        self.assertIn("near_high", row["selection_bias_reason"])
+
+    def test_partial_replace_score_penalizes_repeated_blocked_reasons(self):
+        bot = self._make_bot()
+        bot._ticker_no_signal_cycles["005930"] = 2
+        bot._invalid_price_count["005930"] = 1
+        bot._ticker_runtime_blocked_reasons["KR"] = {
+            "005930": {"momentum_atr_too_high": 2, "entry_blackout": 1}
+        }
+        bot._ticker_runtime_rejection_reasons["KR"] = {
+            "005930": {"momentum_wait": 1, "pullback_missing": 1}
+        }
+
+        score = bot._partial_replace_score("KR", "005930")
+
+        self.assertGreaterEqual(score, 8.0)
+
+    def test_apply_consensus_guards_normalizes_reused_opposite_consensus(self):
+        bot = self._make_bot()
+        judgments = {
+            "bull": {"stance": "CAUTIOUS_BEAR", "confidence": 0.7},
+            "bear": {"stance": "CAUTIOUS_BEAR", "confidence": 0.7},
+            "neutral": {"stance": "CAUTIOUS_BEAR", "confidence": 0.7},
+        }
+
+        guarded = bot._apply_consensus_guards(
+            "US",
+            judgments,
+            {"mode": "MILD_BULL", "size": 23, "tp_mult": 1.0},
+            source="test",
+        )
+
+        self.assertEqual(guarded["mode"], "CAUTIOUS_BEAR")
+        self.assertTrue(guarded["unanimous_override_applied"])
+
+    def test_apply_runtime_tuning_adjustments_updates_judgment_state(self):
+        bot = self._make_bot()
+        bot.today_judgment = {"market": "KR"}
+
+        changed = bot._apply_runtime_tuning_adjustments(
+            "KR",
+            {
+                "momentum_wait_adjust_min": -12,
+                "entry_priority_cutoff_adjust": -0.03,
+                "kr_momentum_atr_cap_adjust": 0.01,
+                "kr_momentum_atr_cap_high_adjust": 0.02,
+            },
+        )
+
+        self.assertEqual(changed["momentum_wait_adjust_min"], -12)
+        self.assertAlmostEqual(changed["entry_priority_cutoff_adjust"], -0.03)
+        self.assertEqual(bot._claude_runtime_overrides["KR"]["momentum_wait_adjust_min"], -12)
+        self.assertEqual(
+            bot.today_judgment["claude_runtime_overrides"]["KR"]["kr_momentum_atr_cap_high_adjust"],
+            0.02,
+        )
+
+    def test_restore_runtime_overrides_from_payload_restores_saved_market_values(self):
+        bot = self._make_bot()
+        bot.today_judgment = {"market": "KR"}
+
+        restored = bot._restore_runtime_overrides_from_payload(
+            "KR",
+            {
+                "claude_runtime_overrides": {
+                    "KR": {
+                        "momentum_wait_adjust_min": -5,
+                        "entry_priority_cutoff_adjust": 0.02,
+                        "kr_momentum_atr_cap_adjust": 0.01,
+                        "kr_momentum_atr_cap_high_adjust": 0.01,
+                    }
+                }
+            },
+        )
+
+        self.assertEqual(restored["momentum_wait_adjust_min"], -5)
+        self.assertAlmostEqual(restored["entry_priority_cutoff_adjust"], 0.02)
+        self.assertAlmostEqual(bot._claude_runtime_overrides["KR"]["kr_momentum_atr_cap_adjust"], 0.01)
+        self.assertEqual(
+            bot.today_judgment["claude_runtime_overrides"]["KR"]["kr_momentum_atr_cap_high_adjust"],
+            0.01,
+        )
+
+    def test_persist_live_judgment_writes_runtime_overrides_from_memory(self):
+        bot = self._make_bot()
+        bot.is_paper = False
+        bot._active_session_date["KR"] = date(2026, 4, 22)
+        bot._claude_runtime_overrides["KR"] = {
+            "momentum_wait_adjust_min": -5,
+            "entry_priority_cutoff_adjust": 0.02,
+            "kr_momentum_atr_cap_adjust": 0.01,
+            "kr_momentum_atr_cap_high_adjust": 0.0,
+        }
+        bot.today_judgment = {
+            "market": "KR",
+            "consensus": {"mode": "MILD_BULL"},
+            "judgment_eval": {"consensus_hit": True, "unanimous_consensus_mismatch": False},
+            "ops_review_snapshot": {"market": "KR", "metrics": {"consensus_directional_hit_rate": {"value": 55.0}}},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+            with patch.object(trading_bot_module, "JUDGMENT_DIR", base_dir):
+                bot._persist_live_judgment = trading_bot_module.TradingBot._persist_live_judgment.__get__(
+                    bot, trading_bot_module.TradingBot
+                )
+                bot._persist_live_judgment("KR")
+
+            saved = json.loads((base_dir / "live_20260422_KR.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["claude_runtime_overrides"]["KR"]["momentum_wait_adjust_min"], -5)
+        self.assertAlmostEqual(saved["claude_runtime_overrides"]["KR"]["entry_priority_cutoff_adjust"], 0.02)
+        self.assertTrue(saved["judgment_eval"]["consensus_hit"])
+        self.assertEqual(saved["ops_review_snapshot"]["metrics"]["consensus_directional_hit_rate"]["value"], 55.0)
+
+    def test_runtime_gate_state_text_reports_effective_values(self):
+        bot = self._make_bot()
+        bot._claude_runtime_overrides["KR"] = {
+            "momentum_wait_adjust_min": -5,
+            "entry_priority_cutoff_adjust": 0.02,
+            "kr_momentum_atr_cap_adjust": 0.01,
+            "kr_momentum_atr_cap_high_adjust": 0.0,
+        }
+
+        text = bot._runtime_gate_state_text("KR")
+
+        self.assertIn("wait=45->40m", text)
+        self.assertIn("cutoff=0.22", text)
+        self.assertIn("kr_atr_cap=0.07/0.10", text)
+        self.assertIn("adjust(wait=-5m, cutoff=+0.02, atr=+0.01/+0.00)", text)
+
+    def test_update_session_date_diagnostics_records_mismatch(self):
+        bot = self._make_bot()
+        bot.today_judgment = {}
+        bot._active_session_date["US"] = date(2026, 4, 23)
+        bot._last_session_date_diag = {"KR": None, "US": None}
+
+        with patch.object(trading_bot_module, "_market_session_date", return_value=date(2026, 4, 24)):
+            diag = bot._update_session_date_diagnostics("US", "session_close")
+
+        self.assertTrue(diag["mismatch"])
+        self.assertEqual(diag["active_session_date"], "2026-04-23")
+        self.assertEqual(diag["calendar_session_date"], "2026-04-24")
+        self.assertEqual(bot.today_judgment["session_date_diagnostics"]["US"]["trigger"], "session_close")
 
     def test_build_portfolio_info_reflects_cash_and_position_limits(self):
         bot = self._make_bot()
@@ -431,6 +1065,7 @@ class TradingBotGateTests(unittest.TestCase):
 
     def test_watch_only_bucket_classifies_soft_reason(self):
         bot = self._make_bot()
+        bot.enable_soft_watch_promotion = True
         bot.today_ticker_reasons["US"] = {"AAPL": "RS 약세. watch 유지"}
         bot.selection_meta["US"] = {"trade_ready": ["NVDA"]}
 
@@ -438,10 +1073,21 @@ class TradingBotGateTests(unittest.TestCase):
         self.assertTrue(bot._can_recheck_soft_watch_only("US", "AAPL", "CAUTIOUS_BEAR"))
         self.assertFalse(bot._can_recheck_soft_watch_only("US", "AAPL", "DEFENSIVE"))
 
+    def test_soft_watch_promotion_disabled_by_default(self):
+        bot = self._make_bot()
+        bot.today_ticker_reasons["US"] = {"AAPL": "RS 약세. watch 유지"}
+        bot.selection_meta["US"] = {"trade_ready": ["NVDA"]}
+
+        self.assertFalse(bot._can_recheck_soft_watch_only("US", "AAPL", "CAUTIOUS_BEAR"))
+
     def test_promote_trade_ready_ticker_updates_state(self):
         bot = self._make_bot()
-        bot.selection_meta["US"] = {"watchlist": ["AAPL"], "trade_ready": []}
-        bot.today_judgment = {"market": "US"}
+        bot.selection_meta["US"] = {
+            "watchlist": ["AAPL"],
+            "trade_ready": [],
+            "recommended_strategy": {"AAPL": "gap_pullback"},
+        }
+        bot.today_judgment = {"market": "US", "consensus": {"mode": "NEUTRAL"}}
 
         changed = bot._promote_trade_ready_ticker("US", "aapl", strategy_name="gap_pullback")
 
@@ -458,6 +1104,93 @@ class TradingBotGateTests(unittest.TestCase):
 
         self.assertEqual(selected, [])
         self.assertEqual(legacy, ["AAPL", "NVDA"])
+
+    def test_normalize_selection_meta_runtime_caps_trade_ready_by_slot(self):
+        bot = self._make_bot()
+        meta = {
+            "watchlist": ["A", "B", "C", "D", "E", "F", "G"],
+            "trade_ready": ["A", "B", "C", "D", "E", "F", "G"],
+            "recommended_strategy": {
+                "A": "momentum",
+                "B": "momentum",
+                "C": "momentum",
+                "D": "gap_pullback",
+                "E": "gap_pullback",
+                "F": "opening_range_pullback",
+                "G": "mean_reversion",
+            },
+        }
+
+        normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="MODERATE_BULL")
+
+        self.assertEqual(normalized["trade_ready"], ["A", "B", "D", "E", "F", "G"])
+
+    def test_normalize_selection_meta_runtime_filters_continuation_when_live_disabled(self):
+        bot = self._make_bot()
+        meta = {
+            "watchlist": ["A", "B"],
+            "trade_ready": ["A", "B"],
+            "recommended_strategy": {
+                "A": "continuation",
+                "B": "gap_pullback",
+            },
+        }
+
+        normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="MODERATE_BULL")
+
+        self.assertEqual(normalized["trade_ready"], ["B"])
+        self.assertEqual(
+            normalized["_runtime_filtered_trade_ready"],
+            {"A": "continuation_shadow_only"},
+        )
+
+    def test_selection_active_strategies_excludes_continuation_when_live_disabled(self):
+        bot = self._make_bot()
+
+        active = bot._selection_active_strategies("US", "MILD_BULL")
+
+        self.assertNotIn("continuation", active)
+
+    def test_trade_ready_slot_config_shrinks_kr_momentum_slots(self):
+        bot = self._make_bot()
+
+        risk_on = bot._trade_ready_slot_config("MILD_BULL", "KR")
+        balanced = bot._trade_ready_slot_config("CAUTIOUS", "KR")
+
+        self.assertEqual(risk_on["momentum"], 1)
+        self.assertEqual(balanced["momentum"], 0)
+
+    def test_pick_partial_replace_in_prefers_matching_slot_then_diverse(self):
+        bot = self._make_bot()
+        bot.selection_meta["KR"] = {
+            "recommended_strategy": {
+                "005930": "momentum",
+                "000660": "gap_pullback",
+            }
+        }
+        candidate_meta = {
+            "recommended_strategy": {
+                "111111": "momentum",
+                "222222": "gap_pullback",
+                "333333": "gap_pullback",
+            }
+        }
+        candidate_map = {
+            "111111": {"ticker": "111111", "category": "leader", "sector": "semis", "from_high_bucket": "near_high", "liquidity_bucket": "high"},
+            "222222": {"ticker": "222222", "category": "earnings", "sector": "autos", "from_high_bucket": "pullback", "liquidity_bucket": "high"},
+            "333333": {"ticker": "333333", "category": "earnings", "sector": "autos", "from_high_bucket": "pullback", "liquidity_bucket": "low"},
+        }
+
+        picked = bot._pick_partial_replace_in(
+            "KR",
+            ["005930", "000660"],
+            ["111111", "222222", "333333"],
+            candidate_meta,
+            candidate_map,
+            2,
+        )
+
+        self.assertEqual(picked, ["111111", "222222"])
 
     def test_fetch_signal_ready_ohlcv_tops_up_us_history(self):
         bot = self._make_bot()
@@ -477,6 +1210,116 @@ class TradingBotGateTests(unittest.TestCase):
         self.assertGreaterEqual(len(df), 180)
         self.assertGreaterEqual(usable, bot._MIN_SIGNAL_ROWS)
         self.assertEqual(source, "yfinance")
+
+
+class OpsReviewSnapshotTests(unittest.TestCase):
+    def test_build_ops_review_snapshot_aggregates_review_metrics(self):
+        bot = trading_bot_module.TradingBot.__new__(trading_bot_module.TradingBot)
+        bot.is_paper = False
+        bot._active_session_date = {"KR": date(2026, 4, 22), "US": None}
+        base_dir = Path(tempfile.mkdtemp())
+        judgment_dir = base_dir / "judgment"
+        judgment_dir.mkdir(parents=True, exist_ok=True)
+        selection_db = base_dir / "ticker_selection_log.db"
+        decisions_db = base_dir / "decisions.db"
+
+        (judgment_dir / "live_20260421_KR.json").write_text(
+            json.dumps(
+                {
+                    "date": "2026-04-21",
+                    "market": "KR",
+                    "actual_result": {"market_change": -0.6},
+                    "judgment_eval": {
+                        "consensus_hit": False,
+                        "analyst_hits": {"bull": True, "bear": False, "neutral": False},
+                        "unanimous_consensus_mismatch": True,
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        orig_tsdb = tsdb.DB_PATH
+        try:
+            tsdb.DB_PATH = str(selection_db)
+            tsdb.init()
+            with sqlite3.connect(selection_db) as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO ticker_selection_log
+                        (bot_mode, date, market, ticker, trade_ready, signal_fired, blocked_reason, forward_3d, max_runup_3d)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        ("live", "2026-04-21", "KR", "A", 1, 1, None, 1.2, 2.0),
+                        ("live", "2026-04-21", "KR", "B", 1, 0, None, -0.4, 1.0),
+                        ("live", "2026-04-22", "KR", "C", 1, 1, "momentum_atr_too_high", 0.6, 5.5),
+                        ("live", "2026-04-22", "KR", "D", 0, 0, None, 1.0, 6.2),
+                        ("live", "2026-04-22", "KR", "E", 0, 0, None, -0.2, 1.1),
+                    ],
+                )
+            with sqlite3.connect(decisions_db) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        market TEXT,
+                        decision TEXT,
+                        block_reason TEXT,
+                        strategy_used TEXT,
+                        pnl_pct REAL,
+                        data_source TEXT,
+                        session_date TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO decisions (market, decision, block_reason, strategy_used, pnl_pct, data_source, session_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        ("KR", "BLOCKED", "entry_blackout", None, None, "live", "2026-04-21"),
+                        ("KR", "BLOCKED", "watch_only", None, None, "live", "2026-04-22"),
+                        ("KR", "BUY_SIGNAL", None, "continuation", -4.2, "live", "2026-04-22"),
+                    ],
+                )
+
+            current_record = {
+                "date": "2026-04-22",
+                "market": "KR",
+                "actual_result": {"market_change": 0.8},
+                "judgment_eval": {
+                    "consensus_hit": True,
+                    "analyst_hits": {"bull": True, "bear": True, "neutral": False},
+                    "unanimous_consensus_mismatch": False,
+                },
+            }
+
+            with patch.object(trading_bot_module, "JUDGMENT_DIR", judgment_dir), \
+                 patch.object(trading_bot_module, "_DECISIONS_DB_PATH", decisions_db):
+                snapshot = bot._build_ops_review_snapshot("KR", current_record=current_record)
+        finally:
+            tsdb.DB_PATH = orig_tsdb
+
+        metrics = snapshot["metrics"]
+        self.assertEqual(snapshot["judgment_sessions"], 2)
+        self.assertEqual(snapshot["best_analyst"], "bull")
+        self.assertEqual(metrics["consensus_directional_hit_rate"]["value"], 50.0)
+        self.assertEqual(metrics["best_analyst_minus_consensus_hit_gap"]["value"], 50.0)
+        self.assertEqual(metrics["unanimous_mismatch_count"]["value"], 1)
+        self.assertEqual(metrics["trade_ready_signal_conversion"]["value"], 66.7)
+        self.assertEqual(metrics["watch_only_missed_runup_ratio"]["value"], 50.0)
+        self.assertAlmostEqual(metrics["trade_ready_forward_3d_average"]["value"], 0.467, places=3)
+        self.assertEqual(metrics["atr_blocked_missed_runup"]["value"], 5.5)
+        self.assertEqual(metrics["entry_blackout_ratio"]["value"], 50.0)
+        self.assertEqual(metrics["watch_only_blocked_ratio"]["value"], 50.0)
+        self.assertEqual(metrics["continuation_average_pnl"]["value"], -4.2)
+        self.assertTrue(snapshot["triggers"]["large_analyst_gap"])
+        self.assertTrue(snapshot["triggers"]["unanimous_mismatch"])
+        self.assertTrue(snapshot["triggers"]["high_entry_blackout_ratio"])
+        self.assertTrue(snapshot["triggers"]["high_watch_only_blocked_ratio"])
+        self.assertFalse(snapshot["triggers"]["low_trade_ready_conversion"])
 
 
 class TradingBotSessionDateTests(unittest.TestCase):
@@ -574,6 +1417,195 @@ class TradingBotSessionDateTests(unittest.TestCase):
             self.assertTrue((base_dir / "live_20260421_US.json").exists())
 
 
+class TradingBotRecoveryTests(unittest.TestCase):
+    def _make_bot(self):
+        bot = trading_bot_module.TradingBot.__new__(trading_bot_module.TradingBot)
+        bot.is_paper = True
+        bot._active_session_date = {"KR": date(2026, 4, 23), "US": date(2026, 4, 23)}
+        bot.usd_krw_rate = 1500.0
+        bot.risk = SimpleNamespace(positions=[], trade_log=[], all_trade_log=[], cash=0.0)
+        bot.pending_orders = []
+        bot._funnel = {"KR": {"filled": 0}, "US": {"filled": 0}}
+        bot._sell_fail_at = {}
+        bot._exit_process_lock = __import__("threading").Lock()
+        bot.current_market = None
+        bot.enable_trailing_stop = True
+        bot.token = "test-token"
+        bot.price_cache = {}
+        bot.price_cache_raw = {}
+        bot._save_positions = Mock()
+        bot._save_pending_orders = Mock()
+        bot._block_entry = Mock()
+        bot._execute_sell = Mock()
+        bot._handle_max_hold_claude = Mock()
+        return bot
+
+    def test_refresh_position_holding_days_keeps_same_session_entry_at_zero(self):
+        bot = self._make_bot()
+        bot.risk.positions = [
+            {
+                "ticker": "OKLO",
+                "entry_session_date": "2026-04-23",
+                "session_date": "2026-04-23",
+                "held_days": 99,
+            },
+            {
+                "ticker": "AAPL",
+                "entry_session_date": "2026-04-22",
+                "session_date": "2026-04-22",
+                "held_days": 0,
+            },
+        ]
+
+        bot._refresh_position_holding_days("US")
+
+        self.assertEqual(bot.risk.positions[0]["held_days"], 0)
+        self.assertEqual(bot.risk.positions[1]["held_days"], 1)
+
+    def test_make_runtime_position_from_broker_marks_untemplated_injection_protected(self):
+        bot = self._make_bot()
+
+        pos = bot._make_runtime_position_from_broker(
+            "NVTS",
+            "US",
+            {"ticker": "NVTS", "qty": 2, "avg_price": 18.32, "eval_price": 18.32},
+        )
+
+        self.assertEqual(pos["position_origin"], "broker_injected")
+        self.assertEqual(pos["position_integrity"], "protected")
+        self.assertTrue(pos["management_protected"])
+
+    def test_reconcile_pending_orders_persists_positions_when_fill_detected(self):
+        bot = self._make_bot()
+        bot.pending_orders = [
+            {
+                "market": "US",
+                "ticker": "NVTS",
+                "qty": 2,
+                "raw_price": 18.47,
+                "filled_price_native": 18.47,
+                "order_no": "0031500432",
+                "strategy": "continuation",
+                "tp_pct": 0.02,
+                "sl_pct": 0.01,
+                "max_hold": 1,
+                "session_date": "2026-04-23",
+            }
+        ]
+
+        with patch.object(trading_bot_module, "fill_confirm_alert"):
+            bot._reconcile_pending_orders(
+                broker_kr={},
+                broker_us={
+                    "NVTS": {
+                        "ticker": "NVTS",
+                        "qty": 2,
+                        "avg_price": 18.47,
+                        "eval_price": 18.47,
+                        "name": "NVTS",
+                    }
+                },
+            )
+
+        self.assertEqual(len(bot.risk.positions), 1)
+        self.assertEqual(bot.pending_orders, [])
+        bot._save_positions.assert_called_once()
+        bot._save_pending_orders.assert_called_once()
+
+    def test_process_exit_candidates_deduplicates_same_ticker(self):
+        bot = self._make_bot()
+        bot.risk = SimpleNamespace(
+            get_exit_candidates=lambda: [
+                {"ticker": "NVTS", "reason": "max_hold", "exit_price": 10.0},
+                {"ticker": "NVTS", "reason": "trail_stop", "exit_price": 10.0},
+            ]
+        )
+
+        with patch.object(trading_bot_module, "is_trading_halted", return_value=False):
+            bot._process_exit_candidates()
+
+        bot._execute_sell.assert_called_once()
+        _, kwargs = bot._execute_sell.call_args
+        self.assertEqual(kwargs["reason"], "trail_stop")
+        bot._handle_max_hold_claude.assert_not_called()
+
+
+class LessonCandidateTests(unittest.TestCase):
+    def _make_bot(self):
+        bot = trading_bot_module.TradingBot.__new__(trading_bot_module.TradingBot)
+        bot.today_judgment = {}
+        bot.decision_event_log = []
+        return bot
+
+    def test_persist_lesson_candidates_includes_affordability_cluster(self):
+        bot = self._make_bot()
+        bot.decision_event_log = [
+            {
+                "market": "US",
+                "ticker": "GEV",
+                "reason_family": "affordability",
+                "reason": "order_size_too_small",
+                "detail": "cost=28,000 budget=50,000 min=45,000",
+            },
+            {
+                "market": "US",
+                "ticker": "AVGO",
+                "reason_family": "affordability",
+                "reason": "insufficient_cash",
+                "detail": "cost=510,000 cash=400,000",
+            },
+        ]
+        snapshot = {
+            "window_days": 14,
+            "metrics": {
+                "trade_ready_signal_conversion": {"value": 9.5, "sample": 24, "breached": True},
+                "watch_only_missed_runup_ratio": {"value": 33.0, "sample": 22, "breached": True},
+                "continuation_average_pnl": {"value": -4.2, "sample": 6, "breached": True},
+                "unanimous_mismatch_count": {"value": 1, "sample": 5, "breached": True},
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "lesson_candidates.json"
+            with patch.object(trading_bot_module, "_LESSON_CANDIDATES_PATH", path):
+                candidates = bot._persist_lesson_candidates("US", snapshot)
+                saved = json.loads(path.read_text(encoding="utf-8"))
+
+        ids = {item["id"] for item in candidates}
+        self.assertIn("affordability_fail_cluster", ids)
+        self.assertIn("trade_ready_conversion_review", ids)
+        self.assertEqual(saved["markets"]["US"], candidates)
+
+
+class TunerRuntimeAdjustmentTests(unittest.TestCase):
+    def test_coerce_runtime_adjustments_clamps_values(self):
+        result = tuner_module._coerce_runtime_adjustments(
+            {
+                "momentum_wait_adjust_min": -30,
+                "entry_priority_cutoff_adjust": "0.20",
+                "kr_momentum_atr_cap_adjust": -0.05,
+                "kr_momentum_atr_cap_high_adjust": 0.08,
+            }
+        )
+
+        self.assertEqual(result["momentum_wait_adjust_min"], -15)
+        self.assertEqual(result["entry_priority_cutoff_adjust"], 0.08)
+        self.assertEqual(result["kr_momentum_atr_cap_adjust"], -0.02)
+        self.assertEqual(result["kr_momentum_atr_cap_high_adjust"], 0.03)
+
+    def test_runtime_adjustment_summary_formats_all_override_fields(self):
+        summary = tuner_module._runtime_adjustment_summary(
+            {
+                "momentum_wait_adjust_min": -5,
+                "entry_priority_cutoff_adjust": 0.02,
+                "kr_momentum_atr_cap_adjust": 0.01,
+                "kr_momentum_atr_cap_high_adjust": 0.0,
+            }
+        )
+
+        self.assertEqual(summary, "wait=-5m cutoff=+0.02 kr_atr=+0.01/+0.00")
+
+
 class DashboardSelectionReasonTests(unittest.TestCase):
     def test_selection_status_for_ticker_uses_trade_ready_membership(self):
         rec = {"selection_meta": {"trade_ready": ["NVDA", "AAPL"]}}
@@ -655,6 +1687,28 @@ class DashboardAnalysisFeedTests(unittest.TestCase):
             timestamps = [rec.get("timestamp") for rec in records]
             self.assertIn("2026-04-22T00:23:22.271633", timestamps)
             self.assertIn("2026-04-22T01:31:10.000000", timestamps)
+
+
+class DashboardBrainLoadTests(unittest.TestCase):
+    def test_load_brain_accepts_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            brain_path = Path(tmpdir) / "brain.json"
+            brain_path.write_bytes(b"\xef\xbb\xbf" + json.dumps({"ok": True}).encode("utf-8"))
+
+            with patch.object(dashboard_server_module, "BRAIN_PATH", brain_path):
+                brain = dashboard_server_module.load_brain()
+
+        self.assertEqual(brain, {"ok": True})
+
+    def test_load_brain_returns_empty_dict_on_invalid_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            brain_path = Path(tmpdir) / "brain.json"
+            brain_path.write_text('{"broken": "value"', encoding="utf-8")
+
+            with patch.object(dashboard_server_module, "BRAIN_PATH", brain_path):
+                brain = dashboard_server_module.load_brain()
+
+        self.assertEqual(brain, {})
 
 
 class AdaptiveParamsTests(unittest.TestCase):
@@ -1261,7 +2315,10 @@ class AnalystSelectionPromptTests(unittest.TestCase):
     def tearDown(self):
         tsdb.DB_PATH = self._orig_db_path
         tsdb._price_cache.clear()
-        self._tmp.cleanup()
+        try:
+            self._tmp.cleanup()
+        except Exception:
+            pass
 
     def test_select_tickers_prompt_includes_recent_selection_feedback(self):
         try:
@@ -1308,6 +2365,12 @@ class AnalystSelectionPromptTests(unittest.TestCase):
                 "market_type": "KOSPI",
                 "from_high_pct": -0.8,
                 "above_ma60": True,
+                "or_state": "formed",
+                "atr_pct": 5.8,
+                "atr_stage": "normal",
+                "entry_priority_bucket": "high",
+                "execution_fit_strategy": "gap_pullback",
+                "minutes_to_close": 240,
             },
             {
                 "ticker": "000660",
@@ -1319,6 +2382,13 @@ class AnalystSelectionPromptTests(unittest.TestCase):
                 "category": "earnings_momentum",
                 "from_high_pct": -5.4,
                 "above_ma60": False,
+                "or_state": "missing",
+                "atr_pct": 8.4,
+                "atr_stage": "atr_35",
+                "entry_priority_bucket": "low",
+                "execution_fit_strategy": "observe",
+                "minutes_to_close": 18,
+                "entry_blackout_now": True,
             },
         ]
         with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
@@ -1329,6 +2399,7 @@ class AnalystSelectionPromptTests(unittest.TestCase):
                 digest_prompt="market digest",
                 consensus_mode="NEUTRAL",
                 candidates=candidates,
+                intraday_context="session_phase=early elapsed=18m to_close=240m blackout=no | active_strategies=opening_range_pullback,gap_pullback,momentum | gates=wait=45->20m cutoff=0.18",
                 market_change_pct=0.0,
                 secondary_change_pct=0.0,
             )
@@ -1337,6 +2408,12 @@ class AnalystSelectionPromptTests(unittest.TestCase):
         self.assertEqual(reasons["005930"], "ok")
         self.assertIn("recent selection feedback:", captured["prompt"])
         self.assertIn("Use recent selection feedback to calibrate trade_ready aggressiveness.", captured["prompt"])
+        self.assertIn("slot guide:", captured["prompt"])
+        self.assertIn("session_phase=early", captured["prompt"])
+        self.assertIn("active_strategies=opening_range_pullback,gap_pullback,momentum", captured["prompt"])
+        self.assertIn("exec=or=formed,atr=5.8%(normal),ep=high,fit=gap_pullback,tclose=240m", captured["prompt"])
+        self.assertIn("exec=or=missing,atr=8.4%(atr_35),ep=low,fit=observe,tclose=18m,blackout=now", captured["prompt"])
+        self.assertIn("Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints.", captured["prompt"])
         self.assertIn("recommended_strategy and max_position_pct must reflect conviction and risk", captured["prompt"])
         self.assertIn("trade_ready 3d:", captured["prompt"])
         self.assertIn("board=KOSPI", captured["prompt"])
@@ -1352,6 +2429,69 @@ class AnalystSelectionPromptTests(unittest.TestCase):
         self.assertEqual(candidates[0]["from_high_bucket"], "near_high")
         self.assertEqual(candidates[1]["liquidity_bucket"], "high")
         self.assertEqual(candidates[1]["from_high_bucket"], "deep")
+
+
+class UniverseManagerTests(unittest.TestCase):
+    def test_build_universe_from_candidates_applies_diversity_caps(self):
+        candidates = [
+            {"ticker": "A1", "name": "A1", "price": 100, "volume": 500000, "vol_ratio": 3.0, "change_rate": 10.0, "sector": "semis", "category": "momentum", "market_type": "KOSDAQ", "from_high_pct": -0.1},
+            {"ticker": "A2", "name": "A2", "price": 90, "volume": 450000, "vol_ratio": 2.9, "change_rate": 9.0, "sector": "semis", "category": "momentum", "market_type": "KOSDAQ", "from_high_pct": -0.2},
+            {"ticker": "A3", "name": "A3", "price": 80, "volume": 440000, "vol_ratio": 2.8, "change_rate": 8.0, "sector": "semis", "category": "momentum", "market_type": "KOSDAQ", "from_high_pct": -0.3},
+            {"ticker": "B1", "name": "B1", "price": 70, "volume": 25000000, "vol_ratio": 2.7, "change_rate": 7.0, "sector": "bio", "category": "reversal", "market_type": "KOSDAQ", "from_high_pct": -3.0},
+            {"ticker": "C1", "name": "C1", "price": 60, "volume": 20000000, "vol_ratio": 2.6, "change_rate": 6.0, "sector": "autos", "category": "earnings", "market_type": "KOSPI", "from_high_pct": -6.0},
+        ]
+
+        snapshot = universe_manager_module.build_universe_from_candidates(
+            market="KR",
+            target_date="2026-04-22",
+            candidates=candidates,
+            config=universe_manager_module.UniverseConfig(
+                top_n=4,
+                category_cap=2,
+                sector_cap=2,
+                overextended_cap=2,
+                low_liquidity_cap=1,
+                kosdaq_cap=4,
+            ),
+            source="test",
+            core_tickers=[],
+        )
+
+        tickers = snapshot["tickers"]
+        self.assertEqual(len(tickers), 4)
+        self.assertIn("B1", tickers)
+        self.assertIn("C1", tickers)
+        self.assertLessEqual(len([ticker for ticker in tickers if ticker in {"A1", "A2", "A3"}]), 2)
+
+    def test_build_universe_preserves_metadata_for_downstream_selection(self):
+        snapshot = universe_manager_module.build_universe_from_candidates(
+            market="US",
+            target_date="2026-04-22",
+            candidates=[
+                {
+                    "ticker": "NVDA",
+                    "name": "NVIDIA",
+                    "price": 100.0,
+                    "volume": 120000000,
+                    "vol_ratio": 2.0,
+                    "change_rate": 4.0,
+                    "sector": "semis",
+                    "category": "momentum",
+                    "from_high_pct": -1.2,
+                    "market_type": "NASDAQ",
+                    "above_ma60": True,
+                }
+            ],
+            config=universe_manager_module.UniverseConfig(top_n=1),
+            source="test",
+            core_tickers=[],
+        )
+
+        row = snapshot["candidates"][0]
+        self.assertEqual(row["sector"], "semis")
+        self.assertEqual(row["category"], "momentum")
+        self.assertEqual(row["from_high_bucket"], "near_high")
+        self.assertEqual(row["liquidity_bucket"], "high")
 
     def test_select_tickers_recovery_clears_trade_ready(self):
         try:
@@ -1384,6 +2524,111 @@ class AnalystSelectionPromptTests(unittest.TestCase):
 
         self.assertEqual(tickers, ["NVDA", "AAPL"])
         self.assertEqual(analysts_module.get_last_selection_meta()["trade_ready"], [])
+
+    def test_select_tickers_includes_lesson_context_in_prompt(self):
+        try:
+            from minority_report import analysts as analysts_module
+        except Exception as exc:
+            self.skipTest(f"analysts import unavailable: {exc}")
+
+        captured = {}
+
+        def _fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":["NVDA"],"trade_ready":[],"reasons":{"NVDA":"ok"}}')],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        candidates = [
+            {"ticker": "NVDA", "name": "NVIDIA", "price": 100.0, "volume": 1000, "change_rate": 1.0},
+        ]
+        with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
+             patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None):
+            analysts_module.select_tickers(
+                market="US",
+                digest_prompt="market digest",
+                consensus_mode="NEUTRAL",
+                candidates=candidates,
+                lesson_context="recent lesson candidates:\n- continuation weak (n=5, severity=high)",
+                market_change_pct=0.0,
+                secondary_change_pct=0.0,
+            )
+
+        self.assertIn("recent lesson candidates:", captured["prompt"])
+        self.assertIn("continuation weak", captured["prompt"])
+
+    def test_select_tickers_includes_earnings_window_hint_in_prompt(self):
+        try:
+            from minority_report import analysts as analysts_module
+        except Exception as exc:
+            self.skipTest(f"analysts import unavailable: {exc}")
+
+        captured = {}
+
+        def _fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":["NVDA"],"trade_ready":[],"reasons":{"NVDA":"watch earnings drift"}}')],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        candidates = [
+            {
+                "ticker": "NVDA",
+                "name": "NVIDIA",
+                "price": 100.0,
+                "volume": 1_000_000,
+                "change_rate": 2.0,
+                "earnings_window": "post_1",
+                "prompt_applied": False,
+            }
+        ]
+
+        with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
+             patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None):
+            analysts_module.select_tickers(
+                market="US",
+                digest_prompt="market digest",
+                consensus_mode="NEUTRAL",
+                candidates=candidates,
+                market_change_pct=0.0,
+                secondary_change_pct=0.0,
+            )
+
+        self.assertIn("earn=post_1", captured["prompt"])
+
+    def test_call_analyst_includes_lesson_context_in_prompt(self):
+        try:
+            from minority_report import analysts as analysts_module
+        except Exception as exc:
+            self.skipTest(f"analysts import unavailable: {exc}")
+
+        captured = {}
+
+        def _fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"stance":"NEUTRAL","confidence":0.55,"key_reason":"ok","full_reasoning":"ok","top_risks":["a"],"suggested_strategy":"관망","suggested_size_pct":30}')],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
+             patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None):
+            analysts_module.call_analyst(
+                "bull",
+                "digest prompt",
+                "brain summary",
+                "{}",
+                lesson_context="recent lesson candidates:\n- trade_ready conversion weak",
+                market="US",
+            )
+
+        self.assertIn("recent lesson candidates", captured["prompt"])
+        self.assertIn("trade_ready conversion weak", captured["prompt"])
 
     def test_select_tickers_partial_recovery_reasks_with_light_prompt(self):
         try:
@@ -1459,6 +2704,24 @@ class AnalystSelectionPromptTests(unittest.TestCase):
 
         self.assertEqual(tickers, [f"T{i:02d}" for i in range(12)])
         self.assertEqual(analysts_module.get_last_selection_meta()["trade_ready"], [])
+
+    def test_curate_selection_candidates_spreads_overextended_names(self):
+        try:
+            from minority_report import analysts as analysts_module
+        except Exception as exc:
+            self.skipTest(f"analysts import unavailable: {exc}")
+
+        candidates = [
+            {"ticker": "A", "category": "leader", "sector": "semis", "liquidity_bucket": "high", "from_high_bucket": "at_high", "market_type": "KOSDAQ"},
+            {"ticker": "B", "category": "leader", "sector": "semis", "liquidity_bucket": "high", "from_high_bucket": "near_high", "market_type": "KOSDAQ"},
+            {"ticker": "C", "category": "leader", "sector": "semis", "liquidity_bucket": "high", "from_high_bucket": "at_high", "market_type": "KOSDAQ"},
+            {"ticker": "D", "category": "earnings", "sector": "autos", "liquidity_bucket": "mid", "from_high_bucket": "pullback", "market_type": "KOSPI"},
+            {"ticker": "E", "category": "turnaround", "sector": "bio", "liquidity_bucket": "low", "from_high_bucket": "deep", "market_type": "KOSPI"},
+        ]
+
+        curated = analysts_module._curate_selection_candidates(candidates, "KR", 4)
+
+        self.assertEqual([item["ticker"] for item in curated], ["A", "B", "D", "E"])
 
 
 class BrainSummarySelectionFeedbackTests(unittest.TestCase):

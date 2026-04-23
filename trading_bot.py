@@ -8,6 +8,7 @@ import sys
 import json
 import time
 import atexit
+import sqlite3
 import queue as _queue_mod
 import argparse
 import threading
@@ -99,7 +100,11 @@ from telegram_reporter import (
 )
 from telegram_commander import commander as tg_commander
 from minority_report.analysts import get_last_selection_meta, get_three_judgments, select_tickers
-from minority_report.consensus import build_consensus
+from minority_report.consensus import (
+    apply_unanimous_override,
+    build_consensus,
+    build_judgment_eval,
+)
 from minority_report.tuner import tune
 from minority_report.postmortem import run as run_postmortem
 from phase1_trainer.digest_builder import build_kr_digest, build_us_digest, digest_to_prompt, get_market_vol_trend
@@ -117,7 +122,7 @@ import strategy.param_tuner as _param_tuner
 
 from claude_memory import brain as BrainDB
 from runtime_paths import get_runtime_path
-from bot.candidate_policy import filter_tradable_candidates
+from bot.candidate_policy import filter_tradable_candidates, selection_limits
 from bot.log_sanitizer import mask_secrets
 import shared_judgment_cache
 import ticker_selection_db as tsdb
@@ -160,6 +165,10 @@ KST = ZoneInfo("Asia/Seoul")
 
 JUDGMENT_DIR = get_runtime_path("logs", "daily_judgment", make_parents=False)
 JUDGMENT_DIR.mkdir(parents=True, exist_ok=True)
+_DECISIONS_DB_PATH = Path(__file__).parent / "data" / "ml" / "decisions.db"
+_OPS_REVIEW_DAYS = 14
+_OPS_REVIEW_SESSION_LIMIT = 10
+_LESSON_CANDIDATES_PATH = get_runtime_path("state", "lesson_candidates.json")
 
 BOT_PID_FILE = get_runtime_path("state", "trading_bot.pid")  # main()에서 mode별로 교체됨
 DECISIONS_FILE = get_runtime_path("state", "decisions.jsonl")  # main()에서 mode별로 교체됨
@@ -245,6 +254,9 @@ _TASK_SLOW_WARN_SEC = float(os.getenv("TASK_SLOW_WARN_SEC", "240"))  # 작업 �
 _LIVE_STATUS_MIN_INTERVAL = float(os.getenv("LIVE_STATUS_MIN_INTERVAL_SEC", "10"))  # live_status 최소 쓰기 간격
 
 # VIX 구간별 포지션 사이즈 승수 (US 전용)
+_MIN_EFFECTIVE_ORDER_KRW = float(os.getenv("MIN_EFFECTIVE_ORDER_KRW", "30000"))
+_MIN_EFFECTIVE_ORDER_USD = float(os.getenv("MIN_EFFECTIVE_ORDER_USD", "30"))
+
 _VIX_SIZE_TIERS = [
     (30.0, float(os.getenv("VIX_MULT_30", "0.55"))),   # VIX 30+  → 55%
     (25.0, float(os.getenv("VIX_MULT_25", "0.70"))),   # VIX 25+  → 70%
@@ -313,6 +325,49 @@ _WATCH_ONLY_SOFT_KEYWORDS = (
     "추세 약",
     "부적합",
 )
+
+
+_RAW_SCREEN_TOP_N_DEFAULTS = {"KR": 80, "US": 80}
+_DYNAMIC_UNIVERSE_TOP_N_DEFAULTS = {"KR": 40, "US": 40}
+_TRADE_READY_SLOT_LIMITS = {
+    "RISK_ON": {
+        "__total__": 6,
+        "momentum": 2,
+        "gap_pullback": 2,
+        "opening_range_pullback": 1,
+        "mean_reversion": 1,
+        "continuation": 1,
+        "__unassigned__": 1,
+    },
+    "BALANCED": {
+        "__total__": 5,
+        "gap_pullback": 2,
+        "opening_range_pullback": 1,
+        "mean_reversion": 1,
+        "momentum": 1,
+        "__unassigned__": 1,
+    },
+    "RISK_OFF": {
+        "__total__": 1,
+        "mean_reversion": 1,
+        "__unassigned__": 0,
+    },
+}
+_CLAUDE_RUNTIME_OVERRIDE_BOUNDS = {
+    "momentum_wait_adjust_min": (-15, 15),
+    "entry_priority_cutoff_adjust": (-0.08, 0.08),
+    "kr_momentum_atr_cap_adjust": (-0.02, 0.03),
+    "kr_momentum_atr_cap_high_adjust": (-0.02, 0.03),
+}
+
+
+def _mode_family(mode: str) -> str:
+    normalized = str(mode or "").upper()
+    if normalized in {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL"}:
+        return "RISK_ON"
+    if not normalized or normalized in {"CAUTIOUS", "NEUTRAL"}:
+        return "BALANCED"
+    return "RISK_OFF"
 
 
 def _normalize_strategy_name(raw: str) -> str:
@@ -430,6 +485,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.today_ticker_reasons: dict = {}
         self.trade_ready_tickers: dict[str, list[str]] = {"KR": [], "US": []}
         self.selection_meta: dict[str, dict] = {"KR": {}, "US": {}}
+        self.selection_stages: dict[str, dict] = {"KR": {}, "US": {}}
         self.today_universe: dict = {}
         self.tuning_count = 0
         # 30분 간격 지수 변동률 히스토리 (시장별, 최대 8개 = 4시간)
@@ -463,10 +519,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.max_est_slippage_bps = float(os.getenv("MAX_EST_SLIPPAGE_BPS", "25"))
         self.enable_atr_position_sizing = _env_bool("ENABLE_ATR_POSITION_SIZING", True)
         self.continuation_atr_position_sizing = _env_bool("CONTINUATION_ATR_POSITION_SIZING", False)
+        self.enable_continuation_live = _env_bool("ENABLE_CONTINUATION_LIVE", False)
+        self.enable_soft_watch_promotion = _env_bool("ENABLE_SOFT_WATCH_PROMOTION", False)
+        self.enable_kr_momentum_shrink = _env_bool("ENABLE_KR_MOMENTUM_SHRINK", True)
+        self._last_session_date_diag = {"KR": None, "US": None}
         self.gap_pullback_atr_position_sizing = _env_bool("GAP_PULLBACK_ATR_POSITION_SIZING", False)
         self.atr_target_pct = float(os.getenv("ATR_TARGET_PCT", "0.015"))
         self.enable_dynamic_universe = _env_bool("ENABLE_DYNAMIC_UNIVERSE", False)
         self.dynamic_universe_top_n = int(os.getenv("DYNAMIC_UNIVERSE_TOP_N", "20"))
+        self.raw_screen_top_n = {
+            "KR": int(os.getenv("KR_SCREEN_TOP_N", str(_RAW_SCREEN_TOP_N_DEFAULTS["KR"]))),
+            "US": int(os.getenv("US_SCREEN_TOP_N", str(_RAW_SCREEN_TOP_N_DEFAULTS["US"]))),
+        }
+        self.dynamic_universe_top_n_by_market = {
+            "KR": int(os.getenv("KR_DYNAMIC_UNIVERSE_TOP_N", str(_DYNAMIC_UNIVERSE_TOP_N_DEFAULTS["KR"]))),
+            "US": int(os.getenv("US_DYNAMIC_UNIVERSE_TOP_N", str(_DYNAMIC_UNIVERSE_TOP_N_DEFAULTS["US"]))),
+        }
 
         # 트레일링 스탑
         self.enable_trailing_stop     = _env_bool("TRAILING_STOP_ENABLED", True)
@@ -512,6 +580,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 매도 실패 쿨다운 — ticker → 실패 시각, 90초간 재시도 억제
         self._sell_fail_at:  dict[str, float] = {}
         self._sell_fail_meta: dict[str, dict] = {}
+        self._exit_process_lock = threading.Lock()
         self._execution_flags: dict[str, set[str]] = {"KR": set(), "US": set()}
         self._broker_state: dict[str, dict] = {
             "KR": {
@@ -537,6 +606,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             os.getenv("ENTRY_PRIORITY_CUTOFF_ENABLED", "true").lower() == "true"
         )
         self.entry_priority_cutoff: float = float(os.getenv("ENTRY_PRIORITY_CUTOFF", "0.20"))
+        self._claude_runtime_overrides: dict[str, dict] = {"KR": {}, "US": {}}
 
         # ticker_selection_log DB — 종목 선택 품질 누적 (ML Phase 3 학습용)
         tsdb.init()
@@ -555,6 +625,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._partial_reselect_last: dict = {"KR": None, "US": None}
         self._ticker_no_signal_cycles: dict = {}   # ticker → 연속 무신호 사이클 수
         self._ticker_exclude_log: dict = {"KR": [], "US": []}  # [{ticker,reason,ts}]
+        self._ticker_runtime_blocked_reasons: dict = {"KR": {}, "US": {}}
+        self._ticker_runtime_rejection_reasons: dict = {"KR": {}, "US": {}}
 
         # ── continuation entry 1회 제한 플래그 (ticker → bool, 세션마다 리셋) ───
         self._continuation_used: dict = {}   # key: ticker, val: True/False
@@ -626,6 +698,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not self.today_judgment or self.today_judgment.get("market") != market:
             return
         live_path = _judgment_runtime_path(self._mode, self._current_session_date_str(market), market)
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        persisted_overrides = dict(self.today_judgment.get("claude_runtime_overrides") or {})
+        persisted_overrides[market_key] = self._runtime_overrides(market_key)
         try:
             with open(live_path, "w", encoding="utf-8") as f:
                 json.dump({
@@ -634,6 +709,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "ticker_reasons": self.today_ticker_reasons.get(market, {}),
                     "selection_meta": self.selection_meta.get(market, {}),
                     "trade_ready_tickers": self.trade_ready_tickers.get(market, []),
+                    "claude_runtime_overrides": persisted_overrides,
                 }, f, ensure_ascii=False, indent=2)
         except Exception as e:
             log.warning(f"판단 임시저장 실패: {e}")
@@ -648,16 +724,606 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _current_session_date(self, market: str) -> date:
         active = getattr(self, "_active_session_date", {}) or {}
         resolved = active.get(market)
-        if isinstance(resolved, date):
+        if resolved is not None and hasattr(resolved, "isoformat"):
             return resolved
         return _market_session_date(market)
 
     def _current_session_date_str(self, market: str) -> str:
         return self._current_session_date(market).isoformat()
 
+    def _update_session_date_diagnostics(self, market: str, trigger: str = "") -> dict:
+        active_date = self._current_session_date(market).isoformat()
+        calendar_date = _market_session_date(market).isoformat()
+        now_kr = datetime.now(KST).isoformat(timespec="seconds")
+        mismatch = active_date != calendar_date
+        diag = {
+            "trigger": trigger,
+            "active_session_date": active_date,
+            "calendar_session_date": calendar_date,
+            "mismatch": mismatch,
+            "updated_at": now_kr,
+        }
+        self.today_judgment.setdefault("session_date_diagnostics", {})[market] = diag
+        if mismatch:
+            last_warned = (getattr(self, "_last_session_date_diag", {}) or {}).get(market)
+            if last_warned != (active_date, calendar_date, trigger):
+                log.warning(
+                    f"[session_date drift] {market} trigger={trigger or 'unknown'} "
+                    f"active={active_date} calendar={calendar_date} at={now_kr}"
+                )
+                self._last_session_date_diag[market] = (active_date, calendar_date, trigger)
+        return diag
+
+    def _apply_consensus_guards(
+        self,
+        market: str,
+        judgments: dict,
+        consensus: dict,
+        *,
+        source: str = "",
+    ) -> dict:
+        guarded = apply_unanimous_override(judgments or {}, consensus or {})
+        if (
+            guarded.get("unanimous_override_applied")
+            and (
+                guarded.get("mode") != (consensus or {}).get("mode")
+                or guarded.get("size") != (consensus or {}).get("size")
+            )
+        ):
+            _src = f" source={source}" if source else ""
+            log.warning(
+                f"[consensus guard {market}]{_src} "
+                f"{(consensus or {}).get('mode')}->{guarded.get('mode')} "
+                f"size={(consensus or {}).get('size')}->{guarded.get('size')} "
+                f"unanimous={guarded.get('unanimous_direction')}"
+            )
+        return guarded
+
+    def _ops_review_mode_value(self) -> str:
+        return "paper" if getattr(self, "is_paper", True) else "live"
+
+    def _load_recent_judgment_review_records(
+        self,
+        market: str,
+        *,
+        days: int = _OPS_REVIEW_DAYS,
+        session_limit: int = _OPS_REVIEW_SESSION_LIMIT,
+        current_record: Optional[dict] = None,
+    ) -> list[dict]:
+        end_date = self._current_session_date(market)
+        start_date = end_date - timedelta(days=max(days - 1, 0))
+        records: list[dict] = []
+        seen_dates: set[str] = set()
+
+        def _append_record(raw: Optional[dict]) -> None:
+            if not isinstance(raw, dict):
+                return
+            raw_date = str(raw.get("date") or raw.get("session_date") or "").strip()
+            if not raw_date:
+                return
+            try:
+                parsed_date = datetime.strptime(raw_date[:10], "%Y-%m-%d").date()
+            except ValueError:
+                return
+            if parsed_date < start_date or parsed_date > end_date:
+                return
+            if raw_date in seen_dates:
+                return
+            judgment_eval = raw.get("judgment_eval") or {}
+            actual_result = raw.get("actual_result") or {}
+            if not judgment_eval or actual_result.get("market_change") is None:
+                return
+            records.append({
+                "date": raw_date,
+                "judgment_eval": judgment_eval,
+                "actual_result": actual_result,
+            })
+            seen_dates.add(raw_date)
+
+        _append_record(current_record)
+        for fname in sorted(JUDGMENT_DIR.glob(f"{self._mode}_*_{market}.json"), reverse=True):
+            try:
+                with open(fname, encoding="utf-8-sig") as f:
+                    _append_record(json.load(f))
+            except Exception:
+                continue
+            if len(records) >= session_limit:
+                break
+        return records[:session_limit]
+
+    def _build_ops_review_snapshot(
+        self,
+        market: str,
+        *,
+        days: int = _OPS_REVIEW_DAYS,
+        session_limit: int = _OPS_REVIEW_SESSION_LIMIT,
+        current_record: Optional[dict] = None,
+    ) -> dict:
+        def _pct(num: float, den: float) -> Optional[float]:
+            if not den:
+                return None
+            return round((float(num) / float(den)) * 100, 1)
+
+        def _metric(value, threshold, *, sample=0, min_sample=0, direction="lt") -> dict:
+            breached = False
+            if value is not None and sample >= min_sample:
+                breached = value < threshold if direction == "lt" else value >= threshold
+            return {
+                "value": value,
+                "threshold": threshold,
+                "sample": int(sample or 0),
+                "min_sample": int(min_sample or 0),
+                "breached": bool(breached),
+            }
+
+        mode_value = self._ops_review_mode_value()
+        as_of = self._current_session_date_str(market)
+        start_date = (self._current_session_date(market) - timedelta(days=max(days - 1, 0))).isoformat()
+        judgment_rows = self._load_recent_judgment_review_records(
+            market,
+            days=days,
+            session_limit=session_limit,
+            current_record=current_record,
+        )
+        judgment_sample = len(judgment_rows)
+        analyst_hits = {"bull": 0, "bear": 0, "neutral": 0}
+        consensus_hits = 0
+        unanimous_mismatch_count = 0
+        for row in judgment_rows:
+            eval_row = row.get("judgment_eval") or {}
+            consensus_hits += 1 if eval_row.get("consensus_hit") else 0
+            unanimous_mismatch_count += 1 if eval_row.get("unanimous_consensus_mismatch") else 0
+            for analyst in analyst_hits:
+                analyst_hits[analyst] += 1 if (eval_row.get("analyst_hits") or {}).get(analyst) else 0
+
+        consensus_hit_rate = _pct(consensus_hits, judgment_sample)
+        analyst_rates = {
+            analyst: _pct(hit_count, judgment_sample)
+            for analyst, hit_count in analyst_hits.items()
+        }
+        best_analyst = max(analyst_hits, key=lambda analyst: analyst_hits[analyst]) if judgment_sample else ""
+        best_analyst_hit_rate = analyst_rates.get(best_analyst) if best_analyst else None
+        best_analyst_gap = (
+            round(float(best_analyst_hit_rate) - float(consensus_hit_rate), 1)
+            if best_analyst_hit_rate is not None and consensus_hit_rate is not None
+            else None
+        )
+
+        selection_stats = {
+            "trade_ready_rows": 0,
+            "trade_ready_signal_rows": 0,
+            "trade_ready_forward_n": 0,
+            "trade_ready_forward_avg": None,
+            "watch_only_forward_n": 0,
+            "watch_only_missed_rows": 0,
+            "atr_blocked_rows": 0,
+            "atr_blocked_runup_avg": None,
+        }
+        if os.path.exists(tsdb.DB_PATH):
+            try:
+                with sqlite3.connect(tsdb.DB_PATH) as conn:
+                    conn.row_factory = sqlite3.Row
+                    row = conn.execute(
+                        """
+                        SELECT
+                            SUM(CASE WHEN trade_ready=1 THEN 1 ELSE 0 END) AS trade_ready_rows,
+                            SUM(CASE WHEN trade_ready=1 AND signal_fired=1 THEN 1 ELSE 0 END) AS trade_ready_signal_rows,
+                            SUM(CASE WHEN trade_ready=1 AND forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS trade_ready_forward_n,
+                            AVG(CASE WHEN trade_ready=1 THEN forward_3d END) AS trade_ready_forward_avg,
+                            SUM(CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS watch_only_forward_n,
+                            SUM(CASE WHEN trade_ready=0 AND max_runup_3d >= 5.0 THEN 1 ELSE 0 END) AS watch_only_missed_rows,
+                            SUM(CASE WHEN blocked_reason='momentum_atr_too_high' AND max_runup_3d IS NOT NULL THEN 1 ELSE 0 END) AS atr_blocked_rows,
+                            AVG(CASE WHEN blocked_reason='momentum_atr_too_high' THEN max_runup_3d END) AS atr_blocked_runup_avg
+                        FROM ticker_selection_log
+                        WHERE bot_mode=? AND market=? AND date>=? AND date<=?
+                        """,
+                        (mode_value, market, start_date, as_of),
+                    ).fetchone()
+                if row:
+                    selection_stats = {
+                        "trade_ready_rows": int(row["trade_ready_rows"] or 0),
+                        "trade_ready_signal_rows": int(row["trade_ready_signal_rows"] or 0),
+                        "trade_ready_forward_n": int(row["trade_ready_forward_n"] or 0),
+                        "trade_ready_forward_avg": round(float(row["trade_ready_forward_avg"]), 3) if row["trade_ready_forward_avg"] is not None else None,
+                        "watch_only_forward_n": int(row["watch_only_forward_n"] or 0),
+                        "watch_only_missed_rows": int(row["watch_only_missed_rows"] or 0),
+                        "atr_blocked_rows": int(row["atr_blocked_rows"] or 0),
+                        "atr_blocked_runup_avg": round(float(row["atr_blocked_runup_avg"]), 3) if row["atr_blocked_runup_avg"] is not None else None,
+                    }
+            except Exception as e:
+                log.warning(f"[ops review {market}] selection stats load failed: {e}")
+
+        decision_stats = {
+            "blocked_rows": 0,
+            "entry_blackout_rows": 0,
+            "watch_only_blocked_rows": 0,
+            "continuation_trades": 0,
+            "continuation_avg_pnl": None,
+        }
+        if _DECISIONS_DB_PATH.exists():
+            try:
+                with sqlite3.connect(str(_DECISIONS_DB_PATH)) as conn:
+                    conn.row_factory = sqlite3.Row
+                    row = conn.execute(
+                        """
+                        SELECT
+                            SUM(CASE WHEN COALESCE(TRIM(block_reason), '') != '' THEN 1 ELSE 0 END) AS blocked_rows,
+                            SUM(CASE WHEN block_reason='entry_blackout' THEN 1 ELSE 0 END) AS entry_blackout_rows,
+                            SUM(CASE WHEN block_reason='watch_only' THEN 1 ELSE 0 END) AS watch_only_blocked_rows,
+                            SUM(CASE WHEN decision='BUY_SIGNAL' AND strategy_used='continuation' AND pnl_pct IS NOT NULL THEN 1 ELSE 0 END) AS continuation_trades,
+                            AVG(CASE WHEN decision='BUY_SIGNAL' AND strategy_used='continuation' AND pnl_pct IS NOT NULL THEN pnl_pct END) AS continuation_avg_pnl
+                        FROM decisions
+                        WHERE data_source=? AND market=? AND session_date>=? AND session_date<=?
+                        """,
+                        (mode_value, market, start_date, as_of),
+                    ).fetchone()
+                if row:
+                    decision_stats = {
+                        "blocked_rows": int(row["blocked_rows"] or 0),
+                        "entry_blackout_rows": int(row["entry_blackout_rows"] or 0),
+                        "watch_only_blocked_rows": int(row["watch_only_blocked_rows"] or 0),
+                        "continuation_trades": int(row["continuation_trades"] or 0),
+                        "continuation_avg_pnl": round(float(row["continuation_avg_pnl"]), 3) if row["continuation_avg_pnl"] is not None else None,
+                    }
+            except Exception as e:
+                log.warning(f"[ops review {market}] decision stats load failed: {e}")
+
+        trade_ready_signal_conversion = _pct(
+            selection_stats["trade_ready_signal_rows"],
+            selection_stats["trade_ready_rows"],
+        )
+        watch_only_missed_runup_ratio = _pct(
+            selection_stats["watch_only_missed_rows"],
+            selection_stats["watch_only_forward_n"],
+        )
+        entry_blackout_ratio = _pct(
+            decision_stats["entry_blackout_rows"],
+            decision_stats["blocked_rows"],
+        )
+        watch_only_blocked_ratio = _pct(
+            decision_stats["watch_only_blocked_rows"],
+            decision_stats["blocked_rows"],
+        )
+        signal_conversion_threshold = 15.0 if market == "KR" else 10.0
+
+        metrics = {
+            "consensus_directional_hit_rate": _metric(consensus_hit_rate, 45.0, sample=judgment_sample, min_sample=1, direction="lt"),
+            "best_analyst_minus_consensus_hit_gap": _metric(best_analyst_gap, 10.0, sample=judgment_sample, min_sample=1, direction="ge"),
+            "unanimous_mismatch_count": _metric(unanimous_mismatch_count, 1, sample=judgment_sample, min_sample=1, direction="ge"),
+            "trade_ready_signal_conversion": _metric(trade_ready_signal_conversion, signal_conversion_threshold, sample=selection_stats["trade_ready_rows"], min_sample=20, direction="lt"),
+            "watch_only_missed_runup_ratio": _metric(watch_only_missed_runup_ratio, 30.0, sample=selection_stats["watch_only_forward_n"], min_sample=20, direction="ge"),
+            "trade_ready_forward_3d_average": _metric(selection_stats["trade_ready_forward_avg"], 0.0, sample=selection_stats["trade_ready_forward_n"], min_sample=1, direction="lt"),
+            "atr_blocked_missed_runup": _metric(selection_stats["atr_blocked_runup_avg"], 4.0, sample=selection_stats["atr_blocked_rows"], min_sample=10, direction="ge"),
+            "entry_blackout_ratio": _metric(entry_blackout_ratio, 15.0, sample=decision_stats["blocked_rows"], min_sample=1, direction="ge"),
+            "watch_only_blocked_ratio": _metric(watch_only_blocked_ratio, 25.0, sample=decision_stats["blocked_rows"], min_sample=1, direction="ge"),
+            "continuation_average_pnl": _metric(decision_stats["continuation_avg_pnl"], -3.0, sample=decision_stats["continuation_trades"], min_sample=5, direction="lt"),
+        }
+
+        return {
+            "market": market,
+            "mode": mode_value,
+            "as_of": as_of,
+            "window_days": int(days),
+            "session_limit": int(session_limit),
+            "judgment_sessions": judgment_sample,
+            "best_analyst": best_analyst,
+            "analyst_hit_rates": analyst_rates,
+            "samples": {
+                "trade_ready_rows": selection_stats["trade_ready_rows"],
+                "trade_ready_forward_n": selection_stats["trade_ready_forward_n"],
+                "watch_only_forward_n": selection_stats["watch_only_forward_n"],
+                "atr_blocked_rows": selection_stats["atr_blocked_rows"],
+                "blocked_rows": decision_stats["blocked_rows"],
+                "continuation_trades": decision_stats["continuation_trades"],
+            },
+            "metrics": metrics,
+            "triggers": {
+                "low_consensus_hit_rate": metrics["consensus_directional_hit_rate"]["breached"],
+                "large_analyst_gap": metrics["best_analyst_minus_consensus_hit_gap"]["breached"],
+                "unanimous_mismatch": metrics["unanimous_mismatch_count"]["breached"],
+                "low_trade_ready_conversion": metrics["trade_ready_signal_conversion"]["breached"],
+                "high_watch_only_missed_runup": metrics["watch_only_missed_runup_ratio"]["breached"],
+                "high_atr_blocked_missed_runup": metrics["atr_blocked_missed_runup"]["breached"],
+                "high_entry_blackout_ratio": metrics["entry_blackout_ratio"]["breached"],
+                "high_watch_only_blocked_ratio": metrics["watch_only_blocked_ratio"]["breached"],
+                "weak_trade_ready_forward": metrics["trade_ready_forward_3d_average"]["breached"],
+                "weak_continuation_pnl": metrics["continuation_average_pnl"]["breached"],
+            },
+        }
+
+    def _build_lesson_candidates(self, market: str, ops_review_snapshot: dict) -> list[dict]:
+        metrics = dict(ops_review_snapshot.get("metrics") or {})
+        candidates: list[dict] = []
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        expires_at = (datetime.now(KST) + timedelta(days=14)).isoformat(timespec="seconds")
+
+        def _severity(breached: bool, sample: int) -> str:
+            if breached and sample >= 20:
+                return "high"
+            if breached:
+                return "medium"
+            return "info"
+
+        def _confidence(breached: bool, sample: int) -> float:
+            base = 0.35 + min(max(sample, 0), 40) / 100.0
+            if breached:
+                base += 0.2
+            return round(min(0.95, base), 2)
+
+        def _append(metric_key: str, candidate_id: str, scope: str, action: str, summary: str) -> None:
+            metric = dict(metrics.get(metric_key) or {})
+            value = metric.get("value")
+            if value is None:
+                return
+            sample = int(metric.get("sample") or 0)
+            breached = bool(metric.get("breached"))
+            candidates.append({
+                "id": candidate_id,
+                "market": market,
+                "scope": scope,
+                "action": action,
+                "summary": summary,
+                "metric_key": metric_key,
+                "metric_value": value,
+                "sample_count": sample,
+                "window_days": int(ops_review_snapshot.get("window_days") or _OPS_REVIEW_DAYS),
+                "breached": breached,
+                "severity": _severity(breached, sample),
+                "confidence": _confidence(breached, sample),
+                "generated_at": now_iso,
+                "expires_at": expires_at,
+            })
+
+        _append(
+            "trade_ready_signal_conversion",
+            "trade_ready_conversion_review",
+            "selection",
+            "prompt_hint",
+            "trade_ready 대비 실제 신호 전환율이 낮습니다. trade_ready 승격 기준을 보수적으로 재검토하세요.",
+        )
+        _append(
+            "watch_only_missed_runup_ratio",
+            "watch_only_missed_runup_review",
+            "selection",
+            "prompt_hint",
+            "watch_only에서 놓친 상승 비율이 높습니다. watch_only 유지 기준과 veto 품질을 재검토하세요.",
+        )
+        _append(
+            "continuation_average_pnl",
+            "continuation_shadow_review",
+            "strategy",
+            "strategy_review",
+            "continuation 성과가 약합니다. live 재진입보다는 shadow 관찰을 우선하세요.",
+        )
+        _append(
+            "unanimous_mismatch_count",
+            "unanimous_override_review",
+            "consensus",
+            "logic_review",
+            "전원합의와 최종합의 불일치가 감지됩니다. unanimous override 경로를 점검하세요.",
+        )
+
+        affordability_events = [
+            event
+            for event in (self.decision_event_log or [])
+            if event.get("market") == market and event.get("reason_family") == "affordability"
+        ]
+        if affordability_events:
+            candidates.append({
+                "id": "affordability_fail_cluster",
+                "market": market,
+                "scope": "execution",
+                "action": "prompt_hint",
+                "summary": "실행 가능 금액/수량 부족 사례가 반복됐습니다. affordability fail 이유를 selection/entry 리뷰에 반영하세요.",
+                "metric_key": "affordability_fail_count",
+                "metric_value": len(affordability_events),
+                "sample_count": len(affordability_events),
+                "window_days": 1,
+                "breached": len(affordability_events) >= 2,
+                "severity": "medium" if len(affordability_events) >= 2 else "info",
+                "confidence": round(min(0.9, 0.3 + len(affordability_events) * 0.15), 2),
+                "generated_at": now_iso,
+                "expires_at": expires_at,
+                "examples": [
+                    {
+                        "ticker": event.get("ticker"),
+                        "reason": event.get("reason"),
+                        "detail": event.get("detail"),
+                    }
+                    for event in affordability_events[:5]
+                ],
+            })
+
+        order = {"high": 3, "medium": 2, "info": 1}
+        candidates.sort(key=lambda item: (order.get(item.get("severity", "info"), 0), item.get("confidence", 0.0)), reverse=True)
+        return candidates
+
+    def _load_lesson_candidate_summary(
+        self,
+        market: str,
+        max_items: int = 3,
+        max_chars: int = 600,
+    ) -> str:
+        try:
+            if not _LESSON_CANDIDATES_PATH.exists():
+                return ""
+            with open(_LESSON_CANDIDATES_PATH, encoding="utf-8-sig") as f:
+                payload = json.load(f)
+            market_rows = list((payload.get("markets") or {}).get(market, []) or [])
+        except Exception as e:
+            log.debug(f"[lesson candidates] summary skipped: {e}")
+            return ""
+
+        severity_rank = {"high": 0, "medium": 1, "info": 2, "low": 3}
+        today_iso = self._current_session_date_str(market)
+        rows = []
+        for item in market_rows:
+            if not isinstance(item, dict):
+                continue
+            if not bool(item.get("breached", False)):
+                continue
+            expires_at = str(item.get("expires_at") or "").strip()
+            if expires_at and expires_at[:10] < today_iso:
+                continue
+            rows.append(item)
+        if not rows:
+            return ""
+
+        rows.sort(
+            key=lambda item: (
+                severity_rank.get(str(item.get("severity") or "info").lower(), 9),
+                -float(item.get("confidence", 0.0) or 0.0),
+                -int(item.get("sample_count", 0) or 0),
+            )
+        )
+        lines = []
+        for item in rows[:max_items]:
+            summary = str(item.get("summary") or "").strip()
+            if not summary:
+                continue
+            sample_count = int(item.get("sample_count", 0) or 0)
+            severity = str(item.get("severity") or "info").lower()
+            lines.append(f"- {summary} (n={sample_count}, severity={severity})")
+        if not lines:
+            return ""
+        return ("recent lesson candidates:\n" + "\n".join(lines))[:max_chars]
+
+    def _persist_lesson_candidates(self, market: str, ops_review_snapshot: dict) -> list[dict]:
+        candidates = self._build_lesson_candidates(market, ops_review_snapshot)
+        store = {"generated_at": datetime.now(KST).isoformat(timespec="seconds"), "markets": {"KR": [], "US": []}}
+        try:
+            if _LESSON_CANDIDATES_PATH.exists():
+                with open(_LESSON_CANDIDATES_PATH, encoding="utf-8-sig") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    store.update(loaded)
+                    store.setdefault("markets", {}).setdefault("KR", [])
+                    store.setdefault("markets", {}).setdefault("US", [])
+        except Exception as e:
+            log.warning(f"[lesson candidates] load failed: {e}")
+
+        store["generated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+        store.setdefault("markets", {})[market] = candidates
+        try:
+            with open(_LESSON_CANDIDATES_PATH, "w", encoding="utf-8") as f:
+                json.dump(store, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            log.warning(f"[lesson candidates] save failed: {e}")
+        self.today_judgment["lesson_candidates"] = candidates
+        return candidates
+
+    def _screen_top_n_for_market(self, market: str) -> int:
+        defaults = getattr(self, "raw_screen_top_n", {}) or {}
+        value = defaults.get(market)
+        if value is None:
+            value = _RAW_SCREEN_TOP_N_DEFAULTS.get(market, 30)
+        return max(10, int(value))
+
+    def _dynamic_universe_top_n_for_market(self, market: str) -> int:
+        values = getattr(self, "dynamic_universe_top_n_by_market", {}) or {}
+        value = values.get(market)
+        if value is None:
+            value = getattr(self, "dynamic_universe_top_n", _DYNAMIC_UNIVERSE_TOP_N_DEFAULTS.get(market, 20))
+        return max(3, int(value))
+
+    def _screen_market_candidates(self, market: str, mode: str) -> list[dict]:
+        top_n = self._screen_top_n_for_market(market)
+        if market == "KR":
+            return screen_market_kr(self.token, top_n=top_n, mode=mode)
+        return screen_market_us(top_n=top_n, mode=mode)
+
+    def _trade_ready_slot_config(self, mode: str, market: str = "") -> dict[str, int]:
+        family = _mode_family(mode)
+        config = dict(_TRADE_READY_SLOT_LIMITS.get(family, _TRADE_READY_SLOT_LIMITS["BALANCED"]))
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        if market_key == "KR" and getattr(self, "enable_kr_momentum_shrink", True):
+            momentum_slots = int(config.get("momentum", 0) or 0)
+            if momentum_slots > 0:
+                shrink_target = 1 if family == "RISK_ON" else 0
+                config["momentum"] = min(momentum_slots, shrink_target)
+        if not getattr(self, "enable_continuation_live", False):
+            cont_slots = int(config.get("continuation", 0) or 0)
+            if cont_slots > 0:
+                config["continuation"] = 0
+                config["__unassigned__"] = int(config.get("__unassigned__", 0) or 0) + cont_slots
+        return config
+
+    def _normalize_selection_meta_runtime(
+        self,
+        market: str,
+        meta: dict,
+        selected: list[str],
+        mode: str = "",
+    ) -> dict:
+        normalized_meta = dict(meta or {})
+        watchlist = list(dict.fromkeys(normalized_meta.get("watchlist") or selected or []))
+        if not watchlist:
+            watchlist = list(selected or [])
+        normalized_meta["watchlist"] = watchlist
+
+        raw_ready = list(dict.fromkeys(normalized_meta.get("trade_ready") or []))
+        normalized_meta["_raw_watchlist"] = list(watchlist)
+        normalized_meta["_raw_trade_ready"] = list(raw_ready)
+        ready_candidates = [ticker for ticker in raw_ready if ticker in watchlist]
+        runtime_filtered: dict[str, str] = {}
+        if not getattr(self, "enable_continuation_live", False):
+            recommended_map = normalized_meta.get("recommended_strategy") or {}
+            filtered_ready: list[str] = []
+            for ticker in ready_candidates:
+                raw_strategy = ""
+                if isinstance(recommended_map, dict):
+                    raw_strategy = recommended_map.get(ticker, "")
+                    if not raw_strategy and market == "US":
+                        for raw_key, raw_value in recommended_map.items():
+                            if str(raw_key).upper() == str(ticker).upper():
+                                raw_strategy = raw_value
+                                break
+                if _normalize_strategy_name(raw_strategy) == "continuation":
+                    runtime_filtered[ticker] = "continuation_shadow_only"
+                    continue
+                filtered_ready.append(ticker)
+            ready_candidates = filtered_ready
+        slot_config = self._trade_ready_slot_config(mode, market)
+        total_cap = min(selection_limits(market)["trade_max"], int(slot_config.get("__total__", len(ready_candidates))))
+        slot_counts: dict[str, int] = {}
+        final_ready: list[str] = []
+        recommended_map = normalized_meta.get("recommended_strategy") or {}
+
+        for ticker in ready_candidates:
+            raw_strategy = ""
+            if isinstance(recommended_map, dict):
+                raw_strategy = recommended_map.get(ticker, "")
+                if not raw_strategy and market == "US":
+                    for raw_key, raw_value in recommended_map.items():
+                        if str(raw_key).upper() == str(ticker).upper():
+                            raw_strategy = raw_value
+                            break
+            strategy_name = _normalize_strategy_name(raw_strategy)
+            slot_name = strategy_name or "__unassigned__"
+            slot_cap = int(slot_config.get(slot_name, slot_config.get("__unassigned__", 0)))
+            if slot_cap <= 0:
+                continue
+            if slot_counts.get(slot_name, 0) >= slot_cap:
+                continue
+            if len(final_ready) >= total_cap:
+                break
+            final_ready.append(ticker)
+            slot_counts[slot_name] = slot_counts.get(slot_name, 0) + 1
+
+        normalized_meta["trade_ready"] = final_ready
+        normalized_meta["_runtime_filtered_trade_ready"] = runtime_filtered
+        if self.today_judgment.get("market") == market:
+            normalized_meta["slot_plan"] = {
+                key: value
+                for key, value in slot_config.items()
+                if not str(key).startswith("__")
+            }
+        return normalized_meta
+
     def _apply_selection_meta(self, market: str, selected: list[str]) -> dict:
         """Persist Claude WATCH/TRADE_READY split while keeping legacy tickers intact."""
-        meta = get_last_selection_meta() or {}
+        raw_meta = dict(get_last_selection_meta() or {})
+        meta = dict(raw_meta)
         if not meta.get("watchlist"):
             meta = {
                 "watchlist": list(selected or []),
@@ -668,11 +1334,46 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "recommended_strategy": {},
                 "max_position_pct": {},
             }
+        mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
+        meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
+        stages = {
+            "raw": {
+                "watchlist": list(dict.fromkeys(raw_meta.get("watchlist") or selected or [])),
+                "trade_ready": list(dict.fromkeys(raw_meta.get("trade_ready") or [])),
+            },
+            "normalized": {
+                "watchlist": list(meta.get("watchlist") or []),
+                "trade_ready": list(meta.get("trade_ready") or []),
+                "runtime_filtered": dict(meta.get("_runtime_filtered_trade_ready") or {}),
+            },
+            "applied": {
+                "selected": list(selected or []),
+                "trade_ready": list(meta.get("trade_ready") or []),
+            },
+        }
+        self.selection_stages[market] = stages
+        log.info(
+            f"[selection normalize] {market} "
+            f"raw_trade={stages['raw']['trade_ready']} "
+            f"normalized_trade={stages['normalized']['trade_ready']} "
+            f"applied_trade={stages['applied']['trade_ready']}"
+        )
+        analysis_log.info(
+            f"[selection normalize] {market} raw={stages['raw']['trade_ready']} "
+            f"normalized={stages['normalized']['trade_ready']} "
+            f"applied={stages['applied']['trade_ready']}",
+            extra={"extra": {
+                "event": "selection_normalized",
+                "market": market,
+                "stages": stages,
+            }},
+        )
         self.selection_meta[market] = meta
         self.trade_ready_tickers[market] = list(meta.get("trade_ready") or [])
         if self.today_judgment.get("market") == market:
             self.today_judgment["selection_meta"] = meta
             self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
+            self.today_judgment["selection_stages"] = stages
         return meta
 
     def _trade_ready_set(self, market: str) -> set[str]:
@@ -765,6 +1466,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         return "SOFT"
 
     def _can_recheck_soft_watch_only(self, market: str, ticker: str, mode: str) -> bool:
+        if not getattr(self, "enable_soft_watch_promotion", False):
+            return False
         if self._watch_only_bucket(market, ticker) != "SOFT":
             return False
         if str(mode or "").upper() in {"DEFENSIVE", "HALT"}:
@@ -782,15 +1485,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if normalized in self._trade_ready_set(market):
             return False
 
-        current_ready = list(self.trade_ready_tickers.get(market, []) or [])
-        current_ready.append(normalized)
-        self.trade_ready_tickers[market] = list(dict.fromkeys(current_ready))
-
         meta = dict(self.selection_meta.get(market) or {})
-        meta_ready = list(meta.get("trade_ready") or [])
-        meta_ready.append(normalized)
-        meta["trade_ready"] = list(dict.fromkeys(meta_ready))
+        meta_ready = [normalized] + [t for t in (meta.get("trade_ready") or []) if t != normalized]
+        meta["trade_ready"] = meta_ready
+        normalized_strategy = _normalize_strategy_name(strategy_name)
+        if normalized_strategy:
+            recommended = dict(meta.get("recommended_strategy") or {})
+            recommended[normalized] = normalized_strategy
+            meta["recommended_strategy"] = recommended
+        mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
+        meta = self._normalize_selection_meta_runtime(
+            market,
+            meta,
+            list(meta.get("watchlist") or []),
+            mode=mode,
+        )
+        if normalized not in set(meta.get("trade_ready") or []):
+            return False
         self.selection_meta[market] = meta
+        self.trade_ready_tickers[market] = list(meta.get("trade_ready") or [])
         self.today_judgment["selection_meta"] = meta
         self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
 
@@ -821,6 +1534,97 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if isinstance(trade_ready, list):
             return list(trade_ready)
         return list(selected or [])
+
+    def _pick_partial_replace_in(
+        self,
+        market: str,
+        replace_out: list[str],
+        candidate_trade_ready: list[str],
+        candidate_meta: dict,
+        candidate_map: dict[str, dict],
+        n_replace: int,
+    ) -> list[str]:
+        remaining = list(dict.fromkeys(candidate_trade_ready or []))
+        if not remaining:
+            return []
+
+        selected: list[str] = []
+        selected_strategies: set[str] = set()
+        selected_categories: set[str] = set()
+        selected_sectors: set[str] = set()
+        selected_pullbacks: set[str] = set()
+
+        target_strategies = [
+            self._recommended_strategy_for_ticker(market, ticker)
+            for ticker in replace_out
+        ]
+
+        def _meta_strategy(ticker: str) -> str:
+            recommended = candidate_meta.get("recommended_strategy") or {}
+            raw_value = ""
+            if isinstance(recommended, dict):
+                raw_value = recommended.get(ticker, "")
+                if not raw_value and market == "US":
+                    for raw_key, raw_candidate in recommended.items():
+                        if str(raw_key).upper() == str(ticker).upper():
+                            raw_value = raw_candidate
+                            break
+            return _normalize_strategy_name(raw_value)
+
+        def _score(ticker: str, target_strategy: str = "") -> float:
+            candidate = candidate_map.get(ticker, {}) or {}
+            strategy_name = _meta_strategy(ticker)
+            category = str(candidate.get("category", "") or "").strip().lower()
+            sector = str(candidate.get("sector", "") or "").strip().lower()
+            pullback = str(candidate.get("from_high_bucket", "") or "").strip().lower()
+            liq = str(candidate.get("liquidity_bucket", "") or "").strip().lower()
+            score = 0.0
+            if target_strategy:
+                if strategy_name == target_strategy:
+                    score += 4.0
+                else:
+                    score -= 1.0
+            if strategy_name and strategy_name not in selected_strategies:
+                score += 2.0
+            if category and category not in selected_categories:
+                score += 1.0
+            if sector and sector not in selected_sectors:
+                score += 1.0
+            if pullback and pullback not in selected_pullbacks:
+                score += 0.5
+            if liq == "low":
+                score -= 1.0
+            return score
+
+        def _accept(ticker: str) -> None:
+            candidate = candidate_map.get(ticker, {}) or {}
+            strategy_name = _meta_strategy(ticker)
+            if strategy_name:
+                selected_strategies.add(strategy_name)
+            category = str(candidate.get("category", "") or "").strip().lower()
+            sector = str(candidate.get("sector", "") or "").strip().lower()
+            pullback = str(candidate.get("from_high_bucket", "") or "").strip().lower()
+            if category:
+                selected_categories.add(category)
+            if sector:
+                selected_sectors.add(sector)
+            if pullback:
+                selected_pullbacks.add(pullback)
+            selected.append(ticker)
+
+        for target_strategy in target_strategies:
+            if len(selected) >= n_replace or not remaining:
+                break
+            best = max(remaining, key=lambda ticker: _score(ticker, target_strategy))
+            remaining.remove(best)
+            _accept(best)
+
+        while len(selected) < n_replace and remaining:
+            best = max(remaining, key=lambda ticker: _score(ticker, ""))
+            remaining.remove(best)
+            _accept(best)
+
+        return selected[:n_replace]
 
     def _watch_only_reason_text(self, market: str, ticker: str) -> str:
         parts: list[str] = []
@@ -906,8 +1710,559 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         normalized = str(ticker).upper() if market == "US" else str(ticker)
         return normalized in self._trade_ready_set(market)
 
-    def _is_entry_priority_blocked(self, score: float) -> bool:
-        return bool(self.entry_priority_cutoff_enabled and float(score or 0.0) < self.entry_priority_cutoff)
+    def _runtime_overrides(self, market: str) -> dict:
+        raw_map = getattr(self, "_claude_runtime_overrides", None)
+        if not isinstance(raw_map, dict):
+            raw_map = {"KR": {}, "US": {}}
+            self._claude_runtime_overrides = raw_map
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        raw = dict(raw_map.get(market_key, {}) or {})
+        normalized = {}
+        for key, (low, high) in _CLAUDE_RUNTIME_OVERRIDE_BOUNDS.items():
+            try:
+                value = float(raw.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                value = 0.0
+            value = max(low, min(high, value))
+            if key == "momentum_wait_adjust_min":
+                normalized[key] = int(round(value))
+            else:
+                normalized[key] = round(value, 4)
+        return normalized
+
+    def _reset_runtime_reason_counters(self, market: str) -> None:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        self._ticker_runtime_blocked_reasons[market_key] = {}
+        self._ticker_runtime_rejection_reasons[market_key] = {}
+
+    def _bump_runtime_reason(self, market: str, ticker: str, reason: str, *, bucket: str = "blocked") -> None:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        normalized = str(ticker).upper() if market_key == "US" else str(ticker)
+        reason_key = str(reason or "").strip()
+        if not normalized or not reason_key:
+            return
+        target = self._ticker_runtime_rejection_reasons if bucket == "rejection" else self._ticker_runtime_blocked_reasons
+        market_map = target.setdefault(market_key, {})
+        ticker_map = market_map.setdefault(normalized, {})
+        ticker_map[reason_key] = int(ticker_map.get(reason_key, 0) or 0) + 1
+
+    def _min_effective_order_krw(self, market: str) -> float:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        if market_key == "US":
+            rate = float(getattr(self, "usd_krw_rate", 0) or 0)
+            return max(0.0, _MIN_EFFECTIVE_ORDER_USD * rate) if rate > 0 else 0.0
+        return max(0.0, _MIN_EFFECTIVE_ORDER_KRW)
+
+    def _is_order_size_too_small(
+        self,
+        market: str,
+        qty: int,
+        order_cost_krw: float,
+        order_budget_krw: float,
+    ) -> tuple[bool, float]:
+        minimum = self._min_effective_order_krw(market)
+        if minimum <= 0:
+            return False, minimum
+        if qty <= 0:
+            return 0 < order_budget_krw < minimum, minimum
+        return 0 < order_cost_krw < minimum, minimum
+
+    def _restrict_candidates_to_universe(self, candidates: list, allowed_tickers: Optional[list] = None) -> list:
+        rows = list(candidates or [])
+        allowed = [str(t or "").strip().upper() for t in (allowed_tickers or []) if str(t or "").strip()]
+        if not rows or not allowed:
+            return rows
+        allowed_set = set(allowed)
+        filtered = [row for row in rows if str(row.get("ticker", "") or "").strip().upper() in allowed_set]
+        return filtered or rows
+
+    def _partial_replace_score(self, market: str, ticker: str, protected: Optional[set] = None) -> float:
+        normalized = str(ticker).upper() if market == "US" else str(ticker)
+        if protected and normalized in protected:
+            return -999.0
+
+        score = (
+            float(self._ticker_no_signal_cycles.get(normalized, self._ticker_no_signal_cycles.get(ticker, 0)) or 0)
+            + float(self._invalid_price_count.get(normalized, self._invalid_price_count.get(ticker, 0)) or 0) * 2.0
+        )
+
+        bucket = self._watch_only_bucket(market, normalized)
+        if bucket == "HARD":
+            score += 4.0
+        elif bucket == "SOFT":
+            score -= 2.0
+        elif bucket == "RECOVERY":
+            score -= 4.0
+
+        blocked_counts = (self._ticker_runtime_blocked_reasons.get(market, {}) or {}).get(normalized, {})
+        rejection_counts = (self._ticker_runtime_rejection_reasons.get(market, {}) or {}).get(normalized, {})
+
+        score += float(blocked_counts.get("momentum_atr_too_high", 0)) * 2.5
+        score += float(blocked_counts.get("affordability_fail", 0)) * 1.0
+        score += float(blocked_counts.get("order_size_too_small", 0)) * 1.5
+        score += float(blocked_counts.get("entry_blackout", 0)) * 1.5
+        score += float(blocked_counts.get("blocked_by_mode", 0)) * 2.0
+        score += float(blocked_counts.get("same_day_reentry_blocked", 0)) * 1.0
+        score += float(rejection_counts.get("momentum_wait", 0)) * 1.0
+        score += float(rejection_counts.get("gap_insufficient", 0)) * 0.5
+        score += float(rejection_counts.get("pullback_missing", 0)) * 0.5
+        score += float(rejection_counts.get("highpoint_missing", 0)) * 0.5
+        return score
+
+    def _reset_runtime_overrides(self, market: str) -> None:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        raw_map = getattr(self, "_claude_runtime_overrides", None)
+        if not isinstance(raw_map, dict):
+            raw_map = {"KR": {}, "US": {}}
+            self._claude_runtime_overrides = raw_map
+        raw_map[market_key] = {}
+        if isinstance(getattr(self, "today_judgment", None), dict) and self.today_judgment.get("market") == market_key:
+            self.today_judgment.setdefault("claude_runtime_overrides", {})
+            self.today_judgment["claude_runtime_overrides"][market_key] = {}
+
+    def _restore_runtime_overrides_from_payload(self, market: str, payload: Optional[dict]) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        self._reset_runtime_overrides(market_key)
+
+        source = payload if isinstance(payload, dict) else {}
+        raw_blob = source.get("claude_runtime_overrides")
+        raw_market = {}
+        if isinstance(raw_blob, dict):
+            if isinstance(raw_blob.get(market_key), dict):
+                raw_market = dict(raw_blob.get(market_key) or {})
+            elif any(key in raw_blob for key in _CLAUDE_RUNTIME_OVERRIDE_BOUNDS):
+                raw_market = dict(raw_blob)
+
+        normalized = {}
+        for key, (low, high) in _CLAUDE_RUNTIME_OVERRIDE_BOUNDS.items():
+            try:
+                value = float(raw_market.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                value = 0.0
+            value = max(low, min(high, value))
+            if key == "momentum_wait_adjust_min":
+                normalized[key] = int(round(value))
+            else:
+                normalized[key] = round(value, 4)
+
+        self._claude_runtime_overrides[market_key] = normalized
+        if isinstance(getattr(self, "today_judgment", None), dict) and self.today_judgment.get("market") == market_key:
+            self.today_judgment.setdefault("claude_runtime_overrides", {})
+            self.today_judgment["claude_runtime_overrides"][market_key] = dict(normalized)
+        return normalized
+
+    def _effective_entry_priority_cutoff(self, market: str = "") -> float:
+        cutoff = float(getattr(self, "entry_priority_cutoff", 0.20) or 0.20)
+        if market:
+            cutoff += float(self._runtime_overrides(market).get("entry_priority_cutoff_adjust", 0.0))
+        return max(0.05, min(0.50, cutoff))
+
+    def _effective_momentum_wait_window(self, market: str, base_window: float) -> float:
+        wait_window = float(base_window or 0)
+        wait_window += float(self._runtime_overrides(market).get("momentum_wait_adjust_min", 0))
+        return max(5.0, min(60.0, wait_window))
+
+    def _effective_kr_momentum_atr_caps(self) -> tuple[float, float]:
+        base_cap = float(os.getenv("KR_MOMENTUM_ATR_PCT_MAX", "0.06") or 0.06)
+        base_high_cap = float(os.getenv("KR_MOMENTUM_ATR_PCT_HIGH", "0.10") or 0.10)
+        overrides = self._runtime_overrides("KR")
+        cap = base_cap + float(overrides.get("kr_momentum_atr_cap_adjust", 0.0) or 0.0)
+        high_cap = base_high_cap + float(overrides.get("kr_momentum_atr_cap_high_adjust", 0.0) or 0.0)
+        cap = max(0.04, min(0.12, cap))
+        high_cap = max(cap + 0.01, min(0.15, high_cap))
+        return round(cap, 4), round(high_cap, 4)
+
+    def _effective_kr_momentum_atr_stage(self, atr_pct: Optional[float]) -> dict:
+        cap, high_cap = self._effective_kr_momentum_atr_caps()
+        if atr_pct is None:
+            return {"blocked": False, "size_cap": None, "stage": "none", "cap": cap, "high_cap": high_cap}
+        atr_pct = float(atr_pct)
+        if atr_pct <= cap:
+            return {"blocked": False, "size_cap": None, "stage": "base", "cap": cap, "high_cap": high_cap}
+
+        stage_1 = min(high_cap, round(cap + 0.01, 4))
+        stage_2 = min(high_cap, round(cap + 0.02, 4))
+        if atr_pct <= stage_1:
+            return {"blocked": False, "size_cap": 70, "stage": "atr_70", "cap": cap, "high_cap": high_cap}
+        if atr_pct <= stage_2:
+            return {"blocked": False, "size_cap": 50, "stage": "atr_50", "cap": cap, "high_cap": high_cap}
+        if atr_pct <= high_cap:
+            return {"blocked": False, "size_cap": 35, "stage": "atr_35", "cap": cap, "high_cap": high_cap}
+        return {"blocked": True, "size_cap": None, "stage": "blocked", "cap": cap, "high_cap": high_cap}
+
+    def _kr_momentum_shrink_signals(self, candidate: dict) -> list[str]:
+        if not getattr(self, "enable_kr_momentum_shrink", True):
+            return []
+        signals: list[str] = []
+        liquidity_bucket = str(candidate.get("liquidity_bucket", "") or "").strip().lower()
+        from_high_bucket = str(candidate.get("from_high_bucket", "") or "").strip().lower()
+        atr_stage = str(candidate.get("atr_stage", "") or "").strip().lower()
+        try:
+            atr_pct = float(candidate.get("atr_pct", 0.0) or 0.0)
+        except Exception:
+            atr_pct = 0.0
+        try:
+            change_rate = abs(float(candidate.get("change_rate", 0.0) or 0.0))
+        except Exception:
+            change_rate = 0.0
+        try:
+            from_high_pct = float(candidate.get("from_high_pct", -99.0) or -99.0)
+        except Exception:
+            from_high_pct = -99.0
+
+        if liquidity_bucket in {"mid", "low", "unknown"}:
+            signals.append(f"liq={liquidity_bucket or 'unknown'}")
+        if from_high_bucket in {"near_high", "at_high"} or from_high_pct >= -1.5:
+            signals.append("near_high")
+        if atr_stage in {"atr_50", "atr_35", "blocked"} or atr_pct >= 7.0:
+            signals.append(f"atr={atr_stage or f'{atr_pct:.1f}%'}")
+        if change_rate >= 8.0:
+            signals.append("hot_move")
+        return signals
+
+    def _market_position_count(self, market: str) -> int:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        count = 0
+        for pos in getattr(self.risk, "positions", []) or []:
+            ticker = str(pos.get("ticker", "") or "")
+            pos_market = "US" if ticker.replace(".", "").isalpha() else "KR"
+            if pos_market == market_key:
+                count += 1
+        return count
+
+    def _risk_off_mr_exception(self, market: str, mode: str, strategy_name: str, sig_row: dict) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        normalized_mode = str(mode or "").upper()
+        normalized_strategy = _normalize_strategy_name(strategy_name)
+        result = {"allowed": False, "size_cap": 40, "reason": "not_applicable"}
+
+        if normalized_mode == "HALT":
+            result["reason"] = "halt"
+            return result
+        if _mode_family(normalized_mode) != "RISK_OFF":
+            result["reason"] = "not_risk_off"
+            return result
+        if normalized_strategy != "mean_reversion":
+            result["reason"] = "not_mean_reversion"
+            return result
+        if self._market_position_count(market_key) >= 1:
+            result["reason"] = "risk_off_position_limit"
+            return result
+
+        primary_change = self._get_market_change_pct(market_key)
+        secondary_change = self._get_secondary_change_pct(market_key)
+        if primary_change is not None and primary_change <= -2.5:
+            result["reason"] = "panic_primary"
+            return result
+        if secondary_change is not None and secondary_change <= -3.5:
+            result["reason"] = "panic_secondary"
+            return result
+
+        vol_ratio = float(sig_row.get("vol_ratio", 0) or 0)
+        if vol_ratio > 2.0:
+            result["reason"] = "overheated_volume"
+            return result
+
+        result["allowed"] = True
+        result["reason"] = "risk_off_mr_exception"
+        return result
+
+    def _apply_runtime_tuning_adjustments(self, market: str, result: dict) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        current = self._runtime_overrides(market_key)
+        updated = {}
+        changed = {}
+        for key, (low, high) in _CLAUDE_RUNTIME_OVERRIDE_BOUNDS.items():
+            try:
+                value = float((result or {}).get(key, 0) or 0)
+            except (TypeError, ValueError):
+                value = 0.0
+            value = max(low, min(high, value))
+            if key == "momentum_wait_adjust_min":
+                value = int(round(value))
+            else:
+                value = round(value, 4)
+            updated[key] = value
+            if current.get(key) != value:
+                changed[key] = value
+        self._claude_runtime_overrides[market_key] = updated
+        if isinstance(getattr(self, "today_judgment", None), dict):
+            self.today_judgment.setdefault("claude_runtime_overrides", {})
+            self.today_judgment["claude_runtime_overrides"][market_key] = updated
+        if changed:
+            log.info(
+                f"[claude runtime override] {market_key} "
+                + ", ".join(f"{key}={value}" for key, value in changed.items())
+            )
+        return changed
+
+    def _runtime_gate_state(self, market: str) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        wait_base = 45.0
+        wait_effective = self._effective_momentum_wait_window(market_key, wait_base)
+        cutoff = self._effective_entry_priority_cutoff(market_key)
+        state = {
+            "momentum_wait_base": wait_base,
+            "momentum_wait_effective": wait_effective,
+            "entry_priority_cutoff": cutoff,
+        }
+        if market_key == "KR":
+            atr_cap, atr_high_cap = self._effective_kr_momentum_atr_caps()
+            state["kr_momentum_atr_cap"] = atr_cap
+            state["kr_momentum_atr_cap_high"] = atr_high_cap
+        return state
+
+    def _runtime_gate_state_text(self, market: str) -> str:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        state = self._runtime_gate_state(market_key)
+        overrides = self._runtime_overrides(market_key)
+        text = (
+            f"wait={int(state['momentum_wait_base'])}->{int(state['momentum_wait_effective'])}m "
+            f"cutoff={state['entry_priority_cutoff']:.2f}"
+        )
+        if market_key == "KR":
+            text += (
+                f" kr_atr_cap={state['kr_momentum_atr_cap']:.2f}/"
+                f"{state['kr_momentum_atr_cap_high']:.2f}"
+            )
+        text += (
+            f" adjust(wait={int(overrides.get('momentum_wait_adjust_min', 0) or 0):+d}m"
+            f", cutoff={float(overrides.get('entry_priority_cutoff_adjust', 0.0) or 0.0):+.2f}"
+        )
+        if market_key == "KR":
+            text += (
+                f", atr={float(overrides.get('kr_momentum_atr_cap_adjust', 0.0) or 0.0):+.2f}/"
+                f"{float(overrides.get('kr_momentum_atr_cap_high_adjust', 0.0) or 0.0):+.2f}"
+        )
+        text += ")"
+        return text
+
+    def _selection_active_strategies(self, market: str, mode: str = "") -> list[str]:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        mode_value = str(mode or (self.today_judgment.get("consensus", {}) or {}).get("mode", "NEUTRAL")).upper()
+        risk_on = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL"}
+        balanced = {"CAUTIOUS", "NEUTRAL"}
+        risk_off = {"MILD_BEAR", "CAUTIOUS_BEAR", "DEFENSIVE", "HALT"}
+
+        if mode_value in risk_off:
+            return ["mean_reversion"]
+
+        if market_key == "KR":
+            if mode_value in risk_on:
+                active = ["opening_range_pullback", "gap_pullback", "momentum", "mean_reversion", "continuation"]
+                return [s for s in active if s != "continuation" or self.enable_continuation_live]
+            if mode_value in balanced:
+                return ["opening_range_pullback", "gap_pullback", "mean_reversion", "momentum"]
+            return ["opening_range_pullback", "gap_pullback", "mean_reversion"]
+
+        if mode_value in risk_on:
+            active = ["opening_range_pullback", "gap_pullback", "mean_reversion", "momentum", "continuation"]
+            return [s for s in active if s != "continuation" or self.enable_continuation_live]
+        if mode_value in balanced:
+            return ["opening_range_pullback", "gap_pullback", "mean_reversion", "momentum"]
+        return ["mean_reversion"]
+
+    def _selection_session_phase(self, market: str) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        elapsed = float(self._market_elapsed_min(market_key))
+        minutes_to_close = float(self._minutes_to_close(market_key))
+        close_guard = float(HARD_RULES.get("close_before_min", 30) or 30)
+        if minutes_to_close <= close_guard:
+            phase = "close_guard"
+        elif elapsed <= 15:
+            phase = "opening"
+        elif elapsed <= 60:
+            phase = "early"
+        elif minutes_to_close <= 60:
+            phase = "late"
+        else:
+            phase = "mid"
+        return {
+            "phase": phase,
+            "elapsed_min": round(elapsed, 1),
+            "minutes_to_close": round(minutes_to_close, 1),
+            "entry_blackout": bool(self._in_entry_blackout(market_key)),
+        }
+
+    def _format_ops_review_context(self, market: str, max_lines: int = 4) -> str:
+        snapshot = dict((self.today_judgment or {}).get("ops_review_snapshot") or {})
+        if str(snapshot.get("market", "") or "").upper() != str(market or "").upper():
+            return ""
+        metrics = snapshot.get("metrics") or {}
+        lines: list[str] = []
+
+        def _metric_line(key: str, label: str, suffix: str = "%") -> None:
+            metric = metrics.get(key) or {}
+            value = metric.get("value")
+            if value is None:
+                return
+            breached = bool(metric.get("breached"))
+            sample = metric.get("sample")
+            sample_text = f" n={sample}" if sample else ""
+            status = " breach" if breached else ""
+            lines.append(f"{label}={value}{suffix}{sample_text}{status}")
+
+        _metric_line("consensus_directional_hit_rate", "consensus_hit")
+        _metric_line("best_analyst_minus_consensus_hit_gap", "best_gap")
+        _metric_line("trade_ready_signal_conversion", "tr_ready_to_signal")
+        _metric_line("watch_only_missed_runup_ratio", "watch_missed")
+        _metric_line("atr_blocked_missed_runup", "atr_blocked_runup")
+        _metric_line("entry_blackout_ratio", "blackout")
+        if not lines:
+            return ""
+        return "ops review: " + " | ".join(lines[:max_lines])
+
+    def _build_execution_profile_text(self, market: str, mode: str = "") -> str:
+        phase = self._selection_session_phase(market)
+        active = self._selection_active_strategies(market, mode)
+        return (
+            f"session_phase={phase['phase']} elapsed={phase['elapsed_min']:.0f}m "
+            f"to_close={phase['minutes_to_close']:.0f}m blackout={'yes' if phase['entry_blackout'] else 'no'} | "
+            f"active_strategies={','.join(active)} | gates={self._runtime_gate_state_text(market)}"
+        )
+
+    def _annotate_selection_execution_features(self, market: str, candidates: list, mode: str = "") -> list:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        if not candidates:
+            return []
+        active_strategies = self._selection_active_strategies(market_key, mode)
+        phase = self._selection_session_phase(market_key)
+        ctx = (
+            getattr(self, "_ca_context_last", None)
+            or (self.today_judgment.get("digest_raw", {}) or {}).get("context", {})
+            or {}
+        )
+        conf = float(((self.today_judgment or {}).get("consensus", {}) or {}).get("confidence", 0.6) or 0.6)
+        or_minutes = 10 if market_key == "KR" else 15
+
+        def _entry_bucket(score: float) -> str:
+            if score >= 1.5:
+                return "high"
+            if score >= 0.8:
+                return "mid"
+            if score > 0:
+                return "low"
+            return "weak"
+
+        def _atr_stage_text(price_ref: float, atr_val: float) -> tuple[str, Optional[float]]:
+            if price_ref <= 0 or atr_val <= 0:
+                return "unknown", None
+            atr_pct = atr_val / price_ref
+            if market_key == "KR":
+                stage = self._effective_kr_momentum_atr_stage(atr_pct)
+                return str(stage.get("stage") or "unknown"), atr_pct
+            if atr_pct <= 0.03:
+                return "low", atr_pct
+            if atr_pct <= 0.05:
+                return "mid", atr_pct
+            if atr_pct <= 0.07:
+                return "high", atr_pct
+            return "extreme", atr_pct
+
+        enriched_rows = []
+        for candidate in candidates:
+            row = dict(candidate or {})
+            ticker = str(row.get("ticker", "") or "").strip().upper()
+            if not ticker:
+                enriched_rows.append(row)
+                continue
+
+            row.setdefault("session_phase", phase.get("phase"))
+            row.setdefault("minutes_to_close", phase.get("minutes_to_close"))
+            row.setdefault("entry_blackout_now", phase.get("entry_blackout"))
+            try:
+                technicals = ((self.today_judgment.get("digest_raw", {}) or {}).get("technicals") or {})
+                tech = technicals.get(ticker) or technicals.get(str(candidate.get("ticker", "") or "").strip()) or {}
+                if tech:
+                    for key in (
+                        "earnings_date",
+                        "earnings_window",
+                        "confidence_tier",
+                        "pead_bias",
+                        "prompt_applied",
+                        "surprise_sign",
+                        "surprise_strength",
+                    ):
+                        if key in tech and key not in row:
+                            row[key] = tech.get(key)
+            except Exception:
+                pass
+            if self._or_formed.get(ticker, False):
+                row["or_state"] = "formed"
+            elif float(phase.get("elapsed_min", 0.0) or 0.0) <= or_minutes:
+                row["or_state"] = "forming"
+            else:
+                row["or_state"] = "missing"
+
+            try:
+                candles = self._get_ohlcv_cached(ticker, market_key)
+                sig_df = calc_all(candles) if not getattr(candles, "empty", True) else None
+                if sig_df is not None and not getattr(sig_df, "empty", True):
+                    sig_row = sig_df.iloc[-1].to_dict()
+                    price_ref = float(row.get("price", 0) or 0) or float(sig_row.get("close", 0) or 0)
+                    atr_val = float(sig_row.get("atr", 0) or 0)
+                    atr_stage, atr_pct = _atr_stage_text(price_ref, atr_val)
+                    row["atr_stage"] = atr_stage
+                    if atr_pct is not None:
+                        row["atr_pct"] = round(float(atr_pct) * 100.0, 2)
+
+                    price_info = {
+                        "price": price_ref,
+                        "high": float(candles.iloc[-1].get("high", 0) or 0),
+                    }
+                    best_score = 0.0
+                    best_strategy = ""
+                    for strategy_name in active_strategies[:4]:
+                        try:
+                            params = _adaptive_params(strategy_name, market_key, mode or "NEUTRAL", conf, context=ctx)
+                        except Exception:
+                            params = {}
+                        if strategy_name == "opening_range_pullback":
+                            params = dict(params or {})
+                            _or_low = self._or_low.get(ticker, float("inf"))
+                            params.update(
+                                {
+                                    "or_high": float(self._or_high.get(ticker, 0.0) or 0.0),
+                                    "or_low": 0.0 if _or_low == float("inf") else float(_or_low or 0.0),
+                                    "or_formed": bool(self._or_formed.get(ticker, False)),
+                                    "or_minutes": or_minutes,
+                                }
+                            )
+                        score, _ = entry_priority_score(
+                            strategy_name=strategy_name,
+                            sig_row=sig_row,
+                            params=params or {},
+                            price_info=price_info,
+                            elapsed_min=float(phase.get("elapsed_min", 0.0) or 0.0),
+                            ticker=ticker,
+                        )
+                        if float(score) > best_score:
+                            best_score = float(score)
+                            best_strategy = strategy_name
+                    if best_strategy:
+                        row["raw_entry_priority_score"] = round(best_score, 3)
+                        row["raw_execution_fit_strategy"] = best_strategy
+                        row["entry_priority_score"] = round(best_score, 3)
+                        row["entry_priority_bucket"] = _entry_bucket(best_score)
+                        row["execution_fit_strategy"] = best_strategy
+                        if market_key == "KR" and best_strategy == "momentum":
+                            shrink_signals = self._kr_momentum_shrink_signals(row)
+                            if len(shrink_signals) >= 3 and "near_high" in shrink_signals and any(sig.startswith("atr=") for sig in shrink_signals):
+                                row["entry_priority_score"] = round(min(float(row["entry_priority_score"]), 0.79), 3)
+                                row["entry_priority_bucket"] = "low"
+                                row["execution_fit_strategy"] = "observe"
+                                row["selection_bias"] = "watch_only"
+                                row["selection_bias_reason"] = "kr_momentum_shrink:" + ",".join(shrink_signals)
+                                row["kr_momentum_shrink_signals"] = list(shrink_signals)
+            except Exception:
+                pass
+
+            enriched_rows.append(row)
+        return enriched_rows
+
+    def _is_entry_priority_blocked(self, score: float, market: str = "") -> bool:
+        cutoff = self._effective_entry_priority_cutoff(market) if market else self._effective_entry_priority_cutoff()
+        return bool(self.entry_priority_cutoff_enabled and float(score or 0.0) < cutoff)
 
     def _get_market_change_pct(self, market: str, digest: dict = None) -> Optional[float]:
         """digest_raw에서 주 지수 등락률 추출 — KR=KOSPI, US=S&P500. 데이터 없으면 None."""
@@ -926,6 +2281,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _log_screen_candidates(self, market: str, candidates: list, source: str):
         """대시보드가 최신 후보 집합을 알 수 있도록 재스크리닝도 analysis 로그에 남긴다."""
         today = self._current_session_date_str(market)
+        self._update_session_date_diagnostics(market, "session_close")
         analysis_log.info(
             f"[screen {today} {market}] source={source} candidates={len(candidates)}",
             extra={"extra": {
@@ -944,6 +2300,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             from kis_api import get_index_change
             lines = []
             now_str = datetime.now(KST).strftime("%H:%M")
+            mode = str((self.today_judgment.get("consensus", {}) or {}).get("mode", "NEUTRAL"))
+            lines.append(self._build_execution_profile_text(market, mode))
+            ops_context = self._format_ops_review_context(market)
+            if ops_context:
+                lines.append(ops_context)
             if market == "KR":
                 kospi_chg = get_index_change("KR")
                 lines.append(f"현재시각 {now_str} KST | 코스피 현재 {kospi_chg:+.2f}%")
@@ -1051,11 +2412,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             digest_prompt = (self.today_judgment or {}).get("digest_prompt", "")
             today = self._current_session_date_str(target_market)
             if target_market == "KR":
-                candidates = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                candidates = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                 if candidates:
                     self._last_kr_candidates = candidates
             else:
-                candidates = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                candidates = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
             if not candidates:
                 raise RuntimeError("재스크리닝 후보가 없습니다.")
             self._log_screen_candidates(target_market, candidates, "manual_rescreen")
@@ -1065,8 +2426,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             candidates = [c for c in candidates if c.get("ticker") not in _manual_cooldown]
             if not candidates:
                 raise RuntimeError("히스토리 필터 통과 후보가 없습니다.")
+            candidates = self._annotate_selection_execution_features(target_market, candidates, mode)
             intraday_ctx = self._build_intraday_context(target_market)
+            lesson_context = self._load_lesson_candidate_summary(target_market)
             selected, reasons = select_tickers(target_market, digest_prompt, mode, candidates,
+                                               lesson_context=lesson_context,
                                                intraday_context=intraday_ctx,
                                                market_change_pct=self._get_market_change_pct(target_market),
                                                secondary_change_pct=self._get_secondary_change_pct(target_market))
@@ -1662,10 +3026,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             saved = self._verify_live_positions(saved)
 
             for pos in saved:
+                market = self._ticker_market(pos.get("ticker", ""))
                 # date 필드가 문자열로 저장됐을 수 있으므로 타입 보정
                 pos.setdefault("held_days", 0)
-                pos.setdefault("entry_date", self._current_session_date_str(self._ticker_market(pos.get("ticker", ""))))
-                pos.setdefault("session_date", pos.get("entry_date") or self._current_session_date_str(self._ticker_market(pos.get("ticker", ""))))
+                pos.setdefault("entry_date", self._current_session_date_str(market))
+                pos.setdefault("session_date", pos.get("entry_date") or self._current_session_date_str(market))
+                default_integrity = "protected" if str(pos.get("price_source", "") or "") == "broker_balance" else "trusted"
+                default_protected = default_integrity != "trusted"
+                self._normalize_position_metadata(
+                    pos,
+                    market,
+                    origin="saved_restore",
+                    integrity=default_integrity,
+                    management_protected=default_protected,
+                )
                 cost = pos["entry"] * pos["qty"]
                 self.risk.cash -= cost
                 self.risk.positions.append(pos)
@@ -1763,6 +3137,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _make_runtime_position_from_broker(self, ticker: str, market: str, broker_pos: dict,
                                            template: Optional[dict] = None) -> dict:
         template = template or {}
+        trusted_template = bool(template)
         native_avg_price = float(template.get("filled_price_native", 0) or broker_pos.get("avg_price", 0) or 0)
         native_eval_price = float(broker_pos.get("eval_price", 0) or native_avg_price)
         avg_price = native_avg_price
@@ -1777,7 +3152,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             or str(broker_pos.get("name", "") or "").strip()
             or self._lookup_ticker_name(ticker, market)
         )
-        return {
+        pos = {
             "ticker": ticker,
             "name": pos_name,
             "entry": avg_price,
@@ -1796,14 +3171,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "held_days": int(template.get("held_days", 0)),
             "entry_date": template.get("entry_date", self._current_session_date_str(market)),
             "session_date": template.get("session_date", self._current_session_date_str(market)),
+            "entry_session_date": template.get(
+                "entry_session_date",
+                template.get("session_date", self._current_session_date_str(market)),
+            ),
             "trailing": bool(template.get("trailing", False)),
             "trail_sl": float(template.get("trail_sl", 0.0)),
+            "trail_sl_usd": float(template.get("trail_sl_usd", 0.0)),
             "trail_pct": float(template.get("trail_pct", 0.03)),
             "tp_triggered": bool(template.get("tp_triggered", False)),
             "hold_advice": template.get("hold_advice"),
             "tp_price": float(template.get("tp_price", 0.0)),
             "decision_id": template.get("decision_id") or self._recover_decision_id(ticker, market),
         }
+        return self._normalize_position_metadata(
+            pos,
+            market,
+            origin="broker_recovered" if trusted_template else "broker_injected",
+            integrity="trusted" if trusted_template else "protected",
+            management_protected=not trusted_template,
+        )
 
     def _recover_decision_id(self, ticker: str, market: str) -> Optional[int]:
         """브로커 복구 포지션에 대해 ML DB에서 decision_id를 best-effort로 조회.
@@ -1812,7 +3199,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return None
         try:
             from ml.db_writer import _get_conn
-            session_date = _market_session_date(market).isoformat()
+            session_date = self._current_session_date_str(market)
             with _get_conn() as conn:
                 row = conn.execute(
                     """SELECT id FROM decisions
@@ -1827,6 +3214,65 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             pass
         return None
+
+    def _normalize_position_metadata(
+        self,
+        pos: dict,
+        market: str,
+        *,
+        origin: str,
+        integrity: str,
+        management_protected: bool,
+    ) -> dict:
+        current_session = self._current_session_date_str(market)
+        entry_session = str(
+            pos.get("entry_session_date")
+            or pos.get("session_date")
+            or pos.get("entry_date")
+            or current_session
+        ).strip()
+        pos["entry_session_date"] = entry_session
+        pos.setdefault("entry_date", entry_session)
+        pos.setdefault("session_date", entry_session)
+        pos["position_origin"] = str(pos.get("position_origin") or origin)
+        pos["position_integrity"] = str(pos.get("position_integrity") or integrity)
+        pos["management_protected"] = bool(pos.get("management_protected", management_protected))
+        if pos["management_protected"]:
+            pos.setdefault("recovery_session_date", current_session)
+        return pos
+
+    def _count_session_holding_days(self, market: str, entry_session_iso: str, current_session_iso: str) -> int:
+        try:
+            entry_session = date.fromisoformat(str(entry_session_iso or "").strip())
+            current_session = date.fromisoformat(str(current_session_iso or "").strip())
+        except Exception:
+            return 0
+        if current_session <= entry_session:
+            return 0
+
+        held_days = 0
+        cursor = entry_session + timedelta(days=1)
+        while cursor <= current_session:
+            if _is_trading_day(market, cursor):
+                held_days += 1
+            cursor += timedelta(days=1)
+        return held_days
+
+    def _refresh_position_holding_days(self, market: str):
+        current_session = self._current_session_date_str(market)
+        for pos in self.risk.positions:
+            ticker = str(pos.get("ticker", "") or "").strip()
+            if self._ticker_market(ticker) != market:
+                continue
+            entry_session = str(
+                pos.get("entry_session_date")
+                or pos.get("session_date")
+                or pos.get("entry_date")
+                or current_session
+            ).strip()
+            pos["entry_session_date"] = entry_session
+            pos["held_days"] = self._count_session_holding_days(market, entry_session, current_session)
+            pos["last_hold_update"] = current_session
 
     def _internal_total_equity_krw(self) -> float:
         return float(self.risk.cash + sum(
@@ -2354,7 +3800,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             or str(broker_pos.get("name", "") or "").strip()
             or self._lookup_ticker_name(order.get("ticker", ""), market)
         )
-        return {
+        pos = {
             "ticker": order.get("ticker", ""),
             "name": pos_name,
             "entry": avg_price,
@@ -2375,6 +3821,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "held_days": 0,
             "entry_date": self._current_session_date_str(market),
             "session_date": order.get("session_date", self._current_session_date_str(market)),
+            "entry_session_date": order.get("session_date", self._current_session_date_str(market)),
             "trailing": False,
             "trail_sl": 0.0,
             "trail_sl_usd": 0.0,     # US 트레일링 SL (USD 기준)
@@ -2384,6 +3831,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "tp_price": 0.0,
             "decision_id": order.get("decision_id"),   # ML DB 연동
         }
+        return self._normalize_position_metadata(
+            pos,
+            market,
+            origin="order_fill",
+            integrity="trusted",
+            management_protected=False,
+        )
 
     def _lookup_ticker_name(self, ticker: str, market: str) -> str:
         raw_ticker = str(ticker or "").strip().upper() if market == "US" else str(ticker or "").strip()
@@ -2537,6 +3991,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     name=str(order.get("name", "") or "").strip(),
                     usd_krw=self.usd_krw_rate,
                 )
+            self._save_positions()
             self.pending_orders = remaining
             self._save_pending_orders()
 
@@ -2673,49 +4128,67 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     _SELL_FAIL_COOLDOWN_SEC = 90  # 매도 실패 후 재시도 억제 시간
 
     def _process_exit_candidates(self):
-        candidates = self.risk.get_exit_candidates()
-        for cand in candidates:
-            if float(cand.get("exit_price") or 0) <= 0:
-                log.error(f"[exit skip] {cand['ticker']} exit_price={cand.get('exit_price')} <= 0 — 매도 차단 (가격 조회 실패)")
-                continue
-            market = self._ticker_market(cand["ticker"])
-            if self.current_market and market != self.current_market:
-                continue
-            if not self._is_order_allowed_now(market):
-                log.debug(f"[exit skip] {cand['ticker']} 장 시작 전 — 매도 보류")
-                continue
-            # 매도 실패 쿨다운 체크
-            _fail_ts = self._sell_fail_at.get(cand["ticker"], 0)
-            if time.time() - _fail_ts < self._SELL_FAIL_COOLDOWN_SEC:
-                remaining = int(self._SELL_FAIL_COOLDOWN_SEC - (time.time() - _fail_ts))
-                log.debug(f"[exit skip] {cand['ticker']} 매도 실패 쿨다운 {remaining}초 남음")
-                continue
+        if not self._exit_process_lock.acquire(blocking=False):
+            log.debug("[exit skip] exit processing already in progress")
+            return
+        try:
+            candidates = self.risk.get_exit_candidates()
+            reason_priority = {"stop_loss": 0, "trail_stop": 1, "tp_check": 2, "max_hold": 3}
+            deduped: dict[tuple[str, str], dict] = {}
+            for cand in candidates:
+                market = self._ticker_market(cand.get("ticker", ""))
+                key = (market, cand.get("ticker", "").upper() if market == "US" else cand.get("ticker", ""))
+                prev = deduped.get(key)
+                if prev is None:
+                    deduped[key] = cand
+                    continue
+                if reason_priority.get(cand.get("reason", ""), 99) < reason_priority.get(prev.get("reason", ""), 99):
+                    deduped[key] = cand
 
-            # ── 거래 중지 체크 (KR만) ──────────────────────────────────────
-            if market == "KR" and is_trading_halted(cand["ticker"], self.token):
-                self._sell_fail_at[cand["ticker"]] = time.time() + 600  # 10분 쿨다운
-                log.warning(f"[거래 중지] {cand['ticker']} 매도 불가 → 10분 후 재확인")
-                continue
+            for cand in deduped.values():
+                if float(cand.get("exit_price") or 0) <= 0:
+                    log.error(f"[exit skip] {cand['ticker']} exit_price={cand.get('exit_price')} <= 0 — 매도 차단 (가격 조회 실패)")
+                    continue
+                market = self._ticker_market(cand["ticker"])
+                if self.current_market and market != self.current_market:
+                    continue
+                if not self._is_order_allowed_now(market):
+                    log.debug(f"[exit skip] {cand['ticker']} 장 시작 전 — 매도 보류")
+                    continue
+                # 매도 실패 쿨다운 체크
+                _fail_ts = self._sell_fail_at.get(cand["ticker"], 0)
+                if time.time() - _fail_ts < self._SELL_FAIL_COOLDOWN_SEC:
+                    remaining = int(self._SELL_FAIL_COOLDOWN_SEC - (time.time() - _fail_ts))
+                    log.debug(f"[exit skip] {cand['ticker']} 매도 실패 쿨다운 {remaining}초 남음")
+                    continue
 
-            # ── TP 도달 → 트레일링 스탑 처리 ──────────────────────────────
-            if cand["reason"] == "tp_check":
-                if self.enable_trailing_stop:
-                    self._handle_tp_trailing(cand, market)
-                else:
-                    # trailing 비활성화 → 기존처럼 즉시 청산
-                    self._execute_sell(cand, market, reason="take_profit")
-                    self._block_entry(cand["ticker"], _TP_COOLDOWN_MIN, "take_profit")
-                continue
+                # ── 거래 중지 체크 (KR만) ──────────────────────────────────────
+                if market == "KR" and is_trading_halted(cand["ticker"], self.token):
+                    self._sell_fail_at[cand["ticker"]] = time.time() + 600  # 10분 쿨다운
+                    log.warning(f"[거래 중지] {cand['ticker']} 매도 불가 → 10분 후 재확인")
+                    continue
 
-            # ── max_hold 도달 → Claude 먼저 물어보고 결정 ──────────────────
-            if cand["reason"] == "max_hold":
-                self._handle_max_hold_claude(cand, market)
-                continue
+                # ── TP 도달 → 트레일링 스탑 처리 ──────────────────────────────
+                if cand["reason"] == "tp_check":
+                    if self.enable_trailing_stop:
+                        self._handle_tp_trailing(cand, market)
+                    else:
+                        # trailing 비활성화 → 기존처럼 즉시 청산
+                        self._execute_sell(cand, market, reason="take_profit")
+                        self._block_entry(cand["ticker"], _TP_COOLDOWN_MIN, "take_profit")
+                    continue
 
-            self._execute_sell(cand, market, reason=cand["reason"])
-            # 손절/트레일링 청산 후 재진입 쿨다운
-            if cand["reason"] in ("stop_loss", "trail_stop"):
-                self._block_entry(cand["ticker"], _STOP_COOLDOWN_MIN, cand["reason"])
+                # ── max_hold 도달 → Claude 먼저 물어보고 결정 ──────────────────
+                if cand["reason"] == "max_hold":
+                    self._handle_max_hold_claude(cand, market)
+                    continue
+
+                self._execute_sell(cand, market, reason=cand["reason"])
+                # 손절/트레일링 청산 후 재진입 쿨다운
+                if cand["reason"] in ("stop_loss", "trail_stop"):
+                    self._block_entry(cand["ticker"], _STOP_COOLDOWN_MIN, cand["reason"])
+        finally:
+            self._exit_process_lock.release()
 
     def _pre_session_position_review(self, market: str):
         """장 시작 전 보유 포지션 Claude 검토.
@@ -3389,7 +4862,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if not fname.exists():
                 continue
             try:
-                rec = json.load(open(fname, encoding="utf-8"))
+                with open(fname, encoding="utf-8") as f:
+                    rec = json.load(f)
             except Exception:
                 continue
             if not rec.get("judgments"):
@@ -3398,7 +4872,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
             sells = [t for t in (rec.get("trades") or []) if t.get("side") == "sell"]
             total_pnl_krw = sum(t.get("pnl", 0) for t in sells)
-            start_eq = self.risk.session_start_equity or self.risk.cash or 1
+            start_eq = (
+                getattr(self.risk, "session_start_equity", 0)
+                or getattr(self.risk, "cash", 0)
+                or 1
+            )
             actual = {
                 "market_change": get_index_change(market),
                 "pnl_pct":  total_pnl_krw / start_eq * 100 if sells else 0.0,
@@ -3487,11 +4965,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.current_market = None
             if hasattr(self, "_active_session_date") and isinstance(self._active_session_date, dict):
                 self._active_session_date[market] = None
+            self._update_session_date_diagnostics(market, "session_open_skipped")
             self._leave_market_task(market, "session_open")
             return
 
         # US 개장 시 스크리너 캐시 무효화 → 신선한 후보로 시작
         self._set_active_session_date(market, session_date_obj)
+        self._update_session_date_diagnostics(market, "session_open")
+        self._reset_runtime_overrides(market)
+        self._reset_runtime_reason_counters(market)
         self._backfill_missed_postmortem(market)
         if market == "US":
             try:
@@ -3517,7 +4999,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._save_pending_orders()
         self._reset_us_order_cache()
         self._sync_runtime_with_broker()
-        self.risk.increment_holding_days(today_iso=self._current_session_date_str(market))
+        self._refresh_position_holding_days(market)
 
         # 시장별 max_order_krw 재계산 — KR: 원화잔고 기준, US: USD 현금 기준
         try:
@@ -3627,17 +5109,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         universe_tickers = None
         if self.enable_dynamic_universe:
             if market == "KR":
-                pre_candidates = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                pre_candidates = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                 if pre_candidates:
                     self._last_kr_candidates = pre_candidates
             else:
-                pre_candidates = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                pre_candidates = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
             if pre_candidates:
                 snapshot = build_universe_from_candidates(
                     market=market,
                     target_date=today,
                     candidates=pre_candidates,
-                    config=UniverseConfig(top_n=max(3, self.dynamic_universe_top_n)),
+                    config=UniverseConfig(top_n=self._dynamic_universe_top_n_for_market(market)),
                     source="runtime_screen",
                     core_tickers=get_core_tickers(market),
                 )
@@ -3679,21 +5161,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "universe_tickers": saved.get("universe_tickers", []),
                         "selection_meta": saved.get("selection_meta", {}),
                         "trade_ready_tickers": saved.get("trade_ready_tickers", []),
+                        "claude_runtime_overrides": saved.get("claude_runtime_overrides", {}),
                         # debate 필드 복원 (파인튜닝 데이터 연속성 유지)
                         "round1_judgments": saved.get("round1_judgments", {}),
                         "debate_changes": saved.get("debate_changes", []),
                     }
                     self.today_tickers[market] = saved.get("tickers", [])
-                    self.selection_meta[market] = saved.get("selection_meta", {}) or {}
-                    self.trade_ready_tickers[market] = (
-                        saved.get("trade_ready_tickers")
-                        or self.selection_meta[market].get("trade_ready")
-                        or saved.get("tickers", [])[:10]
+                    restored_meta = dict(saved.get("selection_meta", {}) or {})
+                    if saved.get("trade_ready_tickers") and not restored_meta.get("trade_ready"):
+                        restored_meta["trade_ready"] = list(saved.get("trade_ready_tickers") or [])
+                    self.selection_meta[market] = self._normalize_selection_meta_runtime(
+                        market,
+                        restored_meta,
+                        saved.get("tickers", []),
+                        mode=saved.get("consensus", {}).get("mode", ""),
                     )
+                    self.trade_ready_tickers[market] = list(self.selection_meta[market].get("trade_ready") or [])
                     self.today_judgment["selection_meta"] = self.selection_meta[market]
                     self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
+                    self._restore_runtime_overrides_from_payload(market, saved)
                     judgments = saved["judgments"]
-                    consensus = saved["consensus"]
+                    consensus = self._apply_consensus_guards(
+                        market,
+                        judgments,
+                        saved["consensus"],
+                        source="session_reuse_live",
+                    )
+                    self.today_judgment["consensus"] = consensus
                     digest_prompt = saved.get("digest_prompt", "")
                     reused = True
                     log.info(f"[재시작 판단 재사용] {today} {market} consensus={consensus['mode']}")
@@ -3717,20 +5211,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "universe_tickers": saved.get("universe_tickers", []),
                         "selection_meta": saved.get("selection_meta", {}),
                         "trade_ready_tickers": saved.get("trade_ready_tickers", []),
+                        "claude_runtime_overrides": saved.get("claude_runtime_overrides", {}),
                         "round1_judgments": saved.get("round1_judgments", {}),
                         "debate_changes": saved.get("debate_changes", []),
                     }
                     self.today_tickers[market] = saved.get("tickers", [])
-                    self.selection_meta[market] = saved.get("selection_meta", {}) or {}
-                    self.trade_ready_tickers[market] = (
-                        saved.get("trade_ready_tickers")
-                        or self.selection_meta[market].get("trade_ready")
-                        or saved.get("tickers", [])[:10]
+                    restored_meta = dict(saved.get("selection_meta", {}) or {})
+                    if saved.get("trade_ready_tickers") and not restored_meta.get("trade_ready"):
+                        restored_meta["trade_ready"] = list(saved.get("trade_ready_tickers") or [])
+                    self.selection_meta[market] = self._normalize_selection_meta_runtime(
+                        market,
+                        restored_meta,
+                        saved.get("tickers", []),
+                        mode=saved.get("consensus", {}).get("mode", ""),
                     )
+                    self.trade_ready_tickers[market] = list(self.selection_meta[market].get("trade_ready") or [])
                     self.today_judgment["selection_meta"] = self.selection_meta[market]
                     self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
+                    self._restore_runtime_overrides_from_payload(market, saved)
                     judgments = saved["judgments"]
-                    consensus = saved["consensus"]
+                    consensus = self._apply_consensus_guards(
+                        market,
+                        judgments,
+                        saved["consensus"],
+                        source="session_reuse_legacy",
+                    )
+                    self.today_judgment["consensus"] = consensus
                     digest_prompt = saved.get("digest_prompt", "")
                     reused = True
                     log.info(f"[session reuse fallback] {today} {market} consensus={consensus['mode']}")
@@ -3746,7 +5252,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             _shared = shared_judgment_cache.load(market, today)
             if _shared:
                 judgments = _shared["judgments"]
-                consensus = _shared["consensus"]
+                consensus = self._apply_consensus_guards(
+                    market,
+                    judgments,
+                    _shared["consensus"],
+                    source="shared_cache",
+                )
                 _from_shared_cache = True
                 log.info(
                     f"[공유판단캐시] {today} {market} consensus={consensus['mode']} "
@@ -3764,12 +5275,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 brain_summary = BrainDB.generate_prompt_summary(market)
                 brain_data = BrainDB.load()
                 correction = json.dumps(brain_data.get("correction_guide", {}).get(market, {}), ensure_ascii=False)
+                lesson_context = self._load_lesson_candidate_summary(market)
                 judgments = get_three_judgments(
                     digest_prompt, brain_summary, correction,
                     market=market,
+                    lesson_context=lesson_context,
                     portfolio_info=self._build_portfolio_info(),
                 )
-                consensus = build_consensus(judgments, market=market)
+                consensus = self._apply_consensus_guards(
+                    market,
+                    judgments,
+                    build_consensus(judgments, market=market),
+                    source="session_open",
+                )
 
             # ── VIX 동적 사이즈 보정 (US 전용, 항상 최신 digest 기준) ─────────
             if market == "US":
@@ -3805,16 +5323,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             # 오늘 집중 종목: 스크리너 → 히스토리 필터 → Claude 선택
             log.info(f"[스크리너] {market} 시장 스캔 중...")
             if market == "KR":
-                candidates = screen_market_kr(self.token, mode=consensus.get("mode", "NEUTRAL"))
+                candidates = self._screen_market_candidates("KR", consensus.get("mode", "NEUTRAL"))
                 if candidates:
                     self._last_kr_candidates = candidates
             else:
-                candidates = screen_market_us(mode=consensus.get("mode", "NEUTRAL"))
+                candidates = self._screen_market_candidates("US", consensus.get("mode", "NEUTRAL"))
             self._log_screen_candidates(market, candidates, "session_open")
             candidates = self._prefill_history_sync(candidates, market)
             candidates = self._filter_candidates_by_history(candidates, market)
+            candidates = self._restrict_candidates_to_universe(candidates, universe_tickers)
+            candidates = self._annotate_selection_execution_features(market, candidates, consensus.get("mode", "NEUTRAL"))
+            _intraday_ctx = self._build_intraday_context(market)
+            _lesson_context = self._load_lesson_candidate_summary(market)
             log.info(f"[스크리너] {market} 후보 {len(candidates)}개 → Claude 선택 중...")
             selected, sel_reasons = select_tickers(market, digest_prompt, consensus["mode"], candidates,
+                                                    lesson_context=_lesson_context,
+                                                    intraday_context=_intraday_ctx,
                                                     market_change_pct=self._get_market_change_pct(market, digest),
                                                     secondary_change_pct=self._get_secondary_change_pct(market, digest))
             sel_meta = self._apply_selection_meta(market, selected)
@@ -3865,6 +5389,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "digest_raw": digest,          # VIX 등 원본 데이터 재판단 경로에서 참조
                 "tickers": selected,
                 "selection_meta": sel_meta,
+                "selection_stages": self.selection_stages.get(market, {}),
                 "trade_ready_tickers": sel_meta.get("trade_ready", []),
                 "universe_tickers": [c.get("ticker") for c in candidates if c.get("ticker")],
                 "round1_judgments": debate_meta.get("r1", {}),
@@ -3872,6 +5397,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             }
 
             # ── 신규 생성 판단을 공유 캐시에 저장 (상대 프로세스가 재사용) ──────
+            self._restore_runtime_overrides_from_payload(
+                market,
+                _shared if _from_shared_cache else self.today_judgment,
+            )
             if not _from_shared_cache:
                 shared_judgment_cache.save(market, today, self.today_judgment)
         else:
@@ -3879,16 +5408,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             # (reused=True 시 전날 저장된 종목이 그대로 고정되는 문제 방지)
             log.info(f"[종목 재스크리닝] {market} 판단 재사용 + 종목만 새로 선택 (mode={consensus['mode']})")
             if market == "KR":
-                fresh_candidates = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                fresh_candidates = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                 if fresh_candidates:
                     self._last_kr_candidates = fresh_candidates
             else:
-                fresh_candidates = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                fresh_candidates = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
             if fresh_candidates:
                 self._log_screen_candidates(market, fresh_candidates, "session_reuse_rescreen")
                 fresh_candidates = self._prefill_history_sync(fresh_candidates, market)
                 fresh_candidates = self._filter_candidates_by_history(fresh_candidates, market)
+                fresh_candidates = self._restrict_candidates_to_universe(
+                    fresh_candidates,
+                    (self.today_universe.get(market) or {}).get("tickers")
+                    or self.today_judgment.get("universe_tickers", []),
+                )
+                fresh_candidates = self._annotate_selection_execution_features(market, fresh_candidates, consensus.get("mode", "NEUTRAL"))
+                _fresh_intraday_ctx = self._build_intraday_context(market)
+                _fresh_lesson_context = self._load_lesson_candidate_summary(market)
                 fresh_selected, fresh_reasons = select_tickers(market, digest_prompt, consensus["mode"], fresh_candidates,
+                                                               lesson_context=_fresh_lesson_context,
+                                                               intraday_context=_fresh_intraday_ctx,
                                                                market_change_pct=self._get_market_change_pct(market),
                                                                secondary_change_pct=self._get_secondary_change_pct(market))
                 fresh_meta = self._apply_selection_meta(market, fresh_selected)
@@ -4361,7 +5900,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "ticker":       ticker_,
                 "is_simulated": 1 if self.is_paper else 0,
                 "data_source":  "paper" if self.is_paper else "live",
-                "session_date": _market_session_date(market).isoformat(),
+                "session_date": self._current_session_date_str(market),
                 "mode":         mode,
                 "mode_score":   self.today_judgment.get("consensus", {}).get("score"),
                 "bull_stance":  _jb.get("stance", "NEUTRAL"),
@@ -4430,6 +5969,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
 
         # 분석가 평균 confidence 계산 — 신뢰도 낮으면 신규 진입 차단
+        log.info(f"[runtime gates {market}] source=run_cycle {self._runtime_gate_state_text(market)}")
         _judgments = self.today_judgment.get("judgments", {})
         _avg_conf = (
             sum(_judgments.get(a, {}).get("confidence", 0.5) for a in ("bull", "bear", "neutral")) / 3.0
@@ -4474,7 +6014,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "gap_pullback",
                 "momentum",
                 "mean_reversion",
-                "volatility_breakout",
             ]
             if _voted_strat and _voted_strat in _kr_base:
                 _kr_strat_list = [_voted_strat] + [s for s in _kr_base if s != _voted_strat]
@@ -4745,6 +6284,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     log.debug(f"  [{ticker}] 인버스 ETF — 약세 모드 아님({mode}) → 스킵")
                     continue
                 if self._in_entry_blackout(market):
+                    self._bump_runtime_reason(market, ticker, "entry_blackout")
                     log.debug(f"  [{ticker}] 블랙아웃 시간 — 스킵")
                     if _ML_DB_ENABLED:
                         _ml_write_eval(ticker, price, {}, "SKIPPED",
@@ -4756,6 +6296,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
 
                 if self._has_same_day_trade(ticker, market):
+                    self._bump_runtime_reason(market, ticker, "same_day_reentry_blocked")
                     analysis_log.info(
                         f"[skip {market}] {ticker} same_day_reentry_blocked",
                         extra={"extra": {
@@ -5277,7 +6818,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         _day_high = float(price_info.get("high", 0) or 0)
                         _from_high_pct = ((price - _day_high) / _day_high * 100.0) if _day_high > 0 else None
                         return isdb.insert_probe(
-                            session_date=_market_session_date(market).isoformat(),
+                            session_date=self._current_session_date_str(market),
                             market=market,
                             ticker=ticker,
                             strategy_name="opening_range_pullback",
@@ -5313,7 +6854,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "mean_reversion": (mr_sig, mr_p),
                         "volatility_breakout": (vb_sig, vb_p),
                     }
-                    _cont_window_max = float(_ap("continuation").get("cont_entry_max_min", 45) or 45)
+                    _cont_window_max = self._effective_momentum_wait_window(
+                        market,
+                        float(_ap("continuation").get("cont_entry_max_min", 45) or 45),
+                    )
                     for _strat_name in _ticker_kr_strat_list:
                         _sig_fn, _p = _kr_dispatch[_strat_name]
                         if _strat_name == "momentum":
@@ -5328,7 +6872,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             params = _p
                             break
                     # continuation entry — 모든 전략 실패 후 개장 초반 갭 연속 상승 시
-                    if not signal_fired and not self._continuation_used.get(ticker, False):
+                    if (
+                        self.enable_continuation_live
+                        and not signal_fired
+                        and not self._continuation_used.get(ticker, False)
+                    ):
                         _cont_p = _ap("continuation")
                         if cont_sig(sig_df, i, _cont_p):
                             signal_fired = True
@@ -5340,6 +6888,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 f"elapsed={self._market_elapsed_min(market):.1f}min "
                                 f"size_mult={_cont_p.get('size_mult', 0.5)}"
                             )
+                    elif not signal_fired:
+                        _cont_p = _ap("continuation")
+                        if cont_sig(sig_df, i, _cont_p):
+                            self._bump_runtime_reason(market, ticker, "continuation_shadow_only")
+                            analysis_log.info(
+                                f"[shadow {market}] {ticker} continuation",
+                                extra={"extra": {
+                                    "event": "shadow_signal",
+                                    "market": market,
+                                    "ticker": ticker,
+                                    "strategy": "continuation",
+                                    "reason": "continuation_shadow_only",
+                                    "mode": mode,
+                                }},
+                            )
                     if not signal_fired:
                         orp_p = locals().get("orp_p") or _ap("opening_range_pullback")
                         gap_p = locals().get("gap_p") or _ap("gap_pullback")
@@ -5348,7 +6911,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         vb_p = locals().get("vb_p") or _ap("volatility_breakout")
                         _cont_p = locals().get("_cont_p") or _ap("continuation")
                         _kr_md = locals().get("kr_momentum_diag") or {}
-                        _cont_window_max = float(_cont_p.get("cont_entry_max_min", 45) or 45)
+                        _cont_window_max = self._effective_momentum_wait_window(
+                            market,
+                            float(_cont_p.get("cont_entry_max_min", 45) or 45),
+                        )
                         _elapsed_min = self._market_elapsed_min(market)
                         _kr_mom_str = (
                             f"모멘텀: 전략 비활성({market} {mode})"
@@ -5397,7 +6963,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         if (
                             _strat_name == "momentum"
                             and self._market_elapsed_min(market)
-                            < float(_ap("continuation").get("cont_entry_max_min", 45) or 45)
+                            < self._effective_momentum_wait_window(
+                                market,
+                                float(_ap("continuation").get("cont_entry_max_min", 45) or 45),
+                            )
                         ):
                             continue
                         if _sig_fn(sig_df, i, _p):
@@ -5406,7 +6975,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             params = _p
                             break
                     # US continuation entry — 모든 전략 실패 후 개장 초반 갭 연속 상승 시
-                    if not signal_fired and not self._continuation_used.get(ticker, False):
+                    if (
+                        self.enable_continuation_live
+                        and not signal_fired
+                        and not self._continuation_used.get(ticker, False)
+                    ):
                         _us_cont_p = _ap("continuation")
                         if cont_sig(sig_df, i, _us_cont_p):
                             signal_fired = True
@@ -5417,6 +6990,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 f"[continuation entry {market}] {ticker} "
                                 f"elapsed={self._market_elapsed_min(market):.1f}min "
                                 f"size_mult={_us_cont_p.get('size_mult', 0.5)}"
+                            )
+                    elif not signal_fired:
+                        _us_cont_p = _ap("continuation")
+                        if cont_sig(sig_df, i, _us_cont_p):
+                            self._bump_runtime_reason(market, ticker, "continuation_shadow_only")
+                            analysis_log.info(
+                                f"[shadow {market}] {ticker} continuation",
+                                extra={"extra": {
+                                    "event": "shadow_signal",
+                                    "market": market,
+                                    "ticker": ticker,
+                                    "strategy": "continuation",
+                                    "reason": "continuation_shadow_only",
+                                    "mode": mode,
+                                }},
                             )
 
                 # 활성도 추적 — 시장별 인라인 교체 기준으로 활용
@@ -5520,7 +7108,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         )
                         # KR momentum 시간 게이트 — 첫 번째 블록과 동일하게 덮어씌움
                         _kr_elapsed_nd = self._market_elapsed_min(market)
-                        _kr_cont_win_nd = float(_cont_p2.get("cont_entry_max_min", 45) or 45)
+                        _kr_cont_win_nd = self._effective_momentum_wait_window(
+                            market,
+                            float(_cont_p2.get("cont_entry_max_min", 45) or 45),
+                        )
                         if not mom_p.get("disabled") and _kr_elapsed_nd < _kr_cont_win_nd:
                             _mom_detail = f"momentum_wait_window({_kr_elapsed_nd:.0f}m<{_kr_cont_win_nd:.0f}m)"
                         none_detail = " | ".join([
@@ -5539,7 +7130,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         _us_gap_p = _ap("gap_pullback")
                         _us_vb_p = _ap("volatility_breakout")
                         _us_cont_p2 = locals().get("_us_cont_p") or _ap("continuation")
-                        _us_cont_window_max2 = float(_us_cont_p2.get("cont_entry_max_min", 45) or 45)
+                        _us_cont_window_max2 = self._effective_momentum_wait_window(
+                            market,
+                            float(_us_cont_p2.get("cont_entry_max_min", 45) or 45),
+                        )
                         _us_elapsed_min2 = self._market_elapsed_min(market)
                         _us_mom_detail = (
                             f"모멘텀: 전략 비활성({market} {mode})"
@@ -5608,6 +7202,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         none_detail,
                         volume_missing_detected=_vol_missing,
                     )
+                    self._bump_runtime_reason(market, ticker, _rej_reason, bucket="rejection")
                     # 퍼널: rejection_reason / volume_state 누적
                     _f = self._funnel[market]
                     _f["rejection_reasons"][_rej_reason] = _f["rejection_reasons"].get(_rej_reason, 0) + 1
@@ -5684,23 +7279,37 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
                 # HALT/DEFENSIVE: 전 마켓 진입 차단
                 # CAUTIOUS_BEAR 이하: US 신규 진입 차단 (VIX 급등 구간 실증 손실 방지)
+                _risk_off_mr = self._risk_off_mr_exception(
+                    market,
+                    mode,
+                    strategy_name,
+                    sig_df.iloc[i].to_dict(),
+                )
                 _bear_block = mode in ("HALT", "DEFENSIVE")
                 if not _bear_block and market == "US":
                     _US_BEAR_BLOCK_MODES = os.getenv(
                         "US_BEAR_BLOCK_MODES", "HALT,DEFENSIVE,CAUTIOUS_BEAR"
                     ).split(",")
                     _bear_block = mode in _US_BEAR_BLOCK_MODES
+                if _bear_block and _risk_off_mr.get("allowed"):
+                    log.info(
+                        f"  [{ticker}] Risk-Off MR 예외 허용: "
+                        f"mode={mode} size_cap={int(_risk_off_mr.get('size_cap', 40))}%"
+                    )
+                    _bear_block = False
                 if _bear_block:
+                    self._bump_runtime_reason(market, ticker, "blocked_by_mode")
                     analysis_log.info(
                         f"[signal {market}] {ticker} blocked_by_mode",
                         extra={"extra": {
                             "event": "signal_blocked",
-                            "market": market,
-                            "ticker": ticker,
-                            "strategy": strategy_name,
-                            "mode": mode,
-                        }},
-                    )
+                                "market": market,
+                                "ticker": ticker,
+                                "strategy": strategy_name,
+                                "mode": mode,
+                                "detail": _risk_off_mr.get("reason"),
+                            }},
+                        )
                     self._notify_signal_state_change(
                         "signal_blocked", market, ticker,
                         strategy=strategy_name,
@@ -5787,16 +7396,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     _ep_detail = {}
 
                 # ── entry_priority cutoff (Phase 2 — env/텔레그램 ON/OFF) ────
-                if self._is_entry_priority_blocked(_ep_score):
+                _effective_entry_cutoff = self._effective_entry_priority_cutoff(market)
+                if self._is_entry_priority_blocked(_ep_score, market):
                     log.info(
                         f"  [{ticker}] entry_priority cutoff: "
-                        f"score={_ep_score:.3f} < {self.entry_priority_cutoff} → 진입 보류"
+                        f"score={_ep_score:.3f} < {_effective_entry_cutoff:.3f} → 진입 보류"
                     )
                     if _ML_DB_ENABLED:
                         _ml_write_eval(
                             ticker, price, sig_df.iloc[i].to_dict(), "SKIPPED",
                             block_reason_="entry_priority_cutoff",
-                            diag_json_={"score": _ep_score, "cutoff": self.entry_priority_cutoff},
+                            diag_json_={"score": _ep_score, "cutoff": _effective_entry_cutoff},
                             extra_fields_={"entry_priority_score": float(_ep_score)},
                         )
                     continue
@@ -5835,35 +7445,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if risk_price > 0 and atr_val > 0:
                         atr_pct = atr_val / risk_price
 
-                # KR momentum: ATR%가 과도하면 진입 자체를 차단한다.
-                # score >= KR_MOMENTUM_ATR_SCORE_MIN 이면 완화 cap(KR_MOMENTUM_ATR_PCT_HIGH)까지 허용하되
-                # effective_size를 KR_MOMENTUM_ATR_HIGH_SIZE_CAP으로 제한해 리스크를 통제한다.
-                _kr_mom_atr_cap      = float(os.getenv("KR_MOMENTUM_ATR_PCT_MAX",      "0.06") or 0.06)
-                _kr_mom_atr_cap_high = float(os.getenv("KR_MOMENTUM_ATR_PCT_HIGH",     "0.10") or 0.10)
-                _kr_mom_atr_score    = float(os.getenv("KR_MOMENTUM_ATR_SCORE_MIN",    "5.0")  or 5.0)
-                _kr_mom_atr_size_cap =   int(os.getenv("KR_MOMENTUM_ATR_HIGH_SIZE_CAP","50")   or 50)
+                # KR momentum: 기본 cap 초과 구간은 단계형 감액으로 받고,
+                # high cap 초과 구간만 차단한다.
                 _momentum_atr_block  = False
                 _momentum_atr_size_cap = None  # None이면 cap 없음
+                _momentum_atr_stage = None
                 if (
                     market == "KR"
                     and strategy_name == "momentum"
                     and atr_pct is not None
-                    and atr_pct > _kr_mom_atr_cap
+                    and atr_pct > 0
                 ):
-                    if atr_pct <= _kr_mom_atr_cap_high and _ep_score >= _kr_mom_atr_score:
-                        # 완화 허용: size cap 적용
-                        _momentum_atr_size_cap = _kr_mom_atr_size_cap
+                    _momentum_atr_stage = self._effective_kr_momentum_atr_stage(atr_pct)
+                    if not _momentum_atr_stage["blocked"] and _momentum_atr_stage["size_cap"] is not None:
+                        _momentum_atr_size_cap = int(_momentum_atr_stage["size_cap"])
                         log.info(
-                            f"  [{ticker}] KR momentum ATR 완화 허용: "
-                            f"atr_pct={atr_pct:.2%} score={_ep_score:.3f}>={_kr_mom_atr_score} "
-                            f"→ size_cap={_kr_mom_atr_size_cap}%"
+                            f"  [{ticker}] KR momentum ATR 감액: "
+                            f"atr_pct={atr_pct:.2%} "
+                            f"stage={_momentum_atr_stage['stage']} "
+                            f"size_cap={_momentum_atr_size_cap}% "
+                            f"(cap={_momentum_atr_stage['cap']:.2%}, high={_momentum_atr_stage['high_cap']:.2%})"
                         )
-                    else:
+                    elif _momentum_atr_stage["blocked"]:
                         _momentum_atr_block = True
+                        self._bump_runtime_reason(market, ticker, "momentum_atr_too_high")
                         log.info(
                             f"  [{ticker}] KR momentum ATR 차단: "
-                            f"atr_pct={atr_pct:.2%} > {_kr_mom_atr_cap:.2%}"
-                            + (f" (score={_ep_score:.3f} < {_kr_mom_atr_score})" if atr_pct <= _kr_mom_atr_cap_high else "")
+                            f"atr_pct={atr_pct:.2%} > {_momentum_atr_stage['high_cap']:.2%}"
                         )
                         analysis_log.info(
                             f"[skip {market}] {ticker} momentum_atr_too_high",
@@ -5875,7 +7483,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 "strategy": strategy_name,
                                 "price": float(price),
                                 "atr_pct": round(float(atr_pct), 4),
-                                "atr_cap": round(float(_kr_mom_atr_cap), 4),
+                                "atr_cap": round(float(_momentum_atr_stage["cap"]), 4),
+                                "atr_high_cap": round(float(_momentum_atr_stage["high_cap"]), 4),
                                 "mode": mode,
                             }},
                         )
@@ -5883,7 +7492,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             _ml_write_eval(
                                 ticker, price, sig_df.iloc[i].to_dict(), "SKIPPED",
                                 block_reason_="momentum_atr_too_high",
-                                diag_json_={"atr_pct": float(atr_pct), "atr_cap": float(_kr_mom_atr_cap)},
+                                diag_json_={
+                                    "atr_pct": float(atr_pct),
+                                    "atr_cap": float(_momentum_atr_stage["cap"]),
+                                    "atr_high_cap": float(_momentum_atr_stage["high_cap"]),
+                                },
                             )
                 if _momentum_atr_block:
                     continue
@@ -5937,6 +7550,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 effective_size = max(10, min(100, int(size_pct * size_mult)))
                 if _momentum_atr_size_cap is not None:
                     effective_size = min(effective_size, _momentum_atr_size_cap)
+                if _risk_off_mr.get("allowed"):
+                    effective_size = min(effective_size, int(_risk_off_mr.get("size_cap", 40)))
                 _selection_size_cap, _selection_size_reasons = self._selection_size_cap_pct(market, ticker)
                 if _selection_size_cap is not None and effective_size > _selection_size_cap:
                     log.info(
@@ -5992,11 +7607,89 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _sig_at  = datetime.now(KST).isoformat()
                 try:
                     avail = self._market_budget_available(market)
+                    order_budget = self.risk.calc_order_budget(
+                        _s_esz,
+                        atr_pct=_s_atr,
+                        atr_target_pct=self.atr_target_pct,
+                    )
                     qty = self.risk.calc_order_size(
                         _s_rpx, _s_esz, _s_sl,
                         atr_pct=_s_atr, atr_target_pct=self.atr_target_pct,
                     )
+                    order_cost = qty * _s_rpx if qty > 0 else 0.0
+                    is_too_small, min_effective_order = self._is_order_size_too_small(
+                        market,
+                        qty,
+                        order_cost,
+                        order_budget,
+                    )
+                    if is_too_small:
+                        diag = {
+                            "qty": int(qty),
+                            "order_cost_krw": float(order_cost),
+                            "order_budget_krw": float(order_budget),
+                            "min_effective_order_krw": float(min_effective_order),
+                            "effective_size": int(_s_esz),
+                            "atr_pct": float(_s_atr) if _s_atr is not None else None,
+                        }
+                        self._bump_runtime_reason(market, _s_tk, "order_size_too_small")
+                        self._bump_runtime_reason(market, _s_tk, "affordability_fail")
+                        self._record_decision_event(
+                            market,
+                            "buy_skipped",
+                            _s_tk,
+                            strategy=_s_strat,
+                            qty=int(qty),
+                            price_native=float(_s_px),
+                            price_krw=float(_s_rpx),
+                            reason="order_size_too_small",
+                            reason_family="affordability",
+                            detail=(
+                                f"cost={order_cost:,.0f} budget={order_budget:,.0f} "
+                                f"min={min_effective_order:,.0f}"
+                            ),
+                            selected_reason=_s_sr,
+                        )
+                        if _ML_DB_ENABLED:
+                            _ml_write_eval(
+                                _s_tk,
+                                _s_px,
+                                _s_row,
+                                "SKIPPED",
+                                block_reason_="order_size_too_small",
+                                diag_json_=diag,
+                            )
+                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, "order_size_too_small")
+                        analysis_log.info(
+                            f"[skip {market}] {_s_tk} order_size_too_small",
+                            extra={"extra": {
+                                "event": "entry_skip", "market": market, "ticker": _s_tk,
+                                "reason": "order_size_too_small", "strategy": _s_strat,
+                                "mode": mode, "price": _s_px, "risk_price_krw": _s_rpx,
+                                **diag,
+                            }},
+                        )
+                        log.info(
+                            f"  [{_s_tk}] order_size_too_small "
+                            f"({order_cost:,.0f}원 < {min_effective_order:,.0f}원, "
+                            f"budget={order_budget:,.0f}원) - skip"
+                        )
+                        continue
                     if qty <= 0:
+                        self._bump_runtime_reason(market, _s_tk, "affordability_fail")
+                        self._record_decision_event(
+                            market,
+                            "buy_skipped",
+                            _s_tk,
+                            strategy=_s_strat,
+                            qty=0,
+                            price_native=float(_s_px),
+                            price_krw=float(_s_rpx),
+                            reason="qty_zero",
+                            reason_family="affordability",
+                            detail="risk engine returned zero quantity",
+                            selected_reason=_s_sr,
+                        )
                         if _ML_DB_ENABLED:
                             _ml_write_eval(_s_tk, _s_px, _s_row, "SKIPPED",
                                            block_reason_="qty_zero",
@@ -6004,8 +7697,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, "qty_zero")
                         log.debug(f"  [{_s_tk}] 주문가능 수량 0주")
                         continue
-                    order_cost = qty * _s_rpx
                     if order_cost > avail:
+                        self._bump_runtime_reason(market, _s_tk, "affordability_fail")
+                        self._record_decision_event(
+                            market,
+                            "buy_skipped",
+                            _s_tk,
+                            strategy=_s_strat,
+                            qty=int(qty),
+                            price_native=float(_s_px),
+                            price_krw=float(_s_rpx),
+                            reason="market_budget_exceeded",
+                            reason_family="affordability",
+                            detail=f"cost={order_cost:,.0f} available={avail:,.0f}",
+                            selected_reason=_s_sr,
+                        )
                         if _ML_DB_ENABLED:
                             _ml_write_eval(_s_tk, _s_px, _s_row, "SKIPPED",
                                            block_reason_="market_budget_exceeded",
@@ -6014,6 +7720,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         log.debug(f"  [{_s_tk}] 시장 예산 초과 ({order_cost:,.0f}원 > {avail:,.0f}원) → 스킵")
                         continue
                     if order_cost > self.risk.cash:
+                        self._bump_runtime_reason(market, _s_tk, "affordability_fail")
+                        self._record_decision_event(
+                            market,
+                            "buy_skipped",
+                            _s_tk,
+                            strategy=_s_strat,
+                            qty=int(qty),
+                            price_native=float(_s_px),
+                            price_krw=float(_s_rpx),
+                            reason="insufficient_cash",
+                            reason_family="affordability",
+                            detail=f"cost={order_cost:,.0f} cash={self.risk.cash:,.0f}",
+                            selected_reason=_s_sr,
+                        )
                         if _ML_DB_ENABLED:
                             _ml_write_eval(_s_tk, _s_px, _s_row, "SKIPPED",
                                            block_reason_="insufficient_cash",
@@ -6239,12 +7959,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         # 50% 사이즈 적용
                         _t2_size = max(10, int(size_pct * TIER2_SIZE_RATIO))
                         _t2_sl, _t2_tp = 0.025, 0.05  # Tier2 고정 SL 2.5% / TP 5%
+                        _t2_budget = self.risk.calc_order_budget(_t2_size)
                         _t2_qty = self.risk.calc_order_size(
                             _t2_risk_price, _t2_size, _t2_sl
                         )
+                        _t2_cost = _t2_qty * _t2_risk_price if _t2_qty > 0 else 0.0
+                        _t2_small, _t2_min = self._is_order_size_too_small("US", _t2_qty, _t2_cost, _t2_budget)
+                        if _t2_small:
+                            self._bump_runtime_reason("US", _t2_ticker, "order_size_too_small")
+                            analysis_log.info(
+                                f"[skip US] {_t2_ticker} order_size_too_small",
+                                extra={"extra": {
+                                    "event": "entry_skip", "market": "US", "ticker": _t2_ticker,
+                                    "reason": "order_size_too_small", "strategy": "sector_play",
+                                    "mode": mode, "price": _t2_price, "risk_price_krw": _t2_risk_price,
+                                    "qty": int(_t2_qty), "order_cost_krw": float(_t2_cost),
+                                    "order_budget_krw": float(_t2_budget),
+                                    "min_effective_order_krw": float(_t2_min),
+                                }},
+                            )
+                            log.info(
+                                f"  [Tier2] {_t2_ticker} order_size_too_small "
+                                f"({_t2_cost:,.0f}원 < {_t2_min:,.0f}원, budget={_t2_budget:,.0f}원) - skip"
+                            )
+                            continue
                         if _t2_qty <= 0:
                             continue
-                        _t2_cost = _t2_qty * _t2_risk_price
                         if _t2_cost > self.risk.cash:
                             log.debug(f"  [Tier2] {_t2_ticker} 현금 부족 ({_t2_cost:,.0f}원)")
                             continue
@@ -6334,9 +8074,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         self.risk.update_prices(self.price_cache, self.price_cache_raw)
                         _t2_size = max(10, int(size_pct * TIER2_SIZE_RATIO))
                         _t2_sl, _t2_tp = 0.025, 0.05
+                        _t2_budget = self.risk.calc_order_budget(_t2_size)
                         _t2_qty = self.risk.calc_order_size(
                             _t2_risk_price, _t2_size, _t2_sl
                         )
+                        _t2_cost = _t2_qty * _t2_risk_price if _t2_qty > 0 else 0.0
+                        _t2_small, _t2_min = self._is_order_size_too_small("KR", _t2_qty, _t2_cost, _t2_budget)
+                        if _t2_small:
+                            self._bump_runtime_reason("KR", _t2_ticker, "order_size_too_small")
+                            analysis_log.info(
+                                f"[skip KR] {_t2_ticker} order_size_too_small",
+                                extra={"extra": {
+                                    "event": "entry_skip", "market": "KR", "ticker": _t2_ticker,
+                                    "reason": "order_size_too_small", "strategy": "kr_sector_play",
+                                    "mode": mode, "price": _t2_risk_price, "risk_price_krw": _t2_risk_price,
+                                    "qty": int(_t2_qty), "order_cost_krw": float(_t2_cost),
+                                    "order_budget_krw": float(_t2_budget),
+                                    "min_effective_order_krw": float(_t2_min),
+                                }},
+                            )
+                            log.info(
+                                f"  [KR Tier2] {_t2_ticker} order_size_too_small "
+                                f"({_t2_cost:,.0f}원 < {_t2_min:,.0f}원, budget={_t2_budget:,.0f}원) - skip"
+                            )
+                            continue
                         if _t2_qty <= 0:
                             continue
                         _t2_result = place_order(
@@ -6445,9 +8206,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 for p in self.risk.positions
             ],
             "alerts": [],
+            "runtime_overrides": self._runtime_overrides(market),
+            "execution_profile": self._build_execution_profile_text(
+                market,
+                (self.today_judgment.get("consensus", {}) or {}).get("mode", "NEUTRAL"),
+            ),
+            "ops_review_context": self._format_ops_review_context(market),
         }
         brain_summary = BrainDB.generate_prompt_summary(market)
         result = tune(market, elapsed, current_state, self.today_judgment, brain_summary)
+        runtime_override_changes = self._apply_runtime_tuning_adjustments(market, result)
+        log.info(f"[runtime gates {market}] source=tuning_{elapsed}m {self._runtime_gate_state_text(market)}")
 
         action = result.get("action", "MAINTAIN")
         if action != "MAINTAIN":
@@ -6468,14 +8237,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 try:
                     log.info(f"[튜너 종목갱신] {old_mode}→{new_mode} 모드 변경 → 종목 재선택")
                     if market == "KR":
-                        tune_cands = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                        tune_cands = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     else:
-                        tune_cands = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                        tune_cands = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     if tune_cands:
                         self._log_screen_candidates(market, tune_cands, "tuning_rescreen")
                         tune_cands = self._filter_candidates_by_history(tune_cands, market)
+                        tune_cands = self._restrict_candidates_to_universe(
+                            tune_cands,
+                            (self.today_universe.get(market) or {}).get("tickers")
+                            or self.today_judgment.get("universe_tickers", []),
+                        )
+                        tune_cands = self._annotate_selection_execution_features(market, tune_cands, new_mode)
                         digest_p = self.today_judgment.get("digest_prompt", "")
+                        _tune_intraday_ctx = self._build_intraday_context(market)
+                        _tune_lesson_context = self._load_lesson_candidate_summary(market)
                         tune_tickers, tune_reasons = select_tickers(market, digest_p, new_mode, tune_cands,
+                                                                    lesson_context=_tune_lesson_context,
+                                                                    intraday_context=_tune_intraday_ctx,
                                                                     market_change_pct=self._get_market_change_pct(market),
                                                                     secondary_change_pct=self._get_secondary_change_pct(market))
                         tune_meta = self._apply_selection_meta(market, tune_tickers)
@@ -6539,6 +8318,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 log.info(f"[튜닝 {elapsed}분] MAINTAIN — 텔레그램 스킵")
 
         # 세션 이벤트 기록 (파인튜닝 데이터 — MAINTAIN 포함 전체 기록)
+        if action == "MAINTAIN" and runtime_override_changes:
+            self._persist_live_judgment(market)
+            self._maybe_push_dashboard(force=True)
+
         self._session_events.append({
             "type":    "tuning",
             "elapsed": elapsed,
@@ -6547,6 +8330,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "reason":  result.get("reason", ""),
             "warning": result.get("warning"),
             "index_change": current_state.get("index_change", 0),
+            "runtime_override_changes": runtime_override_changes,
+            "runtime_overrides": self._runtime_overrides(market),
         })
 
         # ── 긴급 재판단 조건 체크 ──────────────────────────────────────────────
@@ -6792,20 +8577,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
         def _score(t: str) -> float:
             """높을수록 교체 우선 (무신호 지속 + invalid price 누적)"""
-            if t in protected:
-                return -999
-            score = (
-                self._ticker_no_signal_cycles.get(t, 0)
-                + self._invalid_price_count.get(t, 0) * 2
-            )
-            bucket = self._watch_only_bucket(market, t)
-            if bucket == "HARD":
-                score += 4
-            elif bucket == "SOFT":
-                score -= 2
-            elif bucket == "RECOVERY":
-                score -= 4
-            return score
+            return self._partial_replace_score(market, t, protected)
 
         non_protected = [t for t in current_tickers if t not in protected]
         if not non_protected:
@@ -6822,9 +8594,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 새 후보 스크리닝 + 히스토리 필터
         try:
             if market == "KR":
-                new_cands = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                new_cands = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
             else:
-                new_cands = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                new_cands = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
         except Exception as e:
             log.warning(f"[부분교체] {market} 스크리닝 실패: {e}")
             return
@@ -6846,13 +8618,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
         mode = self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL")
         digest_p = self.today_judgment.get("digest_prompt", "")
-        new_selected, new_reasons = select_tickers(market, digest_p, mode, new_cands[:20],
+        new_cands = self._annotate_selection_execution_features(market, new_cands, mode)
+        _partial_intraday_ctx = self._build_intraday_context(market)
+        _partial_lesson_context = self._load_lesson_candidate_summary(market)
+        new_selected, new_reasons = select_tickers(market, digest_p, mode, new_cands,
+                                                    lesson_context=_partial_lesson_context,
+                                                    intraday_context=_partial_intraday_ctx,
                                                     market_change_pct=self._get_market_change_pct(market),
                                                     secondary_change_pct=self._get_secondary_change_pct(market))
 
         new_meta = get_last_selection_meta() or {}
         candidate_trade_ready = self._selection_replace_candidates(new_meta, new_selected)
-        replace_in = [t for t in candidate_trade_ready if t not in set(current_tickers)][:n_replace]
+        candidate_map = {
+            (str(c.get("ticker", "")).upper() if market == "US" else str(c.get("ticker", ""))): c
+            for c in new_cands
+            if c.get("ticker")
+        }
+        replace_in = self._pick_partial_replace_in(
+            market,
+            replace_out,
+            [t for t in candidate_trade_ready if t not in set(current_tickers)],
+            new_meta,
+            candidate_map,
+            n_replace,
+        )
         if replace_in:
             try:
                 _pr_date = datetime.now(KST).strftime("%Y-%m-%d")
@@ -6885,11 +8674,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "recommended_strategy": new_meta.get("recommended_strategy", {}),
             "max_position_pct": new_meta.get("max_position_pct", {}),
         }
+        final_meta = self._normalize_selection_meta_runtime(market, final_meta, final, mode=mode)
         self.selection_meta[market] = final_meta
-        self.trade_ready_tickers[market] = final_ready
+        self.trade_ready_tickers[market] = list(final_meta.get("trade_ready") or [])
         self.today_ticker_reasons[market] = final_meta["reasons"]
         self.today_judgment["selection_meta"] = final_meta
-        self.today_judgment["trade_ready_tickers"] = final_ready
+        self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
 
         # 교체된 종목 쿨다운 등록 (60분)
         for t in replace_out:
@@ -6975,11 +8765,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
 
             portfolio_info = self._build_portfolio_info()
+            lesson_context = self._load_lesson_candidate_summary(market)
             new_judgments = get_three_judgments(
                 digest_prompt, brain_summary, correction,
-                market=market, portfolio_info=portfolio_info,
+                market=market, lesson_context=lesson_context, portfolio_info=portfolio_info,
             )
-            new_consensus = build_consensus(new_judgments, market=market)
+            new_consensus = self._apply_consensus_guards(
+                market,
+                new_judgments,
+                build_consensus(new_judgments, market=market),
+                source=f"reinvoke:{trigger}",
+            )
 
             # VIX 동적 사이즈 보정 (재판단 경로)
             if market == "US":
@@ -7045,9 +8841,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 try:
                     log.info(f"[종목 재선택] 모드 변경({old_mode}→{new_consensus['mode']}) → 종목 갱신 시작")
                     if market == "KR":
-                        reinvoke_cands = screen_market_kr(self.token, mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                        reinvoke_cands = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     else:
-                        reinvoke_cands = screen_market_us(mode=self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                        reinvoke_cands = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     if reinvoke_cands:
                         self._log_screen_candidates(market, reinvoke_cands, "analyst_reinvoke_rescreen")
                         reinvoke_cands = self._filter_candidates_by_history(reinvoke_cands, market)
@@ -7055,8 +8851,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         reinvoke_cands = [c for c in reinvoke_cands
                                           if c.get("ticker") not in _ri_cooldown]
                         digest_p = self.today_judgment.get("digest_prompt", "")
+                        reinvoke_cands = self._annotate_selection_execution_features(market, reinvoke_cands, new_consensus["mode"])
+                        _reinvoke_intraday_ctx = self._build_intraday_context(market)
+                        _reinvoke_lesson_context = self._load_lesson_candidate_summary(market)
                         new_tickers, new_ticker_reasons = select_tickers(market, digest_p,
                                                      new_consensus["mode"], reinvoke_cands,
+                                                     lesson_context=_reinvoke_lesson_context,
+                                                     intraday_context=_reinvoke_intraday_ctx,
                                                      market_change_pct=self._get_market_change_pct(market),
                                                      secondary_change_pct=self._get_secondary_change_pct(market))
                         reinvoke_meta = self._apply_selection_meta(market, new_tickers)
@@ -7143,6 +8944,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "price_native": float(kwargs.get("price_native", 0) or 0),
             "price_krw": float(kwargs.get("price_krw", 0) or 0),
             "reason": kwargs.get("reason", ""),
+            "reason_family": kwargs.get("reason_family", ""),
             "detail": kwargs.get("detail", ""),
             "order_no": kwargs.get("order_no", ""),
             "pnl_krw": float(kwargs.get("pnl_krw", 0) or 0),
@@ -7567,6 +9369,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not self.today_judgment.get("judgments"):
             log.info(f"[{market}] 오늘 판단 없음 — postmortem 생략")
             pm = {}
+            judgment_eval = {}
         else:
             pm = run_postmortem(
                 market,
@@ -7577,6 +9380,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 trade_log=session_trades,   # 해당 시장 체결 내역만 전달
                 decision_event_log=[e for e in self.decision_event_log if e.get("market") == market],
             )
+        if self.today_judgment.get("judgments"):
+            judgment_eval = build_judgment_eval(
+                self.today_judgment.get("judgments", {}),
+                self.today_judgment.get("consensus", {}),
+                actual.get("market_change"),
+            )
+        self.today_judgment["judgment_eval"] = judgment_eval
+        ops_review_snapshot = self._build_ops_review_snapshot(
+            market,
+            current_record={
+                "date": today,
+                "market": market,
+                "judgment_eval": judgment_eval,
+                "actual_result": actual,
+            },
+        )
+        self.today_judgment["ops_review_snapshot"] = ops_review_snapshot
+        lesson_candidates = self._persist_lesson_candidates(market, ops_review_snapshot)
+        self._persist_live_judgment(market)
+        _ops_metrics = ops_review_snapshot.get("metrics", {})
+        log.info(
+            f"[ops review {market}] "
+            f"hit={(_ops_metrics.get('consensus_directional_hit_rate') or {}).get('value', 'N/A')}% "
+            f"gap={(_ops_metrics.get('best_analyst_minus_consensus_hit_gap') or {}).get('value', 'N/A')}pp "
+            f"tr_conv={(_ops_metrics.get('trade_ready_signal_conversion') or {}).get('value', 'N/A')}% "
+            f"watch_miss={(_ops_metrics.get('watch_only_missed_runup_ratio') or {}).get('value', 'N/A')}%"
+        )
+        log.info(f"[lesson candidates {market}] {len(lesson_candidates)}개")
         for event in [e for e in self.decision_event_log if e.get("market") == market]:
             try:
                 BrainDB.update_execution_pattern(market, event)
@@ -7591,6 +9422,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "actual_result": actual,
                 "execution_health": execution_health,
                 "consensus": self.today_judgment.get("consensus", {}),
+                "judgment_eval": judgment_eval,
+                "ops_review_snapshot": ops_review_snapshot,
                 "postmortem": pm,
                 "trades": session_trades,
             }},
@@ -7603,6 +9436,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                             # round1_judgments, debate_changes 포함
             "actual_result":  actual,
             "execution_health": execution_health,
+            "judgment_eval": judgment_eval,
+            "ops_review_snapshot": ops_review_snapshot,
             "postmortem":     pm,
             "trades":         session_trades,
             "decision_events": [e for e in self.decision_event_log if e.get("market") == market],

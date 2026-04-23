@@ -359,6 +359,216 @@ def _yf_earnings_date(symbol: str) -> str:
     return ""
 
 
+_PEAD_PROMPT_INCLUDE_SURPRISE = False
+
+
+def _safe_float_or_none(value) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(parsed):
+        return None
+    return parsed
+
+
+def _normalize_date_str(value) -> str:
+    if value is None:
+        return ""
+    try:
+        ts = pd.Timestamp(value)
+    except Exception:
+        return ""
+    if pd.isna(ts):
+        return ""
+    return str(ts.date())
+
+
+def _business_day_distance(base_date: str, event_date: str) -> Optional[int]:
+    try:
+        start = pd.Timestamp(base_date).normalize()
+        end = pd.Timestamp(event_date).normalize()
+    except Exception:
+        return None
+    if pd.isna(start) or pd.isna(end):
+        return None
+    if start == end:
+        return 0
+    if start < end:
+        return len(pd.bdate_range(start, end)) - 1
+    return -(len(pd.bdate_range(end, start)) - 1)
+
+
+def _classify_earnings_window(target_date: str, event_date: str) -> str:
+    diff = _business_day_distance(target_date, event_date)
+    if diff is None:
+        return "none"
+    if diff == 0:
+        return "today"
+    if 0 < diff <= 5:
+        return "pre"
+    days_since = abs(diff)
+    if diff < 0 and days_since <= 1:
+        return "post_1"
+    if diff < 0 and days_since <= 3:
+        return "post_3"
+    if diff < 0 and days_since <= 10:
+        return "post_10"
+    return "none"
+
+
+def _classify_surprise(actual: Optional[float], estimate: Optional[float]) -> tuple[str, str]:
+    if actual is None or estimate is None or estimate == 0:
+        return "unknown", "unknown"
+    ratio = (actual - estimate) / abs(estimate)
+    if ratio > 0.03:
+        sign = "beat"
+    elif ratio < -0.03:
+        sign = "miss"
+    else:
+        sign = "inline"
+    magnitude = abs(ratio)
+    if magnitude < 0.05:
+        strength = "small"
+    elif magnitude < 0.15:
+        strength = "medium"
+    else:
+        strength = "large"
+    return sign, strength
+
+
+def _ticker_symbol_candidates(market: str, ticker: str) -> list[str]:
+    raw = str(ticker or "").strip().upper()
+    if not raw:
+        return []
+    if market == "KR" and raw.isdigit():
+        return [f"{raw}.KS", f"{raw}.KQ", raw]
+    return [raw]
+
+
+def _load_yf_earnings_events(symbol: str) -> list[dict]:
+    if not _YF_OK:
+        return []
+    try:
+        import logging as _logging
+        _logging.getLogger("yfinance").setLevel(_logging.CRITICAL)
+        table = getattr(yf.Ticker(symbol), "earnings_dates", None)
+        if table is None or not hasattr(table, "iterrows") or table.empty:
+            return []
+        events: list[dict] = []
+        columns = {str(col).strip().lower(): col for col in table.columns}
+        estimate_col = columns.get("eps estimate")
+        reported_col = columns.get("reported eps")
+        for idx, row in table.iterrows():
+            event_date = _normalize_date_str(idx)
+            if not event_date:
+                continue
+            events.append(
+                {
+                    "event_date": event_date,
+                    "eps_estimate": _safe_float_or_none(row.get(estimate_col)) if estimate_col else None,
+                    "reported_eps": _safe_float_or_none(row.get(reported_col)) if reported_col else None,
+                }
+            )
+        events.sort(key=lambda item: item["event_date"])
+        return events
+    except Exception:
+        return []
+
+
+def _pick_relevant_earnings_event(target_date: str, events: list[dict]) -> Optional[dict]:
+    if not events:
+        return None
+    target_ts = pd.Timestamp(target_date).normalize()
+    post_candidates: list[tuple[int, dict]] = []
+    pre_candidates: list[tuple[int, dict]] = []
+    for event in events:
+        event_date = str(event.get("event_date", "") or "")
+        window = _classify_earnings_window(target_date, event_date)
+        if window == "none":
+            continue
+        event_ts = pd.Timestamp(event_date).normalize()
+        distance = abs(_business_day_distance(target_date, event_date) or 0)
+        if event_ts <= target_ts:
+            post_candidates.append((distance, event))
+        else:
+            pre_candidates.append((distance, event))
+    if post_candidates:
+        post_candidates.sort(key=lambda item: item[0])
+        return post_candidates[0][1]
+    if pre_candidates:
+        pre_candidates.sort(key=lambda item: item[0])
+        return pre_candidates[0][1]
+    return None
+
+
+def _build_earnings_event_payload(
+    market: str,
+    ticker: str,
+    target_date: str,
+    include_surprise: bool = False,
+) -> dict:
+    payload = {
+        "earnings_date": "",
+        "earnings_window": "none",
+        "confidence_tier": "low",
+        "surprise_sign": "unknown",
+        "surprise_strength": "unknown",
+        "reported_eps": None,
+        "eps_estimate": None,
+        "pead_bias": "neutral",
+        "prompt_applied": False,
+        "source_symbol": "",
+    }
+
+    fallback_date = ""
+    for symbol in _ticker_symbol_candidates(market, ticker):
+        if not fallback_date:
+            fallback_date = _yf_earnings_date(symbol)
+        events = _load_yf_earnings_events(symbol)
+        event = _pick_relevant_earnings_event(target_date, events)
+        if event is None:
+            continue
+        event_date = str(event.get("event_date", "") or "")
+        payload["earnings_date"] = event_date
+        payload["earnings_window"] = _classify_earnings_window(target_date, event_date)
+        payload["source_symbol"] = symbol
+        payload["confidence_tier"] = "medium"
+        if include_surprise:
+            actual = _safe_float_or_none(event.get("reported_eps"))
+            estimate = _safe_float_or_none(event.get("eps_estimate"))
+            payload["reported_eps"] = actual
+            payload["eps_estimate"] = estimate
+            if actual is not None and estimate is not None:
+                payload["surprise_sign"], payload["surprise_strength"] = _classify_surprise(actual, estimate)
+                payload["confidence_tier"] = "high"
+        break
+
+    if not payload["earnings_date"] and fallback_date:
+        payload["earnings_date"] = fallback_date
+        payload["earnings_window"] = _classify_earnings_window(target_date, fallback_date)
+        payload["confidence_tier"] = "medium"
+
+    window = payload["earnings_window"]
+    sign = payload["surprise_sign"]
+    if window == "pre":
+        payload["pead_bias"] = "pre_earnings_risk"
+    elif window.startswith("post_") or window == "today":
+        if sign == "beat":
+            payload["pead_bias"] = "positive_drift"
+        elif sign == "miss":
+            payload["pead_bias"] = "negative_drift"
+    return payload
+
+
+def _persist_pead_shadow_rows(market: str, target_date: str, rows: list[dict]) -> None:
+    if not rows:
+        return
+    path = get_runtime_path("logs", "pead", f"{target_date}_{market}_shadow.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rows, f, ensure_ascii=False, indent=2)
+
+
 def fetch_live_context_us() -> dict:
     """supplement 파일 없을 때 yfinance로 실시간 시장 지표 수집"""
     if not _YF_OK:
@@ -702,6 +912,8 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         else:
             macd_expanding = None
 
+        earnings_meta = _build_earnings_event_payload("KR", ticker, target_date, include_surprise=False)
+
         layer_b[ticker] = {
             "name":           name,
             "close":          _safe_int(row.get("close", 0)),
@@ -720,6 +932,11 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
             "inst_flow":      _inst,  # None = 데이터 없음
             "short_ratio":    _short, # None = 데이터 없음
             "disclosure":     bool(news.get("disclosures", {}).get(ticker, [])),
+            "earnings_date":  earnings_meta.get("earnings_date", ""),
+            "earnings_window": earnings_meta.get("earnings_window", "none"),
+            "confidence_tier": earnings_meta.get("confidence_tier", "low"),
+            "pead_bias":      earnings_meta.get("pead_bias", "neutral"),
+            "prompt_applied": False,
         }
 
     # ── Layer C: 뉴스 선별 (~200 토큰) ───────────────────────────────────────
@@ -815,6 +1032,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     _vix = supp.get("vix", 0) or 0
     ticker_map = _ticker_map("US", universe_tickers, include_inverse=float(_vix) >= 25)
     layer_b = {}
+    shadow_rows = []
     for ticker, name in ticker_map.items():
         df = load_price_with_cache("US", ticker)
         if df.empty:
@@ -868,7 +1086,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
                          or _yf_premarket(ticker))
 
         # 실적 발표일 (yfinance calendar)
-        earnings_date = _yf_earnings_date(ticker)
+        earnings_meta = _build_earnings_event_payload("US", ticker, target_date, include_surprise=True)
 
         # 감성 점수 (AV에서)
         corp_news  = news.get("corp_news", {}).get(ticker, {})
@@ -888,10 +1106,34 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
             "atr_pct":        atr_pct,       # 변동성 지표
             "trend_5d":       trend_5d,      # 5일 추세 기울기 (%/day)
             "premarket_pct":  premarket_val, # 프리마켓 등락 (%)
-            "earnings_date":  earnings_date, # 다음 실적 발표일
+            "earnings_date":  earnings_meta.get("earnings_date", ""),
+            "earnings_window": earnings_meta.get("earnings_window", "none"),
+            "confidence_tier": earnings_meta.get("confidence_tier", "low"),
+            "surprise_sign":  earnings_meta.get("surprise_sign", "unknown"),
+            "surprise_strength": earnings_meta.get("surprise_strength", "unknown"),
+            "reported_eps":   earnings_meta.get("reported_eps"),
+            "eps_estimate":   earnings_meta.get("eps_estimate"),
+            "pead_bias":      earnings_meta.get("pead_bias", "neutral"),
+            "prompt_applied": bool(_PEAD_PROMPT_INCLUDE_SURPRISE and earnings_meta.get("confidence_tier") == "high"),
             "news_sentiment": round(float(avg_sent), 3),
             "sec_filing":     bool([i for i in news_items if i.get("source") == "SEC EDGAR"]),
         }
+        shadow_rows.append(
+            {
+                "ticker": ticker,
+                "target_date": target_date,
+                "earnings_date": earnings_meta.get("earnings_date", ""),
+                "earnings_window": earnings_meta.get("earnings_window", "none"),
+                "reported_eps": earnings_meta.get("reported_eps"),
+                "eps_estimate": earnings_meta.get("eps_estimate"),
+                "surprise_sign": earnings_meta.get("surprise_sign", "unknown"),
+                "surprise_strength": earnings_meta.get("surprise_strength", "unknown"),
+                "confidence_tier": earnings_meta.get("confidence_tier", "low"),
+                "pead_bias": earnings_meta.get("pead_bias", "neutral"),
+                "prompt_applied": False,
+                "source_symbol": earnings_meta.get("source_symbol", ""),
+            }
+        )
 
     all_news = list(news.get("market_news", []))
     for t in ticker_map:
@@ -918,6 +1160,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     path = DIGEST_DIR / f"{target_date}_US.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(digest, f, ensure_ascii=False, indent=2)
+    _persist_pead_shadow_rows("US", target_date, shadow_rows)
 
     log.info(f"  ✅ US digest 저장: {path.name}")
     return digest
@@ -1078,11 +1321,18 @@ def digest_to_prompt(digest: dict) -> str:
         tr5 = t.get("trend_5d")
         pm  = t.get("premarket_pct")
         ed  = t.get("earnings_date", "")
+        ew  = t.get("earnings_window", "")
+        prompt_applied = bool(t.get("prompt_applied"))
+        surprise_sign = str(t.get("surprise_sign", "") or "")
+        surprise_strength = str(t.get("surprise_strength", "") or "")
         extras = []
         if atr:           extras.append(f"ATR {atr:.1f}%")
         if tr5 is not None and tr5 != 0: extras.append(f"5일추세 {tr5:+.2f}%/일")
         if pm:            extras.append(f"프리마켓 {pm:+.2f}%")
         if ed:            extras.append(f"실적 {ed}")
+        if ew and ew != "none": extras.append(f"실적창 {ew}")
+        if prompt_applied and surprise_sign and surprise_sign != "unknown":
+            extras.append(f"surprise {surprise_sign}/{surprise_strength or 'unknown'}")
         if extras:
             lines.append(f"    {' | '.join(extras)}")
 

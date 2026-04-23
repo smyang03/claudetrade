@@ -1,5 +1,233 @@
 # CLAUDE.md
 
+## PEAD Input Policy (2026-04-24)
+
+- PEAD is an input-quality feature, not a standalone strategy.
+- Do not let PEAD override entry timing, stop-loss, trailing stop, or session-close logic.
+- Keep PEAD event data out of `brain.json`. Store it in digest/candidate metadata and shadow logs only.
+
+### Source Rules
+
+- US:
+  - `earnings_date`: yfinance calendar
+  - `surprise_sign` / `surprise_strength`: yfinance `earnings_dates` using `Reported EPS` and `EPS Estimate`
+- KR:
+  - use `earnings_date` / `earnings_window` first
+  - do not infer EPS beat/miss from Naver news or DART headlines
+  - if structured KR actual/estimate is unavailable, keep `surprise_sign=unknown`
+
+### Trust Tiers
+
+- `high`: actual EPS and estimate both available
+- `medium`: earnings date available, surprise unavailable
+- `low`: news/disclosure only
+
+Only `high` may produce `surprise_sign` / `surprise_strength`.
+`medium` may only produce `earnings_window`.
+`low` must not affect PEAD bias.
+
+### Rollout Rules
+
+- `earnings_date` / `earnings_window`: prompt-visible immediately
+- `surprise_sign` / `surprise_strength`: 5 trading days shadow-only first
+- During shadow:
+  - compute and store values
+  - write logs for manual inspection
+  - do not expose surprise fields to Claude prompts
+
+### Prompt Scope
+
+- Allowed:
+  - watchlist prioritization
+  - trade_ready conviction bias
+  - strategy-fit bias
+- Not allowed:
+  - automatic trade_ready promotion from PEAD alone
+  - entry rule override
+  - exit rule override
+
+### Logging
+
+- Keep US shadow records under runtime logs for 5 trading days.
+- Minimum fields:
+  - ticker
+  - earnings_date
+  - earnings_window
+  - reported_eps
+  - eps_estimate
+  - surprise_sign
+  - surprise_strength
+  - confidence_tier
+  - prompt_applied
+
+## Operations Rules (2026-04-22)
+
+Use adaptive operation, not fast strategy rotation.
+
+### Review metrics
+
+For the rolling 2-week review, track these 10 metrics:
+
+1. consensus directional hit rate
+2. best analyst - consensus hit gap
+3. unanimous mismatch count
+4. trade_ready -> signal_fired conversion
+5. watch_only missed runup ratio
+6. trade_ready forward_3d average
+7. ATR-blocked missed runup
+8. entry_blackout ratio
+9. watch_only blocked ratio
+10. continuation average pnl
+
+Storage contract:
+
+- `1~3`: persisted in each session judgment record as `judgment_eval`
+- `4~10`: persisted or derivable from:
+  - `data/ticker_selection_log.db`
+  - `data/ml/decisions.db`
+- `1~10 aggregate snapshot`: persisted at `session_close` as `ops_review_snapshot`
+  in runtime/live judgment records
+
+### Unanimous override
+
+If all three analysts point to the same directional bucket, final consensus
+must not end on the opposite side.
+
+- all bull -> final consensus cannot be bear/flat
+- all bear -> final consensus cannot be bull/flat
+- all neutral -> final consensus cannot be bull/bear
+
+This is a structural guard, not a tuning rule.
+
+### Claude post-tuning
+
+Claude may only tune bounded runtime controls:
+
+- `momentum_wait_adjust_min`: `-10 .. +10`
+- `entry_priority_cutoff_adjust`: `-0.05 .. +0.05`
+- `kr_momentum_atr_cap_adjust`: `-0.01 .. +0.02`
+- `kr_momentum_atr_cap_high_adjust`: `-0.01 .. +0.02`
+- slot bias / replacement aggressiveness: one-step changes only
+
+Claude must not:
+
+- disable hard safety rules
+- override unanimous direction guards
+- replace market priors with a different strategy philosophy
+
+### Trigger rules
+
+Do not tune every cycle. Tune only at:
+
+- `session_open`
+- scheduled intraday tuning windows
+- explicit event-driven triggers
+
+Event-driven tuning is allowed when one of these conditions is true:
+
+- recent 10-session `trade_ready -> signal_fired` conversion is too low
+  - KR `< 15%`
+  - US `< 10%`
+- recent 10-session `watch_only missed runup ratio >= 30%`
+- recent 10-session `ATR-blocked avg runup >= +4%` with sample `>= 10`
+- recent 10-session `consensus hit rate < 45%`
+- recent 10-session `best analyst - consensus >= 10%p`
+- `unanimous mismatch >= 1`
+
+### Review thresholds
+
+After 2 weeks, modify logic only when thresholds are breached:
+
+- `consensus hit rate < 45%` => review consensus weighting
+- `best analyst - consensus >= 10%p` => review aggregation
+- `unanimous mismatch >= 1` => immediate fix
+- `watch_only missed runup ratio >= 30%` => relax soft promotion rules
+- `trade_ready forward_3d avg <= 0%` => review selection quality
+- `entry_blackout ratio >= 15%` => reduce late-session churn
+- `watch_only blocked ratio >= 25%` => review hard/soft split
+- `continuation avg pnl <= -3%` with trades `>= 5` => reduce continuation usage
+
+### Adaptation principle
+
+- Keep strategy families stable.
+- Adapt slot mix, wait windows, cutoffs, and ATR handling.
+- Apply shrinkage on short windows before changing runtime behavior.
+- KR momentum ATR handling:
+  - `<= cap`: normal
+  - `cap~cap+1%`: size cap `70%`
+  - `cap+1~cap+2%`: size cap `50%`
+  - `cap+2~high_cap`: size cap `35%`
+  - `> high_cap`: block
+- Risk-Off exception:
+  - default: no new entry
+  - exception: `mean_reversion` only
+  - constraints: no `HALT`, one position max per market, no same-day reentry,
+    no panic index move, size cap `40%`
+
+### Candidate funnel (2026-04-23)
+
+Apply expansion only at the front of the funnel. Do not widen `trade_ready`
+or live order concurrency until the new feed proves stable.
+
+- Raw scanner defaults:
+  - KR `80`
+  - US `80`
+- Dynamic universe defaults:
+  - KR `40`
+  - US `40`
+- Claude selection prompt cap:
+  - KR starts at `28`
+  - US stays at `24` until parse stability is confirmed
+- Keep runtime `trade_ready` slot caps unchanged.
+- `low_gap_continuation` is not a standalone live strategy yet.
+  - Use it only as a promotion/support signal first.
+
+### KR screener policy
+
+For KR, candidate expansion must preserve KOSDAQ visibility.
+
+- Do not merge `KOSPI + KOSDAQ` and then blindly truncate.
+- Merge with a minimum KOSDAQ share first, then rank the combined pool.
+- Default KOSDAQ minimum share is `35%`.
+- Environment overrides:
+  - `KR_SCREEN_KOSDAQ_MIN_RATIO`
+  - `KR_SCREEN_KOSDAQ_MIN`
+
+### Screener audit
+
+Before evaluating whether candidate expansion worked, persist raw funnel logs.
+
+- KR screener audit path:
+  - `logs/screener/YYYYMMDD_KR_screen.jsonl`
+- The audit should make these stages inspectable:
+  - KOSPI raw
+  - KOSDAQ raw
+  - merged candidates
+  - post-product-filter candidates
+- Use these logs before changing caps again.
+  - KR prompt cap path: `20 -> 28 -> 32`
+  - Only raise the next step after parse stability is acceptable.
+
+### Deferred Follow-ups
+
+These are intentionally deferred. Do not auto-promote them into live behavior
+until more data is available or a human explicitly approves the change.
+
+- `brain.json` automatic mutation from lesson scoring
+  - keep `lesson_candidates.json` append/score only
+  - promoted memory remains approval-based
+- automatic hard-block generation from short-window evidence
+  - scoring may propose candidates
+  - live hard blocks require human review
+- `low_gap_continuation` live strategy rollout
+  - keep it as observation/promotion support first
+  - only move to live after repeated shadow evidence
+- strategy-level full replacement
+  - avoid swapping strategy philosophy from short windows
+  - prefer shrink/observe over full replacement
+- history auto-fill expansion for repeated insufficient-history names
+  - keep as a later reliability pass, not a live-behavior change
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ---

@@ -23,7 +23,7 @@ MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 # R1 분석가: 비용 절감을 위해 Haiku 사용 (R2 토론은 Sonnet 유지)
 # R1_MODEL 환경변수로 오버라이드 가능 (기본 Haiku 4.5)
 R1_MODEL     = os.getenv("R1_MODEL", "claude-haiku-4-5-20251001")
-STANCES = "AGGRESSIVE|MODERATE_BULL|MILD_BULL|NEUTRAL|MILD_BEAR|CAUTIOUS_BEAR|DEFENSIVE|HALT"
+STANCES = "AGGRESSIVE|MODERATE_BULL|MILD_BULL|CAUTIOUS|NEUTRAL|MILD_BEAR|CAUTIOUS_BEAR|DEFENSIVE|HALT"
 _SELECTION_RECOVERY_FIELDS = (
     "watchlist",
     "trade_ready",
@@ -330,10 +330,180 @@ def _annotate_candidate_prompt_features(candidates: list[dict]) -> list[float]:
     return ranked_turnovers
 
 
+def _mode_family(mode: str) -> str:
+    mode = str(mode or "").upper()
+    if mode in {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL"}:
+        return "RISK_ON"
+    if not mode or mode in {"CAUTIOUS", "NEUTRAL"}:
+        return "BALANCED"
+    return "RISK_OFF"
+
+
+def _selection_slot_plan(consensus_mode: str, market: str = "") -> list[tuple[str, int]]:
+    family = _mode_family(consensus_mode)
+    if family == "RISK_ON":
+        slots = [
+            ("momentum", 2),
+            ("gap_pullback", 2),
+            ("opening_range_pullback", 1),
+            ("mean_reversion", 1),
+        ]
+    elif family == "BALANCED":
+        slots = [
+            ("gap_pullback", 2),
+            ("opening_range_pullback", 1),
+            ("mean_reversion", 1),
+            ("momentum", 1),
+        ]
+    else:
+        slots = [("mean_reversion", 1)]
+    if str(market).upper() == "KR":
+        adjusted = []
+        for name, count in slots:
+            if name == "momentum":
+                count = 1 if family == "RISK_ON" else 0
+            if count > 0:
+                adjusted.append((name, count))
+        return adjusted
+    return slots
+
+
+def _candidate_execution_hint(candidate: dict) -> str:
+    or_state = str(candidate.get("or_state", "") or "").strip()
+    atr_stage = str(candidate.get("atr_stage", "") or "").strip()
+    atr_pct = candidate.get("atr_pct")
+    ep_bucket = str(candidate.get("entry_priority_bucket", "") or "").strip()
+    fit_strategy = str(candidate.get("execution_fit_strategy", "") or "").strip()
+    minutes_to_close = candidate.get("minutes_to_close")
+    blackout = candidate.get("entry_blackout_now")
+
+    parts = []
+    if or_state:
+        parts.append(f"or={or_state}")
+    if atr_stage:
+        if atr_pct is not None:
+            parts.append(f"atr={atr_pct:.1f}%({atr_stage})")
+        else:
+            parts.append(f"atr={atr_stage}")
+    if ep_bucket:
+        parts.append(f"ep={ep_bucket}")
+    if fit_strategy:
+        parts.append(f"fit={fit_strategy}")
+    selection_bias = str(candidate.get("selection_bias", "") or "").strip()
+    if selection_bias:
+        parts.append(f"bias={selection_bias}")
+    if minutes_to_close is not None:
+        parts.append(f"tclose={float(minutes_to_close):.0f}m")
+    if blackout:
+        parts.append("blackout=now")
+    return "exec=" + ",".join(parts) if parts else ""
+
+
+def _candidate_earnings_hint(candidate: dict) -> str:
+    earnings_window = str(candidate.get("earnings_window", "") or "").strip()
+    earnings_date = str(candidate.get("earnings_date", "") or "").strip()
+    prompt_applied = bool(candidate.get("prompt_applied"))
+    surprise_sign = str(candidate.get("surprise_sign", "") or "").strip()
+    surprise_strength = str(candidate.get("surprise_strength", "") or "").strip()
+
+    parts = []
+    if earnings_window and earnings_window != "none":
+        parts.append(f"earn={earnings_window}")
+    elif earnings_date:
+        parts.append(f"earn_date={earnings_date}")
+
+    if prompt_applied and surprise_sign and surprise_sign != "unknown":
+        parts.append(f"surprise={surprise_sign}/{surprise_strength or 'unknown'}")
+    return " ".join(parts)
+
+
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
-    hard_cap = 24 if market == "US" else 18
-    target = max(trade_max + 8, min(watch_max + 4, hard_cap))
+    if market == "US":
+        hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "24"))
+        watch_margin = 4
+    else:
+        hard_cap = int(os.getenv("KR_SELECTION_PROMPT_CAP", "28"))
+        watch_margin = 8
+    target = max(trade_max + 8, min(watch_max + watch_margin, hard_cap))
     return max(trade_max, min(target, hard_cap))
+
+
+def _selection_prompt_diversity_caps(market: str) -> dict[str, int]:
+    if market == "US":
+        return {
+            "category": 3,
+            "sector": 3,
+            "overextended": 3,
+            "low_liquidity": 2,
+        }
+    return {
+        "category": 2,
+        "sector": 2,
+        "overextended": 2,
+        "low_liquidity": 1,
+        "kosdaq": 5,
+    }
+
+
+def _curate_selection_candidates(candidates: list[dict], market: str, prompt_cap: int) -> list[dict]:
+    if len(candidates or []) <= prompt_cap:
+        _annotate_candidate_prompt_features(candidates or [])
+        return list(candidates or [])
+
+    caps = _selection_prompt_diversity_caps(market)
+    _annotate_candidate_prompt_features(candidates or [])
+    chosen: list[dict] = []
+    deferred: list[dict] = []
+    category_counts: dict[str, int] = {}
+    sector_counts: dict[str, int] = {}
+    overextended_count = 0
+    low_liquidity_count = 0
+    kosdaq_count = 0
+
+    for candidate in candidates or []:
+        category = str(candidate.get("category", "") or "").strip().lower()
+        sector = str(candidate.get("sector", "") or "").strip().lower()
+        liquidity_bucket = str(candidate.get("liquidity_bucket", "") or "").strip().lower()
+        from_high_bucket = str(candidate.get("from_high_bucket", "") or "").strip().lower()
+        market_type = str(candidate.get("market_type", "") or "").strip().upper()
+
+        blocked = False
+        if category and category_counts.get(category, 0) >= caps.get("category", prompt_cap):
+            blocked = True
+        if sector and sector_counts.get(sector, 0) >= caps.get("sector", prompt_cap):
+            blocked = True
+        if from_high_bucket in {"at_high", "near_high"} and overextended_count >= caps.get("overextended", prompt_cap):
+            blocked = True
+        if liquidity_bucket == "low" and low_liquidity_count >= caps.get("low_liquidity", prompt_cap):
+            blocked = True
+        if market == "KR" and market_type == "KOSDAQ" and kosdaq_count >= caps.get("kosdaq", prompt_cap):
+            blocked = True
+
+        if blocked:
+            deferred.append(candidate)
+            continue
+
+        chosen.append(candidate)
+        if category:
+            category_counts[category] = category_counts.get(category, 0) + 1
+        if sector:
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if from_high_bucket in {"at_high", "near_high"}:
+            overextended_count += 1
+        if liquidity_bucket == "low":
+            low_liquidity_count += 1
+        if market == "KR" and market_type == "KOSDAQ":
+            kosdaq_count += 1
+        if len(chosen) >= prompt_cap:
+            break
+
+    if len(chosen) < prompt_cap:
+        for candidate in deferred:
+            chosen.append(candidate)
+            if len(chosen) >= prompt_cap:
+                break
+
+    return chosen[:prompt_cap]
 
 
 def _safe_watch_fallback(candidates: list[dict], market: str) -> list[str]:
@@ -569,6 +739,7 @@ def call_analyst(analyst_type: str, digest_prompt: str,
                  brain_summary: str, correction: str,
                  analyst_feedback: str = "",
                  portfolio_info=None,
+                 lesson_context: str = "",
                  market: str = "") -> dict:
     """1라운드 독립 판단"""
     feedback_section = f"\n[나의 과거 실적]\n{analyst_feedback}\n" if analyst_feedback else ""
@@ -591,8 +762,10 @@ def call_analyst(analyst_type: str, digest_prompt: str,
     else:
         portfolio_section = ""
 
+    lesson_section = f"\n[recent lesson candidates]\n{lesson_context[:500]}\n" if lesson_context else ""
+
     prompt = f"""{PERSONAS[analyst_type]}
-{feedback_section}{portfolio_section}
+{feedback_section}{portfolio_section}{lesson_section}
 [데이터 해석 가이드 — 반드시 준수]
 • 코스피: "1d X% / 5d Y%" 형태 — 1d는 전일 대비, 5d는 주간 추세. 둘 다 확인할 것.
 • USD/KRW: "1,465 (1d -0.8%, 5d -3.8%, 20일고점대비 -4.2%)" 형태
@@ -731,6 +904,7 @@ JSON으로만 응답:
 def get_three_judgments(digest_prompt: str, brain_summary: str,
                         correction: str, delay: float = 1.5,
                         market: str = "KR",
+                        lesson_context: str = "",
                         portfolio_info=None) -> dict:
     """
     1라운드 독립 판단 → 2라운드 토론 → 최종 판단
@@ -746,8 +920,16 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
             feedback = BrainDB.generate_analyst_summary(market, atype)
         except Exception:
             feedback = ""
-        r1[atype] = call_analyst(atype, digest_prompt, brain_summary,
-                                 correction, feedback, portfolio_info, market=market)
+        r1[atype] = call_analyst(
+            atype,
+            digest_prompt,
+            brain_summary,
+            correction,
+            feedback,
+            portfolio_info,
+            lesson_context=lesson_context,
+            market=market,
+        )
         time.sleep(delay)
 
     log.info(f"R1 완료 | Bull:{r1['bull']['stance']} "
@@ -814,6 +996,7 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
 
 def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
                    intraday_context: str = "",
+                   lesson_context: str = "",
                    market_change_pct: Optional[float] = None,
                    secondary_change_pct: Optional[float] = None) -> list:
     """
@@ -971,6 +1154,12 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 - trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개까지 선택하세요.
 - 좋은 후보가 부족하면 trade_ready는 0개도 허용됩니다.
 - 파생/레버리지/인버스 ETF, 저유동성, 초과열, 손절폭 과대 후보는 trade_ready에서 제외하세요.
+- trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}
+- trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}
+- Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.
+- Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.
+- Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.
+- Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.
 - Use recent selection feedback to calibrate trade_ready aggressiveness.
 - If a group shows high missed watch_only and today's candidate matches that group, do not leave it watch_only without a clear veto.
 - If a group shows high weak trade_ready, require stronger RS, liquidity, and intraday quality before marking trade_ready.
@@ -1075,6 +1264,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 
 def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
                    intraday_context: str = "",
+                   lesson_context: str = "",
                    market_change_pct: Optional[float] = None,
                    secondary_change_pct: Optional[float] = None) -> list:
     """Claude가 WATCH와 TRADE_READY를 분리 선택한다."""
@@ -1111,7 +1301,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 
     limits = selection_limits(market)
     prompt_cap = _selection_candidate_cap(market, limits["watch_max"], limits["trade_max"])
-    prompt_candidates = candidates[:prompt_cap]
+    prompt_candidates = _curate_selection_candidates(candidates, market, prompt_cap)
     if len(candidates) > len(prompt_candidates):
         log.info(f"[ticker-selection] {market} prompt candidates trimmed: {len(candidates)} -> {len(prompt_candidates)}")
 
@@ -1163,12 +1353,14 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"category={category}" if category else "",
             f"sector={sector}" if sector else "",
             f"liq={liquidity_bucket}",
+            _candidate_earnings_hint(candidate),
             (
                 f"from_high={_safe_float(from_high_pct, 0.0):+.1f}%({from_high_bucket})"
                 if from_high_pct is not None else
                 "from_high=unknown"
             ),
             "ma60=above" if above_ma60 is True else ("ma60=below" if above_ma60 is False else ""),
+            _candidate_execution_hint(candidate),
         ]
         cand_lines.append(" ".join([part for part in parts if part]))
 
@@ -1176,6 +1368,8 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
     n_cands = len([c for c in prompt_candidates if c.get("ticker")])
     watch_max = min(limits["watch_max"], n_cands)
     trade_max = min(limits["trade_max"], n_cands)
+    slot_plan = _selection_slot_plan(consensus_mode, market)
+    slot_text = ", ".join(f"{name}:{count}" for name, count in slot_plan)
 
     intraday_section = f"\n장중 컨텍스트:\n{intraday_context[:400]}\n" if intraday_context else ""
     brain_section = ""
@@ -1215,13 +1409,14 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         log.debug(f"[ticker-selection] tuner context skipped: {_e}")
 
     selection_feedback = _recent_selection_feedback_section(market)
+    lesson_section = f"\n{lesson_context[:500]}\n" if lesson_context else ""
     prompt = f"""오늘 {market} 세션에서 후보를 WATCH와 TRADE_READY로 분리하세요.
 합의 모드: {consensus_mode}
 후보 종목:
 {cand_text}
 
 시장 컨텍스트:
-{digest_prompt[:220]}{intraday_section}{brain_section}{tuner_section}{selection_feedback[:700]}
+{digest_prompt[:220]}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}
 규칙:
 - 후보 종목 중에서만 고르세요.
 - watchlist는 선별 목록입니다. 최대 {watch_max}개, 보통 8~18개 수준으로 제한하세요.
@@ -1245,6 +1440,23 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
   "risk_tags":{{"code1":["tag1"]}},
   "max_position_pct":{{"code1":20}}
 }}"""
+
+    if "slot guide:" not in prompt:
+        prompt = prompt.replace(
+            "- Use recent selection feedback to calibrate trade_ready aggressiveness.",
+            f"- trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}\n"
+            "- Use recent selection feedback to calibrate trade_ready aggressiveness.",
+            1,
+        )
+
+    if "Treat exec= hints" not in prompt:
+        prompt = prompt.replace(
+            "- Use recent selection feedback to calibrate trade_ready aggressiveness.",
+            "- Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.\n"
+            "- Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.\n"
+            "- Use recent selection feedback to calibrate trade_ready aggressiveness.",
+            1,
+        )
 
     fallback_meta = normalize_selection_result(
         {
