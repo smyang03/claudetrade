@@ -3049,88 +3049,96 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as e:
             log.error(f"포지션 복구 실패: {e}")
 
+    def _broker_reconcile_key(self, market: str, ticker: str) -> tuple[str, str]:
+        raw_ticker = str(ticker or "").strip()
+        return market, raw_ticker.upper() if market == "US" else raw_ticker
+
+    def _pending_orders_by_key(self, market: Optional[str] = None) -> dict[tuple[str, str], list[dict]]:
+        grouped: dict[tuple[str, str], list[dict]] = {}
+        for order in self.pending_orders:
+            order_market = str(order.get("market", "KR") or "KR").strip().upper()
+            if market and order_market != market:
+                continue
+            key = self._broker_reconcile_key(order_market, order.get("ticker", ""))
+            grouped.setdefault(key, []).append(order)
+        return grouped
+
     def _verify_live_positions(self, saved: list) -> list:
-        """KIS 브로커 잔고와 저장 포지션 비교 → 실제 보유 중인 것만 유지 (KR + US)"""
-        # KR 잔고 조회
-        broker_kr: dict = {}
-        kr_ok = False
-        try:
-            bal_kr = get_balance(self.token, market="KR")
-            self._set_broker_state(
-                "KR",
-                trust_level="trusted",
-                snapshot=self._broker_snapshot_from_balance("KR", bal_kr),
-            )
-            broker_kr = {s["ticker"]: s for s in bal_kr["stocks"]}
-            kr_ok = True
-        except Exception as e:
-            log.error(f"[브로커 동기화] KR 잔고 조회 실패: {e}")
+        """Broker holdings + pending orders are the source of truth for saved positions."""
+        broker_balances: dict[str, dict] = {"KR": {}, "US": {}}
+        broker_ok = {"KR": False, "US": False}
+        pending_by_key = self._pending_orders_by_key()
 
-        # US 잔고 조회
-        broker_us: dict = {}
-        us_ok = False
-        try:
-            bal_us = get_balance(self.token, market="US")
-            broker_us = {s["ticker"].upper(): s for s in bal_us["stocks"]}
-            us_ok = True
-        except Exception as e:
-            log.error(f"[브로커 동기화] US 잔고 조회 실패: {e}")
+        for market in ("KR", "US"):
+            try:
+                balance = get_balance(self.token, market=market)
+                broker_balances[market] = self._normalize_broker_balance(balance, market)
+                broker_ok[market] = True
+                self._set_broker_state(
+                    market,
+                    trust_level="trusted",
+                    snapshot=self._broker_snapshot_from_balance(market, balance),
+                )
+            except Exception as e:
+                log.error(f"[broker verify] {market} balance lookup failed: {e}")
 
-        # 둘 다 실패하면 저장 포지션 그대로 사용
-        if not kr_ok and not us_ok:
-            log.error("[브로커 동기화] KR/US 모두 조회 실패 → 저장 포지션 그대로 사용")
+        if not broker_ok["KR"] and not broker_ok["US"]:
+            log.error("[broker verify] KR/US balance lookup both failed; keeping saved positions")
             return saved
 
-        # VTS(모의) 잔고 API가 장 마감 후 0건 반환하는 경우 안전장치:
-        # 저장 포지션이 있는데 브로커가 해당 마켓 주식을 0개 반환하면 API 오류로 간주
-        saved_kr_count = sum(1 for p in saved if not p.get("ticker", "").replace(".", "").isalpha())
-        saved_us_count = sum(1 for p in saved if p.get("ticker", "").replace(".", "").isalpha())
-
-        if kr_ok and saved_kr_count > 0 and len(broker_kr) == 0:
-            log.warning(
-                f"[브로커 동기화] KR 잔고 조회 성공했으나 보유주식 0개 반환 "
-                f"(저장 포지션 {saved_kr_count}개) — VTS API 미반영으로 판단, 검증 스킵"
-            )
-            self._flag_execution_issue("KR", "broker_balance_unreliable")
-            kr_ok = False  # 검증 무력화 → 아래 루프에서 KR 포지션 그대로 유지
-
-        if us_ok and saved_us_count > 0 and len(broker_us) == 0:
-            log.warning(
-                f"[브로커 동기화] US 잔고 조회 성공했으나 보유주식 0개 반환 "
-                f"(저장 포지션 {saved_us_count}개) — API 미반영으로 판단, 검증 스킵"
-            )
-            self._flag_execution_issue("US", "broker_balance_unreliable")
-            us_ok = False  # 검증 무력화 → 아래 루프에서 US 포지션 그대로 유지
-
-        verified = []
+        verified: list[dict] = []
         for pos in saved:
-            tk = pos["ticker"]
-            market = "US" if tk.replace(".", "").isalpha() else "KR"
-
-            # 해당 마켓 잔고 조회 실패 or 0건 의심 → 포지션 제거하지 않고 유지
-            if market == "US" and not us_ok:
-                log.warning(f"[브로커 동기화] US 잔고 조회 신뢰 불가 — {tk} 포지션 유지 (검증 스킵)")
-                verified.append(pos)
+            ticker = str(pos.get("ticker", "") or "").strip()
+            if not ticker:
                 continue
-            if market == "KR" and not kr_ok:
-                log.warning(f"[브로커 동기화] KR 잔고 조회 신뢰 불가 — {tk} 포지션 유지 (검증 스킵)")
-                verified.append(pos)
+            market = self._ticker_market(ticker)
+            key = self._broker_reconcile_key(market, ticker)
+
+            if not broker_ok[market]:
+                log.warning(f"[broker verify] {market} lookup unavailable; keeping {ticker}")
+                verified.append(
+                    self._normalize_position_metadata(
+                        pos,
+                        market,
+                        origin="saved_restore",
+                        integrity="protected",
+                        management_protected=True,
+                    )
+                )
                 continue
 
-            broker = broker_us if market == "US" else broker_kr
-
-            if tk.upper() in broker if market == "US" else tk in broker:
-                key = tk.upper() if market == "US" else tk
-                bq = broker[key].get("qty", 0)
-                if bq != pos["qty"]:
-                    log.warning(f"[브로커 동기화] {tk} 수량 불일치 "
-                                f"저장={pos['qty']} 브로커={bq} → 보정")
+            broker_pos = broker_balances[market].get(key[1])
+            pending_orders = pending_by_key.get(key) or []
+            if broker_pos and int(broker_pos.get("qty", 0) or 0) > 0:
+                broker_qty = int(broker_pos.get("qty", 0) or 0)
+                if broker_qty != int(pos.get("qty", 0) or 0):
+                    log.warning(
+                        f"[broker verify] {market} {ticker} qty corrected "
+                        f"{int(pos.get('qty', 0) or 0)} -> {broker_qty}"
+                    )
                     self._flag_execution_issue(market, "broker_qty_corrected")
-                    pos["qty"] = bq
+                    pos["qty"] = broker_qty
                 verified.append(pos)
-            else:
-                self._flag_execution_issue(market, "broker_position_removed")
-                log.warning(f"[브로커 동기화] {tk} ({market}) 브로커에 없음 → 포지션 제거")
+                continue
+
+            if pending_orders:
+                log.warning(
+                    f"[broker verify] {market} {ticker} missing from holdings but pending exists; keep protected"
+                )
+                pos["broker_reconcile_status"] = "pending_only"
+                verified.append(
+                    self._normalize_position_metadata(
+                        pos,
+                        market,
+                        origin="saved_restore",
+                        integrity="protected",
+                        management_protected=True,
+                    )
+                )
+                continue
+
+            self._flag_execution_issue(market, "broker_position_removed")
+            log.warning(f"[broker verify] removed stale legacy position: {market} {ticker}")
 
         return verified
 
@@ -3280,7 +3288,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for p in self.risk.positions
         ))
 
-    def _daily_pnl_pct(self) -> float:
+    def _daily_pnl_pct(self, market: Optional[str] = None) -> float:
+        if market:
+            base = self._market_session_start_equity_krw(market)
+            return float(self.risk.daily_pnl / max(base, 1.0) * 100.0)
         return float(self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100.0)
 
     def _normalize_broker_balance(self, balance: Optional[dict], market: str) -> dict:
@@ -3546,6 +3557,118 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "last_trusted_krw": None,
         }
 
+    def _market_position_value_krw(self, market: str) -> float:
+        total = 0.0
+        for pos in self.risk.positions:
+            ticker = str(pos.get("ticker", "") or "").strip()
+            if self._ticker_market(ticker) != market:
+                continue
+            total += float(pos.get("current_price", pos.get("entry", 0)) or 0) * int(pos.get("qty", 0) or 0)
+        return float(total)
+
+    def _market_session_start_equity_krw(self, market: str) -> float:
+        baseline_meta = dict(self._daily_baseline_by_market.get(market, {}) or {})
+        base = float(baseline_meta.get("base", 0) or 0)
+        if base > 0:
+            return base
+        return float(self.risk.session_start_equity or 0)
+
+    def _market_equity_reference_context(self, market: str) -> dict:
+        state = dict(self._broker_state.get(market, {}) or {})
+        current_snap = dict(state.get("last_snapshot") or {})
+        trusted_snap = dict(state.get("last_trusted_snapshot") or {})
+        position_value = self._market_position_value_krw(market)
+        trust = self._broker_trust_level(market)
+
+        if trust == "trusted" and current_snap.get("total_krw") is not None:
+            return {
+                "market": market,
+                "total_krw": float(current_snap.get("total_krw", 0) or 0),
+                "cash_krw": float(current_snap.get("cash_krw", 0) or 0),
+                "position_krw": position_value,
+                "source": "broker_current",
+            }
+
+        if current_snap.get("cash_krw") is not None:
+            return {
+                "market": market,
+                "total_krw": float(current_snap.get("cash_krw", 0) or 0) + position_value,
+                "cash_krw": float(current_snap.get("cash_krw", 0) or 0),
+                "position_krw": position_value,
+                "source": "broker_cash_plus_positions",
+            }
+
+        if trusted_snap.get("cash_krw") is not None:
+            return {
+                "market": market,
+                "total_krw": float(trusted_snap.get("cash_krw", 0) or 0) + position_value,
+                "cash_krw": float(trusted_snap.get("cash_krw", 0) or 0),
+                "position_krw": position_value,
+                "source": "broker_last_trusted_cash_plus_positions",
+            }
+
+        if trusted_snap.get("total_krw") is not None:
+            return {
+                "market": market,
+                "total_krw": float(trusted_snap.get("total_krw", 0) or 0),
+                "cash_krw": float(trusted_snap.get("cash_krw", 0) or 0),
+                "position_krw": position_value,
+                "source": "broker_last_trusted_total",
+            }
+
+        return {
+            "market": market,
+            "total_krw": position_value,
+            "cash_krw": 0.0,
+            "position_krw": position_value,
+            "source": "positions_only",
+        }
+
+    def _market_daily_return_pct(self, market: str) -> float:
+        base = self._market_session_start_equity_krw(market)
+        if base <= 0:
+            return 0.0
+        equity_context = self._market_equity_reference_context(market)
+        return (float(equity_context.get("total_krw", 0) or 0) - base) / base * 100.0
+
+    def _market_realized_daily_return_pct(self, market: str) -> float:
+        base = self._market_session_start_equity_krw(market)
+        if base <= 0:
+            return 0.0
+        return float(self.risk.daily_pnl) / base * 100.0
+
+    def _check_market_halt(self, market: str, allow_auto_release: bool = False, auto_release_note: str = "") -> bool:
+        if self.risk.halt_reason == "broker_sync":
+            return True
+
+        ret = self._market_daily_return_pct(market)
+        realized_ret = self._market_realized_daily_return_pct(market)
+        threshold = HARD_RULES["max_daily_loss_pct"]
+        equity_breach = ret < threshold
+        pnl_breach = realized_ret < threshold
+        if equity_breach and pnl_breach:
+            if not self.risk.halted:
+                log.warning(
+                    f"daily loss limit reached [{market}] (equity={ret:.2f}% realized={realized_ret:.2f}%) -> halt"
+                )
+            self.risk.halted = True
+            if not self.risk.halt_reason:
+                self.risk.halt_reason = "daily_loss"
+        elif equity_breach and not pnl_breach:
+            log.warning(
+                f"[HALT 보류 {market}] equity breach only "
+                f"(equity={ret:.2f}% realized={realized_ret:.2f}% threshold={threshold:.2f}%)"
+            )
+        elif self.risk.halted and allow_auto_release and ret > threshold * 0.5:
+            note = f" note={auto_release_note}" if auto_release_note else ""
+            log.warning(
+                f"[HALT 자동 해제 {market}] daily_return={ret:.2f}% recovered "
+                f"(threshold={threshold:.2f}%){note}"
+            )
+            self.risk.halted = False
+            self.risk.halt_reason = ""
+        return self.risk.halted
+
     def _sync_runtime_with_broker(self):
         """장중에도 내부 포지션/현금을 브로커 잔고 기준으로 정렬."""
         _pre_sync_cash = float(self.risk.cash)
@@ -3557,6 +3680,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             _pre_sync_us_cost_by_key[_ticker.upper()] = (
                 float(_pos.get("entry", 0) or 0) * int(_pos.get("qty", 0) or 0)
             )
+        bal_us = {}
         try:
             bal_kr = get_balance(self.token, market="KR")
             self._set_broker_state(
@@ -3592,7 +3716,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         us_ok = False
         try:
             bal_us = get_balance(self.token, market="US")
-            broker_us = {s["ticker"].upper(): s for s in bal_us.get("stocks", [])}
+            broker_us = self._normalize_broker_balance(bal_us, "US")
             us_ok = True
             self._set_broker_state(
                 "US",
@@ -3604,7 +3728,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             try:
                 self.token = get_access_token(force_refresh=True)
                 bal_us = get_balance(self.token, market="US")
-                broker_us = {s["ticker"].upper(): s for s in bal_us.get("stocks", [])}
+                broker_us = self._normalize_broker_balance(bal_us, "US")
                 us_ok = True
                 self._set_broker_state(
                     "US",
@@ -3619,36 +3743,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._set_broker_state("US", trust_level="untrusted", error=str(e))
             log.warning(f"[브로커 런타임 동기화] US 잔고 조회 실패 — US 포지션 검증 스킵: {e}")
 
-        # US API가 성공 응답이지만 stocks=[] 반환 시 — 내부 US 포지션이 있으면 API 일시 오류로 간주
-        if us_ok and len(broker_us) == 0:
-            _us_internal_count = sum(
-                1 for p in self.risk.positions
-                if self._ticker_market(p.get("ticker", "")) == "US"
-            )
-            if _us_internal_count > 0:
-                log.warning(
-                    f"[브로커 런타임 동기화] US API 빈 잔고 응답 "
-                    f"(내부 {_us_internal_count}개 포지션 존재) → US 포지션 검증 스킵 (False HALT 방지)"
-                )
-                us_ok = False
-                self._set_broker_state(
-                    "US",
-                    trust_level="untrusted",
-                    snapshot=self._broker_snapshot_from_balance("US", bal_us),
-                    error="empty_balance_with_internal_positions",
-                )
-
-        broker_kr = {s["ticker"]: s for s in bal_kr.get("stocks", [])}
+        broker_kr = self._normalize_broker_balance(bal_kr, "KR")
         self._reconcile_pending_orders(broker_kr, broker_us)
+        pending_by_key = self._pending_orders_by_key()
+        _positions_before = json.dumps(self.risk.positions, ensure_ascii=False, sort_keys=True, default=str)
         synced_positions = {}
         removed = []
         seen_keys = set()
-        pending_by_key = {}
-        for order in self.pending_orders:
-            market = order.get("market", "KR")
-            ticker = order.get("ticker", "")
-            key = ticker.upper() if market == "US" else ticker
-            pending_by_key[(market, key)] = order
         saved_templates = {}
         _positions_file = get_runtime_path("state", f"{self._mode}_open_positions.json")
         try:
@@ -3659,27 +3760,42 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         if not _tk:
                             continue
                         _mkt = self._ticker_market(_tk)
-                        _key = _tk.upper() if _mkt == "US" else _tk
-                        saved_templates[(_mkt, _key)] = _saved_pos
+                        saved_templates[self._broker_reconcile_key(_mkt, _tk)] = _saved_pos
         except Exception as _e:
             log.warning(f"[브로커 런타임 동기화] 저장 포지션 템플릿 로드 실패: {_e}")
 
         for pos in self.risk.positions:
-            ticker = pos.get("ticker", "")
+            ticker = str(pos.get("ticker", "") or "").strip()
+            if not ticker:
+                continue
             market = self._ticker_market(ticker)
-            key = ticker.upper() if market == "US" else ticker
+            key = self._broker_reconcile_key(market, ticker)
             broker = broker_us if market == "US" else broker_kr
 
             # US 잔고 조회 실패 시 US 포지션 제거 금지
             if market == "US" and not us_ok:
-                synced_positions[(market, key)] = pos
-                seen_keys.add((market, key))
+                synced_positions[key] = pos
+                seen_keys.add(key)
                 continue
 
-            broker_pos = broker.get(key)
+            broker_pos = broker.get(key[1])
+            pending_orders = pending_by_key.get(key) or []
             if not broker_pos or broker_pos.get("qty", 0) <= 0:
+                if pending_orders:
+                    pos["broker_reconcile_status"] = "pending_only"
+                    synced_positions[key] = self._normalize_position_metadata(
+                        pos,
+                        market,
+                        origin=str(pos.get("position_origin") or "saved_restore"),
+                        integrity="protected",
+                        management_protected=True,
+                    )
+                    seen_keys.add(key)
+                    log.warning(f"[브로커 런타임 동기화] {market} {ticker} 보유 없음 + 미체결 존재 → 보호 유지")
+                    continue
                 self._flag_execution_issue(market, "broker_position_removed")
                 removed.append(ticker)
+                log.warning(f"[브로커 런타임 동기화] stale 포지션 제거: {market} {ticker}")
                 continue
             if broker_pos.get("qty", 0) != pos.get("qty", 0):
                 log.warning(
@@ -3707,11 +3823,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 pos["display_currency"] = "KRW"
             if not keep_fill_price:
                 pos["price_source"] = "broker_balance"
-            existing = synced_positions.get((market, key))
+            existing = synced_positions.get(key)
             if existing is not None:
                 log.warning(f"[브로커 런타임 동기화] 중복 포지션 병합: {ticker}")
-            synced_positions[(market, key)] = pos
-            seen_keys.add((market, key))
+            synced_positions[key] = pos
+            seen_keys.add(key)
 
         for ticker, broker_pos in broker_kr.items():
             key = ("KR", ticker)
@@ -3720,9 +3836,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if ticker in self._session_closed_tickers.get("KR", set()):
                 log.info(f"[브로커 런타임 동기화] KR 재주입 차단: {ticker} (이번 세션 매도 완료)")
                 continue
+            pending_templates = pending_by_key.get(key) or []
+            template = pending_templates[0] if pending_templates else saved_templates.get(key)
             synced_positions[key] = self._make_runtime_position_from_broker(
                 ticker, "KR", broker_pos,
-                template=pending_by_key.get(key) or saved_templates.get(key)
+                template=template,
             )
             self._flag_execution_issue("KR", "broker_position_injected")
             seen_keys.add(key)
@@ -3735,9 +3853,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if ticker.upper() in self._session_closed_tickers.get("US", set()):
                 log.info(f"[브로커 런타임 동기화] US 재주입 차단: {ticker} (이번 세션 매도 완료)")
                 continue
+            pending_templates = pending_by_key.get(key) or []
+            template = pending_templates[0] if pending_templates else saved_templates.get(key)
             synced_positions[key] = self._make_runtime_position_from_broker(
                 ticker.upper(), "US", broker_pos,
-                template=pending_by_key.get(key) or saved_templates.get(key)
+                template=template,
             )
             self._flag_execution_issue("US", "broker_position_injected")
             seen_keys.add(key)
@@ -3747,6 +3867,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.warning(f"[브로커 런타임 동기화] 브로커 미보유 포지션 제거: {removed}")
 
         self.risk.positions = list(synced_positions.values())
+        if json.dumps(self.risk.positions, ensure_ascii=False, sort_keys=True, default=str) != _positions_before:
+            self._save_positions()
         # 공유 풀 기준 내부 equity는 KR 현금만이 아니라 US 현금까지 포함해야 한다.
         # 그렇지 않으면 US 포지션 청산 후 재시작/재동기화 시
         # "포지션은 제거됐는데 현금은 equity에 미반영" 상태가 되어
@@ -5816,7 +5938,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         self._refresh_operational_halt(market)
         _allow_halt_auto_release = self._has_broker_sync_risk(market)
-        if self.risk.check_halt(
+        if self._check_market_halt(
+            market,
             allow_auto_release=_allow_halt_auto_release,
             auto_release_note="broker_sync_recovery" if _allow_halt_auto_release else "",
         ):
@@ -8906,7 +9029,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market = self.current_market or ""
         mode   = self.today_judgment.get("consensus", {}).get("mode", "")
         pos_key = tuple(sorted((p["ticker"], p["qty"]) for p in self.risk.positions))
-        pnl_bucket = round(self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100, 1)  # 0.1% 단위
+        pnl_bucket = round(self._daily_pnl_pct(market), 1)  # 0.1% 단위
         return {
             "market":     market,
             "mode":       mode,
@@ -9095,7 +9218,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "max_order_krw":  round(self.risk.max_order_krw, 0),
                     "session_active": bool(self.session_active and self.current_market == market),
                     "daily_pnl":      round(status.get("daily_pnl", 0), 0),
-                    "daily_pnl_pct":  round(self._daily_pnl_pct(), 4),
+                    "daily_pnl_pct":  round(self._daily_pnl_pct(market), 4),
                     "cash":           round(self.risk.cash, 0),
                     "total_equity":   kis_total_equity,
                     "equity_source":  equity_ctx.get("source", ""),
@@ -9146,7 +9269,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         digest_ctx = (self.today_judgment.get("digest_raw") or {}).get("context") or {}
         risk_value = float(digest_ctx.get("vix", 0) or 0)
         risk_label = "VKOSPI" if market == "KR" else "VIX"
-        pnl_pct   = self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100
+        pnl_pct   = self._daily_pnl_pct(market)
         pnl_krw   = int(self.risk.daily_pnl)
 
         dashboard_push(market, mode, self.risk.positions,
@@ -9356,7 +9479,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         cumulative_equity = int(round(self._kis_total_equity_krw()))
         actual = {
             "market_change": get_index_change(market),
-            "pnl_pct": self.risk.daily_pnl / max(self.risk.session_start_equity, 1) * 100,
+            "pnl_pct": self._daily_pnl_pct(market),
             "pnl_krw": int(self.risk.daily_pnl),
             "win": self.risk.daily_pnl > 0,
             "trades": len(_sell_log),   # 청산(매도) 건수만

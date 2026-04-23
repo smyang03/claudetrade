@@ -1420,12 +1420,15 @@ class TradingBotSessionDateTests(unittest.TestCase):
 class TradingBotRecoveryTests(unittest.TestCase):
     def _make_bot(self):
         bot = trading_bot_module.TradingBot.__new__(trading_bot_module.TradingBot)
-        bot.is_paper = True
+        bot.is_paper = False
         bot._active_session_date = {"KR": date(2026, 4, 23), "US": date(2026, 4, 23)}
         bot.usd_krw_rate = 1500.0
         bot.risk = SimpleNamespace(positions=[], trade_log=[], all_trade_log=[], cash=0.0)
         bot.pending_orders = []
         bot._funnel = {"KR": {"filled": 0}, "US": {"filled": 0}}
+        bot._execution_flags = {"KR": set(), "US": set()}
+        bot._broker_state = {"KR": {}, "US": {}}
+        bot._session_closed_tickers = {"KR": set(), "US": set()}
         bot._sell_fail_at = {}
         bot._exit_process_lock = __import__("threading").Lock()
         bot.current_market = None
@@ -1511,6 +1514,81 @@ class TradingBotRecoveryTests(unittest.TestCase):
         self.assertEqual(bot.pending_orders, [])
         bot._save_positions.assert_called_once()
         bot._save_pending_orders.assert_called_once()
+
+    def test_verify_live_positions_removes_stale_legacy_when_broker_has_no_holding(self):
+        bot = self._make_bot()
+        saved = [{"ticker": "OKLO", "qty": 2, "entry": 100.0, "price_source": "order_fill"}]
+
+        with patch.object(
+            trading_bot_module,
+            "get_balance",
+            side_effect=[
+                {"cash": 1000000.0, "total_eval": 0.0, "stocks": []},
+                {"cash": 100.0, "total_eval": 0.0, "stocks": []},
+            ],
+        ):
+            verified = bot._verify_live_positions(saved)
+
+        self.assertEqual(verified, [])
+
+    def test_verify_live_positions_keeps_legacy_when_pending_exists(self):
+        bot = self._make_bot()
+        bot.pending_orders = [{"market": "US", "ticker": "OKLO", "qty": 2, "order_no": "P1"}]
+        saved = [{"ticker": "OKLO", "qty": 2, "entry": 100.0, "price_source": "order_fill"}]
+
+        with patch.object(
+            trading_bot_module,
+            "get_balance",
+            side_effect=[
+                {"cash": 1000000.0, "total_eval": 0.0, "stocks": []},
+                {"cash": 100.0, "total_eval": 0.0, "stocks": []},
+            ],
+        ):
+            verified = bot._verify_live_positions(saved)
+
+        self.assertEqual(len(verified), 1)
+        self.assertEqual(verified[0]["position_integrity"], "protected")
+        self.assertTrue(verified[0]["management_protected"])
+
+    def test_sync_runtime_with_broker_removes_stale_legacy_position_and_persists(self):
+        bot = self._make_bot()
+        bot.risk.positions = [
+            {
+                "ticker": "OKLO",
+                "qty": 2,
+                "entry": 100.0,
+                "current_price": 95.0,
+                "display_avg_price": 10.0,
+                "display_current_price": 9.5,
+                "display_currency": "USD",
+                "price_source": "order_fill",
+                "position_origin": "saved_restore",
+                "position_integrity": "trusted",
+                "management_protected": False,
+            }
+        ]
+        bot.risk.cash = 0.0
+        bot._save_positions = Mock()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir) / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            with patch.object(
+                trading_bot_module,
+                "get_balance",
+                side_effect=[
+                    {"cash": 500000.0, "total_eval": 0.0, "stocks": []},
+                    {"cash": 100.0, "total_eval": 0.0, "stocks": []},
+                ],
+            ), patch.object(
+                trading_bot_module,
+                "get_runtime_path",
+                side_effect=lambda *parts: Path(tmpdir).joinpath(*parts),
+            ):
+                bot._sync_runtime_with_broker()
+
+        self.assertEqual(bot.risk.positions, [])
+        bot._save_positions.assert_called()
 
     def test_process_exit_candidates_deduplicates_same_ticker(self):
         bot = self._make_bot()

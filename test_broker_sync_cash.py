@@ -44,6 +44,7 @@ class BrokerSyncCashTests(unittest.TestCase):
             "KR": {"trust_level": "unknown", "last_ok_at": "", "last_error": "", "last_snapshot": {}, "last_trusted_snapshot": {}},
             "US": {"trust_level": "unknown", "last_ok_at": "", "last_error": "", "last_snapshot": {}, "last_trusted_snapshot": {}},
         }
+        bot._daily_baseline_by_market = {"KR": {}, "US": {}}
         bot.today_judgment = {}
         bot._lookup_ticker_name = lambda ticker, market: ticker
         return bot
@@ -107,6 +108,63 @@ class BrokerSyncCashTests(unittest.TestCase):
         rm.daily_pnl = 17_523.0
         self.assertFalse(rm.check_halt())
         self.assertFalse(rm.halted)
+
+    def test_market_daily_return_pct_uses_market_snapshot_not_shared_cash(self):
+        bot = self._make_bot()
+        bot.is_paper = False
+        bot.risk.cash = 2_170_428.0
+        bot.risk.positions = [
+            {"ticker": "OKLO", "qty": 1, "current_price": 112_607.0, "entry": 112_607.0},
+        ]
+        bot._daily_baseline_by_market["US"] = {
+            "session_date": "2026-04-23",
+            "base": 1_078_800.0,
+            "source": "broker_total",
+        }
+        bot._broker_state["US"] = {
+            "trust_level": "trusted",
+            "last_ok_at": "",
+            "last_error": "",
+            "last_snapshot": {"market": "US", "cash_krw": 1_000_000.0, "eval_krw": 50_000.0, "total_krw": 1_050_000.0},
+            "last_trusted_snapshot": {"market": "US", "cash_krw": 1_000_000.0, "eval_krw": 50_000.0, "total_krw": 1_050_000.0},
+        }
+        bot._broker_state["KR"] = {
+            "trust_level": "trusted",
+            "last_ok_at": "",
+            "last_error": "",
+            "last_snapshot": {"market": "KR", "cash_krw": 1_120_428.0, "eval_krw": 0.0, "total_krw": 1_120_428.0},
+            "last_trusted_snapshot": {"market": "KR", "cash_krw": 1_120_428.0, "eval_krw": 0.0, "total_krw": 1_120_428.0},
+        }
+
+        daily_return = bot._market_daily_return_pct("US")
+
+        self.assertAlmostEqual(daily_return, (1_050_000.0 - 1_078_800.0) / 1_078_800.0 * 100.0, places=6)
+
+    def test_market_halt_does_not_auto_release_from_shared_pool_gain(self):
+        bot = self._make_bot()
+        bot.is_paper = False
+        bot.risk.halted = True
+        bot.risk.halt_reason = "daily_loss"
+        bot.risk.daily_pnl = -9_151.0
+        bot.risk.cash = 2_170_428.0
+        bot._daily_baseline_by_market["US"] = {
+            "session_date": "2026-04-23",
+            "base": 1_078_800.0,
+            "source": "broker_total",
+        }
+        bot._broker_state["US"] = {
+            "trust_level": "trusted",
+            "last_ok_at": "",
+            "last_error": "",
+            "last_snapshot": {"market": "US", "cash_krw": 960_000.0, "eval_krw": 0.0, "total_krw": 960_000.0},
+            "last_trusted_snapshot": {"market": "US", "cash_krw": 960_000.0, "eval_krw": 0.0, "total_krw": 960_000.0},
+        }
+
+        halted = bot._check_market_halt("US", allow_auto_release=True)
+
+        self.assertTrue(halted)
+        self.assertTrue(bot.risk.halted)
+        self.assertEqual(bot.risk.halt_reason, "daily_loss")
 
     def test_daily_baseline_persists_across_restart(self):
         bot = self._make_bot()
