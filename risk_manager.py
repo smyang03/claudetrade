@@ -162,11 +162,21 @@ class RiskManager:
             return False, "insufficient cash"
         return True, "OK"
 
-    def calc_order_budget(self, mode_size_pct: int = 70) -> float:
+    def calc_order_budget(
+        self,
+        mode_size_pct: int = 70,
+        atr_pct: Optional[float] = None,
+        atr_target_pct: float = 0.015,
+    ) -> float:
         # MAX_ORDER_KRW 기준, 모드별 비율 조절
         budget = self.max_order_krw * (mode_size_pct / 100)
         # 현금 부족 시 잔액 전부 사용
         budget = min(budget, self.cash)
+        if atr_pct is not None and atr_pct > 0 and atr_target_pct > 0:
+            # Volatility targeting (optional): reduce size in high ATR regimes.
+            vol_scale = atr_target_pct / atr_pct
+            vol_scale = max(0.1, min(1.0, vol_scale))
+            budget *= vol_scale
         return max(0.0, budget)
 
     def calc_order_size(
@@ -179,12 +189,11 @@ class RiskManager:
     ) -> int:
         if price <= 0:
             return 0
-        budget = self.calc_order_budget(mode_size_pct)
-        if atr_pct is not None and atr_pct > 0 and atr_target_pct > 0:
-            # Volatility targeting (optional): reduce size in high ATR regimes.
-            vol_scale = atr_target_pct / atr_pct
-            vol_scale = max(0.1, min(1.0, vol_scale))
-            budget *= vol_scale
+        budget = self.calc_order_budget(
+            mode_size_pct,
+            atr_pct=atr_pct,
+            atr_target_pct=atr_target_pct,
+        )
         return max(1, int(budget / price)) if budget >= price else 0
 
     def open_position(
@@ -224,6 +233,7 @@ class RiskManager:
             "held_days": 0,
             "entry_date": date.today().isoformat(),
             "session_date": session_date,
+            "entry_session_date": session_date,
             "entry_time": _dt.now().isoformat(timespec="seconds"),  # 장중 보유시간 계산용
             "peak_pnl_pct": 0.0,     # 보유 중 최고 수익률 (hold_advisor 컨텍스트용)
             # 트레일링 스탑
@@ -235,6 +245,9 @@ class RiskManager:
             # hold_advisor 기록
             "hold_advice": None,     # {"action", "trail_pct", "votes"} or None
             "tp_price": 0.0,         # TP 도달 당시 가격
+            "position_origin": "open_position",
+            "position_integrity": "trusted",
+            "management_protected": False,
         }
         self.positions.append(pos)
         evt = {
@@ -257,16 +270,24 @@ class RiskManager:
             if pos["ticker"] not in prices:
                 continue
             pos["current_price"] = prices[pos["ticker"]]
-            # peak_pnl_pct 갱신
             _entry = float(pos.get("entry") or 0)
-            _cur_pnl = None
-            if _entry > 0:
-                _cur_pnl = (pos["current_price"] / _entry - 1) * 100
-                if _cur_pnl > float(pos.get("peak_pnl_pct") or 0):
-                    pos["peak_pnl_pct"] = round(_cur_pnl, 3)
-            # US 종목: display_current_price(USD)를 raw_prices로 갱신
-            if raw_prices and pos["ticker"] in raw_prices and pos.get("display_currency") == "USD":
+            is_us = pos.get("display_currency") == "USD"
+            protected = bool(pos.get("management_protected"))
+
+            if raw_prices and pos["ticker"] in raw_prices and is_us:
                 pos["display_current_price"] = float(raw_prices[pos["ticker"]] or 0)
+
+            # peak_pnl_pct / auto-trailing trigger는 native currency 기준으로 계산한다.
+            _cur_pnl = None
+            if is_us:
+                avg_usd = float(pos.get("display_avg_price") or 0)
+                cp_usd = float(pos.get("display_current_price") or 0)
+                if avg_usd > 0 and cp_usd > 0:
+                    _cur_pnl = (cp_usd / avg_usd - 1) * 100
+            elif _entry > 0:
+                _cur_pnl = (pos["current_price"] / _entry - 1) * 100
+            if _cur_pnl is not None and _cur_pnl > float(pos.get("peak_pnl_pct") or 0):
+                pos["peak_pnl_pct"] = round(_cur_pnl, 3)
 
             # 수익 보호: +3% 이상이면 TP 도달 이벤트를 기다리지 않고 본전 위 트레일링 전환.
             if (
@@ -274,6 +295,7 @@ class RiskManager:
                 and _cur_pnl is not None
                 and _cur_pnl >= AUTO_TRAIL_TRIGGER_PCT
                 and not pos.get("trailing")
+                and not protected
                 and pos["current_price"] > 0
             ):
                 trail_pct = max(0.005, min(0.08, AUTO_TRAIL_PCT))
@@ -327,6 +349,7 @@ class RiskManager:
             reason = None
 
             is_us = pos.get("display_currency") == "USD"
+            protected = bool(pos.get("management_protected"))
             avg_usd = float(pos.get("display_avg_price") or 0)
             cp_usd = float(pos.get("display_current_price") or 0)
             entry_krw = float(pos.get("entry") or 0)
@@ -339,7 +362,10 @@ class RiskManager:
                 tp_usd = avg_usd * (1 + tp_pct)
                 sl_usd = avg_usd * (1 - sl_pct)
 
-                if pos.get("trailing"):
+                if protected:
+                    if cp_usd <= sl_usd:
+                        reason = "stop_loss"
+                elif pos.get("trailing"):
                     trail_sl_usd = float(pos.get("trail_sl_usd") or 0)
                     if trail_sl_usd > 0 and cp_usd <= trail_sl_usd:
                         reason = "trail_stop"
@@ -358,7 +384,10 @@ class RiskManager:
                 continue
 
             # KR 종목 (기존 로직)
-            if pos.get("trailing"):
+            if protected:
+                if cp <= pos["sl"]:
+                    reason = "stop_loss"
+            elif pos.get("trailing"):
                 if cp <= pos["trail_sl"]:
                     reason = "trail_stop"
                 elif pos["held_days"] >= pos["max_hold"]:
@@ -422,6 +451,12 @@ class RiskManager:
                 "price": exit_price,
                 "qty": pos["qty"],
                 "strategy": pos["strategy"],
+                "source_strategy": pos.get("source_strategy", ""),
+                "micro_probe": bool(pos.get("micro_probe")),
+                "micro_probe_reason": pos.get("micro_probe_reason", ""),
+                "original_order_cost_krw": float(pos.get("original_order_cost_krw", 0) or 0),
+                "adjusted_order_cost_krw": float(pos.get("adjusted_order_cost_krw", 0) or 0),
+                "oversize_ratio": float(pos.get("oversize_ratio", 0) or 0),
                 "date": date.today().isoformat(),
                 "session_date": session_date,
                 "reason": reason,

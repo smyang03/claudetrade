@@ -124,6 +124,64 @@ def init() -> None:
             "CREATE INDEX IF NOT EXISTS idx_tslog_ticker "
             "ON ticker_selection_log(market, ticker)"
         )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS micro_probe_log (
+                id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_mode                 TEXT NOT NULL DEFAULT 'paper',
+                session_date             TEXT NOT NULL,
+                market                   TEXT NOT NULL,
+                ticker                   TEXT NOT NULL,
+                order_no                 TEXT,
+                source_strategy          TEXT,
+                reason                   TEXT,
+                entry_priority_score     REAL,
+                original_qty             INTEGER,
+                adjusted_qty             INTEGER,
+                original_order_cost_krw  REAL,
+                adjusted_order_cost_krw  REAL,
+                order_budget_krw         REAL,
+                min_effective_order_krw  REAL,
+                oversize_ratio           REAL,
+                status                   TEXT NOT NULL DEFAULT 'ORDERED',
+                entered_at               TEXT NOT NULL,
+                exited_at                TEXT,
+                pnl_pct                  REAL,
+                pnl_krw                  REAL,
+                exit_reason              TEXT,
+                created_at               TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        existing_probe = {r[1] for r in conn.execute("PRAGMA table_info(micro_probe_log)")}
+        for col_name, col_type in (
+            ("bot_mode", "TEXT NOT NULL DEFAULT 'paper'"),
+            ("order_no", "TEXT"),
+            ("source_strategy", "TEXT"),
+            ("reason", "TEXT"),
+            ("entry_priority_score", "REAL"),
+            ("original_qty", "INTEGER"),
+            ("adjusted_qty", "INTEGER"),
+            ("original_order_cost_krw", "REAL"),
+            ("adjusted_order_cost_krw", "REAL"),
+            ("order_budget_krw", "REAL"),
+            ("min_effective_order_krw", "REAL"),
+            ("oversize_ratio", "REAL"),
+            ("status", "TEXT NOT NULL DEFAULT 'ORDERED'"),
+            ("entered_at", "TEXT"),
+            ("exited_at", "TEXT"),
+            ("pnl_pct", "REAL"),
+            ("pnl_krw", "REAL"),
+            ("exit_reason", "TEXT"),
+        ):
+            if col_name not in existing_probe:
+                conn.execute(f"ALTER TABLE micro_probe_log ADD COLUMN {col_name} {col_type}")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_micro_probe_market_date "
+            "ON micro_probe_log(session_date, market)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_micro_probe_order "
+            "ON micro_probe_log(market, ticker, order_no)"
+        )
 
 
 def insert_batch(
@@ -254,6 +312,140 @@ def update_pnl(market: str, ticker: str, pnl_pct: float, exit_reason: str) -> No
             """,
             (pnl_pct, exit_reason, market, ticker),
         )
+
+
+def log_micro_probe_entry(
+    *,
+    session_date: str,
+    market: str,
+    ticker: str,
+    order_no: str,
+    source_strategy: str,
+    reason: str,
+    entry_priority_score: float,
+    original_qty: int,
+    adjusted_qty: int,
+    original_order_cost_krw: float,
+    adjusted_order_cost_krw: float,
+    order_budget_krw: float,
+    min_effective_order_krw: float,
+    oversize_ratio: float,
+    entered_at: str,
+) -> None:
+    """MICRO_PROBE 진입을 일반 전략 성과와 분리해 기록한다."""
+    with _conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO micro_probe_log
+                (bot_mode, session_date, market, ticker, order_no, source_strategy,
+                 reason, entry_priority_score, original_qty, adjusted_qty,
+                 original_order_cost_krw, adjusted_order_cost_krw,
+                 order_budget_krw, min_effective_order_krw, oversize_ratio,
+                 status, entered_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                _BOT_MODE,
+                session_date,
+                market,
+                ticker,
+                order_no,
+                source_strategy,
+                reason,
+                float(entry_priority_score or 0.0),
+                int(original_qty or 0),
+                int(adjusted_qty or 0),
+                float(original_order_cost_krw or 0.0),
+                float(adjusted_order_cost_krw or 0.0),
+                float(order_budget_krw or 0.0),
+                float(min_effective_order_krw or 0.0),
+                float(oversize_ratio or 0.0),
+                "ORDERED",
+                entered_at,
+            ),
+        )
+
+
+def update_micro_probe_outcome(
+    *,
+    market: str,
+    ticker: str,
+    order_no: str = "",
+    pnl_pct: float,
+    pnl_krw: float,
+    exit_reason: str,
+    exited_at: str,
+) -> None:
+    """MICRO_PROBE 청산 결과를 가장 최근 미청산 진입에 연결한다."""
+    params: list[object]
+    selector: str
+    order_no = str(order_no or "").strip()
+    if order_no:
+        selector = """
+            id=(
+                SELECT id FROM micro_probe_log
+                WHERE market=? AND ticker=? AND order_no=? AND pnl_pct IS NULL
+                ORDER BY id DESC LIMIT 1
+            )
+        """
+        params = [market, ticker, order_no]
+    else:
+        selector = """
+            id=(
+                SELECT id FROM micro_probe_log
+                WHERE market=? AND ticker=? AND pnl_pct IS NULL
+                ORDER BY id DESC LIMIT 1
+            )
+        """
+        params = [market, ticker]
+
+    with _conn() as conn:
+        conn.execute(
+            f"""
+            UPDATE micro_probe_log
+            SET status='CLOSED', exited_at=?, pnl_pct=?, pnl_krw=?, exit_reason=?
+            WHERE {selector}
+            """,
+            [exited_at, float(pnl_pct or 0.0), float(pnl_krw or 0.0), exit_reason, *params],
+        )
+
+
+def micro_probe_performance_report(market: Optional[str] = None) -> dict[str, Any]:
+    """MICRO_PROBE 성과를 별도 리포트로 반환한다."""
+    where = "WHERE pnl_pct IS NOT NULL"
+    params: list[object] = []
+    if market:
+        where += " AND market=?"
+        params.append(market)
+    with _conn() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            f"""
+            SELECT
+                COUNT(*) AS trades,
+                SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) AS wins,
+                AVG(pnl_pct) AS avg_pnl_pct,
+                SUM(pnl_krw) AS total_pnl_krw,
+                MIN(pnl_pct) AS max_loss_pct,
+                MAX(pnl_pct) AS max_gain_pct
+            FROM micro_probe_log
+            {where}
+            """,
+            params,
+        ).fetchone()
+
+    trades = int(row["trades"] or 0) if row else 0
+    wins = int(row["wins"] or 0) if row else 0
+    return {
+        "market": market or "ALL",
+        "trades": trades,
+        "wins": wins,
+        "win_rate_pct": round((wins / trades * 100.0), 2) if trades else 0.0,
+        "avg_pnl_pct": round(float(row["avg_pnl_pct"] or 0.0), 4) if row else 0.0,
+        "total_pnl_krw": round(float(row["total_pnl_krw"] or 0.0), 2) if row else 0.0,
+        "max_loss_pct": round(float(row["max_loss_pct"] or 0.0), 4) if row else 0.0,
+        "max_gain_pct": round(float(row["max_gain_pct"] or 0.0), 4) if row else 0.0,
+    }
 
 
 def _load_price(market: str, ticker: str) -> Optional[dict[str, Any]]:

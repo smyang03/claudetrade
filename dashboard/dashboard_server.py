@@ -2584,7 +2584,7 @@ def _fallback_select_reason(ticker: str, market: str, mode: str, item: dict) -> 
     if pending_count > 0:
         return f"{mode_ko} 환경에서 미체결 주문 추적 중"
     if selection_status == "WATCH_ONLY":
-        return f"{mode_ko} 환경에서 WATCH_ONLY · TRADE_READY 제외"
+        return f"{mode_ko} 환경에서 감시 후보 유지 · 실제 매수 후보 아님"
     if last_event == "signal_check":
         return f"{mode_ko} 환경에서 스크리너 통과 종목 · 신호 대기"
     return f"{mode_ko} 환경에서 스크리너 통과 종목"
@@ -2630,6 +2630,28 @@ def _resolve_ticker_select_reason(
             return text
 
     meta = rec.get("selection_meta", {}) or {}
+    runtime_filtered = meta.get("_runtime_filtered_trade_ready") or {}
+    runtime_filtered_reason = str(_selection_meta_lookup(runtime_filtered, ticker, market) or "").strip()
+    if runtime_filtered_reason:
+        slot_name = runtime_filtered_reason.split(":", 1)[1] if ":" in runtime_filtered_reason else ""
+        slot_label_map = {
+            "momentum": "모멘텀",
+            "gap_pullback": "갭눌림",
+            "opening_range_pullback": "OR 눌림",
+            "mean_reversion": "평균회귀",
+            "continuation": "연속진입",
+            "__unassigned__": "공통",
+        }
+        slot_label = slot_label_map.get(slot_name, slot_name or "전략")
+        if runtime_filtered_reason == "continuation_shadow_only":
+            return "TRADE_READY 제외 · 연속진입은 실전 비활성, shadow 관찰만 유지"
+        if runtime_filtered_reason.startswith("slot_disabled:"):
+            return f"TRADE_READY 제외 · {slot_label} 슬롯 비활성"
+        if runtime_filtered_reason.startswith("slot_cap:"):
+            return f"TRADE_READY 제외 · {slot_label} 슬롯 한도 도달"
+        if runtime_filtered_reason == "total_cap_reached":
+            return "TRADE_READY 제외 · 전체 TRADE_READY 한도 도달"
+
     veto_reason = str(_selection_meta_lookup(meta.get("veto", {}), ticker, market) or "").strip()
     if veto_reason:
         return f"TRADE_READY 제외 · {veto_reason}"

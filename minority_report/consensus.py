@@ -67,6 +67,130 @@ def _cat(stance: str) -> str:
         return "bear"
     return "neutral"
 
+
+def _dir_label_from_name(name: str) -> str:
+    score = STANCE_SCORE.get(str(name or "").strip().upper())
+    if score is None:
+        return "NA"
+    cat = _cat(str(name or "").strip().upper())
+    if cat == "bull":
+        return "UP"
+    if cat == "bear":
+        return "DOWN"
+    return "FLAT"
+
+
+def _dir_label_from_change(value) -> str:
+    try:
+        v = float(value)
+    except Exception:
+        return "NA"
+    if v != v:  # NaN
+        return "NA"
+    if v > 0.15:
+        return "UP"
+    if v < -0.15:
+        return "DOWN"
+    return "FLAT"
+
+
+def apply_unanimous_override(judgments: dict, consensus: dict) -> dict:
+    """
+    If all three analysts point to the same directional bucket, the final
+    consensus must not end up on the opposite side.
+    """
+    if not judgments or not consensus:
+        return dict(consensus or {})
+
+    bull = judgments.get("bull") or {}
+    bear = judgments.get("bear") or {}
+    neut = judgments.get("neutral") or {}
+    vote_cats = [_cat(bull.get("stance")), _cat(bear.get("stance")), _cat(neut.get("stance"))]
+    if len(set(vote_cats)) != 1:
+        result = dict(consensus)
+        result.setdefault("unanimous_direction", None)
+        result.setdefault("unanimous_override_applied", False)
+        return result
+
+    unanimous_cat = vote_cats[0]
+    current_cat = _cat(str(consensus.get("mode") or "NEUTRAL"))
+    result = dict(consensus)
+    result["unanimous_direction"] = unanimous_cat
+    result["unanimous_override_applied"] = False
+
+    if unanimous_cat == current_cat:
+        return result
+
+    avg_score = (
+        STANCE_SCORE.get(bull.get("stance"), 0.0)
+        + STANCE_SCORE.get(bear.get("stance"), 0.0)
+        + STANCE_SCORE.get(neut.get("stance"), 0.0)
+    ) / 3.0
+    floor_mode, floor_size = _score_to_mode(avg_score)
+    prev_mode = result.get("mode")
+    prev_size = result.get("size")
+
+    result["pre_unanimous_override_mode"] = prev_mode
+    result["pre_unanimous_override_size"] = prev_size
+    result["mode"] = floor_mode
+    result["size"] = floor_size
+    result["unanimous_override_applied"] = True
+
+    # Do not keep an aggressive profit-taking profile after a unanimous
+    # bearish override.
+    if unanimous_cat == "bear" and float(result.get("tp_mult", 1.0) or 1.0) > 0.8:
+        result["tp_mult"] = 0.8
+
+    log.warning(
+        f"[unanimous override] {prev_mode}->{floor_mode} "
+        f"dir={unanimous_cat} size={prev_size}->{floor_size}"
+    )
+    return result
+
+
+def build_judgment_eval(judgments: dict, consensus: dict, market_change) -> dict:
+    """
+    Persist per-session directional evaluation so recent-window operational
+    metrics can be aggregated without reparsing raw structures.
+    """
+    bull = judgments.get("bull") or {}
+    bear = judgments.get("bear") or {}
+    neut = judgments.get("neutral") or {}
+    analyst_stances = {
+        "bull": bull.get("stance"),
+        "bear": bear.get("stance"),
+        "neutral": neut.get("stance"),
+    }
+    analyst_dirs = {role: _dir_label_from_name(stance) for role, stance in analyst_stances.items()}
+    actual_dir = _dir_label_from_change(market_change)
+    consensus_dir = _dir_label_from_name(consensus.get("mode"))
+    analyst_hits = {
+        role: (actual_dir != "NA" and analyst_dirs[role] == actual_dir)
+        for role in analyst_dirs
+    }
+    consensus_hit = actual_dir != "NA" and consensus_dir == actual_dir
+    vote_cats = [_cat(bull.get("stance")), _cat(bear.get("stance")), _cat(neut.get("stance"))]
+    unanimous_cat = vote_cats[0] if len(set(vote_cats)) == 1 else None
+    unanimous_dir = {
+        "bull": "UP",
+        "bear": "DOWN",
+        "neutral": "FLAT",
+        None: None,
+    }[unanimous_cat]
+    unanimous_mismatch = bool(unanimous_cat and unanimous_dir != consensus_dir)
+    return {
+        "actual_dir": actual_dir,
+        "consensus_dir": consensus_dir,
+        "consensus_hit": consensus_hit,
+        "analyst_dirs": analyst_dirs,
+        "analyst_hits": analyst_hits,
+        "best_analyst_hit": any(analyst_hits.values()),
+        "best_analyst_outperformed_consensus": any(analyst_hits.values()) and not consensus_hit,
+        "unanimous_direction": unanimous_cat,
+        "unanimous_consensus_mismatch": unanimous_mismatch,
+        "unanimous_actual_match": bool(unanimous_cat and actual_dir != "NA" and unanimous_dir == actual_dir),
+    }
+
 TRIGGER_WORDS_KR = ["공시", "급락", "세력", "서킷", "이탈", "장중 -"]
 TRIGGER_WORDS_US = ["halt", "circuit", "crash", "sec", "fraud", "bankrupt", "plunge"]
 
@@ -218,8 +342,10 @@ def build_consensus(judgments: dict, check_minority: bool = True,
         "vote":               list(cats),
     }
 
+    result = apply_unanimous_override(judgments, result)
+
     log.info(
-        f"합의: {mode} size={size}% "
+        f"consensus: {result['mode']} size={result['size']}% "
         f"score={weighted_score:+.3f} "
         f"weights=B{weights['bull']:.2f}/Be{weights['bear']:.2f}/N{weights['neutral']:.2f} "
         f"minority={minority_triggered}"

@@ -8,6 +8,7 @@ import json
 import time
 import logging
 import hashlib
+import math
 import requests
 import threading
 import pandas as pd
@@ -1750,6 +1751,160 @@ def _load_kr_screen_cache() -> list:
         return []
 
 
+def _screen_num(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        return float(value)
+    except Exception:
+        return default
+
+
+def _kr_screen_score(candidate: dict) -> float:
+    price = max(0.0, _screen_num(candidate.get("price"), 0.0))
+    volume = max(0.0, _screen_num(candidate.get("volume"), 0.0))
+    turnover = price * volume
+    change_rate = abs(_screen_num(candidate.get("change_rate"), 0.0))
+    vol_ratio = max(0.0, _screen_num(candidate.get("vol_ratio"), 0.0))
+    return math.log1p(turnover) + (change_rate * 2.0) + (vol_ratio * 4.0)
+
+
+def _kr_screen_brief(candidate: dict) -> dict:
+    row = {
+        "ticker": str(candidate.get("ticker", "") or ""),
+        "name": str(candidate.get("name", "") or ""),
+        "market_type": str(candidate.get("market_type", "") or ""),
+        "price": _screen_num(candidate.get("price"), 0.0),
+        "change_rate": _screen_num(candidate.get("change_rate"), 0.0),
+        "volume": int(_screen_num(candidate.get("volume"), 0.0)),
+        "vol_ratio": _screen_num(candidate.get("vol_ratio"), 0.0),
+    }
+    if "screen_score" in candidate:
+        row["screen_score"] = round(_screen_num(candidate.get("screen_score"), 0.0), 4)
+    return row
+
+
+def _kr_screen_reserve_limit(top_n: int) -> int:
+    limit = max(1, int(top_n or 1))
+    override = os.getenv("KR_SCREEN_RESERVE_LIMIT")
+    if override:
+        try:
+            return max(limit, int(override))
+        except ValueError:
+            pass
+    return max(limit, min(limit * 2, 80))
+
+
+def _merge_kr_market_buckets(kospi: list[dict], kosdaq: list[dict], top_n: int) -> list[dict]:
+    """Merge KOSPI/KOSDAQ screen buckets without letting one board crowd out the other."""
+    limit = max(1, int(top_n or 1))
+    kosdaq_min_ratio = max(0.0, min(0.8, float(os.getenv("KR_SCREEN_KOSDAQ_MIN_RATIO", "0.35"))))
+    forced_kosdaq_min = os.getenv("KR_SCREEN_KOSDAQ_MIN")
+    if forced_kosdaq_min:
+        kosdaq_min = max(0, int(forced_kosdaq_min))
+    else:
+        kosdaq_min = int(round(limit * kosdaq_min_ratio))
+
+    def _prepared(rows: list[dict], board: str) -> list[dict]:
+        out = []
+        for row in rows or []:
+            ticker = str(row.get("ticker", "") or "").strip()
+            if not ticker:
+                continue
+            item = dict(row)
+            item["market_type"] = str(item.get("market_type") or board).upper()
+            item["screen_score"] = _kr_screen_score(item)
+            out.append(item)
+        out.sort(key=lambda c: c.get("screen_score", 0.0), reverse=True)
+        return out
+
+    kq_sorted = _prepared(kosdaq, "KOSDAQ")
+    kp_sorted = _prepared(kospi, "KOSPI")
+    selected: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(row: dict) -> None:
+        ticker = str(row.get("ticker", "") or "").strip()
+        if ticker and ticker not in seen and len(selected) < limit:
+            selected.append(row)
+            seen.add(ticker)
+
+    for row in kq_sorted[: min(kosdaq_min, len(kq_sorted))]:
+        _add(row)
+
+    combined = sorted(kp_sorted + kq_sorted, key=lambda c: c.get("screen_score", 0.0), reverse=True)
+    for row in combined:
+        _add(row)
+
+    selected.sort(key=lambda c: c.get("screen_score", 0.0), reverse=True)
+    return selected[:limit]
+
+
+def _cap_kr_screen_candidates(candidates: list[dict], top_n: int) -> list[dict]:
+    kospi: list[dict] = []
+    kosdaq: list[dict] = []
+    for candidate in candidates or []:
+        market_type = str(candidate.get("market_type") or "").upper()
+        if market_type == "KOSDAQ":
+            kosdaq.append(candidate)
+        else:
+            kospi.append(candidate)
+    return _merge_kr_market_buckets(kospi, kosdaq, top_n)
+
+
+def _save_kr_screen_audit(
+    phase: str,
+    mode: str,
+    top_n: int,
+    vol_cnt: str,
+    buckets: dict[str, list[dict]],
+    merged: list[dict],
+    filtered: Optional[list[dict]] = None,
+    final: Optional[list[dict]] = None,
+) -> None:
+    try:
+        now = datetime.now()
+        path = get_runtime_path("logs", "screener", f"{now.strftime('%Y%m%d')}_KR_screen.jsonl")
+        payload = {
+            "ts": now.isoformat(timespec="seconds"),
+            "phase": phase,
+            "mode": mode,
+            "top_n": top_n,
+            "vol_cnt": vol_cnt,
+            "counts": {
+                **{key: len(value or []) for key, value in (buckets or {}).items()},
+                "merged": len(merged or []),
+                "filtered": len(filtered or []) if filtered is not None else None,
+                "final": len(final or []) if final is not None else None,
+            },
+            "tickers": {
+                **{key: [str(c.get("ticker", "")) for c in (value or [])] for key, value in (buckets or {}).items()},
+                "merged": [str(c.get("ticker", "")) for c in (merged or [])],
+                "filtered": [str(c.get("ticker", "")) for c in (filtered or [])] if filtered is not None else None,
+                "final": [str(c.get("ticker", "")) for c in (final or [])] if final is not None else None,
+            },
+            "candidates": {
+                key: [_kr_screen_brief(c) for c in (value or [])[:120]]
+                for key, value in (buckets or {}).items()
+            },
+            "merged_candidates": [_kr_screen_brief(c) for c in (merged or [])[:120]],
+            "filtered_candidates": (
+                [_kr_screen_brief(c) for c in (filtered or [])[:120]]
+                if filtered is not None else None
+            ),
+            "final_candidates": (
+                [_kr_screen_brief(c) for c in (final or [])[:120]]
+                if final is not None else None
+            ),
+        }
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logging.getLogger("trading_system").debug(f"[KR screener audit] save failed: {exc}")
+
+
 def _kis_volume_rank(token: str, vol_cnt: str, top_n: int, market_div: str = "J") -> list:
     """KIS 거래량순위 API 호출 공통 함수.
     market_div: "J"=KOSPI, "Q"=KOSDAQ
@@ -1797,6 +1952,17 @@ def _kis_volume_rank(token: str, vol_cnt: str, top_n: int, market_div: str = "J"
     return result
 
 
+def _is_kr_premarket_window() -> bool:
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    now_kr = _dt.now(ZoneInfo("Asia/Seoul"))
+    return (
+        (now_kr.hour == 8 and now_kr.minute >= 30)
+        or (now_kr.hour == 9 and now_kr.minute <= 5)
+    )
+
+
 def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list:
     """
     KR 시장 스크리닝 — A+B 병행 전략
@@ -1828,25 +1994,24 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
             )
         return filtered
 
-    from datetime import datetime as _dt
-    from zoneinfo import ZoneInfo
-    _now_kr = _dt.now(ZoneInfo("Asia/Seoul"))
-    _is_premarket = (
-        (_now_kr.hour == 8 and _now_kr.minute >= 30)
-        or (_now_kr.hour == 9 and _now_kr.minute <= 5)
-    )
+    reserve_n = _kr_screen_reserve_limit(top_n)
+    _is_premarket = _is_kr_premarket_window()
 
     try:
         if _is_premarket:
             # ── B: KIS 거래량 필터 OFF → 동시호가 잔량 종목 수집 ───────────────
-            live = []
+            live_kp = []
+            live_kq = []
             try:
-                live = _kis_volume_rank(token, vol_cnt="0", top_n=top_n)
+                live_kp = _kis_volume_rank(token, vol_cnt="0", top_n=reserve_n, market_div="J")
+                live_kq = _kis_volume_rank(token, vol_cnt="0", top_n=reserve_n, market_div="Q")
                 _logger.info(
-                    f"[KR 스크리너 장전-B] KIS 거래량필터OFF → {len(live)}종목"
+                    f"[KR 스크리너 장전-B] KIS 거래량필터OFF "
+                    f"KOSPI={len(live_kp)} KOSDAQ={len(live_kq)}"
                 )
             except Exception as e:
                 _logger.warning(f"[KR 스크리너 장전-B] KIS 실패: {e}")
+            live = _merge_kr_market_buckets(live_kp, live_kq, reserve_n)
 
             # ── A: 전일 캐시 로드 → B 보충 ────────────────────────────────────
             cached = _load_kr_screen_cache()
@@ -1873,42 +2038,54 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
                             "market_type": "KOSPI",
                         })
                         seen.add(ticker)
-                    if len(merged) >= top_n:
+                    if len(merged) >= reserve_n:
                         break
 
             _logger.info(
-                f"[KR 스크리너 장전] 최종 {len(merged[:top_n])}종목 "
+                f"[KR 스크리너 장전] 후보풀 {len(merged)}종목 "
                 f"(B라이브={len(live)}, A캐시={len(cached)})"
             )
-            return _apply_product_filter(merged, "premarket")[:top_n]
+            filtered = _apply_product_filter(merged, "premarket")
+            final = _cap_kr_screen_candidates(filtered, top_n)
+            _save_kr_screen_audit(
+                "premarket",
+                mode,
+                top_n,
+                "0",
+                {"kospi_raw": live_kp, "kosdaq_raw": live_kq, "cache": cached},
+                merged,
+                filtered,
+                final,
+            )
+            return final
 
         else:
             # ── 장중: 정상 스크리닝 + 캐시 저장 ─────────────────────────────
             preset = get_screening_preset("KR", mode)
             _kr_vol_cnt = str(preset["kr_min_volume"])
             _logger.info(f"[KR 스크리너] mode={mode} → FID_VOL_CNT={_kr_vol_cnt}")
-            result = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=top_n,
-                                      market_div="J")
+            kospi_result = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=reserve_n,
+                                            market_div="J")
 
             # KOSDAQ 보강: Q 호출 결과를 후보 풀에 추가 (KOSPI와 ticker 겹침 없음)
+            kosdaq_result = []
             try:
-                _kq = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=top_n,
-                                       market_div="Q")
-                _seen = {c["ticker"] for c in result}
-                _added = 0
-                for c in _kq:
-                    if c["ticker"] not in _seen:
-                        result.append(c)
-                        _seen.add(c["ticker"])
-                        _added += 1
-                _logger.info(f"[KR 스크리너] KOSDAQ 후보 추가: {_added}종목")
+                kosdaq_result = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=reserve_n,
+                                                 market_div="Q")
+                _logger.info(
+                    f"[KR 스크리너] raw KOSPI={len(kospi_result)} "
+                    f"KOSDAQ={len(kosdaq_result)}"
+                )
             except Exception as _e:
                 _logger.debug(f"[KR 스크리너] KOSDAQ 추가 실패(무시): {_e}")
 
-            if len(result) >= 10:
-                # 충분한 결과면 캐시 저장 (다음 날 장전 A로 사용)
-                save_kr_screen_cache(result)
-            elif len(result) < 10:
+            result = _merge_kr_market_buckets(kospi_result, kosdaq_result, reserve_n)
+            _logger.info(
+                f"[KR 스크리너] KOSPI/KOSDAQ quota merge → {len(result)}종목 "
+                f"(KOSDAQ {sum(1 for c in result if c.get('market_type') == 'KOSDAQ')}개)"
+            )
+
+            if len(result) < 10:
                 # 보완: 하드코딩 폴백
                 existing = {r["ticker"] for r in result}
                 for ticker in _KR_FALLBACK_UNIVERSE:
@@ -1919,10 +2096,26 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
                             "volume": 0, "vol_ratio": 1.0,
                             "market_type": "KOSPI",
                         })
-                    if len(result) >= 20:
+                        existing.add(ticker)
+                    if len(result) >= reserve_n:
                         break
 
-            return _apply_product_filter(result, "intraday")[:top_n]
+            filtered = _apply_product_filter(result, "intraday")
+            final = _cap_kr_screen_candidates(filtered, top_n)
+            if len(final) >= 10:
+                # 충분한 tradable 결과면 캐시 저장 (다음 날 장전 A로 사용)
+                save_kr_screen_cache(final)
+            _save_kr_screen_audit(
+                "intraday",
+                mode,
+                top_n,
+                _kr_vol_cnt,
+                {"kospi_raw": kospi_result, "kosdaq_raw": kosdaq_result},
+                result,
+                filtered,
+                final,
+            )
+            return final
 
     except Exception as e:
         _logger.warning(f"[KR 스크리너] API 실패 → 캐시·폴백: {e}")

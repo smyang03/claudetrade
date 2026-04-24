@@ -80,7 +80,6 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
         "MILD_BEAR",
         "NEUTRAL",
         "CAUTIOUS",
-        "CAUTIOUS_BULL",
     }
 
     if brain_mode in _disabled_modes:
@@ -93,7 +92,7 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
         "AGGRESSIVE":   (0.030, 1.2),
         "MODERATE_BULL":(0.033, 1.3),
         "MILD_BULL":    (0.035, 1.4),
-        "CAUTIOUS_BULL":(0.037, 1.5),
+        "CAUTIOUS":     (0.037, 1.5),
         "NEUTRAL":      (0.040, 1.5),
         "MILD_BEAR":    (0.045, 1.8),
     }
@@ -101,7 +100,7 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
         "AGGRESSIVE":   (0.028, 1.2),
         "MODERATE_BULL":(0.030, 1.3),
         "MILD_BULL":    (0.032, 1.4),
-        "CAUTIOUS_BULL":(0.035, 1.5),
+        "CAUTIOUS":     (0.035, 1.5),
         "NEUTRAL":      (0.040, 1.5),
         "MILD_BEAR":    (0.045, 1.8),
     }

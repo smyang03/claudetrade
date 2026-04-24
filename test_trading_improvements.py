@@ -194,6 +194,38 @@ class ScreenerPolicyTests(unittest.TestCase):
             3,
         )
 
+    def test_screen_market_kr_refills_slots_after_product_filter(self):
+        kospi_rows = [
+            {"ticker": "114800", "name": "KODEX 인버스", "price": 1000, "volume": 9_000_000, "change_rate": 9, "vol_ratio": 8, "market_type": "KOSPI"},
+            {"ticker": "252670", "name": "KODEX 200선물인버스2X", "price": 1000, "volume": 8_000_000, "change_rate": 8, "vol_ratio": 7, "market_type": "KOSPI"},
+            {"ticker": "005930", "name": "삼성전자", "price": 70000, "volume": 7_000_000, "change_rate": 2, "vol_ratio": 3, "market_type": "KOSPI"},
+            {"ticker": "000660", "name": "SK하이닉스", "price": 180000, "volume": 6_000_000, "change_rate": 3, "vol_ratio": 4, "market_type": "KOSPI"},
+            {"ticker": "035420", "name": "NAVER", "price": 200000, "volume": 5_000_000, "change_rate": 2, "vol_ratio": 3, "market_type": "KOSPI"},
+            {"ticker": "005380", "name": "현대차", "price": 250000, "volume": 4_000_000, "change_rate": 2, "vol_ratio": 2, "market_type": "KOSPI"},
+        ]
+        kosdaq_rows = [
+            {"ticker": "091990", "name": "셀트리온헬스케어", "price": 65000, "volume": 3_000_000, "change_rate": 4, "vol_ratio": 3, "market_type": "KOSDAQ"},
+            {"ticker": "247540", "name": "에코프로비엠", "price": 120000, "volume": 2_000_000, "change_rate": 5, "vol_ratio": 4, "market_type": "KOSDAQ"},
+        ]
+        requested_limits = []
+
+        def fake_volume_rank(token, vol_cnt, top_n, market_div="J"):
+            requested_limits.append(top_n)
+            rows = kosdaq_rows if market_div == "Q" else kospi_rows
+            return rows[:top_n]
+
+        with patch.object(kis_api_module, "_is_kr_premarket_window", return_value=False), \
+             patch.object(kis_api_module, "_kis_volume_rank", side_effect=fake_volume_rank), \
+             patch.object(kis_api_module, "save_kr_screen_cache"), \
+             patch.object(kis_api_module, "_save_kr_screen_audit"):
+            result = kis_api_module.screen_market_kr("token", top_n=4, mode="NEUTRAL")
+
+        tickers = [row["ticker"] for row in result]
+        self.assertEqual(len(result), 4)
+        self.assertNotIn("114800", tickers)
+        self.assertNotIn("252670", tickers)
+        self.assertTrue(all(limit > 4 for limit in requested_limits))
+
     def test_selection_candidate_cap_starts_kr_at_28_without_changing_us_default(self):
         try:
             from minority_report import analysts as analysts_module
@@ -276,6 +308,84 @@ class DigestBuilderPeadTests(unittest.TestCase):
         self.assertIn("실적 2026-04-23", prompt)
         self.assertIn("실적창 post_1", prompt)
         self.assertNotIn("surprise beat/medium", prompt)
+
+    def test_pead_prompt_gate_requires_shadow_days_and_manual_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def runtime_path(*parts, make_parents=True):
+                path = root.joinpath(*parts)
+                if make_parents:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                return path
+
+            state = {
+                "markets": {
+                    "US": {
+                        "market": "US",
+                        "shadow_start_date": "2026-04-20",
+                        "trading_days_observed": 5,
+                        "required_trading_days": 5,
+                        "prompt_surprise_enabled": True,
+                        "manual_review": {
+                            "tier_null_rate_checked": True,
+                            "surprise_sample_10_checked": True,
+                            "prompt_leak_zero_checked": False,
+                        },
+                    }
+                }
+            }
+
+            with patch.object(digest_builder_module, "get_runtime_path", side_effect=runtime_path), \
+                 patch.object(digest_builder_module, "_PEAD_PROMPT_INCLUDE_SURPRISE", True):
+                digest_builder_module._save_pead_shadow_state(state)
+                self.assertFalse(digest_builder_module._pead_surprise_prompt_allowed("US", "2026-04-24"))
+
+                state["markets"]["US"]["manual_review"]["prompt_leak_zero_checked"] = True
+                digest_builder_module._save_pead_shadow_state(state)
+                self.assertTrue(digest_builder_module._pead_surprise_prompt_allowed("US", "2026-04-24"))
+
+                state["markets"]["US"]["trading_days_observed"] = 4
+                digest_builder_module._save_pead_shadow_state(state)
+                self.assertFalse(digest_builder_module._pead_surprise_prompt_allowed("US", "2026-04-23"))
+
+    def test_persist_pead_shadow_rows_writes_state_summary(self):
+        rows = [
+            {
+                "ticker": "NVDA",
+                "reported_eps": 1.2,
+                "eps_estimate": 1.0,
+                "surprise_sign": "beat",
+                "confidence_tier": "high",
+                "prompt_applied": False,
+            },
+            {
+                "ticker": "GS",
+                "reported_eps": None,
+                "eps_estimate": None,
+                "surprise_sign": "unknown",
+                "confidence_tier": "medium",
+                "prompt_applied": False,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def runtime_path(*parts, make_parents=True):
+                path = root.joinpath(*parts)
+                if make_parents:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                return path
+
+            with patch.object(digest_builder_module, "get_runtime_path", side_effect=runtime_path):
+                digest_builder_module._persist_pead_shadow_rows("US", "2026-04-24", rows)
+
+            state = json.loads((root / "state" / "pead_shadow_state.json").read_text(encoding="utf-8"))
+            market_state = state["markets"]["US"]
+            self.assertEqual(market_state["trading_days_observed"], 1)
+            self.assertFalse(market_state["manual_review_passed"])
+            self.assertEqual(market_state["last_shadow_summary"]["by_tier"]["high"]["surprise_known"], 1)
+            self.assertEqual(market_state["last_shadow_summary"]["by_tier"]["medium"]["reported_eps_null_rate"], 1.0)
 
 
 class TradingBotPeadEnrichmentTests(unittest.TestCase):
@@ -523,6 +633,21 @@ class ConsensusGuardTests(unittest.TestCase):
         self.assertIsNone(result["unanimous_direction"])
         self.assertFalse(result["unanimous_consensus_mismatch"])
 
+    def test_cautious_judgment_eval_uses_bull_direction_consistently(self):
+        judgments = {
+            "bull": {"stance": "CAUTIOUS"},
+            "bear": {"stance": "CAUTIOUS"},
+            "neutral": {"stance": "CAUTIOUS"},
+        }
+        consensus = {"mode": "CAUTIOUS"}
+
+        result = consensus_module.build_judgment_eval(judgments, consensus, 0.2)
+
+        self.assertEqual(result["consensus_dir"], "UP")
+        self.assertEqual(result["analyst_dirs"], {"bull": "UP", "bear": "UP", "neutral": "UP"})
+        self.assertEqual(result["unanimous_direction"], "bull")
+        self.assertFalse(result["unanimous_consensus_mismatch"])
+
 
 class TradingBotGateTests(unittest.TestCase):
     def _make_bot(self):
@@ -641,6 +766,106 @@ class TradingBotGateTests(unittest.TestCase):
 
         self.assertTrue(blocked)
         self.assertEqual(minimum, 45_000)
+
+    def test_micro_probe_adjusts_sub_minimum_order_when_safety_checks_pass(self):
+        bot = self._make_bot()
+        bot.enable_micro_probe = True
+        bot.micro_probe_paper_only = True
+        bot.micro_probe_allowed_markets = {"KR", "US"}
+        bot.micro_probe_allowed_modes = {"MILD_BULL"}
+        bot.micro_probe_min_entry_priority = 0.45
+        bot.micro_probe_max_oversize_ratio = 2.0
+        bot.micro_probe_max_order_krw = 50_000
+        bot.micro_probe_max_daily_trades = 2
+        bot.micro_probe_max_open_positions = 2
+        bot.pending_orders = []
+        bot.decision_event_log = []
+
+        result = bot._micro_probe_adjustment(
+            market="KR",
+            ticker="123456",
+            mode="MILD_BULL",
+            source_strategy="momentum",
+            entry_priority_score=0.62,
+            qty=1,
+            risk_price_krw=8_000,
+            original_order_cost_krw=8_000,
+            order_budget_krw=20_000,
+            min_effective_order_krw=30_000,
+            available_budget_krw=100_000,
+            cash_krw=100_000,
+        )
+
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["adjusted_qty"], 4)
+        self.assertEqual(result["adjusted_order_cost_krw"], 32_000)
+        self.assertAlmostEqual(result["oversize_ratio"], 1.6)
+        self.assertEqual(result["source_strategy"], "momentum")
+
+    def test_micro_probe_blocks_live_by_default(self):
+        bot = self._make_bot()
+        bot.is_paper = False
+        bot.enable_micro_probe = True
+        bot.micro_probe_paper_only = True
+        bot.micro_probe_allowed_markets = {"KR"}
+        bot.micro_probe_allowed_modes = {"MILD_BULL"}
+        bot.micro_probe_min_entry_priority = 0.45
+        bot.micro_probe_max_oversize_ratio = 2.0
+        bot.micro_probe_max_order_krw = 50_000
+        bot.micro_probe_max_daily_trades = 2
+        bot.micro_probe_max_open_positions = 2
+        bot.pending_orders = []
+        bot.decision_event_log = []
+
+        result = bot._micro_probe_adjustment(
+            market="KR",
+            ticker="123456",
+            mode="MILD_BULL",
+            source_strategy="momentum",
+            entry_priority_score=0.80,
+            qty=1,
+            risk_price_krw=8_000,
+            original_order_cost_krw=8_000,
+            order_budget_krw=20_000,
+            min_effective_order_krw=30_000,
+            available_budget_krw=100_000,
+            cash_krw=100_000,
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "live_disabled")
+
+    def test_micro_probe_blocks_excessive_adjusted_order(self):
+        bot = self._make_bot()
+        bot.enable_micro_probe = True
+        bot.micro_probe_paper_only = True
+        bot.micro_probe_allowed_markets = {"KR"}
+        bot.micro_probe_allowed_modes = {"MILD_BULL"}
+        bot.micro_probe_min_entry_priority = 0.45
+        bot.micro_probe_max_oversize_ratio = 2.0
+        bot.micro_probe_max_order_krw = 50_000
+        bot.micro_probe_max_daily_trades = 2
+        bot.micro_probe_max_open_positions = 2
+        bot.pending_orders = []
+        bot.decision_event_log = []
+
+        result = bot._micro_probe_adjustment(
+            market="KR",
+            ticker="123456",
+            mode="MILD_BULL",
+            source_strategy="momentum",
+            entry_priority_score=0.80,
+            qty=0,
+            risk_price_krw=120_000,
+            original_order_cost_krw=0,
+            order_budget_krw=20_000,
+            min_effective_order_krw=30_000,
+            available_budget_krw=200_000,
+            cash_krw=200_000,
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "probe_order_too_large")
 
     def test_risk_off_mr_exception_allows_single_low_volume_setup(self):
         bot = self._make_bot()
@@ -1125,6 +1350,10 @@ class TradingBotGateTests(unittest.TestCase):
         normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="MODERATE_BULL")
 
         self.assertEqual(normalized["trade_ready"], ["A", "B", "D", "E", "F", "G"])
+        self.assertEqual(
+            normalized["_runtime_filtered_trade_ready"],
+            {"C": "slot_cap:momentum"},
+        )
 
     def test_normalize_selection_meta_runtime_filters_continuation_when_live_disabled(self):
         bot = self._make_bot()
@@ -1516,6 +1745,37 @@ class TradingBotRecoveryTests(unittest.TestCase):
         bot._save_positions.assert_called_once()
         bot._save_pending_orders.assert_called_once()
 
+    def test_make_position_from_broker_preserves_micro_probe_metadata(self):
+        bot = self._make_bot()
+
+        pos = bot._make_position_from_broker(
+            {
+                "market": "KR",
+                "ticker": "123456",
+                "qty": 4,
+                "raw_price": 8_000,
+                "order_no": "P1",
+                "strategy": "MICRO_PROBE",
+                "source_strategy": "momentum",
+                "micro_probe": True,
+                "micro_probe_reason": "order_size_too_small_probe",
+                "original_order_cost_krw": 8_000,
+                "adjusted_order_cost_krw": 32_000,
+                "oversize_ratio": 1.6,
+                "tp_pct": 0.03,
+                "sl_pct": 0.02,
+            },
+            {"ticker": "123456", "qty": 4, "avg_price": 8_000, "eval_price": 8_100},
+        )
+
+        self.assertEqual(pos["strategy"], "MICRO_PROBE")
+        self.assertEqual(pos["source_strategy"], "momentum")
+        self.assertTrue(pos["micro_probe"])
+        self.assertEqual(pos["micro_probe_reason"], "order_size_too_small_probe")
+        self.assertEqual(pos["original_order_cost_krw"], 8_000)
+        self.assertEqual(pos["adjusted_order_cost_krw"], 32_000)
+        self.assertEqual(pos["oversize_ratio"], 1.6)
+
     def test_verify_live_positions_removes_stale_legacy_when_broker_has_no_holding(self):
         bot = self._make_bot()
         saved = [{"ticker": "OKLO", "qty": 2, "entry": 100.0, "price_source": "order_fill"}]
@@ -1600,7 +1860,8 @@ class TradingBotRecoveryTests(unittest.TestCase):
             ]
         )
 
-        with patch.object(trading_bot_module, "is_trading_halted", return_value=False):
+        with patch.object(trading_bot_module, "is_trading_halted", return_value=False), \
+             patch.object(bot, "_is_order_allowed_now", return_value=True):
             bot._process_exit_candidates()
 
         bot._execute_sell.assert_called_once()
@@ -1729,6 +1990,27 @@ class DashboardSelectionReasonTests(unittest.TestCase):
         )
 
         self.assertEqual(reason, "TRADE_READY 제외 · 저유동성 제한")
+
+    def test_resolve_ticker_select_reason_uses_runtime_filtered_slot_reason(self):
+        rec = {
+            "selection_meta": {
+                "trade_ready": ["209640", "332570"],
+                "_runtime_filtered_trade_ready": {"032820": "slot_cap:momentum"},
+            }
+        }
+        item = {"selection_status": "WATCH_ONLY"}
+
+        reason = dashboard_server_module._resolve_ticker_select_reason(
+            "032820",
+            "KR",
+            "MILD_BULL",
+            item,
+            rec,
+            base_reason="",
+            watch_only_detail="",
+        )
+
+        self.assertEqual(reason, "TRADE_READY 제외 · 모멘텀 슬롯 한도 도달")
 
 
 class DashboardAnalysisFeedTests(unittest.TestCase):
@@ -2133,6 +2415,57 @@ class TickerSelectionDBTests(unittest.TestCase):
             "max_drawdown_5d",
         ):
             self.assertIn(column, columns)
+
+    def test_micro_probe_log_records_entry_and_outcome_report(self):
+        tsdb.log_micro_probe_entry(
+            session_date="2026-04-24",
+            market="KR",
+            ticker="123456",
+            order_no="P1",
+            source_strategy="momentum",
+            reason="order_size_too_small_probe",
+            entry_priority_score=0.62,
+            original_qty=1,
+            adjusted_qty=4,
+            original_order_cost_krw=8_000,
+            adjusted_order_cost_krw=32_000,
+            order_budget_krw=20_000,
+            min_effective_order_krw=30_000,
+            oversize_ratio=1.6,
+            entered_at="2026-04-24T09:10:00+09:00",
+        )
+        tsdb.update_micro_probe_outcome(
+            market="KR",
+            ticker="123456",
+            order_no="P1",
+            pnl_pct=1.25,
+            pnl_krw=400,
+            exit_reason="take_profit",
+            exited_at="2026-04-24T10:10:00+09:00",
+        )
+
+        report = tsdb.micro_probe_performance_report("KR")
+
+        self.assertEqual(report["trades"], 1)
+        self.assertEqual(report["wins"], 1)
+        self.assertEqual(report["win_rate_pct"], 100.0)
+        self.assertEqual(report["avg_pnl_pct"], 1.25)
+        self.assertEqual(report["total_pnl_krw"], 400)
+        with sqlite3.connect(tsdb.DB_PATH) as conn:
+            row = conn.execute(
+                """
+                SELECT source_strategy, original_order_cost_krw, adjusted_order_cost_krw,
+                       oversize_ratio, status, exit_reason
+                FROM micro_probe_log
+                WHERE ticker='123456'
+                """
+            ).fetchone()
+        self.assertEqual(row[0], "momentum")
+        self.assertEqual(row[1], 8_000)
+        self.assertEqual(row[2], 32_000)
+        self.assertEqual(row[3], 1.6)
+        self.assertEqual(row[4], "CLOSED")
+        self.assertEqual(row[5], "take_profit")
 
     def test_insert_batch_persists_trade_ready_and_selection_meta(self):
         row_ids = tsdb.insert_batch(

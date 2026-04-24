@@ -22,7 +22,7 @@ from datetime import datetime, date
 # STANCE → 숫자 인코딩 (낮을수록 Bearish)
 STANCE_ORDER = [
     "HALT", "DEFENSIVE", "CAUTIOUS_BEAR", "MILD_BEAR",
-    "NEUTRAL", "CAUTIOUS_BULL", "MILD_BULL", "MODERATE_BULL", "AGGRESSIVE",
+    "NEUTRAL", "CAUTIOUS", "MILD_BULL", "MODERATE_BULL", "AGGRESSIVE",
 ]
 
 _ROOT = Path(__file__).parent.parent

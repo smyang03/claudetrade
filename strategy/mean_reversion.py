@@ -30,7 +30,7 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
     _kr = {
         "AGGRESSIVE":   (31, 23),
         "MILD_BULL":    (27, 17),
-        "CAUTIOUS_BULL":(25, 15),
+        "CAUTIOUS":     (25, 15),
         "NEUTRAL":      (25, 15),
         "MILD_BEAR":    (23, 13),
         "CAUTIOUS_BEAR":(23, 12),
@@ -42,7 +42,7 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
         "AGGRESSIVE":   (31, 25),
         "MODERATE_BULL":(29, 22),
         "MILD_BULL":    (27, 19),
-        "CAUTIOUS_BULL":(25, 17),
+        "CAUTIOUS":     (25, 17),
         "NEUTRAL":      (25, 17),
         "MILD_BEAR":    (23, 15),
         "CAUTIOUS_BEAR":(23, 14),

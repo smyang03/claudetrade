@@ -34,6 +34,30 @@ Only `high` may produce `surprise_sign` / `surprise_strength`.
   - compute and store values
   - write logs for manual inspection
   - do not expose surprise fields to Claude prompts
+- Prompt exposure must be blocked by `state/pead_shadow_state.json`, not by memory or comments only.
+- `prompt_surprise_enabled=true` is not sufficient by itself. The manual review checklist below must also pass.
+
+### PEAD manual review gate
+
+Before enabling surprise fields in analyst/selection prompts, all checks must be true in `state/pead_shadow_state.json`.
+
+- `trading_days_observed >= 5`
+- `manual_review.tier_null_rate_checked=true`: inspect 5 trading days of shadow logs and tier-level null rates.
+- `manual_review.surprise_sample_10_checked=true`: manually verify at least 10 `surprise_sign` cases against source EPS values.
+- `manual_review.prompt_leak_zero_checked=true`: confirm zero prompt leaks of surprise text while `prompt_applied=false`.
+- `prompt_surprise_enabled=true`: explicit final operator switch after the checklist is complete.
+- `manual_review_passed` is derived from checklist values. Do not treat a hand-edited boolean as sufficient.
+
+### PEAD gate completion boundary
+
+The first implementation step is complete only when:
+
+- `state/pead_shadow_state.json` is generated from shadow logs.
+- 5 trading day gating is enforced in code.
+- surprise prompt leakage is covered by tests.
+- `prompt_applied` remains false until the state gate and checklist pass.
+
+Do not add PEAD weighting, prompt tuning, or source expansion in the same step.
 
 ### Prompt Scope
 
@@ -59,6 +83,18 @@ Only `high` may produce `surprise_sign` / `surprise_strength`.
   - surprise_strength
   - confidence_tier
   - prompt_applied
+
+### MICRO_PROBE promotion policy
+
+`MICRO_PROBE` is a separate experiment path for order-size-too-small signals, not a regular strategy.
+
+- Keep `MICRO_PROBE` performance separate from normal trades.
+- Do not promote to regular sizing before at least `30` filled probe trades or `4` calendar weeks of observation.
+- Promotion review must use net performance after fees, max loss, loss streak, and separate probe reports.
+- Probe records must keep original order cost, adjusted order cost, oversize ratio, and probe reason.
+- Runtime defaults are defensive: `MICRO_PROBE_ENABLED=false`, `MICRO_PROBE_PAPER_ONLY=true`, max `2` daily probes, max `2` open probe positions.
+- A probe can only convert an `order_size_too_small` signal when market/mode allow it, entry priority is at least `0.45`, adjusted order is at most `50,000 KRW`, and oversize ratio is at most `2.0`.
+- Probe entry/outcome data is stored in `ticker_selection_db.micro_probe_log`; do not mix it into normal strategy promotion decisions.
 
 ## Operations Rules (2026-04-22)
 

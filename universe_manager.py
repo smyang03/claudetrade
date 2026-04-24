@@ -23,6 +23,11 @@ class UniverseConfig:
     top_n: int = 20
     min_price: float = 1.0
     min_dollar_volume: float = 0.0  # price * volume 하한 (0=비활성화)
+    category_cap: int = 3
+    sector_cap: int = 3
+    overextended_cap: int = 3
+    low_liquidity_cap: int = 2
+    kosdaq_cap: int = 5
 
 
 # 시장별 Core 종목 — Dynamic Universe에서 항상 보장
@@ -79,6 +84,94 @@ def _candidate_score(c: dict, vol_weight: float = 4.0) -> float:
     return (liquidity * 0.6) + (vol_ratio * vol_weight) + (change_rate * 2.0)
 
 
+def _candidate_pullback_bucket(from_high_pct) -> str:
+    value = _safe_float(from_high_pct, 0.0)
+    if value <= -5.0:
+        return "deep"
+    if value <= -2.0:
+        return "pullback"
+    if value <= -0.5:
+        return "near_high"
+    return "at_high"
+
+
+def _candidate_liquidity_bucket(turnover: float) -> str:
+    if turnover >= 10_000_000_000:
+        return "high"
+    if turnover >= 1_000_000_000:
+        return "mid"
+    return "low"
+
+
+def _diverse_dynamic_items(
+    cleaned: list[dict],
+    market: str,
+    dynamic_slots: int,
+    cfg: UniverseConfig,
+    excluded: set[str],
+) -> list[dict]:
+    if dynamic_slots <= 0:
+        return []
+
+    chosen: list[dict] = []
+    deferred: list[dict] = []
+    category_counts: dict[str, int] = {}
+    sector_counts: dict[str, int] = {}
+    overextended_count = 0
+    low_liquidity_count = 0
+    kosdaq_count = 0
+
+    for item in cleaned:
+        if item["ticker"] in excluded:
+            continue
+
+        category = str(item.get("category", "") or "").strip().lower()
+        sector = str(item.get("sector", "") or "").strip().lower()
+        pullback = str(item.get("from_high_bucket", "") or "").strip().lower()
+        liquidity = str(item.get("liquidity_bucket", "") or "").strip().lower()
+        market_type = str(item.get("market_type", "") or "").strip().upper()
+
+        blocked = False
+        if category and category_counts.get(category, 0) >= cfg.category_cap:
+            blocked = True
+        if sector and sector_counts.get(sector, 0) >= cfg.sector_cap:
+            blocked = True
+        if pullback in {"at_high", "near_high"} and overextended_count >= cfg.overextended_cap:
+            blocked = True
+        if liquidity == "low" and low_liquidity_count >= cfg.low_liquidity_cap:
+            blocked = True
+        if market.upper() == "KR" and market_type == "KOSDAQ" and kosdaq_count >= cfg.kosdaq_cap:
+            blocked = True
+
+        if blocked:
+            deferred.append(item)
+            continue
+
+        chosen.append(item)
+        if category:
+            category_counts[category] = category_counts.get(category, 0) + 1
+        if sector:
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if pullback in {"at_high", "near_high"}:
+            overextended_count += 1
+        if liquidity == "low":
+            low_liquidity_count += 1
+        if market.upper() == "KR" and market_type == "KOSDAQ":
+            kosdaq_count += 1
+        if len(chosen) >= dynamic_slots:
+            return chosen[:dynamic_slots]
+
+    if len(chosen) < dynamic_slots:
+        for item in deferred:
+            if item["ticker"] in excluded:
+                continue
+            chosen.append(item)
+            if len(chosen) >= dynamic_slots:
+                break
+
+    return chosen[:dynamic_slots]
+
+
 def build_universe_from_candidates(
     market: str,
     target_date: str,
@@ -125,7 +218,21 @@ def build_universe_from_candidates(
             "change_rate": _safe_float(c.get("change_rate", 0.0)),
             "volume": volume,
             "vol_ratio": _safe_float(c.get("vol_ratio", 0.0)),
+            "market_type": str(c.get("market_type", "") or "").strip().upper(),
+            "category": str(c.get("category", "") or "").strip(),
+            "sector": str(c.get("sector", "") or "").strip(),
+            "from_high_pct": _safe_float(c.get("from_high_pct", 0.0)),
+            "above_ma60": c.get("above_ma60"),
         }
+        turnover = price * volume
+        item["liquidity_bucket"] = (
+            str(c.get("liquidity_bucket", "") or "").strip().lower()
+            or _candidate_liquidity_bucket(turnover)
+        )
+        item["from_high_bucket"] = (
+            str(c.get("from_high_bucket", "") or "").strip().lower()
+            or _candidate_pullback_bucket(item["from_high_pct"])
+        )
         item["score"] = _candidate_score(item, vol_weight=vol_weight)
         cleaned.append(item)
 
@@ -140,10 +247,19 @@ def build_universe_from_candidates(
         if t not in core_found:
             core_items.append({"ticker": t, "name": t, "price": 0.0,
                                 "change_rate": 0.0, "volume": 0.0,
-                                "vol_ratio": 1.0, "score": 0.0})
+                                "vol_ratio": 1.0, "score": 0.0,
+                                "market_type": "", "category": "", "sector": "",
+                                "from_high_pct": 0.0, "above_ma60": None,
+                                "liquidity_bucket": "low", "from_high_bucket": "at_high"})
 
     dynamic_slots = max(0, cfg.top_n - len(core_items))
-    dynamic_items = [c for c in cleaned if c["ticker"] not in core][:dynamic_slots]
+    dynamic_items = _diverse_dynamic_items(
+        cleaned,
+        market,
+        dynamic_slots,
+        cfg,
+        {c["ticker"] for c in core_items},
+    )
     selected = core_items + dynamic_items
 
     snapshot = {

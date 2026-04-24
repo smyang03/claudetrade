@@ -360,6 +360,161 @@ def _yf_earnings_date(symbol: str) -> str:
 
 
 _PEAD_PROMPT_INCLUDE_SURPRISE = False
+_PEAD_SHADOW_REQUIRED_TRADING_DAYS = 5
+_PEAD_MANUAL_REVIEW_CHECKS = (
+    "tier_null_rate_checked",
+    "surprise_sample_10_checked",
+    "prompt_leak_zero_checked",
+)
+
+
+def _pead_shadow_state_path() -> Path:
+    return get_runtime_path("state", "pead_shadow_state.json")
+
+
+def _default_pead_market_state(market: str, target_date: str) -> dict:
+    return {
+        "market": str(market or "").upper(),
+        "shadow_start_date": target_date,
+        "last_observed_date": "",
+        "trading_days_observed": 0,
+        "required_trading_days": _PEAD_SHADOW_REQUIRED_TRADING_DAYS,
+        "prompt_surprise_enabled": False,
+        "enabled_at": None,
+        "manual_review_passed": False,
+        "manual_review": {
+            "tier_null_rate_checked": False,
+            "surprise_sample_10_checked": False,
+            "prompt_leak_zero_checked": False,
+            "reviewer": "",
+            "reviewed_at": "",
+            "notes": "",
+        },
+        "last_shadow_summary": {},
+        "updated_at": "",
+    }
+
+
+def _load_pead_shadow_state() -> dict:
+    path = _pead_shadow_state_path()
+    if not path.exists():
+        return {"markets": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"markets": {}}
+    if not isinstance(data, dict):
+        return {"markets": {}}
+    if "markets" not in data:
+        market = str(data.get("market") or "").upper()
+        if market:
+            return {"markets": {market: data}}
+        return {"markets": {}}
+    if not isinstance(data.get("markets"), dict):
+        data["markets"] = {}
+    return data
+
+
+def _save_pead_shadow_state(state: dict) -> None:
+    path = _pead_shadow_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _business_days_observed(start_date: str, target_date: str) -> int:
+    try:
+        start = pd.Timestamp(start_date).normalize()
+        end = pd.Timestamp(target_date).normalize()
+    except Exception:
+        return 0
+    if pd.isna(start) or pd.isna(end) or end < start:
+        return 0
+    return len(pd.bdate_range(start, end))
+
+
+def _pead_manual_review_complete(market_state: dict) -> bool:
+    review = market_state.get("manual_review") or {}
+    return all(bool(review.get(key)) for key in _PEAD_MANUAL_REVIEW_CHECKS)
+
+
+def _summarize_pead_shadow_rows(rows: list[dict]) -> dict:
+    by_tier: dict[str, dict] = {}
+    for row in rows or []:
+        tier = str(row.get("confidence_tier") or "low").lower()
+        bucket = by_tier.setdefault(
+            tier,
+            {
+                "rows": 0,
+                "reported_eps_null": 0,
+                "eps_estimate_null": 0,
+                "surprise_known": 0,
+                "prompt_applied": 0,
+            },
+        )
+        bucket["rows"] += 1
+        if row.get("reported_eps") is None:
+            bucket["reported_eps_null"] += 1
+        if row.get("eps_estimate") is None:
+            bucket["eps_estimate_null"] += 1
+        if str(row.get("surprise_sign") or "unknown") != "unknown":
+            bucket["surprise_known"] += 1
+        if bool(row.get("prompt_applied")):
+            bucket["prompt_applied"] += 1
+
+    for bucket in by_tier.values():
+        rows_count = max(1, int(bucket.get("rows") or 0))
+        bucket["reported_eps_null_rate"] = round(bucket["reported_eps_null"] / rows_count, 4)
+        bucket["eps_estimate_null_rate"] = round(bucket["eps_estimate_null"] / rows_count, 4)
+    return {
+        "rows": len(rows or []),
+        "by_tier": by_tier,
+    }
+
+
+def _record_pead_shadow_observation(market: str, target_date: str, rows: list[dict]) -> dict:
+    market_key = str(market or "").upper()
+    state = _load_pead_shadow_state()
+    markets = state.setdefault("markets", {})
+    market_state = markets.get(market_key)
+    if not isinstance(market_state, dict):
+        market_state = _default_pead_market_state(market_key, target_date)
+
+    if not market_state.get("shadow_start_date"):
+        market_state["shadow_start_date"] = target_date
+    market_state.setdefault("required_trading_days", _PEAD_SHADOW_REQUIRED_TRADING_DAYS)
+    market_state.setdefault("prompt_surprise_enabled", False)
+    market_state.setdefault("manual_review", _default_pead_market_state(market_key, target_date)["manual_review"])
+
+    observed = _business_days_observed(str(market_state.get("shadow_start_date") or target_date), target_date)
+    market_state["last_observed_date"] = target_date
+    market_state["trading_days_observed"] = max(int(market_state.get("trading_days_observed") or 0), observed)
+    market_state["manual_review_passed"] = _pead_manual_review_complete(market_state)
+    market_state["last_shadow_summary"] = _summarize_pead_shadow_rows(rows)
+    market_state["updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+    markets[market_key] = market_state
+    _save_pead_shadow_state(state)
+    return market_state
+
+
+def _pead_surprise_prompt_allowed(market: str, target_date: str) -> bool:
+    if not _PEAD_PROMPT_INCLUDE_SURPRISE:
+        return False
+    market_key = str(market or "").upper()
+    market_state = (_load_pead_shadow_state().get("markets") or {}).get(market_key) or {}
+    if not market_state:
+        return False
+
+    required = int(market_state.get("required_trading_days") or _PEAD_SHADOW_REQUIRED_TRADING_DAYS)
+    observed = max(
+        int(market_state.get("trading_days_observed") or 0),
+        _business_days_observed(str(market_state.get("shadow_start_date") or ""), target_date),
+    )
+    if observed < required:
+        return False
+    if not bool(market_state.get("prompt_surprise_enabled")):
+        return False
+    return _pead_manual_review_complete(market_state)
 
 
 def _safe_float_or_none(value) -> Optional[float]:
@@ -567,6 +722,7 @@ def _persist_pead_shadow_rows(market: str, target_date: str, rows: list[dict]) -
     path = get_runtime_path("logs", "pead", f"{target_date}_{market}_shadow.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=2)
+    _record_pead_shadow_observation(market, target_date, rows)
 
 
 def fetch_live_context_us() -> dict:
@@ -848,6 +1004,7 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     _vkospi = float(_vkospi_val or 0)
     ticker_map = _ticker_map("KR", universe_tickers, include_inverse=_vkospi >= 20)
     layer_b = {}
+
     for ticker, name in ticker_map.items():
         df = load_price_with_cache("KR", ticker)
         if df.empty:
@@ -1033,6 +1190,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     ticker_map = _ticker_map("US", universe_tickers, include_inverse=float(_vix) >= 25)
     layer_b = {}
     shadow_rows = []
+    pead_prompt_allowed = _pead_surprise_prompt_allowed("US", target_date)
     for ticker, name in ticker_map.items():
         df = load_price_with_cache("US", ticker)
         if df.empty:
@@ -1087,6 +1245,11 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
 
         # 실적 발표일 (yfinance calendar)
         earnings_meta = _build_earnings_event_payload("US", ticker, target_date, include_surprise=True)
+        prompt_applied = bool(
+            pead_prompt_allowed
+            and earnings_meta.get("confidence_tier") == "high"
+            and earnings_meta.get("surprise_sign") not in ("", "unknown", None)
+        )
 
         # 감성 점수 (AV에서)
         corp_news  = news.get("corp_news", {}).get(ticker, {})
@@ -1114,7 +1277,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
             "reported_eps":   earnings_meta.get("reported_eps"),
             "eps_estimate":   earnings_meta.get("eps_estimate"),
             "pead_bias":      earnings_meta.get("pead_bias", "neutral"),
-            "prompt_applied": bool(_PEAD_PROMPT_INCLUDE_SURPRISE and earnings_meta.get("confidence_tier") == "high"),
+            "prompt_applied": prompt_applied,
             "news_sentiment": round(float(avg_sent), 3),
             "sec_filing":     bool([i for i in news_items if i.get("source") == "SEC EDGAR"]),
         }
@@ -1130,7 +1293,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
                 "surprise_strength": earnings_meta.get("surprise_strength", "unknown"),
                 "confidence_tier": earnings_meta.get("confidence_tier", "low"),
                 "pead_bias": earnings_meta.get("pead_bias", "neutral"),
-                "prompt_applied": False,
+                "prompt_applied": prompt_applied,
                 "source_symbol": earnings_meta.get("source_symbol", ""),
             }
         )

@@ -166,6 +166,18 @@ class BrokerSyncCashTests(unittest.TestCase):
         self.assertTrue(bot.risk.halted)
         self.assertEqual(bot.risk.halt_reason, "daily_loss")
 
+    def test_market_broker_total_equity_reads_single_market_balance(self):
+        bot = self._make_bot()
+        bot.is_paper = False
+        kr_balance = {"cash": 1_010_738.0, "total_eval": 0.0, "stocks": []}
+
+        with patch.object(trading_bot_module, "get_balance", return_value=kr_balance):
+            total = bot._market_broker_total_equity_krw("KR")
+
+        self.assertEqual(total, 1_010_738.0)
+        self.assertEqual(bot._broker_state["KR"]["trust_level"], "trusted")
+        self.assertEqual(bot._broker_state["KR"]["last_snapshot"]["total_krw"], 1_010_738.0)
+
     def test_daily_baseline_persists_across_restart(self):
         bot = self._make_bot()
         bot._daily_baseline_by_market = {

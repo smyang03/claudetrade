@@ -61,7 +61,7 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
             "AGGRESSIVE":   (0.75, 1.3),
             "MODERATE_BULL":(0.60, 1.4),
             "MILD_BULL":    (0.55, 1.5),
-            "CAUTIOUS_BULL":(0.40, 1.6),
+            "CAUTIOUS":     (0.40, 1.6),
             "NEUTRAL":      (0.45, 1.6),
         }
         size, vol_mult = _us_table.get(brain_mode, _us_table["NEUTRAL"])
@@ -81,7 +81,7 @@ def params(brain_mode: str, conf: float = 0.6, market: str = "KR") -> dict:
         "AGGRESSIVE":   (0.90, 1.2),
         "MODERATE_BULL":(0.72, 1.3),
         "MILD_BULL":    (0.63, 1.4),
-        "CAUTIOUS_BULL":(0.50, 1.5),
+        "CAUTIOUS":     (0.50, 1.5),
         "NEUTRAL":      (0.58, 1.5),
     }
     size, vol_mult = _table.get(brain_mode, _table["NEUTRAL"])

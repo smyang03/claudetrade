@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import time
+import math
 import atexit
 import sqlite3
 import queue as _queue_mod
@@ -256,6 +257,7 @@ _LIVE_STATUS_MIN_INTERVAL = float(os.getenv("LIVE_STATUS_MIN_INTERVAL_SEC", "10"
 # VIX 구간별 포지션 사이즈 승수 (US 전용)
 _MIN_EFFECTIVE_ORDER_KRW = float(os.getenv("MIN_EFFECTIVE_ORDER_KRW", "30000"))
 _MIN_EFFECTIVE_ORDER_USD = float(os.getenv("MIN_EFFECTIVE_ORDER_USD", "30"))
+_MICRO_PROBE_STRATEGY = "MICRO_PROBE"
 
 _VIX_SIZE_TIERS = [
     (30.0, float(os.getenv("VIX_MULT_30", "0.55"))),   # VIX 30+  → 55%
@@ -522,6 +524,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.enable_continuation_live = _env_bool("ENABLE_CONTINUATION_LIVE", False)
         self.enable_soft_watch_promotion = _env_bool("ENABLE_SOFT_WATCH_PROMOTION", False)
         self.enable_kr_momentum_shrink = _env_bool("ENABLE_KR_MOMENTUM_SHRINK", True)
+        self.enable_micro_probe = _env_bool("MICRO_PROBE_ENABLED", False)
+        self.micro_probe_paper_only = _env_bool("MICRO_PROBE_PAPER_ONLY", True)
+        self.micro_probe_allowed_markets = {
+            item.strip().upper()
+            for item in os.getenv("MICRO_PROBE_MARKETS", "KR,US").split(",")
+            if item.strip()
+        }
+        self.micro_probe_allowed_modes = {
+            item.strip().upper()
+            for item in os.getenv("MICRO_PROBE_MODES", "RISK_ON,MILD_BULL,BALANCED").split(",")
+            if item.strip()
+        }
+        self.micro_probe_min_entry_priority = float(os.getenv("MICRO_PROBE_MIN_ENTRY_PRIORITY", "0.45"))
+        self.micro_probe_max_oversize_ratio = float(os.getenv("MICRO_PROBE_MAX_OVERSIZE_RATIO", "2.0"))
+        self.micro_probe_max_order_krw = float(os.getenv("MICRO_PROBE_MAX_ORDER_KRW", "50000"))
+        self.micro_probe_max_daily_trades = int(os.getenv("MICRO_PROBE_MAX_DAILY_TRADES", "2"))
+        self.micro_probe_max_open_positions = int(os.getenv("MICRO_PROBE_MAX_OPEN_POSITIONS", "2"))
         self._last_session_date_diag = {"KR": None, "US": None}
         self.gap_pullback_atr_position_sizing = _env_bool("GAP_PULLBACK_ATR_POSITION_SIZING", False)
         self.atr_target_pct = float(os.getenv("ATR_TARGET_PCT", "0.015"))
@@ -1302,10 +1321,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             slot_name = strategy_name or "__unassigned__"
             slot_cap = int(slot_config.get(slot_name, slot_config.get("__unassigned__", 0)))
             if slot_cap <= 0:
+                runtime_filtered[ticker] = f"slot_disabled:{slot_name}"
                 continue
             if slot_counts.get(slot_name, 0) >= slot_cap:
+                runtime_filtered[ticker] = f"slot_cap:{slot_name}"
                 continue
             if len(final_ready) >= total_cap:
+                runtime_filtered[ticker] = "total_cap_reached"
                 break
             final_ready.append(ticker)
             slot_counts[slot_name] = slot_counts.get(slot_name, 0) + 1
@@ -1766,6 +1788,353 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if qty <= 0:
             return 0 < order_budget_krw < minimum, minimum
         return 0 < order_cost_krw < minimum, minimum
+
+    def _is_micro_probe_record(self, item: dict) -> bool:
+        return bool(item.get("micro_probe")) or str(item.get("strategy", "") or "").upper() == _MICRO_PROBE_STRATEGY
+
+    def _micro_probe_session_count(self, market: str) -> int:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        count = 0
+        for event in getattr(self, "decision_event_log", []) or []:
+            if event.get("market") != market_key:
+                continue
+            if event.get("action") in ("buy_order", "buy_signal") and self._is_micro_probe_record(event):
+                count += 1
+        return count
+
+    def _micro_probe_open_count(self, market: str) -> int:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        count = 0
+        for pos in getattr(getattr(self, "risk", None), "positions", []) or []:
+            ticker = str(pos.get("ticker", "") or "").strip()
+            if ticker and self._ticker_market(ticker) == market_key and self._is_micro_probe_record(pos):
+                count += 1
+        for order in getattr(self, "pending_orders", []) or []:
+            if order.get("market") == market_key and self._is_micro_probe_record(order):
+                count += 1
+        return count
+
+    def _micro_probe_adjustment(
+        self,
+        *,
+        market: str,
+        ticker: str,
+        mode: str,
+        source_strategy: str,
+        entry_priority_score: float,
+        qty: int,
+        risk_price_krw: float,
+        original_order_cost_krw: float,
+        order_budget_krw: float,
+        min_effective_order_krw: float,
+        available_budget_krw: float,
+        cash_krw: float,
+    ) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        if not getattr(self, "enable_micro_probe", False):
+            return {"allowed": False, "reason": "disabled"}
+        if getattr(self, "micro_probe_paper_only", True) and not getattr(self, "is_paper", True):
+            return {"allowed": False, "reason": "live_disabled"}
+        if market_key not in getattr(self, "micro_probe_allowed_markets", {"KR", "US"}):
+            return {"allowed": False, "reason": "market_not_allowed"}
+        allowed_modes = getattr(self, "micro_probe_allowed_modes", set())
+        if allowed_modes and str(mode or "").upper() not in allowed_modes:
+            return {"allowed": False, "reason": "mode_not_allowed"}
+        min_score = float(getattr(self, "micro_probe_min_entry_priority", 0.45) or 0.0)
+        if float(entry_priority_score or 0.0) < min_score:
+            return {"allowed": False, "reason": "entry_priority_too_low"}
+        if self._micro_probe_session_count(market_key) >= int(getattr(self, "micro_probe_max_daily_trades", 0) or 0):
+            return {"allowed": False, "reason": "daily_limit"}
+        if self._micro_probe_open_count(market_key) >= int(getattr(self, "micro_probe_max_open_positions", 0) or 0):
+            return {"allowed": False, "reason": "open_limit"}
+
+        price = float(risk_price_krw or 0.0)
+        minimum = float(min_effective_order_krw or 0.0)
+        budget = float(order_budget_krw or 0.0)
+        original_cost = float(original_order_cost_krw or 0.0)
+        if price <= 0 or minimum <= 0 or budget <= 0:
+            return {"allowed": False, "reason": "invalid_probe_basis"}
+
+        adjusted_qty = max(int(qty or 0), int(math.ceil(minimum / price)))
+        adjusted_cost = adjusted_qty * price
+        ratio_base = max(original_cost, budget)
+        oversize_ratio = adjusted_cost / max(ratio_base, 1.0)
+
+        max_order = float(getattr(self, "micro_probe_max_order_krw", 0.0) or 0.0)
+        if max_order > 0 and adjusted_cost > max_order:
+            return {
+                "allowed": False,
+                "reason": "probe_order_too_large",
+                "adjusted_qty": adjusted_qty,
+                "adjusted_order_cost_krw": adjusted_cost,
+                "oversize_ratio": oversize_ratio,
+            }
+        max_ratio = float(getattr(self, "micro_probe_max_oversize_ratio", 0.0) or 0.0)
+        if max_ratio > 0 and oversize_ratio > max_ratio:
+            return {
+                "allowed": False,
+                "reason": "oversize_ratio_too_high",
+                "adjusted_qty": adjusted_qty,
+                "adjusted_order_cost_krw": adjusted_cost,
+                "oversize_ratio": oversize_ratio,
+            }
+        if adjusted_cost > float(available_budget_krw or 0.0):
+            return {"allowed": False, "reason": "market_budget_exceeded"}
+        if adjusted_cost > float(cash_krw or 0.0):
+            return {"allowed": False, "reason": "insufficient_cash"}
+
+        return {
+            "allowed": True,
+            "reason": "order_size_too_small_probe",
+            "source_strategy": source_strategy,
+            "original_qty": int(qty or 0),
+            "adjusted_qty": adjusted_qty,
+            "original_order_cost_krw": original_cost,
+            "adjusted_order_cost_krw": adjusted_cost,
+            "order_budget_krw": budget,
+            "min_effective_order_krw": minimum,
+            "oversize_ratio": oversize_ratio,
+            "entry_priority_score": float(entry_priority_score or 0.0),
+        }
+
+    def _submit_micro_probe_buy_order(
+        self,
+        *,
+        market: str,
+        ticker: str,
+        name: str,
+        qty: int,
+        raw_price: float,
+        risk_price_krw: float,
+        tp_pct: float,
+        sl_pct: float,
+        max_hold: int,
+        mode: str,
+        selected_reason: str,
+        source_strategy: str,
+        entry_priority_score: float,
+        tsdb_id: int,
+        isdb_id: int,
+        signal_at: str,
+        signal_row: dict,
+        probe_meta: dict,
+    ) -> bool:
+        order_cost = float(qty or 0) * float(risk_price_krw or 0.0)
+        if qty <= 0 or raw_price <= 0 or risk_price_krw <= 0 or order_cost <= 0:
+            return False
+
+        analysis_log.info(
+            f"[signal {market}] {ticker} MICRO_PROBE qty={qty}",
+            extra={"extra": {
+                "event": "entry_signal",
+                "market": market,
+                "ticker": ticker,
+                "strategy": _MICRO_PROBE_STRATEGY,
+                "source_strategy": source_strategy,
+                "mode": mode,
+                "price": raw_price,
+                "risk_price_krw": risk_price_krw,
+                "qty": qty,
+                "order_cost_krw": order_cost,
+                "tp_pct": tp_pct,
+                "sl_pct": sl_pct,
+                "micro_probe": True,
+                **{k: v for k, v in (probe_meta or {}).items() if k != "allowed"},
+            }},
+        )
+        self._funnel.setdefault(market, {}).setdefault("signaled", 0)
+        self._funnel[market]["signaled"] += 1
+        self._notify_signal_state_change(
+            "entry_signal",
+            market,
+            ticker,
+            strategy=_MICRO_PROBE_STRATEGY,
+            price=float(raw_price),
+            mode=mode,
+            qty=qty,
+            order_cost_krw=int(order_cost),
+        )
+
+        order_px = self._compute_order_price("buy", market, float(raw_price))
+        precheck_px = float(raw_price) if order_px == 0 else order_px
+        precheck = precheck_order(ticker, qty, precheck_px, "buy", self.token, market=market)
+        if not precheck.get("ok"):
+            self._record_decision_event(
+                market,
+                "buy_failed",
+                ticker,
+                strategy=_MICRO_PROBE_STRATEGY,
+                qty=qty,
+                price_native=order_px,
+                price_krw=risk_price_krw,
+                reason=precheck.get("reason", "precheck_failed"),
+                detail=precheck.get("msg", ""),
+                selected_reason=selected_reason,
+            )
+            analysis_log.info(
+                f"[signal {market}] {ticker} micro_probe_precheck_failed",
+                extra={"extra": {
+                    "event": "entry_failed",
+                    "market": market,
+                    "ticker": ticker,
+                    "strategy": _MICRO_PROBE_STRATEGY,
+                    "source_strategy": source_strategy,
+                    "reason": precheck.get("reason", "precheck_failed"),
+                    "detail": precheck.get("msg", ""),
+                    "price": raw_price,
+                    "mode": mode,
+                    "micro_probe": True,
+                }},
+            )
+            try:
+                tsdb.update_signal(tsdb_id, _MICRO_PROBE_STRATEGY, entry_priority_score, signal_at, precheck.get("reason", "precheck_failed"))
+            except Exception:
+                pass
+            return False
+
+        try:
+            result = place_order(ticker, qty, order_px, "buy", self.token, market=market)
+        except Exception as exc:
+            self._record_decision_event(
+                market,
+                "buy_failed",
+                ticker,
+                strategy=_MICRO_PROBE_STRATEGY,
+                qty=qty,
+                price_native=order_px,
+                price_krw=risk_price_krw,
+                reason="order_exception",
+                detail=str(exc),
+                selected_reason=selected_reason,
+            )
+            try:
+                tsdb.update_signal(tsdb_id, _MICRO_PROBE_STRATEGY, entry_priority_score, signal_at, "order_exception")
+            except Exception:
+                pass
+            log.error(f"micro_probe order exception [{ticker}]: {exc}")
+            return False
+
+        if not result.get("success"):
+            detail = result.get("msg", "")
+            self._record_decision_event(
+                market,
+                "buy_failed",
+                ticker,
+                strategy=_MICRO_PROBE_STRATEGY,
+                qty=qty,
+                price_native=order_px,
+                price_krw=risk_price_krw,
+                reason="order_rejected",
+                detail=detail,
+                order_no=result.get("order_no", ""),
+                selected_reason=selected_reason,
+            )
+            try:
+                tsdb.update_signal(tsdb_id, _MICRO_PROBE_STRATEGY, entry_priority_score, signal_at, "order_rejected")
+            except Exception:
+                pass
+            log.error(f"micro_probe order failed [{ticker}]: {detail}")
+            return False
+
+        if market == "US":
+            self._mark_us_order_supported(ticker)
+        self._order_error_count.pop(ticker, None)
+        self._funnel.setdefault(market, {}).setdefault("ordered", 0)
+        self._funnel[market]["ordered"] += 1
+        order_no = str(result.get("order_no", "") or "")
+        log.info(
+            f"[{'PAPER' if self.is_paper else 'LIVE'} MICRO_PROBE BUY] "
+            f"{ticker} {qty}@{raw_price:,} | source={source_strategy} | order_no={order_no}"
+        )
+
+        detail = (
+            f"원전략={source_strategy} 원주문={probe_meta.get('original_order_cost_krw', 0):,.0f}원 "
+            f"조정주문={order_cost:,.0f}원 초과비율=x{probe_meta.get('oversize_ratio', 0):.2f}"
+        )
+        self._record_decision_event(
+            market,
+            "buy_order",
+            ticker,
+            strategy=_MICRO_PROBE_STRATEGY,
+            qty=qty,
+            price_native=float(raw_price),
+            price_krw=float(risk_price_krw),
+            reason="MICRO_PROBE 진입",
+            detail=detail,
+            order_no=order_no,
+            selected_reason=selected_reason,
+            source_strategy=source_strategy,
+            micro_probe=True,
+            micro_probe_reason=probe_meta.get("reason", "order_size_too_small_probe"),
+        )
+
+        ml_decision_id = -1
+        try:
+            tsdb.update_signal(tsdb_id, _MICRO_PROBE_STRATEGY, entry_priority_score, signal_at)
+            tsdb.update_traded(tsdb_id, datetime.now(KST).isoformat())
+        except Exception:
+            pass
+        if isdb_id and source_strategy == "opening_range_pullback":
+            try:
+                isdb.update_trade(isdb_id)
+            except Exception:
+                pass
+
+        entered_at = datetime.now(KST).isoformat()
+        try:
+            tsdb.log_micro_probe_entry(
+                session_date=self._current_session_date_str(market),
+                market=market,
+                ticker=ticker,
+                order_no=order_no,
+                source_strategy=source_strategy,
+                reason=probe_meta.get("reason", "order_size_too_small_probe"),
+                entry_priority_score=entry_priority_score,
+                original_qty=int(probe_meta.get("original_qty", 0) or 0),
+                adjusted_qty=qty,
+                original_order_cost_krw=float(probe_meta.get("original_order_cost_krw", 0) or 0),
+                adjusted_order_cost_krw=order_cost,
+                order_budget_krw=float(probe_meta.get("order_budget_krw", 0) or 0),
+                min_effective_order_krw=float(probe_meta.get("min_effective_order_krw", 0) or 0),
+                oversize_ratio=float(probe_meta.get("oversize_ratio", 0) or 0),
+                entered_at=entered_at,
+            )
+        except Exception as exc:
+            log.warning(f"micro_probe DB 기록 실패: {exc}")
+
+        self._add_pending_order({
+            "order_no": order_no,
+            "ticker": ticker,
+            "name": name or self._lookup_ticker_name(ticker, market),
+            "market": market,
+            "qty": qty,
+            "raw_price": float(raw_price),
+            "risk_price_krw": float(risk_price_krw),
+            "strategy": _MICRO_PROBE_STRATEGY,
+            "source_strategy": source_strategy,
+            "micro_probe": True,
+            "micro_probe_reason": probe_meta.get("reason", "order_size_too_small_probe"),
+            "original_order_cost_krw": float(probe_meta.get("original_order_cost_krw", 0) or 0),
+            "adjusted_order_cost_krw": order_cost,
+            "oversize_ratio": float(probe_meta.get("oversize_ratio", 0) or 0),
+            "order_budget_krw": float(probe_meta.get("order_budget_krw", 0) or 0),
+            "min_effective_order_krw": float(probe_meta.get("min_effective_order_krw", 0) or 0),
+            "tp_pct": float(tp_pct),
+            "sl_pct": float(sl_pct),
+            "max_hold": int(max_hold),
+            "created_at": entered_at,
+            "decision_id": ml_decision_id,
+        })
+        self._block_entry(ticker, _BUY_COOLDOWN_MIN, "micro_probe_buy_placed")
+        buy_order_alert(
+            market=market,
+            ticker=ticker,
+            qty=qty,
+            order_no=order_no,
+            detail="MICRO_PROBE 체결 확인 후 보유 포지션에 반영됩니다.",
+            name=name,
+        )
+        return True
 
     def _restrict_candidates_to_universe(self, candidates: list, allowed_tickers: Optional[list] = None) -> list:
         rows = list(candidates or [])
@@ -3573,6 +3942,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return base
         return float(self.risk.session_start_equity or 0)
 
+    def _market_broker_total_equity_krw(self, market: str, force_refresh: bool = False) -> float:
+        try:
+            balance = get_balance(self.token, market=market, force_refresh=force_refresh)
+            snapshot = self._broker_snapshot_from_balance(market, balance)
+            self._set_broker_state(market, trust_level="trusted", snapshot=snapshot)
+            return float(snapshot.get("total_krw", 0) or 0)
+        except Exception as e:
+            self._set_broker_state(market, trust_level="degraded", error=str(e))
+            return 0.0
+
     def _market_equity_reference_context(self, market: str) -> dict:
         state = dict(self._broker_state.get(market, {}) or {})
         current_snap = dict(state.get("last_snapshot") or {})
@@ -3935,6 +4314,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "order_no": order.get("order_no", ""),
             "fill_time": order.get("fill_time", ""),
             "strategy": order.get("strategy", "broker_fill"),
+            "source_strategy": order.get("source_strategy", ""),
+            "micro_probe": bool(order.get("micro_probe")),
+            "micro_probe_reason": order.get("micro_probe_reason", ""),
+            "original_order_cost_krw": float(order.get("original_order_cost_krw", 0) or 0),
+            "adjusted_order_cost_krw": float(order.get("adjusted_order_cost_krw", 0) or 0),
+            "oversize_ratio": float(order.get("oversize_ratio", 0) or 0),
             "tp": avg_price * (1 + tp_pct),
             "sl": avg_price * (1 - sl_pct),
             "tp_pct": tp_pct,        # 비율 보존 — US 환율 드리프트 방지
@@ -4096,6 +4481,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "display_price": fill_px_native,
                     "risk_price": fill_px_risk,
                     "fill_time": order.get("fill_time", ""),
+                    "source_strategy": order.get("source_strategy", ""),
+                    "micro_probe": bool(order.get("micro_probe")),
+                    "micro_probe_reason": order.get("micro_probe_reason", ""),
+                    "original_order_cost_krw": float(order.get("original_order_cost_krw", 0) or 0),
+                    "adjusted_order_cost_krw": float(order.get("adjusted_order_cost_krw", 0) or 0),
+                    "oversize_ratio": float(order.get("oversize_ratio", 0) or 0),
                 }
                 self.risk.trade_log.append(evt)
                 self.risk.all_trade_log.append(evt)
@@ -4851,6 +5242,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             tsdb.update_pnl(market, ex["ticker"], ex.get("pnl_pct", 0), reason)
         except Exception:
             pass
+        if self._is_micro_probe_record(ex):
+            try:
+                tsdb.update_micro_probe_outcome(
+                    market=market,
+                    ticker=ex["ticker"],
+                    order_no=str(ex.get("order_no", "") or ""),
+                    pnl_pct=float(ex.get("pnl_pct", 0) or 0),
+                    pnl_krw=float(ex.get("pnl", 0) or 0),
+                    exit_reason=reason,
+                    exited_at=datetime.now(KST).isoformat(),
+                )
+            except Exception as exc:
+                log.warning(f"micro_probe outcome 기록 실패: {exc}")
         raw_exit = self.price_cache_raw.get(ex["ticker"], ex["exit_price"])
         self._record_decision_event(
             market, "sell_filled", ex["ticker"],
@@ -4863,6 +5267,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             order_no=result.get("order_no", ""),
             pnl_krw=ex.get("pnl", 0),
             pnl_pct=ex.get("pnl_pct", 0),
+            source_strategy=ex.get("source_strategy", ""),
+            micro_probe=bool(ex.get("micro_probe")),
+            micro_probe_reason=ex.get("micro_probe_reason", ""),
         )
         ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
         pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), reason, market=market, name=ex_name, usd_krw=self.usd_krw_rate)
@@ -5191,14 +5598,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"session_start_equity={self.risk.session_start_equity:,.0f}원"
             )
         else:
-            broker_total = float(self._kis_total_equity_krw() or 0)
+            broker_total = float(self._market_broker_total_equity_krw(market) or 0)
             if broker_total <= 0:
-                broker_total = float(self._equity_reference_context().get("total_krw", 0) or 0)
+                broker_total = float(self._market_equity_reference_context(market).get("total_krw", 0) or 0)
             self.risk.reset_daily_state(clear_trade_log=True, override_base=broker_total if broker_total > 0 else None)
             self._daily_baseline_by_market[market] = {
                 "session_date": session_date,
                 "base": float(self.risk.session_start_equity),
-                "source": "broker_total" if broker_total > 0 else "internal_fallback",
+                "source": "broker_market_total" if broker_total > 0 else "internal_market_fallback",
             }
             self._save_daily_baselines()
             _log_normal(
@@ -7718,6 +8125,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _s_rpx  = _sig["risk_price"]
                 _s_row  = _sig["sig_row"]
                 _s_strat= _sig["strategy_name"]
+                _s_source_strat = _s_strat
+                _micro_probe_meta = {}
                 _s_tp   = _sig["tp_pct"]
                 _s_sl   = _sig["sl_pct"]
                 _s_atr  = _sig["atr_pct"]
@@ -7755,6 +8164,75 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "effective_size": int(_s_esz),
                             "atr_pct": float(_s_atr) if _s_atr is not None else None,
                         }
+                        probe = self._micro_probe_adjustment(
+                            market=market,
+                            ticker=_s_tk,
+                            mode=mode,
+                            source_strategy=_s_strat,
+                            entry_priority_score=_s_ep,
+                            qty=qty,
+                            risk_price_krw=_s_rpx,
+                            original_order_cost_krw=order_cost,
+                            order_budget_krw=order_budget,
+                            min_effective_order_krw=min_effective_order,
+                            available_budget_krw=avail,
+                            cash_krw=self.risk.cash,
+                        )
+                        if probe.get("allowed"):
+                            _s_source_strat = _s_strat
+                            _s_strat = _MICRO_PROBE_STRATEGY
+                            qty = int(probe["adjusted_qty"])
+                            order_cost = float(probe["adjusted_order_cost_krw"])
+                            _micro_probe_meta = {
+                                **probe,
+                                "original_strategy": _s_source_strat,
+                            }
+                            analysis_log.info(
+                                f"[micro_probe {market}] {_s_tk} {_s_source_strat} -> {qty}주",
+                                extra={"extra": {
+                                    "event": "micro_probe_entry",
+                                    "market": market,
+                                    "ticker": _s_tk,
+                                    "strategy": _MICRO_PROBE_STRATEGY,
+                                    "source_strategy": _s_source_strat,
+                                    "mode": mode,
+                                    "price": _s_px,
+                                    "risk_price_krw": _s_rpx,
+                                    **{k: v for k, v in _micro_probe_meta.items() if k != "allowed"},
+                                }},
+                            )
+                            log.info(
+                                f"  [{_s_tk}] MICRO_PROBE 전환 "
+                                f"{probe['original_order_cost_krw']:,.0f}원 -> {order_cost:,.0f}원 "
+                                f"(x{probe['oversize_ratio']:.2f})"
+                            )
+                            self._submit_micro_probe_buy_order(
+                                market=market,
+                                ticker=_s_tk,
+                                name=str(_s_row.get("name", "") or "").strip(),
+                                qty=qty,
+                                raw_price=float(_s_px),
+                                risk_price_krw=float(_s_rpx),
+                                tp_pct=float(_s_tp),
+                                sl_pct=float(_s_sl),
+                                max_hold=int(_s_mh),
+                                mode=mode,
+                                selected_reason=_s_sr,
+                                source_strategy=_s_source_strat,
+                                entry_priority_score=float(_s_ep),
+                                tsdb_id=_tsdb_id,
+                                isdb_id=_isdb_id,
+                                signal_at=_sig_at,
+                                signal_row=_s_row,
+                                probe_meta=_micro_probe_meta,
+                            )
+                            continue
+                        else:
+                            diag["micro_probe_block_reason"] = probe.get("reason", "")
+                            if "adjusted_order_cost_krw" in probe:
+                                diag["micro_probe_adjusted_order_cost_krw"] = float(probe.get("adjusted_order_cost_krw") or 0.0)
+                            if "oversize_ratio" in probe:
+                                diag["micro_probe_oversize_ratio"] = float(probe.get("oversize_ratio") or 0.0)
                         self._bump_runtime_reason(market, _s_tk, "order_size_too_small")
                         self._bump_runtime_reason(market, _s_tk, "affordability_fail")
                         self._record_decision_event(
@@ -9063,6 +9541,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "ticker": ticker,
             "mode": mode,
             "strategy": kwargs.get("strategy", ""),
+            "source_strategy": kwargs.get("source_strategy", ""),
+            "micro_probe": bool(kwargs.get("micro_probe", False)),
+            "micro_probe_reason": kwargs.get("micro_probe_reason", ""),
             "qty": int(kwargs.get("qty", 0) or 0),
             "price_native": float(kwargs.get("price_native", 0) or 0),
             "price_krw": float(kwargs.get("price_krw", 0) or 0),
@@ -9096,6 +9577,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "ticker":    ticker,
                 "mode":      mode,
                 "strategy":  event["strategy"],
+                "source_strategy": event.get("source_strategy", ""),
+                "micro_probe": event.get("micro_probe", False),
+                "micro_probe_reason": event.get("micro_probe_reason", ""),
             }
             # entry: 진입 컨텍스트
             if action in ("buy_order", "buy_signal"):
@@ -9146,9 +9630,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._live_status_written_at[market] = _now
         try:
             status = self.risk.get_status()
-            equity_ctx = self._equity_reference_context()
+            equity_ctx = self._market_equity_reference_context(market)
             broker_state = self._broker_state.get(market, {})
             kis_total_equity = round(float(equity_ctx.get("total_krw", 0) or 0), 0)
+            market_cash_krw = round(float(equity_ctx.get("cash_krw", 0) or 0), 0)
+            last_trusted_snapshot = dict(broker_state.get("last_trusted_snapshot", {}) or {})
             normalized_claude = self._normalize_claude_control_state(self.claude_control)
             dedup_positions = {}
             for pos in self.risk.positions:
@@ -9179,6 +9665,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "current_price":   current_price,
                     "pnl_pct":         round(pnl_pct, 4),
                     "strategy":        pos.get("strategy", ""),
+                    "source_strategy": pos.get("source_strategy", ""),
+                    "micro_probe":     bool(pos.get("micro_probe")),
+                    "micro_probe_reason": pos.get("micro_probe_reason", ""),
+                    "oversize_ratio":  round(float(pos.get("oversize_ratio", 0) or 0), 4),
                     "trailing":        pos.get("trailing", False),
                     "trail_sl":        round(float(pos.get("trail_sl", 0) or 0), 2),
                     "trail_pct":       round(float(pos.get("trail_pct", 0) or 0) * 100, 1),
@@ -9202,6 +9692,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "qty": order.get("qty", 0),
                     "raw_price": order.get("raw_price", 0),
                     "strategy": order.get("strategy", ""),
+                    "source_strategy": order.get("source_strategy", ""),
+                    "micro_probe": bool(order.get("micro_probe")),
+                    "micro_probe_reason": order.get("micro_probe_reason", ""),
+                    "oversize_ratio": round(float(order.get("oversize_ratio", 0) or 0), 4),
                     "created_at": order.get("created_at", ""),
                 }
                 for order in self.pending_orders
@@ -9219,11 +9713,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "session_active": bool(self.session_active and self.current_market == market),
                     "daily_pnl":      round(status.get("daily_pnl", 0), 0),
                     "daily_pnl_pct":  round(self._daily_pnl_pct(market), 4),
-                    "cash":           round(self.risk.cash, 0),
+                    "cash":           market_cash_krw,
                     "total_equity":   kis_total_equity,
                     "equity_source":  equity_ctx.get("source", ""),
-                    "internal_equity": round(float(equity_ctx.get("internal_krw", 0) or 0), 0),
-                    "last_trusted_equity": round(float(equity_ctx.get("last_trusted_krw", 0) or 0), 0) if equity_ctx.get("last_trusted_krw") is not None else None,
+                    "internal_equity": round(float(equity_ctx.get("total_krw", 0) or 0), 0),
+                    "last_trusted_equity": round(float(last_trusted_snapshot.get("total_krw", 0) or 0), 0) if last_trusted_snapshot.get("total_krw") is not None else None,
                     "broker": {
                         "trust_level": broker_state.get("trust_level", "unknown"),
                         "last_ok_at": broker_state.get("last_ok_at", ""),
@@ -9593,6 +10087,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             pm,
         )
         log.info(f"[{market}] summary | {actual['pnl_pct']:+.2f}% | {actual['pnl_krw']:+,}")
+        try:
+            probe_report = tsdb.micro_probe_performance_report(market)
+            if int(probe_report.get("trades", 0) or 0) > 0:
+                log.info(
+                    f"[MICRO_PROBE 성과 {market}] "
+                    f"trades={probe_report['trades']} win_rate={probe_report['win_rate_pct']:.1f}% "
+                    f"avg={probe_report['avg_pnl_pct']:+.2f}% total={probe_report['total_pnl_krw']:+,.0f}원 "
+                    f"max_loss={probe_report['max_loss_pct']:+.2f}%"
+                )
+        except Exception as exc:
+            log.warning(f"MICRO_PROBE 성과 리포트 실패: {exc}")
 
         # ── param_tuner outcome 업데이트 ──────────────────────────────────────
         try:
