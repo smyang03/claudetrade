@@ -39,6 +39,9 @@ data/daily_digest/
 data/news/
 data/supplement/
 data/price/
+data/market_data/
+data/backtest_audit/runs/
+*.sqlite
 
 # State (runtime) — brain.json만 버전 관리, 나머지는 무시
 state/*.pid
