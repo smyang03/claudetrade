@@ -441,24 +441,43 @@ def _probe_us_exchange_code(ticker: str, token: str):
     )
 
 
+def _hardcoded_us_exchange_code(ticker: str) -> Optional[str]:
+    normalized = ticker.upper()
+    for exch, tickers in _US_EXCHANGE_MAP.items():
+        if normalized in tickers:
+            return exch
+    return None
+
+
 def _get_ovrs_excg_cd(ticker: str, token: str = None) -> str:
     """
     KIS 거래소 코드 반환 순서:
-    1. _US_EXCHANGE_CACHE (메모리 + 파일 로드분)
-    2. _US_EXCHANGE_MAP (하드코딩 고정 종목)
+    1. _US_EXCHANGE_MAP (하드코딩 고정 종목, 캐시보다 우선)
+    2. _US_EXCHANGE_CACHE (메모리 + 파일 로드분)
     3. Finnhub profile2 resolve
     4. KIS VTS probe (보조)
     실패 시 ValueError — 침묵 NASD fallback 없음.
     """
     normalized = ticker.upper()
-    # 1. 메모리 캐시
-    if normalized in _US_EXCHANGE_CACHE:
-        return _US_EXCHANGE_CACHE[normalized]
-    # 2. 하드코딩 맵
-    for exch, tickers in _US_EXCHANGE_MAP.items():
-        if normalized in tickers:
-            _US_EXCHANGE_CACHE[normalized] = exch
-            return exch
+    cached = _US_EXCHANGE_CACHE.get(normalized)
+
+    # 1. 하드코딩 맵은 사람이 검증한 override다. 캐시와 충돌하면 캐시 파일까지 교정한다.
+    hardcoded = _hardcoded_us_exchange_code(normalized)
+    if hardcoded:
+        if cached != hardcoded:
+            if cached:
+                log.warning(
+                    f"[exchange_resolve] {normalized} cache conflict: "
+                    f"cache={cached} hardcoded={hardcoded}; using hardcoded"
+                )
+            _US_EXCHANGE_CACHE[normalized] = hardcoded
+            _save_exchange_cache()
+        return hardcoded
+
+    # 2. 메모리/파일 캐시
+    if cached:
+        return cached
+
     # 3. Finnhub profile resolve
     try:
         code = _resolve_us_exchange_finnhub(normalized)
@@ -3087,17 +3106,12 @@ class KISWebSocket:
         """해외주식 실시간 현재가 구독 (실전 전용: HDFSASP0).
         tr_key 포맷: D{quote_exch}{ticker}  예) DNYSHIMS, DNASAAPL
         """
-        from kis_api import _US_EXCHANGE_CACHE, _US_EXCHANGE_MAP, _US_QUOTE_CODE_MAP
         normalized = ticker.upper()
-        # 거래소 코드 조회 (캐시 우선)
-        exch = _US_EXCHANGE_CACHE.get(normalized)
-        if not exch:
-            for e, tickers in _US_EXCHANGE_MAP.items():
-                if normalized in tickers:
-                    exch = e
-                    break
-        if not exch:
+        try:
+            exch = _get_ovrs_excg_cd(normalized, token=None)
+        except Exception as e:
             log.warning(f"[KIS WS] US 실시간 구독 스킵: {normalized} 거래소 코드 미확인")
+            log.debug(f"[KIS WS] US 거래소 코드 resolve 실패 [{normalized}]: {e}")
             return None
         quote_exch = _US_QUOTE_CODE_MAP.get(exch, "NAS")
         rsym = f"D{quote_exch}{normalized}"
