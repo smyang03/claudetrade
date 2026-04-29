@@ -82,10 +82,12 @@ def run_walk_forward_on_frame(
     step_years: int = 1,
     regime_timing: str = "previous_close",
     entry_timing: str = "next_open",
+    entry_model: str = "",
     entry_day_exit_policy: str = "allow",
 ) -> list[dict]:
     costs = cost_model or CostModel.from_name(market, "realistic")
     regime_classifier = ReplayRegimeClassifier.from_price_frame(df, timing=regime_timing)
+    model = str(entry_model or entry_timing or "next_open")
     rows: list[dict] = []
     for number, window in enumerate(
         walk_forward_windows(start=start, end=end, train_years=train_years, test_years=test_years, step_years=step_years),
@@ -103,6 +105,7 @@ def run_walk_forward_on_frame(
             start=window.train_start,
             end=window.train_end,
             entry_timing=entry_timing,
+            entry_model=model,
             entry_day_exit_policy=entry_day_exit_policy,
             respect_disabled_combos=False if signal_func else True,
         )
@@ -118,6 +121,7 @@ def run_walk_forward_on_frame(
             start=window.test_start,
             end=window.test_end,
             entry_timing=entry_timing,
+            entry_model=model,
             entry_day_exit_policy=entry_day_exit_policy,
             respect_disabled_combos=False if signal_func else True,
         )
@@ -130,6 +134,7 @@ def run_walk_forward_on_frame(
                 "market": market.upper(),
                 "ticker": ticker,
                 "strategy": strategy,
+                "entry_model": model,
                 "train_stats": train_stats,
                 "test_stats": test_stats,
                 "pf_ratio_test_to_train": _pf_ratio(train_stats, test_stats),
@@ -150,6 +155,7 @@ def run_walk_forward(
     cost_model_name: str = "realistic",
     regime_timing: str = "previous_close",
     entry_timing: str = "next_open",
+    entry_model: str = "",
     entry_day_exit_policy: str = "allow",
     progress: ProgressFunc | None = None,
     progress_interval: int = 10,
@@ -158,8 +164,9 @@ def run_walk_forward(
     rows: list[dict] = []
     total = len(selected)
     interval = max(1, int(progress_interval or 10))
+    model = str(entry_model or entry_timing or "next_open")
     if progress:
-        progress(f"워크포워드 시작 | 시장={market.upper()} 전략={strategy} 종목={total}")
+        progress(f"워크포워드 시작 | 시장={market.upper()} 전략={strategy} 종목={total} 진입모델={model}")
     for idx, ticker in enumerate(selected, start=1):
         frame = load_price_frame(market, ticker)
         ticker_rows = run_walk_forward_on_frame(
@@ -172,6 +179,7 @@ def run_walk_forward(
             cost_model=CostModel.from_name(market, cost_model_name),
             regime_timing=regime_timing,
             entry_timing=entry_timing,
+            entry_model=model,
             entry_day_exit_policy=entry_day_exit_policy,
         )
         rows.extend(ticker_rows)

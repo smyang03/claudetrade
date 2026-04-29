@@ -67,10 +67,12 @@ def write_report_bundle(payload: dict, output_dir: Path, name: str | None = None
     summary_name = base.replace("report", "summary")
     trades_name = base.replace("report", "trades")
     flags_name = base.replace("report", "flags")
+    errors_name = base.replace("report", "errors")
     return {
         "json": str(write_json_report(payload, output_dir, base)),
         "csv": str(write_csv_report(payload.get("summary_rows", []), output_dir, summary_name)),
         "trades_csv": str(write_csv_report(payload.get("trade_rows", []), output_dir, trades_name)),
         "flags_csv": str(write_csv_report(payload.get("flag_rows", []), output_dir, flags_name)),
+        "errors_csv": str(write_csv_report(payload.get("error_rows", []), output_dir, errors_name)),
         "markdown": str(write_markdown_report(payload, output_dir, base)),
     }

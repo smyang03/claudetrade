@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+
+from config.v2 import DEFAULT_V2_CONFIG, V2Config, SAFETY_REASON_CODES
+
+
+@dataclass(frozen=True)
+class SafetyDecision:
+    passed: bool
+    reason_code: str = ""
+    message: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SafetyContext:
+    market: str
+    runtime_mode: str
+    ticker: str
+    price_krw: float
+    qty: int
+    order_cost_krw: float
+    cash_krw: float
+    min_order_krw: float | None = None
+    positions: list[dict[str, Any]] = field(default_factory=list)
+    pending_orders: list[dict[str, Any]] = field(default_factory=list)
+    daily_entry_count: int = 0
+    max_daily_entries: int | None = None
+    daily_pnl_pct: float = 0.0
+    broker_trust_level: str = "unknown"
+    market_open: bool = True
+    last_market_data_at: str | None = None
+    now: datetime | None = None
+    stopped_tickers: set[str] = field(default_factory=set)
+    order_unknown_blocked: bool = False
+
+
+class SafetyGate:
+    def __init__(self, config: V2Config = DEFAULT_V2_CONFIG):
+        self.config = config
+
+    def evaluate(self, ctx: SafetyContext) -> SafetyDecision:
+        market = str(ctx.market or "").upper()
+        ticker = _normalize_ticker(market, ctx.ticker)
+        details = {
+            "market": market,
+            "ticker": ticker,
+            "qty": int(ctx.qty or 0),
+            "order_cost_krw": float(ctx.order_cost_krw or 0.0),
+            "cash_krw": float(ctx.cash_krw or 0.0),
+        }
+
+        if ctx.order_unknown_blocked:
+            return _blocked("ORDER_UNKNOWN_UNRESOLVED", "unresolved ORDER_UNKNOWN blocks new entry", details)
+        if not ctx.market_open:
+            return _blocked("MARKET_CLOSED", "market is closed for new entry", details)
+        if str(ctx.broker_trust_level or "").lower() == "untrusted":
+            return _blocked("BROKER_UNTRUSTED", "broker state is untrusted", details)
+        if float(ctx.price_krw or 0.0) <= 0 or int(ctx.qty or 0) <= 0:
+            return _blocked("INVALID_PRICE", "invalid price or quantity", details)
+        if _is_stale(ctx.last_market_data_at, ctx.now, self.config.stale_market_data_minutes):
+            return _blocked("STALE_MARKET_DATA", "market data is stale", details)
+        if ticker in {_normalize_ticker(market, t) for t in ctx.stopped_tickers}:
+            return _blocked("SAME_DAY_REENTRY_AFTER_STOP", "same-day re-entry after stop is blocked", details)
+        if _has_position(market, ticker, ctx.positions):
+            return _blocked("ALREADY_HOLDING", "ticker is already held", details)
+        if _has_pending(market, ticker, ctx.pending_orders):
+            return _blocked("PENDING_ORDER_EXISTS", "ticker already has pending order", details)
+        max_positions = self.config.us_max_positions if market == "US" else self.config.kr_max_positions
+        if _market_position_count(market, ctx.positions) >= max_positions:
+            return _blocked("MAX_POSITIONS", "market max positions reached", {**details, "max_positions": max_positions})
+        if ctx.max_daily_entries is not None and int(ctx.daily_entry_count or 0) >= int(ctx.max_daily_entries):
+            return _blocked("MAX_DAILY_ENTRIES", "daily entry limit reached", details)
+        if float(ctx.daily_pnl_pct or 0.0) <= float(self.config.daily_loss_limit_pct):
+            return _blocked("DAILY_LOSS_LIMIT", "daily loss limit reached", details)
+        min_order_krw = float(ctx.min_order_krw or 0.0)
+        if min_order_krw <= 0 and market == "KR":
+            min_order_krw = float(self.config.kr_min_order_krw)
+        if min_order_krw > 0 and float(ctx.order_cost_krw or 0.0) < min_order_krw:
+            return _blocked("MIN_ORDER_NOT_MET", "order cost is below minimum", {**details, "min_order_krw": min_order_krw})
+        if float(ctx.order_cost_krw or 0.0) > float(ctx.cash_krw or 0.0):
+            return _blocked("INSUFFICIENT_CASH", "cash is insufficient", details)
+        return SafetyDecision(True, details=details)
+
+
+class PathBSafetyGate:
+    def __init__(self, config: V2Config = DEFAULT_V2_CONFIG, base_gate: SafetyGate | None = None):
+        self.config = config
+        self.base_gate = base_gate or SafetyGate(config)
+
+    def evaluate(
+        self,
+        ctx: SafetyContext,
+        *,
+        plan: Any | None,
+        patha_holding: bool = False,
+        pathb_holding: bool = False,
+        pathb_open_positions: int = 0,
+        pathb_daily_count: int = 0,
+        manually_disabled: bool = False,
+        order_unknown_blocked: bool = False,
+    ) -> SafetyDecision:
+        details = {
+            "market": str(ctx.market or "").upper(),
+            "ticker": _normalize_ticker(str(ctx.market or "").upper(), ctx.ticker),
+            "path_type": "claude_price",
+            "pathb_daily_count": int(pathb_daily_count or 0),
+            "pathb_open_positions": int(pathb_open_positions or 0),
+        }
+        mode = str(self.config.pathb_mode or "").strip().lower()
+        if bool(self.config.pathb_emergency_disable):
+            return _blocked("PATHB_EMERGENCY_DISABLED", "Path B emergency disable is active", details)
+        if not bool(self.config.pathb_enabled):
+            return _blocked("PATHB_MANUALLY_DISABLED", "Path B is manually disabled", details)
+        if manually_disabled:
+            return _blocked("PATHB_MANUALLY_DISABLED", "Path B is disabled by operator control", details)
+        if mode in {"", "disabled", "off"}:
+            return _blocked("PATHB_DISABLED", "Path B mode is disabled", details)
+        if plan is None:
+            return _blocked("CLAUDE_PRICE_INVALID", "Claude price plan is missing", details)
+        try:
+            plan_errors = plan.validate(min_confidence=self.config.pathb_min_confidence)
+        except Exception as exc:
+            plan_errors = [f"plan_validate_error:{exc}"]
+        if plan_errors:
+            return _blocked("CLAUDE_PRICE_INVALID", "Claude price plan is invalid", {**details, "errors": plan_errors})
+
+        base_decision = self.base_gate.evaluate(
+            SafetyContext(
+                **{
+                    **ctx.__dict__,
+                    "order_unknown_blocked": bool(ctx.order_unknown_blocked or order_unknown_blocked),
+                }
+            )
+        )
+        if not base_decision.passed:
+            return base_decision
+        if (patha_holding or pathb_holding) and not bool(self.config.pathb_allow_same_ticker_with_patha):
+            return _blocked("PATH_DUPLICATE_HOLDING", "same ticker live overlap is forbidden", details)
+        if int(pathb_open_positions or 0) >= int(self.config.pathb_max_positions):
+            return _blocked("PATHB_MAX_POSITIONS", "Path B max positions reached", details)
+        if int(pathb_daily_count or 0) >= int(self.config.pathb_max_daily_entries):
+            return _blocked("PATHB_MAX_DAILY_ENTRIES", "Path B daily entry limit reached", details)
+        if float(getattr(plan, "confidence", 0.0) or 0.0) < float(self.config.pathb_min_confidence):
+            return _blocked("PATHB_CONFIDENCE_TOO_LOW", "Path B confidence is below minimum", details)
+        if bool(order_unknown_blocked) and bool(self.config.pathb_order_unknown_halts_entry):
+            return _blocked("PATHB_ORDER_UNKNOWN_HALTED", "ORDER_UNKNOWN blocks Path B entry", details)
+        return SafetyDecision(True, details=details)
+
+
+def validate_reason_code(reason_code: str) -> bool:
+    return str(reason_code or "").upper() in set(SAFETY_REASON_CODES)
+
+
+def _blocked(reason_code: str, message: str, details: dict[str, Any]) -> SafetyDecision:
+    if not validate_reason_code(reason_code):
+        raise ValueError(f"unsupported safety reason code: {reason_code}")
+    return SafetyDecision(False, reason_code=reason_code, message=message, details=details)
+
+
+def _normalize_ticker(market: str, ticker: str) -> str:
+    raw = str(ticker or "").strip()
+    return raw.upper() if str(market or "").upper() == "US" else raw
+
+
+def _infer_market(ticker: str) -> str:
+    raw = str(ticker or "").strip()
+    return "US" if raw.replace(".", "").isalpha() else "KR"
+
+
+def _market_position_count(market: str, positions: list[dict[str, Any]]) -> int:
+    return sum(1 for pos in positions if _infer_market(str(pos.get("ticker", ""))) == market)
+
+
+def _has_position(market: str, ticker: str, positions: list[dict[str, Any]]) -> bool:
+    return any(
+        _infer_market(str(pos.get("ticker", ""))) == market
+        and _normalize_ticker(market, str(pos.get("ticker", ""))) == ticker
+        for pos in positions
+    )
+
+
+def _has_pending(market: str, ticker: str, pending_orders: list[dict[str, Any]]) -> bool:
+    return any(
+        str(order.get("market", market) or market).upper() == market
+        and _normalize_ticker(market, str(order.get("ticker", ""))) == ticker
+        for order in pending_orders
+    )
+
+
+def _is_stale(raw_ts: str | None, now: datetime | None, max_age_minutes: int) -> bool:
+    if not raw_ts:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return (current - parsed.astimezone(current.tzinfo)).total_seconds() > max_age_minutes * 60

@@ -9,12 +9,28 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .config import MARKETS, MARKET_DATA_DB, MARKET_DATA_DIR, RESULT_DIR, STRATEGIES, YFINANCE_DATA_DIR, AuditConfig
+from .config import ENTRY_MODELS, MARKETS, MARKET_DATA_DB, MARKET_DATA_DIR, RESULT_DIR, STRATEGIES, YFINANCE_DATA_DIR, AuditConfig
 from .critical_flags import build_alert_plan, evaluate_critical_flags
 from .data_manifest import build_manifest
 from .db import init_database
 from .event_engine import run_market_backtest
+from .intraday_collector import YFinanceIntradayCollector, intraday_results_to_dicts
+from .intraday_diagnostics import run_intraday_entry_diagnostics, write_intraday_diagnostic_bundle
+from .intraday_entry_models import INTRADAY_ENTRY_MODELS
+from .intraday_file_importer import discover_intraday_files, import_intraday_files, import_results_to_dicts
+from .intraday_probe import probe_intraday_capability, write_intraday_capability
+from .intraday_simulator import run_market_intraday_entry_backtest
+from .intraday_targets import (
+    allowed_intraday_universe_groups,
+    build_intraday_target_rows,
+    unique_target_symbols_by_market,
+    write_intraday_target_files,
+)
+from .market_data_adapter import available_collected_tickers, collected_universe_group_map
+from .network_diag import diagnose_network
+from .matrix_runner import run_collected_matrix
 from .reports import write_csv_report, write_json_report, write_report_bundle
+from .strategy_policy import policy_names
 from .universe import build_live_universe, write_universe_manifest
 from .walk_forward import run_walk_forward
 from .yfinance_collector import YFinanceDailyCollector, results_to_dicts
@@ -34,6 +50,16 @@ def _strategies(value: str) -> list[str]:
     if str(value or "ALL").upper() == "ALL":
         return list(STRATEGIES)
     return [str(value)]
+
+
+def _intraday_entry_models(value: str) -> list[str]:
+    raw = [part.strip() for part in str(value or "ALL").split(",") if part.strip()]
+    if not raw or any(part.upper() == "ALL" for part in raw):
+        return list(INTRADAY_ENTRY_MODELS)
+    invalid = [part for part in raw if part not in INTRADAY_ENTRY_MODELS]
+    if invalid:
+        raise ValueError(f"invalid intraday entry model: {invalid}; valid={list(INTRADAY_ENTRY_MODELS)}")
+    return raw
 
 
 def setup_progress_logger(output_dir: Path, progress_log: str = "") -> tuple[ProgressFunc, Path]:
@@ -89,6 +115,7 @@ def run_audit(config: AuditConfig, progress: ProgressFunc | None = None, progres
                 end=config.end,
                 regime_timing=config.regime_timing,
                 entry_timing=config.entry_timing,
+                entry_model=config.entry_model,
                 entry_day_exit_policy=config.entry_day_exit_policy,
                 progress=progress,
                 progress_interval=progress_interval,
@@ -107,6 +134,7 @@ def run_audit(config: AuditConfig, progress: ProgressFunc | None = None, progres
                     cost_model_name=config.cost_model,
                     regime_timing=config.regime_timing,
                     entry_timing=config.entry_timing,
+                    entry_model=config.entry_model,
                     entry_day_exit_policy=config.entry_day_exit_policy,
                     progress=progress,
                     progress_interval=progress_interval,
@@ -140,6 +168,7 @@ def run_audit(config: AuditConfig, progress: ProgressFunc | None = None, progres
         "end": config.end,
         "cost_model": config.cost_model,
         "entry_timing": config.entry_timing,
+        "entry_model": config.entry_model,
         "entry_day_exit_policy": config.entry_day_exit_policy,
         "regime_timing": config.regime_timing,
         "ticker_limit": config.ticker_limit,
@@ -203,13 +232,232 @@ def _collect_daily_command(args: argparse.Namespace, progress: ProgressFunc) -> 
     }
 
 
+def _collect_intraday_command(args: argparse.Namespace, progress: ProgressFunc) -> dict:
+    markets = _split_choice(args.market, MARKETS)
+    intervals = [part.strip() for part in args.intervals.split(",") if part.strip()]
+    symbols_by_market: dict[str, list[str]] = {}
+    explicit_symbols = [part.strip() for part in args.symbols.split(",") if part.strip()]
+    for market in markets:
+        symbols = explicit_symbols or available_collected_tickers(
+            market,
+            db_path=Path(args.db_path),
+            min_quality=args.min_quality,
+            timeframe="daily",
+            limit=args.ticker_limit,
+        )
+        symbols_by_market[market] = symbols
+
+    collector = YFinanceIntradayCollector(
+        data_dir=Path(args.data_dir),
+        db_path=Path(args.db_path),
+        sleep_seconds=args.sleep_seconds,
+        max_retries=args.max_retries,
+        storage_format=args.storage_format,
+        progress=progress,
+    )
+    period = "730d" if args.period == "max" else args.period
+    all_rows: list[dict] = []
+    for market, symbols in symbols_by_market.items():
+        for interval in intervals:
+            results = collector.collect(
+                market=market,
+                symbols=symbols,
+                interval=interval,
+                period=period,
+                auto_adjust=not args.no_auto_adjust,
+            )
+            all_rows.extend(intraday_results_to_dicts(results))
+
+    output_dir = Path(args.market_data_dir) / "collection_reports"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_path = write_json_report({"results": all_rows}, output_dir, f"intraday_collection_{stamp}")
+    csv_path = write_csv_report(all_rows, output_dir, f"intraday_collection_{stamp}")
+    return {
+        "requested": len(all_rows),
+        "success": sum(1 for row in all_rows if row.get("status") == "ok"),
+        "failed": sum(1 for row in all_rows if row.get("status") != "ok"),
+        "json": str(json_path),
+        "csv": str(csv_path),
+    }
+
+
+def _import_intraday_command(args: argparse.Namespace) -> dict:
+    if not args.input_path:
+        return {"status": "input_path_required", "exit_code": 2}
+    files = discover_intraday_files(Path(args.input_path))
+    if not files:
+        return {"status": "no_intraday_files_found", "exit_code": 1, "input_path": args.input_path}
+
+    import_market = args.market if args.market != "ALL" else "US"
+    results = import_intraday_files(
+        files,
+        market=import_market,
+        timeframe=args.timeframe,
+        db_path=Path(args.db_path),
+        data_dir=Path(args.data_dir),
+        storage_format=args.storage_format,
+    )
+    rows = import_results_to_dicts(results)
+    output_dir = Path(args.market_data_dir) / "collection_reports"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_path = write_json_report({"results": rows}, output_dir, f"intraday_import_{stamp}")
+    csv_path = write_csv_report(rows, output_dir, f"intraday_import_{stamp}")
+    return {
+        "status": "completed",
+        "exit_code": 0,
+        "import_market": import_market,
+        "requested": len(rows),
+        "success": sum(1 for row in rows if row.get("status") == "ok"),
+        "failed": sum(1 for row in rows if row.get("status") != "ok"),
+        "json": str(json_path),
+        "csv": str(csv_path),
+    }
+
+
+def _selected_intraday_tickers(args: argparse.Namespace, *, market: str, strategy: str) -> list[str]:
+    tickers = available_collected_tickers(
+        market,
+        db_path=Path(args.db_path),
+        min_quality=args.min_quality,
+        timeframe=args.timeframe,
+        limit=0,
+    )
+    groups = allowed_intraday_universe_groups(args.policy, market=market, strategy=strategy)
+    if groups is not None:
+        group_map = collected_universe_group_map(market, db_path=Path(args.db_path), min_quality=args.min_quality)
+        allowed = set(groups)
+        tickers = [ticker for ticker in tickers if group_map.get(ticker) in allowed]
+    if args.ticker_limit and args.ticker_limit > 0:
+        tickers = tickers[: args.ticker_limit]
+    return tickers
+
+
+def _run_intraday_entry_command(args: argparse.Namespace, progress: ProgressFunc) -> dict:
+    markets = _split_choice(args.market, MARKETS)
+    strategies = _strategies(args.strategy)
+    models = _intraday_entry_models(args.intraday_entry_model)
+    summary_rows: list[dict] = []
+    trade_rows: list[dict] = []
+    target_rows: list[dict] = []
+    error_rows: list[dict] = []
+
+    for market in markets:
+        for strategy in strategies:
+            tickers = _selected_intraday_tickers(args, market=market, strategy=strategy)
+            if not tickers:
+                error_rows.append(
+                    {
+                        "market": market,
+                        "strategy": strategy,
+                        "timeframe": args.timeframe,
+                        "policy": args.policy,
+                        "reason": "NO_TICKERS_AFTER_POLICY_OR_QUALITY_FILTER",
+                        "min_quality": args.min_quality,
+                    }
+                )
+            target_rows.append(
+                {
+                    "market": market,
+                    "strategy": strategy,
+                    "timeframe": args.timeframe,
+                    "policy": args.policy,
+                    "ticker_count": len(tickers),
+                    "symbols": ",".join(tickers),
+                }
+            )
+            for model in models:
+                result = run_market_intraday_entry_backtest(
+                    market=market,
+                    strategy=strategy,
+                    tickers=tickers,
+                    intraday_entry_model=model,
+                    timeframe=args.timeframe,
+                    cost_model_name=args.cost_model,
+                    start=args.start,
+                    end=args.end,
+                    progress=progress,
+                    progress_interval=args.progress_interval,
+                )
+                stats = result["stats"]
+                summary_rows.append(
+                    {
+                        "market": market,
+                        "strategy": strategy,
+                        "entry_model": model,
+                        "timeframe": args.timeframe,
+                        "policy": args.policy,
+                        "ticker_count": len(tickers),
+                        **stats,
+                    }
+                )
+                trade_rows.extend(result.get("trades", []))
+                for error in result.get("error_rows", []):
+                    error_rows.append({"market": market, "strategy": strategy, "entry_model": model, **error})
+
+    payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "phase": "intraday_entry",
+        "market": args.market,
+        "strategy": args.strategy,
+        "entry_model": args.intraday_entry_model,
+        "timeframe": args.timeframe,
+        "policy": args.policy,
+        "summary_rows": summary_rows,
+        "trade_rows": trade_rows,
+        "target_rows": target_rows,
+        "error_rows": error_rows,
+        "flag_rows": [],
+    }
+    payload["output_paths"] = write_report_bundle(payload, Path(args.output_dir))
+    return payload
+
+
+def _export_intraday_targets_command(args: argparse.Namespace) -> dict:
+    rows = build_intraday_target_rows(
+        policy_name=args.policy,
+        market=args.market,
+        strategy=args.strategy,
+        db_path=Path(args.db_path),
+        min_quality=args.min_quality,
+        ticker_limit=args.ticker_limit,
+    )
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"intraday_targets_{args.policy}_{stamp}"
+    output_dir = Path(args.market_data_dir) / "intraday_targets"
+    paths = write_intraday_target_files(rows, output_dir=output_dir, name=name)
+    symbols_by_market = unique_target_symbols_by_market(rows)
+    return {
+        "policy": args.policy,
+        "rows": len(rows),
+        "unique_symbols": sum(len(symbols) for symbols in symbols_by_market.values()),
+        "symbols_by_market": symbols_by_market,
+        "paths": paths,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Isolated backtest audit lab")
     parser.add_argument(
         "command",
         nargs="?",
         default="run",
-        choices=["run", "init-db", "build-universe", "collect-daily"],
+        choices=[
+            "run",
+            "init-db",
+            "build-universe",
+            "collect-daily",
+            "collect-intraday",
+            "diagnose-network",
+            "export-intraday-targets",
+            "import-intraday",
+            "import-run-intraday",
+            "run-intraday-diagnostics",
+            "run-collected",
+            "run-intraday-entry",
+            "probe-intraday",
+        ],
         help="command to execute",
     )
     parser.add_argument("--market", default="ALL", choices=["ALL", *MARKETS])
@@ -218,8 +466,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end", default="")
     parser.add_argument("--cost-model", default="realistic", choices=["none", "basic", "realistic"])
     parser.add_argument("--entry-timing", default="next_open", choices=["next_open", "same_close"])
+    parser.add_argument("--entry-model", default="next_open", help=f"entry model, comma list, or ALL. valid={','.join(ENTRY_MODELS)}")
     parser.add_argument("--entry-day-exit-policy", default="allow", choices=["allow", "defer"])
     parser.add_argument("--regime-timing", default="previous_close", choices=["previous_close", "current_close"])
+    parser.add_argument("--windows", default="official_2018", help="analysis window, comma list, or ALL")
+    parser.add_argument("--min-quality", default="C", choices=["A", "B", "C", "FAIL"])
+    parser.add_argument("--policy", default="none", choices=policy_names())
     parser.add_argument("--ticker-limit", type=int, default=0)
     parser.add_argument("--min-trades", type=int, default=30)
     parser.add_argument("--output-dir", default=str(RESULT_DIR))
@@ -234,6 +486,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-auto-adjust", action="store_true")
     parser.add_argument("--progress-log", default="", help="progress log path; defaults to output-dir/logs/audit_progress.log")
     parser.add_argument("--progress-interval", type=int, default=10, help="ticker interval for progress logging")
+    parser.add_argument("--symbols", default="", help="comma-separated symbols for probe-intraday")
+    parser.add_argument("--intervals", default="5m,15m", help="comma-separated intervals for probe-intraday")
+    parser.add_argument("--timeframe", default="5m", choices=["5m", "15m", "30m", "60m"])
+    parser.add_argument("--intraday-entry-model", default="opening_range_reclaim", help=f"intraday entry model, comma list, or ALL. valid={','.join(INTRADAY_ENTRY_MODELS)}")
+    parser.add_argument("--intraday-output", default="", help="output json path for probe-intraday")
+    parser.add_argument("--input-path", default="", help="file or directory for import-intraday")
+    parser.add_argument("--opening-minutes", type=int, default=30)
+    parser.add_argument("--deadline-minutes", type=int, default=180)
+    parser.add_argument("--max-gap-pct", type=float, default=1.5)
     return parser
 
 
@@ -261,6 +522,203 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{key}: {value}")
         return 0
 
+    if args.command == "collect-intraday":
+        progress, log_path = setup_progress_logger(Path(args.market_data_dir), args.progress_log)
+        progress(f"진행 로그 파일 | {log_path}")
+        result = _collect_intraday_command(args, progress)
+        print("intraday_collection_completed")
+        print(f"progress_log: {log_path}")
+        for key, value in result.items():
+            print(f"{key}: {value}")
+        return 0
+
+    if args.command == "diagnose-network":
+        result = diagnose_network()
+        print("network_diagnosis_completed")
+        print(f"python_executable: {result['python_executable']}")
+        print(f"all_ok: {result['all_ok']}")
+        print(f"blocked_by_os_policy: {result['blocked_by_os_policy']}")
+        print(f"recommendation: {result['recommendation']}")
+        for check in result["checks"]:
+            print(
+                "check: "
+                f"url={check['url']} status={check['status']} "
+                f"status_code={check['status_code']} error={check['error_type']} {check['error_msg']}"
+            )
+        return 0
+
+    if args.command == "export-intraday-targets":
+        result = _export_intraday_targets_command(args)
+        print("intraday_targets_exported")
+        print(f"policy: {result['policy']}")
+        print(f"rows: {result['rows']}")
+        print(f"unique_symbols: {result['unique_symbols']}")
+        for market, symbols in result["symbols_by_market"].items():
+            print(f"{market}: {len(symbols)} symbols")
+        for key, path in result["paths"].items():
+            print(f"{key}: {path}")
+        return 0
+
+    if args.command == "import-intraday":
+        result = _import_intraday_command(args)
+        if result["status"] == "input_path_required":
+            print("input_path_required")
+            return int(result["exit_code"])
+        if result["status"] == "no_intraday_files_found":
+            print(f"no_intraday_files_found: {result['input_path']}")
+            return int(result["exit_code"])
+        print("intraday_import_completed")
+        for key, value in result.items():
+            if key not in {"status", "exit_code"}:
+                print(f"{key}: {value}")
+        return int(result["exit_code"])
+
+    if args.command == "import-run-intraday":
+        progress, log_path = setup_progress_logger(Path(args.output_dir), args.progress_log)
+        progress(f"진행 로그 파일 | {log_path}")
+        import_result = _import_intraday_command(args)
+        if import_result["status"] == "input_path_required":
+            print("input_path_required")
+            return int(import_result["exit_code"])
+        if import_result["status"] == "no_intraday_files_found":
+            print(f"no_intraday_files_found: {import_result['input_path']}")
+            return int(import_result["exit_code"])
+        payload = _run_intraday_entry_command(args, progress)
+        payload["intraday_import"] = import_result
+        print("intraday_import_and_backtest_completed")
+        print(f"progress_log: {log_path}")
+        for key, value in import_result.items():
+            if key not in {"status", "exit_code"}:
+                print(f"import_{key}: {value}")
+        for key, path in payload.get("output_paths", {}).items():
+            print(f"{key}: {path}")
+        return 0
+
+    if args.command == "run-collected":
+        output_dir = Path(args.output_dir)
+        progress, log_path = setup_progress_logger(output_dir, args.progress_log)
+        progress(f"진행 로그 파일 | {log_path}")
+        payload = run_collected_matrix(
+            market=args.market,
+            strategy=args.strategy,
+            entry_models=args.entry_model,
+            analysis_windows=args.windows,
+            cost_model=args.cost_model,
+            ticker_limit=args.ticker_limit,
+            min_quality=args.min_quality,
+            min_trades=args.min_trades,
+            policy_name=args.policy,
+            db_path=Path(args.db_path),
+            output_dir=output_dir,
+            progress=progress,
+            progress_interval=args.progress_interval,
+        )
+        print("collected_matrix_completed")
+        print(f"progress_log: {log_path}")
+        for key, path in payload.get("output_paths", {}).items():
+            print(f"{key}: {path}")
+        return 0
+
+    if args.command == "run-intraday-entry":
+        output_dir = Path(args.output_dir)
+        progress, log_path = setup_progress_logger(output_dir, args.progress_log)
+        progress(f"진행 로그 파일 | {log_path}")
+        payload = _run_intraday_entry_command(args, progress)
+        print("intraday_entry_backtest_completed")
+        print(f"progress_log: {log_path}")
+        for key, path in payload.get("output_paths", {}).items():
+            print(f"{key}: {path}")
+        return 0
+
+    if args.command == "run-intraday-diagnostics":
+        output_dir = Path(args.output_dir)
+        progress, log_path = setup_progress_logger(output_dir, args.progress_log)
+        progress(f"진행 로그 파일 | {log_path}")
+        markets = _split_choice(args.market, MARKETS)
+        strategies = _strategies(args.strategy)
+        models = _intraday_entry_models(args.intraday_entry_model)
+        payloads: list[dict] = []
+        summary_rows: list[dict] = []
+        detail_rows: list[dict] = []
+        error_rows: list[dict] = []
+        for market in markets:
+            for strategy in strategies:
+                tickers = _selected_intraday_tickers(args, market=market, strategy=strategy)
+                if not tickers:
+                    error_rows.append(
+                        {
+                            "market": market,
+                            "strategy": strategy,
+                            "reason": "NO_TICKERS_AFTER_POLICY_OR_QUALITY_FILTER",
+                            "policy": args.policy,
+                            "timeframe": args.timeframe,
+                            "min_quality": args.min_quality,
+                        }
+                    )
+                for model in models:
+                    payload = run_intraday_entry_diagnostics(
+                        market=market,
+                        strategy=strategy,
+                        tickers=tickers,
+                        intraday_entry_model=model,
+                        timeframe=args.timeframe,
+                        start=args.start,
+                        end=args.end,
+                        db_path=Path(args.db_path),
+                        opening_minutes=args.opening_minutes,
+                        deadline_minutes=args.deadline_minutes,
+                        max_gap_pct=args.max_gap_pct,
+                        progress=progress,
+                        progress_interval=args.progress_interval,
+                    )
+                    payloads.append(payload)
+                    for row in payload.get("summary_rows", []):
+                        summary_rows.append({"market": market, "strategy": strategy, "entry_model": model, **row})
+                    detail_rows.extend(payload.get("diagnostic_rows", []))
+                    error_rows.extend(payload.get("error_rows", []))
+        combined = {
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "phase": "intraday_entry_diagnostics_combined",
+            "market": args.market,
+            "strategy": args.strategy,
+            "entry_model": args.intraday_entry_model,
+            "timeframe": args.timeframe,
+            "policy": args.policy,
+            "payloads": payloads,
+            "summary_rows": summary_rows,
+            "diagnostic_rows": detail_rows,
+            "error_rows": error_rows,
+        }
+        combined["output_paths"] = write_intraday_diagnostic_bundle(combined, output_dir)
+        print("intraday_diagnostics_completed")
+        print(f"progress_log: {log_path}")
+        for key, path in combined.get("output_paths", {}).items():
+            print(f"{key}: {path}")
+        return 0
+
+    if args.command == "probe-intraday":
+        markets = _split_choice(args.market, MARKETS)
+        symbols = [part.strip() for part in args.symbols.split(",") if part.strip()]
+        if not symbols:
+            for market in markets:
+                symbols.extend(
+                    available_collected_tickers(
+                        market,
+                        db_path=Path(args.db_path),
+                        min_quality=args.min_quality,
+                        limit=args.ticker_limit or 5,
+                    )
+                )
+        intervals = [part.strip() for part in args.intervals.split(",") if part.strip()]
+        rows = probe_intraday_capability(symbols, intervals=intervals)
+        output_path = Path(args.intraday_output) if args.intraday_output else Path(args.market_data_dir) / "intraday_capability.json"
+        path = write_intraday_capability(rows, output_path)
+        print("intraday_probe_completed")
+        print(f"symbols: {len(symbols)}")
+        print(f"rows: {len(rows)}")
+        print(f"output: {path}")
+        return 0
+
     config = AuditConfig(
         market=args.market,
         strategy=args.strategy,
@@ -268,6 +726,7 @@ def main(argv: list[str] | None = None) -> int:
         end=args.end,
         cost_model=args.cost_model,
         entry_timing=args.entry_timing,
+        entry_model=args.entry_model,
         entry_day_exit_policy=args.entry_day_exit_policy,
         regime_timing=args.regime_timing,
         ticker_limit=args.ticker_limit,

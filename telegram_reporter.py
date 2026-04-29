@@ -144,6 +144,20 @@ def display_ticker(ticker: str, market: str = "KR", name: str = "") -> str:
     return _display_ticker(ticker, market, name)
 
 
+def _path_label(value: str = "") -> str:
+    key = str(value or "").strip().lower()
+    if key in {"path_b", "claude_price", "b"}:
+        return "B플랜 | Claude 지정가"
+    if key in {"path_a", "timing_adapter", "a"}:
+        return "A플랜 | Timing Adapter"
+    return ""
+
+
+def _path_line(value: str = "") -> str:
+    label = _path_label(value)
+    return f"매수 경로: {label}" if label else ""
+
+
 def _risk_status_label(value: float) -> str:
     if value <= 0:
         return ""
@@ -513,9 +527,13 @@ def buy_order_alert(
     order_no: str = "",
     detail: str = "",
     name: str = "",
+    buy_path: str = "",
 ) -> str:
     ticker_disp = _display_ticker(ticker, market, name)
     lines = [f"{ticker_disp} | {qty}주"]
+    path = _path_line(buy_path)
+    if path:
+        lines.append(path)
     if order_no:
         lines.append(f"주문번호 {order_no}")
     if detail:
@@ -532,6 +550,7 @@ def fill_confirm_alert(
     source: str = "",
     name: str = "",
     usd_krw: float = 0.0,
+    buy_path: str = "",
 ) -> str:
     ticker_disp = _display_ticker(ticker, market, name)
     price_txt = _display_price(price, market) if price > 0 else "-"
@@ -540,6 +559,9 @@ def fill_confirm_alert(
         if price > 0 and rate > 0:
             price_txt += f" (약 {int(round(price * rate)):,}원)"
     lines = [f"{ticker_disp} | {qty}주", f"체결가 {price_txt}" + (f" ({source})" if source else "")]
+    path = _path_line(buy_path)
+    if path:
+        lines.append(path)
     if order_no:
         lines.insert(1, f"주문번호 {order_no}")
     return block_alert("매수 체결 확인", lines, market=market, icon="🟡")
@@ -802,6 +824,7 @@ def trade_alert(
     market: str = "KR",
     name: str = "",
     usd_krw: float = 0.0,
+    buy_path: str = "",
 ) -> str:
     icon = "🟢" if side == "buy" else "🔴"
     ticker_disp = _display_ticker(ticker, market, name)
@@ -824,11 +847,14 @@ def trade_alert(
         sl_txt = f"{int(float(sl or 0)):,}원"
 
     extra_line = f"TP: {tp_txt} / SL: {sl_txt}" if side == "buy" else f"사유: {_ko_reason(reason) if reason else reason}"
+    path = _path_line(buy_path)
+    path_text = f"{path}\n" if path else ""
     text = (
         f"━━━━━━━━━━━━\n"
         f"{icon} <b>[{'매수' if side == 'buy' else '매도'} 체결]</b>\n"
         f"종목: {ticker_disp}  {qty}주 @{price_txt}\n"
         f"총금액: {total_txt}  수수료약 {fee_txt}\n"
+        f"{path_text}"
         f"전략: {_ko_strategy(strategy)}\n"
         f"{extra_line}\n"
         f"━━━━━━━━━━━━"
@@ -845,6 +871,7 @@ def pnl_alert(
     market: Optional[str] = None,
     name: str = "",
     usd_krw: float = 0.0,
+    buy_path: str = "",
 ) -> str:
     icon = "🟢" if pnl_krw > 0 else "🔴"
     market = market or ("US" if str(ticker or "").replace(".", "").isalpha() else "KR")
@@ -855,9 +882,11 @@ def pnl_alert(
         pnl_txt = f"${pnl_usd:+.2f}" + (f" (약 {int(pnl_krw):+,}원)" if pnl_krw else "")
     else:
         pnl_txt = f"{int(pnl_krw):+,}원"
+    path = _path_line(buy_path)
+    path_text = f"\n{path}" if path else ""
     text = (
         f"{icon} <b>[청산]</b> {ticker_disp}\n"
-        f"{fmt_pct(pnl_pct)}  {pnl_txt} (수수료 차감 후)  ({_ko_reason(reason)})"
+        f"{fmt_pct(pnl_pct)}  {pnl_txt} (수수료 차감 후)  ({_ko_reason(reason)}){path_text}"
     )
     send(text)
     return text

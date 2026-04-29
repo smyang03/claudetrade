@@ -33,6 +33,7 @@ def evaluate_critical_flags(
     *,
     walk_forward_rows: list[dict] | None = None,
     min_trades: int = 30,
+    decision_min_trades: int = 100,
     live_recent_stats: dict | None = None,
     long_term_stats: dict | None = None,
 ) -> list[dict]:
@@ -49,6 +50,16 @@ def evaluate_critical_flags(
                 message="거래 표본이 부족해 수익성 판단 신뢰도가 낮음",
                 metric=n_trades,
                 threshold=min_trades,
+            )
+        )
+    if n_trades < decision_min_trades:
+        flags.append(
+            CriticalFlag(
+                code="LOW_SAMPLE_DECISION_BLOCKED",
+                severity="medium",
+                message="거래 표본 100건 미만으로 실전 반영 판단 금지",
+                metric=n_trades,
+                threshold=decision_min_trades,
             )
         )
     if pf is not None and pf < 1.0:

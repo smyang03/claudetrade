@@ -15,6 +15,12 @@ MARKET_DATA_DB = MARKET_DATA_DIR / "market_data.sqlite"
 
 STRATEGIES = ("mean_reversion", "gap_pullback", "momentum", "volatility_breakout")
 MARKETS = ("KR", "US")
+ENTRY_MODELS = ("next_open", "same_close", "gap_filter", "pullback_limit", "confirmation_next_open")
+
+ENTRY_MODEL_DEFAULTS = {
+    "gap_filter_max_gap_pct": 1.5,
+    "pullback_limit_pct": -0.5,
+}
 
 # Phase-1 data trust boundary. Earlier data can still be analyzed, but reports
 # must mark it as lower confidence.
@@ -46,6 +52,7 @@ class AuditConfig:
     end: str = ""
     cost_model: str = "realistic"
     entry_timing: str = "next_open"
+    entry_model: str = "next_open"
     entry_day_exit_policy: str = "allow"
     regime_timing: str = "previous_close"
     ticker_limit: int = 0

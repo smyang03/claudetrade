@@ -23,6 +23,15 @@ MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 # R1 분석가: 비용 절감을 위해 Haiku 사용 (R2 토론은 Sonnet 유지)
 # R1_MODEL 환경변수로 오버라이드 가능 (기본 Haiku 4.5)
 R1_MODEL     = os.getenv("R1_MODEL", "claude-haiku-4-5-20251001")
+
+
+def _env_int_bound(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(str(os.getenv(name, str(default))).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
 STANCES = "AGGRESSIVE|MODERATE_BULL|MILD_BULL|CAUTIOUS|NEUTRAL|MILD_BEAR|CAUTIOUS_BEAR|DEFENSIVE|HALT"
 _SELECTION_RECOVERY_FIELDS = (
     "watchlist",
@@ -32,6 +41,7 @@ _SELECTION_RECOVERY_FIELDS = (
     "recommended_strategy",
     "risk_tags",
     "max_position_pct",
+    "price_targets",
     "tickers",
 )
 
@@ -269,7 +279,12 @@ def _recent_selection_feedback_section(market: str) -> str:
 
         recent_feedback = _tsdb.format_recent_selection_feedback(market, days=20)
         if recent_feedback:
-            return "\nrecent selection feedback:\n" + recent_feedback[:900] + "\n"
+            return (
+                "\nrecent selection feedback (historical calibration only; "
+                "not a same-session chase signal):\n"
+                + recent_feedback[:900]
+                + "\n"
+            )
     except Exception as _e:
         log.debug(f"[ticker-selection] selection feedback skipped: {_e}")
     return ""
@@ -523,7 +538,7 @@ def _safe_watch_fallback(candidates: list[dict], market: str) -> list[str]:
 
 
 def _pick_selection_retry_candidates(candidates: list[dict], result: dict, market: str) -> list[dict]:
-    retry_cap = min(10 if market == "US" else 8, len(candidates))
+    retry_cap = min(selection_limits(market)["watch_max"], len(candidates))
     candidate_map: dict[str, dict] = {}
     for candidate in candidates or []:
         ticker = str(candidate.get("ticker", "") or "").strip()
@@ -605,24 +620,48 @@ def _build_selection_retry_prompt(
 
     watch_max = min(selection_limits(market)["watch_max"], len(retry_candidates))
     trade_max = min(selection_limits(market)["trade_max"], len(retry_candidates))
+    watch_floor = min(watch_max, 10 if len(retry_candidates) >= 15 else max(1, len(retry_candidates) // 2))
     return f"""이전 종목선정 응답이 잘려서 다시 묻습니다. 이번에는 아주 짧게 답하세요.
 시장: {market}
 모드: {consensus_mode}
 후보:
 {chr(10).join(lines)}
 
+Required output rules:
+- keep a broad watchlist: if candidates >= 15 and mode is not DEFENSIVE/HALT, return at least {watch_floor} watchlist names.
+- required fields: watchlist, trade_ready, reasons, price_targets
+- price_targets is required for every trade_ready ticker. Do not add price_targets for watch_only tickers.
+- price_targets prices must be native market prices: KR=KRW, US=USD.
+- price_targets fields: buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence, cancel_if_open_above, entry_rationale, exit_rationale, rationale.
+- price target rationale fields must be short: entry_rationale, exit_rationale, rationale <= 40 chars each.
+
 규칙:
 - 후보 중에서만 선택
 - watchlist 최대 {watch_max}개
 - trade_ready 최대 {trade_max}개
 - JSON만 반환
-- 필수 필드만 반환: watchlist, trade_ready, reasons
+- 필수 필드만 반환: watchlist, trade_ready, reasons, price_targets
 - reasons는 짧게
+- price_targets 안의 entry_rationale, exit_rationale, rationale도 각각 40자 이내로 짧게
 
 {{
   "watchlist":["code1","code2"],
   "trade_ready":["code1"],
-  "reasons":{{"code1":"짧은 이유"}}
+  "reasons":{{"code1":"짧은 이유"}},
+  "price_targets":{{
+    "code1":{{
+      "buy_zone_low":73000,
+      "buy_zone_high":73500,
+      "sell_target":76000,
+      "stop_loss":71000,
+      "hold_days":1,
+      "confidence":0.65,
+      "cancel_if_open_above":74500,
+      "entry_rationale":"support pullback",
+      "exit_rationale":"near resistance",
+      "rationale":"buy near support"
+    }}
+  }}
 }}"""
 
 
@@ -1019,6 +1058,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             "risk_tags": {},
             "recommended_strategy": {},
             "max_position_pct": {},
+            "price_targets": {},
         }
         return fallback, {}
 
@@ -1161,6 +1201,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 - Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.
 - Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.
 - Use recent selection feedback to calibrate trade_ready aggressiveness.
+- Recent selection feedback is historical only. Do not promote a ticker to trade_ready solely because it moved after watch_only earlier in the same session.
 - If a group shows high missed watch_only and today's candidate matches that group, do not leave it watch_only without a clear veto.
 - If a group shows high weak trade_ready, require stronger RS, liquidity, and intraday quality before marking trade_ready.
 - recommended_strategy and max_position_pct must reflect conviction and risk, not generic defaults.
@@ -1423,11 +1464,16 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 - trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개이며 0개도 허용됩니다.
 - 저유동성, 구조화 상품, 과열, 손절폭 과대 후보는 trade_ready에서 제외하세요.
 - Use recent selection feedback to calibrate trade_ready aggressiveness.
+- Recent selection feedback is historical only. Do not promote a ticker to trade_ready solely because it moved after watch_only earlier in the same session.
 - recent selection feedback을 반영해 missed watch_only가 높은 그룹은 명확한 veto 없이 watch_only로만 두지 마세요.
 - weak trade_ready가 높은 그룹은 더 강한 RS, 유동성, 장중 품질이 있을 때만 trade_ready로 올리세요.
 - reasons와 veto는 짧게 쓰세요.
 - recommended_strategy and max_position_pct must reflect conviction and risk, not generic defaults.
 - recommended_strategy, risk_tags, max_position_pct는 trade_ready 종목에 대해서만 채우세요.
+- price_targets는 trade_ready 종목에 대해서만 채우세요. watch_only 종목에는 price_targets를 쓰지 마세요.
+- price_targets 가격 단위는 시장 native 가격입니다. KR은 KRW, US는 USD입니다.
+- 각 price target에는 buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence, cancel_if_open_above, entry_rationale, exit_rationale, rationale, entry_basis_tags, exit_basis_tags, invalidation_conditions를 포함하세요.
+- Long 매수 기준 sell_target은 buy_zone_high보다 높고 stop_loss는 buy_zone_low보다 낮아야 합니다.
 - 응답이 길어질 것 같으면 watchlist를 줄이고 watch_only 종목의 optional field는 생략하세요.
 - JSON만 반환하세요.
 
@@ -1438,7 +1484,24 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
   "veto":{{"code2":"제외 이유"}},
   "recommended_strategy":{{"code1":"momentum|gap_pullback|mean_reversion|opening_range_pullback|observe"}},
   "risk_tags":{{"code1":["tag1"]}},
-  "max_position_pct":{{"code1":20}}
+  "max_position_pct":{{"code1":20}},
+  "price_targets":{{
+    "code1":{{
+      "buy_zone_low":73000,
+      "buy_zone_high":73500,
+      "sell_target":76000,
+      "stop_loss":71000,
+      "hold_days":1,
+      "confidence":0.65,
+      "cancel_if_open_above":74500,
+      "entry_rationale":"support pullback",
+      "exit_rationale":"near resistance",
+      "rationale":"buy near support, sell into resistance",
+      "entry_basis_tags":["support","pullback"],
+      "exit_basis_tags":["resistance","risk_reward"],
+      "invalidation_conditions":["gap up without volume"]
+    }}
+  }}
 }}"""
 
     if "slot guide:" not in prompt:
@@ -1480,7 +1543,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         try:
             resp = client.messages.create(
                 model=MODEL,
-                max_tokens=1400,
+                max_tokens=_env_int_bound("CLAUDE_SELECTION_MAX_TOKENS", 3200, 1024, 6000),
                 messages=[{"role": "user", "content": prompt}],
             )
             last_err = None
@@ -1528,7 +1591,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                 try:
                     retry_resp = client.messages.create(
                         model=MODEL,
-                        max_tokens=700,
+                        max_tokens=_env_int_bound("CLAUDE_SELECTION_RETRY_MAX_TOKENS", 1800, 700, 4000),
                         messages=[{"role": "user", "content": retry_prompt}],
                     )
                     retry_raw = retry_resp.content[0].text.strip()

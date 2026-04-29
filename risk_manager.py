@@ -45,6 +45,15 @@ AUTO_PROFIT_TRAILING_ENABLED = os.getenv("AUTO_PROFIT_TRAILING_ENABLED", "true")
 AUTO_TRAIL_TRIGGER_PCT = float(os.getenv("AUTO_TRAIL_TRIGGER_PCT", "3.0"))
 AUTO_TRAIL_PCT = float(os.getenv("AUTO_TRAIL_PCT", "0.04"))
 AUTO_BREAKEVEN_BUFFER_PCT = float(os.getenv("AUTO_BREAKEVEN_BUFFER_PCT", "0.002"))
+POSITION_SESSION_LOSS_CAP_PCT = float(os.getenv("POSITION_SESSION_LOSS_CAP_PCT", "0.5"))
+PROFIT_FLOOR_ENABLED = os.getenv("PROFIT_FLOOR_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+PROFIT_FLOOR_TRIGGER_PCT = float(os.getenv("PROFIT_FLOOR_TRIGGER_PCT", "2.0"))
+PROFIT_FLOOR_EXIT_PCT = float(os.getenv("PROFIT_FLOOR_EXIT_PCT", "0.5"))
 
 HARD_RULES = {
     "max_daily_loss_pct":   float(os.getenv("MAX_DAILY_LOSS_PCT",   "-3.0")),   # 일일 최대 손실 (%)
@@ -236,6 +245,7 @@ class RiskManager:
             "entry_session_date": session_date,
             "entry_time": _dt.now().isoformat(timespec="seconds"),  # 장중 보유시간 계산용
             "peak_pnl_pct": 0.0,     # 보유 중 최고 수익률 (hold_advisor 컨텍스트용)
+            "trough_pnl_pct": 0.0,   # 보유 중 최저 수익률 (exit audit용)
             # 트레일링 스탑
             "trailing": False,       # 트레일링 모드 여부
             "trail_sl": 0.0,         # 트레일링 SL 가격 (KRW/KRW)
@@ -288,6 +298,8 @@ class RiskManager:
                 _cur_pnl = (pos["current_price"] / _entry - 1) * 100
             if _cur_pnl is not None and _cur_pnl > float(pos.get("peak_pnl_pct") or 0):
                 pos["peak_pnl_pct"] = round(_cur_pnl, 3)
+            if _cur_pnl is not None and _cur_pnl < float(pos.get("trough_pnl_pct") or 0):
+                pos["trough_pnl_pct"] = round(_cur_pnl, 3)
 
             # 수익 보호: +3% 이상이면 TP 도달 이벤트를 기다리지 않고 본전 위 트레일링 전환.
             if (
@@ -333,6 +345,112 @@ class RiskManager:
                         if new_trail_usd > float(pos.get("trail_sl_usd", 0) or 0):
                             pos["trail_sl_usd"] = new_trail_usd
 
+    def current_pnl_pct(self, pos: dict) -> float | None:
+        entry = float(pos.get("entry") or 0)
+        if pos.get("display_currency") == "USD":
+            avg_usd = float(pos.get("display_avg_price") or 0)
+            cp_usd = float(pos.get("display_current_price") or 0)
+            if avg_usd > 0 and cp_usd > 0:
+                return (cp_usd / avg_usd - 1.0) * 100.0
+            return None
+        cp = float(pos.get("current_price") or 0)
+        if entry > 0 and cp > 0:
+            return (cp / entry - 1.0) * 100.0
+        return None
+
+    def position_loss_budget_krw(self, pos: dict) -> float:
+        entry = float(pos.get("entry") or 0)
+        qty = int(pos.get("qty", 0) or 0)
+        entry_value = entry * qty
+        if entry_value <= 0:
+            return 0.0
+        budgets: list[float] = []
+        single_loss_pct = abs(float(HARD_RULES.get("max_single_loss_pct", 0) or 0)) / 100.0
+        if single_loss_pct > 0:
+            budgets.append(entry_value * single_loss_pct)
+        session_loss_pct = max(0.0, float(POSITION_SESSION_LOSS_CAP_PCT or 0)) / 100.0
+        base = float(self.session_start_equity or 0)
+        if session_loss_pct > 0 and base > 0:
+            budgets.append(base * session_loss_pct)
+        return max(0.0, min(budgets)) if budgets else 0.0
+
+    def loss_cap_pct(self, pos: dict) -> float:
+        entry = float(pos.get("entry") or 0)
+        qty = int(pos.get("qty", 0) or 0)
+        entry_value = entry * qty
+        if entry_value <= 0:
+            return 0.0
+        budget = self.position_loss_budget_krw(pos)
+        if budget <= 0:
+            return 0.0
+        return max(0.0, min(0.99, budget / entry_value))
+
+    def loss_cap_price(self, pos: dict, *, native: bool = False) -> float:
+        cap_pct = self.loss_cap_pct(pos)
+        if cap_pct <= 0:
+            return 0.0
+        if native and pos.get("display_currency") == "USD":
+            avg_usd = float(pos.get("display_avg_price") or 0)
+            return avg_usd * (1.0 - cap_pct) if avg_usd > 0 else 0.0
+        entry = float(pos.get("entry") or 0)
+        return entry * (1.0 - cap_pct) if entry > 0 else 0.0
+
+    def profit_floor_price(self, pos: dict, *, native: bool = False) -> float:
+        floor_pct = float(PROFIT_FLOOR_EXIT_PCT or 0) / 100.0
+        if native and pos.get("display_currency") == "USD":
+            avg_usd = float(pos.get("display_avg_price") or 0)
+            return avg_usd * (1.0 + floor_pct) if avg_usd > 0 else 0.0
+        entry = float(pos.get("entry") or 0)
+        return entry * (1.0 + floor_pct) if entry > 0 else 0.0
+
+    def profit_floor_triggered(self, pos: dict) -> bool:
+        if not PROFIT_FLOOR_ENABLED:
+            return False
+        peak = float(pos.get("peak_pnl_pct") or 0)
+        current = self.current_pnl_pct(pos)
+        if current is None:
+            return False
+        return peak >= float(PROFIT_FLOOR_TRIGGER_PCT or 0) and current <= float(PROFIT_FLOOR_EXIT_PCT or 0)
+
+    @staticmethod
+    def _exit_meta(
+        *,
+        strategy_stop_price: float = 0.0,
+        loss_cap_price: float = 0.0,
+        effective_stop_price: float = 0.0,
+        loss_budget_krw: float = 0.0,
+        profit_floor_price: float = 0.0,
+        profit_floor_triggered: bool = False,
+        peak_pnl_pct: float = 0.0,
+        position_mfe_pct: float = 0.0,
+        position_mae_pct: float = 0.0,
+    ) -> dict:
+        return {
+            "strategy_stop_price": float(strategy_stop_price or 0),
+            "loss_cap_price": float(loss_cap_price or 0),
+            "effective_stop_price": float(effective_stop_price or 0),
+            "loss_budget_krw": float(loss_budget_krw or 0),
+            "profit_floor_price": float(profit_floor_price or 0),
+            "profit_floor_triggered": bool(profit_floor_triggered),
+            "peak_pnl_pct": float(peak_pnl_pct or 0),
+            "position_mfe_pct": float(position_mfe_pct or 0),
+            "position_mae_pct": float(position_mae_pct or 0),
+        }
+
+    def _stop_reason(
+        self,
+        current: float,
+        strategy_stop: float,
+        loss_cap_stop: float,
+        fallback_reason: str,
+    ) -> tuple[str | None, float]:
+        effective_stop = max(float(strategy_stop or 0), float(loss_cap_stop or 0))
+        if effective_stop <= 0 or float(current or 0) > effective_stop:
+            return None, effective_stop
+        if loss_cap_stop > 0 and loss_cap_stop >= float(strategy_stop or 0):
+            return "loss_cap", effective_stop
+        return fallback_reason, effective_stop
+
     def increment_holding_days(self, today_iso: Optional[str] = None):
         if today_iso is None:
             today_iso = date.today().isoformat()
@@ -345,7 +463,11 @@ class RiskManager:
     def get_exit_candidates(self):
         candidates = []
         for pos in self.positions:
-            cp = pos["current_price"]
+            if pos.get("pathb_closing"):
+                continue
+            if pos.get("pathb_path_run_id"):
+                continue
+            cp = float(pos.get("current_price") or 0)
             reason = None
 
             is_us = pos.get("display_currency") == "USD"
@@ -353,6 +475,10 @@ class RiskManager:
             avg_usd = float(pos.get("display_avg_price") or 0)
             cp_usd = float(pos.get("display_current_price") or 0)
             entry_krw = float(pos.get("entry") or 0)
+            loss_budget_krw = self.position_loss_budget_krw(pos)
+            peak_pnl_pct = float(pos.get("peak_pnl_pct") or 0)
+            trough_pnl_pct = float(pos.get("trough_pnl_pct") or 0)
+            floor_triggered = self.profit_floor_triggered(pos)
 
             # US 종목: 환율 드리프트 방지를 위해 USD 기준으로 TP/SL 비교
             if is_us and avg_usd > 0 and cp_usd > 0 and entry_krw > 0:
@@ -361,46 +487,86 @@ class RiskManager:
                 sl_pct = float(pos.get("sl_pct") or 0) or (1 - pos["sl"] / entry_krw if pos.get("sl") else 0)
                 tp_usd = avg_usd * (1 + tp_pct)
                 sl_usd = avg_usd * (1 - sl_pct)
+                loss_cap_usd = self.loss_cap_price(pos, native=True)
+                floor_usd = self.profit_floor_price(pos, native=True)
+                exit_meta = self._exit_meta(
+                    strategy_stop_price=sl_usd,
+                    loss_cap_price=loss_cap_usd,
+                    loss_budget_krw=loss_budget_krw,
+                    profit_floor_price=floor_usd,
+                    profit_floor_triggered=floor_triggered,
+                    peak_pnl_pct=peak_pnl_pct,
+                    position_mfe_pct=peak_pnl_pct,
+                    position_mae_pct=trough_pnl_pct,
+                )
 
                 if protected:
-                    if cp_usd <= sl_usd:
-                        reason = "stop_loss"
+                    reason, effective_stop = self._stop_reason(cp_usd, sl_usd, loss_cap_usd, "stop_loss")
+                    exit_meta["effective_stop_price"] = effective_stop
                 elif pos.get("trailing"):
                     trail_sl_usd = float(pos.get("trail_sl_usd") or 0)
-                    if trail_sl_usd > 0 and cp_usd <= trail_sl_usd:
-                        reason = "trail_stop"
-                    elif pos["held_days"] >= pos["max_hold"]:
+                    reason, effective_stop = self._stop_reason(cp_usd, trail_sl_usd, loss_cap_usd, "trail_stop")
+                    exit_meta["strategy_stop_price"] = trail_sl_usd
+                    exit_meta["effective_stop_price"] = effective_stop
+                    if not reason and floor_triggered and floor_usd > 0 and cp_usd <= floor_usd:
+                        reason = "profit_floor"
+                    if not reason and pos["held_days"] >= pos["max_hold"]:
                         reason = "max_hold"
                 else:
-                    if cp_usd >= tp_usd and not pos.get("tp_triggered"):
+                    reason, effective_stop = self._stop_reason(cp_usd, sl_usd, loss_cap_usd, "stop_loss")
+                    exit_meta["effective_stop_price"] = effective_stop
+                    if reason:
+                        pass
+                    elif floor_triggered and floor_usd > 0 and cp_usd <= floor_usd:
+                        reason = "profit_floor"
+                    elif cp_usd >= tp_usd and not pos.get("tp_triggered"):
                         reason = "tp_check"
-                    elif cp_usd <= sl_usd:
-                        reason = "stop_loss"
                     elif pos["held_days"] >= pos["max_hold"]:
                         reason = "max_hold"
 
                 if reason:
-                    candidates.append({**pos, "exit_price": cp, "reason": reason})
+                    candidates.append({**pos, "exit_price": cp, "reason": reason, **exit_meta})
                 continue
 
             # KR 종목 (기존 로직)
+            loss_cap_krw = self.loss_cap_price(pos)
+            floor_krw = self.profit_floor_price(pos)
+            base_stop = float(pos.get("sl") or 0)
+            exit_meta = self._exit_meta(
+                strategy_stop_price=base_stop,
+                loss_cap_price=loss_cap_krw,
+                loss_budget_krw=loss_budget_krw,
+                profit_floor_price=floor_krw,
+                profit_floor_triggered=floor_triggered,
+                peak_pnl_pct=peak_pnl_pct,
+                position_mfe_pct=peak_pnl_pct,
+                position_mae_pct=trough_pnl_pct,
+            )
             if protected:
-                if cp <= pos["sl"]:
-                    reason = "stop_loss"
+                reason, effective_stop = self._stop_reason(cp, base_stop, loss_cap_krw, "stop_loss")
+                exit_meta["effective_stop_price"] = effective_stop
             elif pos.get("trailing"):
-                if cp <= pos["trail_sl"]:
-                    reason = "trail_stop"
-                elif pos["held_days"] >= pos["max_hold"]:
+                trail_stop = float(pos.get("trail_sl") or 0)
+                reason, effective_stop = self._stop_reason(cp, trail_stop, loss_cap_krw, "trail_stop")
+                exit_meta["strategy_stop_price"] = trail_stop
+                exit_meta["effective_stop_price"] = effective_stop
+                if not reason and floor_triggered and floor_krw > 0 and cp <= floor_krw:
+                    reason = "profit_floor"
+                if not reason and pos["held_days"] >= pos["max_hold"]:
                     reason = "max_hold"
             else:
-                if cp >= pos["tp"] and not pos.get("tp_triggered"):
+                reason, effective_stop = self._stop_reason(cp, base_stop, loss_cap_krw, "stop_loss")
+                exit_meta["effective_stop_price"] = effective_stop
+                if reason:
+                    pass
+                elif floor_triggered and floor_krw > 0 and cp <= floor_krw:
+                    reason = "profit_floor"
+                elif cp >= pos["tp"] and not pos.get("tp_triggered"):
                     reason = "tp_check"      # TP 도달 → trading_bot에서 처리
-                elif cp <= pos["sl"]:
-                    reason = "stop_loss"
                 elif pos["held_days"] >= pos["max_hold"]:
                     reason = "max_hold"
             if reason:
-                candidates.append({**pos, "exit_price": cp, "reason": reason})
+                candidates.append({**pos, "exit_price": cp, "reason": reason, **exit_meta})
         return candidates
 
     def activate_trailing(self, ticker: str, trail_pct: float, hold_advice: dict = None):
@@ -422,7 +588,14 @@ class RiskManager:
                 return True
         return False
 
-    def close_position(self, ticker: str, exit_price: float, reason: str, session_date: Optional[str] = None):
+    def close_position(
+        self,
+        ticker: str,
+        exit_price: float,
+        reason: str,
+        session_date: Optional[str] = None,
+        exit_meta: Optional[dict] = None,
+    ):
         for pos in list(self.positions):
             if pos["ticker"] != ticker:
                 continue
@@ -444,6 +617,7 @@ class RiskManager:
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,
                 "reason": reason,
+                **(exit_meta or {}),
             }
             evt = {
                 "side": "sell",
@@ -462,6 +636,7 @@ class RiskManager:
                 "reason": reason,
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,
+                **(exit_meta or {}),
             }
             self.trade_log.append(evt)
             self.all_trade_log.append(evt)
@@ -472,7 +647,28 @@ class RiskManager:
     def check_exits(self):
         exits = []
         for cand in self.get_exit_candidates():
-            closed = self.close_position(cand["ticker"], cand["exit_price"], cand["reason"])
+            exit_meta = {
+                key: cand[key]
+                for key in (
+                    "strategy_stop_price",
+                    "loss_cap_price",
+                    "effective_stop_price",
+                    "loss_budget_krw",
+                    "profit_floor_price",
+                    "profit_floor_triggered",
+                    "peak_pnl_pct",
+                    "position_mfe_pct",
+                    "position_mae_pct",
+                    "exit_owner",
+                )
+                if key in cand
+            }
+            closed = self.close_position(
+                cand["ticker"],
+                cand["exit_price"],
+                cand["reason"],
+                exit_meta=exit_meta,
+            )
             if closed:
                 exits.append(closed)
         return exits

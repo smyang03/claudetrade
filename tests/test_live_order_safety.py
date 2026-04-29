@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+from pathlib import Path
+import tempfile
+import unittest
+
+from config.v2 import V2Config
+from decision.claude_price_plan import make_price_plan
+from execution.claude_price_adapter import ClaudePriceAdapter
+from execution.safety_gate import PathBSafetyGate, SafetyContext
+from lifecycle.event_store import EventStore
+
+
+class LiveOrderSafetyTests(unittest.TestCase):
+    def _plan(self):
+        return make_price_plan(
+            decision_id="dec1",
+            ticker="005930",
+            market="KR",
+            session_date="2026-04-27",
+            buy_zone_low=52_000,
+            buy_zone_high=52_500,
+            sell_target=54_500,
+            stop_loss=51_000,
+            hold_days=1,
+            confidence=0.7,
+        )
+
+    def test_qty_zero_is_blocked_before_broker_order(self) -> None:
+        ctx = SafetyContext(
+            market="KR",
+            runtime_mode="live",
+            ticker="005930",
+            price_krw=200_000,
+            qty=0,
+            order_cost_krw=0,
+            cash_krw=100_000,
+            min_order_krw=100_000,
+            market_open=True,
+            broker_trust_level="trusted",
+        )
+        decision = PathBSafetyGate(V2Config()).evaluate(ctx, plan=self._plan())
+
+        self.assertFalse(decision.passed)
+        self.assertEqual(decision.reason_code, "INVALID_PRICE")
+
+    def test_duplicate_pathb_plan_is_visible_as_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            adapter = ClaudePriceAdapter(store)
+            plan = self._plan()
+
+            adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            active = store.active_path_runs_for_ticker(
+                market="KR",
+                ticker="005930",
+                session_date="2026-04-27",
+                runtime_mode="live",
+            )
+
+            self.assertEqual(len(active), 1)
+            self.assertEqual(active[0]["path_type"], "claude_price")
+
+
+if __name__ == "__main__":
+    unittest.main()

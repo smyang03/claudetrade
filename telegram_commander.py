@@ -14,6 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from logger import get_trading_logger
 from telegram_reporter import _display_ticker
+from bot.log_sanitizer import mask_secrets
 
 log = get_trading_logger()
 KST = ZoneInfo("Asia/Seoul")
@@ -70,7 +71,7 @@ def _send(text: str):
             timeout=10,
         )
     except Exception as e:
-        log.error(f"[commander] 전송 실패: {e}")
+        log.error(f"[commander] 전송 실패: {mask_secrets(e)}")
 
 
 def _handle(text: str, bot) -> str:
@@ -81,6 +82,22 @@ def _handle(text: str, bot) -> str:
     # ── 도움말 ────────────────────────────────────────────────────────────────
     if cmd in ("?", "/help", "/h"):
         return HELP_TEXT
+
+    if cmd in (
+        "/health", "/picks", "/errors", "/brain_pending", "/halt", "/resume", "/panic",
+        "/pathb_status", "/pathb_on", "/pathb_off", "/pathb_kill", "/pathb_closeall",
+    ):
+        try:
+            from interface.v2_telegram import handle_v2_command
+            msg = handle_v2_command(text, bot)
+            if cmd == "/panic":
+                try:
+                    return msg + "\n\n" + _cmd_closeall(bot)
+                except Exception as e:
+                    return msg + f"\n\nclose-all request failed: {e}"
+            return msg
+        except Exception as e:
+            return f"V2 command failed: {e}"
 
     # ── 현재 상태 ─────────────────────────────────────────────────────────────
     if cmd in ("/s", "/status"):
@@ -444,6 +461,9 @@ def _cmd_pnl(bot) -> str:
 
 
 def _cmd_positions(bot) -> str:
+    broker_msg = _cmd_positions_from_broker_truth(bot)
+    if broker_msg:
+        return broker_msg
     pos = bot.risk.positions
     if not pos:
         return "📭 보유 포지션이 없습니다."
@@ -546,6 +566,113 @@ def _cmd_positions(bot) -> str:
         lines.append("\n".join(block))
 
     return "\n\n".join(lines)
+
+
+def _cmd_positions_from_broker_truth(bot) -> str:
+    try:
+        from interface.v2_ops_summary import build_v2_ops_summary
+
+        summary = build_v2_ops_summary(bot=bot, runtime_mode=str(getattr(bot, "_mode", "live") or "live"))
+    except Exception:
+        return ""
+    broker_truth = summary.get("broker_truth") or {}
+    markets = broker_truth.get("markets") if isinstance(broker_truth.get("markets"), dict) else {}
+    has_snapshot = any(
+        isinstance(markets.get(market), dict)
+        and not bool((markets.get(market) or {}).get("missing", True))
+        and bool((markets.get(market) or {}).get("last_success_at"))
+        for market in ("KR", "US")
+    )
+    if not has_snapshot:
+        return ""
+    covered_markets = {
+        market for market in ("KR", "US")
+        if isinstance(markets.get(market), dict)
+        and not bool((markets.get(market) or {}).get("missing", True))
+        and bool((markets.get(market) or {}).get("last_success_at"))
+        and not bool((markets.get(market) or {}).get("stale"))
+    }
+    positions = [
+        pos for pos in list(summary.get("positions") or [])
+        if isinstance(pos, dict) and str(pos.get("market", "") or "KR").upper() in covered_markets
+    ]
+    seen = {
+        (
+            str(pos.get("market", "") or "KR").upper(),
+            str(pos.get("ticker", "") or "").upper()
+            if str(pos.get("market", "") or "KR").upper() == "US"
+            else str(pos.get("ticker", "") or ""),
+        )
+        for pos in positions
+        if isinstance(pos, dict)
+    }
+    fallback_markets = {market for market in ("KR", "US") if market not in covered_markets}
+    local_positions = list(getattr(getattr(bot, "risk", None), "positions", []) or [])
+    for local in local_positions:
+        if not isinstance(local, dict):
+            continue
+        local_market = str(local.get("market", "") or "").upper()
+        if not local_market:
+            local_market = "US" if str(local.get("ticker", "")).replace(".", "").isalpha() else "KR"
+        if local_market not in fallback_markets:
+            continue
+        ticker = str(local.get("ticker", "") or "")
+        key = (local_market, ticker.upper() if local_market == "US" else ticker)
+        if key in seen:
+            continue
+        entry = float(local.get("display_avg_price", local.get("avg_price", local.get("entry", 0))) or 0)
+        cur = float(local.get("display_current_price", local.get("current_price", entry)) or entry)
+        pnl_pct = (cur / entry - 1) * 100 if entry > 0 and cur > 0 else 0.0
+        path_label = str(local.get("buy_path_label", "") or "")
+        if not path_label:
+            path_label = "Path B" if (local.get("pathb_path_run_id") or local.get("path_type") == "claude_price") else "local"
+        positions.append(
+            {
+                "market": local_market,
+                "ticker": ticker,
+                "name": str(local.get("name", "") or ""),
+                "qty": int(local.get("qty", 0) or 0),
+                "entry": entry,
+                "current_price": cur,
+                "pnl_pct": pnl_pct,
+                "buy_path_label": path_label,
+                "source": "local_fallback",
+            }
+        )
+        seen.add(key)
+    stale_markets = [
+        market for market in ("KR", "US")
+        if isinstance(markets.get(market), dict)
+        and bool((markets.get(market) or {}).get("stale"))
+        and bool((markets.get(market) or {}).get("last_success_at"))
+    ]
+    lines = ["<b>보유 포지션</b>", "기준: 계좌 조회 snapshot"]
+    if stale_markets:
+        lines.append("주의: 오래된 계좌 조회 - " + ", ".join(stale_markets))
+    local_fallback_markets = sorted({
+        str(pos.get("market", "") or "KR").upper()
+        for pos in positions
+        if str(pos.get("source", "") or "") == "local_fallback"
+    })
+    if local_fallback_markets:
+        lines.append("Local fallback: " + ", ".join(local_fallback_markets))
+    if not positions:
+        return "\n".join(lines + ["계좌 기준 보유 포지션 없음"])
+    for pos in positions:
+        market = str(pos.get("market", "") or "KR").upper()
+        ticker_disp = _display_symbol(pos.get("ticker", "-"), market, pos.get("name", "") or "")
+        entry = float(pos.get("entry", 0) or 0)
+        cur = float(pos.get("current_price", entry) or entry)
+        qty = int(pos.get("qty", 0) or 0)
+        pnl_pct = float(pos.get("pnl_pct", 0) or ((cur / entry - 1) * 100 if entry > 0 and cur > 0 else 0.0))
+        path_label = str(pos.get("buy_path_label", "") or "")
+        source = str(pos.get("source", "") or "")
+        lines.append(
+            f"{ticker_disp} | {qty}주 | {pnl_pct:+.2f}% | "
+            f"{_fmt_price_for_market(entry, market)} -> {_fmt_price_for_market(cur, market)} | "
+            f"{path_label} | {source}"
+        )
+    return "\n".join(lines)
 
 
 def _cmd_mode(bot) -> str:
@@ -975,7 +1102,7 @@ class TelegramCommander:
                         response = _handle(text, self._bot)
                         _send(response)
             except Exception as e:
-                log.warning(f"[commander] 폴링 오류: {e}")
+                log.warning(f"[commander] 폴링 오류: {mask_secrets(e)}")
                 time.sleep(5)
 
     def _get_updates(self) -> list:

@@ -14,6 +14,7 @@ env/
 .env
 .env.paper
 .env.live
+*.env
 
 # Logs
 logs/
@@ -23,6 +24,8 @@ docs/archive/
 
 # Local databases
 *.db
+*.db-shm
+*.db-wal
 
 # IDE
 .vscode/
@@ -35,11 +38,13 @@ Thumbs.db
 # Data (runtime-generated, regeneratable)
 data/cache/
 data/backtest/
+data/backtest_audit/
 data/daily_digest/
 data/news/
 data/supplement/
 data/price/
 data/market_data/
+data/v2_reports/
 data/backtest_audit/runs/
 *.sqlite
 
@@ -61,6 +66,14 @@ state/decisions.jsonl
 state/param_tuner_sessions.json
 state/_api_summary_*.json
 state/*.bak*
+state/archive/
+state/brain_snapshots/
+state/shared_judgment_*.json
+state/candidate_health_*.json
+state/bucket_detection_state.json
+state/daily_baseline.json
+state/lesson_candidates.json
+state/pead_shadow_state.json
 # Dual runtime — paper/live 분리 파일 (모두 runtime 생성, git 제외)
 state/paper_*.json
 state/paper_*.jsonl
@@ -79,3 +92,11 @@ dashboard/__pycache__/
 # ML outputs (generated)
 ml/analysis_outputs/
 data/ml/
+
+# Local agent/editor scratch
+.claude/
+_extract_*.txt
+_sim_test.py
+
+# Local credential notes
+*API*.txt

@@ -1,18 +1,17 @@
 ﻿"""
 dashboard_server.py
-Flask 기반 트레이딩 대시보드 웹서버 (4-page edition)
+Flask 기반 트레이딩 대시보드 웹서버
 
 페이지:
   /            오늘 현황
-  /history     기간별 성과
-  /trades      매매 원장
+  /pathb       B플랜 실시간
   /analytics   분석
 
 실행: python dashboard_server.py
 접속: http://localhost:5000
 """
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, redirect, render_template_string, request
 from pathlib import Path
 from datetime import datetime, date, timedelta, time as dt_time
 import json, sys, os, re, subprocess, threading, atexit, time as _time
@@ -38,6 +37,10 @@ KST = ZoneInfo("Asia/Seoul")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from runtime_paths import get_runtime_path
+try:
+    from interface.v2_ops_summary import build_v2_ops_summary
+except Exception:
+    build_v2_ops_summary = None
 from credit_tracker import summary as credit_summary
 import kis_api as _kis_api_module
 from kis_api import (
@@ -2149,6 +2152,9 @@ def _ticker_name_map(market: str, include_broker: bool = True, mode: str = "pape
                 name = str((info or {}).get("name", "") or "").strip()
                 if t and name and name != t:
                     name_map[t] = name
+    for t, name in _screen_cache_name_map(market).items():
+        if t and name and name != t:
+            name_map[t] = name
     if include_broker:
         for pos in (_load_broker_positions(market, mode=mode) or []):
             t = str(pos.get("ticker", "") or "").strip().upper()
@@ -2162,7 +2168,70 @@ def _ticker_name_map(market: str, include_broker: bool = True, mode: str = "pape
             name = str(item.get("name", "") or "").strip()
             if t and name and name != t:
                 name_map[t] = name
+    for t, name in _ticker_name_overrides(market).items():
+        if t and name and name != t:
+            name_map[t] = name
     return name_map
+
+
+def _screen_cache_name_map(market: str) -> dict[str, str]:
+    market_key = str(market or "").upper()
+    filename = "us_screen_cache.json" if market_key == "US" else "kr_screen_cache.json"
+    path = get_runtime_path("state", filename, make_parents=False)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {}
+    rows = data.get("candidates") if isinstance(data, dict) else []
+    if not isinstance(rows, list):
+        return {}
+    out: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ticker = str(row.get("ticker") or "").strip().upper()
+        name = _clean_ticker_name(row.get("name"))
+        if ticker and name and name.upper() != ticker:
+            out[ticker] = name
+    return out
+
+
+def _clean_ticker_name(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        repaired = text.encode("cp949").decode("utf-8")
+    except Exception:
+        return text
+    return repaired if _hangul_score(repaired) > _hangul_score(text) else text
+
+
+def _hangul_score(value: str) -> int:
+    return sum(1 for ch in str(value or "") if "\uac00" <= ch <= "\ud7a3")
+
+
+def _ticker_name_overrides(market: str) -> dict[str, str]:
+    market_key = str(market or "").upper()
+    paths = [
+        BASE_DIR / "config" / "ticker_name_overrides.json",
+        get_runtime_path("state", "ticker_name_overrides.json", make_parents=False),
+    ]
+    merged: dict[str, str] = {}
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        scoped = data.get(market_key) if isinstance(data, dict) else {}
+        if not isinstance(scoped, dict):
+            continue
+        for ticker, name in scoped.items():
+            t = str(ticker or "").strip().upper()
+            n = str(name or "").strip()
+            if t and n:
+                merged[t] = n
+    return merged
 
 
 def _display_ticker_label(ticker: str, name: str = "", name_map: Optional[dict] = None) -> str:
@@ -3011,6 +3080,47 @@ def api_summary():
     })
 
 
+@app.route("/api/v2/ops")
+def api_v2_ops():
+    if build_v2_ops_summary is None:
+        return jsonify({"ok": False, "error": "V2 ops summary unavailable"}), 500
+    market = str(request.args.get("market") or "").strip().upper() or None
+    session_date = _session_trade_date(market).isoformat() if market in {"KR", "US"} else None
+    mode = _request_mode()
+    summary = build_v2_ops_summary(market=market, runtime_mode=mode, session_date=session_date)
+    _enrich_bucket_monitor_tickers(summary, market=market, mode=mode)
+    return jsonify(summary)
+
+
+def _enrich_bucket_monitor_tickers(summary: dict, *, market: Optional[str], mode: str) -> None:
+    """Add name+code labels to bucket monitor rows using the dashboard ticker name map."""
+    bucket = (summary or {}).get("bucket_monitor")
+    if not isinstance(bucket, dict):
+        return
+    rows = bucket.get("candidates")
+    if not isinstance(rows, list):
+        return
+    requested_market = str(market or "").upper()
+    name_maps: dict[str, dict[str, str]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_market = requested_market or str(row.get("market") or "").upper()
+        if row_market not in {"KR", "US"}:
+            row_market = "US" if str(row.get("ticker") or "").strip().upper().isalpha() else "KR"
+        if row_market not in name_maps:
+            try:
+                name_maps[row_market] = _ticker_name_map(row_market, include_broker=True, mode=mode)
+            except Exception:
+                name_maps[row_market] = {}
+        ticker = str(row.get("ticker") or "").strip()
+        mapped_name = str(name_maps.get(row_market, {}).get(ticker.upper(), "") or "").strip()
+        current_name = str(row.get("name") or "").strip()
+        if mapped_name and (not current_name or current_name.upper() == ticker.upper()):
+            row["name"] = mapped_name
+        row["display_ticker"] = _display_ticker_label(ticker, row.get("name", ""), name_maps.get(row_market, {}))
+
+
 @app.route("/api/claude/status")
 def api_claude_status():
     market = request.args.get("market", best_market_with_data())
@@ -3673,6 +3783,16 @@ def api_trades_list():
     limit        = int(request.args.get("limit", "100"))
     include_live = request.args.get("include_live", "true").lower() != "false"
 
+    def _trade_dedupe_key(t: dict) -> tuple:
+        return (
+            t.get("date", ""),
+            t.get("time", ""),
+            t.get("side", ""),
+            t.get("ticker", ""),
+            t.get("order_no", ""),
+            int(t.get("qty", 0) or 0),
+        )
+
     records = load_records_filtered(market, period, start, end)
     broker_rows = _broker_trade_rows_with_pnl(market, period, start, end, mode=mode)
 
@@ -3691,22 +3811,15 @@ def api_trades_list():
             for t in _trades_for_record(r, market):
                 trades.append(t)
 
-        seen = set()
-        deduped = []
-        for t in trades:
-            key = (
-                t.get("date", ""),
-                t.get("time", ""),
-                t.get("side", ""),
-                t.get("ticker", ""),
-                t.get("order_no", ""),
-                int(t.get("qty", 0) or 0),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(t)
-        trades = deduped
+    seen = set()
+    deduped = []
+    for t in trades:
+        key = _trade_dedupe_key(t)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(t)
+    trades = deduped
 
     if include_live:
         live_rows = _live_trades(market)
@@ -3722,14 +3835,7 @@ def api_trades_list():
                 continue
             if side     and side     != t_side:
                 continue
-            key = (
-                t.get("date", ""),
-                t.get("time", ""),
-                t.get("side", ""),
-                t.get("ticker", ""),
-                t.get("order_no", ""),
-                int(t.get("qty", 0) or 0),
-            )
+            key = _trade_dedupe_key(t)
             if key in seen:
                 continue
             seen.add(key)
@@ -4864,9 +4970,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 def _header_html(active_page: str) -> str:
     pages = [
         ("/",          "오늘 현황"),
-        ("/history",   "기간별 성과"),
-        ("/trades",    "매매 원장"),
-        ("/broker-trades", "실거래 원장"),
+        ("/pathb",     "B플랜 실시간"),
         ("/analytics", "분석"),
     ]
     nav_links = "".join(
@@ -4881,8 +4985,8 @@ def _header_html(active_page: str) -> str:
     <span class="status-dot"></span>
     <button class="mkt-btn" data-group="market" id="btn-kr" onclick="setMarket('KR')">한국장 KR</button>
     <button class="mkt-btn" data-group="market" id="btn-us" onclick="setMarket('US')">미국장 US</button>
-    <button class="mkt-btn" data-group="mode" id="btn-paper" onclick="setMode('paper')">Paper</button>
-    <button class="mkt-btn" data-group="mode" id="btn-live" onclick="setMode('live')">Live</button>
+    <button class="mkt-btn" data-group="mode" id="btn-paper" onclick="setMode('paper')">모의</button>
+    <button class="mkt-btn" data-group="mode" id="btn-live" onclick="setMode('live')">실전</button>
     <span id="clock"></span>
   </div>
 </header>
@@ -7720,6 +7824,661 @@ loadAll();
 </script>
 """
 
+PAGE_PATHB_HTML = """
+<main>
+  <section class="section">
+    <div class="section-title">B플랜 실시간</div>
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+      <div class="card"><div class="card-sub">상태</div><div class="metric" id="pathb-enabled">-</div></div>
+      <div class="card"><div class="card-sub">모드</div><div class="metric" id="pathb-mode">-</div></div>
+      <div class="card"><div class="card-sub">오늘 B 플랜</div><div class="metric" id="pathb-runs">-</div></div>
+      <div class="card"><div class="card-sub">대기</div><div class="metric" id="pathb-waiting">-</div></div>
+      <div class="card"><div class="card-sub">보유</div><div class="metric" id="pathb-filled">-</div></div>
+      <div class="card"><div class="card-sub">주문상태 불명</div><div class="metric danger" id="pathb-unknown">-</div></div>
+    </div>
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top:12px;">
+      <div class="card green"><div class="card-sub">진입률</div><div class="metric" id="pathb-entry-rate">-</div></div>
+      <div class="card blue"><div class="card-sub">목표가 적중률</div><div class="metric" id="pathb-target-rate">-</div></div>
+      <div class="card yellow"><div class="card-sub">평균 수익률</div><div class="metric" id="pathb-avg-pnl">-</div></div>
+      <div class="card purple"><div class="card-sub">추정 실현손익</div><div class="metric" id="pathb-realized">-</div></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">운용 제한</div>
+      <div id="pathb-limits" class="muted"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">B플랜 판단 흐름</div>
+      <div id="pathb-flow" class="muted"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">A플랜 진입 타이밍</div>
+      <div id="entry-timing-summary" class="muted"></div>
+      <div id="entry-timing-recent" class="table-wrap" style="margin-top:10px;"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">후보 바구니 모니터</div>
+      <div id="bucket-summary" class="table-wrap"><div class="muted">바구니 데이터 로딩 중...</div></div>
+      <div id="bucket-candidates" class="table-wrap" style="margin-top:10px;"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">계좌 조회 기준 상태</div>
+      <div id="pathb-broker-truth" class="muted"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">A/B 실현 수익률 비교</div>
+      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+        <div class="card"><div class="card-sub">A플랜 평균 수익률</div><div class="metric" id="patha-avg-pnl">-</div></div>
+        <div class="card"><div class="card-sub">B플랜 평균 수익률</div><div class="metric" id="pathb-compare-avg-pnl">-</div></div>
+        <div class="card"><div class="card-sub">B-A 차이</div><div class="metric" id="pathb-delta-pnl">-</div></div>
+        <div class="card"><div class="card-sub">B-A 실현손익 차이</div><div class="metric" id="pathb-delta-realized">-</div></div>
+      </div>
+      <div class="grid" style="grid-template-columns: 1fr 1.2fr; margin-top:12px;">
+        <div id="pathb-comparison-table" class="table-wrap"></div>
+        <div class="chart-container"><canvas id="pathbCompareChart"></canvas></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">B플랜 관찰 / 미동작 사유</div>
+      <div id="pathb-watch" class="table-wrap"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">현재 보유 경로</div>
+      <div id="pathb-position-paths" class="table-wrap"></div>
+    </div>
+    <div class="grid" style="grid-template-columns: 1.2fr 1fr 1fr; margin-top:12px;">
+      <div class="card">
+        <div class="card-title">누적 수익률</div>
+        <div class="chart-container"><canvas id="pathbPnlChart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">적중률</div>
+        <div class="chart-container"><canvas id="pathbOutcomeChart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">상태 분포</div>
+        <div class="chart-container"><canvas id="pathbStatusChart"></canvas></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">진행 중인 클로드 가격 플랜</div>
+      <div id="pathb-active" class="table-wrap"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">클로드 매수/매도 근거</div>
+      <div id="pathb-recent" class="table-wrap"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">주문상태 불명</div>
+      <div id="pathb-unknown-table" class="table-wrap"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">상태별 건수</div>
+      <div id="pathb-status" class="muted"></div>
+    </div>
+  </section>
+</main>
+<script>
+async function loadPathB() {
+  const market = (window.MARKET || localStorage.getItem('market') || 'KR');
+  const mode = localStorage.getItem('runtime_mode') || 'live';
+  MODE = mode;
+  const modeBtn = document.getElementById('btn-' + mode);
+  if (modeBtn) {
+    document.querySelectorAll('.mkt-btn[data-group="mode"]').forEach(b => b.classList.remove('active'));
+    modeBtn.classList.add('active');
+  }
+  const d = await fetch('/api/v2/ops?market=' + encodeURIComponent(market) + '&mode=' + encodeURIComponent(mode)).then(r => r.json()).catch(() => ({}));
+  const b = d.path_b_live || {};
+  const cfg = b.config || {};
+  const ctl = b.control || {};
+  const m = b.metrics || {};
+  const enabled = !!cfg.enabled && !!ctl.enabled && !cfg.emergency_disable && !ctl.emergency_disabled;
+  document.getElementById('pathb-enabled').textContent = enabled ? '켜짐' : '꺼짐';
+  document.getElementById('pathb-mode').textContent = koPathBMode(cfg.mode || '-');
+  document.getElementById('pathb-runs').textContent = b.runs ?? 0;
+  document.getElementById('pathb-waiting').textContent = b.waiting ?? 0;
+  document.getElementById('pathb-filled').textContent = b.filled ?? 0;
+  document.getElementById('pathb-unknown').textContent = (b.order_unknown || []).length;
+  document.getElementById('pathb-entry-rate').textContent = fmtPct(m.entry_rate_pct);
+  document.getElementById('pathb-target-rate').textContent = fmtPct(m.target_hit_rate_pct);
+  document.getElementById('pathb-avg-pnl').textContent = fmtSignedPct(m.avg_pnl_pct);
+  document.getElementById('pathb-realized').textContent = fmtMoney(m.realized_pnl_value);
+  const src = cfg.source || {};
+  const conflicts = src.conflicts || {};
+  const conflictText = Object.keys(conflicts).length
+    ? ` | 설정 충돌 ${Object.entries(conflicts).map(([k, v]) => `${koConfigKey(k)} ${v.runtime_env}→${v.start_config}`).join(', ')}`
+    : '';
+  document.getElementById('pathb-limits').textContent =
+    `1회 예산 ${fmtMoney(cfg.fixed_order_krw || 0)}원 | 투입금액 ${fmtMoney(m.deployed_value || 0)}원 | 동시보유 ${cfg.max_positions || 0}개 | 하루 진입 ${cfg.max_daily_entries || 0}회 | 최소 신뢰도 ${cfg.min_confidence || 0} | 당일청산 ${cfg.intraday_only ? '사용' : '미사용'} | 설정 ${src.start_config_applied ? '시작설정 적용' : 'env 기준'} | 제어 ${koControlBy(ctl.updated_by || 'default')} ${ctl.reason || ''}${conflictText}`;
+  const sel = b.selection || {};
+  const sc = sel.counts || {};
+  const noPlan = (sel.no_plan_reasons || []).map(koPathBSelectionReason).filter(Boolean);
+  const missing = (sel.missing_price_targets || []).join(', ');
+  document.getElementById('pathb-flow').innerHTML =
+    `Claude 입력 후보 ${sc.universe || 0}개 | Claude 관찰 ${sc.watchlist || 0}개 | 원래 매수 후보 ${sc.raw_trade_ready || 0}개 | 실제 적용 매수 후보 ${sc.applied_trade_ready || 0}개 | 가격목표 ${sc.price_targets || 0}개 | 생성된 B플랜 ${sc.registered_plans || 0}개`
+    + `<br>상태: ${(noPlan.length ? noPlan.join(' / ') : '정상')}`
+    + (missing ? `<br>가격목표 누락: ${missing}` : '')
+    + (sel.fallback_mode ? `<br>Claude 응답 복구 모드: ${sel.fallback_mode}` : '');
+  renderEntryTiming(d.entry_timing || {});
+  renderBucketMonitor(d.bucket_monitor || {});
+  const brokerTruth = d.broker_truth || {};
+  const brokerMarkets = brokerTruth.markets || {};
+  document.getElementById('pathb-broker-truth').innerHTML = ['KR', 'US'].map(mkt => {
+    const bt = brokerMarkets[mkt] || {};
+    const err = bt.error ? ` | 오류 ${bt.error}` : '';
+    return `${mkt}: ${bt.missing ? '계좌 조회 대기' : (bt.stale ? '계좌 조회 오래됨' : '계좌 조회 정상')} | 보유 ${(bt.positions || []).length}개 | 미체결 ${(bt.open_orders || []).length}개 | 당일체결 ${(bt.today_fills || []).length}개 | 마지막 ${bt.last_success_at || '-'}${err}`;
+  }).join('<br>');
+  renderPathComparison(b.path_comparison || {});
+  const watchRows = (sel.watch_rows || []).map(r => `
+    <tr>
+      <td>${r.display_ticker || r.ticker || ''}</td>
+      <td>${koPathBWatchCategory(r.category || '')}</td>
+      <td>${koPathBWatchState(r.state || '')}</td>
+      <td>${r.buy_zone_low || ''}${r.buy_zone_high ? ' ~ ' + r.buy_zone_high : ''}</td>
+      <td>${r.sell_target || ''}</td>
+      <td>${r.stop_loss || ''}</td>
+      <td>${r.confidence || ''}</td>
+      <td>${koPathBReason(r.filter_reason || '')}</td>
+      <td>${r.reason || ''}</td>
+      <td>${r.entry_rationale || ''}</td>
+      <td>${r.exit_rationale || ''}</td>
+    </tr>
+  `).join('');
+  document.getElementById('pathb-watch').innerHTML = watchRows
+    ? `<table><thead><tr><th>종목</th><th>구분</th><th>B플랜 상태</th><th>매수 존</th><th>목표</th><th>손절</th><th>신뢰도</th><th>차단 사유</th><th>Claude 선택 이유</th><th>진입 근거</th><th>청산 근거</th></tr></thead><tbody>${watchRows}</tbody></table>`
+    : '<div class="muted">오늘 B플랜 관찰 대상이 없습니다.</div>';
+  const posRows = (d.positions || []).map(p => `
+    <tr>
+      <td>${p.display_ticker || p.ticker || ''}</td>
+      <td>${koBuyPath(p.buy_path || '')}</td>
+      <td>${p.qty || ''}</td>
+      <td>${p.entry || ''}</td>
+      <td>${p.current_price || ''}</td>
+      <td>${p.strategy || ''}</td>
+      <td>${p.target || ''}</td>
+      <td>${p.stop_loss || ''}</td>
+      <td>${p.source === 'broker_truth' ? '계좌 조회' : '로컬 fallback'}</td>
+    </tr>
+  `).join('');
+  document.getElementById('pathb-position-paths').innerHTML = posRows
+    ? `<table><thead><tr><th>종목</th><th>매수 경로</th><th>수량</th><th>진입가</th><th>현재가</th><th>전략</th><th>B 목표</th><th>B 손절</th><th>상태 기준</th></tr></thead><tbody>${posRows}</tbody></table>`
+    : '<div class="muted">현재 보유 포지션이 없습니다.</div>';
+  drawPathBCharts(b.charts || {});
+  const rows = (b.active || []).map(r => `
+    <tr>
+      <td>${r.market || ''}</td>
+      <td>${r.display_ticker || r.ticker || ''}</td>
+      <td>${koBuyPath(r.buy_path || 'path_b')}</td>
+      <td>${koPathBStatus(r.status || '')}</td>
+      <td>${r.buy_zone_low || ''} ~ ${r.buy_zone_high || ''}</td>
+      <td>${r.sell_target || ''}</td>
+      <td>${r.stop_loss || ''}</td>
+      <td>${r.confidence || ''}</td>
+      <td>${r.filled_qty || ''}</td>
+      <td>${fmtSignedPct(r.pnl_pct)}</td>
+      <td>${r.entry_rationale || ''}</td>
+      <td>${r.exit_rationale || ''}</td>
+    </tr>
+  `).join('');
+  document.getElementById('pathb-active').innerHTML = rows
+    ? `<table><thead><tr><th>시장</th><th>종목</th><th>매수 경로</th><th>상태</th><th>매수 존</th><th>목표</th><th>손절</th><th>신뢰도</th><th>수량</th><th>수익률</th><th>진입 근거</th><th>청산 근거</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<div class="muted">활성 B플랜이 없습니다.</div>';
+  const recentRows = (b.recent || []).map(r => `
+    <tr>
+      <td>${r.display_ticker || r.ticker || ''}</td>
+      <td>${koBuyPath(r.buy_path || 'path_b')}</td>
+      <td>${koPathBStatus(r.status || '')}</td>
+      <td>${r.buy_zone_low || ''} ~ ${r.buy_zone_high || ''}</td>
+      <td>${r.actual_entry_price || r.entry_order_price || ''}</td>
+      <td>${r.actual_exit_price || ''}</td>
+      <td>${fmtSignedPct(r.pnl_pct)}</td>
+      <td>${koPathBReason(r.close_reason || r.cancel_reason || '')}</td>
+      <td>${r.rationale || r.entry_rationale || ''}</td>
+      <td>${listText(r.entry_basis_tags)}</td>
+      <td>${listText(r.invalidation_conditions)}</td>
+    </tr>
+  `).join('');
+  document.getElementById('pathb-recent').innerHTML = recentRows
+    ? `<table><thead><tr><th>종목</th><th>매수 경로</th><th>상태</th><th>매수 존</th><th>진입</th><th>청산</th><th>수익률</th><th>결과</th><th>Claude 근거</th><th>진입 태그</th><th>무효 조건</th></tr></thead><tbody>${recentRows}</tbody></table>`
+    : '<div class="muted">오늘 클로드 가격 플랜 기록이 없습니다.</div>';
+  const unknownRows = (b.order_unknown || []).map(r => `
+    <tr><td>${r.market || ''}</td><td>${r.display_ticker || r.ticker || ''}</td><td>${koPathBStatus(r.status || '')}</td><td>${koOrderUnknownResolution(r.order_unknown_resolution || '')}</td><td>${r.broker_position_evidence ? '있음' : '없음'}</td><td>${r.broker_today_fill_evidence ? '있음' : '없음'}</td><td>${r.path_a_origin_possible ? '가능' : '-'}</td><td>${r.broker_truth_last_success_at || ''}</td><td>${r.path_run_id || ''}</td></tr>
+  `).join('');
+  document.getElementById('pathb-unknown-table').innerHTML = unknownRows
+    ? `<table><thead><tr><th>시장</th><th>종목</th><th>상태</th><th>재판정</th><th>계좌보유</th><th>당일체결</th><th>A기인 가능</th><th>계좌조회</th><th>플랜ID</th></tr></thead><tbody>${unknownRows}</tbody></table>`
+    : '<div class="muted">주문상태 불명 없음</div>';
+  const counts = b.status_counts || {};
+  document.getElementById('pathb-status').textContent = Object.keys(counts).length
+    ? Object.entries(counts).map(([k, v]) => `${koPathBStatus(k)}: ${v}`).join(' | ')
+    : '상태 카운트 없음';
+}
+
+function fmtPct(v) {
+  const n = Number(v || 0);
+  return n.toFixed(1) + '%';
+}
+
+function fmtSignedPct(v) {
+  if (v === '' || v === null || typeof v === 'undefined') return '-';
+  const n = Number(v || 0);
+  return (n > 0 ? '+' : '') + n.toFixed(2) + '%';
+}
+
+function fmtMoney(v) {
+  const n = Number(v || 0);
+  return n.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
+}
+
+function listText(v) {
+  if (Array.isArray(v)) return v.join(', ');
+  return v || '';
+}
+
+function koPathBMode(v) {
+  const m = {
+    min_size_live: '최소금액 실매매',
+    disabled: '중지',
+    off: '중지'
+  };
+  return m[v] || v || '-';
+}
+
+function koConfigKey(v) {
+  const m = {
+    PATHB_MAX_POSITIONS: '동시보유',
+    PATHB_MAX_DAILY_ENTRIES: '하루 진입',
+    PATHB_FIXED_ORDER_KRW: '1회 예산',
+    PATHB_INTRADAY_ONLY: '당일청산',
+    PATHB_MIN_CONFIDENCE: '최소 신뢰도',
+    V2_MAX_DAILY_ENTRIES: '전체 하루 진입',
+    KR_MAX_POSITIONS: 'KR 최대보유',
+    US_MAX_POSITIONS: 'US 최대보유'
+  };
+  return m[v] || v || '';
+}
+
+function koControlBy(v) {
+  const m = {
+    default: '기본값',
+    telegram: '텔레그램',
+    operator: '운영자'
+  };
+  return m[v] || v || '';
+}
+
+function koPathBStatus(v) {
+  const m = {
+    WAITING: '지정가 대기',
+    HIT: '매수가 도달',
+    ORDER_SENT: '매수 주문 전송',
+    ORDER_ACKED: '매수 주문 접수',
+    PARTIAL_FILLED: '부분 체결',
+    FILLED: '보유 중',
+    SELL_SENT: '매도 주문 전송',
+    SELL_ACKED: '매도 주문 접수',
+    SELL_PARTIAL_FILLED: '매도 부분체결',
+    CLOSED: '청산 완료',
+    EXPIRED: '매수 미도달',
+    CANCELLED: '취소',
+    ORDER_UNKNOWN: '주문상태 불명'
+  };
+  return m[v] || v || '-';
+}
+
+function koOrderUnknownResolution(v) {
+  const m = {
+    path_a_origin_possible: 'A플랜 기인 가능',
+    broker_no_evidence: '계좌 근거 없음',
+    broker_truth_unavailable: '계좌 조회 실패',
+    ambiguous_broker_truth: '계좌 근거 애매함',
+    pathb_fill_recovered: 'B플랜 체결 복구',
+    pathb_open_order_recovered: 'B플랜 미체결 주문 복구',
+    session_end_unresolved: '세션 종료 미해결'
+  };
+  return m[v] || v || '-';
+}
+
+function koPathBReason(v) {
+  const m = {
+    CLOSED_CLAUDE_PRICE_TARGET: '목표가 도달 청산',
+    CLOSED_CLAUDE_PRICE_STOP: '클로드 손절가 청산',
+    CLOSED_HARD_STOP: '하드스탑 청산',
+    CLOSED_CLAUDE_PRICE_PRE_CLOSE: '마감 전 청산',
+    CLOSED_USER_MANUAL: '수동 청산',
+    CLOSED_PANIC: '긴급 청산',
+    cancel_if_open_above: '시가가 무효 가격 초과',
+    precheck_failed: '주문 사전검사 실패',
+    PATHB_MAX_DAILY_ENTRIES: 'B플랜 하루 진입 제한',
+    PATHB_MAX_POSITIONS: 'B플랜 최대 보유 제한',
+    PATH_DUPLICATE_HOLDING: '같은 종목 중복 보유 차단',
+    PATHB_MANUALLY_DISABLED: 'B플랜 수동 중지',
+    PATHB_EMERGENCY_DISABLED: 'B플랜 긴급 중지'
+  };
+  return m[v] || v || '';
+}
+
+function koPathBSelectionReason(v) {
+  const m = {
+    MARKET_NOT_SELECTED: '시장 선택 필요',
+    PATHB_CONFIG_DISABLED: '설정에서 B플랜 꺼짐',
+    PATHB_OPERATOR_DISABLED: '운영자가 B플랜 중지',
+    PATHB_EMERGENCY_DISABLED: 'B플랜 긴급 중지',
+    NO_SELECTION_FILE: '오늘 Claude 판단 파일 없음',
+    NO_WATCHLIST: 'Claude 관찰 종목 없음',
+    ALL_TRADE_READY_FILTERED: '매수 후보가 런타임 필터에서 모두 차단',
+    PRICE_TARGETS_EMPTY: 'Claude 가격목표 전체 누락',
+    MISSING_PRICE_TARGETS: '일부 매수 후보 가격목표 누락',
+    NO_PATH_RUN_REGISTERED: '매수 후보는 있으나 B플랜 등록 없음',
+    NO_TRADE_READY: '매수 후보 없음'
+  };
+  return m[v] || v || '';
+}
+
+function koPathBWatchCategory(v) {
+  const m = {
+    applied_trade_ready: '실제 매수 후보',
+    filtered_trade_ready: '필터 차단',
+    raw_trade_ready: '원래 매수 후보',
+    watch_only: '관찰만'
+  };
+  return m[v] || v || '';
+}
+
+function koPathBWatchState(v) {
+  const m = {
+    WATCH_ONLY: '관찰만',
+    READY_NO_PATH_RUN: '등록 대기/누락',
+    MISSING_PRICE_TARGETS: '가격목표 없음',
+    WAITING: '지정가 대기',
+    HIT: '매수가 도달',
+    ORDER_SENT: '매수 주문 전송',
+    ORDER_ACKED: '매수 주문 접수',
+    PARTIAL_FILLED: '부분 체결',
+    FILLED: '보유 중',
+    SELL_SENT: '매도 주문 전송',
+    SELL_ACKED: '매도 주문 접수',
+    CLOSED: '청산 완료',
+    EXPIRED: '매수 미도달',
+    CANCELLED: '취소',
+    ORDER_UNKNOWN: '주문상태 불명',
+    continuation_shadow_only: '연속 상승 전략 비활성',
+    slot_cap: '전략 슬롯 초과'
+  };
+  if (String(v || '').startsWith('slot_cap:')) return '전략 슬롯 초과: ' + String(v).split(':')[1];
+  if (String(v || '').startsWith('slot_disabled:')) return '전략 슬롯 비활성: ' + String(v).split(':')[1];
+  return m[v] || koPathBReason(v) || v || '';
+}
+
+function koBuyPath(v) {
+  const m = {
+    path_a: 'Path A - Timing Adapter',
+    path_b: 'Path B - Claude Price',
+    manual_or_broker: '수동/브로커 동기화'
+  };
+  return m[v] || v || '';
+}
+
+function drawPathBCharts(chartsData) {
+  if (typeof Chart === 'undefined') return;
+  drawLineChart('pathbPnlChart', 'pathbPnl', chartsData.pnl || {}, '누적 수익률 %', '#10b981');
+  drawBarChart('pathbOutcomeChart', 'pathbOutcome', chartsData.outcomes || {}, '#3b82f6');
+  drawDoughnutChart('pathbStatusChart', 'pathbStatus', chartsData.status || {});
+}
+
+function renderPathComparison(cmp) {
+  const a = cmp.path_a || {};
+  const b = cmp.path_b || {};
+  const delta = cmp.delta || {};
+  document.getElementById('patha-avg-pnl').textContent = fmtSignedPct(a.avg_pnl_pct);
+  document.getElementById('pathb-compare-avg-pnl').textContent = fmtSignedPct(b.avg_pnl_pct);
+  document.getElementById('pathb-delta-pnl').textContent = fmtSignedPct(delta.avg_pnl_pct);
+  document.getElementById('pathb-delta-realized').textContent = fmtMoney(delta.realized_pnl_value || 0);
+  const rows = [
+    ['A플랜', a.closed || 0, fmtPct(a.win_rate_pct), fmtSignedPct(a.avg_pnl_pct), fmtMoney(a.realized_pnl_value || 0)],
+    ['B플랜', b.closed || 0, fmtPct(b.win_rate_pct), fmtSignedPct(b.avg_pnl_pct), fmtMoney(b.realized_pnl_value || 0)]
+  ].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join('');
+  document.getElementById('pathb-comparison-table').innerHTML =
+    `<table><thead><tr><th>경로</th><th>청산건수</th><th>승률</th><th>평균 수익률</th><th>실현손익</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `<div class="muted" style="margin-top:8px;">기준: ${cmp.basis || '실현 청산 기준'}</div>`;
+  if (typeof Chart !== 'undefined') {
+    drawBarChart('pathbCompareChart', 'pathbCompare', cmp.chart || {}, '#0ea5e9');
+  }
+}
+
+function renderEntryTiming(timing) {
+  const summaryEl = document.getElementById('entry-timing-summary');
+  const recentEl = document.getElementById('entry-timing-recent');
+  if (!summaryEl || !recentEl) return;
+  if (!timing || timing.missing) {
+    summaryEl.textContent = '오늘 A플랜 진입 타이밍 로그가 아직 없습니다.';
+    recentEl.innerHTML = '';
+    return;
+  }
+  const avg = timing.averages || {};
+  const events = timing.events || {};
+  summaryEl.innerHTML =
+    `로그 ${timing.row_count || 0}행 | 후보 ${events.candidate_detected || 0} | 신호 ${events.signal_fired || 0} | 주문 ${events.order_sent || 0} | 체결 ${(events.filled || 0) + (events.partial_filled || 0)}`
+    + `<br>후보→주문 평균 ${fmtMaybeMin(avg.candidate_to_order_delay_min)} | 신호→주문 평균 ${fmtMaybeMin(avg.signal_to_order_delay_min)} | 주문→체결 평균 ${fmtMaybeSec(avg.order_to_fill_delay_sec)}`
+    + `<br>후보→주문 가격변화 ${fmtMaybePct(avg.price_change_candidate_to_order_pct)} | 고점 대비 진입 ${fmtMaybePct(avg.entry_vs_intraday_high_pct)}`;
+  const rows = (timing.recent || []).map(r => `
+    <tr>
+      <td>${r.market || ''}</td>
+      <td>${r.ticker || ''}</td>
+      <td>${koEntryTimingEvent(r.event || '')}</td>
+      <td>${r.strategy || ''}</td>
+      <td>${r.signal_check_count || 0}</td>
+      <td>${fmtMaybeMin(r.candidate_to_order_delay_min)}</td>
+      <td>${fmtMaybeMin(r.signal_to_order_delay_min)}</td>
+      <td>${fmtMaybeSec(r.order_to_fill_delay_sec)}</td>
+      <td>${fmtMaybePct(r.price_change_candidate_to_order_pct)}</td>
+      <td>${fmtMaybePct(r.entry_vs_intraday_high_pct)}</td>
+      <td>${r.order_no || ''}</td>
+    </tr>
+  `).join('');
+  recentEl.innerHTML = rows
+    ? `<table><thead><tr><th>시장</th><th>종목</th><th>이벤트</th><th>전략</th><th>신호체크</th><th>후보→주문</th><th>신호→주문</th><th>주문→체결</th><th>후보→주문 가격</th><th>고점 대비</th><th>주문번호</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<div class="muted">아직 신호/주문/체결 이벤트가 없습니다.</div>';
+}
+
+function fmtMaybeMin(v) {
+  if (v === null || typeof v === 'undefined' || v === '') return '-';
+  return Number(v).toFixed(1) + '분';
+}
+
+function fmtMaybeSec(v) {
+  if (v === null || typeof v === 'undefined' || v === '') return '-';
+  return Number(v).toFixed(0) + '초';
+}
+
+function koEntryTimingEvent(v) {
+  const m = {
+    signal_fired: '신호 발생',
+    order_sent: '주문 전송',
+    partial_filled: '부분 체결',
+    filled: '체결'
+  };
+  return m[v] || v || '-';
+}
+
+function renderBucketMonitor(bucket) {
+  const summaryEl = document.getElementById('bucket-summary');
+  const candidateEl = document.getElementById('bucket-candidates');
+  if (!summaryEl || !candidateEl) return;
+  if (!bucket || bucket.missing) {
+    summaryEl.innerHTML = `<div class="muted">${(bucket && bucket.message) || '후보 바구니 데이터가 아직 없습니다.'}</div>`;
+    candidateEl.innerHTML = '';
+    return;
+  }
+  const warnings = (bucket.warnings || []).map(koBucketWarning).filter(Boolean).join(' / ');
+  const bucketRows = (bucket.buckets || []).map(r => `
+    <tr>
+      <td>${koBucket(r.primary_bucket || '')}</td>
+      <td>${r.candidates || 0}</td>
+      <td>${r.claude_input || 0}</td>
+      <td>${r.watch || 0}</td>
+      <td>${r.trade_ready || 0}</td>
+      <td>${r.not_in_prompt || 0}</td>
+      <td>${r.winner_30m || 0}</td>
+      <td>${r.winner_60m || 0}</td>
+      <td>${r.winner_close || 0}</td>
+      <td>${r.missed_winner || 0}</td>
+      <td>${fmtMaybePct(r.avg_forward_30m)}</td>
+      <td>${fmtMaybePct(r.avg_forward_60m)}</td>
+      <td>${fmtMaybePct(r.avg_forward_close)}</td>
+    </tr>
+  `).join('');
+  summaryEl.innerHTML = bucketRows
+    ? `<div class="muted" style="margin-bottom:8px;">세션 ${bucket.session_date || ''} | 후보 ${bucket.unique_candidate_count || 0}개 | 표시 ${bucket.candidate_display_limit || 30}개 | 로그 ${bucket.row_count || 0}행${warnings ? ' | 경고 ' + warnings : ''}</div>`
+      + `<table><thead><tr><th>바구니</th><th>후보</th><th>Claude 입력</th><th>관찰</th><th>매수 후보</th><th>미입력</th><th>30분 승</th><th>60분 승</th><th>종가 승</th><th>놓친 승</th><th>30분 수익률</th><th>60분 수익률</th><th>종가 수익률</th></tr></thead><tbody>${bucketRows}</tbody></table>`
+    : '<div class="muted">집계 가능한 바구니가 없습니다.</div>';
+  const candidateRows = (bucket.candidates || []).map(r => `
+    <tr>
+      <td>${r.display_ticker || r.ticker || ''}</td>
+      <td>${koBucket(r.primary_bucket || '')}</td>
+      <td>${(r.secondary_buckets || []).map(koBucket).join(', ')}</td>
+      <td>${fmtSignedPct(r.change_rate)}</td>
+      <td>${fmtMoney(r.turnover || 0)}</td>
+      <td>${r.volume_ratio || ''}</td>
+      <td>${koCandidateStatus(r.status || '')}</td>
+      <td>${r.input_to_claude ? '예' : '아니오'}</td>
+      <td>${r.first_bucket_detected_at || ''}</td>
+      <td>${bucketReasonText(r.bucket_reasons || {})}</td>
+    </tr>
+  `).join('');
+  candidateEl.innerHTML = candidateRows
+    ? `<table><thead><tr><th>종목</th><th>대표 바구니</th><th>보조 바구니</th><th>등락률</th><th>거래대금</th><th>거래량비</th><th>상태</th><th>Claude 입력</th><th>첫 감지</th><th>근거</th></tr></thead><tbody>${candidateRows}</tbody></table>`
+    : '<div class="muted">표시할 후보가 없습니다.</div>';
+}
+
+function fmtMaybePct(v) {
+  if (v === null || typeof v === 'undefined' || v === '') return '-';
+  return fmtSignedPct(v);
+}
+
+function koBucket(v) {
+  const m = {
+    momentum_now: '현재 강한 상승',
+    volume_surge: '거래량 급증',
+    liquidity_leader: '유동성 주도',
+    prev_strength: '전일 강세 지속',
+    near_breakout: '돌파 근접',
+    pullback_watch: '눌림목 관찰',
+    pre_move_setup: '상승 전 셋업',
+    sector_lagging_leader: '섹터 후발/리더',
+    unclassified: '미분류'
+  };
+  return m[v] || v || '-';
+}
+
+function koBucketWarning(v) {
+  const m = {
+    NO_BUCKET_DATA: '바구니 데이터 없음',
+    KOSDAQ_BUCKET_ZERO: 'KOSDAQ 후보 0',
+    MARKET_TYPE_MISSING: 'KR 시장구분 누락',
+    PRE_MOVE_NOT_IN_PROMPT: '상승 전 셋업 미입력',
+    MOMENTUM_BAD_SIGNAL: '모멘텀 후보 손실 신호'
+  };
+  return m[v] || v || '';
+}
+
+function koCandidateStatus(v) {
+  const m = {
+    TRADE_READY: '매수 후보',
+    WATCH: '관찰',
+    VETO: '거부',
+    NOT_IN_PROMPT: 'Claude 미입력',
+    SCREENER_ONLY: '스크리너만'
+  };
+  return m[v] || v || '-';
+}
+
+function bucketReasonText(reasons) {
+  if (!reasons || typeof reasons !== 'object') return '';
+  return Object.entries(reasons).map(([k, v]) => `${koBucket(k)}: ${v}`).join(' | ');
+}
+
+function resetChart(key) {
+  if (charts[key]) {
+    charts[key].destroy();
+    delete charts[key];
+  }
+}
+
+function drawLineChart(canvasId, key, data, label, color) {
+  resetChart(key);
+  const el = document.getElementById(canvasId);
+  if (!el) return;
+  charts[key] = new Chart(el.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: data.labels || [],
+      datasets: [{
+        label,
+        data: data.data || [],
+        borderColor: color,
+        backgroundColor: 'rgba(16,185,129,0.12)',
+        tension: 0.25,
+        fill: true
+      }]
+    },
+    options: chartOptions('%')
+  });
+}
+
+function drawBarChart(canvasId, key, data, color) {
+  resetChart(key);
+  const el = document.getElementById(canvasId);
+  if (!el) return;
+  charts[key] = new Chart(el.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: data.labels || [],
+      datasets: [{ label: '비율 %', data: data.data || [], backgroundColor: color }]
+    },
+    options: chartOptions('%')
+  });
+}
+
+function drawDoughnutChart(canvasId, key, data) {
+  resetChart(key);
+  const el = document.getElementById(canvasId);
+  if (!el) return;
+  charts[key] = new Chart(el.getContext('2d'), {
+    type: 'doughnut',
+    data: {
+      labels: data.labels || [],
+      datasets: [{
+        data: data.data || [],
+        backgroundColor: ['#06b6d4', '#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b']
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }
+    }
+  });
+}
+
+function chartOptions(suffix) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.12)' } },
+      y: {
+        ticks: { color: '#64748b', callback: v => `${v}${suffix || ''}` },
+        grid: { color: 'rgba(100,116,139,0.12)' }
+      }
+    },
+    plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }
+  };
+}
+loadPathB();
+setInterval(loadPathB, 10000);
+</script>
+"""
+
 
 # ?? Flask ?쇱슦?????????????????????????????????????????????????????????????????
 
@@ -7740,39 +8499,26 @@ def page_today():
 
 @app.route("/history")
 def page_history():
-    html = (
-        _head("기간별 성과")
-        + _header_html("/history")
-        + _period_bar_html()
-        + COMMON_JS_BLOCK
-        + PAGE_HISTORY_HTML
-        + "</body></html>"
-    )
-    return render_template_string(html)
+    return redirect("/pathb")
 
 
 @app.route("/trades")
 def page_trades():
-    html = (
-        _head("매매 원장")
-        + _header_html("/trades")
-        + _period_bar_html(extra_filters=TRADES_EXTRA_FILTERS)
-        + COMMON_JS_BLOCK
-        + PAGE_TRADES_HTML
-        + "</body></html>"
-    )
-    return render_template_string(html)
+    return redirect("/pathb")
 
 
 @app.route("/broker-trades")
 def page_broker_trades():
+    return redirect("/pathb")
+
+
+@app.route("/pathb")
+def page_pathb():
     html = (
-        _head("실거래 원장")
-        + _header_html("/broker-trades")
-        + _period_bar_html(extra_filters=TRADES_EXTRA_FILTERS)
+        _head("B플랜 실시간")
+        + _header_html("/pathb")
         + COMMON_JS_BLOCK
-        + PAGE_BROKER_TRADES_HTML
-        + BROKER_TRADES_STATUS_JS
+        + PAGE_PATHB_HTML
         + "</body></html>"
     )
     return render_template_string(html)
@@ -7800,9 +8546,7 @@ if __name__ == "__main__":
     print("  http://localhost:5000 으로 접속하세요")
     print()
     print("  /            오늘 현황")
-    print("  /history     기간별 성과")
-    print("  /trades      매매 원장")
-    print("  /broker-trades 실거래 원장")
+    print("  /pathb       B플랜 실시간")
     print("  /analytics   분석")
     print("=" * 52)
     app.run(host="0.0.0.0", port=5000, debug=False)

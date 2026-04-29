@@ -40,6 +40,10 @@ def _date_str(value: object) -> str:
     return pd.to_datetime(value).strftime("%Y-%m-%d")
 
 
+def _is_intraday_timeframe(timeframe: str) -> bool:
+    return str(timeframe or "").lower() not in {"", "daily", "1d", "day"}
+
+
 def _issue(
     *,
     symbol: str,
@@ -229,7 +233,36 @@ def validate_ohlcv_frame(
     if start_date and end_date:
         duration_days = int((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days)
     severities = {issue.severity for issue in issues}
-    if (
+    if _is_intraday_timeframe(timeframe):
+        # Intraday free sources often expose only 30-60 calendar days. Grade
+        # them by row count and structural validity, not multi-year duration.
+        if (
+            missing_rate < 0.01
+            and invalid_count == 0
+            and "critical" not in severities
+            and "error" not in severities
+            and duration_days >= 45
+            and row_count >= 1000
+        ):
+            grade = "A"
+        elif (
+            missing_rate < 0.05
+            and "critical" not in severities
+            and invalid_rate <= 0.002
+            and duration_days >= 20
+            and row_count >= 300
+        ):
+            grade = "B"
+        elif (
+            missing_rate < 0.10
+            and "critical" not in severities
+            and invalid_rate <= 0.005
+            and row_count >= 100
+        ):
+            grade = "C"
+        else:
+            grade = "FAIL"
+    elif (
         missing_rate < 0.01
         and invalid_count == 0
         and "critical" not in severities

@@ -111,8 +111,14 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
 CREATE TABLE IF NOT EXISTS backtest_trades (
     id INTEGER PRIMARY KEY,
     run_id TEXT NOT NULL,
+    market TEXT,
     symbol TEXT NOT NULL,
+    strategy TEXT,
+    entry_model TEXT,
+    universe_group TEXT,
+    analysis_window TEXT,
     signal_date TEXT NOT NULL,
+    signal_price REAL,
     entry_date TEXT NOT NULL,
     entry_price REAL,
     exit_date TEXT,
@@ -123,6 +129,7 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
     regime TEXT,
     entry_gap_pct REAL,
     entry_day_sl_breach INTEGER,
+    entry_timing TEXT,
     cost_pct REAL,
     net_return_pct REAL
 );
@@ -136,6 +143,8 @@ CREATE TABLE IF NOT EXISTS strategy_metrics (
     year INTEGER,
     universe_group TEXT,
     entry_model TEXT,
+    analysis_window TEXT,
+    data_source TEXT,
     trade_count INTEGER,
     win_rate REAL,
     avg_return REAL,
@@ -154,6 +163,8 @@ CREATE TABLE IF NOT EXISTS critical_flags (
     flag_type TEXT NOT NULL,
     market TEXT,
     strategy TEXT,
+    entry_model TEXT,
+    analysis_window TEXT,
     value REAL,
     threshold REAL,
     severity TEXT,
@@ -164,6 +175,27 @@ CREATE TABLE IF NOT EXISTS critical_flags (
 
 def utc_now() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+MIGRATION_COLUMNS = {
+    "backtest_trades": {
+        "market": "TEXT",
+        "strategy": "TEXT",
+        "entry_model": "TEXT",
+        "universe_group": "TEXT",
+        "analysis_window": "TEXT",
+        "signal_price": "REAL",
+        "entry_timing": "TEXT",
+    },
+    "strategy_metrics": {
+        "analysis_window": "TEXT",
+        "data_source": "TEXT",
+    },
+    "critical_flags": {
+        "entry_model": "TEXT",
+        "analysis_window": "TEXT",
+    },
+}
 
 
 @contextmanager
@@ -182,11 +214,22 @@ def connect(db_path: Path = MARKET_DATA_DB) -> Iterator[sqlite3.Connection]:
 def init_database(db_path: Path = MARKET_DATA_DB) -> Path:
     with connect(db_path) as conn:
         conn.executescript(SCHEMA_SQL)
+        ensure_schema_columns(conn)
         conn.execute(
             "INSERT OR IGNORE INTO schema_version(version, applied_at) VALUES (?, ?)",
             (SCHEMA_VERSION, utc_now()),
         )
     return Path(db_path)
+
+
+def ensure_schema_columns(conn: sqlite3.Connection) -> None:
+    """Add backward-compatible columns to DBs created by earlier audit phases."""
+
+    for table, columns in MIGRATION_COLUMNS.items():
+        existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for column, column_type in columns.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def table_names(db_path: Path = MARKET_DATA_DB) -> set[str]:
@@ -356,3 +399,151 @@ def insert_quality_issues(conn: sqlite3.Connection, issues: list[dict]) -> None:
                 issue.get("detected_at") or utc_now(),
             ),
         )
+
+
+def insert_backtest_run(conn: sqlite3.Connection, row: dict) -> None:
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO backtest_runs(
+            run_id, market, strategy, engine_version, data_start, data_end,
+            cost_model, entry_model, params_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            row.get("run_id"),
+            row.get("market"),
+            row.get("strategy"),
+            row.get("engine_version", "audit_lab_event_loop_v1"),
+            row.get("data_start", ""),
+            row.get("data_end", ""),
+            row.get("cost_model", ""),
+            row.get("entry_model", ""),
+            json.dumps(row.get("params", {}), ensure_ascii=False, sort_keys=True),
+            row.get("created_at") or utc_now(),
+        ),
+    )
+
+
+def insert_backtest_trades(conn: sqlite3.Connection, run_id: str, trades: list[dict]) -> None:
+    conn.execute("DELETE FROM backtest_trades WHERE run_id = ?", (run_id,))
+    for trade in trades:
+        conn.execute(
+            """
+            INSERT INTO backtest_trades(
+                run_id, market, symbol, strategy, entry_model, universe_group,
+                analysis_window, signal_date, signal_price, entry_date,
+                entry_price, exit_date, exit_price, return_pct, held_days,
+                exit_reason, regime, entry_gap_pct, entry_day_sl_breach,
+                entry_timing, cost_pct, net_return_pct
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                trade.get("market"),
+                trade.get("ticker") or trade.get("symbol"),
+                trade.get("strategy"),
+                trade.get("entry_model"),
+                trade.get("universe_group", ""),
+                trade.get("analysis_window", ""),
+                trade.get("signal_date"),
+                float(trade.get("signal_price", 0.0) or 0.0),
+                trade.get("entry_date"),
+                float(trade.get("entry_price", 0.0) or 0.0),
+                trade.get("exit_date"),
+                float(trade.get("exit_price", 0.0) or 0.0),
+                float(trade.get("gross_pnl_pct", trade.get("return_pct", 0.0)) or 0.0),
+                int(trade.get("held_days", 0) or 0),
+                trade.get("reason") or trade.get("exit_reason"),
+                trade.get("mode") or trade.get("regime"),
+                float(trade.get("entry_gap_pct", 0.0) or 0.0),
+                int(trade.get("entry_day_sl_breach", 0) or 0),
+                trade.get("entry_timing", ""),
+                float(trade.get("cost_bps", 0.0) or 0.0) / 100.0,
+                float(trade.get("net_pnl_pct", trade.get("net_return_pct", 0.0)) or 0.0),
+            ),
+        )
+
+
+def insert_strategy_metrics(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    for row in rows:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO strategy_metrics(
+                run_id, market, strategy, regime, year, universe_group,
+                entry_model, analysis_window, data_source, trade_count,
+                win_rate, avg_return, avg_net_return, profit_factor,
+                max_drawdown, sharpe, held_days_0_count, held_days_0_avg_return
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row.get("run_id"),
+                row.get("market"),
+                row.get("strategy"),
+                row.get("regime"),
+                row.get("year"),
+                row.get("universe_group", ""),
+                row.get("entry_model", ""),
+                row.get("analysis_window", ""),
+                row.get("data_source", ""),
+                int(row.get("n_trades", row.get("trade_count", 0)) or 0),
+                float(row.get("win_rate", 0.0) or 0.0),
+                float(row.get("avg_pnl_pct", row.get("avg_return", 0.0)) or 0.0),
+                float(row.get("avg_net_return", row.get("avg_pnl_pct", 0.0)) or 0.0),
+                row.get("profit_factor"),
+                float(row.get("max_drawdown_pct", row.get("max_drawdown", 0.0)) or 0.0),
+                float(row.get("trade_sharpe", row.get("sharpe", 0.0)) or 0.0),
+                int(row.get("held_days_0_count", 0) or 0),
+                float(row.get("held_days_0_avg_return", 0.0) or 0.0),
+            ),
+        )
+
+
+def insert_critical_flags(conn: sqlite3.Connection, run_id: str, flags: list[dict], *, market: str, strategy: str, entry_model: str, analysis_window: str) -> None:
+    conn.execute("DELETE FROM critical_flags WHERE run_id = ?", (run_id,))
+    for flag in flags:
+        conn.execute(
+            """
+            INSERT INTO critical_flags(
+                run_id, flag_type, market, strategy, entry_model,
+                analysis_window, value, threshold, severity, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                flag.get("code") or flag.get("flag_type"),
+                market,
+                strategy,
+                entry_model,
+                analysis_window,
+                flag.get("metric"),
+                flag.get("threshold"),
+                flag.get("severity"),
+                utc_now(),
+            ),
+        )
+
+
+def persist_backtest_result(
+    conn: sqlite3.Connection,
+    *,
+    run_info: dict,
+    trades: list[dict],
+    metrics: list[dict],
+    flags: list[dict],
+) -> None:
+    insert_backtest_run(conn, run_info)
+    insert_backtest_trades(conn, str(run_info.get("run_id")), trades)
+    insert_strategy_metrics(conn, metrics)
+    insert_critical_flags(
+        conn,
+        str(run_info.get("run_id")),
+        flags,
+        market=str(run_info.get("market", "")),
+        strategy=str(run_info.get("strategy", "")),
+        entry_model=str(run_info.get("entry_model", "")),
+        analysis_window=str((run_info.get("params") or {}).get("analysis_window", "")),
+    )

@@ -22,6 +22,7 @@ from .regime_replay import ReplayRegimeClassifier
 
 SignalFunc = Callable[[pd.DataFrame, int, dict], bool]
 ProgressFunc = Callable[[str], None]
+PriceLoader = Callable[[str, str], pd.DataFrame]
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,9 @@ class Trade:
     held_days: int
     cost_bps: float
     entry_timing: str
+    entry_model: str
     entry_day_exit_policy: str
+    entry_day_sl_breach: int
 
 
 def _date_str(value: object) -> str:
@@ -79,7 +82,9 @@ def _build_trade(
     held_days: int,
     cost_model: CostModel,
     entry_timing: str,
+    entry_model: str,
     entry_day_exit_policy: str,
+    entry_day_sl_breach: bool = False,
 ) -> Trade:
     signal_price = float(signal_row.get("close", 0) or 0)
     gross = _pnl_pct(entry_price, exit_price)
@@ -101,8 +106,76 @@ def _build_trade(
         held_days=int(held_days),
         cost_bps=round(float(cost_model.round_trip_bps), 3),
         entry_timing=entry_timing,
+        entry_model=entry_model,
         entry_day_exit_policy=entry_day_exit_policy,
+        entry_day_sl_breach=1 if entry_day_sl_breach else 0,
     )
+
+
+def _entry_plan(
+    frame: pd.DataFrame,
+    signal_i: int,
+    *,
+    entry_model: str,
+    max_entry_gap_pct: float,
+    pullback_limit_pct: float,
+    sl_pct: float,
+) -> tuple[int, float, str] | None:
+    signal_row = frame.iloc[signal_i]
+    signal_close = float(signal_row.get("close", 0) or 0)
+    if not _is_valid_price(signal_close):
+        return None
+
+    model = str(entry_model or "next_open")
+    if model == "same_close":
+        return signal_i, signal_close, "same_close"
+    if signal_i >= len(frame) - 1:
+        return None
+
+    entry_i = signal_i + 1
+    entry_row = frame.iloc[entry_i]
+    next_open = float(entry_row.get("open", 0) or 0)
+
+    if model == "next_open":
+        return (entry_i, next_open, "next_open") if _is_valid_price(next_open) else None
+
+    if model == "gap_filter":
+        if not _is_valid_price(next_open):
+            return None
+        entry_gap_pct = _pnl_pct(signal_close, next_open)
+        if entry_gap_pct > float(max_entry_gap_pct):
+            return None
+        return entry_i, next_open, "next_open"
+
+    if model == "pullback_limit":
+        low = float(entry_row.get("low", 0) or 0)
+        limit_price = signal_close * (1.0 + float(pullback_limit_pct) / 100.0)
+        if _is_valid_price(low) and _is_valid_price(limit_price) and low <= limit_price:
+            return entry_i, limit_price, "next_open"
+        return None
+
+    if model == "confirmation_next_open":
+        if signal_i >= len(frame) - 2:
+            return None
+        confirm_row = frame.iloc[signal_i + 1]
+        confirm_open = float(confirm_row.get("open", 0) or 0)
+        confirm_low = float(confirm_row.get("low", 0) or 0)
+        confirm_close = float(confirm_row.get("close", 0) or 0)
+        if not all(_is_valid_price(value) for value in (confirm_open, confirm_low, confirm_close)):
+            return None
+        if _pnl_pct(signal_close, confirm_open) > float(max_entry_gap_pct):
+            return None
+        if confirm_low <= confirm_open * (1.0 - float(sl_pct)):
+            return None
+        if confirm_close < confirm_open:
+            return None
+        delayed_entry_i = signal_i + 2
+        delayed_open = float(frame.iloc[delayed_entry_i].get("open", 0) or 0)
+        if _is_valid_price(delayed_open):
+            return delayed_entry_i, delayed_open, "next_open_confirmed"
+        return None
+
+    raise ValueError(f"unknown entry_model: {entry_model}")
 
 
 def run_ticker_backtest(
@@ -118,6 +191,9 @@ def run_ticker_backtest(
     start: str = "",
     end: str = "",
     entry_timing: str = "next_open",
+    entry_model: str = "",
+    max_entry_gap_pct: float = 1.5,
+    pullback_limit_pct: float = -0.5,
     entry_day_exit_policy: str = "allow",
     confidence: float = 0.6,
     respect_disabled_combos: bool = True,
@@ -136,6 +212,7 @@ def run_ticker_backtest(
     adapter = None if signal_func else load_strategy(strategy)
     signal = signal_func or adapter.signal
     costs = cost_model or CostModel.from_name(market, "realistic")
+    model = str(entry_model or entry_timing or "next_open")
     start_ts = pd.to_datetime(start) if start else None
     end_ts = pd.to_datetime(end) if end else None
     trades: list[Trade] = []
@@ -162,8 +239,10 @@ def run_ticker_backtest(
                         reason="period_end",
                         held_days=max(0, int(i - 1 - position["entry_i"])),
                         cost_model=costs,
-                        entry_timing=entry_timing,
+                        entry_timing=str(position.get("entry_timing", entry_timing)),
+                        entry_model=model,
                         entry_day_exit_policy=entry_day_exit_policy,
+                        entry_day_sl_breach=bool(position.get("entry_day_sl_breach")),
                     )
                 )
                 position = None
@@ -210,8 +289,10 @@ def run_ticker_backtest(
                         reason=reason,
                         held_days=held_days,
                         cost_model=costs,
-                        entry_timing=entry_timing,
+                        entry_timing=str(position.get("entry_timing", entry_timing)),
+                        entry_model=model,
                         entry_day_exit_policy=entry_day_exit_policy,
+                        entry_day_sl_breach=bool(position.get("entry_day_sl_breach")),
                     )
                 )
                 position = None
@@ -238,12 +319,21 @@ def run_ticker_backtest(
         if not has_signal:
             continue
 
-        entry_i = i + 1 if entry_timing == "next_open" else i
-        entry_row = frame.iloc[entry_i]
-        entry_col = "open" if entry_timing == "next_open" else "close"
-        entry_price = float(entry_row.get(entry_col, 0) or 0)
-        if not _is_valid_price(entry_price):
+        plan = _entry_plan(
+            frame,
+            i,
+            entry_model=model,
+            max_entry_gap_pct=max_entry_gap_pct,
+            pullback_limit_pct=pullback_limit_pct,
+            sl_pct=float(local_params.get("sl_pct", 0.02) or 0.02),
+        )
+        if plan is None:
             continue
+        entry_i, entry_price, actual_entry_timing = plan
+        entry_row = frame.iloc[entry_i]
+        sl_pct = float(local_params.get("sl_pct", 0.02) or 0.02)
+        entry_day_low = float(entry_row.get("low", 0) or 0)
+        entry_day_sl_breach = _is_valid_price(entry_day_low) and entry_day_low <= entry_price * (1.0 - sl_pct)
 
         position = {
             "entry_i": entry_i,
@@ -252,8 +342,10 @@ def run_ticker_backtest(
             "entry_price": entry_price,
             "mode": mode,
             "tp_pct": float(local_params.get("tp_pct", 0.03) or 0.03),
-            "sl_pct": float(local_params.get("sl_pct", 0.02) or 0.02),
+            "sl_pct": sl_pct,
             "max_hold": max(1, int(local_params.get("max_hold", 5) or 5)),
+            "entry_timing": actual_entry_timing,
+            "entry_day_sl_breach": entry_day_sl_breach,
         }
 
     if position is not None:
@@ -272,8 +364,10 @@ def run_ticker_backtest(
                 reason="data_end",
                 held_days=max(0, len(frame) - 1 - position["entry_i"]),
                 cost_model=costs,
-                entry_timing=entry_timing,
+                entry_timing=str(position.get("entry_timing", entry_timing)),
+                entry_model=model,
                 entry_day_exit_policy=entry_day_exit_policy,
+                entry_day_sl_breach=bool(position.get("entry_day_sl_breach")),
             )
         )
 
@@ -339,7 +433,11 @@ def run_market_backtest(
     regime_classifier: object | None = None,
     regime_timing: str = "previous_close",
     entry_timing: str = "next_open",
+    entry_model: str = "",
+    max_entry_gap_pct: float = 1.5,
+    pullback_limit_pct: float = -0.5,
     entry_day_exit_policy: str = "allow",
+    price_loader: PriceLoader | None = None,
     progress: ProgressFunc | None = None,
     progress_interval: int = 10,
 ) -> dict:
@@ -349,10 +447,11 @@ def run_market_backtest(
     all_trades: list[dict] = []
     total = len(selected)
     interval = max(1, int(progress_interval or 10))
+    model = str(entry_model or entry_timing or "next_open")
     if progress:
-        progress(f"백테스트 시작 | 시장={market.upper()} 전략={strategy} 종목={total}")
+        progress(f"백테스트 시작 | 시장={market.upper()} 전략={strategy} 종목={total} 진입모델={model}")
     for idx, ticker in enumerate(selected, start=1):
-        frame = load_price_frame(market, ticker)
+        frame = price_loader(market, ticker) if price_loader is not None else load_price_frame(market, ticker)
         ticker_regime = regime_classifier or ReplayRegimeClassifier.from_price_frame(frame, timing=regime_timing)
         ticker_trades = run_ticker_backtest(
             frame,
@@ -364,6 +463,9 @@ def run_market_backtest(
             start=start,
             end=end,
             entry_timing=entry_timing,
+            entry_model=model,
+            max_entry_gap_pct=max_entry_gap_pct,
+            pullback_limit_pct=pullback_limit_pct,
             entry_day_exit_policy=entry_day_exit_policy,
         )
         all_trades.extend(ticker_trades)
@@ -380,4 +482,4 @@ def run_market_backtest(
             f"시장={market.upper()} 전략={strategy} 거래={stats['n_trades']} "
             f"승률={stats['win_rate']}% 평균수익={stats['avg_pnl_pct']}% PF={stats['profit_factor']}"
         )
-    return {"market": market.upper(), "strategy": strategy, "trades": all_trades, "stats": stats}
+    return {"market": market.upper(), "strategy": strategy, "entry_model": model, "trades": all_trades, "stats": stats}

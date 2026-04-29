@@ -4,7 +4,7 @@ bot/market_utils.py
 trading_bot.py에서 이동 (로직 변경 없음)
 """
 
-from datetime import date, datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta, time as dt_time
 
 try:
     from zoneinfo import ZoneInfo
@@ -34,6 +34,16 @@ def _market_session_date(market: str, now_dt=None):
     return d
 
 
+def _market_close_anchor_at(market: str, now_dt: datetime) -> datetime:
+    market_key = str(market or "").upper()
+    if market_key == "KR":
+        return datetime.combine(now_dt.date(), dt_time(15, 30), tzinfo=KST)
+    close_dt = datetime.combine(now_dt.date(), dt_time(5, 0), tzinfo=KST)
+    if now_dt.time() >= dt_time(5, 0):
+        close_dt += timedelta(days=1)
+    return close_dt
+
+
 def _is_trading_day(market: str, check_date=None) -> bool:
     """오늘이 해당 시장의 정규 거래일인지 확인 (주말·공휴일 모두 처리)"""
     if check_date is None:
@@ -53,38 +63,14 @@ def _is_trading_day(market: str, check_date=None) -> bool:
 class MarketUtilsMixin:
 
     def _in_entry_blackout(self, market: str) -> bool:
-        now = datetime.now(KST).time()
         no_new = HARD_RULES["no_new_entry_min"]
         no_late = HARD_RULES["close_before_min"]
-
-        if market == "KR":
-            open_t = dt_time(9, 0)
-            close_t = dt_time(16, 0)
-        else:
-            # US session in KST: 22:30 ~ 05:00(next day)
-            open_t = dt_time(22, 30)
-            close_t = dt_time(5, 0)
-
-        if market == "KR":
-            # timezone-aware 비교 (KST 명시)
-            start_block_end = (datetime.combine(date.today(), open_t, tzinfo=KST).timestamp() + no_new * 60)
-            end_block_start = (datetime.combine(date.today(), close_t, tzinfo=KST).timestamp() - no_late * 60)
-            now_ts = datetime.now(KST).timestamp()
-            return now_ts < start_block_end or now_ts > end_block_start
-
-        # US crossing midnight
         now_dt = datetime.now(KST)
-        open_dt = datetime.combine(now_dt.date(), open_t, tzinfo=KST)
-        close_dt = datetime.combine(now_dt.date(), close_t, tzinfo=KST)
-        if now < close_t:
-            open_dt = open_dt - timedelta(days=1)
-        else:
-            close_dt = close_dt + timedelta(days=1)
-
-        start_block_end = open_dt.timestamp() + no_new * 60
-        end_block_start = close_dt.timestamp() - no_late * 60
-        now_ts = now_dt.timestamp()
-        return now_ts < start_block_end or now_ts > end_block_start
+        open_dt = self._market_open_anchor_dt(market)
+        close_dt = self._market_close_anchor_dt(market)
+        start_block_end = open_dt + timedelta(minutes=no_new)
+        end_block_start = close_dt - timedelta(minutes=no_late)
+        return now_dt < start_block_end or now_dt > end_block_start
 
     def _is_order_allowed_now(self, market: str) -> bool:
         """정규장 외 주문 차단 — 장전/장종료 주문 실패 반복 방지."""
@@ -132,13 +118,7 @@ class MarketUtilsMixin:
 
     def _market_close_anchor_dt(self, market: str) -> datetime:
         """현재 세션의 실제 장 종료 시각(KST)을 반환한다."""
-        now_dt = datetime.now(KST)
-        if market == "KR":
-            return datetime.combine(now_dt.date(), dt_time(15, 30), tzinfo=KST)
-        close_dt = datetime.combine(now_dt.date(), dt_time(5, 0), tzinfo=KST)
-        if now_dt.time() >= dt_time(22, 30):
-            close_dt += timedelta(days=1)
-        return close_dt
+        return _market_close_anchor_at(market, datetime.now(KST))
 
     def _minutes_to_close(self, market: str) -> float:
         return (self._market_close_anchor_dt(market) - datetime.now(KST)).total_seconds() / 60.0

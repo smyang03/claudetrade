@@ -209,9 +209,9 @@ class ScreenerPolicyTests(unittest.TestCase):
         ]
         requested_limits = []
 
-        def fake_volume_rank(token, vol_cnt, top_n, market_div="J"):
+        def fake_volume_rank(token, vol_cnt, top_n, market_div="J", input_iscd="0000"):
             requested_limits.append(top_n)
-            rows = kosdaq_rows if market_div == "Q" else kospi_rows
+            rows = kosdaq_rows if input_iscd == "1001" else kospi_rows
             return rows[:top_n]
 
         with patch.object(kis_api_module, "_is_kr_premarket_window", return_value=False), \
@@ -225,6 +225,86 @@ class ScreenerPolicyTests(unittest.TestCase):
         self.assertNotIn("114800", tickers)
         self.assertNotIn("252670", tickers)
         self.assertTrue(all(limit > 4 for limit in requested_limits))
+
+    def test_screen_market_kr_warns_when_kosdaq_raw_is_zero(self):
+        kospi_rows = [
+            {"ticker": "005930", "name": "삼성전자", "price": 70000, "volume": 7_000_000, "change_rate": 2, "vol_ratio": 3, "market_type": "KOSPI"},
+            {"ticker": "000660", "name": "SK하이닉스", "price": 180000, "volume": 6_000_000, "change_rate": 3, "vol_ratio": 4, "market_type": "KOSPI"},
+            {"ticker": "035420", "name": "NAVER", "price": 200000, "volume": 5_000_000, "change_rate": 2, "vol_ratio": 3, "market_type": "KOSPI"},
+            {"ticker": "005380", "name": "현대차", "price": 250000, "volume": 4_000_000, "change_rate": 2, "vol_ratio": 2, "market_type": "KOSPI"},
+        ]
+
+        def fake_volume_rank(token, vol_cnt, top_n, market_div="J", input_iscd="0000"):
+            return [] if input_iscd == "1001" else kospi_rows[:top_n]
+
+        with patch.object(kis_api_module, "_is_kr_premarket_window", return_value=False), \
+             patch.object(kis_api_module, "_kis_volume_rank", side_effect=fake_volume_rank), \
+             patch.object(kis_api_module, "save_kr_screen_cache"), \
+             patch.object(kis_api_module, "_save_kr_screen_audit"), \
+             self.assertLogs("trading_system", level="WARNING") as logs:
+            kis_api_module.screen_market_kr("token", top_n=4, mode="NEUTRAL")
+
+        self.assertTrue(any("KOSDAQ raw=0" in line for line in logs.output))
+        self.assertTrue(any("input_iscd=1001" in line for line in logs.output))
+
+    def test_kis_volume_rank_uses_input_iscd_for_kosdaq_labeling(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "output": [
+                        {
+                            "mksc_shrn_iscd": "091990",
+                            "hts_kor_isnm": "셀트리온헬스케어",
+                            "stck_prpr": "65000",
+                            "prdy_ctrt": "4.5",
+                            "acml_vol": "3000000",
+                            "vol_tnrt": "3.2",
+                        }
+                    ]
+                }
+
+        with patch.object(kis_api_module, "_headers", return_value={}), \
+             patch.object(kis_api_module, "_kis_get", return_value=FakeResponse()) as get_mock:
+            rows = kis_api_module._kis_volume_rank(
+                "token", vol_cnt="100000", top_n=5, market_div="J", input_iscd="1001"
+            )
+
+        params = get_mock.call_args.kwargs["params"]
+        self.assertEqual(params["FID_COND_MRKT_DIV_CODE"], "J")
+        self.assertEqual(params["FID_INPUT_ISCD"], "1001")
+        self.assertEqual(rows[0]["market_type"], "KOSDAQ")
+
+    def test_screen_market_kr_calls_kospi_and_kosdaq_with_input_iscd_split(self):
+        calls = []
+
+        def fake_volume_rank(token, vol_cnt, top_n, market_div="J", input_iscd="0000"):
+            calls.append((market_div, input_iscd))
+            market_type = "KOSDAQ" if input_iscd == "1001" else "KOSPI"
+            return [
+                {
+                    "ticker": "091990" if input_iscd == "1001" else "005930",
+                    "name": "셀트리온헬스케어" if input_iscd == "1001" else "삼성전자",
+                    "price": 65000,
+                    "volume": 3_000_000,
+                    "change_rate": 4,
+                    "vol_ratio": 3,
+                    "market_type": market_type,
+                }
+            ]
+
+        with patch.object(kis_api_module, "_is_kr_premarket_window", return_value=False), \
+             patch.object(kis_api_module, "_kis_volume_rank", side_effect=fake_volume_rank), \
+             patch.object(kis_api_module, "save_kr_screen_cache"), \
+             patch.object(kis_api_module, "_save_kr_screen_audit"):
+            result = kis_api_module.screen_market_kr("token", top_n=2, mode="NEUTRAL")
+
+        self.assertIn(("J", "0001"), calls)
+        self.assertIn(("J", "1001"), calls)
+        self.assertNotIn(("Q", "0000"), calls)
+        self.assertTrue(any(row.get("market_type") == "KOSDAQ" for row in result))
 
     def test_selection_candidate_cap_starts_kr_at_28_without_changing_us_default(self):
         try:
@@ -2212,7 +2292,7 @@ class DashboardLiveBrokerTruthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["basis"], "broker_asset_reconstructed")
-        self.assertEqual(payload["labels"][-1], "2026-04-24")
+        self.assertEqual(payload["labels"][-1], date.today().isoformat())
         self.assertEqual(payload["equity"][-1], 105000.0)
 
 
@@ -2962,7 +3042,7 @@ class AnalystSelectionPromptTests(unittest.TestCase):
 
         self.assertEqual(tickers, ["005930"])
         self.assertEqual(reasons["005930"], "ok")
-        self.assertIn("recent selection feedback:", captured["prompt"])
+        self.assertIn("recent selection feedback", captured["prompt"])
         self.assertIn("Use recent selection feedback to calibrate trade_ready aggressiveness.", captured["prompt"])
         self.assertIn("slot guide:", captured["prompt"])
         self.assertIn("session_phase=early", captured["prompt"])
@@ -3226,6 +3306,7 @@ class UniverseManagerTests(unittest.TestCase):
 
         self.assertEqual(len(prompts), 2)
         self.assertIn("다시 묻습니다", prompts[1])
+        self.assertIn("price_targets", prompts[1])
         self.assertEqual(tickers, ["NVDA", "AAPL"])
         self.assertEqual(reasons["NVDA"], "strong")
         self.assertEqual(analysts_module.get_last_selection_meta()["trade_ready"], ["NVDA"])

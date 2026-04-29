@@ -69,6 +69,8 @@ _OHLCV_CACHE = {}
 _CACHE_LOG_TS = {}
 _KIS_HTTP_LOCK = threading.Lock()
 _KIS_LAST_CALL_TS = 0.0
+_TOKEN_ALIAS_LOCK = threading.Lock()
+_TOKEN_ALIAS: dict[str, str] = {}
 
 # ── US 거래소 코드 영속 캐시 ────────────────────────────────────────────────────
 from pathlib import Path as _Path
@@ -179,16 +181,66 @@ def _rate_limit_wait():
         _KIS_LAST_CALL_TS = time.monotonic()
 
 
-def _kis_get(url: str, **kwargs):
+def _bearer_from_headers(headers: Optional[dict]) -> str:
+    if not isinstance(headers, dict):
+        return ""
+    raw = str(headers.get("authorization") or headers.get("Authorization") or "")
+    prefix = "Bearer "
+    return raw[len(prefix):].strip() if raw.startswith(prefix) else ""
+
+
+def _set_bearer(headers: dict, token: str) -> None:
+    if "Authorization" in headers and "authorization" not in headers:
+        headers["Authorization"] = f"Bearer {token}"
+    else:
+        headers["authorization"] = f"Bearer {token}"
+
+
+def _response_is_token_expired(resp) -> bool:
+    if getattr(resp, "status_code", 0) != 500:
+        return False
+    try:
+        body = resp.json()
+    except Exception:
+        return False
+    return body.get("msg_cd") == "EGW00123"
+
+
+def _kis_request(method: str, url: str, **kwargs):
     _rate_limit_wait()
     timeout = kwargs.pop("timeout", KIS_HTTP_TIMEOUT)
-    return requests.get(url, timeout=timeout, **kwargs)
+    headers = kwargs.get("headers")
+    if isinstance(headers, dict):
+        headers = dict(headers)
+        old_token = _bearer_from_headers(headers)
+        if old_token:
+            with _TOKEN_ALIAS_LOCK:
+                aliased = _TOKEN_ALIAS.get(old_token)
+            if aliased:
+                _set_bearer(headers, aliased)
+                kwargs["headers"] = headers
+    else:
+        old_token = ""
+    requester = requests.get if method == "GET" else requests.post
+    resp = requester(url, timeout=timeout, **kwargs)
+    if old_token and "/oauth2/tokenP" not in url and _response_is_token_expired(resp):
+        fresh_token = get_access_token(force_refresh=True)
+        with _TOKEN_ALIAS_LOCK:
+            _TOKEN_ALIAS[old_token] = fresh_token
+        retry_headers = dict(kwargs.get("headers") or {})
+        _set_bearer(retry_headers, fresh_token)
+        kwargs["headers"] = retry_headers
+        _rate_limit_wait()
+        resp = requester(url, timeout=timeout, **kwargs)
+    return resp
+
+
+def _kis_get(url: str, **kwargs):
+    return _kis_request("GET", url, **kwargs)
 
 
 def _kis_post(url: str, **kwargs):
-    _rate_limit_wait()
-    timeout = kwargs.pop("timeout", KIS_HTTP_TIMEOUT)
-    return requests.post(url, timeout=timeout, **kwargs)
+    return _kis_request("POST", url, **kwargs)
 
 
 def _token_cache_context() -> dict:
@@ -202,6 +254,23 @@ def _token_cache_context() -> dict:
 
 class KISTokenExpiredError(RuntimeError):
     """KIS API가 EGW00123(토큰 만료)을 반환한 경우."""
+
+
+class KISOrderHTTPError(RuntimeError):
+    """KIS 주문 HTTP 오류. 주문은 중복 위험이 있어 일반 조회처럼 blind retry하지 않는다."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 0,
+        response_text: str = "",
+        order_body: Optional[dict] = None,
+    ):
+        self.status_code = int(status_code or 0)
+        self.response_text = str(response_text or "")
+        self.order_body = order_body or {}
+        super().__init__(message)
 
 
 def load_token():
@@ -1518,6 +1587,145 @@ def _normalize_order_result(market: str, side: str, ticker: str, qty: int, nativ
     }
 
 
+def _mask_order_body(body: dict) -> dict:
+    masked = dict(body or {})
+    cano = str(masked.get("CANO", "") or "")
+    if cano:
+        masked["CANO"] = f"{cano[:2]}***{cano[-2:]}" if len(cano) >= 4 else "***"
+    return masked
+
+
+def _response_text(resp) -> str:
+    try:
+        return json.dumps(resp.json(), ensure_ascii=False)
+    except Exception:
+        return str(getattr(resp, "text", "") or "")[:1000]
+
+
+def _raise_order_http_error(label: str, resp, body: dict) -> None:
+    status_code = int(getattr(resp, "status_code", 0) or 0)
+    text = _response_text(resp)
+    masked_body = _mask_order_body(body)
+    msg = f"{label}: HTTP {status_code}; response={text}; order_body={masked_body}"
+    log.error(f"[KIS order error] {msg}")
+    raise KISOrderHTTPError(msg, status_code=status_code, response_text=text, order_body=masked_body)
+
+
+def _parse_kr_order_time(order_time: str, base_dt: datetime) -> Optional[datetime]:
+    raw = "".join(ch for ch in str(order_time or "") if ch.isdigit())
+    if len(raw) < 6:
+        return None
+    try:
+        return datetime.strptime(base_dt.strftime("%Y%m%d") + raw[:6], "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+
+def _find_recent_order_truth_kr(
+    token: str,
+    *,
+    ticker: str,
+    side: str,
+    qty: int,
+    submitted_at: datetime,
+) -> Optional[dict]:
+    side_code = "02" if side == "buy" else "01"
+    rows = inquire_daily_ccld_kr(
+        token,
+        start_date=submitted_at.strftime("%Y%m%d"),
+        end_date=submitted_at.strftime("%Y%m%d"),
+        ticker=str(ticker or "").strip(),
+        side_code=side_code,
+        filled_code="00",
+    )
+    lower_bound = submitted_at - timedelta(minutes=2)
+    matches = []
+    for row in rows:
+        if str(row.get("ticker", "")).strip() != str(ticker or "").strip():
+            continue
+        if row.get("side") and str(row.get("side")) != str(side):
+            continue
+        row_qty = int(row.get("order_qty", 0) or 0)
+        if row_qty > 0 and int(qty or 0) > 0 and row_qty != int(qty or 0):
+            continue
+        row_dt = _parse_kr_order_time(str(row.get("order_time", "") or ""), submitted_at)
+        if row_dt is not None and row_dt < lower_bound:
+            continue
+        matches.append((row_dt or submitted_at, row))
+    if not matches:
+        return None
+    matches.sort(key=lambda item: (item[0], str(item[1].get("order_no", ""))), reverse=True)
+    return matches[0][1]
+
+
+def _parse_order_time_any(order_time: str, base_dt: datetime) -> Optional[datetime]:
+    raw = "".join(ch for ch in str(order_time or "") if ch.isdigit())
+    if len(raw) < 6:
+        return None
+    for date_dt in (base_dt, base_dt - timedelta(days=1), base_dt + timedelta(days=1)):
+        try:
+            return datetime.strptime(date_dt.strftime("%Y%m%d") + raw[:6], "%Y%m%d%H%M%S")
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_order_time_for_query_date(order_time: str, query_date: str, fallback_dt: datetime) -> Optional[datetime]:
+    raw = "".join(ch for ch in str(order_time or "") if ch.isdigit())
+    if len(raw) < 6:
+        return None
+    try:
+        return datetime.strptime(str(query_date)[:8] + raw[:6], "%Y%m%d%H%M%S")
+    except ValueError:
+        return _parse_order_time_any(order_time, fallback_dt)
+
+
+def _find_recent_order_truth_us(
+    token: str,
+    *,
+    ticker: str,
+    side: str,
+    qty: int,
+    submitted_at: datetime,
+) -> Optional[dict]:
+    side_code = "02" if side == "buy" else "01"
+    query_dates = []
+    for dt in (submitted_at, submitted_at - timedelta(days=1)):
+        value = dt.strftime("%Y%m%d")
+        if value not in query_dates:
+            query_dates.append(value)
+    rows: list[tuple[str, dict]] = []
+    for query_date in query_dates:
+        for row in inquire_ccnl_us(
+            token,
+            start_date=query_date,
+            end_date=query_date,
+            ticker=str(ticker or "").strip().upper(),
+            side_code=side_code,
+            filled_code="00",
+        ):
+            rows.append((query_date, row))
+    normalized_ticker = str(ticker or "").strip().upper()
+    lower_bound = submitted_at - timedelta(minutes=2)
+    matches = []
+    for query_date, row in rows:
+        if str(row.get("ticker", "")).strip().upper() != normalized_ticker:
+            continue
+        if row.get("side") and str(row.get("side")) != str(side):
+            continue
+        row_qty = int(row.get("order_qty", 0) or 0)
+        if row_qty > 0 and int(qty or 0) > 0 and row_qty != int(qty or 0):
+            continue
+        row_dt = _parse_order_time_for_query_date(str(row.get("order_time", "") or ""), query_date, submitted_at)
+        if row_dt is not None and row_dt < lower_bound:
+            continue
+        matches.append((row_dt or submitted_at, row))
+    if not matches:
+        return None
+    matches.sort(key=lambda item: (item[0], str(item[1].get("order_no", ""))), reverse=True)
+    return matches[0][1]
+
+
 def precheck_order(
     ticker: str,
     qty: int,
@@ -1582,23 +1790,38 @@ def precheck_order(
     }
 
 
-def _place_order_kr(ticker, qty, price, side, token):
+def _normalize_kr_order_inputs(qty, price) -> tuple[int, int]:
+    qty_i = int(qty or 0)
+    price_f = float(price or 0)
+    price_i = 0 if price_f <= 0 else int(round(price_f))
+    return qty_i, price_i
+
+
+def _build_order_body_kr(ticker, qty, price, side) -> tuple[dict, int, int]:
     acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    qty_i, price_i = _normalize_kr_order_inputs(qty, price)
+    body = {
+        "CANO": acnt_no,
+        "ACNT_PRDT_CD": acnt_prdt,
+        "PDNO": str(ticker or "").strip(),
+        "ORD_DVSN": "01" if price_i == 0 else "00",
+        "ORD_QTY": str(qty_i),
+        "ORD_UNPR": "0" if price_i == 0 else str(price_i),
+        "EXCG_ID_DVSN_CD": "KRX",
+        "SLL_TYPE": "01" if side == "sell" else "",
+        "CNDT_PRIC": "",
+    }
+    return body, qty_i, price_i
+
+
+def _submit_order_kr_once(ticker, qty, price, side, token) -> dict:
     tr_map = {
         ("buy",  True):  "VTTC0012U",   # 모의투자 매수 (신TR)
         ("sell", True):  "VTTC0011U",   # 모의투자 매도 (신TR)
         ("buy",  False): "TTTC0012U",   # 실거래 매수 (신TR)
         ("sell", False): "TTTC0011U",   # 실거래 매도 (신TR)
     }
-    body = {
-        "CANO": acnt_no,
-        "ACNT_PRDT_CD": acnt_prdt,
-        "PDNO": ticker,
-        "SLL_TYPE": "01" if side == "sell" else "",
-        "ORD_DVSN": "01" if price == 0 else "00",
-        "ORD_QTY": str(qty),
-        "ORD_UNPR": str(price),
-    }
+    body, qty_i, price_i = _build_order_body_kr(ticker, qty, price, side)
     headers = _headers(token, tr_map[(side, IS_PAPER)])
     headers["custtype"] = "P"   # 개인
     headers["hashkey"] = get_hashkey(body, token)
@@ -1608,9 +1831,73 @@ def _place_order_kr(ticker, qty, price, side, token):
         json=body,
         timeout=15,
     )
-    resp.raise_for_status()
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        _raise_order_http_error(f"KR order [{side} {ticker}]", resp, body)
     r = resp.json()
-    return _normalize_order_result("KR", side, ticker, qty, price, r)
+    return _normalize_order_result("KR", side, ticker, qty_i, price_i, r)
+
+
+def _order_result_from_kr_truth(ticker, qty, price, side, row: dict) -> dict:
+    order_price = float(row.get("fill_price", 0) or price or 0)
+    return {
+        "success": True,
+        "msg": "broker_truth_recovered_after_http_500",
+        "order_no": str(row.get("order_no", "") or "").strip(),
+        "market": "KR",
+        "side": side,
+        "ticker": ticker,
+        "qty": int(row.get("order_qty", 0) or qty or 0),
+        "price": float(order_price),
+        "price_type": "market" if float(price or 0) == 0 else "limit",
+        "raw": {"broker_truth": row},
+    }
+
+
+def _place_order_kr(ticker, qty, price, side, token):
+    ticker = str(ticker or "").strip()
+    qty_i, price_i = _normalize_kr_order_inputs(qty, price)
+    submitted_at = datetime.now()
+    try:
+        return _submit_order_kr_once(ticker, qty_i, price_i, side, token)
+    except KISOrderHTTPError as first_error:
+        if first_error.status_code != 500:
+            raise
+
+        try:
+            truth = _find_recent_order_truth_kr(
+                token,
+                ticker=ticker,
+                side=side,
+                qty=qty_i,
+                submitted_at=submitted_at,
+            )
+        except Exception as truth_error:
+            msg = (
+                f"{first_error}; broker_truth_query_failed={truth_error}; "
+                "retry_skipped=state_unknown"
+            )
+            raise KISOrderHTTPError(
+                msg,
+                status_code=first_error.status_code,
+                response_text=first_error.response_text,
+                order_body=first_error.order_body,
+            ) from truth_error
+
+        if truth:
+            log.warning(f"[KIS KR order recovery] {side} {ticker} recovered by broker truth: {truth}")
+            return _order_result_from_kr_truth(ticker, qty_i, price_i, side, truth)
+
+        log.warning(f"[KIS KR order retry] {side} {ticker} HTTP 500 with no broker truth; retrying once")
+        try:
+            return _submit_order_kr_once(ticker, qty_i, price_i, side, token)
+        except KISOrderHTTPError as retry_error:
+            msg = f"{retry_error}; retry_after_no_broker_truth_failed"
+            raise KISOrderHTTPError(
+                msg,
+                status_code=retry_error.status_code,
+                response_text=retry_error.response_text,
+                order_body=retry_error.order_body,
+            ) from retry_error
 
 
 # 미국 거래소 코드 매핑. 미확인 종목을 기본 NASD로 보내지 않고 명시적으로 막는다.
@@ -1623,13 +1910,16 @@ _US_EXCHANGE_MAP = {
     ],
     "NYSE": ["BRK.B","JPM","BAC","WFC","GS","MS","C","USB","BLK","AXP",
              "XOM","CVX","COP","SLB","WMT","HD","MCD","NKE","PG","KO",
-             "PFE","JNJ","MRK","ABT","UNH","V","MA","HIMS"],
+             "PFE","JNJ","MRK","ABT","UNH","V","MA","HIMS",
+             "LLY","ABBV","CAT","GE","NOK"],
     "AMEX": ["SPY","IWM","GLD","SLV","USO"],
 }
 
 
-def _place_order_us(ticker, qty, price, side, token):
+def _submit_order_us_once(ticker, qty, price, side, token) -> dict:
     acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    qty_i = int(qty or 0)
+    price_f = float(price or 0)
     tr_map = {
         ("buy",  True):  "VTTT1002U",
         ("sell", True):  "VTTT1001U",
@@ -1641,8 +1931,8 @@ def _place_order_us(ticker, qty, price, side, token):
         "ACNT_PRDT_CD":    acnt_prdt,
         "OVRS_EXCG_CD":    _get_ovrs_excg_cd(ticker, token=token),
         "PDNO":            ticker.upper(),
-        "ORD_QTY":         str(qty),
-        "OVRS_ORD_UNPR":   f"{float(price):.2f}",
+        "ORD_QTY":         str(qty_i),
+        "OVRS_ORD_UNPR":   f"{price_f:.2f}",
         "CTAC_TLNO":       "",
         "MGCO_APTM_ODNO":  "",
         "ORD_SVR_DVSN_CD": "0",
@@ -1658,23 +1948,172 @@ def _place_order_us(ticker, qty, price, side, token):
         json=body,
         timeout=15,
     )
-    resp.raise_for_status()
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        _raise_order_http_error(f"US order [{side} {ticker}]", resp, body)
     r = resp.json()
-    return _normalize_order_result("US", side, ticker, qty, price, r)
+    return _normalize_order_result("US", side, ticker, qty_i, price_f, r)
+
+
+def _order_result_from_us_truth(ticker, qty, price, side, row: dict) -> dict:
+    order_price = float(row.get("fill_price", 0) or price or 0)
+    return {
+        "success": True,
+        "msg": "broker_truth_recovered_after_http_500",
+        "order_no": str(row.get("order_no", "") or "").strip(),
+        "market": "US",
+        "side": side,
+        "ticker": str(ticker or "").strip().upper(),
+        "qty": int(row.get("order_qty", 0) or qty or 0),
+        "price": float(order_price),
+        "price_type": "market" if float(price or 0) == 0 else "limit",
+        "raw": {"broker_truth": row},
+    }
+
+
+def _place_order_us(ticker, qty, price, side, token):
+    ticker_u = str(ticker or "").strip().upper()
+    qty_i = int(qty or 0)
+    price_f = float(price or 0)
+    submitted_at = datetime.now()
+    try:
+        return _submit_order_us_once(ticker_u, qty_i, price_f, side, token)
+    except KISOrderHTTPError as first_error:
+        if first_error.status_code != 500:
+            raise
+
+        try:
+            truth = _find_recent_order_truth_us(
+                token,
+                ticker=ticker_u,
+                side=side,
+                qty=qty_i,
+                submitted_at=submitted_at,
+            )
+        except Exception as truth_error:
+            msg = (
+                f"{first_error}; broker_truth_query_failed={truth_error}; "
+                "retry_skipped=state_unknown"
+            )
+            raise KISOrderHTTPError(
+                msg,
+                status_code=first_error.status_code,
+                response_text=first_error.response_text,
+                order_body=first_error.order_body,
+            ) from truth_error
+
+        if truth:
+            log.warning(f"[KIS US order recovery] {side} {ticker_u} recovered by broker truth: {truth}")
+            return _order_result_from_us_truth(ticker_u, qty_i, price_f, side, truth)
+
+        log.warning(f"[KIS US order retry] {side} {ticker_u} HTTP 500 with no broker truth; retrying once")
+        try:
+            return _submit_order_us_once(ticker_u, qty_i, price_f, side, token)
+        except KISOrderHTTPError as retry_error:
+            msg = f"{retry_error}; retry_after_no_broker_truth_failed"
+            raise KISOrderHTTPError(
+                msg,
+                status_code=retry_error.status_code,
+                response_text=retry_error.response_text,
+                order_body=retry_error.order_body,
+            ) from retry_error
 
 
 def place_order(ticker, qty, price, side, token, market="KR"):
     if market == "US":
-        return _retry_kis(
-            f"US order [{side} {ticker}]",
-            lambda: _place_order_us(ticker, qty, price, side, token),
-            retries=5, delay_sec=1.0,
-        )
-    return _retry_kis(
-        f"KR order [{side} {ticker}]",
-        lambda: _place_order_kr(ticker, qty, price, side, token),
-        retries=5, delay_sec=1.0,
+        return _place_order_us(ticker, qty, price, side, token)
+    return _place_order_kr(ticker, qty, price, side, token)
+
+
+def _cancel_order_kr(ticker, order_no, qty, token, price=0) -> dict:
+    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    qty_i = int(qty or 0)
+    _, price_i = _normalize_kr_order_inputs(qty_i, price)
+    body = {
+        "CANO": acnt_no,
+        "ACNT_PRDT_CD": acnt_prdt,
+        "KRX_FWDG_ORD_ORGNO": "",
+        "ORGN_ODNO": str(order_no or "").strip(),
+        "ORD_DVSN": "00",
+        "RVSE_CNCL_DVSN_CD": "02",
+        "ORD_QTY": str(qty_i),
+        "ORD_UNPR": "0" if price_i == 0 else str(price_i),
+        "QTY_ALL_ORD_YN": "Y",
+        "EXCG_ID_DVSN_CD": "KRX",
+        "CNDT_PRIC": "",
+    }
+    headers = _headers(token, "VTTC0013U" if IS_PAPER else "TTTC0013U")
+    headers["custtype"] = "P"
+    headers["hashkey"] = get_hashkey(body, token)
+    resp = _kis_post(
+        f"{BASE_URL}/uapi/domestic-stock/v1/trading/order-rvsecncl",
+        headers=headers,
+        json=body,
+        timeout=15,
     )
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        _raise_order_http_error(f"KR order cancel [{ticker} {order_no}]", resp, body)
+    data = resp.json()
+    _require_kis_success(data, f"KR order cancel [{ticker} {order_no}]")
+    output = _first_record(data.get("output", {}))
+    return {
+        "success": True,
+        "msg": data.get("msg1", "") or data.get("msg_cd", ""),
+        "order_no": str(output.get("ODNO", "") or "").strip(),
+        "original_order_no": str(order_no or "").strip(),
+        "market": "KR",
+        "ticker": str(ticker or "").strip(),
+        "qty": qty_i,
+        "raw": data,
+    }
+
+
+def _cancel_order_us(ticker, order_no, qty, token, price=0) -> dict:
+    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    ticker_u = str(ticker or "").strip().upper()
+    qty_i = int(qty or 0)
+    price_f = float(price or 0)
+    body = {
+        "CANO": acnt_no,
+        "ACNT_PRDT_CD": acnt_prdt,
+        "OVRS_EXCG_CD": _get_ovrs_excg_cd(ticker_u, token=token),
+        "PDNO": ticker_u,
+        "ORGN_ODNO": str(order_no or "").strip(),
+        "RVSE_CNCL_DVSN_CD": "02",
+        "ORD_QTY": str(qty_i),
+        "OVRS_ORD_UNPR": f"{price_f:.2f}" if price_f > 0 else "0",
+        "MGCO_APTM_ODNO": "",
+        "ORD_SVR_DVSN_CD": "0",
+    }
+    headers = _headers(token, "VTTT1004U" if IS_PAPER_US else "TTTT1004U")
+    headers["custtype"] = "P"
+    headers["hashkey"] = get_hashkey(body, token)
+    resp = _kis_post(
+        f"{BASE_URL}/uapi/overseas-stock/v1/trading/order-rvsecncl",
+        headers=headers,
+        json=body,
+        timeout=15,
+    )
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        _raise_order_http_error(f"US order cancel [{ticker_u} {order_no}]", resp, body)
+    data = resp.json()
+    _require_kis_success(data, f"US order cancel [{ticker_u} {order_no}]")
+    output = _first_record(data.get("output", {}))
+    return {
+        "success": True,
+        "msg": data.get("msg1", "") or data.get("msg_cd", ""),
+        "order_no": str(output.get("ODNO", "") or "").strip(),
+        "original_order_no": str(order_no or "").strip(),
+        "market": "US",
+        "ticker": ticker_u,
+        "qty": qty_i,
+        "raw": data,
+    }
+
+
+def cancel_order(ticker, order_no, qty, token, market="KR", price=0):
+    if market == "US":
+        return _cancel_order_us(ticker, order_no, qty, token, price=price)
+    return _cancel_order_kr(ticker, order_no, qty, token, price=price)
 
 
 # ── 시장 스크리너 ──────────────────────────────────────────────────────────────
@@ -1905,15 +2344,22 @@ def _save_kr_screen_audit(
         logging.getLogger("trading_system").debug(f"[KR screener audit] save failed: {exc}")
 
 
-def _kis_volume_rank(token: str, vol_cnt: str, top_n: int, market_div: str = "J") -> list:
+def _kis_volume_rank(
+    token: str,
+    vol_cnt: str,
+    top_n: int,
+    market_div: str = "J",
+    input_iscd: str = "0000",
+) -> list:
     """KIS 거래량순위 API 호출 공통 함수.
-    market_div: "J"=KOSPI, "Q"=KOSDAQ
+    market_div: "J"=KRX, "NX"=NXT, "UN"=통합
+    input_iscd: "0000"=전체, "0001"=KOSPI, "1001"=KOSDAQ
     """
     url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/volume-rank"
     params = {
         "FID_COND_MRKT_DIV_CODE": market_div,
         "FID_COND_SCR_DIV_CODE":  "20171",
-        "FID_INPUT_ISCD":         "0000",
+        "FID_INPUT_ISCD":         input_iscd,
         "FID_DIV_CLS_CODE":       "0",
         "FID_BLNG_CLS_CODE":      "0",
         "FID_TRGT_CLS_CODE":      "111111111",
@@ -1931,7 +2377,12 @@ def _kis_volume_rank(token: str, vol_cnt: str, top_n: int, market_div: str = "J"
     )
     resp.raise_for_status()
     items = resp.json().get("output", [])
-    _mkt_type = "KOSDAQ" if market_div == "Q" else "KOSPI"
+    if input_iscd == "1001":
+        _mkt_type = "KOSDAQ"
+    elif input_iscd == "0001":
+        _mkt_type = "KOSPI"
+    else:
+        _mkt_type = "ALL"
     result = []
     for it in items[:top_n]:
         ticker = it.get("mksc_shrn_iscd", "").strip()
@@ -2003,12 +2454,22 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
             live_kp = []
             live_kq = []
             try:
-                live_kp = _kis_volume_rank(token, vol_cnt="0", top_n=reserve_n, market_div="J")
-                live_kq = _kis_volume_rank(token, vol_cnt="0", top_n=reserve_n, market_div="Q")
+                live_kp = _kis_volume_rank(
+                    token, vol_cnt="0", top_n=reserve_n, market_div="J", input_iscd="0001"
+                )
+                live_kq = _kis_volume_rank(
+                    token, vol_cnt="0", top_n=reserve_n, market_div="J", input_iscd="1001"
+                )
                 _logger.info(
                     f"[KR 스크리너 장전-B] KIS 거래량필터OFF "
                     f"KOSPI={len(live_kp)} KOSDAQ={len(live_kq)}"
                 )
+                if len(live_kq) == 0:
+                    _logger.warning(
+                        "[KR 스크리너 KOSDAQ raw=0] "
+                        f"phase=premarket market_div=J input_iscd=1001 "
+                        f"vol_cnt=0 reserve_n={reserve_n} kospi_raw={len(live_kp)}"
+                    )
             except Exception as e:
                 _logger.warning(f"[KR 스크리너 장전-B] KIS 실패: {e}")
             live = _merge_kr_market_buckets(live_kp, live_kq, reserve_n)
@@ -2064,20 +2525,32 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
             preset = get_screening_preset("KR", mode)
             _kr_vol_cnt = str(preset["kr_min_volume"])
             _logger.info(f"[KR 스크리너] mode={mode} → FID_VOL_CNT={_kr_vol_cnt}")
-            kospi_result = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=reserve_n,
-                                            market_div="J")
+            kospi_result = _kis_volume_rank(
+                token, vol_cnt=_kr_vol_cnt, top_n=reserve_n, market_div="J", input_iscd="0001"
+            )
 
-            # KOSDAQ 보강: Q 호출 결과를 후보 풀에 추가 (KOSPI와 ticker 겹침 없음)
+            # KOSDAQ 보강: KRX volume-rank 업종코드 1001 결과를 후보 풀에 추가한다.
             kosdaq_result = []
             try:
-                kosdaq_result = _kis_volume_rank(token, vol_cnt=_kr_vol_cnt, top_n=reserve_n,
-                                                 market_div="Q")
+                kosdaq_result = _kis_volume_rank(
+                    token, vol_cnt=_kr_vol_cnt, top_n=reserve_n, market_div="J", input_iscd="1001"
+                )
                 _logger.info(
                     f"[KR 스크리너] raw KOSPI={len(kospi_result)} "
                     f"KOSDAQ={len(kosdaq_result)}"
                 )
+                if len(kosdaq_result) == 0:
+                    _logger.warning(
+                        "[KR 스크리너 KOSDAQ raw=0] "
+                        f"phase=intraday market_div=J input_iscd=1001 "
+                        f"vol_cnt={_kr_vol_cnt} reserve_n={reserve_n} kospi_raw={len(kospi_result)}"
+                    )
             except Exception as _e:
-                _logger.debug(f"[KR 스크리너] KOSDAQ 추가 실패(무시): {_e}")
+                _logger.warning(
+                    f"[KR 스크리너 KOSDAQ raw=0] phase=intraday "
+                    f"market_div=J input_iscd=1001 "
+                    f"vol_cnt={_kr_vol_cnt} reserve_n={reserve_n} error={_e}"
+                )
 
             result = _merge_kr_market_buckets(kospi_result, kosdaq_result, reserve_n)
             _logger.info(
