@@ -1,0 +1,1044 @@
+# Encoding/mojibake scan report (2026-05-01)
+
+- Scope: `.py`, `.js`, `.md` source/docs under repo, excluding `.git`, `__pycache__`, `.pytest_cache`.
+- Detection: C1 controls, replacement char, Hangul Jamo/compat Jamo, CJK/compat ideographs typical of Korean mojibake; allowed `前/後` so simulation labels are not counted.
+- Total suspicious lines: 1001 in 10 files.
+- UTF-8 decode errors: none in scanned files; these are mojibake/corrupted text inside UTF-8 files.
+
+## Summary
+
+| File | Lines | Categories | Ranges |
+|---|---:|---|---|
+| `claude_memory/brain.py` | 41 | comment:18, string/docstring:23 | 144, 148, 150-151, 163, 170, 189, 209, 288, 290, 294, 410, 413, 436, 463, 476-477, 485, 498, 502, 505, 508-510, 541, 545, 765, 793, 854-855, 866, 873, 876-878, 896, 918, 928, 974-976 |
+| `dashboard/_tmp_analytics_scripts.js` | 27 | comment:18, string/template:9 | 2, 58, 112, 125, 127, 131, 136, 143, 163, 182, 201, 215, 218, 220, 222, 239, 250, 256-257, 259, 267, 283, 318, 323, 330, 347, 368 |
+| `dashboard/_tmp_history_scripts.js` | 24 | comment:10, string/template:14 | 2, 58, 112, 125, 127, 131, 136, 143, 156-159, 163-166, 172, 177, 187-188, 235-236, 239, 266 |
+| `dashboard/_tmp_today_scripts.js` | 33 | comment:9, string/template:24 | 2, 58, 112, 125, 127, 131, 136, 143, 570, 1113-1114, 1116-1121, 1124-1126, 1129, 1131-1134, 1148, 1161, 1183, 1199, 1205, 1210, 1215, 1222 |
+| `dashboard/_tmp_today_scripts_utf8.js` | 33 | comment:9, string/template:24 | 2, 58, 112, 125, 127, 131, 136, 143, 570, 1113-1114, 1116-1121, 1124-1126, 1129, 1131-1134, 1148, 1161, 1183, 1199, 1205, 1210, 1215, 1222 |
+| `dashboard/_tmp_trades_scripts.js` | 43 | comment:8, string/template:35 | 2, 58, 112, 125, 127, 131, 136, 143, 169-170, 179, 194, 198, 205, 215, 217-225, 228-230, 236-239, 248-249, 252-253, 274-277, 279-281, 284 |
+| `dashboard/dashboard_server.py` | 10 | comment:4, string/docstring:6 | 3549, 4697, 4735, 4944, 5103, 5257, 5933, 6557, 8483, 8539 |
+| `docs/plans/TRADING_IMPROVEMENT_WORKLOG_20260421.md` | 1 | doc/markdown:1 | 352 |
+| `minority_report/postmortem.py` | 14 | comment:6, string/docstring:8 | 47, 51, 56, 62, 65, 69, 91, 104, 115, 143, 182, 431, 444, 493 |
+| `trading_bot.py` | 775 | comment:334, string/docstring:441 | 32-33, 38, 195, 267, 270-274, 276, 278-280, 282, 287-289, 298, 301, 305-307, 313, 315, 317, 348, 350, 356, 410-411, 458, 468, 473, 476, 482-483, 486, 496, 516, 521, 527, 535, 544-545, 550, 562-565, 611, 615, 618, 620, 622, 624, 630, 633, 635, 637, 643, 666, 672, 676, 678-679, 682, 684, 687, 689, 691, 703, 709, 725, 730, 744, 758, 762, 780, 1649,... |
+
+## Detail
+
+### `claude_memory/brain.py` (41 lines)
+- L144 [comment] `'# ?\x80?\x80 遺꾩꽍媛\x80 ?깃낵 ?낅뜲?댄듃 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L148 [string/docstring] `'    留ㅼ씪 postmortem ???몄텧'`
+- L150 [string/docstring] `'    hit: True=?곸쨷, False=誘몄쟻以?'`
+- L151 [string/docstring] `'    recent_days: 理쒓렐 30??湲곕줉 由ъ뒪??'`
+- L163 [comment] `'    # 理쒓렐 7??'`
+- L170 [comment] `'    # 理쒓렐 30??'`
+- L189 [comment] `'# ?\x80?\x80 紐⑤뱶 ?깃낵 ?낅뜲?댄듃 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L209 [comment] `'# ?\x80?\x80 ?꾨왂 ?깃낵 ?낅뜲?댄듃 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L288 [string/docstring] `'        lessons.append(f"{strategy} 吏꾩엯 ?ㅽ뙣 ?⑦꽩: {reason}")'`
+- L290 [string/docstring] `'        lessons.append(f"泥?궛 ?ㅽ뙣 ?⑦꽩: {reason}")'`
+- L294 [string/docstring] `'        lessons.append(f"?섏씡 泥?궛 ?좏슚 ?⑦꽩: {reason}")'`
+- L410 [comment] `'            existing["examples"] = existing["examples"][-5:]  # 理쒓렐 5媛쒕쭔'`
+- L413 [comment] `'        # ?좉퇋 ?⑦꽩 異붽?'`
+- L436 [comment] `'# ?\x80?\x80 ?쒕떇 ?⑦꽩 ?낅뜲?댄듃 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L463 [comment] `'# ?\x80?\x80 理쒓렐 ?쇰퀎 湲곕줉 異붽? ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L476 [string/docstring] `'      "bull_reason": "HBM4 怨꾩빟 二쇨? 寃ъ씤",'`
+- L477 [string/docstring] `'      "bear_reason": "愿\x80??諛쒗몴 ?곌린濡?誘몄뒪",'`
+- L485 [comment] `'    # 媛숈? ?좎쭨 ?덉퐫?쒓? ?대? ?덉쑝硫???뼱?\x80 (backfill 以묐났 諛⑹?)'`
+- L498 [comment] `'# ?\x80?\x80 beliefs ?낅뜲?댄듃 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L502 [string/docstring] `'    Claude postmortem??諛섑솚??beliefs ?낅뜲?댄듃'`
+- L505 [string/docstring] `'      "market_regime": "媛뺤꽭??,'`
+- L508 [string/docstring] `'      "best_strategy": "紐⑤찘?\x80",'`
+- L509 [string/docstring] `'      "new_lesson": "愿\x80???⑤룆 寃쎄퀬???좊ː????쓬",'`
+- L510 [string/docstring] `'      "add_avoid": "CAUTIOUS 怨쇰룄 ?ъ슜",'`
+- L541 [comment] `'# ?\x80?\x80 媛쒕퀎 遺꾩꽍媛\x80 留욎땄 ?쇰뱶諛??앹꽦 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80'`
+- L545 [string/docstring] `'    """理쒓렐 ?좎쭨遺\x80????닚?쇰줈 ?곗냽 target 寃곌낵 ?잛닔 怨꾩궛."""'`
+- L765 [string/docstring] `'    R1?뭃2 ?좊줎 寃곌낵瑜?brain.json???\x80??'`
+- L793 [comment] `'        "outcome":           None,   # postmortem ??梨꾩?'`
+- L854 [string/docstring] `'    postmortem ???대떦 ???좊줎 寃곌낵媛\x80 留욎븯?붿? ?낅뜲?댄듃'`
+- L855 [string/docstring] `'    correct: True=?⑹쓽 諛⑺뼢???ㅼ젣 寃곌낵?\x80 ?쇱튂'`
+- L866 [comment] `'# ?\x80?\x80 hold_advisor ?깃낵 ?꾩쟻 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80'`
+- L873 [comment] `'    extra_pnl_pct: float,    # HOLD: ?몃젅???댄썑 異붽? ?섏씡%, SELL: 利됱떆 ?ㅽ쁽 ?섏씡%'`
+- L876 [string/docstring] `'    TP ?꾨떖 ??hold_advisor 寃곗젙 寃곌낵瑜?brain.json???꾩쟻.'`
+- L877 [string/docstring] `'    - HOLD ??泥?궛媛\x80 > tp_price : success=True'`
+- L878 [string/docstring] `'    - SELL ??TP 利됱떆 ?ㅽ쁽 ?먯껜媛\x80 ?깃났'`
+- L896 [comment] `'        # ?꾩쟻 ?됯퇏 異붽??섏씡'`
+- L918 [comment] `'# ?\x80?\x80 ?щ줈?ㅻ쭏耳??낅뜲?댄듃 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L928 [comment] `'# ?\x80?\x80 correction_guide ?낅뜲?댄듃 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80'`
+- L974 [string/docstring] `"踰꾩쟾:      v{meta['version']}"`
+- L975 [string/docstring] `"留덉?留??낅뜲?댄듃: {meta['last_updated']}"`
+- L976 [string/docstring] `"?숈뒿?쇱닔:  援?궡 {meta['trained_days_kr']}??/ 誘멸뎅 {meta['trained_days_us']}??"`
+
+### `dashboard/_tmp_analytics_scripts.js` (27 lines)
+- L2 [comment] `'// ?\x80?\x80 怨듯넻 ?곹깭 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x8...`
+- L58 [comment] `'// ?\x80?\x80 ?щ㎎???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L112 [comment] `'// ?\x80?\x80 ?쒓퀎 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L125 [comment] `'// ?\x80?\x80 珥덇린???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L127 [comment] `'  // 留덉폆 踰꾪듉'`
+- L131 [comment] `'  // 湲곌컙 踰꾪듉'`
+- L136 [comment] `'  // ?좎쭨 ?명뭼 蹂듭썝'`
+- L143 [comment] `'// ?\x80?\x80 ?먮룞 ?덈줈怨좎묠 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?...`
+- L163 [string/template] `"        { label: '以묐┰', data: d.neutral, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.14)', borderWidth: 3, pointRadius: 3, pointHoverRadius: 5, pointBackgroundColor: '#38bdf8', tension: 0.35, fill: false, borderDash: [6, 4] },"`
+- L182 [comment] `'  // 紐⑤뱶蹂??뚯씠釉?  const modes = d.modes || {};'`
+- L201 [comment] `'  // 援먰썕'`
+- L215 [comment] `'  // Brain ?곹깭 移대뱶'`
+- L218 [string/template] `'      踰꾩쟾 ${d.version || \'-\'} &nbsp;|&nbsp; ${d.trained_days || 0}???숈뒿 &nbsp;|&nbsp; ?μ꽭: <span style="color:var(--text)">${koRegime(d.regime)}</span>'`
+- L220 [string/template] `'    <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:4px">留덉?留??낅뜲?댄듃</div>'`
+- L222 [string/template] `'    <div style="font-size:11px;font-weight:600;letter-spacing:1.5px;color:var(--muted);margin-bottom:10px">遺꾩꽍媛\x80 ?곸쨷瑜?/div>'`
+- L239 [comment] `'  // 遺꾩꽍媛\x80 ?깃낵 ?곸꽭'`
+- L250 [string/template] `"        const lbl = k === 'bull' ? '?윟 Bull 遺꾩꽍媛\x80' : k === 'bear' ? '?뵶 Bear 遺꾩꽍媛\x80' : '??Neutral 遺꾩꽍媛\x80';"`
+- L256 [string/template] `'            <div>?곸쨷瑜?<span style="color:${col}">${rate}%</span></div>'`
+- L257 [string/template] `'            <div>珥??먮떒 <span style="color:var(--text)">${v.total || 0}??/span></div>'`
+- L259 [string/template] `'            ${v.recent_streak !== undefined ? `<div>理쒓렐 ?곗냽 <span style="color:var(--text)">${v.recent_streak}</span></div>` : \'\'}'`
+- L267 [comment] `'  // ?꾨왂蹂??깃낵 (brain??strategy ?꾨뱶 ?덉쓣 寃쎌슦)'`
+- L283 [string/template] `"  ['蹂\x80?숈꽦?뚰뙆', '媛?닃由?, '紐⑤찘?\x80', '?됯퇏?뚭?', '釉뚮줈而ㅻ룞湲고솕'].forEach(name => {"`
+- L318 [comment] `'  // 硫뷀? ?ㅻ뜑'`
+- L323 [comment] `'  // 寃곌낵 諭껋?'`
+- L330 [comment] `'  // ?뚯씠釉?rows'`
+- L347 [comment] `'      // 遺꾩꽍媛\x80 ?댁쑀 tooltip'`
+- L368 [comment] `'  // ?꾩쟻 援먰썕'`
+
+### `dashboard/_tmp_history_scripts.js` (24 lines)
+- L2 [comment] `'// ?\x80?\x80 怨듯넻 ?곹깭 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x8...`
+- L58 [comment] `'// ?\x80?\x80 ?щ㎎???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L112 [comment] `'// ?\x80?\x80 ?쒓퀎 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L125 [comment] `'// ?\x80?\x80 珥덇린???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L127 [comment] `'  // 留덉폆 踰꾪듉'`
+- L131 [comment] `'  // 湲곌컙 踰꾪듉'`
+- L136 [comment] `'  // ?좎쭨 ?명뭼 蹂듭썝'`
+- L143 [comment] `'// ?\x80?\x80 ?먮룞 ?덈줈怨좎묠 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?...`
+- L156 [string/template] `"    cardLabels[0].textContent = '泥?궛 ?밸쪧';"`
+- L157 [string/template] `"    cardLabels[1].textContent = '泥?궛 ?먯씡 ?⑷퀎';"`
+- L158 [string/template] `"    cardLabels[2].textContent = '?됯퇏 泥?궛 ?먯씡瑜?;"`
+- L159 [string/template] `"    cardLabels[3].textContent = '泥?궛 嫄곕옒 ??;"`
+- L163 [string/template] `'    cardSubs[1].textContent = `${d.wins || 0}??/ ${d.losses || 0}??쨌 留ㅻ룄 ?꾨즺 湲곗?`;'`
+- L164 [string/template] `'    cardSubs[2].textContent = `${d.days || 0} 嫄곕옒??쨌 泥?궛 湲곗?`;'`
+- L165 [string/template] `"    cardSubs[3].textContent = '留ㅻ룄 ?꾨즺 1嫄대떦 ?됯퇏';"`
+- L166 [string/template] `"    cardSubs[4] && (cardSubs[4].textContent = '留ㅻ룄 ?꾨즺 嫄댁닔');"`
+- L172 [string/template] `"  document.getElementById('h-win-detail').textContent = `${d.wins || 0}??/ ${d.losses || 0}??쨌 留ㅻ룄 ?꾨즺 湲곗?`;"`
+- L177 [string/template] `"  document.getElementById('h-days').textContent = `${d.days || 0} 嫄곕옒??쨌 泥?궛 湲곗?`;"`
+- L187 [string/template] `'      ? `?꾩옱 ?좏깮 ?쒖옣(${MARKET}) 湲곗? 留ㅻ룄 ?꾨즺 嫄곕옒媛\x80 ?놁뒿?덈떎`'`
+- L188 [string/template] `"      : '湲곗?: 留ㅻ룄 ?꾨즺 嫄곕옒留?吏묎퀎';"`
+- L235 [string/template] `"    historyTitles[1].textContent = '?붾퀎 泥?궛 ?먯씡';"`
+- L236 [string/template] `"    historyTitles[2].textContent = '?붾퀎 泥?궛 ?깃낵 ?붿빟';"`
+- L239 [comment] `'  // ?붾퀎 李⑦듃'`
+- L266 [comment] `"  // ?뚯씠釉?  const tbody = document.getElementById('monthly-tbody');"`
+
+### `dashboard/_tmp_today_scripts.js` (33 lines)
+- L2 [comment] `'// ?\x80?\x80 怨듯넻 ?곹깭 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x8...`
+- L58 [comment] `'// ?\x80?\x80 ?щ㎎???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L112 [comment] `'// ?\x80?\x80 ?쒓퀎 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L125 [comment] `'// ?\x80?\x80 珥덇린???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L127 [comment] `'  // 留덉폆 踰꾪듉'`
+- L131 [comment] `'  // 湲곌컙 踰꾪듉'`
+- L136 [comment] `'  // ?좎쭨 ?명뭼 蹂듭썝'`
+- L143 [comment] `'// ?\x80?\x80 ?먮룞 ?덈줈怨좎묠 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?...`
+- L570 [comment] `'  // ?좏깮 ?????꾨낫 紐⑸줉 (?묓엺 ?뺥깭)'`
+- L1113 [string/template] `"    entry_signal: '吏꾩엯 ?좏샇',"`
+- L1114 [string/template] `"    entry_skip: '吏꾩엯 蹂대쪟',"`
+- L1116 [string/template] `"    signal_blocked: '?좏샇 李⑤떒',"`
+- L1117 [string/template] `"    buy_filled: '留ㅼ닔 泥닿껐',"`
+- L1118 [string/template] `"    sell_filled: '留ㅻ룄 泥닿껐',"`
+- L1119 [string/template] `"    trailing: '異붿쟻以?,"`
+- L1120 [string/template] `"    waiting: '?\x80湲?,"`
+- L1121 [string/template] `"    cycle_error: '泥섎━ ?ㅻ쪟'"`
+- L1124 [string/template] `"    already_holding: '?대? 蹂댁쑀以?,"`
+- L1125 [string/template] `"    pending_order: '誘몄껜寃?二쇰Ц',"`
+- L1126 [string/template] `"    invalid_price: '媛\x80寃??ㅻ쪟',"`
+- L1129 [string/template] `"    trail_stop: '異붿쟻 ?먯젅',"`
+- L1131 [string/template] `"    max_hold: '蹂댁쑀 湲곌컙 留뚮즺',"`
+- L1132 [string/template] `"    session_close: '?λ쭏媛??뺤궛',"`
+- L1133 [string/template] `"    live_position: '釉뚮줈而??붽퀬 諛섏쁺',"`
+- L1134 [string/template] `"    us_order_blocked: '誘멸뎅 二쇰Ц 李⑤떒'"`
+- L1148 [string/template] `"      `?ㅻ뒛 ?⑹쓽: ${koMode(judgments.consensus.mode || '-')}`,"`
+- L1161 [string/template] `"      `${ch.analyst || 'analyst'} ?섍껄 蹂\x80寃?,"`
+- L1183 [string/template] `"      `${koReason(s.reason || '-') }<br>媛\x80寃? ${priceTxt}`,"`
+- L1199 [string/template] `"    let detail = `${koReason(t.reason || '-') }<br>媛\x80寃? ${priceTxt}`;"`
+- L1205 [string/template] `'      detail += `<br>留ㅼ닔媛\x80 ${buyPriceTxt} 쨌 留ㅼ닔珥앹븸 ${buyTotalTxt}<br>留ㅻ룄珥앹븸 ${sellTotalTxt} 쨌 ?먰솕?먯씡 ${pnlKrwTxt}`;'`
+- L1210 [string/template] `'        detail += `<br>留ㅼ닔珥앹븸 ${tradeTotalTxt}`;'`
+- L1215 [string/template] `"      `${t.display_ticker || t.ticker || '-'} ${t.side || '-'} ${t.qty || 0}二?,"`
+- L1222 [string/template] `'    box.innerHTML = \'<div style="color:var(--text-dim);font-size:13px">?쒖떆??Claude ?먮떒/?ㅽ뻾 ?댁뿭???꾩쭅 ?놁뒿?덈떎</div>\';'`
+
+### `dashboard/_tmp_today_scripts_utf8.js` (33 lines)
+- L2 [comment] `'// ?\x80?\x80 怨듯넻 ?곹깭 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x8...`
+- L58 [comment] `'// ?\x80?\x80 ?щ㎎???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L112 [comment] `'// ?\x80?\x80 ?쒓퀎 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L125 [comment] `'// ?\x80?\x80 珥덇린???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L127 [comment] `'  // 留덉폆 踰꾪듉'`
+- L131 [comment] `'  // 湲곌컙 踰꾪듉'`
+- L136 [comment] `'  // ?좎쭨 ?명뭼 蹂듭썝'`
+- L143 [comment] `'// ?\x80?\x80 ?먮룞 ?덈줈怨좎묠 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?...`
+- L570 [comment] `'  // ?좏깮 ?????꾨낫 紐⑸줉 (?묓엺 ?뺥깭)'`
+- L1113 [string/template] `"    entry_signal: '吏꾩엯 ?좏샇',"`
+- L1114 [string/template] `"    entry_skip: '吏꾩엯 蹂대쪟',"`
+- L1116 [string/template] `"    signal_blocked: '?좏샇 李⑤떒',"`
+- L1117 [string/template] `"    buy_filled: '留ㅼ닔 泥닿껐',"`
+- L1118 [string/template] `"    sell_filled: '留ㅻ룄 泥닿껐',"`
+- L1119 [string/template] `"    trailing: '異붿쟻以?,"`
+- L1120 [string/template] `"    waiting: '?\x80湲?,"`
+- L1121 [string/template] `"    cycle_error: '泥섎━ ?ㅻ쪟'"`
+- L1124 [string/template] `"    already_holding: '?대? 蹂댁쑀以?,"`
+- L1125 [string/template] `"    pending_order: '誘몄껜寃?二쇰Ц',"`
+- L1126 [string/template] `"    invalid_price: '媛\x80寃??ㅻ쪟',"`
+- L1129 [string/template] `"    trail_stop: '異붿쟻 ?먯젅',"`
+- L1131 [string/template] `"    max_hold: '蹂댁쑀 湲곌컙 留뚮즺',"`
+- L1132 [string/template] `"    session_close: '?λ쭏媛??뺤궛',"`
+- L1133 [string/template] `"    live_position: '釉뚮줈而??붽퀬 諛섏쁺',"`
+- L1134 [string/template] `"    us_order_blocked: '誘멸뎅 二쇰Ц 李⑤떒'"`
+- L1148 [string/template] `"      `?ㅻ뒛 ?⑹쓽: ${koMode(judgments.consensus.mode || '-')}`,"`
+- L1161 [string/template] `"      `${ch.analyst || 'analyst'} ?섍껄 蹂\x80寃?,"`
+- L1183 [string/template] `"      `${koReason(s.reason || '-') }<br>媛\x80寃? ${priceTxt}`,"`
+- L1199 [string/template] `"    let detail = `${koReason(t.reason || '-') }<br>媛\x80寃? ${priceTxt}`;"`
+- L1205 [string/template] `'      detail += `<br>留ㅼ닔媛\x80 ${buyPriceTxt} 쨌 留ㅼ닔珥앹븸 ${buyTotalTxt}<br>留ㅻ룄珥앹븸 ${sellTotalTxt} 쨌 ?먰솕?먯씡 ${pnlKrwTxt}`;'`
+- L1210 [string/template] `'        detail += `<br>留ㅼ닔珥앹븸 ${tradeTotalTxt}`;'`
+- L1215 [string/template] `"      `${t.display_ticker || t.ticker || '-'} ${t.side || '-'} ${t.qty || 0}二?,"`
+- L1222 [string/template] `'    box.innerHTML = \'<div style="color:var(--text-dim);font-size:13px">?쒖떆??Claude ?먮떒/?ㅽ뻾 ?댁뿭???꾩쭅 ?놁뒿?덈떎</div>\';'`
+
+### `dashboard/_tmp_trades_scripts.js` (43 lines)
+- L2 [comment] `'// ?\x80?\x80 怨듯넻 ?곹깭 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x8...`
+- L58 [comment] `'// ?\x80?\x80 ?щ㎎???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L112 [comment] `'// ?\x80?\x80 ?쒓퀎 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L125 [comment] `'// ?\x80?\x80 珥덇린???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L127 [comment] `'  // 留덉폆 踰꾪듉'`
+- L131 [comment] `'  // 湲곌컙 踰꾪듉'`
+- L136 [comment] `'  // ?좎쭨 ?명뭼 蹂듭썝'`
+- L143 [comment] `'// ?\x80?\x80 ?먮룞 ?덈줈怨좎묠 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?...`
+- L169 [string/template] `"  const sells = trades.filter(t => t.side === 'sell' || t.side === '留ㅻ룄');"`
+- L170 [string/template] `"  const buys  = trades.filter(t => t.side === 'buy'  || t.side === '留ㅼ닔');"`
+- L179 [string/template] `"  document.getElementById('t-buy-sell').textContent = `留ㅼ닔 ${buys.length} / 留ㅻ룄 ${sells.length}`;"`
+- L194 [string/template] `"  document.getElementById('trades-count-label').textContent = `${trades.length}嫄??쒖떆`;"`
+- L198 [string/template] `"  const days = ['??,'??,'??,'??,'紐?,'湲?,'??];"`
+- L205 [string/template] `'    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">?좏깮 ?쒖옣(${MARKET}) 湲곗? 嫄곕옒 ?댁뿭???놁뒿?덈떎</td></tr>`;'`
+- L215 [string/template] `"    const isSell = (t.side === 'sell' || t.side === '留ㅻ룄');"`
+- L217 [string/template] `"      paper_buy: '二쇰Ц ?묒닔 湲곗? 留ㅼ닔',"`
+- L218 [string/template] `"      pending_order: '誘몄껜寃?二쇰Ц ?\x80湲?,"`
+- L219 [string/template] `"      live_position: '釉뚮줈而??붽퀬 諛섏쁺',"`
+- L220 [string/template] `"      broker_sync: '釉뚮줈而??숆린??諛섏쁺',"`
+- L221 [string/template] `"      trail_stop: '?몃젅?쇰쭅 湲곗? 泥?궛',"`
+- L222 [string/template] `"      max_hold: '蹂댁쑀 湲곌컙 留뚮즺 泥?궛',"`
+- L223 [string/template] `"      stop_loss: '?먯젅 湲곗? 泥?궛',"`
+- L224 [string/template] `"      take_profit: '?듭젅 湲곗? 泥?궛',"`
+- L225 [string/template] `"      paper_sell: '二쇰Ц ?묒닔 湲곗? 留ㅻ룄',"`
+- L228 [string/template] `"    if (!isSell && strategy && strategy !== 'broker_sync') return `遺꾩꽍媛\x80 ?좏깮 + ${koStrategy(strategy)} 濡쒖쭅 吏꾩엯`;"`
+- L229 [string/template] `"    if (isSell && strategy && strategy !== 'broker_sync') return `${koStrategy(strategy)} 濡쒖쭅 泥?궛`;"`
+- L230 [string/template] `"    if (strategy === 'broker_sync') return '釉뚮줈而??숆린??諛섏쁺';"`
+- L236 [string/template] `"    if (ps === 'order_fill') return '泥닿껐 議고쉶 湲곗?';"`
+- L237 [string/template] `"    if (ps === 'broker_balance') return '釉뚮줈而??붽퀬 湲곗?';"`
+- L238 [string/template] `"    if (ps === 'pending_order') return '誘몄껜寃?二쇰Ц 湲곗?';"`
+- L239 [string/template] `"    if (ps === 'system_log') return '?쒖뒪??濡쒓렇 蹂듦뎄';"`
+- L248 [string/template] `"      const sep = '?\x80'.repeat(30);"`
+- L249 [string/template] `'      html += `<tr class="date-group-row"><td colspan="8">?\x80?\x80 ${d} (${dow}) ${sep}</td></tr>`;'`
+- L252 [string/template] `"    const isSell  = t.side === 'sell' || t.side === '留ㅻ룄';"`
+- L253 [string/template] `"    const sideLbl = isSell ? '?뵶 留ㅻ룄' : '?윟 留ㅼ닔';"`
+- L274 [string/template] `"    if (t.price_source === 'broker_balance') metaBits.push('釉뚮줈而ㅽ룊洹좊떒媛\x80');"`
+- L275 [string/template] `"    if (t.price_source === 'order_fill') metaBits.push('泥닿껐議고쉶?④?');"`
+- L276 [string/template] `"    if (t.order_no) metaBits.push('二쇰Ц踰덊샇 ' + t.order_no);"`
+- L277 [string/template] `"    if (t.fill_time) metaBits.push('泥닿껐?쒓컖 ' + t.fill_time);"`
+- L279 [string/template] `"      if (buyPrice > 0) metaBits.push('留ㅼ닔媛\x80 ' + (currency === 'USD' ? ('$' + buyPrice.toFixed(4)) : (Math.round(buyPrice).toLocaleString() + '??)));"`
+- L280 [string/template] `"      if (buyTotal > 0) metaBits.push('留ㅼ닔珥앹븸 ' + fmtNative(buyTotal));"`
+- L281 [string/template] `"      if (sellTotal > 0) metaBits.push('留ㅻ룄珥앹븸 ' + fmtNative(sellTotal));"`
+- L284 [string/template] `"      metaBits.push('留ㅼ닔珥앹븸 ' + fmtNative(tradeTotal));"`
+
+### `dashboard/dashboard_server.py` (10 lines)
+- L3549 [comment] `'# ?\x80?\x80 ?좉퇋 API ?붾뱶?ъ씤???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L4697 [comment] `'# ?\x80?\x80 HTML ?ы띁 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x8...`
+- L4735 [string/docstring] `'/* ?\x80?\x80 ?ㅻ뜑 ?\x80?\x80 */'`
+- L4944 [string/docstring] `'/* ?\x80?\x80 Brain ?곹깭 ?\x80?\x80 */'`
+- L5103 [string/docstring] `'// ?\x80?\x80 ?щ㎎???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L5257 [string/docstring] `'// ?\x80?\x80 ?쒓퀎 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x...`
+- L5933 [string/docstring] `'  // ?좏깮 ?????꾨낫 紐⑸줉 (?묓엺 ?뺥깭)'`
+- L6557 [string/docstring] `'  // ?붾퀎 李⑦듃'`
+- L8483 [comment] `'# ?\x80?\x80 Flask ?쇱슦???\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\...`
+- L8539 [comment] `'# ?\x80?\x80 ?ㅽ뻾 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x8...`
+
+### `docs/plans/TRADING_IMPROVEMENT_WORKLOG_20260421.md` (1 lines)
+- L352 [doc/markdown] `'rg -n "�|遺|醫|援|湲|寃|濡|嫄|鍮|猷|洹|留|吏|理|媛" -g "*.py" -g "*.md" .'`
+
+### `minority_report/postmortem.py` (14 lines)
+- L47 [comment] `'    # 1) ```json ... ``` ?먮뒗 ``` ... ``` 釉붾줉 (?먯슃??留ㅼ묶?쇰줈 以묒꺽 {} ?ы븿)'`
+- L51 [comment] `'    # 2) { ... } 吏곸젒 異붿텧 ??泥?踰덉㎏ { 遺\x80??留덉?留?} 源뚯?'`
+- L56 [string/docstring] `'    raise ValueError(f"JSON 異붿텧 ?ㅽ뙣: {text[:200]}")'`
+- L62 [string/docstring] `'        return "  (泥닿껐 ?놁쓬)"'`
+- L65 [string/docstring] `'        side  = "留ㅼ닔" if t.get("side") == "buy" else "留ㅻ룄"'`
+- L69 [string/docstring] `'            f"  [{side}] {t.get(\'ticker\',\'-\')} {t.get(\'qty\',0)}二?"'`
+- L91 [comment] `'_AVOID_STANCES   = {"DEFENSIVE", "HALT"}   # 諛⑺뼢 ?덉륫 ?꾨떂 ???몄텧 ?뚰뵾媛\x80 留욎븯?붽?濡??먯젙'`
+- L104 [string/docstring] `'    BULL/BEAR: 諛⑺뼢 ?덉륫 ?뺥솗??'`
+- L115 [string/docstring] `'    DEFENSIVE/HALT: ?몄텧 ?뚰뵾 ?곸젅??("??? ?몄텧???좊━?덈뒗媛\x80")'`
+- L143 [string/docstring] `'        return "  (?섏궗寃곗젙 濡쒓렇 ?놁쓬)"'`
+- L182 [string/docstring] `'    ??留덇컧 ??Claude ?ы썑 遺꾩꽍.'`
+- L431 [comment] `'    # ?\x80?\x80 brain ?낅뜲?댄듃 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?...`
+- L444 [comment] `'    # new_lesson ?놁쑝硫?key_lesson??fallback?쇰줈 ?ъ슜'`
+- L493 [comment] `'    # ?\x80?\x80 ?좊줎 寃곌낵 ?뺣떟 ?щ? ?낅뜲?댄듃 ?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80?\x80'`
+
+### `trading_bot.py` (775 lines)
+- L32 [comment] `'# --live ?뚮옒洹몃줈 env ?뚯씪 遺꾧린 (argparse ?댁쟾??sys.argv 吏곸젒 ?뺤씤)'`
+- L33 [comment] `'# .env.live / .env.paper ?놁쑝硫?.env fallback'`
+- L38 [comment] `'# 濡쒓굅 ?뚯씪紐?遺꾨━: import ?꾩뿉 紐⑤뱶 ?ㅼ젙 ??紐⑤뱺 ?쒕툕紐⑤뱢 濡쒓굅 ?먮룞 ?곸슜'`
+- L195 [comment] `'# ML ?섏궗寃곗젙 DB (?좏깮????import ?ㅽ뙣?대룄 遊??뺤긽 ?숈옉)'`
+- L267 [comment] `'# ?숈쟻 ?좏깮 ?ㅽ뙣 ???대갚 (湲곕낯 3醫낅ぉ)'`
+- L270 [comment] `'# 吏꾩엯 李⑤떒 荑⑤떎??(遺?'`
+- L271 [comment] `'_STOP_COOLDOWN_MIN = int(os.getenv("STOP_COOLDOWN_MIN", "60"))   # ?먯젅 ???ъ쭊??湲덉? (20??0: 諛섎났?먯젅 諛⑹?)'`
+- L272 [comment] `'_BUY_COOLDOWN_MIN  = int(os.getenv("BUY_COOLDOWN_MIN",  "15"))   # 留ㅼ닔 ?묒닔 ??以묐났 李⑤떒'`
+- L273 [comment] `'_TP_COOLDOWN_MIN   = int(os.getenv("TP_COOLDOWN_MIN",   "10"))   # TP ???ъ쭊??李⑤떒'`
+- L274 [comment] `'_MIN_ENTRY_CONF    = float(os.getenv("MIN_ENTRY_CONF",   "0.4"))  # 遺꾩꽍媛 ?됯퇏 confidence 理쒖냼媛?_STARTUP_GUARD_SEC = float(os.getenv("STARTUP_GUARD_SEC", "60"))  # session_open ??泥?cycle 蹂댄샇 援ш컙'`
+- L276 [comment] `'_ENTRY_SCAN_OPENING_INTERVAL_MIN = int(os.getenv("ENTRY_SCAN_OPENING_INTERVAL_MIN", "2"))   # 5??遺?_ENTRY_SCAN_REGULAR_INTERVAL_MIN = int(os.getenv("ENTRY_SCAN_REGULAR_INTERVAL_MIN", "5"))'`
+- L278 [comment] `'_KR_NO_SIGNAL_SWAP_MIN = int(os.getenv("KR_NO_SIGNAL_SWAP_MIN", "60"))   # KR: 臾댁떊??60遺??꾩쟻 ??援먯껜'`
+- L279 [comment] `'_US_NO_SIGNAL_SWAP_CYCLES = int(os.getenv("US_NO_SIGNAL_SWAP_CYCLES", "8"))  # US: 臾댁떊??8?ъ씠????援먯껜'`
+- L280 [comment] `'# KR: session_open(8:50)怨??ㅼ젣 ???쒖옉(9:00) ?ъ씠 ?ㅽ봽??(遺?'`
+- L282 [comment] `'# 留덇컧 吏곸쟾 ?좉퇋 吏꾩엯 李⑤떒 ??session_open 湲곗? 寃쎄낵 遺?# KR: 8:50 KST + 380min = 15:10 KST'`
+- L287 [comment] `'_TASK_SLOW_WARN_SEC = float(os.getenv("TASK_SLOW_WARN_SEC", "240"))  # ?묒뾽 吏??寃쎄퀬 ?꾧퀎媛?(4遺?'`
+- L288 [comment] `'_LIVE_STATUS_MIN_INTERVAL = float(os.getenv("LIVE_STATUS_MIN_INTERVAL_SEC", "10"))  # live_status 理쒖냼 ?곌린 媛꾧꺽'`
+- L289 [comment] `'# VIX 援ш컙蹂??ъ????ъ씠利??뱀닔 (US ?꾩슜)'`
+- L298 [comment] `'# 遺꾩꽍媛 suggested_strategy(?쒓?) ??肄붾뱶 ?꾨왂紐?留ㅽ븨'`
+- L301 [string/docstring] `'    "紐⑤찘?": "momentum",'`
+- L305 [string/docstring] `'    "媛??諛?": "gap_pullback",'`
+- L306 [string/docstring] `'    "媛??뚮┝": "gap_pullback",'`
+- L307 [string/docstring] `'    "媛?닃由?": "gap_pullback",'`
+- L313 [string/docstring] `'    "蹂?숈꽦?뚰뙆": "volatility_breakout",'`
+- L315 [string/docstring] `'    "?곗냽吏꾩엯": "continuation",'`
+- L317 [string/docstring] `'    "愿留?": "",'`
+- L348 [string/docstring] `'    "諛섎벑",'`
+- L350 [string/docstring] `'    "媛먯떆",'`
+- L356 [string/docstring] `'    "遺?곹빀",'`
+- L410 [string/docstring] `'    3紐?遺꾩꽍媛 suggested_strategy ?ㅼ닔寃???肄붾뱶 ?꾨왂紐?'`
+- L411 [string/docstring] `'    2???댁긽 ?쇱튂 ?놁쑝硫?鍮?臾몄옄??諛섑솚.'`
+- L458 [comment] `'        # ?? ?ъ옄 湲덉븸 ?ㅼ젙 ??KIS ?붽퀬 吏곸젒 議고쉶 (紐⑥쓽/?ㅺ굅??怨듯넻) ?????????'`
+- L468 [string/docstring] `'                _log_risk("warning", f"KIS KR ?붽퀬 議고쉶 ?ㅽ뙣 ({_attempt}/{_bal_retry_max}): {e}")'`
+- L473 [string/docstring] `'                        _log_risk("warning", "KIS ?쒕쾭 ?묐떟 ?놁쓬 ??PAPER_CASH ?대갚?쇰줈 湲곕룞")'`
+- L476 [string/docstring] `'                        raise SystemExit(f"KIS ?ㅺ굅???붽퀬 議고쉶 {_bal_retry_max}???ㅽ뙣 ??醫낅즺")'`
+- L482 [string/docstring] `'                    f"紐⑥쓽?ъ옄 ?붽퀬 0 ??PAPER_CASH ?대갚({init_cash:,}?? ?ъ슜. "'`
+- L483 [string/docstring] `'                    f"KIS ?깆뿉??紐⑥쓽?ъ옄 怨꾩쥖 珥덇린???꾩슂 (紐⑥쓽?ъ옄 硫붾돱 ??珥덇린??"'`
+- L486 [string/docstring] `'                raise SystemExit("?붽퀬 0 ???ㅺ굅??怨꾩쥖 ?뺤씤 ?꾩슂")'`
+- L496 [comment] `'        # US ?붽퀬 議고쉶 ???섏쟾 ?꾧툑 + 蹂댁쑀醫낅ぉ ?쒖떆, 怨듭쑀 ????⑹궛'`
+- L516 [string/docstring] `'                _log_risk("warning", f"KIS US ?붽퀬 議고쉶 ?ㅽ뙣 (臾댁떆): {e}")'`
+- L521 [comment] `'        # KR/US 怨듭쑀 ? ???⑥씪 ?꾧툑 怨꾩쥖, ?쒖옣 援щ텇 ?놁씠 ?ъ슜'`
+- L527 [comment] `'        self.today_tickers: dict = {}   # {market: [ticker, ...]} ??留ㅼ씪 ?꾩묠 Claude媛 ?좏깮'`
+- L535 [comment] `'        # 30遺?媛꾧꺽 吏??蹂?숇쪧 ?덉뒪?좊━ (?쒖옣蹂? 理쒕? 8媛?= 4?쒓컙)'`
+- L544 [comment] `'        self._ohlcv_cache: dict = {}        # ticker -> DataFrame (?쇰큺 罹먯떆)'`
+- L545 [comment] `'        self._ohlcv_cache_time: dict = {}   # ticker -> datetime (罹먯떆 媛깆떊 ?쒓컖)'`
+- L550 [comment] `'        self._session_open_at: dict[str, float] = {"KR": 0.0, "US": 0.0}  # startup 蹂댄샇 援ш컙'`
+- L562 [comment] `'        self._vix_refresh_at: float = 0.0          # VIX ?μ쨷 媛깆떊 ??꾩뒪?ы봽'`
+- L563 [comment] `'        self._task_start_time: dict[str, float] = {"KR": 0.0, "US": 0.0}  # ?묒뾽 吏??媛먯?'`
+- L564 [comment] `'        self._live_status_written_at: dict[str, float] = {"KR": 0.0, "US": 0.0}  # 以묐났 ?곌린 諛⑹?'`
+- L565 [comment] `'        self._ticker_no_signal_minutes: dict = {}  # ticker -> ?꾩쟻 臾댁떊???쒓컙(遺?, KR 援먯껜 ?꾧퀎???ъ슜'`
+- L611 [comment] `'        # ?몃젅?쇰쭅 ?ㅽ깙'`
+- L615 [comment] `'        # ?붾젅洹몃옩 以묐났 諛⑹???留덉?留??꾩넚 ?곹깭'`
+- L618 [comment] `'        # 湲닿툒 ?ы뙋??荑⑤떎??(留덉?留??ы샇異??쒕떇 移댁슫?? 60遺?2?ъ씠??媛꾧꺽 ?좎?)'`
+- L620 [comment] `'        # ???쒖옉 ???ъ???由щ럭 寃곌낵 (session_open?먯꽌 梨꾩? ??startup guard ???ㅽ뻾)'`
+- L622 [comment] `'        # KR ?μ쨷 ?ㅽ겕由щ떇 寃곌낵 (session_close ??罹먯떆 ??????ㅼ쓬???μ쟾 ?ъ슜)'`
+- L624 [comment] `'        # ?μ쨷 ?대깽??湲곕줉 (?쒕떇/湲닿툒?ы뙋?? ??session_close ??daily_judgment???ы븿'`
+- L630 [comment] `'        # 吏꾩엯 李⑤떒: {ticker: unblock_epoch_sec} ???먯젅 荑⑤떎??+ 以묐났 留ㅼ닔 諛⑹?'`
+- L633 [comment] `'        # ?뱀씪 ?먯젅 移댁슫??{market: count} ???곗냽 ?먯젅 ??size_mult ?먮룞 異뺤냼'`
+- L635 [comment] `'        # ?대쾲 ?몄뀡?먯꽌 留ㅻ룄 ?꾨즺???곗빱 ??broker sync ?ъ＜??諛⑹?'`
+- L637 [comment] `'        # WS tick 湲곕컲 ?μ쨷 怨좉?/?媛 ?꾩쟻 ???뱀씪遊?二쇱엯 ???⑥씪媛遊??덉텧???ъ슜'`
+- L643 [comment] `'        # 留ㅻ룄 ?ㅽ뙣 荑⑤떎????ticker ???ㅽ뙣 ?쒓컖, 90珥덇컙 ?ъ떆???듭젣'`
+- L666 [comment] `'        # entry_priority cutoff (Phase 2) ??env濡?ON/OFF, ?붾젅洹몃옩?쇰줈 ?ㅼ떆媛??좉?'`
+- L672 [comment] `'        # ticker_selection_log DB ??醫낅ぉ ?좏깮 ?덉쭏 ?꾩쟻 (ML Phase 3 ?숈뒿??'`
+- L676 [comment] `'        # ?? ?덉뒪?좊━ 蹂닿컯 ????????????????????????????????????????????????????'`
+- L678 [comment] `'        self._hist_fill_queued: set = set()      # ???湲?以?(以묐났 諛⑹?)'`
+- L679 [comment] `'        self._hist_fill_inflight: set = set()    # ?섏쭛 吏꾪뻾 以?        self._hist_fill_last_ts: dict = {}       # ticker ??留덉?留??쒕룄 time.time()'`
+- L682 [comment] `'        # ?? 遺遺??ъ꽑?????????????????????????????????????????????????????????'`
+- L684 [comment] `'        self._ticker_no_signal_cycles: dict = {}   # ticker ???곗냽 臾댁떊???ъ씠????        self._ticker_exclude_log: dict = {"KR": [], "US": []}  # [{ticker,reason,ts}]'`
+- L687 [comment] `'        # ?? continuation entry 1???쒗븳 ?뚮옒洹?(ticker ??bool, ?몄뀡留덈떎 由ъ뀑) ???'`
+- L689 [comment] `'        # ?? 二쇰Ц ?덉쇅(HTTP 500 ?? ?곗냽 移댁슫????3???곗냽 ???뱀씪 李⑤떒 ??????????'`
+- L691 [comment] `'        # ?? ?쇰꼸 怨꾩륫 移댁슫??(selected?뭩ignaled?뭥rdered?뭚illed) ??????????????'`
+- L703 [string/docstring] `'                log.warning(f"[ML DB] 珥덇린???ㅽ뙣 (遊??숈옉???곹뼢 ?놁쓬): {_e}")'`
+- L709 [comment] `'        # ?ъ떆?????댁썡 ?ъ???蹂듦뎄'`
+- L725 [comment] `'        # Phase1 ?숈뒿 ?곹깭 寃쎄퀬'`
+- L730 [string/docstring] `'                log.warning("?좑툘  brain.json ?숈뒿 ?곗씠???놁쓬 ??Phase1 ?쒕??덉씠??沅뚯옣:")'`
+- L744 [string/docstring] `'        """媛숈? ?쒖옣?먯꽌 ?곸쐞 ?ㅼ?以??묒뾽??寃뱀튂吏 ?딄쾶 留됰뒗??"""'`
+- L758 [string/docstring] `'                    f"???ㅼ쓬 二쇨린 諛由?媛??(?꾧퀎={_TASK_SLOW_WARN_SEC:.0f}s)"'`
+- L762 [string/docstring] `'        """?μ쨷 ?먮떒 蹂寃쎌쓣 利됱떆 ??ν빐 ?ъ떆????쒕낫?쒓? 理쒖떊 ?곹깭瑜?蹂닿쾶 ?쒕떎."""'`
+- L780 [string/docstring] `'            log.warning(f"?먮떒 ?꾩떆????ㅽ뙣: {e}")'`
+- L1649 [string/docstring] `'            "trade_ready ?鍮??ㅼ젣 ?좏샇 ?꾪솚?⑥씠 ??뒿?덈떎. trade_ready ?밴꺽 湲곗???蹂댁닔?곸쑝濡??ш??좏븯?몄슂.",'`
+- L1656 [string/docstring] `'            "watch_only?먯꽌 ?볦튇 ?곸듅 鍮꾩쑉???믪뒿?덈떎. watch_only ?좎? 湲곗?怨?veto ?덉쭏???ш??좏븯?몄슂.",'`
+- L1663 [string/docstring] `'            "continuation ?깃낵媛 ?쏀빀?덈떎. live ?ъ쭊?낅낫?ㅻ뒗 shadow 愿李곗쓣 ?곗꽑?섏꽭??",'`
+- L1670 [string/docstring] `'            "?꾩썝?⑹쓽? 理쒖쥌?⑹쓽 遺덉씪移섍? 媛먯??⑸땲?? unanimous override 寃쎈줈瑜??먭??섏꽭??",'`
+- L1683 [string/docstring] `'                "summary": "?ㅽ뻾 媛??湲덉븸/?섎웾 遺議??щ?媛 諛섎났?먯뒿?덈떎. affordability fail ?댁쑀瑜?selection/entry 由щ럭??諛섏쁺?섏꽭??",'`
+- L2633 [string/docstring] `'            parts.append(f"由ъ뒪??{\', \'.join(risk_tags[:3])}")'`
+- L2636 [string/docstring] `'            parts.append(f"沅뚯옣?꾨왂 {recommended}")'`
+- L2643 [string/docstring] `'            parts.append(f"鍮꾩쨷?곹븳 {int(round(cap_pct))}%")'`
+- L2650 [string/docstring] `'            return "紐낆떆???쒖쇅 ?ъ쑀 - watch_only ?좎?"'`
+- L2652 [string/docstring] `'            return "trade_ready 鍮꾩뼱 ?덉쓬 - watch_only ?좎?"'`
+- L3059 [string/docstring] `'            f"?먯쟾??{source_strategy} ?먯＜臾?{probe_meta.get(\'original_order_cost_krw\', 0):,.0f}??"'`
+- L3060 [string/docstring] `'            f"議곗젙二쇰Ц={order_cost:,.0f}??珥덇낵鍮꾩쑉=x{probe_meta.get(\'oversize_ratio\', 0):.2f}"'`
+- L3070 [string/docstring] `'            reason="MICRO_PROBE 吏꾩엯",'`
+- L3109 [string/docstring] `'            log.warning(f"micro_probe DB 湲곕줉 ?ㅽ뙣: {exc}")'`
+- L3139 [string/docstring] `'            detail="MICRO_PROBE 泥닿껐 ?뺤씤 ??蹂댁쑀 ?ъ??섏뿉 諛섏쁺?⑸땲??",'`
+- L3597 [string/docstring] `'        """digest_raw?먯꽌 二?吏???깅씫瑜?異붿텧 ??KR=KOSPI, US=S&P500. ?곗씠???놁쑝硫?None."""'`
+- L3603 [string/docstring] `'        """蹂댁“ 吏???깅씫瑜???KR=KOSDAQ, US=NASDAQ. ?곗씠???놁쑝硫?None."""'`
+- L3609 [string/docstring] `'        """??쒕낫?쒓? 理쒖떊 ?꾨낫 吏묓빀???????덈룄濡??ъ뒪?щ━?앸룄 analysis 濡쒓렇???④릿??"""'`
+- L3696 [string/docstring] `'        """?μ쨷 ?ъ뒪?щ━?앹슜 ?ㅼ떆媛??쒖옣 而⑦뀓?ㅽ듃 臾몄옄???앹꽦."""'`
+- L3708 [string/docstring] `'                lines.append(f"?꾩옱?쒓컖 {now_str} KST | 肄붿뒪???꾩옱 {kospi_chg:+.2f}%")'`
+- L3709 [comment] `'                # ?μ쨷 蹂댁쑀 ?ъ????꾪솴'`
+- L3716 [string/docstring] `'                    lines.append(f"?꾩옱 蹂댁쑀: {\' | \'.join(pos_strs)}")'`
+- L3717 [comment] `'                # ?꾩묠 紐⑤뱶 ?鍮?吏??蹂??李멸퀬'`
+- L3727 [string/docstring] `'                        f"?μ쟾 ?鍮?{abs(kospi_chg - morning_kospi):.1f}%p {direction} "'`
+- L3739 [string/docstring] `'                    lines.append(f"?꾩옱 蹂댁쑀: {\' | \'.join(pos_strs)}")'`
+- L3742 [string/docstring] `'            log.debug(f"[intraday_context ?앹꽦 ?ㅽ뙣] {e}")'`
+- L3745 [string/docstring] `'        """hold_advisor ?몄텧??pos 蹂듭궗蹂???mode/entry_time ??而⑦뀓?ㅽ듃 ?꾨뱶 二쇱엯."""'`
+- L3753 [string/docstring] `'        """?몄뀡 醫낅즺 ???쇰꼸 移댁슫?곕? ?쇰퀎 JSON ?뚯씪?????"""'`
+- L3758 [comment] `'            return  # ?꾨Т ?쒕룞 ?놁쑝硫?????앸왂'`
+- L3762 [comment] `'        # 湲곗〈 ?뚯씪???덉쑝硫??꾩쟻'`
+- L3788 [comment] `'        # 移댁슫??珥덇린??(?ъ떆???鍮?'`
+- L3794 [string/docstring] `'        """?붾젅洹몃옩 ?섎룞 紐낅졊?쇰줈 ?꾩옱 ?쒖옣 醫낅ぉ留?利됱떆 ?ъ꽑??"""'`
+- L3799 [string/docstring] `'            raise ValueError("?몄뀡??鍮꾪솢???곹깭?낅땲??")'`
+- L3803 [string/docstring] `'            raise RuntimeError(f"{target_market} ?쒖옣 ?묒뾽 吏꾪뻾 以? {current}")'`
+- L3816 [string/docstring] `'                raise RuntimeError("?ъ뒪?щ━???꾨낫媛 ?놁뒿?덈떎.")'`
+- L3824 [string/docstring] `'                raise RuntimeError("?덉뒪?좊━ ?꾪꽣 ?듦낵 ?꾨낫媛 ?놁뒿?덈떎.")'`
+- L3834 [string/docstring] `'                raise RuntimeError("理쒖쥌 ?좏깮 醫낅ぉ???놁뒿?덈떎.")'`
+- L3860 [string/docstring] `'                f"[?섎룞 醫낅ぉ ?ъ꽑???꾨즺] {target_market}: watch={selected} "'`
+- L3885 [comment] `'    _MIN_SIGNAL_ROWS = 65  # calc_all ???좏슚 ??理쒖냼移?(ma60=60遊?+ ?ъ쑀 5遊?'`
+- L3964 [string/docstring] `'        ?ㅽ겕由щ꼫 ?꾨낫 以??좏샇 怨꾩궛???꾩슂???덉뒪?좊━媛 遺議깊븳 醫낅ぉ ?쒓굅.'`
+- L3965 [string/docstring] `'        - 怨꾩쥖/?꾨왂?먯꽌 留ㅻℓ?섏? ?딆쓣 ?뚯깮/?덈쾭由ъ?/?몃쾭??ETF ?꾨낫瑜?癒쇱? ?쒓굅'`
+- L3966 [string/docstring] `'        - calc_all() ???좏슚 ??ma60 湲곗? dropna) < _MIN_SIGNAL_ROWS ??醫낅ぉ ?쒖쇅'`
+- L3967 [string/docstring] `'        - 媛寃??곗씠???먯껜媛 ?녿뒗 醫낅ぉ???쒖쇅'`
+- L3982 [string/docstring] `'                    removed.append((ticker, "罹붾뱾?놁쓬"))'`
+- L3986 [string/docstring] `'                    removed.append((ticker, f"?곗씠?곕?議?{len(sig_df)}??"))'`
+- L3990 [string/docstring] `'                removed.append((ticker, f"?ㅻ쪟:{e}"))'`
+- L3994 [string/docstring] `'                f"[?덉뒪?좊━ ?꾪꽣] {market} ?쒖쇅 {len(removed)}媛? "'`
+- L3997 [string/docstring] `'        log.info(f"[?덉뒪?좊━ ?꾪꽣] {market} ?꾨낫 {len(candidates)}媛????좏슚 {len(filtered)}媛??듦낵 (?쒖쇅 {len(removed)}媛?")'`
+- L3998 [comment] `'        # ?곗씠?곕?議?醫낅ぉ? 諛깃렇?쇱슫???덉뒪?좊━ 蹂닿컯 ?먯뿉 ?깅줉'`
+- L4000 [string/docstring] `'            if "data" in r or "?곗씠?곕?議?" in r:'`
+- L4003 [comment] `'    # ?? API ?ъ뒪泥댄겕 ???????????????????????????????????????????????????????????'`
+- L4013 [comment] `'        # 1. KIS 紐⑤뱶 / ?쒕쾭'`
+- L4014 [string/docstring] `'        results[f"KIS 紐⑤뱶"] = f"OK | {mode_label} ({server_type})"'`
+- L4029 [string/docstring] `'                f"OK | 珥?{total:,}??(?꾧툑 {bal[\'cash\']:,} + ?됯? {bal[\'total_eval\']:,})"'`
+- L4033 [comment] `'        # 5. Finnhub (US ?꾩옱媛)'`
+- L4043 [string/docstring] `'                results["Finnhub (NVDA)"] = f"OK | ${price:.2f}" if price else "WARN - 媛寃?0"'`
+- L4048 [comment] `'        # 6. FMP (US ?ㅽ겕由щ꼫)'`
+- L4058 [string/docstring] `'                results["FMP (?ㅽ겕由щ꼫)"] = f"OK | {cnt}媛?醫낅ぉ"'`
+- L4060 [string/docstring] `'                results["FMP (?ㅽ겕由щ꼫)"] = f"FAIL - {e}"'`
+- L4076 [string/docstring] `'        results["Alpha Vantage KEY-2"] = ("OK | ?湲곗쨷" if av_key2 else "SKIP - ???놁쓬")'`
+- L4091 [comment] `'        # 9. DART (怨듭떆) - ?좏깮'`
+- L4107 [comment] `'        # 寃곌낵 濡쒓렇 異쒕젰'`
+- L4115 [comment] `'        # ?붾젅洹몃옩'`
+- L4116 [string/docstring] `'        lines = [f"?쨼 遊??쒖옉 [{mode_label}] ??API ?먭? 寃곌낵"]'`
+- L4121 [string/docstring] `'            lines.append(f"\\n?좑툘 {fail_count}媛?API ?곌껐 ?ㅽ뙣 ???뺤씤 ?꾩슂")'`
+- L4122 [string/docstring] `'        system_alert(f"遊??쒖옉 [{mode_label}] ??API ?먭? 寃곌낵", lines[1:], icon="?쨼")'`
+- L4123 [comment] `'    # ?? ?쒖옣蹂??덉궛 議고쉶 ??????????????????????????????????????????????????????'`
+- L4140 [string/docstring] `'            self.claude_control["last_error"] = "Claude ?ы뙋??湲곕뒫??OFF ?곹깭?낅땲??"'`
+- L4150 [string/docstring] `'            log.error(f"[Claude ??쒕낫???몃━嫄??ㅽ뙣] {market}: {e}")'`
+- L4169 [string/docstring] `'            log.info(f"[?ъ????ы뙋???몃━嫄?泥섎━] {market} {ticker} | {source}")'`
+- L4173 [string/docstring] `'            log.error(f"[?ъ????ы뙋???몃━嫄??ㅽ뙣] {market} {ticker}: {e}")'`
+- L4180 [string/docstring] `'        """??쒕낫??利됱떆 留ㅻ룄 踰꾪듉 ??claude_control.json pending_sell ?뚮퉬"""'`
+- L4202 [string/docstring] `'            log.info(f"[利됱떆 留ㅻ룄] {market} {ticker} @ {raw_px:,.2f} (??쒕낫???붿껌)")'`
+- L4208 [string/docstring] `'            log.error(f"[利됱떆 留ㅻ룄 ?ㅽ뙣] {market} {ticker}: {e}")'`
+- L4235 [string/docstring] `'        """ticker 吏꾩엯??minutes遺??숈븞 李⑤떒"""'`
+- L4238 [string/docstring] `'        log.info(f"[吏꾩엯 李⑤떒] {ticker} {minutes}遺?({reason})")'`
+- L4240 [string/docstring] `'        """李⑤떒 以묒씠硫?True, 留뚮즺?먯쑝硫??쒓굅 ??False"""'`
+- L4249 [string/docstring] `'        """?뱀씪 ?숈씪 醫낅ぉ 泥닿껐 ?대젰???덉쑝硫??ъ쭊??湲덉?."""'`
+- L4318 [string/docstring] `'        """??λ맂 ?댁썡 ?ъ???蹂듦뎄"""'`
+- L4330 [comment] `'                # date ?꾨뱶媛 臾몄옄?대줈 ??λ릱?????덉쑝誘濡????蹂댁젙'`
+- L4346 [string/docstring] `'            log.info(f"[?ъ???蹂듦뎄] {[p[\'ticker\'] for p in saved]} "'`
+- L4347 [string/docstring] `'                     f"(珥?{len(saved)}媛?/ ?꾧툑 ?붿뿬 {self.risk.cash:,.0f}??")'`
+- L4349 [string/docstring] `'            log.error(f"?ъ???蹂듦뎄 ?ㅽ뙣: {e}")'`
+- L4614 [string/docstring] `'        """釉뚮줈而?蹂듦뎄 ?ъ??섏뿉 ???ML DB?먯꽌 decision_id瑜?best-effort濡?議고쉶.'`
+- L4615 [string/docstring] `'        ?ㅻ뒛 ?좎쭨 BUY_SIGNAL 以??꾩쭅 filled=0???됱쓣 李얠븘 ?곌껐?쒕떎."""'`
+- L4630 [string/docstring] `'                log.debug(f"[ML DB 蹂듦뎄] {ticker} decision_id={row[0]}")'`
+- L4701 [string/docstring] `'        """get_balance() ?묐떟??ticker -> position dict ?뺥깭濡??뺢퇋??"""'`
+- L4775 [comment] `'        # ?ъ??섏씠 ?놁쓣 ?뚮뒗 degraded ?곹깭?먯꽌???좉퇋 吏꾩엯 ?덉슜'`
+- L4776 [comment] `'        # (蹂댄샇??湲곗〈 ?ъ??섏씠 ?놁쑝誘濡?釉뚮줈而?遺덉떊??吏꾩엯??留됱쓣 ?댁쑀 ?놁쓬)'`
+- L4795 [comment] `'            # ?ъ??섏씠 ?덉쓣 ?뚮쭔 halt ???놁쑝硫?釉뚮줈而?遺덉떊???댁쁺??留됱쓣 ?댁쑀 ?놁쓬'`
+- L4870 [string/docstring] `'        """?듯빀怨꾩쥖 湲곗? KIS 珥앹옄??KRW). KR+US ?붽퀬 ?⑹궛 ???ㅽ뙣 ???대? 怨꾩궛媛믪쑝濡??대갚."""'`
+- L4885 [string/docstring] `'            log.warning(f"[?꾩쟻?먯궛 ?숆린?? KR ?붽퀬 議고쉶 ?ㅽ뙣: {e}")'`
+- L4899 [string/docstring] `'            log.debug(f"[?꾩쟻?먯궛 ?숆린?? US ?붽퀬 議고쉶 ?ㅽ뙣: {e}")'`
+- L5206 [string/docstring] `'                f"[HALT 蹂대쪟 {market}] equity breach only "'`
+- L5219 [string/docstring] `'        """?μ쨷?먮룄 ?대? ?ъ????꾧툑??釉뚮줈而??붽퀬 湲곗??쇰줈 ?뺣젹."""'`
+- L5238 [string/docstring] `'            log.warning(f"[釉뚮줈而??고????숆린?? KR ?좏겙 留뚮즺 媛먯? ??媛뺤젣 媛깆떊 ???ъ떆?? {e}")'`
+- L5247 [string/docstring] `'                log.info("[釉뚮줈而??고????숆린?? KR ?좏겙 媛깆떊 ?깃났")'`
+- L5252 [string/docstring] `'                log.error(f"[釉뚮줈而??고????숆린?? KR ?좏겙 媛깆떊 ???ъ떆???ㅽ뙣({_kr_fails}??: {retry_e}")'`
+- L5258 [string/docstring] `'            log.warning(f"[釉뚮줈而??고????숆린?? KR ?붽퀬 議고쉶 ?ㅽ뙣({_kr_fails}??: {e}")'`
+- L5272 [string/docstring] `'            log.warning(f"[釉뚮줈而??고????숆린?? US ?좏겙 留뚮즺 媛먯? ??媛뺤젣 媛깆떊 ???ъ떆?? {e}")'`
+- L5283 [string/docstring] `'                log.info("[釉뚮줈而??고????숆린?? US ?좏겙 媛깆떊 ?깃났")'`
+- L5286 [string/docstring] `'                log.warning(f"[釉뚮줈而??고????숆린?? US ?좏겙 媛깆떊 ???ъ떆???ㅽ뙣: {retry_e}")'`
+- L5289 [string/docstring] `'            log.warning(f"[釉뚮줈而??고????숆린?? US ?붽퀬 議고쉶 ?ㅽ뙣 ??US ?ъ???寃利??ㅽ궢: {e}")'`
+- L5309 [string/docstring] `'            log.warning(f"[釉뚮줈而??고????숆린?? ????ъ????쒗뵆由?濡쒕뱶 ?ㅽ뙣: {_e}")'`
+- L5317 [comment] `'            # US ?붽퀬 議고쉶 ?ㅽ뙣 ??US ?ъ????쒓굅 湲덉?'`
+- L5335 [string/docstring] `'                    log.warning(f"[釉뚮줈而??고????숆린?? {market} {ticker} 蹂댁쑀 ?놁쓬 + 誘몄껜寃?議댁옱 ??蹂댄샇 ?좎?")'`
+- L5339 [string/docstring] `'                log.warning(f"[釉뚮줈而??고????숆린?? stale ?ъ????쒓굅: {market} {ticker}")'`
+- L5343 [string/docstring] `'                    f"[釉뚮줈而??고????숆린?? {ticker} ?섎웾 蹂댁젙 "'`
+- L5369 [string/docstring] `'                log.warning(f"[釉뚮줈而??고????숆린?? 以묐났 ?ъ???蹂묓빀: {ticker}")'`
+- L5377 [string/docstring] `'                log.info(f"[釉뚮줈而??고????숆린?? KR ?ъ＜??李⑤떒: {ticker} (?대쾲 ?몄뀡 留ㅻ룄 ?꾨즺)")'`
+- L5393 [string/docstring] `'                log.info(f"[釉뚮줈而??고????숆린?? US ?ъ＜??李⑤떒: {ticker} (?대쾲 ?몄뀡 留ㅻ룄 ?꾨즺)")'`
+- L5405 [string/docstring] `'            log.warning(f"[釉뚮줈而??고????숆린?? 釉뚮줈而?誘몃낫???ъ????쒓굅: {removed}")'`
+- L5409 [comment] `'        # 怨듭쑀 ? 湲곗? ?대? equity??KR ?꾧툑留뚯씠 ?꾨땲??US ?꾧툑源뚯? ?ы븿?댁빞 ?쒕떎.'`
+- L5410 [comment] `'        # 洹몃젃吏 ?딆쑝硫?US ?ъ???泥?궛 ???ъ떆???щ룞湲고솕 ??        # "?ъ??섏? ?쒓굅?먮뒗???꾧툑? equity??誘몃컲?? ?곹깭媛 ?섏뼱'`
+- L5411 [comment] `'        # ?쇱씪 ?먯떎 ?쒕룄(halt)媛 媛吏쒕줈 諛쒕룞?????덈떎.'`
+- L5419 [comment] `'        # KIS paper US 怨꾩쥖??USD ?꾧툑??0?쇰줈 諛섑솚?쒕떎.'`
+- L5420 [comment] `'        # broker_sync濡?二쇱엯??US paper ?ъ??섏? risk.positions???ㅼ뼱媛吏留?        # ????꾧툑 李④컧???놁뼱 equity = KR_cash + US_pos_value 濡?怨쇰?怨꾩긽?쒕떎.'`
+- L5421 [comment] `'        # ?대? 諛⑹??섍린 ?꾪빐 paper 紐⑤뱶?먯꽌 US paper ?ъ???cost瑜?KR ?꾧툑?먯꽌 李④컧???뚭퀎瑜?留욎텣??'`
+- L5422 [comment] `'        # (?ㅺ굅??US??寃쎌슦 us_cash_krw媛 ?ㅼ젣 ?щ윭 ?붽퀬瑜?諛섏쁺?섎?濡?湲곗〈 濡쒖쭅 ?좎?)'`
+- L5442 [comment] `'            or order.get("raw_price", 0)   # 泥닿껐媛/?붽퀬 紐⑤몢 0????二쇰Ц ?묒닔媛 ?대갚'`
+- L5480 [comment] `'            "tp_pct": tp_pct,        # 鍮꾩쑉 蹂댁〈 ??US ?섏쑉 ?쒕━?꾪듃 諛⑹?'`
+- L5489 [comment] `'            "trail_sl_usd": 0.0,     # US ?몃젅?쇰쭅 SL (USD 湲곗?)'`
+- L5605 [string/docstring] `'                    label = "援?궡" if market == "KR" else "?댁쇅"'`
+- L5606 [string/docstring] `'                    log.warning(f"[{label} 泥닿껐議고쉶 ?ㅽ뙣] {ticker} 二쇰Ц踰덊샇={order.get(\'order_no\',\'\')}: {e}")'`
+- L5710 [comment] `'                # ML DB: 泥닿껐 ?뺤씤 湲곕줉'`
+- L5751 [comment] `'                    or order.get("raw_price", 0)   # 泥닿껐媛/?붽퀬 紐⑤몢 0????二쇰Ц ?묒닔媛 ?대갚'`
+- L5781 [string/docstring] `'                    f"[二쇰Ц 泥닿껐 諛섏쁺] {ticker} {order.get(\'qty\')}二?"'`
+- L5782 [string/docstring] `'                    f"| 二쇰Ц踰덊샇={order.get(\'order_no\', \'\')}"'`
+- L5790 [string/docstring] `'                    source="釉뚮줈而??됯퇏?④?",'`
+- L5869 [string/docstring] `'        tickers = [f"{o.get(\'ticker\', \'\')}({o.get(\'qty\', 0)}二?" for o in removed]'`
+- L5870 [string/docstring] `'        log.warning(f"[誘몄껜寃?二쇰Ц ?뺣━] {market} {reason}: {tickers}")'`
+- L5959 [comment] `'    _SELL_FAIL_COOLDOWN_SEC = 90  # 留ㅻ룄 ?ㅽ뙣 ???ъ떆???듭젣 ?쒓컙'`
+- L6145 [string/docstring] `'                    log.error(f"[exit skip] {cand[\'ticker\']} exit_price={cand.get(\'exit_price\')} <= 0 ??留ㅻ룄 李⑤떒 (媛寃?議고쉶 ?ㅽ뙣)")'`
+- L6151 [string/docstring] `'                    log.debug(f"[exit skip] {cand[\'ticker\']} ???쒖옉 ????留ㅻ룄 蹂대쪟")'`
+- L6153 [comment] `'                # 留ㅻ룄 ?ㅽ뙣 荑⑤떎??泥댄겕'`
+- L6157 [string/docstring] `'                    log.debug(f"[exit skip] {cand[\'ticker\']} 留ㅻ룄 ?ㅽ뙣 荑⑤떎??{remaining}珥??⑥쓬")'`
+- L6159 [comment] `'                # ?? 嫄곕옒 以묒? 泥댄겕 (KR留? ??????????????????????????????????????'`
+- L6161 [comment] `'                    self._sell_fail_at[cand["ticker"]] = time.time() + 600  # 10遺?荑⑤떎??                    log.warning(f"[嫄곕옒 以묒?] {cand[\'ticker\']} 留ㅻ룄 遺덇? ??10遺????ы솗??)'`
+- L6163 [comment] `'                # ?? TP ?꾨떖 ???몃젅?쇰쭅 ?ㅽ깙 泥섎━ ??????????????????????????????'`
+- L6168 [comment] `'                        # trailing 鍮꾪솢?깊솕 ??湲곗〈泥섎읆 利됱떆 泥?궛'`
+- L6188 [string/docstring] `'        """???쒖옉 ??蹂댁쑀 ?ъ???Claude 寃??'`
+- L6189 [string/docstring] `'        SELL 寃곗젙 醫낅ぉ? _pre_session_sell_queue???댁븘?먭퀬,'`
+- L6190 [string/docstring] `'        startup guard ?댁젣 ??run_cycle?먯꽌 利됱떆 留ㅻ룄.'`
+- L6195 [string/docstring] `'                log.warning(f"[?μ쟾 由щ럭] {market} 釉뚮줈而??숆린??遺덉떊 ?곹깭 ??由щ럭/SELL ?덉빟 蹂대쪟")'`
+- L6197 [string/docstring] `'                log.info(f"[?μ쟾 由щ럭] {market} ?μ쨷 ?ъ떆??媛먯? ??由щ럭/SELL ?덉빟 嫄대꼫?")'`
+- L6212 [string/docstring] `'                log.info(f"[?μ쟾 由щ럭] {ticker} ???꾩씪 ?λ쭏媛?SELL ?덉빟 ?좎?")'`
+- L6215 [string/docstring] `'                log.warning(f"[?μ쟾 由щ럭] {ticker} entry=0 ??hold_advisor 嫄대꼫?, HOLD ?좎?")'`
+- L6222 [string/docstring] `'                log.warning(f"[?μ쟾 由щ럭] {ticker} hold_advisor ?ㅻ쪟 ??HOLD ?좎?: {e}")'`
+- L6240 [string/docstring] `'                log.info(f"[?μ쟾 由щ럭] {ticker} ??SELL ?덉빟: {reason}")'`
+- L6254 [string/docstring] `'                log.info(f"[?μ쟾 由щ럭] {ticker} ??{action} ?좎?: {reason}")'`
+- L6255 [comment] `'        # ?? ?붾젅洹몃옩 ?뚮┝ ???????????????????????????????????????????????????'`
+- L6258 [string/docstring] `'            lines.append("?뵶 <b>留ㅻ룄 ?덉젙 (???쒖옉 利됱떆)</b>")'`
+- L6263 [string/docstring] `'                lines.append(f"  ??{disp}: {rsn or \'遺꾩꽍媛 ?⑹쓽\'}")'`
+- L6270 [string/docstring] `'                lines.append(f"  ??{disp}: {rsn or \'怨꾩냽 蹂댁쑀\'}")'`
+- L6272 [string/docstring] `'            lines.append("蹂댁쑀 ?ъ????놁쓬")'`
+- L6275 [string/docstring] `'        """??醫낅즺 ???댁썡 ?ъ???Claude ?먭? ????蹂댁쑀 以묒씤吏 ?댁쑀 湲곕줉 + ?붾젅洹몃옩 ?꾩넚."""'`
+- L6280 [string/docstring] `'        lines = [f"?뙔 <b>[??醫낅즺 ?ъ????꾪솴] {market}</b>", "?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺"]'`
+- L6302 [comment] `'            # Claude hold_advisor ?몄텧 (entry=0?대㈃ 嫄대꼫?)'`
+- L6305 [string/docstring] `'                log.warning(f"[?ν썑 由щ럭] {ticker} entry=0 ??hold_advisor 嫄대꼫?, HOLD ?좎?")'`
+- L6306 [string/docstring] `'                lines.append(f"  ?좑툘 吏꾩엯媛 誘명솗????Claude ?먮떒 蹂대쪟 (HOLD)")'`
+- L6317 [comment] `'                # hold_advice ?ъ??섏뿉 湲곕줉 (??쒕낫?쒖뿉??蹂댁엫)'`
+- L6324 [string/docstring] `'                log.warning(f"[?ν썑 由щ럭] {ticker} hold_advisor ?ㅻ쪟: {e}")'`
+- L6325 [string/docstring] `'            action_ko = {"HOLD": "????좎?", "TRAIL": "?몃젅?쇰쭅 ?좎?", "SELL": "留ㅻ룄 沅뚭퀬"}.get(action, action)'`
+- L6326 [comment] `'            # 留ㅻ룄 湲곗?'`
+- L6332 [string/docstring] `'                exit_cond = f"?몃젅?쇰쭅 {px(trail_sl)} ?댄븯 ??留ㅻ룄"'`
+- L6336 [string/docstring] `'                if tp > 0: parts.append(f"紐⑺몴 {px(tp)}")'`
+- L6342 [string/docstring] `'                f"  留ㅼ닔 {px(entry)} ???꾩옱 {px(cur)}  {qty}二? {held}?쇱㎏\\n"'`
+- L6349 [comment] `'        # ?ъ????뚯씪 ?ㅼ떆 ???(hold_advice 媛깆떊 諛섏쁺)'`
+- L6352 [string/docstring] `'        block_alert("??醫낅즺 ?ъ????꾪솴", lines[1:], market=market, icon="?뙔")'`
+- L6355 [string/docstring] `'        """??以?1?쒓컙 二쇨린 蹂댁쑀 ?ъ???Claude ?먭?.'`
+- L6356 [string/docstring] `'        - 吏꾩엯 ??理쒖냼 60遺?寃쎄낵???ъ??섎쭔 ???        - SELL 寃곗젙 ??利됱떆 留ㅻ룄'`
+- L6357 [string/docstring] `'        - force=True: ?붾젅洹몃옩 /review 紐낅졊?대줈 ?섎룞 ?몄텧'`
+- L6358 [string/docstring] `'        - ticker_filter: 吏?????대떦 醫낅ぉ留??먭?'`
+- L6364 [comment] `'        # ?대떦 留덉폆 ?ъ??섎쭔, 吏꾩엯 60遺??댁긽 寃쎄낵??寃껊쭔'`
+- L6372 [comment] `'            # fill_time ?먮뒗 entry_date濡?寃쎄낵 ?먮떒'`
+- L6379 [string/docstring] `'                block_alert("??以??ъ????먭?", ["寃??????ъ????놁쓬 (吏꾩엯 ??60遺?誘멸꼍怨?"], market=market, icon="?뵇")'`
+- L6386 [string/docstring] `'        lines  = [f"?뵇 <b>[??以??ъ????먭? 쨌 {label}] {market}</b>", "?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺"]'`
+- L6421 [string/docstring] `'                log.warning(f"[?μ쨷 由щ럭] {ticker} ?ㅻ쪟: {e}")'`
+- L6422 [string/docstring] `'            action_ko = {"HOLD": "????좎?", "TRAIL": "?몃젅?쇰쭅 ?좎?", "SELL": "利됱떆 留ㅻ룄"}.get(action, action)'`
+- L6426 [string/docstring] `'                f"  留ㅼ닔 {px(entry)} ???꾩옱 {px(cur)}  {qty}二?n"'`
+- L6432 [comment] `'            # SELL 寃곗젙 ??利됱떆 留ㅻ룄'`
+- L6435 [string/docstring] `'                    log.warning(f"[?μ쨷 由щ럭 SELL ?ㅽ궢] {ticker} ??session_active=False, 留ㅻ룄 遺덇?")'`
+- L6436 [string/docstring] `'                    lines.append(f"  ?좑툘 ?몄뀡 鍮꾪솢????留ㅻ룄 蹂대쪟 (?ㅼ쓬 ?몄뀡 ?쒖옉 ???ш???")'`
+- L6438 [comment] `'                    # exit_price: KRW 湲곗? (price_cache) ?먮뒗 display_current_price'`
+- L6441 [string/docstring] `'                        log.error(f"[?μ쨷 由щ럭 SELL ?ㅽ궢] {ticker} ???좏슚 媛寃??놁쓬 (cur={cur})")'`
+- L6442 [string/docstring] `'                        lines.append(f"  ???좏슚 媛寃??놁쓬 ??留ㅻ룄 蹂대쪟")'`
+- L6448 [string/docstring] `'                            lines.append(f"  ??留ㅻ룄 二쇰Ц ?묒닔 ({px(cur)} 횞 {qty}二?")'`
+- L6449 [string/docstring] `'                            log.info(f"[?μ쨷 由щ럭 SELL] {ticker} {pnl:+.2f}% ??利됱떆 留ㅻ룄 ({sell_px:,.0f})")'`
+- L6451 [string/docstring] `'                            log.error(f"[?μ쨷 由щ럭 留ㅻ룄 ?ㅽ뙣] {ticker}: {se}")'`
+- L6452 [string/docstring] `'                            lines.append(f"  ??留ㅻ룄 ?ㅽ뙣: {se}")'`
+- L6455 [string/docstring] `'        block_alert(f"??以??ъ????먭? 쨌 {label}", lines[1:], market=market, icon="?뵇")'`
+- L6457 [string/docstring] `'        """max_hold ?꾨떖 ??Claude?먭쾶 SELL/HOLD 臾쇱뼱蹂???寃곗젙.'`
+- L6458 [string/docstring] `'        - SELL: 利됱떆 留ㅻ룄'`
+- L6459 [string/docstring] `'        - HOLD/TRAIL: max_hold +1 ?곗옣 (1?뚮쭔, ?댄썑 ?щ룄????媛뺤젣 泥?궛)'`
+- L6473 [string/docstring] `'            log.info(f"[max_hold 媛뺤젣泥?궛] {ticker} ??2???곗옣 ???щ룄????利됱떆 泥?궛")'`
+- L6475 [string/docstring] `'            _send(f"??<b>[蹂댁쑀湲고븳 留뚮즺] {ticker}</b>  {pnl:+.2f}%\\n"'`
+- L6476 [string/docstring] `'                  f"  max_hold {max_hold}??2???곗옣 ???щ룄????利됱떆 泥?궛")'`
+- L6480 [string/docstring] `'            log.warning(f"[max_hold Claude] {ticker} entry=0 ??hold_advisor 嫄대꼫?, HOLD ?좎?")'`
+- L6496 [string/docstring] `'                log.warning(f"[max_hold Claude] {ticker} hold_advisor ?ㅽ뙣 ??湲곕낯 泥?궛: {e}")'`
+- L6498 [string/docstring] `'        action_ko  = "利됱떆 泥?궛" if action == "SELL" else f"蹂댁쑀湲고븳 {max_hold+1}?쇰줈 ?곗옣"'`
+- L6502 [string/docstring] `'            msg = (f"??<b>[蹂댁쑀湲고븳 留뚮즺 쨌 Claude 泥?궛] {ticker}</b>  {pnl:+.2f}%\\n"'`
+- L6503 [string/docstring] `'                   f"  {held_days}??蹂댁쑀, {px_fmt(cur)} 留ㅻ룄\\n"'`
+- L6507 [comment] `'            # max_hold +1 ?곗옣, ?곗옣 ?뚮옒洹??명똿'`
+- L6513 [comment] `'                        # 2踰덉㎏ ?곗옣 ???ㅼ쓬 ?щ룄????吏꾩쭨 媛뺤젣 泥?궛'`
+- L6519 [string/docstring] `'            msg = (f"??<b>[蹂댁쑀湲고븳 留뚮즺 쨌 Claude ?곗옣] {ticker}</b>  {pnl:+.2f}%\\n"'`
+- L6520 [string/docstring] `'                   f"  {held_days}??蹂댁쑀 ??max_hold {max_hold+1}?쇰줈 ?곗옣 (1???쒖젙)\\n"'`
+- L6526 [string/docstring] `'        """TP ?꾨떖 ???몃젅?쇰쭅 ?ㅽ깙 ?꾪솚 (遺꾩꽍媛 ?⑹쓽 ?듭뀡)"""'`
+- L6531 [comment] `'            # 遺꾩꽍媛 3紐낆뿉寃?HOLD/SELL 臾쇱뼱遊?(entry=0?대㈃ 嫄대꼫?)'`
+- L6534 [string/docstring] `'                log.warning(f"[TP trailing] {ticker} entry=0 ??hold_advisor 嫄대꼫?, ?몃젅?쇰쭅 利됱떆 ?꾪솚")'`
+- L6543 [string/docstring] `'                        log.info(f"[TP?믩텇?앷??⑹쓽:SELL] {ticker} ??利됱떆 泥?궛")'`
+- L6544 [string/docstring] `'                        trailing_alert(market, ticker, "sell", detail="遺꾩꽍媛 ?⑹쓽: 利됱떆 泥?궛")'`
+- L6553 [string/docstring] `'                    log.warning(f"[hold_advisor] ?ㅻ쪟 ??trail 湲곕낯媛??곸슜: {e}")'`
+- L6555 [string/docstring] `'            log.info(f"[TP?믫듃?덉씪留? {ticker} trail={trail_pct:.2%} (遺꾩꽍媛 ?앸왂)")'`
+- L6560 [string/docstring] `'        """?ㅼ젣 留ㅻ룄 ?ㅽ뻾 + ?붾젅洹몃옩 ?뚮┝ + hold_advisor 寃곌낵 湲곕줉"""'`
+- L6573 [string/docstring] `'            self._note_sell_failure(market, cand["ticker"], reason, precheck.get("msg", "二쇰Ц 遺덇?"))'`
+- L6585 [string/docstring] `'            log.error(f"sell precheck failed [{cand[\'ticker\']}]: {precheck.get(\'msg\',\'二쇰Ц 遺덇?\')}")'`
+- L6593 [string/docstring] `'                detail=precheck.get("msg", "二쇰Ц 遺덇?"),'`
+- L6600 [string/docstring] `'                    log.warning(f"[釉뚮줈而?誘몃낫???뺣━] {cand[\'ticker\']} ?대? ?ъ????쒓굅")'`
+- L6624 [comment] `'                # 釉뚮줈而??ㅼ젣 ?붽퀬 ?뺤씤 ?꾩뿉留??ъ????쒓굅 (VTS API ?ㅻ쪟濡??명븳 ?ㅼ젣嫄?諛⑹?)'`
+- L6633 [string/docstring] `'                    log.warning(f"[釉뚮줈而??뺤씤 ?ㅽ뙣] {cand[\'ticker\']}: {_be} ???ъ????좎?")'`
+- L6634 [comment] `'                    broker_has = True  # ?뺤씤 ?ㅽ뙣 ???덉쟾?섍쾶 ?좎?'`
+- L6636 [comment] `'                    self._sell_fail_at[cand["ticker"]] = time.time()  # 荑⑤떎???쒖옉'`
+- L6643 [string/docstring] `'                        log.warning(f"[釉뚮줈而?誘몃낫???뺣━] {cand[\'ticker\']} 釉뚮줈而?誘몃낫???뺤씤 ???대? ?ъ????쒓굅")'`
+- L6647 [string/docstring] `'        log.info(f"[{\'PAPER\' if self.is_paper else \'LIVE\'} SELL] {cand[\'ticker\']} {cand[\'qty\']}@{order_px:,} | 二쇰Ц踰덊샇={result.get(\'order_no\',\'\')}")'`
+- L6650 [comment] `'        # 留ㅻ룄 ?꾨즺 ?곗빱 ?깅줉 ??broker sync ?ъ＜??諛⑹?'`
+- L6653 [comment] `'        # hold_advice: 遺꾩꽍媛 SELL 利됱떆 泥?궛 ???꾨떖??advice'`
+- L6654 [comment] `'        # cand????λ맂 hold_advice(?ъ??섏뿉????寃????뺤씤'`
+- L6700 [comment] `'        # ?뱀씪 ?먯젅 移댁슫?????곗냽 ?먯젅 ???댄썑 吏꾩엯 size_mult ?먮룞 異뺤냼'`
+- L6708 [string/docstring] `'                log.warning(f"[?뱀씪 ?먯젅 {_sl_mkt}] {_sl_cnt}?????좉퇋 吏꾩엯 以묐떒")'`
+- L6713 [comment] `'        # ML DB: 嫄곕옒 寃곌낵 湲곕줉'`
+- L6726 [comment] `'        # ticker_selection_log: ?섏씡 寃곌낵 湲곕줉'`
+- L6743 [string/docstring] `'                log.warning(f"micro_probe outcome 湲곕줉 ?ㅽ뙣: {exc}")'`
+- L6798 [comment] `'        # ?? hold_advisor 寃곌낵 湲곕줉 ?????????????????????????????????????????????'`
+- L6803 [string/docstring] `'        泥?궛 ?꾨즺 ??hold_advisor 寃곗젙???깃났/?ㅽ뙣 ?먯젙 諛?湲곕줉.'`
+- L6804 [string/docstring] `'        - HOLD 寃곗젙: exit_price > tp_price ??異붽? ?섏씡 ?ㅽ쁽 ???깃났'`
+- L6805 [string/docstring] `'        - SELL 寃곗젙: TP 利됱떆 ?ㅽ쁽 ?먯껜 ???깃났 (湲고쉶鍮꾩슜? ?ы썑 鍮꾧탳)'`
+- L6812 [comment] `'            # US: price_cache (KRW ?섏궛媛? ?곗꽑 ?ъ슜 ??raw USD媛 ?섎せ ?ㅼ뼱?ㅻ뒗 寃쎌슦 諛⑹?'`
+- L6817 [comment] `'                    # price_cache 媛믪씠 exit_price蹂대떎 ?좊ː???믪쓬'`
+- L6820 [comment] `'                    # exit_price媛 USD raw 媛믪쑝濡??섏떖????(< $5000 ?섏?) ??KRW ?섏궛'`
+- L6823 [comment] `'                # HOLD/TRAIL ?깃났: 泥?궛媛 > TP ?꾨떖媛 (蹂댁쑀/?몃젅???뺤뿉 ??踰뚯뿀??'`
+- L6825 [comment] `'                # 異붽? ?섏씡: TP ?鍮?泥?궛媛 李⑥씠'`
+- L6827 [comment] `'            else:  # SELL (利됱떆 泥?궛)'`
+- L6828 [comment] `'                # TP ?꾨떖 ??利됱떆 泥?궛 ?먯껜???섏씡 ?ㅽ쁽'`
+- L6841 [string/docstring] `'                f"[hold_advisor 寃곌낵] {ex[\'ticker\']} {decision} ??"'`
+- L6842 [string/docstring] `'                f"{result_icon} {\'?깃났\' if success else \'?ㅽ뙣\'} "'`
+- L6846 [string/docstring] `'            log.warning(f"[hold_advisor] 寃곌낵 湲곕줉 ?ㅽ뙣: {e}")'`
+- L6851 [string/docstring] `'        """?ㅻ뒛??decisions JSONL?먯꽌 ?대떦 醫낅ぉ 誘몄셿猷??덉퐫?쒖뿉 outcome??湲곕줉"""'`
+- L6883 [string/docstring] `'            log.warning(f"[hold_advisor] JSONL outcome ?낅뜲?댄듃 ?ㅽ뙣: {e}")'`
+- L6885 [string/docstring] `'        """?ъ떆?뫢룸퉬?뺤긽醫낅즺濡?session_close 誘몄떎????actual_result 怨듬갚????postmortem ?뚭툒"""'`
+- L6901 [comment] `'            if rec.get("actual_result"):  # ?대? ?덉쑝硫??ㅽ궢'`
+- L6918 [string/docstring] `'            log.info(f"[postmortem ?뚭툒] {target_date} {market} ??session_close ?꾨씫 媛먯?, ?뚭툒 ?ㅽ뻾")'`
+- L6931 [string/docstring] `'                log.warning(f"[postmortem ?뚭툒 ?ㅽ뙣] {target_date} {market}: {e}")'`
+- L6977 [string/docstring] `'            log.warning(f"[{market}] decisions.jsonl daily_pnl 蹂듦뎄 ?ㅽ뙣: {e}")'`
+- L6981 [string/docstring] `'            log.info(f"[{market}] daily_pnl 蹂듦뎄: {restored_pnl:,.0f}??({restored_count}嫄?")'`
+- L6993 [comment] `'        # ?? ?댁옣??泥댄겕 (二쇰쭚 + 怨듯쑕?? ?????????????????????????????????????'`
+- L6995 [string/docstring] `'            _log_flow("info", f"[{market}] ?댁옣?????몄뀡 ?ㅽ궢")'`
+- L7003 [comment] `'        # US 媛쒖옣 ???ㅽ겕由щ꼫 罹먯떆 臾댄슚?????좎꽑???꾨낫濡??쒖옉'`
+- L7014 [string/docstring] `'                log.debug(f"[US] ?ㅽ겕由щ꼫 罹먯떆 臾댄슚???ㅽ뙣(臾댁떆): {_uce}")'`
+- L7027 [comment] `'        self.risk.market = market          # ?섏닔猷뚯쑉 ?쒖옣??留욊쾶 ?ㅼ젙'`
+- L7029 [comment] `'        self._index_history[market].clear()   # ?몄뀡留덈떎 吏???덉뒪?좊━ 珥덇린??        self._session_events = []          # ?몄뀡 ?대깽??珥덇린??        self._entry_blocked = {}           # ???몄뀡 ?쒖옉 ??荑⑤떎??珥덇린??        self._order_error_count = {}       # 二쇰Ц ?곗냽 ?ㅻ쪟 移댁슫??珥덇린??        self.decision_event_log =...`
+- L7030 [comment] `'        self._daily_sl_count[market] = 0   # ?뱀씪 ?먯젅 移댁슫??珥덇린??        self._session_closed_tickers[market] = set()  # 留ㅻ룄 ?꾨즺 ?곗빱 珥덇린??        self._v2_same_day_stop_tickers[market] = set()'`
+- L7058 [comment] `'        # ?쒖옣蹂?max_order_krw ?ш퀎????KR: ?먰솕?붽퀬 湲곗?, US: USD ?꾧툑 湲곗?'`
+- L7074 [string/docstring] `'            _log_risk("warning", f"[max_order 媛깆떊 ?ㅽ뙣] {market}: {_mo_e}")'`
+- L7075 [comment] `'        # ?? ?곗씠??臾닿껐???먮룞 ?먭? ??????????????????????????????????????????'`
+- L7082 [string/docstring] `'                _log_risk("warning", f"[data_integrity] 寃쎄퀬: {msg}")'`
+- L7084 [string/docstring] `'                _log_normal("info", f"[data_integrity] 珥?{len(integrity[\'fixed\'])}嫄??먮룞 ?섏젙 ?꾨즺")'`
+- L7086 [string/docstring] `'            _log_risk("warning", f"[data_integrity] ?먭? ?ㅽ뙣 (臾댁떆?섍퀬 怨꾩냽): {_di_e}")'`
+- L7087 [comment] `'        # ?? USD/KRW ?섏쑉 ?먮룞 媛깆떊 ????????????????????????????????????????????'`
+- L7095 [string/docstring] `'            _log_risk("warning", f"[?섏쑉 媛깆떊 ?ㅽ뙣] {e} ???댁쟾 媛?{self.usd_krw_rate:,.0f}???좎?")'`
+- L7096 [comment] `'        # ?댁썡 ?ъ????꾩옱媛 媛깆떊 (?댁젣 醫낃? ???ㅻ뒛 ?쒓? 諛⑺뼢?쇰줈 ?낅뜲?댄듃)'`
+- L7105 [string/docstring] `'                    log.warning(f"?댁썡 ?ъ????쒓? 議고쉶 ?ㅽ뙣 [{pos[\'ticker\']}]: {e}")'`
+- L7107 [comment] `'        # ?? session_start_equity: ?섏쑉 媛깆떊 + ?꾩옱媛 諛섏쁺 ?댄썑 湲곗??쇰줈 ?뺤젙 ??'`
+- L7108 [comment] `'        # (?댁쟾??reset_daily_state瑜?癒쇱? ?몄텧?섎㈃ 援ы솚??湲곗??쇰줈 base媛 ?≫?'`
+- L7109 [comment] `'        #  ?섏쑉 蹂?숇텇???쇱씪 ?먯떎濡??섎せ 怨꾩궛?섎뒗 踰꾧렇 ?섏젙)'`
+- L7118 [string/docstring] `'                f"[?쇱씪 湲곗? ?좎?] {market} session_date={session_date} "'`
+- L7134 [string/docstring] `'                f"[?쇱씪 湲곗? ?뺤젙] {market} session_date={session_date} "'`
+- L7154 [string/docstring] `'                log.info(f"[?댁썡 ?ъ????꾩옱媛 媛깆떊] {updated_prices}")'`
+- L7178 [string/docstring] `'                    f"[?좊땲踰꾩뒪] {market} ?꾨낫 {len(pre_candidates)} -> "'`
+- L7212 [comment] `'                        # debate ?꾨뱶 蹂듭썝 (?뚯씤?쒕떇 ?곗씠???곗냽???좎?)'`
+- L7243 [string/docstring] `'                log.warning(f"??λ맂 ?먮떒 濡쒕뱶 ?ㅽ뙣: {e}")'`
+- L7293 [comment] `'        # ?? 怨듭쑀 ?먮떒 罹먯떆 ?뺤씤 (paper/live Claude 以묐났 ?몄텧 諛⑹?) ?????????????'`
+- L7294 [comment] `'        # 媛숈? ??媛숈? ?μ뿉????履??꾨줈?몄뒪媛 ?대? ?먮떒???앹꽦?덉쑝硫?        # get_three_judgments ?ы샇異??놁씠 寃곌낵瑜??ъ궗?⑺븳??'`
+- L7295 [comment] `'        # ?ㅽ겕由щ꼫 + select_tickers ???ы듃?대━??留λ씫???щ씪 媛곸옄 ?ㅽ뻾?쒕떎.'`
+- L7309 [string/docstring] `'                    f"[怨듭쑀?먮떒罹먯떆] {today} {market} consensus={consensus[\'mode\']} "'`
+- L7310 [string/docstring] `'                    f"(Claude ?ы샇異??앸왂, {self._mode} ?고????ъ궗??"'`
+- L7315 [comment] `'            # select_tickers / watchlist_alert ???꾩옱 ?고??꾩뿉???ㅼ떆 留뚮뱺 理쒖떊 digest瑜??ъ슜?쒕떎.'`
+- L7333 [comment] `'            # ?? VIX ?숈쟻 ?ъ씠利?蹂댁젙 (US ?꾩슜, ??긽 理쒖떊 digest 湲곗?) ?????????'`
+- L7348 [string/docstring] `'                            f"[VIX={vix:.1f}] ?ъ씠利?異뺤냼 x{vix_mult} "'`
+- L7362 [comment] `'            # ?ㅻ뒛 吏묒쨷 醫낅ぉ: ?ㅽ겕由щ꼫 ???덉뒪?좊━ ?꾪꽣 ??Claude ?좏깮'`
+- L7363 [string/docstring] `'            log.info(f"[?ㅽ겕由щ꼫] {market} ?쒖옣 ?ㅼ틪 以?..")'`
+- L7378 [string/docstring] `'            log.info(f"[?ㅽ겕由щ꼫] {market} ?꾨낫 {len(candidates)}媛???Claude ?좏깮 以?..")'`
+- L7404 [comment] `'            # ?쇰꼸: selected 移댁슫??(?몄뀡 ?쒖옉 ???좏깮??醫낅ぉ ??'`
+- L7406 [string/docstring] `'            log.info(f"[醫낅ぉ?좏깮 ?뺤젙] {market}: watch={selected} trade_ready={sel_meta.get(\'trade_ready\', [])}")'`
+- L7431 [comment] `'            # _debate 硫뷀??곗씠??遺꾨━ ??today_judgment???④퍡 蹂닿?'`
+- L7445 [comment] `'                "digest_raw": digest,          # VIX ???먮낯 ?곗씠???ы뙋??寃쎈줈?먯꽌 李몄“'`
+- L7454 [comment] `'            # ?? ?좉퇋 ?앹꽦 ?먮떒??怨듭쑀 罹먯떆?????(?곷? ?꾨줈?몄뒪媛 ?ъ궗?? ??????'`
+- L7462 [comment] `'            # ?먮떒? ?ъ궗?⑺븯??醫낅ぉ? ??긽 ?덈줈 ?ㅽ겕由щ떇'`
+- L7463 [comment] `'            # (reused=True ???꾨궇 ??λ맂 醫낅ぉ??洹몃?濡?怨좎젙?섎뒗 臾몄젣 諛⑹?)'`
+- L7464 [string/docstring] `'            log.info(f"[醫낅ぉ ?ъ뒪?щ━?? {market} ?먮떒 ?ъ궗??+ 醫낅ぉ留??덈줈 ?좏깮 (mode={consensus[\'mode\']})")'`
+- L7522 [string/docstring] `'                    f"[醫낅ぉ ?ъ꽑???꾨즺] {market}: watch={fresh_selected} "'`
+- L7539 [string/docstring] `'                log.warning(f"[醫낅ぉ ?ъ뒪?щ━?? ?꾨낫 ?놁쓬 ??湲곗〈 醫낅ぉ ?좎?: {self.today_tickers.get(market, [])}")'`
+- L7540 [comment] `'        # ??쒕낫?쒓? ??以묒뿉???ㅻ뒛 ?먮떒??蹂????덈룄濡?session_open 吏곹썑 利됱떆 湲곕줉'`
+- L7542 [comment] `'        # ?μ쟾 蹂댁쑀 ?ъ???由щ럭???뱀씪 ?먮떒??以鍮꾨맂 ?ㅼ뿉留??섑뻾?쒕떎.'`
+- L7546 [string/docstring] `'            log.warning(f"[?μ쟾 ?ъ???由щ럭 ?ㅻ쪟] {market}: {_psr_e}")'`
+- L7568 [comment] `'        self._session_open_at[market] = time.time()  # startup guard 湲곗???        self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)'`
+- L7575 [comment] `'        # ?? Claude ?뚮씪誘명꽣 寃??(4th layer) ??session_open 1????????????????'`
+- L7581 [comment] `'        # ???몄뀡 ?쒖옉 ???μ쨷 H/L 珥덇린??+ continuation entry ?뚮옒洹?由ъ뀑'`
+- L7589 [comment] `'        # session_open ?꾨즺 利됱떆 ??쒕낫??媛뺤젣 媛깆떊 ??stale live_status 諛⑹?'`
+- L7592 [comment] `'    # ?? Claude ?뚮씪誘명꽣 寃???ы띁 ?????????????????????????????????????????????'`
+- L7594 [string/docstring] `'        """紐⑤뱺 ?꾨왂??adaptive_params瑜?怨꾩궛??Claude 寃???덉씠?댁뿉 ?섍릿??'`
+- L7595 [string/docstring] `'        寃곌낵??_param_tuner._cache[market]????λ릺??        run_cycle??_ap() ?ы띁?먯꽌 ?먮룞?쇰줈 李몄“?쒕떎.'`
+- L7620 [string/docstring] `'                log.debug("[param_review] %s params ?ㅻ쪟: %s", strat, _ape)'`
+- L7652 [comment] `'        # ?μ큹 OR(opening range) 異붿쟻 ??OR ?덈룄??醫낅즺 ??freeze'`
+- L7675 [string/docstring] `'        """KIS WS 泥닿껐?듬낫 ?섏떊 ??pending ??filled 利됱떆 ?꾪솚 (KR + US)"""'`
+- L7684 [comment] `'        # pending_orders?먯꽌 order_no 留ㅼ묶'`
+- L7691 [string/docstring] `'            log.debug(f"[WS 泥닿껐?듬낫] {ticker} 二쇰Ц踰덊샇={order_no} ??pending 誘몃ℓ移?(?대? 泥섎━??")'`
+- L7696 [comment] `'        # broker_pos 援ъ꽦 (WS 泥닿껐媛 湲곗?)'`
+- L7746 [comment] `'        # partial fill? 泥닿껐 ?섎웾留?position?쇰줈 留뚮뱾怨??붾웾? TTL ?숈븞 pending ?좎?'`
+- L7764 [comment] `'        # ?붾젅洹몃옩 泥닿껐 ?뺤씤 (KR: ??/ US: ?щ윭)'`
+- L7783 [string/docstring] `'            f"[WS 泥닿껐?듬낫] {ticker} {filled_qty}二?@{log_price} "'`
+- L7784 [string/docstring] `'            f"| 二쇰Ц踰덊샇={order_no} | market={market} | pending?뭚illed ?꾨즺"'`
+- L7789 [comment] `'            return _ENTRY_SCAN_OPENING_INTERVAL_MIN * 60   # 媛쒖옣: 2遺?(KR/US ?숈씪)'`
+- L7810 [string/docstring] `'            log.error(f"[housekeeping ?ㅻ쪟] {market}: {_hk_e}", exc_info=True)'`
+- L7824 [string/docstring] `'            f"[{market} ?뷀듃由??ㅼ틪] interval={int(interval_sec/60)}遺?"'`
+- L7825 [string/docstring] `'            f"(?μ큹 {_ENTRY_SCAN_OPENING_MIN}遺?{_ENTRY_SCAN_OPENING_INTERVAL_MIN}遺? ?댄썑={_regular_min}遺?"'`
+- L7830 [string/docstring] `'            log.error(f"[entry_scan ?ㅻ쪟] {market}: {_es_e}", exc_info=True)'`
+- L7844 [string/docstring] `'            log.info(f"[{market} ?뺤떆 ?ъ뒪?щ━???ㅽ궢] {e}")'`
+- L7847 [string/docstring] `'        ?쇰큺 OHLCV 罹먯떆 ??TTL ???ъ슂泥??앸왂.'`
+- L7849 [string/docstring] `'          1. 硫붾え由?罹먯떆(TTL) ???덉쑝硫?利됱떆 諛섑솚'`
+- L7850 [string/docstring] `'          2. price CSV ?덉쑝硫?濡쒕뱶 (?섏쭛湲곌? 誘몃━ ??ν븳 寃?'`
+- L7851 [string/docstring] `'          3. ?놁쑝硫?get_daily_ohlcv() on-demand 議고쉶 ??CSV ?곸냽 ???        """'`
+- L7858 [comment] `'        # CSV ?뚯씪 寃쎈줈'`
+- L7866 [comment] `'                # CSV媛 ?덈Т ?ㅻ옒?먭굅?????섍? 遺議깊븯硫?on-demand fetch濡?蹂댁셿'`
+- L7879 [string/docstring] `'                    log.debug(f"[OHLCV] {ticker} CSV {len(df)}??遺議???on-demand 蹂댁셿")'`
+- L7882 [comment] `'        # on-demand 議고쉶'`
+- L7886 [comment] `'            # CSV ?곸냽 ???(?ㅼ쓬 ?ㅽ뻾遺???뚯씪?먯꽌 ?쎌쓬)'`
+- L7896 [string/docstring] `'                log.debug(f"[OHLCV CSV ????ㅽ뙣] {ticker}: {_e}")'`
+- L7939 [string/docstring] `'                f"[{market}] startup guard ??session_open ??{_since_open:.0f}s 寃쎄낵 "'`
+- L7940 [string/docstring] `'                f"(理쒖냼 {_guard_sec:.0f}s ?湲?以? ??cycle ?ㅽ궢"'`
+- L7944 [comment] `'        # ?? ?μ쟾 SELL ?덉빟 ??泥섎━ (startup guard ?댁젣 吏곹썑 1?? ?????????????'`
+- L7948 [string/docstring] `'                _log_risk("warning", f"[?μ쟾 SELL ?? {market} 釉뚮줈而??숆린??遺덉떊 ?곹깭 ???덉빟 留ㅻ룄 ?꾨? 蹂대쪟")'`
+- L7951 [string/docstring] `'                _log_flow("info", f"[?μ쟾 SELL ?? {market} {len(sell_queue)}嫄?留ㅻ룄 ?ㅽ뻾")'`
+- L7956 [comment] `'                        # ???앹꽦 ?쒖젏??current_price??援ы솚??湲곗??????덉쑝誘濡?                        # ?ㅼ젣 ?ㅽ뻾 ?쒖젏??price_cache(理쒖떊 ?섏쑉 諛섏쁺) ?곗꽑 ?ъ슜'`
+- L7966 [string/docstring] `'                        log.error(f"[?μ쟾 SELL ?ㅽ뙣] {_sq_tk}: {_sqe}")'`
+- L7981 [string/docstring] `'            """醫낅ぉ蹂?ML row 怨듯넻 ?꾨뱶 議곕┰"""'`
+- L8060 [string/docstring] `'            f"[{market} ?ъ씠??{now_str}] 紐⑤뱶:{mode} size:{size_pct}% | "'`
+- L8063 [comment] `'        # 遺꾩꽍媛 ?됯퇏 confidence 怨꾩궛 ???좊ː????쑝硫??좉퇋 吏꾩엯 李⑤떒'`
+- L8072 [string/docstring] `'            log.info(f"[{market}] ??? 遺꾩꽍媛 confidence ({_avg_conf:.2f} < {_MIN_ENTRY_CONF}) ???좉퇋 吏꾩엯 ???ъ씠???ㅽ궢")'`
+- L8074 [comment] `'        # US ?꾩슜: VIX 30遺꾨쭏???μ쨷 媛깆떊 (寃쎄퀎 吏꾨룞 諛⑹? ?꾪빐 VIX留?媛깆떊)'`
+- L8086 [string/docstring] `'                        log.info(f"[VIX 媛깆떊] {_vix_prev:.1f} ??{_vix_live:.1f}")'`
+- L8088 [string/docstring] `'                    log.debug(f"[VIX 媛깆떊 ?ㅽ뙣] {_ve}")'`
+- L8089 [comment] `'        self._ca_context_last = _ca_context   # param_tuner媛 李몄“'`
+- L8092 [string/docstring] `'            log.debug(f"[{market}] cross-asset 蹂댁젙 ?곸슜 | {_fear_label} | "'`
+- L8095 [comment] `'        # KR ?꾨왂 ?곗꽑?쒖쐞: 遺꾩꽍媛 ?ㅼ닔寃??꾨왂??留??욎쑝濡??щ┛ ??湲곕낯 ?쒖꽌 ?좎?.'`
+- L8096 [comment] `'        # continuation? 媛쒖옣 珥덈컲 ?덉쇅 ?좏샇??湲곕낯 ?쒖꽌???ｌ? ?딄퀬 蹂꾨룄 議곌굔?쇰줈留??덉슜?쒕떎.'`
+- L8111 [comment] `'        # US ?꾨왂 ?곗꽑?쒖쐞: 遺꾩꽍媛 ?ы몴 ?꾨왂 ??mean_reversion ??gap_pullback'`
+- L8112 [comment] `'        # momentum/VB 紐⑤몢 disabled?대?濡?base??mean_reversion, gap_pullback 怨좎젙'`
+- L8124 [comment] `'        _pending_signals: list[dict] = []   # ?ъ씠?????좏샇 ?섏쭛 ???뺣젹 ???ㅽ뻾'`
+- L8127 [comment] `'                # ?몄뀡 ??二쇰Ц 李⑤떒 醫낅ぉ ?ㅽ궢 (KR/US 怨듯넻 ??留ㅻℓ遺덇?/3?뚯뿰??500?ㅻ쪟)'`
+- L8141 [string/docstring] `'                    log.info(f"[二쇰Ц李⑤떒 {market}] {ticker} ??{_order_blk}")'`
+- L8173 [string/docstring] `'                            f"??醫낅ぉ 援먯껜"'`
+- L8186 [string/docstring] `'                            log.info(f"[醫낅ぉ 援먯껜] {market} {ticker} ??{replacement}")'`
+- L8192 [string/docstring] `'                            log.warning(f"[醫낅ぉ 援먯껜 ?ㅽ뙣] {market} {ticker} ???泥??꾨낫 ?놁쓬")'`
+- L8209 [comment] `'                # ?댁쟾 ?뺤긽媛 ?鍮?30% 珥덇낵 愿대━ ??KIS API outlier 諛⑹뼱'`
+- L8212 [comment] `'                    # KR: 1???ъ“???쒕룄 ??API ?몄씠利?vs ?ㅼ젣 湲됰벑 援щ텇'`
+- L8218 [comment] `'                                # ?ъ“??寃곌낵媛 ?뺤긽 ??泥?議고쉶媛 ?ㅻ쪟??? ?뺤긽 媛寃??ъ슜'`
+- L8221 [string/docstring] `'                                    f"first={price:,} retry={_retry_px:,} ???뺤긽媛 ?ъ슜"'`
+- L8229 [comment] `'                                # outlier ?꾨떂?쇰줈 泥섎━ ???꾨옒 skip 釉붾줉 嫄대꼫?'`
+- L8230 [comment] `'                                # (continue瑜?_outer if ?덉뿉???몄텧?????놁쑝誘濡??뚮옒洹??ъ슜)'`
+- L8235 [string/docstring] `'                                    f"retry={_retry_px:,} ??愿대━ ???댁긽移??뺤젙"'`
+- L8250 [string/docstring] `'                            f"愿대━ {abs(price-_prev_price)/_prev_price*100:.1f}% ???ㅽ궢 ({cnt}/{_MAX_OUTLIER}??"'`
+- L8264 [string/docstring] `'                                log.info(f"[醫낅ぉ 援먯껜] {market} {ticker} ??{_replacement} (outlier {cnt}??")'`
+- L8270 [string/docstring] `'                                log.warning(f"[醫낅ぉ 援먯껜 ?ㅽ뙣] {market} {ticker} ???泥??꾨낫 ?놁쓬")'`
+- L8286 [comment] `'                self._invalid_price_count.pop(ticker, None)  # ?뺤긽 媛寃??섏떊 ??移댁슫??由ъ뀑'`
+- L8290 [comment] `'                # US??VTS?먯꽌 WS ?쒖꽭 誘몄궗??/ ?ㅼ쟾?먯꽌??WS ?깆쑝濡?price_cache ?낅뜲?댄듃??                # ??寃쎌슦 紐⑤몢 scan ??polling 媛寃⑹쑝濡?OR 洹쇱궗 ?꾩쟻 (?ㅼ쟾 WS ?깆? _on_tick?먯꽌 蹂꾨룄 ?꾩쟻)'`
+- L8318 [string/docstring] `'                    log.debug(f"  [{ticker}] HALT 紐⑤뱶 ???좉퇋吏꾩엯 ?ㅽ궢")'`
+- L8357 [string/docstring] `'                            f"  [{ticker}] WATCH_ONLY({ _watch_bucket }) ??trade_ready ?꾨떂 ???좉퇋吏꾩엯 ?ㅽ궢"'`
+- L8360 [comment] `'                # ?몃쾭??ETF???쎌꽭(MILD_BEAR ?댄븯) 紐⑤뱶?먯꽌留?留ㅼ닔 ?덉슜'`
+- L8364 [string/docstring] `'                    log.debug(f"  [{ticker}] ?몃쾭??ETF ???쎌꽭 紐⑤뱶 ?꾨떂({mode}) ???ㅽ궢")'`
+- L8368 [string/docstring] `'                    log.debug(f"  [{ticker}] 釉붾옓?꾩썐 ?쒓컙 ???ㅽ궢")'`
+- L8374 [string/docstring] `'                    log.debug(f"  [{ticker}] 吏꾩엯 李⑤떒 以?(荑⑤떎??")'`
+- L8402 [string/docstring] `'                    log.debug(f"  [{ticker}] ?뱀씪 ?숈씪 醫낅ぉ 泥닿껐 ?대젰 ?덉쓬 ???ъ쭊???ㅽ궢")'`
+- L8411 [string/docstring] `'                    log.debug(f"  [{ticker}] confidence 遺議?({_avg_conf:.2f} < {_MIN_ENTRY_CONF}) ???좉퇋 吏꾩엯 ?ㅽ궢")'`
+- L8438 [string/docstring] `'                    log.debug(f"  [{ticker}] 釉뚮줈而??고???蹂댁쑀以????ъ쭊???ㅽ궢")'`
+- L8470 [string/docstring] `'                    log.debug(f"  [{ticker}] 吏꾩엯遺덇?: {reason}")'`
+- L8497 [string/docstring] `'                    log.debug(f"  [{ticker}] 誘몄껜寃?二쇰Ц 議댁옱 ???ъ＜臾??ㅽ궢")'`
+- L8499 [comment] `'                # ?쒖옣蹂??덉궛 珥덇낵 ?뺤씤'`
+- L8519 [string/docstring] `'                    log.debug(f"  [{ticker}] ?덉궛 ?뚯쭊 (?붿뿬 {avail:,.0f}??< {risk_price:,.0f}?? ???ㅽ궢")'`
+- L8523 [string/docstring] `'                    log.debug(f"  [{ticker}] 罹붾뱾 ?놁쓬")'`
+- L8525 [comment] `'                # ?? ?μ쨷 ?꾩떆 ?뱀씪遊?二쇱엯 (KR/US 怨듯넻) ???????????????????'`
+- L8526 [comment] `'                # CSV 留덉?留??됱? ?댁젣 醫낃? 湲곗?. ?μ쨷?먮뒗 ?ㅻ뒛 price_info(open/'`
+- L8527 [comment] `'                # high/low/close/volume)瑜??꾩떆 罹붾뱾濡?異붽???吏?쒕? ?뱀씪 湲곗??쇰줈'`
+- L8528 [comment] `'                # ?ш퀎?? ??留덇컧 ??price_collector媛 ?ㅼ젣 ?쇰큺??CSV????ν븯硫?                # ?ㅼ쓬 TTL 媛깆떊 ???먮룞?쇰줈 ?ㅼ젣 遊됱쑝濡??泥대맖.'`
+- L8529 [comment] `'                # US??KST ?먯젙???섏뼱??ET 湲곗? ?좎쭨瑜??ъ슜???щ컮瑜?嫄곕옒??諛섏쁺.'`
+- L8530 [comment] `'                _vol_missing = False   # today-bar 二쇱엯 ??珥덇린????二쇱엯 釉붾줉 ?덉뿉??True濡???뼱?'`
+- L8539 [comment] `'                    # CSV???ㅻ뒛 ?좎쭨媛 ?덉뼱??OHLC ?꾨? ?숈씪(pre-open 遺덉셿???곗씠???대㈃'`
+- L8548 [comment] `'                            # ?ㅻ뒛 遊됱씠 ?대? CSV???덉쓬(price_collector ?좉린濡? ??live vol ?꾨씫 ?щ???蹂꾨룄 ?뺤씤'`
+- L8558 [comment] `'                        # WS tick ?꾩쟻 怨좉?/?媛濡?蹂댁젙 ??KIS API媛 intraday H/L 誘몄젣怨????덉텧'`
+- L8570 [string/docstring] `'                            log.debug(f"[?뱀씪遊?二쇱엯 ?ㅽ궢 {market}] {ticker} ?⑥씪媛遊?媛?뾾?????쒖쇅")'`
+- L8574 [string/docstring] `'                                    f"[?뱀씪遊?媛?＜??{market}] {ticker} ?⑥씪媛遊됱씠??媛??덉쓬"'`
+- L8583 [comment] `'                                # 理쒓렐 20??hist vol ?됯퇏?쇰줈 異붿젙 (?몄뀡 吏꾪뻾瑜?諛섏쁺)'`
+- L8587 [comment] `'                                # ?몄뀡 吏꾪뻾瑜?횞 hist_avg ???꾩옱源뚯? ?볦???嫄곕옒??異붿젙 (?섑븳 20%)'`
+- L8610 [string/docstring] `'                                f"[?뱀씪遊?二쇱엯 {market}] {ticker} "'`
+- L8616 [string/docstring] `'                    log.warning(f"  [{ticker}] ?좏샇怨꾩궛 遺덇? ???좏슚??{len(sig_df)}媛?(理쒖냼 {self._MIN_SIGNAL_ROWS})")'`
+- L8629 [string/docstring] `'                    """adaptive_params + cross-asset + Claude 寃???듯빀 ?ы띁."""'`
+- L8630 [comment] `'                    # param_tuner 罹먯떆 ?곗꽑 (罹먯떆 ?놁쑝硫?adaptive_params 湲곕낯)'`
+- L8637 [comment] `'                    # ?μ큹諛?opening window ?먮떒????gap_pullback.signal()???ъ슜'`
+- L8658 [string/docstring] `'                        return f"OR?뚮┝: ?꾨왂 鍮꾪솢??{market} {mode})"'`
+- L8667 [string/docstring] `'                            return f"OR?뚮┝: OR ?뺤꽦以?{int(_elapsed)}遺?{int(_or_minutes)}遺?"'`
+- L8670 [string/docstring] `'                        return f"OR?뚮┝: 吏꾩엯李?醫낅즺({int(_elapsed)}遺?"'`
+- L8686 [string/docstring] `'                        return f"媛?닃由? ?꾨왂 鍮꾪솢??{market} {mode})"'`
+- L8721 [string/docstring] `'                        return f"?됯퇏?뚭?: ?꾨왂 鍮꾪솢??{market} {mode})"'`
+- L8738 [string/docstring] `'                        return f"蹂?숈꽦?뚰뙆: ?꾨왂 鍮꾪솢??{market} {mode})"'`
+- L8752 [string/docstring] `'                    none_detail 臾몄옄?댁뿉??rejection_reason / volume_state 遺꾨쪟.'`
+- L8759 [string/docstring] `'                      1. or_forming        ??OR ?꾩쭅 ?뺤꽦 以?(?쒓컙 臾몄젣, ?湲??꾩슂)'`
+- L8760 [string/docstring] `'                      2. momentum_wait     ??momentum ?쒓컙 寃뚯씠??誘명넻怨?(?뺤긽 ?湲?'`
+- L8762 [string/docstring] `'                      4. gap_insufficient  ??媛?議곌굔 誘몄땐議?                      5. volume_low        ??嫄곕옒??遺議?                      6. pullback_missing  ???뚮┝ 議곌굔 誘몄땐議?                      7. highpoint_missing ???좉퀬媛/異붿꽭 遺議?                      8. strategy_disabled ??VB ???꾨왂 鍮꾪솢??(理쒗븯??????긽 ?...`
+- L8763 [string/docstring] `'                      9. signal_not_met    ??湲고? 誘몄땐議?                    """'`
+- L8767 [comment] `'                    # 1. OR ?뺤꽦以????꾩쭅 OR 誘몄셿??(?쒓컙 寃뚯씠?? 媛??紐낇솗???먯씤)'`
+- L8773 [comment] `'                    # 3. vol ?곗씠???꾨씫 (?몃? 二쇱엯 ?뚮옒洹??곗꽑)'`
+- L8777 [comment] `'                    # 嫄곕옒??遺꾩꽍 ??媛?닃由?OR?뚮┝/蹂??怨듯넻 ?⑦꽩 + ?곗냽吏꾩엯 ?꾩슜 ?⑦꽩 紐⑤몢 ?ㅼ틪'`
+- L8778 [comment] `'                    # ?꾨왂 ?섎굹?쇰룄 vol=?쀬씠硫?volume_low, ?꾨왂 vol=0/1?대㈃ data_missing'`
+- L8779 [comment] `'                    _vol_fail = False   # ?대뒓 ?꾨왂?대뱺 vol 誘몃떖'`
+- L8780 [comment] `'                    _vol_found = False  # ?대뒓 ?꾨왂?대뱺 vol ?⑦꽩 諛쒓껄'`
+- L8781 [comment] `'                    # ?쒖? ?뺤떇: vol=ratio(紐⑺몴>X)???? (媛?닃由?OR?뚮┝/蹂??'`
+- L8783 [string/docstring] `'                        r"媛?닃由?^|]*?vol=([0-9.]+)\\(紐⑺몴>[0-9.]+\\)(????",'`
+- L8784 [string/docstring] `'                        r"OR?뚮┝[^|]*?vol=([0-9.]+)\\(紐⑺몴>[0-9.]+\\)(????",'`
+- L8785 [string/docstring] `'                        r"蹂??^|]*?vol=([0-9.]+)\\(紐⑺몴>[0-9.]+\\)(????",'`
+- L8797 [comment] `'                            break  # data_missing???뺤젙?섎㈃ ??蹂??꾩슂 ?놁쓬'`
+- L8800 [comment] `'                    # ?곗냽吏꾩엯 ?꾩슜 ?뺤떇: vol=????ratio)'`
+- L8801 [string/docstring] `'                    _cvm = _re.search(r"?곗냽吏꾩엯[^|]*?vol=(????\\(([0-9.]+)\\)", detail)'`
+- L8830 [comment] `'                    # 8. ?꾨왂 鍮꾪솢??(VB ????理쒗븯?? ??긽 none_detail???ы븿?????덉쓬)'`
+- L8961 [comment] `'                    # US: 遺꾩꽍媛 ?ы몴 ?꾨왂 ?곗꽑, volatility_breakout ?대갚'`
+- L9018 [comment] `'                # ?쒖꽦??異붿쟻 ???쒖옣蹂??몃씪??援먯껜 湲곗??쇰줈 ?쒖슜'`
+- L9064 [comment] `'                                # 援먯껜 醫낅ぉ 60遺?荑⑤떎???깅줉'`
+- L9074 [string/docstring] `'                                log.info(f"[?몃씪?멸탳泥?{market}] {ticker}({_swap_label}) ??{_new}")'`
+- L9114 [comment] `'                        # KR momentum ?쒓컙 寃뚯씠????泥?踰덉㎏ 釉붾줉怨??숈씪?섍쾶 ??뼱?뚯?'`
+- L9176 [comment] `'                    # ?μ큹諛??꾨낫 濡쒓퉭 ???좏샇 ?놁쓬?댁?留?opening window ??媛?3%+ 醫낅ぉ 異붿쟻'`
+- L9239 [comment] `'                    # ML DB: NO_SIGNAL 湲곕줉 (?꾨왂蹂?near-miss ?ы븿)'`
+- L9282 [comment] `'                # HALT/DEFENSIVE: ??留덉폆 吏꾩엯 李⑤떒'`
+- L9283 [comment] `'                # CAUTIOUS_BEAR ?댄븯: US ?좉퇋 吏꾩엯 李⑤떒 (VIX 湲됰벑 援ш컙 ?ㅼ쬆 ?먯떎 諛⑹?)'`
+- L9322 [string/docstring] `'                    log.debug(f"  [{ticker}] {strategy_name} ?좏샇 ??{mode} 紐⑤뱶 吏꾩엯 ?듭젣")'`
+- L9323 [comment] `'                    # ML DB: BLOCKED 湲곕줉'`
+- L9336 [comment] `'                # ?μ쨷 怨좎젏洹쇱젒 吏꾩엯 李⑤떒 ???뱀씪 怨좎젏 ?鍮?-2% ?대궡 ?좉퇋 吏꾩엯 蹂대쪟'`
+- L9337 [comment] `'                # ?μ큹諛?30遺? ?쒖쇅, KR/US 怨듯넻 ?곸슜'`
+- L9349 [string/docstring] `'                                f"  [{ticker}] 怨좎젏洹쇱젒 李⑤떒: ?꾩옱媛={float(price):,.0f} "'`
+- L9350 [string/docstring] `'                                f"?뱀씪怨좎젏={_day_high:,.0f} "'`
+- L9351 [string/docstring] `'                                f"from_high={_from_high_pct:.2f}% > {_FROM_HIGH_BLOCK}% ??吏꾩엯 蹂대쪟"'`
+- L9354 [comment] `'                # 留덇컧 吏곸쟾 ?좉퇋 吏꾩엯 李⑤떒 ???뱀씪 泥?궛 遺덇? 諛⑹?'`
+- L9359 [string/docstring] `'                    log.info(f"[留덇컧 吏곸쟾 李⑤떒 {market}] {ticker} ??吏꾩엯 ?쒗븳 ?쒓컙 珥덇낵 "'`
+- L9360 [string/docstring] `'                             f"({_since_open_min:.0f}遺?>= {_cutoff}遺?")'`
+- L9362 [comment] `'                # ?? 吏꾩엯 ?곗꽑?쒖쐞 ?먯닔 (Phase 1: 濡쒓렇/ML 湲곕줉, hard cutoff ?놁쓬) ????'`
+- L9396 [comment] `'                # ?? entry_priority cutoff (Phase 2 ??env/?붾젅洹몃옩 ON/OFF) ????'`
+- L9401 [string/docstring] `'                        f"score={_ep_score:.3f} < {_effective_entry_cutoff:.3f} ??吏꾩엯 蹂대쪟"'`
+- L9412 [comment] `'                # ?? ATR 湲곕컲 ?숈쟻 TP/SL ???????????????????????????????????????'`
+- L9413 [comment] `'                # ATR???덉쑝硫?蹂?숈꽦??鍮꾨????먯젅/紐⑺몴媛 ?ъ슜 (Risk:Reward 2:1)'`
+- L9414 [comment] `'                # ATR ?녾굅??怨꾩궛 遺덇?硫??꾨왂 ?뚮씪誘명꽣 ?대갚'`
+- L9420 [comment] `'                    # mean_reversion: BB 以묒꽑?????먯뿰?ㅻ윭??紐⑺몴 ??BB媛 ATR蹂대떎 媛源뚯슦硫?BB ?곗꽑'`
+- L9444 [comment] `'                # KR momentum: 湲곕낯 cap 珥덇낵 援ш컙? ?④퀎??媛먯븸?쇰줈 諛쏄퀬,'`
+- L9445 [comment] `'                # high cap 珥덇낵 援ш컙留?李⑤떒?쒕떎.'`
+- L9459 [string/docstring] `'                            f"  [{ticker}] KR momentum ATR 媛먯븸: "'`
+- L9469 [string/docstring] `'                            f"  [{ticker}] KR momentum ATR 李⑤떒: "'`
+- L9499 [comment] `'                # ?꾨왂蹂?size_mult ?곸슜 (?? momentum 0.4~1.0 ???⑹쓽 size_pct ?ㅼ??쇰쭅)'`
+- L9501 [comment] `'                # ?? 1. entry_priority score ??size_mult 蹂댁젙 ????????????????'`
+- L9502 [comment] `'                # ?좏샇 ?덉쭏????쓣?섎줉 ?ъ???異뺤냼 (phase 1 ?곗씠???놁뼱??利됱떆 ?곸슜)'`
+- L9515 [comment] `'                # ?? 2. ?뱀씪 ?먯젅 移댁슫????size_mult ?먮룞 異뺤냼 ???????????????'`
+- L9519 [string/docstring] `'                        f"  [{ticker}] ?뱀씪 ?먯젅 {_sl_cnt_now}?????좉퇋 吏꾩엯 李⑤떒"'`
+- L9528 [comment] `'                # ?? 3. ???꾨컲 吏꾩엯 湲곗? 媛뺥솕 ????????????????????????????????'`
+- L9529 [comment] `'                # KR 14:00 ?댄썑 / US 03:00 ?댄썑: score < 0.6?대㈃ 吏꾩엯 蹂대쪟'`
+- L9530 [comment] `'                # ?몃쾭??ETF ?쒖쇅 ?????꾨컲 ?섎씫 吏????吏꾩엯 湲고쉶媛 ?ㅽ엳????醫뗭쓬'`
+- L9538 [string/docstring] `'                            f"  [{ticker}] ???꾨컲({_since_open_late:.0f}遺? "'`
+- L9539 [string/docstring] `'                            f"score={_ep_score:.3f} < {_LATE_SCORE_MIN} ??吏꾩엯 蹂대쪟"'`
+- L9555 [comment] `'                # ?? ?좏샇 ?섏쭛 ???ъ씠???꾨즺 ??score ?뺣젹 ??二쇰Ц ?ㅽ뻾 ????????'`
+- L9603 [comment] `'        # ?? ?섏쭛???좏샇 ?뺣젹 ??二쇰Ц ?ㅽ뻾 ????????????????????????????????????'`
+- L10127 [string/docstring] `'                        log.debug(f"  [{_s_tk}] ?쒖옣 ?덉궛 珥덇낵 ({order_cost:,.0f}??> {avail:,.0f}?? ???ㅽ궢")'`
+- L10150 [string/docstring] `'                        log.debug(f"  [{_s_tk}] ?꾧툑 遺議?({order_cost:,.0f}??> {self.risk.cash:,.0f}?? ???ㅽ궢")'`
+- L10207 [string/docstring] `'                        log.info(f"[二쇰Ц ?ъ쟾泥댄겕 ?ㅽ뙣] {_s_tk} ??{precheck.get(\'msg\',\'二쇰Ц 遺덇?\')}")'`
+- L10242 [comment] `'                        # ?곗냽 ?ㅻ쪟 移댁슫??利앷? ??3???댁긽?대㈃ ?뱀씪 李⑤떒'`
+- L10246 [string/docstring] `'                            _blk_reason = f"?곗냽?ㅻ쪟 {_err_cnt}?? {e}"'`
+- L10248 [string/docstring] `'                            log.warning(f"[二쇰Ц?ㅻ쪟李⑤떒 {market}] {_s_tk} {_err_cnt}???곗냽 ???뱀씪 李⑤떒: {e}")'`
+- L10250 [string/docstring] `'                            _reason = f"VTS 二쇰Ц?ㅽ뙣: {e}"'`
+- L10275 [string/docstring] `'                        _reason = result.get("msg", "") or "二쇰Ц嫄곗젅"'`
+- L10276 [comment] `'                        # 留ㅻℓ遺덇? 醫낅ぉ ???몄뀡 ???ъ떆??李⑤떒 (KR/US 怨듯넻)'`
+- L10277 [string/docstring] `'                        if "留ㅻℓ遺덇?" in _reason or "二쇰Ц泥섎━媛 ?덈릺?덉뒿?덈떎" in _reason:'`
+- L10279 [string/docstring] `'                            log.warning(f"[留ㅻℓ遺덇?] {_s_tk} ?몄뀡 ??吏꾩엯 李⑤떒: {_reason}")'`
+- L10299 [comment] `'                    # 二쇰Ц ?깃났 ???곗냽 ?ㅻ쪟 移댁슫??珥덇린??                    self._order_error_count.pop(_s_tk, None)'`
+- L10311 [string/docstring] `'                        f"二쇰Ц踰덊샇={result.get(\'order_no\',\'\')} | score={_s_ep:.3f}"'`
+- L10318 [string/docstring] `'                        reason=f"{_s_strat} 吏꾩엯",'`
+- L10417 [string/docstring] `'                        detail="泥닿껐 ?뺤씤 ??蹂댁쑀 ?ъ??섏뿉 諛섏쁺?⑸땲??",'`
+- L10424 [comment] `'        # Core 5 猷⑦봽 ?꾨즺 ?? ?뱁꽣 ETF 媛뺤꽭 ?좏샇媛 ?덉쑝硫?異붽? 吏꾩엯 ?쒕룄'`
+- L10449 [comment] `'                        # ?대? ?ъ???蹂댁쑀 以묒씠硫??ㅽ궢'`
+- L10451 [string/docstring] `'                            log.debug(f"  [Tier2] {_t2_ticker} ?대? ?ъ???蹂댁쑀 ???ㅽ궢")'`
+- L10453 [comment] `'                        # 吏꾩엯 荑⑤떎??泥댄겕'`
+- L10455 [string/docstring] `'                            log.debug(f"  [Tier2] {_t2_ticker} 吏꾩엯 荑⑤떎?????ㅽ궢")'`
+- L10457 [comment] `'                        # US 二쇰Ц 李⑤떒 泥댄겕'`
+- L10460 [string/docstring] `'                            log.debug(f"  [Tier2] {_t2_ticker} 二쇰Ц李⑤떒: {_t2_blocked}")'`
+- L10470 [comment] `'                        # 50% ?ъ씠利??곸슜'`
+- L10472 [comment] `'                        _t2_sl, _t2_tp = 0.025, 0.05  # Tier2 怨좎젙 SL 2.5% / TP 5%'`
+- L10550 [string/docstring] `'                            log.debug(f"  [Tier2] {_t2_ticker} ?꾧툑 遺議?({_t2_cost:,.0f}??")'`
+- L10571 [string/docstring] `'                            log.info(f"  [Tier2] {_t2_ticker} precheck ?ㅽ뙣: {_t2_pre.get(\'msg\')}")'`
+- L10577 [string/docstring] `'                            log.error(f"  [Tier2] {_t2_ticker} 二쇰Ц?ㅽ뙣: {_t2_result.get(\'msg\')}")'`
+- L10580 [string/docstring] `'                            f"[Tier2 BUY] {_t2_ticker} {_t2_qty}二?@{_t2_price} "'`
+- L10616 [string/docstring] `'                            detail=f"{_play[\'etf\']} {_play[\'etf_chg\']:+.2f}% ?뱁꽣媛뺤꽭 | conf={_play[\'confidence\']:.2f} | {_play[\'reason\']}",'`
+- L10621 [string/docstring] `'                        log.error(f"[Tier2] {_t2_ticker} ?ㅻ쪟: {_t2_e}")'`
+- L10625 [string/docstring] `'                log.error(f"[Tier2 ?뱁꽣?뚮젅?? 猷⑦봽 ?ㅻ쪟: {_t2_loop_e}")'`
+- L10652 [string/docstring] `'                            log.debug(f"  [KR Tier2] {_t2_ticker} ?대? ?ъ???蹂댁쑀 ???ㅽ궢")'`
+- L10655 [string/docstring] `'                            log.debug(f"  [KR Tier2] {_t2_ticker} 吏꾩엯 荑⑤떎?????ㅽ궢")'`
+- L10748 [string/docstring] `'                            log.error(f"  [KR Tier2] {_t2_ticker} 二쇰Ц?ㅽ뙣: {_t2_result.get(\'msg\')}")'`
+- L10751 [string/docstring] `'                            f"[KR Tier2 BUY] {_t2_ticker} {_t2_qty}二?@{_t2_risk_price:,}??"'`
+- L10786 [string/docstring] `'                            detail=f"{_play[\'etf\']} {_play[\'etf_chg\']:+.2f}% ?뱁꽣媛뺤꽭 | conf={_play[\'confidence\']:.2f} | {_play[\'reason\']}",'`
+- L10791 [string/docstring] `'                        log.error(f"[KR Tier2] {_t2_ticker} ?ㅻ쪟: {_t2_e}")'`
+- L10795 [string/docstring] `'                log.error(f"[KR Tier2 ?뱁꽣?뚮젅?? 猷⑦봽 ?ㅻ쪟: {_t2_loop_e}")'`
+- L10798 [string/docstring] `'            f"[{market} ?ъ씠???꾨즺] ?ъ???{len(self.risk.positions)}媛?| "'`
+- L10802 [comment] `'        self._maybe_push_dashboard()  # ?ъ???P&L 蹂???덉쑝硫??붾젅洹몃옩 ?꾩넚'`
+- L10815 [comment] `'        # 吏??蹂?숇쪧 ?덉뒪?좊━ 湲곕줉 (30遺?湲곗슱湲?怨꾩궛??'`
+- L10819 [comment] `'        # 吏곸쟾 ?쒕떇 ?鍮?湲곗슱湲? ?꾩옱 - 30遺???(踰꾪띁 2媛??댁긽 ?덉쓣 ?뚮쭔)'`
+- L10831 [comment] `'            "index_slope_30m": _slope_30m,   # None = 泥??쒕떇 (?댁쟾 湲곗?媛??놁쓬)'`
+- L10872 [comment] `'            # 紐⑤뱶 蹂寃???醫낅ぉ ?ъ꽑??(?? REVERSE??_reinvoke?먯꽌 泥섎━)'`
+- L10906 [string/docstring] `'                            f"[?쒕꼫 醫낅ぉ媛깆떊 ?꾨즺] {market}: watch={tune_tickers} "'`
+- L10914 [string/docstring] `'                    log.warning(f"[?쒕꼫 醫낅ぉ媛깆떊 ?ㅽ뙣] {te}")'`
+- L10917 [comment] `'                adj_clamped = max(-0.10, min(0.10, float(sl_adj)))  # 짹10% ?대궡濡??쒗븳'`
+- L10921 [comment] `'            # REVERSE: Claude媛 ?μ꽭 諛섏쟾 ?먮떒 ??蹂댁쑀 ?ъ???泥?궛'`
+- L10922 [comment] `'            # broker_sync ?꾨왂? hold_advisor媛 媛쒕퀎 ?먮떒?섎?濡?REVERSE ??곸뿉???쒖쇅'`
+- L10927 [string/docstring] `'                    log.info(f"[REVERSE] broker_sync ?ъ????쒖쇅 (hold_advisor 愿??: {skipped}")'`
+- L10928 [string/docstring] `'                log.warning(f"[REVERSE] ?쒕꼫 ?먮떒: {result.get(\'reason\',\'\')} ??{len(reverse_targets)}媛??ъ???泥?궛")'`
+- L10942 [comment] `'        # 紐⑤뱶媛 諛붾?寃쎌슦留?tuning_report ?꾩넚, ?좎?硫??ㅽ궢'`
+- L10949 [string/docstring] `'                    f"[?쒕떇 {elapsed}遺? Claude 怨쇰??섎줈 ?쒕떇 ?앸왂 ??湲곗〈 紐⑤뱶 ?좎?"'`
+- L10953 [string/docstring] `'                log.info(f"[?쒕떇 {elapsed}遺? MAINTAIN ???붾젅洹몃옩 ?ㅽ궢")'`
+- L10954 [comment] `'        # ?몄뀡 ?대깽??湲곕줉 (?뚯씤?쒕떇 ?곗씠????MAINTAIN ?ы븿 ?꾩껜 湲곕줉)'`
+- L10969 [comment] `'        # ?? 湲닿툒 ?ы뙋??議곌굔 泥댄겕 ??????????????????????????????????????????????'`
+- L10973 [comment] `'        # ?? 120遺꾨쭏??遺遺??ъ꽑??(湲닿툒?ы뙋?④낵 ?낅┰, 紐⑤뱶 ?좎? ?쒕룄 ?ы븿) ??'`
+- L10978 [string/docstring] `'                log.warning(f"[遺遺꾧탳泥??ㅻ쪟] {market}: {_pre}")'`
+- L10980 [comment] `'    # ?? 湲닿툒 ?ы뙋?????????????????????????????????????????????????????????????'`
+- L10981 [comment] `'    # 遺꾩꽍媛 ?ы닾??議곌굔 (?섎굹?쇰룄 ?대떦?섎㈃ True)'`
+- L10982 [comment] `'    _REINVOKE_INDEX_THRESHOLD = -2.0   # 吏??-2% ?댁긽 湲됰씫'`
+- L10983 [comment] `'    _REINVOKE_COOLDOWN_CYCLES = 2      # 理쒖냼 2?ъ씠??60遺? 媛꾧꺽'`
+- L10984 [comment] `'    _REINVOKE_SAME_MODE_EXTRA = 2      # 媛숈? 紐⑤뱶 ?좎? ???щ컻????異붽? ?湲??ъ씠??'`
+- L10985 [comment] `'    # ?? ?덉뒪?좊━ 蹂닿컯 ?????????????????????????????????????????????????????????'`
+- L10991 [string/docstring] `'        session_open 吏곸쟾 吏㏃? ?숆린 蹂닿컯.'`
+- L10992 [string/docstring] `'        ?곗씠??遺議?醫낅ぉ 以??곸쐞 max_tickers媛쒕? timeout_sec ?대궡??利됱떆 蹂닿컯?섍퀬'`
+- L10993 [string/docstring] `'        ?섎㉧吏??諛깃렇?쇱슫???먮줈 ?섍릿??'`
+- L10994 [string/docstring] `'        諛섑솚媛? ?먮낯 candidates 洹몃?濡?(CSV 媛깆떊 + 罹먯떆 臾댄슚?붾쭔 ?섑뻾).'`
+- L10995 [string/docstring] `'        ?댄썑 _filter_candidates_by_history媛 ?ㅼ떆 ?꾪꽣留곹븯硫?蹂닿컯??醫낅ぉ???듦낵.'`
+- L11001 [comment] `'        # ?앸퀎: on-demand fetch ?놁씠 硫붾え由?罹먯떆 ??CSV ???섎쭔 鍮좊Ⅴ寃??뺤씤'`
+- L11002 [comment] `'        # (API ?몄텧 ?좊컻 湲덉? ??timeout ?꾩뿉 ?앸퀎留뚯쑝濡??쒓컙 ?뚯쭊 諛⑹?)'`
+- L11008 [comment] `'            # 1?쒖쐞: 硫붾え由?罹먯떆'`
+- L11015 [comment] `'            # 2?쒖쐞: CSV ????吏곸젒 ?뺤씤 (?ㅻ뜑 ?ы븿 N+1?됰쭔 ?쎌쓬)'`
+- L11019 [comment] `'                    n = sum(1 for _ in open(_csv, encoding="utf-8-sig")) - 1  # ?ㅻ뜑 ?쒖쇅'`
+- L11020 [comment] `'                    if n >= _MIN + 60:   # ma60 warm-up 踰꾪띁 ?ы븿 ??usable row ?뺣낫'`
+- L11030 [string/docstring] `'            f"[?숆린 蹂닿컯] {market} 遺議?{len(shortage)}媛?以?{len(to_fill)}媛?利됱떆 ?쒕룄"'`
+- L11035 [string/docstring] `'            諛섑솚: (ticker, status)'`
+- L11037 [string/docstring] `'              "saved_insufficient"  ??????깃났, 洹몃윭??usable rows 遺議?              "failed"              ??????ㅽ뙣'`
+- L11057 [comment] `'                # ??????ㅼ젣 ?좏샇 怨꾩궛 媛???щ? ?뺤씤'`
+- L11062 [string/docstring] `'                log.debug(f"[?숆린 蹂닿컯 ?ㅽ뙣] {ticker}: {e}")'`
+- L11064 [comment] `'        # daemon thread + result queue ??timeout ??利됱떆 諛섑솚 (executor wait 釉붾줉 ?놁쓬)'`
+- L11080 [string/docstring] `'                log.info(f"[?숆린 蹂닿컯] {market} timeout {timeout_sec}s ???꾨즺遺꾨쭔 諛섏쁺")'`
+- L11086 [string/docstring] `'                    log.info(f"[?숆린 蹂닿컯 ?좏샇媛?? {market} {ticker}")'`
+- L11088 [string/docstring] `'                    log.info(f"[?숆린 蹂닿컯 ??μ셿猷??ъ쟾?덈?議? {market} {ticker} {status}")'`
+- L11091 [string/docstring] `'                    log.debug(f"[?숆린 蹂닿컯 ?ㅽ뙣] {market} {ticker}")'`
+- L11093 [string/docstring] `'                log.info(f"[?숆린 蹂닿컯] {market} timeout {timeout_sec}s ???꾨즺遺꾨쭔 諛섏쁺")'`
+- L11095 [comment] `'        # timeout ??誘몄닔??+ 踰붿쐞 珥덇낵 醫낅ぉ? 諛깃렇?쇱슫???먮줈'`
+- L11106 [comment] `'        return candidates   # 援ъ“ 蹂寃??놁씠 諛섑솚, _filter媛 ?ы뙋??'`
+- L11108 [string/docstring] `'        """?덉뒪?좊━ 蹂닿컯 ???깅줉 ??以묐났/荑⑤떎??諛⑹?"""'`
+- L11116 [string/docstring] `'        log.debug(f"[?덉뒪?좊━ 蹂닿컯 ?? {market} {ticker} ?깅줉")'`
+- L11118 [string/docstring] `'        """諛깃렇?쇱슫???덉뒪?좊━ 蹂닿컯 ?뚯빱 ??OHLCV 遺議?醫낅ぉ??365?쇱튂 ?섏쭛"""'`
+- L11148 [comment] `'                        # ??????좏샇 媛???щ? ?뺤씤'`
+- L11151 [string/docstring] `'                            log.info(f"[?덉뒪?좊━ 蹂닿컯 ?좏샇媛?? {market} {ticker} ??{len(df)}raw/{usable}usable")'`
+- L11153 [string/docstring] `'                            log.info(f"[?덉뒪?좊━ 蹂닿컯 ??μ셿猷??ъ쟾?덈?議? {market} {ticker} ??{len(df)}raw/{usable}usable")'`
+- L11155 [string/docstring] `'                        log.debug(f"[?덉뒪?좊━ 蹂닿컯 ????ㅽ뙣] {ticker}: {_e}")'`
+- L11157 [string/docstring] `'                log.debug(f"[?덉뒪?좊━ 蹂닿컯 ?ㅻ쪟] {ticker}: {e}")'`
+- L11162 [comment] `'            time.sleep(2)   # rate limit: 醫낅ぉ 媛?2珥?媛꾧꺽'`
+- L11163 [comment] `'    # ?? 遺遺??ъ꽑?????????????????????????????????????????????????????????????'`
+- L11165 [string/docstring] `'        """60遺??ъ쭊??湲덉? ???곗씠?곕?議??ъ쑀??荑⑤떎???쒖쇅 (蹂닿컯 ??蹂듦? ?덉슜)"""'`
+- L11174 [string/docstring] `'        """2?쒓컙留덈떎 ?쒖꽦???섏쐞 2媛?理쒕? 3媛? 醫낅ぉ 遺遺?援먯껜"""'`
+- L11185 [string/docstring] `'            """?믪쓣?섎줉 援먯껜 ?곗꽑 (臾댁떊??吏??+ invalid price ?꾩쟻)"""'`
+- L11189 [string/docstring] `'            log.info(f"[遺遺꾧탳泥? {market}: ??醫낅ぉ ?ъ???蹂댁쑀 ???ㅽ궢")'`
+- L11197 [comment] `'        # ???꾨낫 ?ㅽ겕由щ떇 + ?덉뒪?좊━ ?꾪꽣'`
+- L11204 [string/docstring] `'            log.warning(f"[遺遺꾧탳泥? {market} ?ㅽ겕由щ떇 ?ㅽ뙣: {e}")'`
+- L11209 [comment] `'        # ?좎? 醫낅ぉ + 荑⑤떎???쒖쇅'`
+- L11218 [string/docstring] `'            log.info(f"[遺遺꾧탳泥? {market}: ???꾨낫 ?놁쓬 ???ㅽ궢")'`
+- L11256 [string/docstring] `'            log.info(f"[遺遺꾧탳泥? {market}: ?좏슚 ?좉퇋 醫낅ぉ ?놁쓬 ???ㅽ궢")'`
+- L11296 [comment] `'        # 援먯껜??醫낅ぉ 荑⑤떎???깅줉 (60遺?'`
+- L11309 [comment] `'        # 遺遺꾧탳泥???param_tuner 罹먯떆 媛깆떊 (rescreen ?몃━嫄?'`
+- L11316 [string/docstring] `'        log.info(f"[遺遺꾧탳泥? {market}: [{out_str}] ??[{in_str}] (臾댁떊??吏??")'`
+- L11319 [string/docstring] `'        """遺꾩꽍媛 ?ы닾???щ?. (bool, trigger_reason)"""'`
+- L11322 [comment] `'        # 湲곕낯 荑⑤떎??泥댄겕'`
+- L11326 [comment] `'        # 議곌굔 1: ?쒕꼫媛 諛⑺뼢 ?꾪솚 沅뚭퀬 ??利됱떆 ?덉슜'`
+- L11328 [string/docstring] `'            return True, f"REVERSE 沅뚭퀬: {result.get(\'reason\', \'\')[:60]}"'`
+- L11329 [comment] `'        # 議곌굔 2: 吏??-2% ?댁긽 湲됰씫'`
+- L11332 [comment] `'            # 吏곸쟾 ?ы뙋?⑥씠 媛숈? 紐⑤뱶 ?좎???쇰㈃ 異붽? 荑⑤떎???곸슜'`
+- L11338 [string/docstring] `'            return True, f"吏??湲됰씫 {idx_chg:+.2f}%"'`
+- L11339 [comment] `'        # 議곌굔 3: ?쒕꼫 寃쎄퀬 諛쒕졊 + TIGHTEN (MAINTAIN?대㈃ ??? ?꾪뿕)'`
+- L11341 [string/docstring] `'            return True, f"?쒕꼫 寃쎄퀬: {result[\'warning\']}"'`
+- L11344 [string/docstring] `'        """?댁긽 ?좏샇 媛먯? ??遺꾩꽍媛 3紐?湲닿툒 ?ы샇異????먮떒쨌?⑹쓽 媛깆떊"""'`
+- L11346 [string/docstring] `'            raise RuntimeError("Claude ?ы뙋??湲곕뒫??OFF ?곹깭?낅땲??")'`
+- L11347 [comment] `'        # ?????쒓컙 reinvoke 李⑤떒 (?섎룞 紐낅졊 ?쒖쇅)'`
+- L11349 [string/docstring] `'            log.info(f"[reinvoke ?ㅽ궢] {market} ?????쒓컙 ???몃━嫄? {trigger}")'`
+- L11355 [string/docstring] `'        log.warning(f"[湲닿툒 ?ы뙋???쒖옉] {market} | ?몃━嫄? {trigger}")'`
+- L11377 [comment] `'            # VIX ?숈쟻 ?ъ씠利?蹂댁젙 (?ы뙋??寃쎈줈)'`
+- L11414 [string/docstring] `'                f"[湲닿툒 ?ы뙋???꾨즺] {old_mode} ??{new_consensus[\'mode\']} "'`
+- L11417 [comment] `'            # ?몄뀡 ?대깽??湲곕줉 (湲닿툒 ?ы뙋??'`
+- L11427 [comment] `'            # 紐⑤뱶媛 諛붾뚮㈃ 醫낅ぉ???ъ꽑??(?? DEFENSIVE?묺ODERATE_BULL ???몃쾭??ETF ?쒓굅)'`
+- L11464 [string/docstring] `'                            f"[醫낅ぉ ?ъ꽑???꾨즺] {market}: watch={new_tickers} "'`
+- L11471 [comment] `'                        # ?ㅼ쓬 run_cycle遺????醫낅ぉ ?ъ슜 (WS???ㅼ쓬 ?ъ떆????媛깆떊)'`
+- L11473 [string/docstring] `'                    log.error(f"[醫낅ぉ ?ъ꽑???ㅽ뙣] {te}")'`
+- L11493 [string/docstring] `'            log.error(f"[湲닿툒 ?ы뙋???ㅽ뙣] {e}")'`
+- L11495 [string/docstring] `'        """?꾩옱 ?곹깭 ?ㅻ깄??(蹂??媛먯???"""'`
+- L11505 [comment] `'            "cash_m":     round(self.risk.cash / 1_000_000, 2),  # 1留뚯썝 ?⑥쐞'`
+- L11509 [comment] `'    # ?? Claude ?쒕떇??寃곗젙 ?대깽???????????????????????????????????????????'`
+- L11510 [comment] `'    # entry      : 留ㅼ닔 ?좏샇 諛쒖깮 (Claude ?좏깮 醫낅ぉ)'`
+- L11511 [comment] `'    # closed     : ?ъ???醫낅즺 ?붿빟 (吏꾩엯~泥?궛 ?꾩껜)'`
+- L11512 [comment] `'    # hold_outcome: hold_advisor ?먮떒 寃곌낵 (寃곌낵 ?뺤젙 ??'`
+- L11513 [comment] `'    # ?ㅽ뻾 ?ㅻ쪟(sell_failed ????decisions.jsonl??湲곕줉?섏? ?딆쓬'`
+- L11516 [comment] `'        # ?? ?ㅽ뻾 ?ㅻ쪟/?곹깭 ?대깽?몃뒗 decisions.jsonl ?쒖쇅 ???????????????????'`
+- L11522 [comment] `'        # in-memory 濡쒓렇??紐⑤뱺 ?대깽???좎? (紐⑤땲?곕쭅??'`
+- L11576 [comment] `'        # ?? Claude ?먮떒 ?대깽?몃쭔 decisions.jsonl 湲곕줉 ???????????????????????'`
+- L11598 [comment] `'            # entry: 吏꾩엯 而⑦뀓?ㅽ듃'`
+- L11605 [comment] `'            # closed: 醫낅즺 ?붿빟'`
+- L11637 [comment] `'            # hold_outcome: ?먮떒 寃곌낵'`
+- L11649 [string/docstring] `'                log.debug(f"decisions.jsonl 湲곕줉 ?ㅽ뙣: {_de}")'`
+- L11655 [string/docstring] `'        """?ъ씠?대쭏???쇱씠釉??곹깭瑜?state/live_status_{market}.json ??湲곕줉 (??쒕낫?쒖슜)'`
+- L11656 [string/docstring] `'        force=True: ?띾룄 ?쒗븳 臾댁떆 (?ъ???湲닿툒 蹂寃???'`
+- L11661 [comment] `'                return  # 理쒓렐???대? ? ??以묐났 I/O ?ㅽ궢'`
+- L11684 [comment] `'                # selected_reason: pending_order ?먮뒗 ?ъ????먯껜?먯꽌 蹂듦뎄'`
+- L11790 [string/docstring] `'            log.warning(f"live_status ????ㅽ뙣: {e}")'`
+- L11792 [string/docstring] `'        """?곹깭 蹂???덉쓣 ?뚮쭔 ?붾젅洹몃옩 ??쒕낫???몄떆"""'`
+- L11797 [comment] `'            return  # 蹂???놁쓬 ???ㅽ궢'`
+- L11816 [string/docstring] `'        """1?쒓컙留덈떎 濡쒓렇 + 蹂???놁뼱??媛뺤젣 ?붾젅洹몃옩 ?꾩넚"""'`
+- L11821 [string/docstring] `'        pos_txt = ", ".join(f"{p[\'ticker\']}({p[\'qty\']}二?" for p in self.risk.positions) or "?놁쓬"'`
+- L11823 [string/docstring] `'        log.info(f"[Heartbeat {now_str}] {market} | 紐⑤뱶:{mode} | ?ъ???{pos_txt}")'`
+- L11824 [comment] `'        self._maybe_push_dashboard(force=True)  # 1?쒓컙留덈떎 媛뺤젣 ?꾩넚'`
+- L11830 [comment] `'        # ??留덇컧 吏곸쟾 留덉?留됱쑝濡?釉뚮줈而??붽퀬/泥닿껐???숆린?뷀빐 誘몄껜寃??ㅽ뙋??以꾩씤??'`
+- L11837 [string/docstring] `'            _log_risk("warning", f"[{market}] session_close 理쒖쥌 泥닿껐 ?숆린???ㅽ뙣: {e}")'`
+- L11879 [comment] `'        # ?? ?쇰꼸 吏묎퀎 ???????????????????????????????????????????????????????'`
+- L11883 [string/docstring] `'            log.warning(f"[?쇰꼸 ????ㅽ뙣] {market}: {_fe}")'`
+- L11884 [comment] `'        # ?? ?ъ????뺣━: ??醫낅즺 ?꾩뿉??二쇰Ц?섏? ?딄퀬, ?ㅼ쓬 ?몄뀡 ?됰룞留?寃곗젙 ?????'`
+- L11892 [comment] `'        # day_trade??Claude?먭쾶 癒쇱? 臾쇱뼱蹂????ㅼ쓬 ?몄뀡 ?됰룞 寃곗젙'`
+- L11893 [string/docstring] `'        claude_review_lines = [f"?뵒 <b>[?λ쭏媛??ъ???寃?? {market}</b>", "?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺?곣봺"]'`
+- L11901 [comment] `'            action = "SELL"  # 湲곕낯媛? 泥?궛'`
+- L11916 [string/docstring] `'                log.info(f"[?λ쭏媛?寃?? {ticker} Claude ??{action} ({reason_txt[:50]})")'`
+- L11918 [string/docstring] `'                log.warning(f"[?λ쭏媛?寃?? {ticker} hold_advisor ?ㅽ뙣 ??湲곕낯 泥?궛: {e}")'`
+- L11920 [string/docstring] `'            action_ko  = "?ㅼ쓬 ?몄뀡 泥?궛 沅뚭퀬" if action == "SELL" else "?댁씪濡??댁썡"'`
+- L11949 [string/docstring] `'                log.info(f"[?λ쭏媛?Claude ?댁썡] {ticker} {pnl:+.2f}% ??max_hold ?곗옣")'`
+- L11957 [string/docstring] `'                     f"???ㅼ쓬 ?몄뀡 怨꾩냽 蹂댁쑀 (held_days: "'`
+- L11959 [comment] `'        # ?댁썡 ?ъ????뚯씪 ???(?ъ떆???鍮?'`
+- L11961 [comment] `'        # ?? ??醫낅즺 ???댁썡 ?ъ???Claude ?먭? ???붾젅洹몃옩 ?꾩넚 ??????????????'`
+- L11965 [string/docstring] `'            log.warning(f"[?ν썑 ?ъ???由щ럭 ?ㅻ쪟] {market}: {_pse}")'`
+- L11967 [comment] `'        # order_no 湲곗? 以묐났 ?쒓굅 (?ъ떆???깆쑝濡?trade_log???숈씪 泥닿껐??2??湲곕줉?섎뒗 耳?댁뒪)'`
+- L11978 [comment] `'        # ?? decisions.jsonl ?대갚 癒몄? ?????????????????????????????????????????'`
+- L11979 [comment] `'        # ?ъ떆?묒쑝濡?trade_log媛 鍮꾧굅??遺遺꾨쭔 ?⑥쓣 寃쎌슦 decisions.jsonl??        # ?뱀씪 closed 嫄곕옒瑜?蹂댁“ ?뚯뒪濡?異붽???留ㅻℓ ?먯옣 ?꾨씫??諛⑹??쒕떎.'`
+- L12023 [string/docstring] `'                log.info(f"[{market}] decisions.jsonl ?대갚 {len(_dec_trades)}嫄?癒몄? (trade_log ?꾨씫 蹂댁셿)")'`
+- L12026 [string/docstring] `'            log.warning(f"[{market}] decisions.jsonl 癒몄? ?ㅽ뙣: {_dm_e}")'`
+- L12035 [comment] `'            "trades": len(_sell_log),   # 泥?궛(留ㅻ룄) 嫄댁닔留?            "cumulative": cumulative_equity,'`
+- L12039 [comment] `'        # ?먮떒???녿뒗 ??HALT, ?먮윭 ??? postmortem ?ㅽ궢'`
+- L12041 [string/docstring] `'            log.info(f"[{market}] ?ㅻ뒛 ?먮떒 ?놁쓬 ??postmortem ?앸왂")'`
+- L12051 [comment] `'                trade_log=session_trades,   # ?대떦 ?쒖옣 泥닿껐 ?댁뿭留??꾨떖'`
+- L12102 [comment] `'        # ?? ?뚯씤?쒕떇/?꾨＼?꾪듃 媛쒖꽑???꾪븳 ?꾩쟾??training record ?????????????'`
+- L12114 [comment] `'            "session_events": self._session_events,   # ?쒕떇/湲닿툒?ы뙋???꾩껜 ?대젰'`
+- L12152 [string/docstring] `'            log.warning(f"MICRO_PROBE ?깃낵 由ы룷???ㅽ뙣: {exc}")'`
+- L12194 [string/docstring] `'            log.info(f"[param_tuner] {market} outcome 湲곕줉 ?꾨즺 (ids={len(_pt_ids)}媛? ?뚭툒 ?ы븿)")'`
+- L12196 [string/docstring] `'            log.warning(f"[param_tuner] outcome ?낅뜲?댄듃 ?ㅻ쪟: {_pt_e}")'`
+- L12201 [string/docstring] `'                log.info(f"[KR ?ㅽ겕由щ꼫 罹먯떆] session_close ????꾨즺 ({len(self._last_kr_candidates)}醫낅ぉ)")'`
+- L12203 [string/docstring] `'                log.warning(f"[KR ?ㅽ겕由щ꼫 罹먯떆] session_close ????ㅽ뙣: {_e}")'`
+- L12208 [string/docstring] `'    """?꾩옱 KST ?쒓컖???대떦 ?쒖옣 ?몄뀡 以묒씤吏 ?뺤씤"""'`
+- L12215 [string/docstring] `'    """?숈씪 紐⑤뱶 遊뉗씠 ?대? ?ㅽ뻾 以묒씠硫?True"""'`
+- L12240 [string/docstring] `'        log.error(f"[以묐났 ?ㅽ뻾 李⑤떒] {_mode} 遊뉗씠 ?대? ?ㅽ뻾 以묒엯?덈떎. 湲곗〈 ?꾨줈?몄뒪瑜?癒쇱? 醫낅즺?섏꽭??")'`
+- L12254 [comment] `'    # ?붾젅洹몃옩 紐낅졊???섏떊 ?쒖옉 (諛깃렇?쇱슫???ㅻ젅??'`
+- L12258 [string/docstring] `'        f"遊??쒖옉??[{mode_txt}]",'`
+- L12260 [string/docstring] `'            f"?뮥 珥덇린?먭툑: {bot.risk.init_cash:,}??(KR/US 怨듭쑀)",'`
+- L12266 [comment] `'    # ?? ?덈꼍 ?ㅽ겕由щ꼫 ? ?ъ쟾?섏쭛 ?????????????????????????????????????????????'`
+- L12271 [string/docstring] `'            log.info(f"[?덈꼍 ?섏쭛] {market} ?ㅽ겕由щ꼫 ? {n}醫낅ぉ ?꾨즺")'`
+- L12273 [string/docstring] `'            log.warning(f"[?덈꼍 ?섏쭛] {market} ?ㅽ뙣: {e}")'`
+- L12275 [comment] `'    # ?멸뎅??湲곌? ?쒕ℓ????KR digest??foreign_flow/inst_flow ?꾨뱶 梨꾩?'`
+- L12276 [comment] `'    # 08:20: supplement ?섏쭛 ??08:30: ?ㅽ겕由щ꼫 ?섏쭛 ??08:50: ?몄뀡 ?ㅽ뵂'`
+- L12289 [string/docstring] `'            log.warning(f"[?섍툒 ?섏쭛] {market} ?ㅽ뙣: {e}")'`
+- L12290 [comment] `'    # ?? ??留덇컧 ???곗씠??理쒖떊??(醫낃? ?뺤젙 + forward return) ??????????????????'`
+- L12299 [string/docstring] `'            log.warning(f"[?곗씠??理쒖떊?? {market} ?ㅽ뙣: {e}")'`
+- L12301 [comment] `'        schedule.every().day.at("08:20").do(_supplement_collect, "KR")   # KR ?섍툒 (?멸뎅??湲곌?)'`
+- L12307 [string/docstring] `'        """KIS ?좏겙 ?먯젙 臾댄슚???????00:01??媛뺤젣 媛깆떊 ??釉뚮줈而??곹깭 蹂듦뎄"""'`
+- L12311 [string/docstring] `'            log.info("[?먯젙 ?좏겙 媛깆떊] ?꾨즺")'`
+- L12313 [string/docstring] `'            log.warning(f"[?먯젙 ?좏겙 媛깆떊] ?ㅽ뙣: {e}")'`
+- L12319 [comment] `'        schedule.every().day.at("16:10").do(_data_update, "KR")          # KR ????醫낃? ?뺤젙'`
+- L12323 [comment] `'        schedule.every().day.at("06:30").do(_data_update, "US")          # US ????醫낃? ?뺤젙'`
+- L12330 [comment] `'    # 1?쒓컙留덈떎 ?곹깭 蹂닿퀬 (?몄뀡 以묒씪 ?뚮쭔 ?ㅼ젣 ?꾩넚)'`
+- L12333 [comment] `'    # ?? 遊??쒖옉 ???대? 吏꾪뻾 以묒씤 ?몄뀡???덉쑝硫?利됱떆 session_open ??????????????'`
+- L12339 [comment] `'    us_mid_session = now_t >= us_open or now_t < us_close  # ?먯젙 嫄몄묠'`
+- L12341 [string/docstring] `'        log.info("[startup] KR ?몄뀡 吏꾪뻾 以???session_open 利됱떆 ?ㅽ뻾")'`
+- L12344 [string/docstring] `'        log.info("[startup] US ?몄뀡 吏꾪뻾 以???session_open 利됱떆 ?ㅽ뻾")'`
+- L12354 [string/docstring] `'                        help="?곗씠???섏쭛 ?ㅽ뻾 ??醫낅즺: 二쇨??믩돱?ㅲ넂supplement ?쒖꽌濡??섏쭛")'`
+- L12356 [string/docstring] `'                        help="Phase1 ??궗 ?숈뒿 ?ㅽ뻾 ??醫낅즺 (?? --train KR)")'`
+- L12358 [string/docstring] `'                        help="?섏쭛/?숈뒿 ?쒖옉??(湲곕낯: KR=2024-10-01 / US=2025-01-01)")'`
+- L12361 [comment] `'        # 1?④퀎: 二쇨? ?섏쭛'`
+- L12369 [string/docstring] `'            log.info(f"[?섏쭛] KR 二쇨? {col_start} ~ {col_end}")'`
+- L12372 [string/docstring] `'            log.info(f"[?섏쭛] US 二쇨? {col_start} ~ {col_end}")'`
+- L12384 [comment] `'        # 3?④퀎: 蹂댁“ ?곗씠??        log.info(f"[?섏쭛] supplement {col_start} ~ {col_end}")'`
+- L12387 [string/docstring] `'        log.info("?곗씠???섏쭛 ?꾨즺. ?댁젣 --train ?쇰줈 Phase1 ?숈뒿???ㅽ뻾?섏꽭??")'`
