@@ -1,183 +1,129 @@
-# KIS 체결통보 WS 연동 계획
+# KIS 체결통보 WS 연동 상태 - 2026-05-01
 
 ## 목적
 
-한투 모의투자(VTS)에서 `inquire-daily-ccld` REST 조회가 지연되거나 `0건/500`으로 불안정한 경우가 있어,
-실제 체결이 발생해도 봇이 `pending -> filled` 전환을 놓치는 문제가 있다.
+REST 주문/체결 조회가 지연되거나 불안정할 때도 실제 체결을 빠르게 인식하기 위해 KIS 실시간 체결통보 WebSocket을 보조 진실 소스로 사용한다.
 
-이를 보완하기 위해 **REST 체결조회 보조 수단**으로 **KIS 실시간 체결통보 WebSocket**을 붙인다.
+## 현재 상태
 
-## 공식 샘플 기준 확인사항
+상태: 구현 완료, 로컬 단위 테스트 완료, 실계좌/모의계좌 수신 검증은 남음.
 
-공식 샘플 저장소:
-- `E:\code\open-trading-api\examples_user\domestic_stock\domestic_stock_functions_ws.py`
-- `E:\code\open-trading-api\examples_user\domestic_stock\domestic_stock_examples_ws.py`
+기존 문서에는 `KISWebSocket`이 국내 시세 체결가 `H0STCNT0`만 구독하고 계좌 체결통보는 없다고 되어 있었지만, 현재 코드는 이미 체결통보 경로를 포함한다.
 
-핵심 내용:
-- 국내주식 체결통보 TR:
-  - 실전: `H0STCNI0`
+## 구현 완료 항목
+
+### `kis_api.py`
+
+- `KISWebSocket(..., on_notice=...)` 콜백 지원.
+- `KIS_HTS_ID` 기반 계좌 체결통보 구독.
+- 국내 체결통보 TR:
   - 모의: `H0STCNI9`
-- 공식 샘플 설명:
-  - 주문/정정/취소/거부 접수 통보와 체결 통보가 모두 수신됨
-  - `CNTG_YN`
-    - `1`: 주문/정정/취소/거부 접수 통보
-    - `2`: 체결 통보
-- 모의투자도 전용 TR(`H0STCNI9`)이 존재하므로, **WS 체결통보 자체는 지원하는 구조**로 본다.
+  - 실전: `H0STCNI0`
+- 해외 체결통보 TR:
+  - 모의: `H0GSCNI9`
+  - 실전: `H0GSCNI0`
+- 체결통보 AES key/iv 수신 및 복호화 경로.
+- KR/US 체결통보 payload parser.
+- `CNTG_YN == "2"`인 체결 이벤트만 처리.
+- `(order_no, filled_qty, filled_time)` 기준 dedupe.
 
-## 현재 코드 상태
+### `trading_bot.py`
 
-현재 구현:
-- `E:\code\claudetrade\kis_api.py`
-  - `KISWebSocket`는 현재 국내 시세 체결가 `H0STCNT0`만 구독
-  - 계좌 체결통보 구독은 없음
-- `E:\code\claudetrade\trading_bot.py`
-  - 체결 인식은
-    - 잔고 증가
-    - REST 주문/체결 조회
-  - 에 의존
+- `KISWebSocket` 시작 시 `on_notice=self._on_fill_notice` 연결.
+- `_on_fill_notice()`에서 buy 체결통보를 pending order와 `order_no`로 매칭.
+- full fill:
+  - pending order 제거
+  - position 생성
+  - lifecycle `FILLED` 기록
+  - Telegram fill alert 발송
+- partial fill:
+  - pending order 잔량 유지
+  - `filled_qty_accum`, `partial_fill_at`, `filled_price_native`, `fill_time` 기록
+  - lifecycle `PARTIAL_FILLED` 기록
+- PathB 주문:
+  - `pathb.on_buy_fill(..., partial=...)` 호출
+- sell notice, order number 없음, 체결 수량 0 이하는 무시.
 
-즉 현재는 **WS 실시간 체결 이벤트를 전혀 사용하지 않는다.**
+## 로컬 테스트
 
-## 붙일 위치
+추가 테스트 파일:
 
-### 1. `kis_api.py`
+- `tests/test_kis_ws_fill_notice.py`
 
-`KISWebSocket` 확장:
-- 기존 시세 체결가 구독 유지
-- 계좌 체결통보 구독 추가
+검증 항목:
 
-필요 항목:
-- 새 인자:
-  - `notice_key` (보통 HTS ID)
-  - `on_notice`
-- 새 구독 함수:
-  - 실전 `H0STCNI0`
-  - 모의 `H0STCNI9`
-- 수신 파싱:
-  - `CNTG_YN == "2"` 인 경우만 체결 이벤트로 처리
+- KR 체결통보 payload 파싱.
+- US 체결통보 payload 파싱 및 `CNTG_UNPR12` 소수 가격 사용.
+- `CNTG_YN != "2"` 무시.
+- malformed payload 무시.
+- 중복 체결통보 dedupe.
+- full buy fill 시 pending order 제거 및 position 반영.
+- partial PathB buy fill 시 pending 잔량 유지 및 `pathb.on_buy_fill()` 호출.
+- sell notice 또는 invalid notice 무시.
 
-공식 샘플 컬럼:
-- `CUST_ID`
-- `ACNT_NO`
-- `ODER_NO`
-- `OODER_NO`
-- `SELN_BYOV_CLS`
-- `RCTF_CLS`
-- `ODER_KIND`
-- `ODER_COND`
-- `STCK_SHRN_ISCD`
-- `CNTG_QTY`
-- `CNTG_UNPR`
-- `STCK_CNTG_HOUR`
-- `RFUS_YN`
-- `CNTG_YN`
-- `ACPT_YN`
-- `BRNC_NO`
-- `ODER_QTY`
-- `ACNT_NAME`
-- `ORD_COND_PRC`
-- `ORD_EXG_GB`
-- `POPUP_YN`
-- `FILLER`
-- `CRDT_CLS`
-- `CRDT_LOAN_DATE`
-- `CNTG_ISNM40`
-- `ODER_PRC`
+검증 결과:
 
-봇에서 실제로 필요한 최소 필드:
-- `order_no`
-- `ticker`
-- `filled_qty`
-- `filled_price`
-- `filled_time`
-- `side`
-- `is_fill` (`CNTG_YN == "2"`)
+```powershell
+python -m py_compile tests\test_kis_ws_fill_notice.py
+python -m pytest tests\test_kis_ws_fill_notice.py -q
+```
 
-### 2. `trading_bot.py`
+결과:
 
-세션 오픈 시 WS notice callback 연결:
-- KR 세션 시작 시
-  - 시세 tick callback
-  - 체결 notice callback
-  둘 다 연결
+- `tests/test_kis_ws_fill_notice.py`: 6 passed.
+- 경고: 기존 `eventlet`/`distutils` deprecation warning 2건.
 
-체결 notice 수신 시 할 일:
-1. `pending_orders[market]`에서 `order_no` 매칭
-2. `pending -> filled` 즉시 전환
-3. `positions` 반영
-4. `decisions.db` `filled=1`, `entry_price`, `order_no` 업데이트
-5. 텔레그램 `[매수 체결 확인]` 발송
-6. 중복 수신 방지를 위해 `seen_fill_keys` 캐시 처리
+## 로컬 환경 확인
 
-## 권장 동작 우선순위
+2026-05-01 로컬 확인 결과:
 
-체결 인식 우선순위:
-1. **WS 체결통보**
-2. REST 주문/체결 조회
-3. 잔고 증가 감지
+```powershell
+python -c "from Crypto.Cipher import AES; print('pycryptodome OK')"
+python -m py_compile kis_api.py trading_bot.py tests\test_kis_ws_fill_notice.py
+python -m pytest tests\test_kis_ws_fill_notice.py tests\test_live_order_reconciliation.py -q
+python -m pytest tests\test_order_unknown_reconciliation.py tests\test_pathb_sell_reconcile.py -q
+```
 
-즉 WS를 1차 소스로 두고,
-REST/잔고는 보조 복구용으로 유지한다.
+결과:
 
-## 구현 시 주의점
+- `pycryptodome`: 설치 확인 완료.
+- `KIS_HTS_ID`: 설정 존재 확인 완료. 값은 출력하지 않았고 길이만 확인함.
+- 현재 로컬 설정: `IS_PAPER=False`.
+- notice 구독 payload:
+  - KR: `H0STCNI0`, `tr_key` 존재.
+  - US: `H0GSCNI0`, `tr_key` 존재.
+- WS fill notice + pending reconciliation 관련 테스트:
+  - `tests/test_kis_ws_fill_notice.py tests/test_live_order_reconciliation.py`: 8 passed.
+  - `tests/test_order_unknown_reconciliation.py tests/test_pathb_sell_reconcile.py`: 15 passed.
 
-### 1. `tr_key`는 종목코드가 아니라 HTS ID 계열
+## 남은 운영 검증
 
-공식 샘플:
-- `ccnl_notice("1", trenv.my_htsid, env_dv="demo")`
+아래 항목은 로컬 단위 테스트로 대체할 수 없는 운영 확인 사항이다.
 
-즉 계좌 체결통보는 일반 종목코드가 아니라 **HTS ID 기반**이다.
-현재 프로젝트에서 이 값이 `.env` 또는 런타임 설정에 있는지 먼저 확인 필요.
+1. `KIS_HTS_ID` 설정 확인
+   - 값이 없으면 체결통보 구독은 스킵된다.
 
-후보 키:
-- `KIS_HTS_ID`
-- 사용자 ID/고객 ID 계열
+2. `pycryptodome` 설치 확인
+   - AES 복호화 경로에서 필요하다.
 
-없다면:
-- 새 env 추가 필요
+3. KIS 모의계좌 수신 검증
+   - 주문 접수 이벤트와 체결 이벤트가 실제로 어떤 payload로 오는지 확인.
+   - `CNTG_YN == "2"` 이벤트가 정상 파싱되는지 확인.
 
-### 2. 복호화 필요 가능성
+4. KIS 실계좌 수신 검증
+   - 실전 TR `H0STCNI0`, `H0GSCNI0` 구독과 key/iv 수신 확인.
+   - 실전에서는 소액 주문으로 full/partial fill 경로를 확인.
 
-공식 샘플 설명상 체결통보는 AES256 KEY/IV 기반 복호화 경로가 있다.
-현재 `claudetrade`의 단순 시세 WS 파서처럼 `split("^")`만으로 끝나지 않을 수 있다.
+5. REST fallback과의 중복 동작 확인
+   - WS가 먼저 pending을 filled로 전환한 뒤 REST reconcile이 같은 체결을 중복 반영하지 않는지 확인.
 
-따라서 구현 전:
-- 공식 샘플의 복호화 처리 부분을 같이 가져와야 함
-- 특히 모의 `H0STCNI9`의 실제 payload 형식을 먼저 확인해야 함
+## 권장 우선순위
 
-### 3. 중복 체결 통보
+1. 로컬 단위 테스트는 완료.
+2. 다음 운영 전 체크는 `KIS_HTS_ID`와 `pycryptodome` 확인.
+3. 그 다음 모의계좌에서 실제 notice payload를 수집.
+4. 실계좌 적용은 소액 full fill 확인 후 partial fill 케이스를 별도 확인.
 
-동일 주문에 대해:
-- 접수 통보
-- 체결 통보
-- 부분 체결 통보
-가 올 수 있다.
+## 결론
 
-따라서 키는 최소:
-- `order_no`
-- `filled_qty`
-- `filled_time`
-조합으로 dedupe 필요.
-
-## 추천 구현 순서
-
-1. `.env`/설정에 HTS ID 존재 여부 확인
-2. 공식 샘플 복호화 로직 확인
-3. `kis_api.KISWebSocket`에 `notice` 구독 추가
-4. KR만 먼저 적용
-5. 실전 검증:
-   - 주문 접수
-   - 체결
-   - `pending -> filled` 전환
-   - 텔레그램 체결 확인
-6. 안정화 후 US 체결통보 여부 별도 검토
-
-## 이번 단계의 결론
-
-현재 VTS REST 체결조회는 신뢰도가 낮다.
-따라서 **국내주식 체결 인식의 정답 경로는 WS 체결통보 연동**이다.
-
-다음 구현 작업은:
-- `KISWebSocket`에 국내주식 체결통보(`H0STCNI9`) 추가
-- `trading_bot` pending order 동기화에 notice 이벤트 연결
-이다.
+KIS WS 체결통보는 코드상 구현되어 있고, parser와 pending-order 반영 경로는 로컬 테스트로 검증했다. 남은 작업은 환경 설정 확인과 실제 KIS WebSocket 수신 검증이다.
