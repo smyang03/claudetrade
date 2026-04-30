@@ -453,6 +453,45 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(bot.risk.positions[0]["buy_path"], "path_b")
             self.assertTrue(bot.saved_positions)
 
+    def test_us_pre_close_carry_review_passes_current_usd_display_price(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=EventStore(Path(tmp) / "events.db"))
+            plan = make_price_plan(
+                decision_id="dec_us",
+                ticker="NVDA",
+                market="US",
+                session_date="2026-04-27",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=90,
+                hold_days=1,
+                confidence=0.7,
+            )
+            pos = {
+                "ticker": "NVDA",
+                "qty": 1,
+                "entry": 135000,
+                "current_price": 135000,
+                "display_current_price": 95.0,
+            }
+
+            with patch(
+                "minority_report.hold_advisor.ask",
+                return_value={"action": "HOLD", "confidence": 0.8, "reason": "trend intact"},
+            ) as advisor_ask:
+                decision = runtime._run_pre_close_carry_review(
+                    plan,
+                    pos,
+                    current=101.25,
+                    minutes_to_close=8.0,
+                )
+
+            advisor_pos = advisor_ask.call_args.args[0]
+            self.assertEqual(advisor_pos["current_price"], 101.25)
+            self.assertEqual(advisor_pos["display_current_price"], 101.25)
+            self.assertEqual(decision["decision"], "CARRY")
+
     def test_cached_carry_does_not_block_hard_target_exit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()

@@ -125,6 +125,41 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             self.assertEqual(run["plan"]["order_unknown_resolution"], "pathb_fill_recovered")
             self.assertEqual(len(runtime.bot.risk.positions), 1)
 
+    def test_generic_pathb_fill_event_is_not_path_a_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": [{"ticker": "005930", "qty": 1, "avg_price": 100, "current_price": 102}]},
+                ccld_provider=lambda market, day: [{"ticker": "005930", "side": "buy", "order_qty": 1, "filled_qty": 1, "remaining_qty": 0, "avg_price": 100, "order_no": "ord_pathb"}],
+            )
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={"entry_execution_id": "ord_pathb", "entry_qty": 1},
+                merge_plan=True,
+            )
+            runtime.store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id=plan.decision_id,
+                    execution_id="ord_pathb",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"order_no": "ord_pathb", "qty": 1},
+                )
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_fill"], 1)
+            self.assertEqual(summary["path_a_origin_possible"], 0)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "pathb_fill_recovered")
+
     def test_broker_open_order_recovers_order_acked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan = _runtime(
@@ -227,6 +262,25 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
                 state["orders"]["KR:ord1"]["resolution"],
                 "AUTO_CLEARED_NO_BROKER_EVIDENCE",
             )
+
+    def test_external_close_updates_pathb_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+
+            synced = runtime.on_external_close(
+                {"pathb_path_run_id": plan.path_run_id, "pnl_pct": 1.25, "position_id": "pos1"},
+                market="KR",
+                execution_id="sell1",
+                close_reason="CLOSED_USER_MANUAL",
+                price=105,
+            )
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertTrue(synced)
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertEqual(run["plan"]["close_reason"], "CLOSED_USER_MANUAL")
+            self.assertEqual(run["plan"]["exit_execution_id"], "sell1")
+            self.assertTrue(run["plan"]["external_close_synced"])
 
 
 if __name__ == "__main__":

@@ -704,6 +704,57 @@ class PathBRuntime:
         )
         self._audit_pathb_buy_fill(run, order, price=price, qty=qty, partial=False)
 
+    def on_external_close(
+        self,
+        closed_trade: dict[str, Any],
+        *,
+        market: str,
+        execution_id: str = "",
+        close_reason: str = "",
+        price: float = 0.0,
+    ) -> bool:
+        path_run_id = str(
+            closed_trade.get("pathb_path_run_id", "")
+            or closed_trade.get("path_run_id", "")
+            or ""
+        )
+        if not path_run_id:
+            return False
+        run = self.store.find_path_run(path_run_id)
+        if not run or str(run.get("path_type", "")) != "claude_price":
+            return False
+        market_key = str(market or run.get("market", "") or "").upper()
+        if not market_key:
+            return False
+        close_reason = str(close_reason or closed_trade.get("close_reason", "") or "CLOSED_USER_MANUAL")
+        price_native = float(price or closed_trade.get("display_exit_price", 0) or closed_trade.get("actual_exit_price", 0) or 0)
+        pnl_pct = float(closed_trade.get("pnl_pct", 0) or 0)
+        execution_id = str(execution_id or closed_trade.get("exit_execution_id", "") or closed_trade.get("order_no", "") or "")
+        position_id = str(closed_trade.get("position_id", "") or "")
+        if str(run.get("status", "")) != "CLOSED":
+            self.sell_manager.mark_closed(
+                path_run_id,
+                close_reason=close_reason,
+                price=price_native,
+                pnl_pct=pnl_pct,
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market_key),
+                execution_id=execution_id,
+                position_id=position_id,
+            )
+        self.store.update_path_run(
+            path_run_id,
+            plan={
+                "external_close_synced": True,
+                "external_close_synced_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "external_close_source": "generic_sell",
+                "exit_execution_id": execution_id,
+                "close_reason": close_reason,
+            },
+            merge_plan=True,
+        )
+        return True
+
     def cancel_waiting(self, market: str, *, reason: str) -> int:
         count = 0
         market = str(market or "").upper()
@@ -1987,7 +2038,18 @@ class PathBRuntime:
             return "skipped"
 
         ticker = self._ticker_key(market, plan.ticker)
-        path_a_lifecycle = self._path_a_lifecycle_evidence(market, ticker, plan.session_date)
+        plan_json = run.get("plan") or {}
+        path_a_lifecycle = self._path_a_lifecycle_evidence(
+            market,
+            ticker,
+            plan.session_date,
+            exclude_path_run_id=path_run_id,
+            exclude_decision_id=str(run.get("decision_id", "") or plan.decision_id or ""),
+            exclude_execution_ids={
+                str(plan_json.get("entry_execution_id", "") or ""),
+                str(plan_json.get("exit_execution_id", "") or ""),
+            },
+        )
         path_a_pending = self._path_a_pending_evidence(market, ticker)
         if path_a_lifecycle or path_a_pending:
             self._set_order_unknown_resolution(
@@ -2205,9 +2267,19 @@ class PathBRuntime:
         )
         return any(marker.lower() in text for marker in permanent_markers)
 
-    def _path_a_lifecycle_evidence(self, market: str, ticker: str, session_date: str) -> list[dict[str, Any]]:
+    def _path_a_lifecycle_evidence(
+        self,
+        market: str,
+        ticker: str,
+        session_date: str,
+        *,
+        exclude_path_run_id: str = "",
+        exclude_decision_id: str = "",
+        exclude_execution_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         events = self.store.events_for_session(market=market, runtime_mode=self.mode, session_date=session_date)
         key = self._ticker_key(market, ticker)
+        excluded_execs = {str(value or "") for value in (exclude_execution_ids or set()) if str(value or "")}
         evidence: list[dict[str, Any]] = []
         for event in events:
             if self._ticker_key(market, str(event.get("ticker", "") or "")) != key:
@@ -2217,10 +2289,25 @@ class PathBRuntime:
             payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
             if str(payload.get("path_type", "") or "") == "claude_price" or str(payload.get("path_run_id", "") or ""):
                 continue
+            execution_id = str(event.get("execution_id", "") or "")
+            payload_order_no = str(payload.get("order_no", "") or "")
+            if execution_id and execution_id in excluded_execs:
+                continue
+            if payload_order_no and payload_order_no in excluded_execs:
+                continue
+            if (
+                exclude_decision_id
+                and str(event.get("decision_id", "") or "") == exclude_decision_id
+                and not execution_id
+                and not payload_order_no
+            ):
+                continue
+            if exclude_path_run_id and str(payload.get("path_run_id", "") or "") == exclude_path_run_id:
+                continue
             evidence.append(
                 {
                     "event_type": event.get("event_type", ""),
-                    "execution_id": event.get("execution_id", ""),
+                    "execution_id": execution_id,
                     "reason_code": event.get("reason_code", ""),
                 }
             )
@@ -2638,7 +2725,10 @@ class PathBRuntime:
             from minority_report.hold_advisor import ask as advisor_ask
 
             advisor_pos = dict(pos)
-            advisor_pos["current_price"] = float(current or 0)
+            advisor_current = float(current or 0)
+            advisor_pos["current_price"] = advisor_current
+            if str(plan.market or "").upper() == "US":
+                advisor_pos["display_current_price"] = advisor_current
             advisor_pos["pathb_plan"] = plan.to_dict()
             advisor_pos["minutes_to_close"] = float(minutes_to_close or 0)
             builder = getattr(self.bot, "_advisor_pos", None)
@@ -2648,7 +2738,13 @@ class PathBRuntime:
                 except Exception:
                     pass
             digest = self._pre_close_carry_digest(plan.market)
-            advice = advisor_ask(advisor_pos, plan.market, digest)
+            advice = advisor_ask(
+                advisor_pos,
+                plan.market,
+                digest,
+                decision_stage="PRE_CLOSE_CARRY",
+                minutes_to_close=float(minutes_to_close or 0),
+            )
             action = str((advice or {}).get("action", "SELL") or "SELL").upper()
             decision = "SELL" if action == "SELL" else "CARRY"
             return {

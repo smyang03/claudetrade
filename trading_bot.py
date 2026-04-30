@@ -9,6 +9,7 @@ import time
 import math
 import atexit
 import sqlite3
+import subprocess
 import queue as _queue_mod
 import argparse
 import threading
@@ -125,7 +126,7 @@ from minority_report.consensus import (
 )
 from minority_report.tuner import tune
 from minority_report.postmortem import run as run_postmortem
-from phase1_trainer.digest_builder import build_kr_digest, build_us_digest, digest_to_prompt, get_market_vol_trend
+from phase1_trainer.digest_builder import build_breadth_summary, build_kr_digest, build_us_digest, digest_to_prompt, get_market_vol_trend
 from phase1_trainer.sector_play import run_sector_plays, run_kr_sector_plays, TIER2_SIZE_RATIO
 from strategy.momentum import signal as mom_sig, params as mom_params, diagnostics as mom_diag
 from strategy.mean_reversion import signal as mr_sig, params as mr_params
@@ -271,9 +272,11 @@ _DEFAULT_US_TICKERS = ["NVDA", "TSLA", "GOOGL", "AAPL", "NFLX"]
 _STOP_COOLDOWN_MIN = int(os.getenv("STOP_COOLDOWN_MIN", "60"))   # ?먯젅 ???ъ쭊??湲덉? (20??0: 諛섎났?먯젅 諛⑹?)
 _BUY_COOLDOWN_MIN  = int(os.getenv("BUY_COOLDOWN_MIN",  "15"))   # 留ㅼ닔 ?묒닔 ??以묐났 李⑤떒
 _TP_COOLDOWN_MIN   = int(os.getenv("TP_COOLDOWN_MIN",   "10"))   # TP ???ъ쭊??李⑤떒
-_MIN_ENTRY_CONF    = float(os.getenv("MIN_ENTRY_CONF",   "0.4"))  # 遺꾩꽍媛 ?됯퇏 confidence 理쒖냼媛?_STARTUP_GUARD_SEC = float(os.getenv("STARTUP_GUARD_SEC", "60"))  # session_open ??泥?cycle 蹂댄샇 援ш컙
+_MIN_ENTRY_CONF    = float(os.getenv("MIN_ENTRY_CONF",   "0.4"))  # minimum average analyst confidence
+_STARTUP_GUARD_SEC = float(os.getenv("STARTUP_GUARD_SEC", "60"))  # protect first cycle after session_open
 _ENTRY_SCAN_OPENING_MIN = int(os.getenv("ENTRY_SCAN_OPENING_MIN", "30"))
-_ENTRY_SCAN_OPENING_INTERVAL_MIN = int(os.getenv("ENTRY_SCAN_OPENING_INTERVAL_MIN", "2"))   # 5??遺?_ENTRY_SCAN_REGULAR_INTERVAL_MIN = int(os.getenv("ENTRY_SCAN_REGULAR_INTERVAL_MIN", "5"))
+_ENTRY_SCAN_OPENING_INTERVAL_MIN = int(os.getenv("ENTRY_SCAN_OPENING_INTERVAL_MIN", "2"))
+_ENTRY_SCAN_REGULAR_INTERVAL_MIN = int(os.getenv("ENTRY_SCAN_REGULAR_INTERVAL_MIN", "5"))
 _RESCREEN_INTERVAL_MIN = int(os.getenv("RESCREEN_INTERVAL_MIN", "60"))
 _KR_NO_SIGNAL_SWAP_MIN = int(os.getenv("KR_NO_SIGNAL_SWAP_MIN", "60"))   # KR: 臾댁떊??60遺??꾩쟻 ??援먯껜
 _US_NO_SIGNAL_SWAP_CYCLES = int(os.getenv("US_NO_SIGNAL_SWAP_CYCLES", "8"))  # US: 臾댁떊??8?ъ씠????援먯껜
@@ -298,28 +301,30 @@ _VIX_SIZE_TIERS = [
 # 遺꾩꽍媛 suggested_strategy(?쒓?) ??肄붾뱶 ?꾨왂紐?留ㅽ븨
 _STRATEGY_NAME_MAP = {
     "momentum": "momentum",
-    "紐⑤찘?": "momentum",
+    "모멘텀": "momentum",
     "mean_reversion": "mean_reversion",
-    "?됯퇏?뚭?": "mean_reversion",
+    "평균회귀": "mean_reversion",
     "gap_pullback": "gap_pullback",
-    "媛??諛?": "gap_pullback",
-    "媛??뚮┝": "gap_pullback",
-    "媛?닃由?": "gap_pullback",
+    "갭풀백": "gap_pullback",
+    "갭 풀백": "gap_pullback",
+    "갭눌림": "gap_pullback",
+    "갭+눌림": "gap_pullback",
+    "갭 + 눌림": "gap_pullback",
     "opening_range_pullback": "opening_range_pullback",
     "or_pullback": "opening_range_pullback",
-    "or?뚮┝": "opening_range_pullback",
-    "OR?뚮┝": "opening_range_pullback",
+    "or눌림": "opening_range_pullback",
+    "OR눌림": "opening_range_pullback",
     "volatility_breakout": "volatility_breakout",
-    "蹂?숈꽦?뚰뙆": "volatility_breakout",
+    "변동성돌파": "volatility_breakout",
     "continuation": "continuation",
-    "?곗냽吏꾩엯": "continuation",
+    "연속진입": "continuation",
     "observe": "",
-    "愿留?": "",
+    "관망": "",
 }
 _SELECTION_RISK_TAG_CAPS = (
-    (("low_liquidity", "liquidity", "watch_only"), 35),
-    (("overheated", "chase", "stop_loss", "spike"), 50),
-    (("volatility", "news", "theme"), 70),
+    (("low_liquidity", "liquidity", "watch_only", "저유동성"), 35),
+    (("overheated", "chase", "stop_loss", "spike", "과열", "추격", "손절"), 50),
+    (("volatility", "news", "theme", "변동성", "뉴스", "테마"), 70),
 )
 _WATCH_ONLY_RECOVERY_FALLBACKS = {"selection_partial", "safe_watch", "ticker_regex"}
 _WATCH_ONLY_HARD_KEYWORDS = (
@@ -532,6 +537,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.candidate_health_trackers: dict[str, Optional[CandidateHealthTracker]] = {"KR": None, "US": None}
         self.today_universe: dict = {}
         self.tuning_count = 0
+        self._last_tune_result: dict[str, dict] = {"KR": {}, "US": {}}
+        self._tune_maintain_streak: dict[str, int] = {"KR": 0, "US": 0}
         # 30遺?媛꾧꺽 吏??蹂?숇쪧 ?덉뒪?좊━ (?쒖옣蹂? 理쒕? 8媛?= 4?쒓컙)
         self._index_history: dict[str, deque] = {
             "KR": deque(maxlen=8),
@@ -637,7 +644,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # WS tick 湲곕컲 ?μ쨷 怨좉?/?媛 ?꾩쟻 ???뱀씪遊?二쇱엯 ???⑥씪媛遊??덉텧???ъ슜
         self._intraday_high: dict[str, float] = {}
         self._intraday_low:  dict[str, float] = {}
-        # OR(opening range) ?곹깭 ??KR ?μ큹 OR pullback ?꾨왂??        self._or_high: dict[str, float] = {}
+        # OR(opening range) state used by KR OR pullback entry.
+        self._or_high: dict[str, float] = {}
         self._or_low: dict[str, float] = {}
         self._or_formed: dict[str, bool] = {}
         # 留ㅻ룄 ?ㅽ뙣 荑⑤떎????ticker ???ㅽ뙣 ?쒓컖, 90珥덇컙 ?ъ떆???듭젣
@@ -676,12 +684,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # ?? ?덉뒪?좊━ 蹂닿컯 ????????????????????????????????????????????????????
         self._hist_fill_queue: _queue_mod.Queue = _queue_mod.Queue()
         self._hist_fill_queued: set = set()      # ???湲?以?(以묐났 諛⑹?)
-        self._hist_fill_inflight: set = set()    # ?섏쭛 吏꾪뻾 以?        self._hist_fill_last_ts: dict = {}       # ticker ??留덉?留??쒕룄 time.time()
+        self._hist_fill_inflight: set = set()
+        self._hist_fill_last_ts: dict = {}
         _hist_thread = threading.Thread(target=self._history_fill_worker, daemon=True)
         _hist_thread.start()
-        # ?? 遺遺??ъ꽑?????????????????????????????????????????????????????????
+        # Partial reselect state.
         self._partial_reselect_last: dict = {"KR": None, "US": None}
-        self._ticker_no_signal_cycles: dict = {}   # ticker ???곗냽 臾댁떊???ъ씠????        self._ticker_exclude_log: dict = {"KR": [], "US": []}  # [{ticker,reason,ts}]
+        self._ticker_no_signal_cycles: dict = {}
+        self._ticker_exclude_log: dict = {"KR": [], "US": []}
         self._ticker_runtime_blocked_reasons: dict = {"KR": {}, "US": {}}
         self._ticker_runtime_rejection_reasons: dict = {"KR": {}, "US": {}}
         # ?? continuation entry 1???쒗븳 ?뚮옒洹?(ticker ??bool, ?몄뀡留덈떎 由ъ뀑) ???
@@ -2239,6 +2249,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "risk_tags": {},
                 "recommended_strategy": {},
                 "max_position_pct": {},
+                "allocation_intent": {},
+                "max_order_cap_pct": {},
+                "risk_budget_pct": {},
+                "size_reason": {},
             }
         mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
         meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
@@ -2627,34 +2641,42 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             parts.append(selected_reason)
         veto_reason = str(self._selection_meta_value(market, ticker, "veto") or "").strip()
         if veto_reason:
-            parts.append(f"?쒖쇅?ъ쑀 {veto_reason}")
+            parts.append(f"제외사유 {veto_reason}")
         risk_tags = self._risk_tags_for_ticker(market, ticker)
         if risk_tags:
-            parts.append(f"由ъ뒪??{', '.join(risk_tags[:3])}")
+            parts.append(f"리스크 {', '.join(risk_tags[:3])}")
         recommended = self._recommended_strategy_for_ticker(market, ticker)
         if recommended:
-            parts.append(f"沅뚯옣?꾨왂 {recommended}")
-        raw_cap = self._selection_meta_value(market, ticker, "max_position_pct")
+            parts.append(f"권장전략 {recommended}")
+        raw_cap = (
+            self._selection_meta_value(market, ticker, "max_order_cap_pct")
+            or self._selection_meta_value(market, ticker, "max_position_pct")
+        )
         try:
             cap_pct = float(raw_cap)
         except (TypeError, ValueError):
             cap_pct = None
         if cap_pct is not None and cap_pct > 0:
-            parts.append(f"鍮꾩쨷?곹븳 {int(round(cap_pct))}%")
+            parts.append(f"비중상한 {int(round(cap_pct))}%")
+        intent = self._selection_meta_value(market, ticker, "allocation_intent")
+        if intent:
+            parts.append(f"allocation_intent={intent}")
         if parts:
             return " | ".join(parts)
         bucket = self._watch_only_bucket(market, ticker)
         if bucket == "RECOVERY":
-            return "selection recovery state - trade_ready pending"
+            return "selection 복구 상태 - trade_ready 확정 전"
         if bucket == "HARD":
-            return "紐낆떆???쒖쇅 ?ъ쑀 - watch_only ?좎?"
+            return "명시적 제외 사유 - watch_only 유지"
         if not self._trade_ready_set(market):
-            return "trade_ready 鍮꾩뼱 ?덉쓬 - watch_only ?좎?"
+            return "trade_ready 비어 있음 - watch_only 유지"
         return "not trade_ready - keep watch_only"
     def _selection_size_cap_pct(self, market: str, ticker: str) -> tuple[Optional[int], list[str]]:
         caps: list[int] = []
         reasons: list[str] = []
-        raw_max_position_pct = self._selection_meta_value(market, ticker, "max_position_pct")
+        raw_max_order_cap_pct = self._selection_meta_value(market, ticker, "max_order_cap_pct")
+        raw_legacy_max_position_pct = self._selection_meta_value(market, ticker, "max_position_pct")
+        raw_max_position_pct = raw_max_order_cap_pct or raw_legacy_max_position_pct
         try:
             max_position_pct = float(raw_max_position_pct)
         except (TypeError, ValueError):
@@ -2662,7 +2684,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if max_position_pct is not None and max_position_pct > 0:
             cap = max(1, min(100, int(round(max_position_pct))))
             caps.append(cap)
-            reasons.append(f"max_position_pct={cap}%")
+            reason_key = "max_order_cap_pct" if raw_max_order_cap_pct not in (None, "") else "max_position_pct"
+            reasons.append(f"{reason_key}={cap}%")
         risk_tags = self._risk_tags_for_ticker(market, ticker)
         risk_tag_cap = None
         for tag in risk_tags:
@@ -3692,6 +3715,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self.manual_rescreen(market)
         except Exception as exc:
             log.warning(f"[opening_fresh_quality] {market} failed: {exc}")
+    def _build_current_breadth_summary(self, market: str, mode: str) -> dict:
+        """Build a lightweight intraday breadth summary for tune prompts."""
+        try:
+            candidates = self._screen_market_candidates(market, mode)
+            if market == "KR" and candidates:
+                self._last_kr_candidates = candidates
+            universe = (
+                (self.today_universe.get(market) or {}).get("tickers")
+                or (self.today_judgment or {}).get("universe_tickers")
+                or []
+            )
+            if universe:
+                candidates = self._restrict_candidates_to_universe(candidates, universe)
+            ctx = ((self.today_judgment or {}).get("digest_raw") or {}).get("context") or {}
+            summary = build_breadth_summary(market, candidates or [], ctx)
+            summary["source"] = "intraday_screen"
+            return summary
+        except Exception as exc:
+            log.debug("[tune breadth] %s current breadth unavailable: %s", market, exc)
+            return {}
     def _build_intraday_context(self, market: str) -> str:
         """?μ쨷 ?ъ뒪?щ━?앹슜 ?ㅼ떆媛??쒖옣 而⑦뀓?ㅽ듃 臾몄옄???앹꽦."""
         try:
@@ -5983,7 +6026,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _find_live_position_for_candidate(self, cand: dict, market: str) -> Optional[dict]:
         ticker = str(cand.get("ticker", "") or "")
         key = ticker.upper() if market == "US" else ticker
-        for pos in self.risk.positions:
+        positions = getattr(getattr(self, "risk", None), "positions", []) or []
+        for pos in positions:
             pos_ticker = str(pos.get("ticker", "") or "")
             pos_key = pos_ticker.upper() if market == "US" else pos_ticker
             if pos_key == key:
@@ -6156,9 +6200,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     remaining = int(self._SELL_FAIL_COOLDOWN_SEC - (time.time() - _fail_ts))
                     log.debug(f"[exit skip] {cand['ticker']} 留ㅻ룄 ?ㅽ뙣 荑⑤떎??{remaining}珥??⑥쓬")
                     continue
-                # ?? 嫄곕옒 以묒? 泥댄겕 (KR留? ??????????????????????????????????????
+                # KR trading halt check.
                 if market == "KR" and is_trading_halted(cand["ticker"], self.token):
-                    self._sell_fail_at[cand["ticker"]] = time.time() + 600  # 10遺?荑⑤떎??                    log.warning(f"[嫄곕옒 以묒?] {cand['ticker']} 留ㅻ룄 遺덇? ??10遺????ы솗??)
+                    self._sell_fail_at[cand["ticker"]] = time.time() + 600
+                    log.warning(f"[trading halted] {cand['ticker']} sell blocked; retry after 10m")
                     continue
                 # ?? TP ?꾨떖 ???몃젅?쇰쭅 ?ㅽ깙 泥섎━ ??????????????????????????????
                 if cand["reason"] == "tp_check":
@@ -6217,7 +6262,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
-                advice = advisor_ask(self._advisor_pos(pos, market), market, digest)
+                advice = advisor_ask(
+                    self._advisor_pos(pos, market),
+                    market,
+                    digest,
+                    decision_stage="PRE_SESSION",
+                )
             except Exception as e:
                 log.warning(f"[?μ쟾 由щ럭] {ticker} hold_advisor ?ㅻ쪟 ??HOLD ?좎?: {e}")
                 hold_list.append((ticker, "advisor error default hold"))
@@ -6307,7 +6357,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
-                advice = advisor_ask(self._advisor_pos(pos, market), market, digest)
+                advice = advisor_ask(
+                    self._advisor_pos(pos, market),
+                    market,
+                    digest,
+                    decision_stage="PRE_CLOSE_CARRY",
+                )
                 action = advice.get("action", "HOLD")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
@@ -6406,7 +6461,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             action, reason = "HOLD", ""
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
-                advice = advisor_ask(self._advisor_pos(pos, market), market, digest)
+                advice = advisor_ask(
+                    self._advisor_pos(pos, market),
+                    market,
+                    digest,
+                    decision_stage="INTRADAY_REVIEW",
+                )
                 action = advice.get("action", "HOLD")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
@@ -6485,7 +6545,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _d = self.today_judgment.get("digest_prompt", "")
                 _ic = self._build_intraday_context(market)
                 digest = _d + "\n\n[?μ쨷 ?꾩옱]\n" + _ic if _ic else _d
-                advice = advisor_ask(self._advisor_pos(cand, market), market, digest)
+                advice = advisor_ask(
+                    self._advisor_pos(cand, market),
+                    market,
+                    digest,
+                    decision_stage="MAX_HOLD",
+                )
                 action = advice.get("action", "SELL")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
@@ -6538,7 +6603,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     _d = self.today_judgment.get("digest_prompt", "")
                     _ic = self._build_intraday_context(market)
                     digest = _d + "\n\n[?μ쨷 ?꾩옱]\n" + _ic if _ic else _d
-                    advice = advisor_ask(self._advisor_pos(cand, market), market, digest)
+                    advice = advisor_ask(
+                        self._advisor_pos(cand, market),
+                        market,
+                        digest,
+                        decision_stage="TP_REVIEW",
+                    )
                     if advice["action"] == "SELL":
                         log.info(f"[TP?믩텇?앷??⑹쓽:SELL] {ticker} ??利됱떆 泥?궛")
                         trailing_alert(market, ticker, "sell", detail="遺꾩꽍媛 ?⑹쓽: 利됱떆 泥?궛")
@@ -6778,6 +6848,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 **exit_meta,
             },
         )
+        if getattr(self, "pathb", None) is not None and ex.get("pathb_path_run_id"):
+            try:
+                self.pathb.on_external_close(
+                    ex,
+                    market=market,
+                    execution_id=str(result.get("order_no", "") or ex.get("v2_execution_id", "") or ""),
+                    close_reason=_v2_close_reason(reason),
+                    price=float(raw_exit or 0),
+                )
+            except Exception as _pathb_close_e:
+                log.error(f"[PathB external close sync] {market} {ex.get('ticker')}: {_pathb_close_e}", exc_info=True)
         ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
         _exit_buy_path = "path_b" if (ex.get("pathb_path_run_id") or ex.get("path_type") == "claude_price") else "path_a"
         pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), reason, market=market, name=ex_name, usd_krw=self.usd_krw_rate, buy_path=_exit_buy_path)
@@ -7026,8 +7107,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._execution_flags[market] = set()
         self.risk.market = market          # ?섏닔猷뚯쑉 ?쒖옣??留욊쾶 ?ㅼ젙
         self.tuning_count = 0
-        self._index_history[market].clear()   # ?몄뀡留덈떎 吏???덉뒪?좊━ 珥덇린??        self._session_events = []          # ?몄뀡 ?대깽??珥덇린??        self._entry_blocked = {}           # ???몄뀡 ?쒖옉 ??荑⑤떎??珥덇린??        self._order_error_count = {}       # 二쇰Ц ?곗냽 ?ㅻ쪟 移댁슫??珥덇린??        self.decision_event_log = []
-        self._daily_sl_count[market] = 0   # ?뱀씪 ?먯젅 移댁슫??珥덇린??        self._session_closed_tickers[market] = set()  # 留ㅻ룄 ?꾨즺 ?곗빱 珥덇린??        self._v2_same_day_stop_tickers[market] = set()
+        self._last_tune_result[market] = {}
+        self._tune_maintain_streak[market] = 0
+        self._index_history[market].clear()
+        self._session_events = []
+        self._entry_blocked = {}
+        self._order_error_count = {}
+        self.decision_event_log = []
+        self._daily_sl_count[market] = 0
+        self._session_closed_tickers[market] = set()
+        self._v2_same_day_stop_tickers[market] = set()
         self._normalize_pending_orders()
         self._save_pending_orders()
         self._reset_us_order_cache()
@@ -7565,7 +7654,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             market=market,
         )
         self.ws.start()
-        self._session_open_at[market] = time.time()  # startup guard 湲곗???        self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)
+        self._session_open_at[market] = time.time()
+        self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)
         if self._session_startup_guard_sec[market] <= 0:
             _log_flow(
                 "info",
@@ -10149,6 +10239,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, "insufficient_cash")
                         log.debug(f"  [{_s_tk}] ?꾧툑 遺議?({order_cost:,.0f}??> {self.risk.cash:,.0f}?? ???ㅽ궢")
                         continue
+                    _selection_cap_pct, _selection_cap_reasons = self._selection_size_cap_pct(market, _s_tk)
+                    _atr_size_scale = None
+                    if _s_atr is not None and float(_s_atr or 0) > 0 and float(self.atr_target_pct or 0) > 0:
+                        _atr_size_scale = max(0.1, min(1.0, float(self.atr_target_pct) / float(_s_atr)))
+                    _sizing_contract = {
+                        "sizing_contract_version": "sizing_contract_v1",
+                        "claude_allocation_intent": self._selection_meta_value(market, _s_tk, "allocation_intent"),
+                        "claude_max_order_cap_pct": _selection_cap_pct,
+                        "claude_risk_budget_pct": self._selection_meta_value(market, _s_tk, "risk_budget_pct"),
+                        "claude_size_reason": self._selection_meta_value(market, _s_tk, "size_reason"),
+                        "selection_size_cap_reasons": _selection_cap_reasons,
+                        "consensus_size_pct": int(size_pct),
+                        "effective_mode_size_pct": int(_s_esz),
+                        "atr_size_scale": _atr_size_scale,
+                        "cash_krw": float(self.risk.cash),
+                        "market_available_budget_krw": float(avail),
+                        "final_order_budget_krw": float(order_budget),
+                        "final_qty": int(qty),
+                    }
                     analysis_log.info(
                         f"[signal {market}] {_s_tk} {_s_strat} qty={qty}",
                         extra={"extra": {
@@ -10157,6 +10266,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "risk_price_krw": _s_rpx, "qty": qty,
                             "order_cost_krw": order_cost, "tp_pct": _s_tp, "sl_pct": _s_sl,
                             **_v2_late_payload,
+                            **_sizing_contract,
                         }},
                     )
                     # ?쇰꼸: signaled
@@ -10272,11 +10382,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             selected_reason=_s_sr,
                         )
                         log.error(f"order failed [{_s_tk}]: {result['msg']}")
-                        _reason = result.get("msg", "") or "二쇰Ц嫄곗젅"
-                        # 留ㅻℓ遺덇? 醫낅ぉ ???몄뀡 ???ъ떆??李⑤떒 (KR/US 怨듯넻)
-                        if "留ㅻℓ遺덇?" in _reason or "二쇰Ц泥섎━媛 ?덈릺?덉뒿?덈떎" in _reason:
+                        _reason = result.get("msg", "") or "주문거절"
+                        # Broker-declared untradable symbols should not be retried.
+                        if "매매불가" in _reason or "주문처리가 안되었습니다" in _reason:
                             self._mark_us_order_blocked(_s_tk, _reason)
-                            log.warning(f"[留ㅻℓ遺덇?] {_s_tk} ?몄뀡 ??吏꾩엯 李⑤떒: {_reason}")
+                            log.warning(f"[untradable] {_s_tk} order blocked: {_reason}")
                         elif market == "US" and self.is_paper:
                             self._mark_us_order_blocked(_s_tk, _reason)
                             analysis_log.info(
@@ -10296,7 +10406,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         continue
                     if market == "US":
                         self._mark_us_order_supported(_s_tk)
-                    # 二쇰Ц ?깃났 ???곗냽 ?ㅻ쪟 移댁슫??珥덇린??                    self._order_error_count.pop(_s_tk, None)
+                    # Clear consecutive order errors after a successful order.
+                    self._order_error_count.pop(_s_tk, None)
                     _entry_timing_order_snapshot = self._entry_timing_order_sent(
                         market,
                         _s_tk,
@@ -10826,10 +10937,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             _vol_trend = get_market_vol_trend(market)
         except Exception:
             _vol_trend = "normal"
+        _tune_mode = (self.today_judgment.get("consensus", {}) or {}).get("mode", "NEUTRAL")
+        _morning_breadth = ((self.today_judgment.get("digest_raw") or {}).get("breadth_summary") or {})
+        _current_breadth = self._build_current_breadth_summary(market, _tune_mode)
+        _prev_tune_result = self._last_tune_result.get(market, {}) or {}
         current_state = {
             "index_change":    _idx_now,
             "index_slope_30m": _slope_30m,   # None = 泥??쒕떇 (?댁쟾 湲곗?媛??놁쓬)
             "volume_trend":    _vol_trend,
+            "morning_breadth": _morning_breadth,
+            "current_breadth": _current_breadth,
+            "previous_tune_action": _prev_tune_result.get("action", "N/A"),
+            "maintain_streak": self._tune_maintain_streak.get(market, 0),
             "positions": [
                 {
                     "ticker":        p["ticker"],
@@ -10847,7 +10966,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "runtime_overrides": self._runtime_overrides(market),
             "execution_profile": self._build_execution_profile_text(
                 market,
-                (self.today_judgment.get("consensus", {}) or {}).get("mode", "NEUTRAL"),
+                _tune_mode,
             ),
             "ops_review_context": self._format_ops_review_context(market),
         }
@@ -10856,6 +10975,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         runtime_override_changes = self._apply_runtime_tuning_adjustments(market, result)
         log.info(f"[runtime gates {market}] source=tuning_{elapsed}m {self._runtime_gate_state_text(market)}")
         action = result.get("action", "MAINTAIN")
+        self._last_tune_result[market] = dict(result or {})
+        self._tune_maintain_streak[market] = (
+            self._tune_maintain_streak.get(market, 0) + 1
+            if action == "MAINTAIN"
+            else 0
+        )
         if action != "MAINTAIN":
             old_mode = self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL")
             new_mode = result.get("mode", old_mode)
@@ -11906,7 +12031,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _d = self.today_judgment.get("digest_prompt", "")
                 _ic = self._build_intraday_context(market)
                 digest = _d + "\n\n[?μ쨷 ?꾩옱]\n" + _ic if _ic else _d
-                advice = advisor_ask(self._advisor_pos(pos, market), market, digest)
+                advice = advisor_ask(
+                    self._advisor_pos(pos, market),
+                    market,
+                    digest,
+                    decision_stage="PRE_CLOSE_CARRY",
+                )
                 action = advice.get("action", "SELL")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
@@ -12297,6 +12427,46 @@ def main(is_paper: bool = True):
                 run_us_update()
         except Exception as e:
             log.warning(f"[?곗씠??理쒖떊?? {market} ?ㅽ뙣: {e}")
+    def _repo_health_check(trigger: str):
+        # Non-blocking operational guardrail: detect/report only, never stop trading flow.
+        check_script = Path(__file__).parent / "tools" / "repo_health_check.py"
+        cmd = [sys.executable, str(check_script), "--trigger", trigger, "--json"]
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(Path(__file__).parent),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=90,
+            )
+            payload = json.loads(proc.stdout or "{}")
+            checks = payload.get("checks") or []
+            failed = [c for c in checks if c.get("status") == "FAIL"]
+            warned = [c for c in checks if c.get("status") == "WARN"]
+            if proc.returncode == 0 and payload.get("ok") and not failed:
+                log.info(f"[repo health] {trigger} OK ({len(checks)} checks, warnings={len(warned)})")
+                return
+            details = [
+                f"{c.get('name')}: {c.get('detail')}"
+                for c in (failed or warned)[:6]
+            ]
+            if not details:
+                details = [(proc.stderr or proc.stdout or f"exit={proc.returncode}").strip()[:800]]
+            log.warning(f"[repo health] {trigger} FAIL | " + " | ".join(details))
+            system_alert(
+                f"repo health warning: {trigger}",
+                details,
+                icon="!",
+            )
+        except Exception as e:
+            log.warning(f"[repo health] {trigger} failed to run: {e}")
+            system_alert(
+                f"repo health runner warning: {trigger}",
+                [str(e)],
+                icon="!",
+            )
     if "KR" in enabled_markets:
         schedule.every().day.at("08:20").do(_supplement_collect, "KR")   # KR ?섍툒 (?멸뎅??湲곌?)
         schedule.every().day.at("08:30").do(_screener_collect, "KR")
@@ -12313,13 +12483,17 @@ def main(is_paper: bool = True):
             log.warning(f"[?먯젙 ?좏겙 媛깆떊] ?ㅽ뙣: {e}")
     schedule.every().day.at("00:01").do(_midnight_token_refresh)
     if "KR" in enabled_markets:
+        schedule.every().day.at("08:40").do(_repo_health_check, "KR_PREOPEN")
         schedule.every().day.at("08:50").do(bot.session_open, "KR")
         schedule.every().day.at("09:05").do(bot.run_opening_fresh_screener, "KR")
         schedule.every().day.at("16:00").do(bot.session_close, "KR")
         schedule.every().day.at("16:10").do(_data_update, "KR")          # KR ????醫낃? ?뺤젙
+        schedule.every().day.at("16:15").do(_repo_health_check, "KR_POSTCLOSE")
     if "US" in enabled_markets:
+        schedule.every().day.at("22:10").do(_repo_health_check, "US_PREOPEN")
         schedule.every().day.at("22:20").do(bot.session_open, "US")
         schedule.every().day.at("05:00").do(bot.session_close, "US")
+        schedule.every().day.at("05:10").do(_repo_health_check, "US_POSTCLOSE")
         schedule.every().day.at("06:30").do(_data_update, "US")          # US ????醫낃? ?뺤젙
     for _mkt in sorted(enabled_markets):
         schedule.every(5).minutes.do(bot.run_housekeeping, _mkt)
@@ -12381,7 +12555,8 @@ if __name__ == "__main__":
         if "US" in markets_col:
             log.info(f"[?섏쭛] US ?댁뒪 {col_start} ~ {col_end}")
             us_news_range(col_start, col_end)
-        # 3?④퀎: 蹂댁“ ?곗씠??        log.info(f"[?섏쭛] supplement {col_start} ~ {col_end}")
+        # Step 3: supplementary data.
+        log.info(f"[collect] supplement {col_start} ~ {col_end}")
         market_arg = args.collect if args.collect != "ALL" else "ALL"
         supp_range(col_start, col_end, market=market_arg)
         log.info("?곗씠???섏쭛 ?꾨즺. ?댁젣 --train ?쇰줈 Phase1 ?숈뒿???ㅽ뻾?섏꽭??")
