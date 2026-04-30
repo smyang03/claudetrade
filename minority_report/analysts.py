@@ -14,6 +14,13 @@ from logger import get_analysis_logger, get_judgment_logger, get_minority_logger
 from credit_tracker import record as credit_record
 from minority_report.raw_call_logger import save as save_raw_call
 from bot.candidate_policy import normalize_selection_result, selection_limits
+from minority_report.prompt_contracts import (
+    COMMON_DECISION_CONTRACT,
+    HARD_SOFT_RULE_CONTRACT,
+    PRICE_PLAN_CONTRACT,
+    SELECTION_EXECUTION_PHASE_CONTRACT,
+    SIZING_DECISION_CONTRACT,
+)
 
 log          = get_minority_logger()
 analysis_log = get_analysis_logger()
@@ -627,12 +634,18 @@ def _build_selection_retry_prompt(
 후보:
 {chr(10).join(lines)}
 
+{COMMON_DECISION_CONTRACT}
+{SELECTION_EXECUTION_PHASE_CONTRACT}
+{SIZING_DECISION_CONTRACT}
+{PRICE_PLAN_CONTRACT}
+{HARD_SOFT_RULE_CONTRACT}
+
 Required output rules:
 - keep a broad watchlist: if candidates >= 15 and mode is not DEFENSIVE/HALT, return at least {watch_floor} watchlist names.
 - required fields: watchlist, trade_ready, reasons, price_targets
 - price_targets is required for every trade_ready ticker. Do not add price_targets for watch_only tickers.
 - price_targets prices must be native market prices: KR=KRW, US=USD.
-- price_targets fields: buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence, cancel_if_open_above, entry_rationale, exit_rationale, rationale.
+- price_targets fields: reference_price, buy_zone_low, buy_zone_high, sell_target, stop_loss, reward_risk, risk_pct, reward_pct, hold_days, confidence, cancel_if_open_above, target_basis, invalid_if, entry_rationale, exit_rationale, rationale.
 - price target rationale fields must be short: entry_rationale, exit_rationale, rationale <= 40 chars each.
 
 규칙:
@@ -648,15 +661,25 @@ Required output rules:
   "watchlist":["code1","code2"],
   "trade_ready":["code1"],
   "reasons":{{"code1":"짧은 이유"}},
+  "allocation_intent":{{"code1":"probe|small|normal|aggressive"}},
+  "max_order_cap_pct":{{"code1":35}},
+  "risk_budget_pct":{{"code1":0.35}},
+  "size_reason":{{"code1":"short sizing reason"}},
   "price_targets":{{
     "code1":{{
+      "reference_price":73200,
       "buy_zone_low":73000,
       "buy_zone_high":73500,
       "sell_target":76000,
       "stop_loss":71000,
+      "reward_risk":1.5,
+      "risk_pct":2.7,
+      "reward_pct":3.4,
       "hold_days":1,
       "confidence":0.65,
       "cancel_if_open_above":74500,
+      "target_basis":"support pullback",
+      "invalid_if":"breaks support",
       "entry_rationale":"support pullback",
       "exit_rationale":"near resistance",
       "rationale":"buy near support"
@@ -687,6 +710,20 @@ def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
         suggested_size_pct = max(0.0, min(100.0, float(suggested_size_pct)))
     except Exception:
         suggested_size_pct = None
+    market_regime = str(result.get("market_regime", "unknown") or "unknown").strip()
+    data_quality = str(result.get("data_quality", "unknown") or "unknown").strip()
+    new_buy_permission = str(result.get("new_buy_permission", "selective") or "selective").strip()
+    try:
+        max_gross_exposure_pct = int(float(result.get("max_gross_exposure_pct", 0) or 0))
+    except Exception:
+        max_gross_exposure_pct = 0
+    max_gross_exposure_pct = max(0, min(100, max_gross_exposure_pct))
+    key_confirmations = result.get("key_confirmations", [])
+    if not isinstance(key_confirmations, list):
+        key_confirmations = []
+    key_contradictions = result.get("key_contradictions", [])
+    if not isinstance(key_contradictions, list):
+        key_contradictions = []
     return {
         "stance": stance,
         "confidence": confidence,
@@ -695,6 +732,12 @@ def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
         "top_risks": top_risks,
         "suggested_strategy": suggested_strategy,
         "suggested_size_pct": suggested_size_pct,
+        "market_regime": market_regime[:40],
+        "data_quality": data_quality[:40],
+        "new_buy_permission": new_buy_permission[:40],
+        "max_gross_exposure_pct": max_gross_exposure_pct,
+        "key_confirmations": [str(x)[:120] for x in key_confirmations[:5]],
+        "key_contradictions": [str(x)[:120] for x in key_contradictions[:5]],
     }
 
 
@@ -705,6 +748,12 @@ def _fallback_result(error: Exception) -> dict:
         "key_reason": f"오류:{str(error)[:60]}",
         "full_reasoning": "",
         "top_risks": [],
+        "market_regime": "unknown",
+        "data_quality": "poor",
+        "new_buy_permission": "selective",
+        "max_gross_exposure_pct": 0,
+        "key_confirmations": [],
+        "key_contradictions": [],
         "suggested_strategy": "관망",
     }
 
@@ -721,7 +770,8 @@ PERSONAS = {
 • 52주 신고가 근접 (5% 이내)
 
 [판단 기준]
-• 위 신호 2개 이상 → MODERATE_BULL 이상
+• 개별 종목의 위 신호 2개 이상은 해당 종목 모멘텀 근거일 뿐, 시장 MODERATE_BULL의 충분조건이 아님
+• 시장 MODERATE_BULL 이상은 breadth 요약(상승 비율, GC/DC, 섹터 확산) 또는 지수/섹터 확인이 동반될 때만
 • 신호 1개 + 시장 분위기 양호 → MILD_BULL
 • 기술적 신호 없음 → NEUTRAL 이하
 
@@ -756,7 +806,7 @@ PERSONAS = {
     "neutral": """당신은 퀀트 통계 분석가입니다.
 
 [전문 영역 — 이 관점에서 분석]
-• 상승/하락 신호 개수 대비 비교 (몇 대 몇인가)
+• 제공된 breadth 요약의 상승/하락 신호 개수 대비 비교 (직접 재계산 금지)
 • 과거 유사 시장 패턴과의 통계적 일치도
 • 지표 간 상충 여부 (기술적 긍정 + 매크로 부정 → 불확실)
 • 데이터 신뢰도 검증 (데이터 누락시 불확실성 증가)
@@ -772,6 +822,40 @@ PERSONAS = {
 • 한쪽 분석가 의견에 무조건 동조 금지
 • 신호가 명확하지 않은데 confidence 0.7 이상 부여 금지""",
 }
+
+US_BEAR_PERSONA = """당신은 미국 주식 헤지펀드 리스크 매니저입니다.
+
+[전문 영역 — US 리스크 축을 우선 확인]
+• VIX 수준/변화: 결측이면 calm으로 해석하지 말고 data_quality 불확실성으로 처리
+• HYG 하락, TNX 급등, DXY 급등 같은 credit/rate/USD 스트레스
+• SPY/QQQ/IWM 및 섹터 ETF(XLK/XLF/XLE 등) 약세 확산
+• breadth 악화: 상승 비율 하락, GC/DC 악화, RSI 과매수 과포화 후 둔화
+• 대형주 과매수(NVDA/AAPL/GOOGL 등)는 보조 위험이지 단독 시장 판단 근거가 아님
+
+[판단 기준]
+• VIX/HYG/TNX/DXY 중 2개 이상 위험 신호 + breadth 악화 → CAUTIOUS_BEAR 이하
+• VIX 25 이상 또는 HYG 급락 + 지수 약세 → DEFENSIVE 검토
+• 대형주 일부 과매수만 있고 breadth가 양호하면 CAUTIOUS 이상으로 과도 하향 금지
+• VIX/DXY가 N/A면 calm으로 보지 말고 data_quality를 mixed로 반영
+
+[절대 하지 말 것]
+• KR 지표(VKOSPI, 외국인 선물, USD/KRW)로 US Bear 판단을 주도하지 말 것
+• 개별 기술주 1~3개의 과매수만으로 시장 전체 HALT 판단 금지
+• 위험 신호가 있는데 AGGRESSIVE 판단 금지"""
+
+BREADTH_FIRST_CONTRACT = """[시장 breadth 우선 계약 — 반드시 준수]
+• 시장 mode는 먼저 breadth 요약과 지수/매크로/섹터 흐름으로 판단하세요.
+• 개별 종목은 시장 판단의 보조 예시입니다. 1~3개 종목만으로 시장 mode를 결정하지 마세요.
+• 제공된 GC/DC, RSI 과매수/과매도, 상승/하락 개수는 코드가 계산한 값입니다. 직접 다시 세지 말고 그대로 사용하세요.
+• breadth와 개별 종목 예시가 충돌하면 breadth를 우선하세요.
+• VIX/DXY/VKOSPI가 N/A 또는 결측이면 안정 신호가 아니라 data_quality 불확실성입니다.
+• key_reason에는 개별 종목을 최대 3개까지만 예시로 언급하세요."""
+
+
+def _persona_for(analyst_type: str, market: str = "") -> str:
+    if analyst_type == "bear" and str(market or "").upper() == "US":
+        return US_BEAR_PERSONA
+    return PERSONAS[analyst_type]
 
 # ── 1라운드: 독립 판단 ─────────────────────────────────────────────────────────
 def call_analyst(analyst_type: str, digest_prompt: str,
@@ -803,7 +887,12 @@ def call_analyst(analyst_type: str, digest_prompt: str,
 
     lesson_section = f"\n[recent lesson candidates]\n{lesson_context[:500]}\n" if lesson_context else ""
 
-    prompt = f"""{PERSONAS[analyst_type]}
+    prompt = f"""{_persona_for(analyst_type, market)}
+
+{BREADTH_FIRST_CONTRACT}
+{COMMON_DECISION_CONTRACT}
+{HARD_SOFT_RULE_CONTRACT}
+{SIZING_DECISION_CONTRACT}
 {feedback_section}{portfolio_section}{lesson_section}
 [데이터 해석 가이드 — 반드시 준수]
 • 코스피: "1d X% / 5d Y%" 형태 — 1d는 전일 대비, 5d는 주간 추세. 둘 다 확인할 것.
@@ -832,7 +921,13 @@ JSON으로만 응답 (다른 텍스트 없이):
   "full_reasoning":"상세 분석 2~3문장",
   "top_risks":["위험1","위험2"],
   "suggested_strategy":"모멘텀|평균회귀|갭+눌림|변동성돌파|관망",
-  "suggested_size_pct":0~100}}"""
+  "suggested_size_pct":0~100,
+  "market_regime":"risk_on|balanced|risk_off|panic|unknown",
+  "data_quality":"good|mixed|poor|unknown",
+  "new_buy_permission":"allow|selective|block",
+  "max_gross_exposure_pct":0~100,
+  "key_confirmations":["short evidence"],
+  "key_contradictions":["short contradiction"]}}"""
 
     try:
         resp = client.messages.create(model=R1_MODEL, max_tokens=2048,
@@ -847,6 +942,7 @@ JSON으로만 응답 (다른 텍스트 없이):
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
             model=R1_MODEL,
+            prompt_version="market_judgment_v3",
         )
         log.info(f"[{analyst_type} R1] {result.get('stance','-')} "
                  f"conf={result.get('confidence',0):.2f} | "
@@ -887,7 +983,8 @@ def call_analyst_debate(analyst_type: str, my_r1: dict,
 
     history_section = f"\n[과거 토론 이력]\n{debate_history}\n" if debate_history else ""
 
-    prompt = f"""{PERSONAS[analyst_type]}
+    prompt = f"""{_persona_for(analyst_type, market)}
+{BREADTH_FIRST_CONTRACT}
 {history_section}
 [당신의 1라운드 판단]
 • stance: {my_r1['stance']}
@@ -925,6 +1022,7 @@ JSON으로만 응답:
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
             model=MODEL,
+            prompt_version="market_debate_v2",
         )
 
         changed = result.get("changed", False)
@@ -1057,6 +1155,10 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             "risk_tags": {},
             "recommended_strategy": {},
             "max_position_pct": {},
+            "allocation_intent": {},
+            "max_order_cap_pct": {},
+            "risk_budget_pct": {},
+            "size_reason": {},
         }
         return fallback, {}
 
@@ -1190,6 +1292,11 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 
 시장 컨텍스트:
 {digest_prompt[:220]}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}
+{COMMON_DECISION_CONTRACT}
+{SELECTION_EXECUTION_PHASE_CONTRACT}
+{SIZING_DECISION_CONTRACT}
+{PRICE_PLAN_CONTRACT}
+{HARD_SOFT_RULE_CONTRACT}
 규칙:
 - 후보 종목 중에서만 고르세요.
 - watchlist는 선별 목록입니다. 최대 {watch_max}개, 보통 8~18개 수준으로 제한하세요.
@@ -1204,6 +1311,8 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 - weak trade_ready가 높은 그룹은 더 강한 RS, 유동성, 장중 품질이 있을 때만 trade_ready로 올리세요.
 - reasons와 veto는 짧게 쓰세요.
 - recommended_strategy and max_position_pct must reflect conviction and risk, not generic defaults.
+- max_order_cap_pct, allocation_intent, and risk_budget_pct must reflect conviction and risk, not generic defaults.
+- max_position_pct is a legacy alias for max_order_cap_pct. It caps the system order budget and is not final portfolio weight or final quantity.
 - recommended_strategy, risk_tags, max_position_pct는 trade_ready 종목에 대해서만 채우세요.
 - price_targets는 trade_ready 종목에 대해서만 채우세요. watch_only 종목에는 price_targets를 쓰지 마세요.
 - price_targets 가격 단위는 시장 native 가격입니다. KR은 KRW, US는 USD입니다.
@@ -1220,15 +1329,25 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
   "recommended_strategy":{{"code1":"momentum|gap_pullback|mean_reversion|opening_range_pullback|observe"}},
   "risk_tags":{{"code1":["tag1"]}},
   "max_position_pct":{{"code1":20}},
+  "allocation_intent":{{"code1":"probe|small|normal|aggressive"}},
+  "max_order_cap_pct":{{"code1":20}},
+  "risk_budget_pct":{{"code1":0.35}},
+  "size_reason":{{"code1":"high RS but ATR elevated"}},
   "price_targets":{{
     "code1":{{
+      "reference_price":73200,
       "buy_zone_low":73000,
       "buy_zone_high":73500,
       "sell_target":76000,
       "stop_loss":71000,
+      "reward_risk":1.5,
+      "risk_pct":2.7,
+      "reward_pct":3.4,
       "hold_days":1,
       "confidence":0.65,
       "cancel_if_open_above":74500,
+      "target_basis":"VWAP reclaim + resistance",
+      "invalid_if":"breaks opening range low",
       "entry_rationale":"support pullback",
       "exit_rationale":"near resistance",
       "rationale":"buy near support, sell into resistance"
@@ -1289,6 +1408,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             output_tokens=resp.usage.output_tokens,
             market=market,
             model=MODEL,
+            prompt_version="selection_rank_v3+execution_plan_v1",
         )
         if result.get("_fallback_mode") == "selection_partial":
             retry_candidates = _pick_selection_retry_candidates(prompt_candidates, result, market)
@@ -1323,6 +1443,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                         output_tokens=retry_resp.usage.output_tokens,
                         market=market,
                         model=MODEL,
+                        prompt_version="selection_retry_v2+execution_plan_v1",
                     )
                     if not retry_result.get("_parse_recovered") and retry_meta.get("watchlist"):
                         result = retry_result

@@ -16,6 +16,7 @@ from credit_tracker import record as credit_record
 from logger import get_trading_logger
 from minority_report.claude_utils import extract_json
 from minority_report.raw_call_logger import save as save_raw_call
+from minority_report.prompt_contracts import COMMON_DECISION_CONTRACT, HARD_SOFT_RULE_CONTRACT
 
 
 log = get_trading_logger()
@@ -74,9 +75,13 @@ def quick_exit_check(
 
     prompt = f"""You are a fast exit arbiter for an automated trading system.
 
+{COMMON_DECISION_CONTRACT}
+{HARD_SOFT_RULE_CONTRACT}
+
 Return a strict JSON object only. Decide whether this soft-exit sell should proceed now.
 
 Position:
+- decision_stage: SOFT_EXIT
 - ticker: {ticker_key}
 - market: {market_key}
 - strategy: {strategy}
@@ -125,6 +130,7 @@ JSON schema:
             output_tokens=output_tokens,
             market=market_key,
             model=MODEL,
+            prompt_version="quick_exit_v2",
         )
         action = str(parsed.get("action", "SELL") or "SELL").strip().upper()
         if action not in {"HOLD", "SELL"}:

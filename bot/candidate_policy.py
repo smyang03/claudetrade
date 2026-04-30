@@ -175,6 +175,12 @@ def _valid_list(values, valid_order: list[str], market: str, max_items: int | No
     return out
 
 
+def _normalized_dict(values, market: str) -> dict:
+    if not isinstance(values, dict):
+        return {}
+    return {normalize_ticker(k, market): v for k, v in values.items()}
+
+
 def normalize_selection_result(parsed: dict, candidates: list[dict], market: str) -> dict:
     """Normalize Claude output into WATCH and TRADE_READY lists.
 
@@ -231,6 +237,14 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
         if isinstance(parsed.get("max_position_pct"), dict)
         else {}
     )
+    max_order_cap_pct = _normalized_dict(parsed.get("max_order_cap_pct"), market)
+    allocation_intent = _normalized_dict(parsed.get("allocation_intent"), market)
+    risk_budget_pct = _normalized_dict(parsed.get("risk_budget_pct"), market)
+    size_reason = _normalized_dict(parsed.get("size_reason"), market)
+    if not max_order_cap_pct and max_position_pct:
+        max_order_cap_pct = _normalized_dict(max_position_pct, market)
+    if not max_position_pct and max_order_cap_pct:
+        max_position_pct = dict(max_order_cap_pct)
     raw_price_targets = parsed.get("price_targets", {}) if isinstance(parsed.get("price_targets"), dict) else {}
     price_targets = {}
     trade_ready_set = set(trade_ready)
@@ -252,7 +266,15 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
             for k, v in risk_tags.items()
         },
         "recommended_strategy": {normalize_ticker(k, market): str(v) for k, v in recommended_strategy.items()},
-        "max_position_pct": max_position_pct,
+        "max_position_pct": _normalized_dict(max_position_pct, market),
+        "allocation_intent": {
+            k: str(v).strip().lower()
+            for k, v in allocation_intent.items()
+            if str(v).strip().lower() in {"probe", "small", "normal", "aggressive"}
+        },
+        "max_order_cap_pct": max_order_cap_pct,
+        "risk_budget_pct": risk_budget_pct,
+        "size_reason": {k: str(v) for k, v in size_reason.items()},
         "price_targets": price_targets,
         "_price_target_coverage": {
             "trade_ready_count": len(trade_ready),

@@ -23,6 +23,12 @@ def _as_float(value: Any) -> float:
     return float(value)
 
 
+def _as_optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return _as_float(value)
+
+
 def _as_int(value: Any) -> int:
     if isinstance(value, str):
         value = value.replace(",", "").strip()
@@ -51,7 +57,13 @@ class PricePlan:
     stop_loss: float
     hold_days: int
     confidence: float
+    reference_price: float | None = None
+    reward_risk: float | None = None
+    risk_pct: float | None = None
+    reward_pct: float | None = None
     cancel_if_open_above: float | None = None
+    target_basis: str = ""
+    invalid_if: str = ""
     entry_rationale: str = ""
     exit_rationale: str = ""
     rationale: str = ""
@@ -95,6 +107,15 @@ class PricePlan:
             errors.append("risk_nonpositive")
         elif reward / risk < min_reward_risk:
             errors.append("reward_risk_below_minimum")
+        if self.reward_risk is not None:
+            if self.reward_risk <= 0:
+                errors.append("reward_risk_nonpositive")
+            elif self.reward_risk < min_reward_risk:
+                errors.append("declared_reward_risk_below_minimum")
+        if self.risk_pct is not None and self.risk_pct <= 0:
+            errors.append("risk_pct_nonpositive")
+        if self.reward_pct is not None and self.reward_pct <= 0:
+            errors.append("reward_pct_nonpositive")
         return errors
 
     @property
@@ -114,7 +135,13 @@ class PricePlan:
             "stop_loss": self.stop_loss,
             "hold_days": self.hold_days,
             "confidence": self.confidence,
+            "reference_price": self.reference_price,
+            "reward_risk": self.reward_risk,
+            "risk_pct": self.risk_pct,
+            "reward_pct": self.reward_pct,
             "cancel_if_open_above": self.cancel_if_open_above,
+            "target_basis": self.target_basis,
+            "invalid_if": self.invalid_if,
             "entry_rationale": self.entry_rationale,
             "exit_rationale": self.exit_rationale,
             "rationale": self.rationale,
@@ -139,7 +166,13 @@ def make_price_plan(
     stop_loss: float,
     hold_days: int,
     confidence: float,
+    reference_price: float | None = None,
+    reward_risk: float | None = None,
+    risk_pct: float | None = None,
+    reward_pct: float | None = None,
     cancel_if_open_above: float | None = None,
+    target_basis: str = "",
+    invalid_if: str = "",
     entry_rationale: str = "",
     exit_rationale: str = "",
     rationale: str = "",
@@ -163,7 +196,13 @@ def make_price_plan(
         stop_loss=float(stop_loss),
         hold_days=int(hold_days),
         confidence=float(confidence),
+        reference_price=float(reference_price) if reference_price not in (None, "") else None,
+        reward_risk=float(reward_risk) if reward_risk not in (None, "") else None,
+        risk_pct=float(risk_pct) if risk_pct not in (None, "") else None,
+        reward_pct=float(reward_pct) if reward_pct not in (None, "") else None,
         cancel_if_open_above=float(cancel_if_open_above) if cancel_if_open_above not in (None, "") else None,
+        target_basis=str(target_basis or "")[:240],
+        invalid_if=str(invalid_if or "")[:240],
         entry_rationale=str(entry_rationale or "")[:240],
         exit_rationale=str(exit_rationale or "")[:240],
         rationale=str(rationale or "")[:360],
@@ -204,11 +243,17 @@ def parse_plan_from_claude(
             stop_loss=_as_float(raw.get("stop_loss")),
             hold_days=_as_int(raw.get("hold_days")),
             confidence=_as_float(raw.get("confidence")),
+            reference_price=_as_optional_float(raw.get("reference_price")),
+            reward_risk=_as_optional_float(raw.get("reward_risk")),
+            risk_pct=_as_optional_float(raw.get("risk_pct")),
+            reward_pct=_as_optional_float(raw.get("reward_pct")),
             cancel_if_open_above=(
                 _as_float(raw.get("cancel_if_open_above"))
                 if raw.get("cancel_if_open_above") not in (None, "")
                 else None
             ),
+            target_basis=str(raw.get("target_basis", "") or ""),
+            invalid_if=str(raw.get("invalid_if", "") or ""),
             entry_rationale=str(raw.get("entry_rationale", "") or ""),
             exit_rationale=str(raw.get("exit_rationale", "") or ""),
             rationale=str(raw.get("rationale", "") or ""),

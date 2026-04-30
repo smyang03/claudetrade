@@ -10,6 +10,7 @@ import time
 import anthropic
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trading_logger
@@ -17,6 +18,7 @@ from minority_report.claude_utils import extract_json
 from credit_tracker import record as credit_record
 from runtime_paths import get_runtime_path
 from minority_report.raw_call_logger import save as save_raw_call
+from minority_report.prompt_contracts import COMMON_DECISION_CONTRACT, HARD_SOFT_RULE_CONTRACT
 
 try:
     from phase1_trainer.digest_builder import build_intraday_advisor_context as _build_rt_ctx
@@ -46,12 +48,55 @@ TRAIL_GUIDE = """Trail guide:
 - 0.04 = wider room; use when trend is intact but normal pullbacks are likely.
 - 0.05 = widest room; use only for strong trend continuation with high noise, not for weak positions."""
 
+HOLD_DECISION_STAGES = {
+    "TP_REVIEW",
+    "PRE_SESSION",
+    "INTRADAY_REVIEW",
+    "MAX_HOLD",
+    "PRE_CLOSE_CARRY",
+    "SOFT_EXIT",
+    "MANUAL_REVIEW",
+}
 
-def _fallback_vote(reason: str) -> dict:
-    return {"action": "HOLD", "confidence": 0.0, "trail_pct": 0.03, "reason": reason, "fallback": True}
+STAGE_DEFAULT_POLICIES = {
+    "TP_REVIEW": "SELL unless a trend-continuation exception justifies trailing.",
+    "PRE_SESSION": "HOLD unless overnight or pre-session risk is broken.",
+    "INTRADAY_REVIEW": "HOLD unless risk/reward has deteriorated or thesis is invalid.",
+    "MAX_HOLD": "SELL unless there is a clear one-review carry exception.",
+    "PRE_CLOSE_CARRY": "SELL unless broker-truth is trusted and carry risk is acceptable.",
+    "SOFT_EXIT": "SELL unless the soft exit is premature and risk is protected.",
+    "MANUAL_REVIEW": "HOLD unless the supplied review context supports SELL.",
+}
 
 
-def _coerce_vote(result: dict) -> dict:
+def _normalize_stage(decision_stage: Optional[str]) -> str:
+    stage = str(decision_stage or "TP_REVIEW").strip().upper()
+    return stage if stage in HOLD_DECISION_STAGES else "MANUAL_REVIEW"
+
+
+def _stage_policy(decision_stage: str, default_policy: Optional[str] = None) -> str:
+    return str(default_policy or STAGE_DEFAULT_POLICIES.get(decision_stage, STAGE_DEFAULT_POLICIES["MANUAL_REVIEW"]))
+
+
+def _fallback_vote(reason: str, decision_stage: str = "TP_REVIEW", default_policy: str = "") -> dict:
+    stage = _normalize_stage(decision_stage)
+    return {
+        "action": "HOLD",
+        "confidence": 0.0,
+        "trail_pct": 0.03,
+        "sell_urgency": "wait",
+        "protective_stop": 0.0,
+        "next_review_min": 30,
+        "invalid_if": "",
+        "reason": reason,
+        "fallback": True,
+        "decision_stage": stage,
+        "default_policy": default_policy or _stage_policy(stage),
+    }
+
+
+def _coerce_vote(result: dict, decision_stage: str = "TP_REVIEW", default_policy: str = "") -> dict:
+    stage = _normalize_stage(decision_stage)
     action = str((result or {}).get("action", "HOLD") or "HOLD").strip().upper()
     if action not in {"HOLD", "SELL"}:
         action = "HOLD"
@@ -63,17 +108,40 @@ def _coerce_vote(result: dict) -> dict:
         trail_pct = float((result or {}).get("trail_pct", 0.03) or 0.03)
     except Exception:
         trail_pct = 0.03
+    sell_urgency = str((result or {}).get("sell_urgency", "") or "").strip().lower()
+    if sell_urgency not in {"now", "next_open", "wait"}:
+        sell_urgency = "now" if action == "SELL" else "wait"
+    try:
+        protective_stop = float((result or {}).get("protective_stop", 0.0) or 0.0)
+    except Exception:
+        protective_stop = 0.0
+    try:
+        next_review_min = int(float((result or {}).get("next_review_min", 30) or 30))
+    except Exception:
+        next_review_min = 30
     return {
         "action": action,
         "confidence": max(0.0, min(1.0, confidence)),
         "trail_pct": max(0.02, min(0.05, trail_pct)),
+        "sell_urgency": sell_urgency,
+        "protective_stop": max(0.0, protective_stop),
+        "next_review_min": max(5, min(240, next_review_min)),
+        "invalid_if": str((result or {}).get("invalid_if", "") or "")[:240],
         "reason": str((result or {}).get("reason", "") or ""),
         "fallback": bool((result or {}).get("fallback", False)),
+        "decision_stage": stage,
+        "default_policy": default_policy or _stage_policy(stage),
     }
 
 
 def _ask_one(analyst_type: str, pos: dict, market: str,
-             digest_prompt: str, rt_context: str = "") -> dict:
+             digest_prompt: str, rt_context: str = "",
+             decision_stage: str = "TP_REVIEW",
+             default_policy: Optional[str] = None,
+             minutes_to_close: Optional[float] = None,
+             force_exit_window: bool = False) -> dict:
+    decision_stage = _normalize_stage(decision_stage)
+    default_policy_text = _stage_policy(decision_stage, default_policy)
     # entry: open_positions(KRW) 우선, 없으면 display_avg_price(USD) 폴백
     entry = float(pos.get("entry", 0) or 0)
     if entry <= 0:
@@ -118,7 +186,7 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
     strat   = pos.get("strategy", "-")
     held    = pos.get("held_days", 0)
     # 장중 보유시간(분) 계산
-    held_min: int | None = None
+    held_min: Optional[int] = None
     _entry_time = pos.get("entry_time")
     if _entry_time:
         try:
@@ -172,6 +240,9 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
 
     prompt = f"""{PERSONAS[analyst_type]}
 
+{COMMON_DECISION_CONTRACT}
+{HARD_SOFT_RULE_CONTRACT}
+
 목표가에 도달한 포지션을 계속 보유할지 판단하세요.
 
 ━━━ 포지션 ━━━
@@ -186,6 +257,13 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
 HOLD(보유) 또는 SELL(청산) 중 하나를 선택하고,
 HOLD 시 트레일링 폭(trail_pct: 0.02~0.05)을 제안하세요.
 
+Decision stage:
+- decision_stage: {decision_stage}
+- default_policy: {default_policy_text}
+- minutes_to_close: {minutes_to_close if minutes_to_close is not None else "unknown"}
+- force_exit_window: {bool(force_exit_window)}
+- System hard exits override any HOLD output.
+
 Perspective focus:
 {PERSONA_FOCUS.get(analyst_type, "")}
 
@@ -195,7 +273,11 @@ JSON으로만 응답:
 {{
   "action": "HOLD" or "SELL",
   "confidence": 0.0~1.0,
+  "sell_urgency": "now|next_open|wait",
   "trail_pct": 0.03,
+  "protective_stop": 0.0,
+  "next_review_min": 30,
+  "invalid_if": "price loses VWAP",
   "reason": "한 문장"
 }}"""
 
@@ -213,14 +295,25 @@ JSON으로만 응답:
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
             model=MODEL,
+            prompt_version="hold_advisor_v3",
+            extra={"decision_stage": decision_stage, "default_policy": default_policy_text},
         )
-        return _coerce_vote(result)
+        return _coerce_vote(result, decision_stage=decision_stage, default_policy=default_policy_text)
     except Exception as e:
         log.warning(f"[hold_advisor:{analyst_type}] 오류 → HOLD fallback: {e}")
-        return _fallback_vote("error")
+        return _fallback_vote("error", decision_stage=decision_stage, default_policy=default_policy_text)
 
 
-def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> dict:
+def ask(
+    pos: dict,
+    market: str,
+    digest_prompt: str = "",
+    delay: float = 0.5,
+    decision_stage: str = "TP_REVIEW",
+    default_policy: Optional[str] = None,
+    minutes_to_close: Optional[float] = None,
+    force_exit_window: bool = False,
+) -> dict:
     """
     분석가 3명 합의 → HOLD/SELL 결정.
 
@@ -233,6 +326,13 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
     }
     """
     ticker  = pos.get("ticker", "-")
+    decision_stage = _normalize_stage(decision_stage or pos.get("decision_stage"))
+    default_policy_text = _stage_policy(decision_stage, default_policy or pos.get("default_policy"))
+    if minutes_to_close is None and pos.get("minutes_to_close") not in (None, ""):
+        try:
+            minutes_to_close = float(pos.get("minutes_to_close"))
+        except Exception:
+            minutes_to_close = None
 
     # entry=0이면 Claude가 "데이터 오류"로 일관되게 SELL 판단 → 의미없는 호출 차단
     _entry = float(pos.get("entry", 0) or 0)
@@ -240,7 +340,14 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
         _entry = float(pos.get("avg_price", 0) or pos.get("display_avg_price", 0) or 0)
     if _entry <= 0:
         log.warning(f"[hold_advisor] {ticker} entry=0 → 호출 차단 (진입가 미확정), HOLD 반환")
-        return {"action": "HOLD", "trail_pct": 0.03, "votes": {}}
+        return {
+            "action": "HOLD",
+            "trail_pct": 0.03,
+            "votes": {},
+            "confidence": 0.0,
+            "decision_stage": decision_stage,
+            "default_policy": default_policy_text,
+        }
 
     # 실시간 컨텍스트 1회만 조회 (3명이 공유)
     rt_ctx = ""
@@ -254,7 +361,17 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
 
     votes   = {}
     for atype in ("bull", "bear", "neutral"):
-        votes[atype] = _ask_one(atype, pos, market, digest_prompt, rt_ctx)
+        votes[atype] = _ask_one(
+            atype,
+            pos,
+            market,
+            digest_prompt,
+            rt_ctx,
+            decision_stage=decision_stage,
+            default_policy=default_policy_text,
+            minutes_to_close=minutes_to_close,
+            force_exit_window=force_exit_window,
+        )
         time.sleep(delay)
 
     hold_score = sum(
@@ -271,6 +388,21 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
         sum(v["trail_pct"] for v in hold_voters) / len(hold_voters)
         if hold_voters else 0.03
     )
+    action_voters = [v for v in votes.values() if v["action"] == action]
+    confidence = max((float(v.get("confidence", 0.0) or 0.0) for v in action_voters), default=0.0)
+    sell_urgency = "wait"
+    if action == "SELL":
+        urgencies = [str(v.get("sell_urgency", "") or "") for v in action_voters]
+        sell_urgency = "now" if "now" in urgencies else ("next_open" if "next_open" in urgencies else "wait")
+    protective_stop = max((float(v.get("protective_stop", 0.0) or 0.0) for v in votes.values()), default=0.0)
+    next_review_min = min((int(v.get("next_review_min", 30) or 30) for v in votes.values()), default=30)
+    reason = ""
+    invalid_if = ""
+    for vote in action_voters:
+        if not reason and vote.get("reason"):
+            reason = str(vote.get("reason", ""))[:500]
+        if not invalid_if and vote.get("invalid_if"):
+            invalid_if = str(vote.get("invalid_if", ""))[:240]
 
     log.info(
         f"[hold_advisor] {ticker} → {action} "
@@ -278,13 +410,27 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
     )
 
     # ── 결정 시점 JSONL 기록 ──────────────────────────────────────────────────
-    _log_decision(ticker, market, pos, action, trail_pct, votes)
+    _log_decision(ticker, market, pos, action, trail_pct, votes, decision_stage, default_policy_text)
 
-    return {"action": action, "trail_pct": round(trail_pct, 3), "votes": votes}
+    return {
+        "action": action,
+        "trail_pct": round(trail_pct, 3),
+        "votes": votes,
+        "confidence": round(confidence, 4),
+        "sell_urgency": sell_urgency,
+        "protective_stop": protective_stop,
+        "next_review_min": next_review_min,
+        "reason": reason,
+        "invalid_if": invalid_if,
+        "decision_stage": decision_stage,
+        "default_policy": default_policy_text,
+    }
 
 
 def _log_decision(ticker: str, market: str, pos: dict,
-                  action: str, trail_pct: float, votes: dict):
+                  action: str, trail_pct: float, votes: dict,
+                  decision_stage: str = "TP_REVIEW",
+                  default_policy: str = ""):
     """hold_advisor 결정을 JSONL 파일에 기록"""
     try:
         log_dir = get_runtime_path("logs", "hold_advisor", make_parents=False)
@@ -302,6 +448,8 @@ def _log_decision(ticker: str, market: str, pos: dict,
             "pnl_pct":    round((pos.get("current_price", 0) / pos.get("entry", 1) - 1) * 100, 3),
             "held_days":  pos.get("held_days", 0),
             "decision":   action,
+            "decision_stage": decision_stage,
+            "default_policy": default_policy,
             "trail_pct":  trail_pct,
             "votes": {k: {"action": v["action"], "confidence": v["confidence"],
                           "reason": v["reason"]} for k, v in votes.items()},

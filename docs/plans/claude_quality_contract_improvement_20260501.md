@@ -188,7 +188,7 @@ Validation:
 - `python -m py_compile` passed for touched runtime, Claude, DB, and test modules.
 - Focused contract tests passed: 32 passed.
 - Related soft-exit/shadow tests passed: 31 passed.
-- `python -m pytest tests -q` passed: 212 passed, 2 warnings.
+- `python -m pytest tests -q` passed: 213 passed, 2 warnings.
 
 Known non-code test blocker:
 
@@ -203,3 +203,31 @@ Deferred by design:
 - Rescreen without price targets.
 - Legacy `watchlist -> trade_ready` fallback removal.
 - Full parser unification.
+
+## Mojibake Follow-up QA - 2026-05-01
+
+Scope applied now:
+
+- Fixed the reported `trading_bot.py` P0 lines where broken comments had swallowed executable assignments or control flow.
+- Restored startup scan constants, history-fill state, ticker exclusion state, session reset state, startup-guard state, order-error clearing, and supplement-collection logging.
+- Fixed the dashboard temporary JS syntax breaks reported in `_tmp_analytics_scripts.js`, `_tmp_history_scripts.js`, `_tmp_today_scripts.js`, `_tmp_today_scripts_utf8.js`, and `_tmp_trades_scripts.js`.
+
+Validation:
+
+- `python -m py_compile trading_bot.py` passed after P0 line restoration.
+- `python -m pytest tests -q` passed after P0 line restoration: 213 passed, 2 warnings.
+- `node --check` passed for all five reported dashboard temporary JS files.
+
+Compatibility review:
+
+- Existing BrainDB files are not migrated or rewritten by this change set. BrainDB file locking already exists; checksum/schema validation remains a later hardening item.
+- Existing SQLite DB files are not destructively migrated. The ticker selection DB connection behavior is additive: WAL mode, busy timeout, and connection close semantics.
+- Existing JSON state and raw-call records remain readable because added fields are optional/additive.
+- Existing credit tracker files remain readable because legacy `total`, `daily`, and `sessions` keys are preserved; model buckets are additive.
+- Existing PathB plans are still accepted only if they pass current validation. Invalid or missing price targets now block registration instead of creating unsafe runtime plans.
+
+Deferred mojibake cleanup:
+
+- Remaining mojibake in comments, log text, UI labels, and docstrings should be cleaned separately from trading-logic changes.
+- `claude_memory/brain.py` should be treated as read-only until a small fixture verifies that old BrainDB files still load after any text cleanup.
+- A CI or preflight scanner should be added after cleanup to fail on new code-swallowing mojibake patterns, not on every historical non-executable string.
