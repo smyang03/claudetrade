@@ -116,6 +116,67 @@ class OrderUnknownRegistryTests(unittest.TestCase):
             self.assertEqual(order_state["resolution"], "CANCEL_CONFIRMED")
             self.assertTrue(order_state["resolved_at"])
 
+    def test_session_open_auto_clear_removes_market_pause_but_keeps_known_open_ticker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = OrderUnknownEscalator(Path(tmp) / "unknown.json")
+            registry.record_unknown(market="KR", ticker="006340", execution_id="0007603600", detail="unknown")
+            registry.record_unknown(market="KR", ticker="047040", execution_id="0008147800", detail="unknown")
+
+            summary = registry.auto_clear_at_session_open(
+                market="KR",
+                broker_snapshot={
+                    "missing": False,
+                    "stale": False,
+                    "error": "",
+                    "positions": [],
+                    "open_orders": [
+                        {
+                            "ticker": "006340",
+                            "order_no": "0007603600",
+                            "side": "buy",
+                            "remaining_qty": 1,
+                        }
+                    ],
+                    "today_fills": [],
+                },
+            )
+
+            self.assertTrue(summary["market_pause_cleared"])
+            self.assertFalse(registry.should_block_market("KR"))
+            self.assertIn("006340", registry.state["paused_tickers"]["KR"])
+            self.assertNotIn("047040", registry.state["paused_tickers"]["KR"])
+            self.assertEqual(registry.state["orders"]["KR:0007603600"]["resolution"], "RESTORED_TO_PENDING")
+            self.assertEqual(registry.state["orders"]["KR:0008147800"]["resolution"], "AUTO_CLEARED_NO_BROKER_EVIDENCE")
+
+    def test_session_open_auto_clear_keeps_duplicate_open_orders_unresolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = OrderUnknownEscalator(Path(tmp) / "unknown.json")
+            registry.record_duplicate_open_orders(
+                market="KR",
+                ticker="006340",
+                order_nos=["0007603600", "0008146000"],
+                reason="duplicate",
+            )
+
+            summary = registry.auto_clear_at_session_open(
+                market="KR",
+                broker_snapshot={
+                    "missing": False,
+                    "stale": False,
+                    "error": "",
+                    "positions": [],
+                    "open_orders": [
+                        {"ticker": "006340", "order_no": "0007603600", "remaining_qty": 1},
+                        {"ticker": "006340", "order_no": "0008146000", "remaining_qty": 1},
+                    ],
+                    "today_fills": [],
+                },
+            )
+
+            self.assertEqual(summary["kept_unresolved"], 1)
+            self.assertTrue(registry.should_block_market("KR"))
+            self.assertIn("006340", registry.state["paused_tickers"]["KR"])
+
 
 class EquityReferenceTests(unittest.TestCase):
     def _bot_for_equity(self, market: str, base: float, broker_total: float, *, daily_pnl: float = 0.0):

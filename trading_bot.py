@@ -6817,7 +6817,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             try:
                 self.pathb.refresh_broker_truth(market, force=True)
                 self._reconcile_broker_open_orders(market, reason="session_open", force=False)
-                self.pathb.reconcile_order_unknowns(market, force=True)
+                self.pathb.reconcile_order_unknowns_at_open(market)
                 self.pathb.scan_waiting_entries(market)
                 self.pathb.scan_exits(market)
             except Exception as _pathb_cycle_e:
@@ -11709,6 +11709,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self._reconcile_broker_open_orders(market, reason="session_close", force=False)
                 self.pathb.finalize_sell_pending_at_session_close(market)
                 self.pathb.reconcile_filled_positions(market, force=True)
+                self.pathb.finalize_carried_positions_at_session_close(market)
                 self.pathb.finalize_order_unknowns_at_session_close(market)
                 self.pathb.expire_waiting_at_session_close(market)
             except Exception as _pathb_close_e:

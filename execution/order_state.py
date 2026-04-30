@@ -54,6 +54,13 @@ class PartialFillPolicy:
 
 
 class OrderUnknownEscalator:
+    AUTO_CLEAR_RESOLUTIONS = {
+        "ORDER_UNKNOWN_UNRESOLVED",
+        "BROKER_ONLY_OPEN_ORDER",
+        "CANCEL_REQUESTED",
+        "DUPLICATE_OPEN_ORDERS",
+    }
+
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else get_runtime_path("state", "v2_order_unknown.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -325,6 +332,202 @@ class OrderUnknownEscalator:
             }
         )
         self._save()
+
+    def auto_clear_at_session_open(self, *, market: str, broker_snapshot: dict[str, Any]) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        summary: dict[str, Any] = {
+            "market": market_key,
+            "trusted": False,
+            "checked": 0,
+            "auto_cleared_no_broker_evidence": 0,
+            "restored_to_pending": 0,
+            "restored_to_position": 0,
+            "kept_unresolved": 0,
+            "market_pause_cleared": False,
+            "skipped_reason": "",
+            "errors": [],
+        }
+        if not isinstance(broker_snapshot, dict):
+            summary["skipped_reason"] = "broker_snapshot_missing"
+            return summary
+        if (
+            bool(broker_snapshot.get("missing"))
+            or bool(broker_snapshot.get("stale"))
+            or str(broker_snapshot.get("error", "") or "")
+        ):
+            summary["skipped_reason"] = "broker_snapshot_untrusted"
+            return summary
+        summary["trusted"] = True
+
+        paused = self.state.setdefault("paused_tickers", {}).setdefault(market_key, {})
+        orders = self.state.setdefault("orders", {})
+        tickers = set(paused.keys())
+        for order in orders.values():
+            if not isinstance(order, dict):
+                continue
+            if str(order.get("market", "") or "").upper() != market_key:
+                continue
+            resolution = str(order.get("resolution", "") or "")
+            if resolution and resolution not in self.AUTO_CLEAR_RESOLUTIONS:
+                continue
+            ticker = self._ticker_key(market_key, str(order.get("ticker", "") or ""))
+            if ticker:
+                tickers.add(ticker)
+
+        for ticker in sorted(tickers):
+            try:
+                result = self._auto_clear_ticker_at_open(market_key, ticker, broker_snapshot)
+                summary["checked"] += 1
+                summary[result] = int(summary.get(result, 0) or 0) + 1
+            except Exception as exc:
+                summary["errors"].append(f"{ticker}:{exc}")
+
+        if int(summary.get("kept_unresolved", 0) or 0) <= 0:
+            self.state.setdefault("paused_markets", {}).pop(market_key, None)
+            self.state.setdefault("market_consecutive_unknown", {})[market_key] = 0
+            summary["market_pause_cleared"] = True
+            if not self.state.get("paused_markets"):
+                self.state.pop("global_halt", None)
+        if summary["checked"] or summary["errors"]:
+            self._save()
+        return summary
+
+    def _auto_clear_ticker_at_open(
+        self,
+        market: str,
+        ticker: str,
+        broker_snapshot: dict[str, Any],
+    ) -> str:
+        ticker_key = self._ticker_key(market, ticker)
+        positions = self._broker_rows_for_ticker(broker_snapshot.get("positions", []), market, ticker_key)
+        open_orders = self._broker_rows_for_ticker(broker_snapshot.get("open_orders", []), market, ticker_key)
+        fills = self._broker_rows_for_ticker(broker_snapshot.get("today_fills", []), market, ticker_key)
+        now = _now()
+        related_keys = self._related_order_keys(market, ticker_key)
+
+        if len(open_orders) >= 2:
+            for key in related_keys:
+                order_state = dict(self.state.setdefault("orders", {}).get(key) or {})
+                if not order_state:
+                    continue
+                order_state["last_checked_at"] = now
+                order_state["broker_open"] = True
+                order_state["broker_open_order_evidence"] = True
+                order_state["broker_duplicate_open_order_evidence"] = True
+                self.state["orders"][key] = order_state
+            self.state.setdefault("events", []).append(
+                {
+                    "type": "ORDER_UNKNOWN_DUPLICATE_OPEN_ORDERS_STILL_PRESENT",
+                    "market": market,
+                    "ticker": ticker_key,
+                    "execution_id": ",".join(
+                        str(row.get("order_no", "") or "")
+                        for row in open_orders
+                        if row.get("order_no")
+                    ),
+                    "broker_open_order_evidence": True,
+                    "recorded_at": now,
+                }
+            )
+            return "kept_unresolved"
+
+        if open_orders:
+            resolution = "RESTORED_TO_PENDING"
+            broker_open = True
+            local_pending = True
+            event_type = "ORDER_UNKNOWN_RESTORED_TO_PENDING"
+            result = "restored_to_pending"
+        elif positions or fills:
+            resolution = "RESTORED_TO_POSITION"
+            broker_open = False
+            local_pending = False
+            event_type = "ORDER_UNKNOWN_RESTORED_TO_POSITION"
+            result = "restored_to_position"
+        else:
+            resolution = "AUTO_CLEARED_NO_BROKER_EVIDENCE"
+            broker_open = False
+            local_pending = False
+            event_type = "ORDER_UNKNOWN_AUTO_CLEARED"
+            result = "auto_cleared_no_broker_evidence"
+
+        for key in related_keys:
+            order_state = dict(self.state.setdefault("orders", {}).get(key) or {})
+            if not order_state:
+                continue
+            order_state["resolution"] = resolution
+            order_state["resolved_at"] = now
+            order_state["last_checked_at"] = now
+            order_state["broker_open"] = bool(broker_open)
+            order_state["local_pending"] = bool(local_pending)
+            order_state["broker_position_evidence"] = bool(positions)
+            order_state["broker_open_order_evidence"] = bool(open_orders)
+            order_state["broker_today_fill_evidence"] = bool(fills)
+            self.state["orders"][key] = order_state
+
+        if result != "restored_to_pending":
+            self.state.setdefault("paused_tickers", {}).setdefault(market, {}).pop(ticker_key, None)
+        else:
+            self.state.setdefault("paused_tickers", {}).setdefault(market, {})[ticker_key] = {
+                "execution_id": ",".join(
+                    str(row.get("order_no", "") or "")
+                    for row in open_orders
+                    if row.get("order_no")
+                ),
+                "detail": "restored_to_pending",
+                "recorded_at": now,
+            }
+        self.state.setdefault("events", []).append(
+            {
+                "type": event_type,
+                "market": market,
+                "ticker": ticker_key,
+                "execution_id": ",".join(
+                    str((self.state.get("orders", {}).get(key) or {}).get("order_no", "") or "")
+                    for key in related_keys
+                    if (self.state.get("orders", {}).get(key) or {}).get("order_no")
+                ),
+                "resolution": resolution,
+                "broker_position_evidence": bool(positions),
+                "broker_open_order_evidence": bool(open_orders),
+                "broker_today_fill_evidence": bool(fills),
+                "recorded_at": now,
+            }
+        )
+        return result
+
+    def _related_order_keys(self, market: str, ticker: str) -> list[str]:
+        ticker_key = self._ticker_key(market, ticker)
+        keys: list[str] = []
+        for key, order in self.state.setdefault("orders", {}).items():
+            if not isinstance(order, dict):
+                continue
+            if str(order.get("market", "") or "").upper() != market:
+                continue
+            if self._ticker_key(market, str(order.get("ticker", "") or "")) != ticker_key:
+                continue
+            resolution = str(order.get("resolution", "") or "")
+            if resolution and resolution not in self.AUTO_CLEAR_RESOLUTIONS:
+                continue
+            keys.append(str(key))
+        return keys
+
+    @classmethod
+    def _ticker_key(cls, market: str, ticker: str) -> str:
+        market_key = str(market or "").upper()
+        raw = str(ticker or "").strip()
+        return raw.upper() if market_key == "US" else raw
+
+    @classmethod
+    def _broker_rows_for_ticker(cls, rows: Any, market: str, ticker: str) -> list[dict[str, Any]]:
+        key = cls._ticker_key(market, ticker)
+        out: list[dict[str, Any]] = []
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            row_key = cls._ticker_key(market, str(row.get("ticker", "") or ""))
+            if row_key == key:
+                out.append(row)
+        return out
 
     def clear_manual_resume(self, *, market: str | None = None) -> None:
         if market:

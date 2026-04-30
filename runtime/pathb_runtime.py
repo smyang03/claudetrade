@@ -82,6 +82,16 @@ class PathBRuntime:
     points so the production bot is not filled with Path B internals.
     """
 
+    ORDER_UNKNOWN_OPEN_RETRY_RESOLUTIONS = {
+        "",
+        "ambiguous_broker_truth",
+        "broker_no_evidence",
+        "broker_truth_unavailable",
+        "session_end_unresolved",
+    }
+    ORDER_UNKNOWN_OPEN_LOOKBACK_SESSIONS = 5
+    PRE_CLOSE_CARRY_REVIEW_MINUTES = 15.0
+
     def __init__(
         self,
         bot: Any,
@@ -330,6 +340,8 @@ class PathBRuntime:
                 exit_signal = ExitSignal(True, "loss_cap", "CLOSED_LOSS_CAP", current, plan.path_run_id)
             else:
                 exit_signal = self.sell_manager.check_exit(plan.path_run_id, current, hard_stop_price=hard_stop_price)
+            if not exit_signal.signal:
+                self._maybe_run_pre_close_carry_review(plan, pos, current, minutes_to_close)
             if not exit_signal.signal and self._pre_close_force_exit(plan.path_run_id, minutes_to_close):
                 exit_signal = ExitSignal(
                     True,
@@ -399,6 +411,58 @@ class PathBRuntime:
             self._session_date(str(market or "").upper()),
             brain_snapshot_id=self._brain_snapshot_id(str(market or "").upper()),
         )
+
+    def finalize_carried_positions_at_session_close(self, market: str) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        summary: dict[str, Any] = {
+            "market": market_key,
+            "checked": 0,
+            "carried": 0,
+            "missing_position": 0,
+            "errors": [],
+        }
+        for status in ("FILLED", "PARTIAL_FILLED"):
+            for run in self.store.path_runs_for_session(
+                market=market_key,
+                runtime_mode=self.mode,
+                session_date=self._session_date(market_key),
+                status=status,
+                path_type="claude_price",
+            ):
+                plan_json = run.get("plan") or {}
+                if str(plan_json.get("carry_decision", "") or "").upper() != "CARRY":
+                    continue
+                summary["checked"] += 1
+                try:
+                    plan = self._plan_from_run(run)
+                    if plan is None:
+                        summary["errors"].append(f"{run.get('path_run_id', '?')}:invalid_plan")
+                        continue
+                    pos = self._find_position(market_key, plan.ticker, path_run_id=plan.path_run_id)
+                    if not pos:
+                        summary["missing_position"] += 1
+                        continue
+                    pos["carry_source"] = "pathb_preclose"
+                    pos["origin_path_run_id"] = plan.path_run_id
+                    pos["buy_path"] = "path_b"
+                    pos.setdefault("path_type", "claude_price")
+                    pos.setdefault("pathb_path_run_id", plan.path_run_id)
+                    self.store.update_path_run(
+                        plan.path_run_id,
+                        status="CARRIED_OUT",
+                        plan={
+                            "carried_at_session_close": datetime.now(KST).isoformat(timespec="seconds"),
+                            "carry_status": "carried_out",
+                        },
+                        merge_plan=True,
+                    )
+                    summary["carried"] += 1
+                except Exception as exc:
+                    summary["errors"].append(f"{run.get('path_run_id', '?')}:{exc}")
+        if summary["carried"]:
+            self._save_positions_if_possible()
+            log.warning(f"[PathB carry session_close] {summary}")
+        return summary
 
     def close_all_open(self, market: str, *, reason: str = "pathb_closeall") -> int:
         count = 0
@@ -1412,6 +1476,9 @@ class PathBRuntime:
         force: bool = False,
         path_run_id: str = "",
         session_end: bool = False,
+        include_cross_session: bool = False,
+        auto_clear_no_evidence: bool = False,
+        refresh_snapshot: bool = True,
     ) -> dict[str, Any]:
         market_key = str(market or "").upper()
         summary: dict[str, Any] = {
@@ -1419,6 +1486,7 @@ class PathBRuntime:
             "checked": 0,
             "recovered_fill": 0,
             "recovered_open_order": 0,
+            "auto_cleared_no_broker_evidence": 0,
             "path_a_origin_possible": 0,
             "broker_no_evidence": 0,
             "broker_truth_unavailable": 0,
@@ -1434,19 +1502,30 @@ class PathBRuntime:
                 return summary | {"skipped": 1}
             runs = due
         else:
-            runs = self._order_unknown_runs(market_key)
+            runs = (
+                self._order_unknown_runs_cross_session(market_key)
+                if include_cross_session
+                else self._order_unknown_runs(market_key)
+            )
         if path_run_id:
             runs = [run for run in runs if str(run.get("path_run_id", "") or "") == path_run_id]
         if not runs:
             self._last_unknown_reconcile_at[market_key] = time.time()
             return summary
-        try:
-            self.refresh_broker_truth(market_key, force=force or session_end or bool(path_run_id))
-        except Exception as exc:
-            summary["errors"].append(f"snapshot_refresh:{exc}")
+        if refresh_snapshot:
+            try:
+                self.refresh_broker_truth(market_key, force=force or session_end or bool(path_run_id))
+            except Exception as exc:
+                summary["errors"].append(f"snapshot_refresh:{exc}")
         for run in runs:
             try:
-                result = self._reconcile_order_unknown_run(run, market_key, force=force, session_end=session_end)
+                result = self._reconcile_order_unknown_run(
+                    run,
+                    market_key,
+                    force=force,
+                    session_end=session_end,
+                    auto_clear_no_evidence=auto_clear_no_evidence,
+                )
                 summary["checked"] += 1
                 summary[result] = int(summary.get(result, 0) or 0) + 1
             except Exception as exc:
@@ -1454,6 +1533,41 @@ class PathBRuntime:
         self._last_unknown_reconcile_at[market_key] = time.time()
         if summary["checked"] or summary["errors"]:
             log.info(f"[PathB ORDER_UNKNOWN reconcile] {summary}")
+        return summary
+
+    def reconcile_order_unknowns_at_open(self, market: str) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        initial_errors: list[str] = []
+        try:
+            self.refresh_broker_truth(market_key, force=True)
+        except Exception as exc:
+            initial_errors.append(f"snapshot_refresh:{exc}")
+        pathb_summary = self.reconcile_order_unknowns(
+            market_key,
+            force=True,
+            include_cross_session=True,
+            auto_clear_no_evidence=True,
+            refresh_snapshot=False,
+        )
+        summary: dict[str, Any] = dict(pathb_summary)
+        summary["errors"] = initial_errors + list(pathb_summary.get("errors") or [])
+
+        unknown = getattr(self.bot, "v2_order_unknown", None)
+        clear_fn = getattr(unknown, "auto_clear_at_session_open", None)
+        if callable(clear_fn):
+            try:
+                escalator_summary = clear_fn(
+                    market=market_key,
+                    broker_snapshot=self.broker_truth.market_snapshot(market_key),
+                )
+                summary["escalator"] = escalator_summary
+                summary["escalator_market_pause_cleared"] = bool(
+                    escalator_summary.get("market_pause_cleared")
+                )
+            except Exception as exc:
+                summary.setdefault("errors", []).append(f"escalator_auto_clear:{exc}")
+        if summary.get("checked") or summary.get("escalator") or summary.get("errors"):
+            log.info(f"[PathB ORDER_UNKNOWN session_open] {summary}")
         return summary
 
     def finalize_order_unknowns_at_session_close(self, market: str) -> dict[str, Any]:
@@ -1474,6 +1588,7 @@ class PathBRuntime:
         *,
         force: bool = False,
         session_end: bool = False,
+        auto_clear_no_evidence: bool = False,
     ) -> str:
         path_run_id = str(run.get("path_run_id", "") or "")
         plan = self._plan_from_run(run)
@@ -1609,6 +1724,20 @@ class PathBRuntime:
             )
             return "recovered_open_order"
 
+        if auto_clear_no_evidence:
+            self._set_order_unknown_resolution(
+                path_run_id,
+                "auto_cleared_no_broker_evidence",
+                {**evidence_payload, "order_unknown_auto_cleared": True},
+                next_retry=False,
+            )
+            self.store.update_path_run(
+                path_run_id,
+                status="CANCELLED",
+                plan={"cancel_reason": "order_unknown_auto_cleared_no_broker_evidence"},
+                merge_plan=True,
+            )
+            return "auto_cleared_no_broker_evidence"
         self._set_order_unknown_resolution(path_run_id, "broker_no_evidence", evidence_payload, next_retry=True)
         return "broker_no_evidence"
 
@@ -1639,6 +1768,36 @@ class PathBRuntime:
             status="ORDER_UNKNOWN",
             path_type="claude_price",
         )
+
+    def _order_unknown_runs_cross_session(self, market: str) -> list[dict[str, Any]]:
+        market_key = str(market or "").upper()
+        candidates = self.store.path_runs_for_session(
+            market=market_key,
+            runtime_mode=self.mode,
+            status="ORDER_UNKNOWN",
+            path_type="claude_price",
+        )
+        retryable: list[dict[str, Any]] = []
+        for run in candidates:
+            plan = run.get("plan") or {}
+            resolution = str(plan.get("order_unknown_resolution", "") or "")
+            if resolution not in self.ORDER_UNKNOWN_OPEN_RETRY_RESOLUTIONS:
+                continue
+            if self._is_permanent_order_failure(str(plan.get("order_unknown_detail", "") or "")):
+                continue
+            retryable.append(run)
+        sessions: list[str] = []
+        for run in sorted(retryable, key=lambda item: str(item.get("session_date", "") or ""), reverse=True):
+            session_date = str(run.get("session_date", "") or "")
+            if session_date and session_date not in sessions:
+                sessions.append(session_date)
+            if len(sessions) >= self.ORDER_UNKNOWN_OPEN_LOOKBACK_SESSIONS:
+                break
+        allowed_sessions = set(sessions)
+        return [
+            run for run in retryable
+            if not allowed_sessions or str(run.get("session_date", "") or "") in allowed_sessions
+        ]
 
     def _due_order_unknown_runs(self, market: str) -> list[dict[str, Any]]:
         return [run for run in self._order_unknown_runs(market) if self._unknown_recheck_due(run)]
@@ -1967,8 +2126,171 @@ class PathBRuntime:
             meta["exit_owner"] = "system_hard_rule"
         return meta
 
+    def _maybe_run_pre_close_carry_review(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        current: float,
+        minutes_to_close: float,
+    ) -> dict[str, Any]:
+        if not bool(self.config.pathb_intraday_only):
+            return {"reviewed": False, "reason": "intraday_only_disabled"}
+        cutoff = int(self.config.new_entry_cutoff_minutes_before_close)
+        if float(minutes_to_close or 999.0) > self.PRE_CLOSE_CARRY_REVIEW_MINUTES:
+            return {"reviewed": False, "reason": "outside_review_window"}
+        if float(minutes_to_close or 999.0) <= float(cutoff):
+            return {"reviewed": False, "reason": "inside_force_exit_window"}
+        run = self.store.find_path_run(plan.path_run_id)
+        plan_json = (run or {}).get("plan") or {}
+        if str(plan_json.get("carry_reviewed_at", "") or ""):
+            return {"reviewed": False, "reason": "already_reviewed"}
+
+        gate = self._pre_close_carry_gate(plan, pos, current)
+        if not bool(gate.get("allowed")):
+            decision_payload = {
+                "decision": "SELL",
+                "reason": str(gate.get("reason") or "carry_gate_rejected"),
+                "confidence": 0.0,
+                "advice": {},
+                "error": str(gate.get("reason") or "carry_gate_rejected"),
+            }
+        else:
+            decision_payload = self._run_pre_close_carry_review(plan, pos, current, minutes_to_close)
+        decision = str(decision_payload.get("decision", "SELL") or "SELL").upper()
+        if decision not in {"SELL", "CARRY"}:
+            decision = "SELL"
+        payload = {
+            "carry_source": "pathb_preclose",
+            "carry_reviewed_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "carry_review_minutes_to_close": float(minutes_to_close or 0),
+            "carry_decision": decision,
+            "carry_reason": str(decision_payload.get("reason", "") or "")[:500],
+            "carry_confidence": float(decision_payload.get("confidence", 0.0) or 0.0),
+            "carry_advice": decision_payload.get("advice") if isinstance(decision_payload.get("advice"), dict) else {},
+        }
+        if str(decision_payload.get("error", "") or ""):
+            payload["carry_review_error"] = str(decision_payload.get("error", "") or "")[:500]
+        if str(decision_payload.get("reject_reason", "") or ""):
+            payload["carry_reject_reason"] = str(decision_payload.get("reject_reason", "") or "")[:500]
+        self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+        log.warning(
+            f"[PathB carry review] {plan.market} {plan.ticker} decision={decision} "
+            f"pnl={self._position_pnl_pct(pos, current):+.2f}% close_in={float(minutes_to_close or 0):.1f}m"
+        )
+        return {"reviewed": True, **payload}
+
+    def _pre_close_carry_gate(self, plan: PricePlan, pos: dict[str, Any], current: float) -> dict[str, Any]:
+        if float(current or 0) <= 0:
+            return {"allowed": False, "reason": "missing_current_price"}
+        if self._order_unknown_blocked(plan.market):
+            return {"allowed": False, "reason": "active_order_unknown_block"}
+        try:
+            self.refresh_broker_truth(plan.market, force=False)
+        except Exception as exc:
+            return {"allowed": False, "reason": f"broker_truth_refresh_failed:{exc}"}
+        market_data = self.broker_truth.market_snapshot(plan.market)
+        if (
+            bool(market_data.get("missing"))
+            or bool(market_data.get("stale"))
+            or str(market_data.get("error", "") or "")
+        ):
+            return {"allowed": False, "reason": "broker_truth_untrusted"}
+        broker_positions = self._broker_rows_for_ticker(market_data.get("positions", []), plan.market, plan.ticker)
+        if not broker_positions:
+            return {"allowed": False, "reason": "broker_position_missing"}
+        qty = int(float(pos.get("qty", 0) or 0))
+        if qty <= 0:
+            return {"allowed": False, "reason": "local_position_missing"}
+        return {"allowed": True, "reason": ""}
+
+    def _run_pre_close_carry_review(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        current: float,
+        minutes_to_close: float,
+    ) -> dict[str, Any]:
+        try:
+            from minority_report.hold_advisor import ask as advisor_ask
+
+            advisor_pos = dict(pos)
+            advisor_pos["current_price"] = float(current or 0)
+            advisor_pos["pathb_plan"] = plan.to_dict()
+            advisor_pos["minutes_to_close"] = float(minutes_to_close or 0)
+            builder = getattr(self.bot, "_advisor_pos", None)
+            if callable(builder):
+                try:
+                    advisor_pos = builder(advisor_pos, plan.market)
+                except Exception:
+                    pass
+            digest = self._pre_close_carry_digest(plan.market)
+            advice = advisor_ask(advisor_pos, plan.market, digest)
+            action = str((advice or {}).get("action", "SELL") or "SELL").upper()
+            decision = "SELL" if action == "SELL" else "CARRY"
+            return {
+                "decision": decision,
+                "reason": self._hold_advice_reason(advice) or action,
+                "confidence": float((advice or {}).get("confidence", 0.0) or 0.0),
+                "advice": advice if isinstance(advice, dict) else {},
+            }
+        except Exception as exc:
+            log.warning(f"[PathB carry review] hold_advisor failed {plan.market} {plan.ticker}: {exc}")
+            return {
+                "decision": "SELL",
+                "reason": f"hold_advisor_failed:{exc}",
+                "confidence": 0.0,
+                "advice": {},
+                "error": f"hold_advisor_failed:{exc}",
+            }
+
+    def _pre_close_carry_digest(self, market: str) -> str:
+        digest = ""
+        try:
+            digest = str((getattr(self.bot, "today_judgment", {}) or {}).get("digest_prompt", "") or "")
+        except Exception:
+            digest = ""
+        ctx_builder = getattr(self.bot, "_build_intraday_context", None)
+        if callable(ctx_builder):
+            try:
+                intraday = str(ctx_builder(market) or "")
+                if intraday:
+                    digest = digest + "\n\n[Intraday]\n" + intraday if digest else intraday
+            except Exception:
+                pass
+        return digest
+
+    @staticmethod
+    def _hold_advice_reason(advice: Any) -> str:
+        if not isinstance(advice, dict):
+            return ""
+        reason = str(advice.get("reason", "") or "")
+        if reason:
+            return reason[:500]
+        action = str(advice.get("action", "") or "")
+        votes = advice.get("votes") if isinstance(advice.get("votes"), dict) else {}
+        for vote in votes.values():
+            if not isinstance(vote, dict):
+                continue
+            if action and str(vote.get("action", "") or "").upper() != action.upper():
+                continue
+            vote_reason = str(vote.get("reason", "") or "")
+            if vote_reason:
+                return vote_reason[:500]
+        return ""
+
+    @staticmethod
+    def _position_pnl_pct(pos: dict[str, Any], current: float) -> float:
+        entry = float(pos.get("entry", 0) or pos.get("avg_price", 0) or pos.get("entry_price", 0) or 0)
+        if entry <= 0 or float(current or 0) <= 0:
+            return 0.0
+        return (float(current or 0) / entry - 1.0) * 100.0
+
     def _pre_close_force_exit(self, path_run_id: str, minutes_to_close: float) -> bool:
         if not bool(self.config.pathb_intraday_only):
+            return False
+        run = self.store.find_path_run(path_run_id)
+        plan_json = (run or {}).get("plan") or {}
+        if str(plan_json.get("carry_decision", "") or "").upper() == "CARRY":
             return False
         return self.sell_manager.pre_close_exit_needed(
             path_run_id,

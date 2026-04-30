@@ -7,6 +7,7 @@ from pathlib import Path
 from decision.claude_price_plan import make_price_plan
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent
+from execution.order_state import OrderUnknownEscalator
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
 from runtime.pathb_runtime import PathBControlState, PathBRuntime
 
@@ -175,6 +176,57 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             self.assertEqual(run["status"], "ORDER_UNKNOWN")
             self.assertEqual(run["plan"]["order_unknown_resolution"], "permanent_order_reject")
             self.assertEqual(run["plan"]["next_broker_truth_recheck_at"], "")
+
+    def test_session_open_reconciles_cross_session_and_clears_escalator_pause(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+            runtime.bot._current_session_date_str = lambda market: "2026-04-28"  # type: ignore[method-assign]
+            escalator = OrderUnknownEscalator(Path(tmp) / "unknown.json")
+            escalator.record_unknown(market="KR", ticker="005930", execution_id="ord1", detail="stale local pending")
+            escalator.record_unknown(market="KR", ticker="000660", execution_id="ord2", detail="stale local pending")
+            runtime.bot.v2_order_unknown = escalator
+
+            permanent = make_price_plan(
+                decision_id="decision2",
+                ticker="000660",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=106,
+                stop_loss=98,
+                hold_days=1,
+                confidence=0.8,
+            )
+            runtime.adapter.register_plan(permanent, runtime_mode="live", brain_snapshot_id="brain")
+            runtime.adapter.mark_order_unknown(
+                permanent.path_run_id,
+                detail="unsupported symbol",
+                runtime_mode="live",
+                brain_snapshot_id="brain",
+            )
+            runtime.store.update_path_run(
+                permanent.path_run_id,
+                plan={"order_unknown_resolution": "permanent_order_reject"},
+                merge_plan=True,
+            )
+
+            summary = runtime.reconcile_order_unknowns_at_open("KR")
+            run = runtime.store.find_path_run(plan.path_run_id)
+            permanent_run = runtime.store.find_path_run(permanent.path_run_id)
+            state = escalator.state
+
+            self.assertEqual(summary["checked"], 1)
+            self.assertEqual(summary["auto_cleared_no_broker_evidence"], 1)
+            self.assertEqual(run["status"], "CANCELLED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "auto_cleared_no_broker_evidence")
+            self.assertEqual(permanent_run["status"], "ORDER_UNKNOWN")
+            self.assertFalse(escalator.should_block_market("KR"))
+            self.assertEqual(state["market_consecutive_unknown"]["KR"], 0)
+            self.assertEqual(
+                state["orders"]["KR:ord1"]["resolution"],
+                "AUTO_CLEARED_NO_BROKER_EVIDENCE",
+            )
 
 
 if __name__ == "__main__":
