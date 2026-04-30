@@ -16,14 +16,18 @@ raw_call_logger.py — Claude API raw 호출 저장 유틸리티
   }
 """
 import json
+import logging
 import os
+import re
+import uuid
 from datetime import datetime, date
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from runtime_paths import get_runtime_path
 
 _RAW_CALLS_DIR: Optional[Path] = None
+log = logging.getLogger(__name__)
 
 
 def _dir() -> Path:
@@ -44,26 +48,54 @@ def save(
     market: str = "",
     call_date: Optional[str] = None,
     model: str = "",
-):
+    call_id: str = "",
+    parse_error: Optional[bool] = None,
+    parse_stage: str = "",
+    duration_ms: Optional[int] = None,
+    prompt_mode: str = "",
+    prompt_version: str = "",
+    extra: Optional[dict[str, Any]] = None,
+) -> Optional[Path]:
     """Claude API raw 호출 1건을 JSON 파일로 저장한다."""
     today = call_date or date.today().isoformat()
-    ts    = datetime.now().strftime("%H%M%S")
+    now   = datetime.now()
+    ts    = now.strftime("%H%M%S%f")
     mkt   = (market or "XX").upper()
+    safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(label or "call")).strip("_") or "call"
+    stable_call_id = str(call_id or f"{ts}_{uuid.uuid4().hex[:10]}")
 
-    filename = f"{today.replace('-','')}_{mkt}_{label}_{ts}.json"
+    filename = f"{today.replace('-','')}_{mkt}_{safe_label}_{stable_call_id}.json"
     path = _dir() / filename
 
     record = {
-        "timestamp":    datetime.now().isoformat(timespec="seconds"),
+        "timestamp":    now.isoformat(timespec="microseconds"),
         "date":         today,
         "market":       mkt,
         "label":        label,
+        "call_id":      stable_call_id,
         "model":        model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
         "prompt":       prompt,
         "raw_response": raw_response,
         "parsed":       parsed,
         "tokens":       {"input": input_tokens, "output": output_tokens},
     }
+    if parse_error is not None:
+        record["parse_error"] = bool(parse_error)
+    if parse_stage:
+        record["parse_stage"] = parse_stage
+    if duration_ms is not None:
+        record["duration_ms"] = int(duration_ms)
+    if prompt_mode:
+        record["prompt_mode"] = prompt_mode
+    if prompt_version:
+        record["prompt_version"] = prompt_version
+    if extra:
+        record["extra"] = dict(extra)
 
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(record, f, ensure_ascii=False, indent=2)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(record, f, ensure_ascii=False, indent=2)
+        return path
+    except Exception as exc:
+        log.warning("[raw_call_logger] save failed label=%s call_id=%s: %s", label, stable_call_id, exc)
+        return None

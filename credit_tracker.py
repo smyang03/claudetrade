@@ -18,6 +18,20 @@ from runtime_paths import get_runtime_path
 # ── 가격 설정 ─────────────────────────────────────────────────────────────────
 PRICE_INPUT_PER_M  = 3.00   # $ per million input tokens
 PRICE_OUTPUT_PER_M = 15.00  # $ per million output tokens
+PRICE_BY_MODEL_PER_M = {
+    "haiku": (
+        float(os.getenv("CLAUDE_PRICE_HAIKU_INPUT_PER_M", "0.80")),
+        float(os.getenv("CLAUDE_PRICE_HAIKU_OUTPUT_PER_M", "4.00")),
+    ),
+    "sonnet": (
+        float(os.getenv("CLAUDE_PRICE_SONNET_INPUT_PER_M", str(PRICE_INPUT_PER_M))),
+        float(os.getenv("CLAUDE_PRICE_SONNET_OUTPUT_PER_M", str(PRICE_OUTPUT_PER_M))),
+    ),
+    "opus": (
+        float(os.getenv("CLAUDE_PRICE_OPUS_INPUT_PER_M", "15.00")),
+        float(os.getenv("CLAUDE_PRICE_OPUS_OUTPUT_PER_M", "75.00")),
+    ),
+}
 
 _IS_PAPER = str(os.getenv("KIS_IS_PAPER", "true")).strip().lower() != "false"
 _MODE     = "paper" if _IS_PAPER else "live"
@@ -50,33 +64,61 @@ def _calc_cost(input_tokens: int, output_tokens: int) -> float:
             + output_tokens / 1_000_000 * PRICE_OUTPUT_PER_M)
 
 
+def _model_price(model: str) -> tuple[float, float]:
+    model_l = str(model or "").lower()
+    for key, price in PRICE_BY_MODEL_PER_M.items():
+        if key in model_l:
+            return price
+    return PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M
+
+
+def _calc_cost_for_model(input_tokens: int, output_tokens: int, model: str = "") -> float:
+    input_per_m, output_per_m = _model_price(model)
+    return (input_tokens / 1_000_000 * input_per_m
+            + output_tokens / 1_000_000 * output_per_m)
+
+
+def _add_usage(bucket: dict, input_tokens: int, output_tokens: int, cost: float) -> None:
+    bucket["input_tokens"] = int(bucket.get("input_tokens", 0) or 0) + int(input_tokens)
+    bucket["output_tokens"] = int(bucket.get("output_tokens", 0) or 0) + int(output_tokens)
+    bucket["cost_usd"] = round(float(bucket.get("cost_usd", 0.0) or 0.0) + float(cost), 6)
+    if "calls" in bucket:
+        bucket["calls"] = int(bucket.get("calls", 0) or 0) + 1
+
+
 # ── 퍼블릭 API ─────────────────────────────────────────────────────────────────
 
-def record(input_tokens: int, output_tokens: int, label: str = ""):
+def record(input_tokens: int, output_tokens: int, label: str = "", model: str = ""):
     """API 호출 결과를 기록 (analysts.py 등에서 호출)"""
-    cost = _calc_cost(input_tokens, output_tokens)
+    model_name = str(model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6") or "unknown")
+    cost = _calc_cost_for_model(input_tokens, output_tokens, model_name)
     today = date.today().isoformat()
 
     data = _load()
+    data.setdefault("total", {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})
+    data.setdefault("daily", {})
+    data.setdefault("sessions", [])
 
     # 누적
-    data["total"]["input_tokens"]  += input_tokens
-    data["total"]["output_tokens"] += output_tokens
-    data["total"]["cost_usd"]      = round(data["total"]["cost_usd"] + cost, 6)
+    _add_usage(data["total"], input_tokens, output_tokens, cost)
 
     # 일별
     if today not in data["daily"]:
         data["daily"][today] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0}
-    data["daily"][today]["input_tokens"]  += input_tokens
-    data["daily"][today]["output_tokens"] += output_tokens
-    data["daily"][today]["cost_usd"]       = round(data["daily"][today]["cost_usd"] + cost, 6)
-    data["daily"][today]["calls"]         += 1
+    _add_usage(data["daily"][today], input_tokens, output_tokens, cost)
+    by_model = data.setdefault("by_model", {})
+    model_bucket = by_model.setdefault(model_name, {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0})
+    _add_usage(model_bucket, input_tokens, output_tokens, cost)
+    daily_by_model = data["daily"][today].setdefault("by_model", {})
+    daily_model_bucket = daily_by_model.setdefault(model_name, {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0})
+    _add_usage(daily_model_bucket, input_tokens, output_tokens, cost)
 
     # 세션 로그 (최근 100개 유지)
     data["sessions"].append({
         "ts":            datetime.now().strftime("%H:%M:%S"),
         "date":          today,
         "label":         label,
+        "model":         model_name,
         "input_tokens":  input_tokens,
         "output_tokens": output_tokens,
         "cost_usd":      round(cost, 6),
