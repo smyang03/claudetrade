@@ -3683,7 +3683,7 @@ def api_history_equity():
             for item in snapshot_rows
         }
         labels = sorted(set(list(pnl_by_date.keys()) + list(snapshot_map.keys())))
-        trade_today = _session_trade_date(market).isoformat()
+        trade_today = date.today().isoformat()
         if current_asset > 0 and trade_today not in labels:
             labels.append(trade_today)
         labels = sorted(set(labels))
@@ -4211,7 +4211,7 @@ def api_review_position():
         except Exception:
             pass
 
-        advice = advisor_ask(pos, market, digest)
+        advice = advisor_ask(pos, market, digest, decision_stage="MANUAL_REVIEW")
         now_iso = datetime.now(KST).isoformat(timespec="seconds")
 
         # live_status 업데이트

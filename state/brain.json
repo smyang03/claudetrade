@@ -1,6 +1,6 @@
 {
   "meta": {
-    "version": 2598,
+    "version": 2603,
     "created": "2026-03-19",
     "last_updated": "2026-05-01",
     "trained_days_kr": 30,
@@ -1130,7 +1130,7 @@
           "examples": []
         },
         {
-          "id": "P068",
+          "id": "P066",
           "type": "데이터결측_고위험진입",
           "description": "수급 데이터 전종목 0억 결측 + VKOSPI 결측 + RSI>80 과매수 9개 극단 환경에서 claude_price 전략이 058430 고점 부근 진입 → -7.38% 최악 손실 발생. 데이터 결측 시 claude_price 전략 자동 차단 미흡이 직접 원인.",
           "count": 1,
@@ -3099,7 +3099,7 @@
         "손실 매도 주요 사유: intraday_review_sell",
         "손실 매도 주요 사유: intraday_review_sell",
         "손실 매도 주요 사유: intraday_review_sell",
-        "?섏씡 泥?궛 ?좏슚 ?⑦꽩: intraday_review_sell",
+        "수익 청산 유효 패턴: intraday_review_sell",
         "손실 매도 주요 사유: intraday_review_sell",
         "손실 매도 주요 사유: intraday_review_sell"
       ],
@@ -3252,9 +3252,9 @@
           "avg_pnl": 5.726
         },
         "claude_price": {
-          "count": 19,
-          "win_rate": 0.474,
-          "avg_pnl": -0.1061
+          "count": 20,
+          "win_rate": 0.5,
+          "avg_pnl": 0.0459
         }
       },
       "issue_patterns": [
@@ -3919,7 +3919,7 @@
           "examples": []
         },
         {
-          "id": "P046",
+          "id": "P045",
           "type": "과매수_과포화_진입오류",
           "description": "RSI>70 종목 16개 군집 + 횡보 레짐 + 프리마켓-장중 불일치 조건에서 MILD_BULL 합의를 그대로 따라 SNAP 진입 실행. Neutral(CAUTIOUS) 분석가의 경고를 합의 과정에서 충분히 반영하지 못했고, 최종 size=50%는 과대 배분이었음. 과매수 과포화 시장에서는 MILD_BULL이라도 진입 억제 또는 사이즈 대폭 축소가 필요.",
           "count": 1,
@@ -4000,25 +4000,25 @@
           "last_seen": "2026-05-01"
         },
         "240min_tune": {
-          "count": 13,
+          "count": 14,
           "correct": 1,
-          "rate": 0.077,
-          "insight": "Historically low precision (8% over 13 trials); treat as weak context only. (Context: 지수 -0.44%로 소폭 약세이나 30분 기울기 +0.03%p 상승 전환 중이고 경고 없음, 마감 8분 전 블랙아웃 미적용 상태이나 신규 진입 )",
-          "last_seen": "2026-04-29"
+          "rate": 0.071,
+          "insight": "개장 대비 +0.72% 상승 + 최근 30분 기울기 +0.22%p 상승으로 아침 MILD_BULL 방향 일치, 거래량 low이나 경고 없음, 기존 runtime 조정(wait -5m, cutoff -0.03) 유지가 적절하며 추가 변경 불필요",
+          "last_seen": "2026-05-01"
         },
         "270min_tune": {
-          "count": 8,
+          "count": 9,
           "correct": 1,
-          "rate": 0.125,
-          "insight": "Below-average precision (12% over 8 trials); use with caution. (Context: 개장 대비 +0.11% 및 최근 30분 기울기 +0.10%p 상승으로 아침 MODERATE_BULL 방향 일치, 경고 없음·포지션 손실 최대 -)",
-          "last_seen": "2026-04-28"
+          "rate": 0.111,
+          "insight": "개장 대비 +0.90% 상승에 최근 30분 기울기 +0.19%p 상승 지속으로 아침 MILD_BULL 방향 일치, 거래량 low이나 경고 없음 — 현행 runtime 조정값(-5min wait, -0.03 cutoff) 유지가 적절",
+          "last_seen": "2026-05-01"
         },
         "300min_tune": {
-          "count": 8,
+          "count": 9,
           "correct": 0,
           "rate": 0.0,
-          "insight": "Historically low precision (0% over 8 trials); treat as weak context only. (Context: 경과 276분 지수 +0.11% 아침 MODERATE_BULL 방향 유지, 30분 기울기 -0.01%p로 낙폭 미미하며 경고 부재·포지션 최대손)",
-          "last_seen": "2026-04-28"
+          "insight": "개장 대비 +0.99% 상승에 30분 기울기 +0.09%p 상승 유지로 아침 MILD_BULL 방향과 일치하며 경고 없음, 기존 runtime 조정값(wait -5m, cutoff -0.03) 그대로 유지가 적절",
+          "last_seen": "2026-05-01"
         },
         "330min_tune": {
           "count": 7,
@@ -5979,18 +5979,18 @@
         }
       },
       "execution_lessons": [
-        "泥?궛 ?ㅽ뙣 ?⑦꽩: pre_session_sell",
+        "청산 실패 주요 사유: pre_session_sell",
         "손실 매도 주요 사유: pre_close",
         "손실 매도 주요 사유: pre_close",
         "손실 매도 주요 사유: pre_close",
         "손실 매도 주요 사유: intraday_review_sell",
         "손실 매도 주요 사유: intraday_review_sell",
-        "?섏씡 泥?궛 ?좏슚 ?⑦꽩: tp_analyst_sell",
-        "?섏씡 泥?궛 ?좏슚 ?⑦꽩: pre_close",
-        "?섏씡 泥?궛 ?좏슚 ?⑦꽩: pre_close",
+        "수익 청산 유효 패턴: tp_analyst_sell",
+        "수익 청산 유효 패턴: pre_close",
+        "수익 청산 유효 패턴: pre_close",
         "손실 매도 주요 사유: pre_close",
-        "?섏씡 泥?궛 ?좏슚 ?⑦꽩: pre_close",
-        "?섏씡 泥?궛 ?좏슚 ?⑦꽩: intraday_review_sell"
+        "수익 청산 유효 패턴: pre_close",
+        "수익 청산 유효 패턴: intraday_review_sell"
       ],
       "execution_stats": {
         "buy_order": 8,
@@ -6008,35 +6008,45 @@
   },
   "correction_guide": {
     "KR": {
-      "bull_adjustments": [],
-      "bear_adjustments": [],
-      "tuning_rules": [],
-      "today_notes": "",
-      "generated_date": "2026-04-30"
+      "bull_adjustments": [
+        "MACD골든크로스+BB상단동시=반등신호우선",
+        "전원DEFENSIVE합의시Bull재검토의무화"
+      ],
+      "bear_adjustments": [
+        "RSI과매수단독근거DEFENSIVE금지",
+        "환율고점+지수하락에도MACD골든크로스시약화처리"
+      ],
+      "tuning_rules": [
+        "전원DEFENSIVE합의→NEUTRAL전환검토",
+        "거래량증가+MACD골든크로스=매집신호우선",
+        "Bear신호3개이상이라도NEUTRAL최소유지"
+      ],
+      "today_notes": "DEFENSIVE반복=기회비용누적,내일NEUTRAL기본값",
+      "generated_date": "2026-04-20"
     },
     "US": {
-      "bull_adjustments": [],
-      "bear_adjustments": [],
-      "tuning_rules": [],
-      "today_notes": "",
-      "generated_date": "2026-04-30"
+      "bull_adjustments": [
+        "MILD_BULL합의시최소1종목신규매수실행",
+        "시장+1%이상시 size57%미만이라도진입"
+      ],
+      "bear_adjustments": [
+        "혼조신호있어도시장강세시MILD_BULL유지"
+      ],
+      "tuning_rules": [
+        "broker_sync청산후동일세션신규진입검토",
+        "VG청산후대체종목탐색로직추가"
+      ],
+      "today_notes": "5일연속MILD_BULL적중실패=판단맞고실행없는구조적문제",
+      "generated_date": "2026-04-18"
     }
   },
   "hold_advisor_performance": {
-    "total": 95,
+    "total": 96,
     "hold_count": 18,
     "hold_success": 2,
-    "sell_count": 77,
+    "sell_count": 78,
     "hold_avg_extra_pnl": -11.603,
     "recent": [
-      {
-        "date": "2026-04-28",
-        "market": "KR",
-        "ticker": "452190",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -5.6165
-      },
       {
         "date": "2026-04-28",
         "market": "KR",
@@ -6188,6 +6198,14 @@
         "decision": "SELL",
         "success": true,
         "extra_pnl_pct": 0.1838
+      },
+      {
+        "date": "2026-05-01",
+        "market": "US",
+        "ticker": "GOOGL",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 2.934
       }
     ]
   },

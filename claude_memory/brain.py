@@ -84,6 +84,18 @@ def _normalize_tuning_rules(rules: list, max_items: int = 12) -> list:
     return normalized[:max_items]
 
 
+def _is_empty_correction_guide(guide: dict) -> bool:
+    if not isinstance(guide, dict):
+        return True
+    for key in ("bull_adjustments", "bear_adjustments", "tuning_rules"):
+        values = guide.get(key, []) or []
+        if isinstance(values, str):
+            values = [values]
+        if any(str(item or "").strip() for item in values):
+            return False
+    return not str(guide.get("today_notes", "") or "").strip()
+
+
 def _normalize_brain(brain: dict) -> dict:
     brain = _ensure_extensions(brain)
     meta = brain.setdefault("meta", {})
@@ -141,14 +153,14 @@ def save(brain: dict):
             json.dump(brain, f, ensure_ascii=False, indent=2)
 
 
-# ?? 遺꾩꽍媛 ?깃낵 ?낅뜲?댄듃 ??????????????????????????????????????????????????????
+# 분석가 성과 업데이트
 
 def update_analyst(market: str, analyst: str, hit: bool, recent_days: list):
     """
-    留ㅼ씪 postmortem ???몄텧
+    매일 postmortem에서 호출한다.
     analyst: 'bull' | 'bear' | 'neutral'
-    hit: True=?곸쨷, False=誘몄쟻以?
-    recent_days: 理쒓렐 30??湲곕줉 由ъ뒪??
+    hit: True=적중, False=미적중
+    recent_days: 최근 30일 기록 리스트
     """
     brain = load()
     perf  = brain["markets"][market]["analyst_performance"][analyst]
@@ -160,14 +172,14 @@ def update_analyst(market: str, analyst: str, hit: bool, recent_days: list):
         perf["miss"] += 1
     perf["rate"] = round(perf["hit"] / perf["total"], 3)
 
-    # 理쒓렐 7??
+    # 최근 7일
     r7 = [d for d in recent_days[-7:] if f"{analyst}_result" in d]
     if r7:
         h7 = sum(1 for d in r7 if d.get(f"{analyst}_result") == "HIT")
         perf["recent_7d"] = {"total": len(r7), "hit": h7,
                               "rate": round(h7 / len(r7), 3)}
 
-    # 理쒓렐 30??
+    # 최근 30일
     r30 = [d for d in recent_days[-30:] if f"{analyst}_result" in d]
     if r30:
         h30 = sum(1 for d in r30 if d.get(f"{analyst}_result") == "HIT")
@@ -186,7 +198,7 @@ def update_analyst(market: str, analyst: str, hit: bool, recent_days: list):
     save(brain)
 
 
-# ?? 紐⑤뱶 ?깃낵 ?낅뜲?댄듃 ????????????????????????????????????????????????????????
+# 모드 성과 업데이트
 
 def update_mode_performance(market: str, mode: str, pnl_pct: float, win: bool):
     brain = load()
@@ -206,7 +218,7 @@ def update_mode_performance(market: str, mode: str, pnl_pct: float, win: bool):
     save(brain)
 
 
-# ?? ?꾨왂 ?깃낵 ?낅뜲?댄듃 ????????????????????????????????????????????????????????
+# 전략 성과 업데이트
 
 def update_strategy_performance(market: str, strategy: str,
                                   pnl_pct: float, win: bool):
@@ -285,13 +297,13 @@ def update_execution_pattern(market: str, event: dict):
 
     lessons = m.setdefault("execution_lessons", [])
     if action == "buy_failed" and reason not in ("pending_order", "already_holding"):
-        lessons.append(f"{strategy} 吏꾩엯 ?ㅽ뙣 ?⑦꽩: {reason}")
+        lessons.append(f"{strategy} 매수 실패 주요 사유: {reason}")
     elif action == "sell_failed":
-        lessons.append(f"泥?궛 ?ㅽ뙣 ?⑦꽩: {reason}")
+        lessons.append(f"청산 실패 주요 사유: {reason}")
     elif action == "sell_filled" and pnl_pct < 0:
         lessons.append(f"손실 매도 주요 사유: {reason}")
     elif action == "sell_filled" and pnl_pct > 0:
-        lessons.append(f"?섏씡 泥?궛 ?좏슚 ?⑦꽩: {reason}")
+        lessons.append(f"수익 청산 유효 패턴: {reason}")
     m["execution_lessons"] = lessons[-12:]
     save(brain)
 
@@ -365,6 +377,19 @@ def get_recent_selection_feedback_text(
 
 # 이슈 패턴 업데이트
 
+def _next_issue_pattern_id(patterns: list) -> str:
+    max_id = 0
+    for pattern in patterns or []:
+        if not isinstance(pattern, dict):
+            continue
+        pattern_id = pattern.get("id")
+        if not isinstance(pattern_id, str):
+            continue
+        if pattern_id.startswith("P") and pattern_id[1:].isdigit():
+            max_id = max(max_id, int(pattern_id[1:]))
+    return f"P{max_id + 1:03d}"
+
+
 def update_issue_pattern(market: str, pattern_update: dict):
     """
     Claude postmortem 반환값으로 이슈 패턴 업데이트를 적용한다.
@@ -382,7 +407,12 @@ def update_issue_pattern(market: str, pattern_update: dict):
     patterns = brain["markets"][market]["issue_patterns"]
 
     matched_id = pattern_update.get("matched_id")
-    existing   = next((p for p in patterns if p["id"] == matched_id), None)
+    existing = None
+    if matched_id:
+        existing = next(
+            (p for p in patterns if isinstance(p, dict) and p.get("id") == matched_id),
+            None,
+        )
 
     if existing:
         # 기존 패턴 업데이트
@@ -395,7 +425,7 @@ def update_issue_pattern(market: str, pattern_update: dict):
         existing["bear_accuracy"] = round(
             existing.get("bear_hit", 0) / existing["count"], 3
         )
-        # ?됯퇏 pnl ?낅뜲?댄듃
+        # 평균 PnL 업데이트
         prev = existing.get("avg_pnl_when_followed", 0.0)
         cnt  = existing["count"]
         existing["avg_pnl_when_followed"] = round(
@@ -407,11 +437,11 @@ def update_issue_pattern(market: str, pattern_update: dict):
             existing.setdefault("examples", []).append(
                 pattern_update["example"]
             )
-            existing["examples"] = existing["examples"][-5:]  # 理쒓렐 5媛쒕쭔
+            existing["examples"] = existing["examples"][-5:]  # 최근 5개만
 
     else:
-        # ?좉퇋 ?⑦꽩 異붽?
-        new_id = f"P{len(patterns) + 1:03d}"
+        # 신규 패턴 추가
+        new_id = _next_issue_pattern_id(patterns)
         new_pattern = {
             "id":          new_id,
             "type":        pattern_update.get("type", "unknown"),
@@ -433,7 +463,7 @@ def update_issue_pattern(market: str, pattern_update: dict):
     save(brain)
 
 
-# ?? ?쒕떇 ?⑦꽩 ?낅뜲?댄듃 ????????????????????????????????????????????????????????
+# 튜닝 패턴 업데이트
 
 def update_tuning_pattern(market: str, pattern_key: str,
                            correct: bool, new_insight: str = None,
@@ -460,11 +490,11 @@ def update_tuning_pattern(market: str, pattern_key: str,
     save(brain)
 
 
-# ?? 理쒓렐 ?쇰퀎 湲곕줉 異붽? ???????????????????????????????????????????????????????
+# 최근 일별 기록 추가
 
 def add_daily_record(market: str, record: dict):
     """
-    record ?덉떆:
+    record 예시:
     {
       "date": "2026-03-19",
       "mode": "MODERATE_BULL",
@@ -473,8 +503,8 @@ def add_daily_record(market: str, record: dict):
       "bull_result": "HIT",
       "bear_result": "MISS",
       "neutral_result": "PARTIAL",
-      "bull_reason": "HBM4 怨꾩빟 二쇨? 寃ъ씤",
-      "bear_reason": "愿??諛쒗몴 ?곌린濡?誘몄뒪",
+      "bull_reason": "HBM4 계약 주가 견인",
+      "bear_reason": "관세 발표 연기로 미스",
       "kospi_change": 0.82
     }
     """
@@ -482,7 +512,7 @@ def add_daily_record(market: str, record: dict):
     recent = brain["markets"][market]["recent_days"]
     new_date = record.get("date", "")
 
-    # 媛숈? ?좎쭨 ?덉퐫?쒓? ?대? ?덉쑝硫???뼱? (backfill 以묐났 諛⑹?)
+    # 같은 날짜 레코드가 이미 있으면 덮어쓴다 (backfill 중복 방지)
     existing_idx = next((i for i, r in enumerate(recent) if r.get("date") == new_date), None)
     if existing_idx is not None:
         recent[existing_idx] = record
@@ -495,20 +525,20 @@ def add_daily_record(market: str, record: dict):
     save(brain)
 
 
-# ?? beliefs ?낅뜲?댄듃 ??????????????????????????????????????????????????????????
+# beliefs 업데이트
 
 def update_beliefs(market: str, beliefs_update: dict):
     """
-    Claude postmortem??諛섑솚??beliefs ?낅뜲?댄듃
-    beliefs_update ?덉떆:
+    Claude postmortem이 반환한 beliefs 업데이트.
+    beliefs_update 예시:
     {
-      "market_regime": "媛뺤꽭??,
+      "market_regime": "강세장",
       "bull_reliability": "high",
       "bear_reliability": "low",
-      "best_strategy": "紐⑤찘?",
-      "new_lesson": "愿???⑤룆 寃쎄퀬???좊ː????쓬",
-      "add_avoid": "CAUTIOUS 怨쇰룄 ?ъ슜",
-      "add_emphasize": "Bull ?뺤젙?몄옱"
+      "best_strategy": "모멘텀",
+      "new_lesson": "관망 경고가 유효했음",
+      "add_avoid": "CAUTIOUS 과도 사용",
+      "add_emphasize": "Bull 확정 근거"
     }
     """
     brain = load()
@@ -538,11 +568,11 @@ def update_beliefs(market: str, beliefs_update: dict):
     save(brain)
 
 
-# ?? 媛쒕퀎 遺꾩꽍媛 留욎땄 ?쇰뱶諛??앹꽦 ??????????????????????????????????????????????
+# 개별 분석가 맞춤 피드백 생성
 
 def _count_consecutive_result(recent_days: list, analyst_type: str,
                                target: str = "MISS") -> int:
-    """理쒓렐 ?좎쭨遺????닚?쇰줈 ?곗냽 target 寃곌낵 ?잛닔 怨꾩궛."""
+    """최근 날짜부터 역순으로 연속 target 결과 개수를 계산한다."""
     key = f"{analyst_type}_result"
     count = 0
     for day in reversed(recent_days):
@@ -762,7 +792,7 @@ Learned lessons
 
 def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
     """
-    R1?뭃2 ?좊줎 寃곌낵瑜?brain.json?????
+    R1/R2 토론 결과를 brain.json에 저장한다.
     r1, r2: {"bull":..., "bear":..., "neutral":...}
     """
     brain = load()
@@ -790,7 +820,7 @@ def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
                    "key_reason": r2[k].get("key_reason", "")[:80]} for k in r2},
         "changes":           changes,
         "consensus_shifted": len(changes) > 0,
-        "outcome":           None,   # postmortem ??梨꾩?
+        "outcome":           None,   # postmortem 채점 전
     }
 
     # 최근 30개만 보관
@@ -851,8 +881,8 @@ def get_debate_summary(market: str, n: int = 5) -> str:
 
 def update_debate_outcome(market: str, target_date: str, correct: bool):
     """
-    postmortem ???대떦 ???좊줎 寃곌낵媛 留욎븯?붿? ?낅뜲?댄듃
-    correct: True=?⑹쓽 諛⑺뼢???ㅼ젣 寃곌낵? ?쇱튂
+    postmortem 결과에 맞춰 토론 결과가 맞았는지 업데이트한다.
+    correct: True=합의 방향과 실제 결과가 일치
     """
     brain = load()
     history = brain["markets"][market].get("debate_history", [])
@@ -863,19 +893,19 @@ def update_debate_outcome(market: str, target_date: str, correct: bool):
             return
 
 
-# ?? hold_advisor ?깃낵 ?꾩쟻 ????????????????????????????????????????????????????
+# hold_advisor 성과 누적
 
 def update_hold_advisor_performance(
     market: str,
     ticker: str,
     decision: str,           # "HOLD" | "SELL"
     success: bool,
-    extra_pnl_pct: float,    # HOLD: ?몃젅???댄썑 異붽? ?섏씡%, SELL: 利됱떆 ?ㅽ쁽 ?섏씡%
+    extra_pnl_pct: float,    # HOLD: 목표가 이후 추가 수익%, SELL: 즉시 실현 수익%
 ):
     """
-    TP ?꾨떖 ??hold_advisor 寃곗젙 寃곌낵瑜?brain.json???꾩쟻.
-    - HOLD ??泥?궛媛 > tp_price : success=True
-    - SELL ??TP 利됱떆 ?ㅽ쁽 ?먯껜媛 ?깃났
+    TP 도달 후 hold_advisor 결정 결과를 brain.json에 누적한다.
+    - HOLD 후 청산가 > tp_price: success=True
+    - SELL 후 TP 즉시 실현 자체가 성공
     """
     brain = load()
     if "hold_advisor_performance" not in brain:
@@ -893,7 +923,7 @@ def update_hold_advisor_performance(
         hp["hold_count"] += 1
         if success:
             hp["hold_success"] += 1
-        # ?꾩쟻 ?됯퇏 異붽??섏씡
+        # 누적 평균 추가 수익
         n = hp["hold_count"]
         hp["hold_avg_extra_pnl"] = round(
             (hp["hold_avg_extra_pnl"] * (n - 1) + extra_pnl_pct) / n, 4
@@ -915,7 +945,7 @@ def update_hold_advisor_performance(
     save(brain)
 
 
-# ?? ?щ줈?ㅻ쭏耳??낅뜲?댄듃 ???????????????????????????????????????????????????????
+# cross_market 업데이트
 
 def update_cross_market(correlation: float, insight: str):
     brain = load()
@@ -925,7 +955,7 @@ def update_cross_market(correlation: float, insight: str):
     save(brain)
 
 
-# ?? correction_guide ?낅뜲?댄듃 ?????????????????????????????????????????????????
+# correction_guide 업데이트
 
 def update_correction_guide(market: str, guide: dict):
     """
@@ -938,7 +968,12 @@ def update_correction_guide(market: str, guide: dict):
       "today_notes":      "FOMC 발표 일정, 변동성 주의"
     }
     """
+    guide = dict(guide or {})
     brain = load()
+    correction_guide = brain.setdefault("correction_guide", {})
+    current = correction_guide.setdefault(market, {})
+    if _is_empty_correction_guide(guide) and not _is_empty_correction_guide(current):
+        return
     brain["correction_guide"][market] = {
         **guide,
         "generated_date": date.today().isoformat()
@@ -968,17 +1003,17 @@ def print_status():
     brain = load()
     meta  = brain["meta"]
     print(f"""
-?붴븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븮
-??          Brain ?꾩옱 ?곹깭                    ??
-?싢븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븴
-踰꾩쟾:      v{meta['version']}
-留덉?留??낅뜲?댄듃: {meta['last_updated']}
-?숈뒿?쇱닔:  援?궡 {meta['trained_days_kr']}??/ 誘멸뎅 {meta['trained_days_us']}??
+============================================================
+          Brain 현재 상태
+============================================================
+버전:        v{meta['version']}
+마지막 업데이트: {meta['last_updated']}
+학습일수:    국내 {meta['trained_days_kr']}일 / 미국 {meta['trained_days_us']}일
     """)
     for mkt in ["KR", "US"]:
         m = brain["markets"][mkt]
         p = m["analyst_performance"]
-        print(f"[{mkt}] trained={m['trained_days']}?? "
+        print(f"[{mkt}] trained={m['trained_days']}일 "
               f"Bull={p['bull']['rate']*100:.1f}%  "
               f"Bear={p['bear']['rate']*100:.1f}%  "
               f"Neutral={p['neutral']['rate']*100:.1f}%")
@@ -986,9 +1021,9 @@ def print_status():
 
 if __name__ == "__main__":
     print_status()
-    print("\n[KR ?붿빟]")
+    print("\n[KR 요약]")
     print(generate_prompt_summary("KR"))
-    print("\n[US ?붿빟]")
+    print("\n[US 요약]")
     print(generate_prompt_summary("US"))
 
 

@@ -527,6 +527,272 @@ def _safe_float_or_none(value) -> Optional[float]:
     return parsed
 
 
+def _positive_float_or_none(value) -> Optional[float]:
+    parsed = _safe_float_or_none(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
+def _metric_prompt_value(value, label: str, digits: int = 1) -> str:
+    parsed = _positive_float_or_none(value)
+    if parsed is None:
+        return f"{label} N/A (결측)"
+    return f"{label} {parsed:.{digits}f}"
+
+
+def _iter_breadth_rows(items) -> list[dict]:
+    rows: list[dict] = []
+    if isinstance(items, dict):
+        iterable = items.items()
+        for ticker, payload in iterable:
+            if not isinstance(payload, dict):
+                continue
+            row = dict(payload)
+            row.setdefault("ticker", str(ticker))
+            rows.append(row)
+    elif isinstance(items, list):
+        for payload in items:
+            if not isinstance(payload, dict):
+                continue
+            row = dict(payload)
+            if row.get("ticker"):
+                rows.append(row)
+    return rows
+
+
+def _item_change_pct(item: dict) -> Optional[float]:
+    for key in ("change_pct", "change_rate", "change"):
+        parsed = _safe_float_or_none(item.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _macd_bucket(value) -> str:
+    text = str(value or "").lower()
+    if "골든" in text or "golden" in text or text in {"gc", "bullish"}:
+        return "golden"
+    if "데드" in text or "dead" in text or text in {"dc", "bearish"}:
+        return "dead"
+    return ""
+
+
+def _ticker_example(item: dict) -> dict:
+    ticker = str(item.get("ticker", "") or "").strip()
+    change = _item_change_pct(item)
+    example = {
+        "ticker": ticker,
+        "name": str(item.get("name", ticker) or ticker),
+        "change_pct": round(change, 2) if change is not None else None,
+    }
+    rsi = _safe_float_or_none(item.get("rsi"))
+    if rsi is not None:
+        example["rsi"] = round(rsi, 1)
+    macd = str(item.get("macd", "") or "")
+    if macd:
+        example["macd"] = macd
+    vol_ratio = _safe_float_or_none(item.get("vol_ratio"))
+    if vol_ratio is not None:
+        example["vol_ratio"] = round(vol_ratio, 2)
+    return example
+
+
+def build_breadth_summary(market: str, items, context: Optional[dict] = None) -> dict:
+    """Deterministic market breadth summary for Claude prompts."""
+    rows = _iter_breadth_rows(items)
+    total = len(rows)
+    changes = [(row, _item_change_pct(row)) for row in rows]
+    valid_changes = [(row, chg) for row, chg in changes if chg is not None]
+    advancers = sum(1 for _, chg in valid_changes if chg > 0)
+    decliners = sum(1 for _, chg in valid_changes if chg < 0)
+    unchanged = sum(1 for _, chg in valid_changes if chg == 0)
+
+    golden = 0
+    dead = 0
+    overbought = 0
+    oversold = 0
+    volume_spike = 0
+    volume_extreme = 0
+    near_52w_high = 0
+    at_52w_high = 0
+    above_ma60 = 0
+    below_ma60 = 0
+    earnings_pre = 0
+    earnings_post = 0
+    sector_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+
+    for row in rows:
+        macd = _macd_bucket(row.get("macd"))
+        if macd == "golden":
+            golden += 1
+        elif macd == "dead":
+            dead += 1
+
+        rsi = _safe_float_or_none(row.get("rsi"))
+        if rsi is not None:
+            if rsi > 70:
+                overbought += 1
+            if rsi < 30:
+                oversold += 1
+
+        vol_ratio = _safe_float_or_none(row.get("vol_ratio"))
+        if vol_ratio is not None:
+            if vol_ratio >= 1.5:
+                volume_spike += 1
+            if vol_ratio >= 3.0:
+                volume_extreme += 1
+
+        pos_52w = _safe_float_or_none(row.get("pos_52w"))
+        from_high = _safe_float_or_none(row.get("from_high_pct"))
+        if pos_52w is not None:
+            if pos_52w >= 95:
+                near_52w_high += 1
+            if pos_52w >= 99:
+                at_52w_high += 1
+        elif from_high is not None:
+            if from_high >= -5:
+                near_52w_high += 1
+            if from_high >= -1:
+                at_52w_high += 1
+
+        ma60 = row.get("above_ma60")
+        if ma60 is True or ma60 == 1:
+            above_ma60 += 1
+        elif ma60 is False or ma60 == 0:
+            below_ma60 += 1
+
+        earnings_window = str(row.get("earnings_window", "") or "").lower()
+        if earnings_window.startswith("pre") or earnings_window == "today":
+            earnings_pre += 1
+        elif earnings_window.startswith("post"):
+            earnings_post += 1
+
+        sector = str(row.get("sector", "") or "").strip()
+        category = str(row.get("category", "") or "").strip()
+        if sector:
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if category:
+            category_counts[category] = category_counts.get(category, 0) + 1
+
+    sorted_valid = sorted(valid_changes, key=lambda pair: pair[1], reverse=True)
+    top_positive = [_ticker_example(row) for row, _ in sorted_valid[:5]]
+    top_negative = [_ticker_example(row) for row, _ in sorted_valid[-5:]][::-1]
+
+    ctx = context or {}
+    data_quality_flags: list[str] = []
+    if str(market or "").upper() == "US":
+        if _positive_float_or_none(ctx.get("vix")) is None:
+            data_quality_flags.append("vix_missing")
+        if _positive_float_or_none(ctx.get("dxy")) is None:
+            data_quality_flags.append("dxy_missing")
+    else:
+        if ctx.get("vkospi") is None:
+            data_quality_flags.append("vkospi_missing")
+
+    advance_ratio = round(advancers / total, 3) if total else 0.0
+    decline_ratio = round(decliners / total, 3) if total else 0.0
+    return {
+        "market": str(market or "").upper(),
+        "source": "digest_or_screen",
+        "universe_count": total,
+        "valid_change_count": len(valid_changes),
+        "advancers": advancers,
+        "decliners": decliners,
+        "unchanged": unchanged,
+        "advance_ratio": advance_ratio,
+        "decline_ratio": decline_ratio,
+        "golden_cross": golden,
+        "dead_cross": dead,
+        "rsi_overbought": overbought,
+        "rsi_oversold": oversold,
+        "volume_spike": volume_spike,
+        "volume_extreme": volume_extreme,
+        "near_52w_high": near_52w_high,
+        "at_52w_high": at_52w_high,
+        "above_ma60": above_ma60,
+        "below_ma60": below_ma60,
+        "earnings_pre": earnings_pre,
+        "earnings_post": earnings_post,
+        "top_positive": top_positive,
+        "top_negative": top_negative,
+        "sector_counts": dict(sorted(sector_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:8]),
+        "category_counts": dict(sorted(category_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:8]),
+        "sector_changes": ctx.get("sectors") or ctx.get("kr_sectors") or {},
+        "data_quality_flags": data_quality_flags,
+    }
+
+
+def _format_breadth_summary(summary: dict) -> list[str]:
+    if not isinstance(summary, dict) or not summary.get("universe_count"):
+        return ["  breadth N/A (요약 없음)"]
+    total = int(summary.get("universe_count") or 0)
+    valid = int(summary.get("valid_change_count") or 0)
+    adv = int(summary.get("advancers") or 0)
+    dec = int(summary.get("decliners") or 0)
+    flat = int(summary.get("unchanged") or 0)
+    adv_ratio = float(summary.get("advance_ratio") or 0) * 100
+    lines = [
+        f"  universe {total}개 / 변화율 유효 {valid}개",
+        f"  상승/하락/보합: {adv}/{dec}/{flat} ({adv_ratio:.0f}% 상승)",
+        f"  GC/DC: {int(summary.get('golden_cross') or 0)}/{int(summary.get('dead_cross') or 0)}",
+        (
+            f"  RSI 과매수/과매도: {int(summary.get('rsi_overbought') or 0)}/"
+            f"{int(summary.get('rsi_oversold') or 0)}"
+        ),
+        (
+            f"  거래량 급증/폭증: {int(summary.get('volume_spike') or 0)}/"
+            f"{int(summary.get('volume_extreme') or 0)}"
+        ),
+        (
+            f"  52주 고점근접/신고가권: {int(summary.get('near_52w_high') or 0)}/"
+            f"{int(summary.get('at_52w_high') or 0)}"
+        ),
+    ]
+    sector_changes = summary.get("sector_changes") or {}
+    if isinstance(sector_changes, dict):
+        sec = " | ".join(
+            f"{k} {float(v):+.2f}%"
+            for k, v in sector_changes.items()
+            if _safe_float_or_none(v) not in (None, 0.0)
+        )
+        if sec:
+            lines.append(f"  섹터/ETF: {sec}")
+    flags = summary.get("data_quality_flags") or []
+    if flags:
+        lines.append(f"  데이터 품질: {', '.join(str(f) for f in flags)}")
+    top_pos = summary.get("top_positive") or []
+    top_neg = summary.get("top_negative") or []
+    if top_pos:
+        lines.append("  상승 예시: " + ", ".join(_format_example(e) for e in top_pos[:3]))
+    if top_neg:
+        lines.append("  하락 예시: " + ", ".join(_format_example(e) for e in top_neg[:3]))
+    return lines
+
+
+def _format_example(example: dict) -> str:
+    ticker = str(example.get("ticker", "") or "").strip()
+    name = str(example.get("name", ticker) or ticker)
+    change = example.get("change_pct")
+    label = ticker if not name or name == ticker else f"{name}({ticker})"
+    if change is None:
+        return label
+    return f"{label} {float(change):+.2f}%"
+
+
+def _prompt_ticker_label(ticker: str, item: dict) -> str:
+    ticker = str(ticker or item.get("ticker", "") or "").strip()
+    name = str(item.get("name", ticker) or ticker).strip()
+    if not ticker:
+        return name or "-"
+    if ticker.upper() == "RSI":
+        return f"{name}(ticker=RSI)"
+    if name and name != ticker:
+        return f"{name}(ticker={ticker})"
+    return f"ticker={ticker}"
+
+
 def _normalize_date_str(value) -> str:
     if value is None:
         return ""
@@ -902,7 +1168,7 @@ def build_intraday_advisor_context(market: str = "KR") -> dict:
                       f"({sp500.get('change_pct', 0):+.2f}%)")
             nq_str = (f"NASDAQ {nasdaq.get('close', 0):,.0f} "
                       f"({nasdaq.get('change_pct', 0):+.2f}%)")
-            vix_str = f"VIX {vix:.1f}" if vix else "VIX N/A"
+            vix_str = _metric_prompt_value(vix, "VIX")
             return {"ok": True, "text": f"{sp_str} | {nq_str} | {vix_str}"}
 
     except Exception:
@@ -1124,6 +1390,7 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         "universe_tickers": list(ticker_map.keys()),
         "context":     layer_a,
         "technicals":  layer_b,
+        "breadth_summary": build_breadth_summary("KR", layer_b, layer_a),
         "top_news":    layer_c,
         "disclosures": disclosures,
         "prev_result": prev,
@@ -1161,11 +1428,13 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         for d in FOMC_DATES
     )
 
+    _us_vix = _positive_float_or_none(supp.get("vix"))
+    _us_dxy = _positive_float_or_none(supp.get("dxy"))
     layer_a = {
         "sp500":      supp.get("sp500", {}),
         "nasdaq":     supp.get("nasdaq", {}),
-        "vix":        supp.get("vix", 0),
-        "dxy":        supp.get("dxy", 0),
+        "vix":        _us_vix,
+        "dxy":        _us_dxy,
         "usd_krw":    supp.get("usd_krw", 0),
         "oil_wti":    supp.get("oil_wti", 0),
         # 채권 / 신용 (시장 위험 지표)
@@ -1176,7 +1445,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         # 시장 레짐 자동 감지
         "regime":     detect_market_regime(
             sp500_change=supp.get("sp500", {}).get("change_pct", 0) if isinstance(supp.get("sp500"), dict) else 0,
-            vix=float(supp.get("vix", 0) or 0),
+            vix=float(_us_vix or 0),
         ),
         "fomc":       is_fomc,
         "fomc_week":  is_fomc_week,
@@ -1186,7 +1455,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     }
 
     # VIX 25+ 이상이면 인버스 ETF 포함 (약세 헤지 구간)
-    _vix = supp.get("vix", 0) or 0
+    _vix = _us_vix or 0
     ticker_map = _ticker_map("US", universe_tickers, include_inverse=float(_vix) >= 25)
     layer_b = {}
     shadow_rows = []
@@ -1315,6 +1584,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         "universe_tickers": list(ticker_map.keys()),
         "context":     layer_a,
         "technicals":  layer_b,
+        "breadth_summary": build_breadth_summary("US", layer_b, layer_a),
         "top_news":    layer_c,
         "prev_result": prev,
         "built_at":    datetime.now().isoformat(),
@@ -1346,11 +1616,15 @@ def digest_to_prompt(digest: dict) -> str:
     date   = digest.get("date", "")
     ctx    = digest.get("context", {})
     tech   = digest.get("technicals", {})
+    breadth = digest.get("breadth_summary", {})
     news   = digest.get("top_news", [])
     disc   = digest.get("disclosures", [])
     prev   = digest.get("prev_result", {})
 
-    lines = [f"[{date} {market} 시장 데이터]"]
+    lines = [
+        f"[{date} {market} 시장 데이터]",
+        "시장 mode 판단은 breadth 요약과 지수/매크로를 우선하고, 개별 종목은 보조 예시로만 사용.",
+    ]
 
     # 시장 컨텍스트
     lines.append("\n▶ 시장 컨텍스트")
@@ -1404,10 +1678,12 @@ def digest_to_prompt(digest: dict) -> str:
     else:
         sp = ctx.get("sp500", {})
         nq = ctx.get("nasdaq", {})
+        vix_str = _metric_prompt_value(ctx.get("vix"), "VIX")
+        dxy_str = _metric_prompt_value(ctx.get("dxy"), "DXY")
         lines.append(f"  S&P500 {sp.get('change_pct',0):+.2f}% | "
                      f"나스닥 {nq.get('change_pct',0):+.2f}% | "
-                     f"VIX {ctx.get('vix',0):.1f} | "
-                     f"DXY {ctx.get('dxy',0):.1f}")
+                     f"{vix_str} | "
+                     f"{dxy_str}")
         # 채권 / 신용
         tnx = ctx.get("tnx", 0)
         hyg = ctx.get("hyg", {})
@@ -1440,14 +1716,19 @@ def digest_to_prompt(digest: dict) -> str:
     if events:
         lines.append(f"  이벤트: {' | '.join(events)}")
 
+    # 시장 breadth 요약
+    lines.append("\n▶ 시장 breadth 요약")
+    lines.extend(_format_breadth_summary(breadth))
+
     # 종목 지표
     lines.append("\n▶ 종목 기술 지표")
     for ticker, t in tech.items():
         rsi_mark = "🔴과매도" if t["rsi"] < 30 else "🟢과매수" if t["rsi"] > 70 else ""
         vol_mark = "⚡폭증" if t["vol_ratio"] > 3 else "↑증가" if t["vol_ratio"] > 1.5 else ""
         bb_display = t['bb_pos'] if 'bb_pos' in t else f"{t['bb_pct']:.0f}%"
+        label = _prompt_ticker_label(ticker, t)
         lines.append(
-            f"  [{t.get('name',ticker)}] {t['close']:,} "
+            f"  [{label}] {t['close']:,} "
             f"{t['change_pct']:+.2f}% | "
             f"RSI {t['rsi']}{rsi_mark} | "
             f"MACD {t['macd']} | "

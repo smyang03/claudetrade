@@ -111,7 +111,14 @@ def build_v2_ops_summary(
             session_date=session_key,
         ),
         "bucket_monitor": build_bucket_summary(market=market_key, session_date=session_key, runtime_mode=runtime_key),
-        "path_b_live": _path_b_live_summary(store, market_key, runtime_key, session_key, events=events),
+        "path_b_live": _path_b_live_summary(
+            store,
+            market_key,
+            runtime_key,
+            session_key,
+            events=events,
+            broker_truth=broker_truth,
+        ),
         "lifecycle": {
             "event_counts": dict(counts),
             "last_event": last_event,
@@ -333,6 +340,7 @@ def _path_b_live_summary(
     runtime_mode: str | None,
     session_date: str,
     events: list[dict[str, Any]] | None = None,
+    broker_truth: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     markets = [market] if market else ["KR", "US"]
     modes = [runtime_mode] if runtime_mode else ["live", "paper"]
@@ -349,7 +357,12 @@ def _path_b_live_summary(
                 )
             except Exception:
                 continue
-    pathb_runs = [run for run in runs if str(run.get("path_type", "")) == "claude_price"]
+    status_overrides = _path_status_overrides(events or [])
+    pathb_runs = [
+        _apply_lifecycle_status(run, status_overrides)
+        for run in runs
+        if str(run.get("path_type", "")) == "claude_price"
+    ]
     name_map = _path_b_name_map(markets, runtime_mode, session_date)
     status_counts = Counter(str(run.get("status", "") or "UNKNOWN") for run in pathb_runs)
     active_statuses = {"WAITING", "HIT", "ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED", "FILLED", "SELL_SENT", "SELL_ACKED"}
@@ -375,9 +388,9 @@ def _path_b_live_summary(
             control=control,
             name_map=name_map,
         ),
-        "active": _compact_path_runs(active, name_map=name_map),
-        "recent": _compact_path_runs(pathb_runs, name_map=name_map),
-        "order_unknown": _compact_path_runs(unknown, name_map=name_map),
+        "active": _compact_path_runs(active, name_map=name_map, broker_truth=broker_truth),
+        "recent": _compact_path_runs(pathb_runs, name_map=name_map, broker_truth=broker_truth),
+        "order_unknown": _compact_path_runs(unknown, name_map=name_map, broker_truth=broker_truth),
         "status_counts": dict(status_counts),
         "waiting": status_counts.get("WAITING", 0),
         "filled": status_counts.get("FILLED", 0),
@@ -673,6 +686,127 @@ def _display_ticker(ticker: Any, name: Any = "") -> str:
     return raw_ticker or raw_name or "-"
 
 
+def _ticker_key(market: str, ticker: Any) -> str:
+    raw = str(ticker or "").strip()
+    return raw.upper() if str(market or "").upper() == "US" else raw
+
+
+def _path_status_overrides(events: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    overrides: dict[str, dict[str, str]] = {}
+    event_status = {
+        "CLAUDE_PRICE_WAITING": "WAITING",
+        "CLAUDE_PRICE_HIT": "HIT",
+        "CLAUDE_PRICE_CANCELLED": "CANCELLED",
+        "CLAUDE_PRICE_EXPIRED": "EXPIRED",
+        "ORDER_SENT": "ORDER_SENT",
+        "ORDER_ACKED": "ORDER_ACKED",
+        "PARTIAL_FILLED": "PARTIAL_FILLED",
+        "FILLED": "FILLED",
+        "CLOSED": "CLOSED",
+        "ORDER_UNKNOWN": "ORDER_UNKNOWN",
+    }
+    for event in events:
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        path_run_id = str(payload.get("path_run_id", "") or "").strip()
+        if not path_run_id:
+            continue
+        status = str(payload.get("path_status", "") or "").strip()
+        if not status:
+            status = event_status.get(str(event.get("event_type", "") or ""), "")
+        if not status:
+            continue
+        overrides[path_run_id] = {
+            "status": status,
+            "event_type": str(event.get("event_type", "") or ""),
+            "occurred_at": str(event.get("occurred_at", "") or ""),
+        }
+    return overrides
+
+
+def _apply_lifecycle_status(run: dict[str, Any], overrides: dict[str, dict[str, str]]) -> dict[str, Any]:
+    path_run_id = str(run.get("path_run_id", "") or "")
+    override = overrides.get(path_run_id)
+    if not override:
+        return run
+    stored_status = str(run.get("status", "") or "")
+    effective_status = str(override.get("status", "") or stored_status)
+    if not effective_status or effective_status == stored_status:
+        return run
+    out = dict(run)
+    out["stored_status"] = stored_status
+    out["status"] = effective_status
+    out["status_from_lifecycle"] = True
+    out["status_lifecycle_event_type"] = override.get("event_type", "")
+    out["status_lifecycle_at"] = override.get("occurred_at", "")
+    return out
+
+
+def _broker_evidence_for_path_run(run: dict[str, Any], broker_truth: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(broker_truth, dict):
+        return {}
+    market = str(run.get("market", "") or "").upper()
+    ticker = _ticker_key(market, run.get("ticker", ""))
+    if not market or not ticker:
+        return {}
+    markets = broker_truth.get("markets") if isinstance(broker_truth.get("markets"), dict) else {}
+    data = markets.get(market) if isinstance(markets.get(market), dict) else {}
+    if not data:
+        return {}
+    plan = run.get("plan") or run.get("plan_json") or {}
+    if not isinstance(plan, dict):
+        plan = {}
+    execution_ids = {
+        str(plan.get("entry_execution_id", "") or "").strip(),
+        str(plan.get("exit_execution_id", "") or "").strip(),
+    }
+    execution_ids = {value for value in execution_ids if value}
+    status = str(run.get("status", "") or "")
+    openish_statuses = {
+        "ORDER_SENT",
+        "ORDER_ACKED",
+        "PARTIAL_FILLED",
+        "FILLED",
+        "SELL_SENT",
+        "SELL_ACKED",
+        "SELL_PARTIAL_FILLED",
+        "ORDER_UNKNOWN",
+    }
+
+    def matching(rows: Any) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            if _ticker_key(market, row.get("ticker", "")) == ticker:
+                out.append(row)
+        return out
+
+    def matching_orders(rows: Any, *, fallback_to_ticker: bool) -> list[dict[str, Any]]:
+        ticker_matches = matching(rows)
+        if not execution_ids:
+            return ticker_matches if fallback_to_ticker else []
+        exact = [
+            row for row in ticker_matches
+            if str(row.get("order_no", "") or "").strip() in execution_ids
+        ]
+        return exact if exact or not fallback_to_ticker else ticker_matches
+
+    positions = matching(data.get("positions", [])) if status in openish_statuses else []
+    open_orders = matching_orders(data.get("open_orders", []), fallback_to_ticker=status in openish_statuses)
+    fills = matching_orders(data.get("today_fills", []), fallback_to_ticker=status in openish_statuses)
+    return {
+        "broker_position_evidence": bool(positions),
+        "broker_open_order_evidence": bool(open_orders),
+        "broker_today_fill_evidence": bool(fills),
+        "broker_truth_last_success_at": data.get("last_success_at", ""),
+        "broker_truth_stale": bool(data.get("stale")),
+        "broker_truth_error": str(data.get("error", "") or ""),
+        "broker_position_count": len(positions),
+        "broker_open_order_count": len(open_orders),
+        "broker_today_fill_count": len(fills),
+    }
+
+
 def _path_b_metrics(runs: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(runs)
     entered_statuses = {"ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED", "FILLED", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED", "CLOSED"}
@@ -959,7 +1093,12 @@ def _path_b_control_state(runtime_mode: str | None) -> dict[str, Any]:
     }
 
 
-def _compact_path_runs(runs: list[dict[str, Any]], *, name_map: dict[str, str] | None = None) -> list[dict[str, Any]]:
+def _compact_path_runs(
+    runs: list[dict[str, Any]],
+    *,
+    name_map: dict[str, str] | None = None,
+    broker_truth: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     compact = []
     for run in runs[-20:]:
         plan = run.get("plan") or run.get("plan_json") or {}
@@ -968,6 +1107,7 @@ def _compact_path_runs(runs: list[dict[str, Any]], *, name_map: dict[str, str] |
         ticker = str(run.get("ticker", "") or "")
         market = str(run.get("market", "") or "")
         name = str(plan.get("name", "") or _name_for_ticker(ticker, market, name_map) or "")
+        broker_evidence = _broker_evidence_for_path_run(run, broker_truth)
         compact.append(
             {
                 "market": market,
@@ -980,6 +1120,10 @@ def _compact_path_runs(runs: list[dict[str, Any]], *, name_map: dict[str, str] |
                 "decision_id": run.get("decision_id", ""),
                 "path_run_id": run.get("path_run_id", ""),
                 "status": run.get("status", ""),
+                "stored_status": run.get("stored_status", run.get("status", "")),
+                "status_from_lifecycle": bool(run.get("status_from_lifecycle", False)),
+                "status_lifecycle_event_type": run.get("status_lifecycle_event_type", ""),
+                "status_lifecycle_at": run.get("status_lifecycle_at", ""),
                 "buy_zone_low": plan.get("buy_zone_low", ""),
                 "buy_zone_high": plan.get("buy_zone_high", ""),
                 "sell_target": plan.get("sell_target", ""),
@@ -1000,11 +1144,26 @@ def _compact_path_runs(runs: list[dict[str, Any]], *, name_map: dict[str, str] |
                 "close_reason": plan.get("close_reason", ""),
                 "order_unknown_resolution": plan.get("order_unknown_resolution", ""),
                 "order_unknown_resolution_at": plan.get("order_unknown_resolution_at", ""),
-                "broker_position_evidence": bool(plan.get("broker_position_evidence", False)),
-                "broker_open_order_evidence": bool(plan.get("broker_open_order_evidence", False)),
-                "broker_today_fill_evidence": bool(plan.get("broker_today_fill_evidence", False)),
+                "broker_position_evidence": bool(
+                    plan.get("broker_position_evidence", False)
+                    or broker_evidence.get("broker_position_evidence", False)
+                ),
+                "broker_open_order_evidence": bool(
+                    plan.get("broker_open_order_evidence", False)
+                    or broker_evidence.get("broker_open_order_evidence", False)
+                ),
+                "broker_today_fill_evidence": bool(
+                    plan.get("broker_today_fill_evidence", False)
+                    or broker_evidence.get("broker_today_fill_evidence", False)
+                ),
                 "path_a_origin_possible": bool(plan.get("path_a_lifecycle_evidence") or plan.get("path_a_pending_evidence")),
-                "broker_truth_last_success_at": plan.get("broker_truth_last_success_at", ""),
+                "broker_truth_last_success_at": plan.get("broker_truth_last_success_at", "")
+                or broker_evidence.get("broker_truth_last_success_at", ""),
+                "broker_truth_stale": bool(broker_evidence.get("broker_truth_stale", False)),
+                "broker_truth_error": broker_evidence.get("broker_truth_error", ""),
+                "broker_position_count": broker_evidence.get("broker_position_count", 0),
+                "broker_open_order_count": broker_evidence.get("broker_open_order_count", 0),
+                "broker_today_fill_count": broker_evidence.get("broker_today_fill_count", 0),
                 "session_end_unresolved": bool(plan.get("session_end_unresolved", False)),
                 "created_at": run.get("created_at", ""),
                 "updated_at": run.get("updated_at", ""),
