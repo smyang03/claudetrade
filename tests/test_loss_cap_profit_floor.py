@@ -130,6 +130,7 @@ class LossCapProfitFloorTests(unittest.TestCase):
     def test_v2_close_reason_maps_new_exit_reasons(self) -> None:
         self.assertEqual(v2_close_reason("loss_cap"), "CLOSED_LOSS_CAP")
         self.assertEqual(v2_close_reason("profit_floor"), "CLOSED_PROFIT_FLOOR")
+        self.assertEqual(v2_close_reason("soft_exit_floor_price"), "CLOSED_SOFT_EXIT_FLOOR")
         self.assertEqual(v2_close_reason("CLOSED_LOSS_CAP"), "CLOSED_LOSS_CAP")
 
 

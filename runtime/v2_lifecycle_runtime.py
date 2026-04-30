@@ -25,8 +25,10 @@ def v2_close_reason(reason: str) -> str:
     mapping = {
         "loss_cap": "CLOSED_LOSS_CAP",
         "profit_floor": "CLOSED_PROFIT_FLOOR",
+        "soft_exit_floor_price": "CLOSED_SOFT_EXIT_FLOOR",
         "CLOSED_LOSS_CAP": "CLOSED_LOSS_CAP",
         "CLOSED_PROFIT_FLOOR": "CLOSED_PROFIT_FLOOR",
+        "CLOSED_SOFT_EXIT_FLOOR": "CLOSED_SOFT_EXIT_FLOOR",
         "stop_loss": "CLOSED_HARD_STOP",
         "trail_stop": "CLOSED_TRAILING_STOP",
         "max_hold": "CLOSED_TIME_STOP",

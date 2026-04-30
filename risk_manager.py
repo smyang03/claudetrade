@@ -403,6 +403,17 @@ class RiskManager:
         entry = float(pos.get("entry") or 0)
         return entry * (1.0 + floor_pct) if entry > 0 else 0.0
 
+    def soft_exit_floor_price(self, pos: dict, *, native: bool = False) -> float:
+        floor = float(pos.get("soft_exit_floor_price") or 0)
+        if floor <= 0:
+            return 0.0
+        if native and pos.get("display_currency") == "USD":
+            return floor
+        if not native and pos.get("display_currency") == "USD":
+            rate = float(pos.get("entry") or 0) / float(pos.get("display_avg_price") or 0) if float(pos.get("display_avg_price") or 0) > 0 else 0.0
+            return floor * rate if rate > 0 else 0.0
+        return floor
+
     def profit_floor_triggered(self, pos: dict) -> bool:
         if not PROFIT_FLOOR_ENABLED:
             return False
@@ -489,6 +500,7 @@ class RiskManager:
                 sl_usd = avg_usd * (1 - sl_pct)
                 loss_cap_usd = self.loss_cap_price(pos, native=True)
                 floor_usd = self.profit_floor_price(pos, native=True)
+                soft_floor_usd = self.soft_exit_floor_price(pos, native=True)
                 exit_meta = self._exit_meta(
                     strategy_stop_price=sl_usd,
                     loss_cap_price=loss_cap_usd,
@@ -499,15 +511,21 @@ class RiskManager:
                     position_mfe_pct=peak_pnl_pct,
                     position_mae_pct=trough_pnl_pct,
                 )
+                exit_meta["soft_exit_floor_price"] = soft_floor_usd
+                exit_meta["soft_exit_floor_triggered"] = bool(soft_floor_usd > 0 and cp_usd <= soft_floor_usd)
 
                 if protected:
                     reason, effective_stop = self._stop_reason(cp_usd, sl_usd, loss_cap_usd, "stop_loss")
                     exit_meta["effective_stop_price"] = effective_stop
+                    if not reason and soft_floor_usd > 0 and cp_usd <= soft_floor_usd:
+                        reason = "soft_exit_floor_price"
                 elif pos.get("trailing"):
                     trail_sl_usd = float(pos.get("trail_sl_usd") or 0)
                     reason, effective_stop = self._stop_reason(cp_usd, trail_sl_usd, loss_cap_usd, "trail_stop")
                     exit_meta["strategy_stop_price"] = trail_sl_usd
                     exit_meta["effective_stop_price"] = effective_stop
+                    if soft_floor_usd > 0 and cp_usd <= soft_floor_usd and reason in (None, "trail_stop"):
+                        reason = "soft_exit_floor_price"
                     if not reason and floor_triggered and floor_usd > 0 and cp_usd <= floor_usd:
                         reason = "profit_floor"
                     if not reason and pos["held_days"] >= pos["max_hold"]:
@@ -517,6 +535,8 @@ class RiskManager:
                     exit_meta["effective_stop_price"] = effective_stop
                     if reason:
                         pass
+                    elif soft_floor_usd > 0 and cp_usd <= soft_floor_usd:
+                        reason = "soft_exit_floor_price"
                     elif floor_triggered and floor_usd > 0 and cp_usd <= floor_usd:
                         reason = "profit_floor"
                     elif cp_usd >= tp_usd and not pos.get("tp_triggered"):
@@ -531,6 +551,7 @@ class RiskManager:
             # KR 종목 (기존 로직)
             loss_cap_krw = self.loss_cap_price(pos)
             floor_krw = self.profit_floor_price(pos)
+            soft_floor_krw = self.soft_exit_floor_price(pos)
             base_stop = float(pos.get("sl") or 0)
             exit_meta = self._exit_meta(
                 strategy_stop_price=base_stop,
@@ -542,14 +563,20 @@ class RiskManager:
                 position_mfe_pct=peak_pnl_pct,
                 position_mae_pct=trough_pnl_pct,
             )
+            exit_meta["soft_exit_floor_price"] = soft_floor_krw
+            exit_meta["soft_exit_floor_triggered"] = bool(soft_floor_krw > 0 and cp <= soft_floor_krw)
             if protected:
                 reason, effective_stop = self._stop_reason(cp, base_stop, loss_cap_krw, "stop_loss")
                 exit_meta["effective_stop_price"] = effective_stop
+                if not reason and soft_floor_krw > 0 and cp <= soft_floor_krw:
+                    reason = "soft_exit_floor_price"
             elif pos.get("trailing"):
                 trail_stop = float(pos.get("trail_sl") or 0)
                 reason, effective_stop = self._stop_reason(cp, trail_stop, loss_cap_krw, "trail_stop")
                 exit_meta["strategy_stop_price"] = trail_stop
                 exit_meta["effective_stop_price"] = effective_stop
+                if soft_floor_krw > 0 and cp <= soft_floor_krw and reason in (None, "trail_stop"):
+                    reason = "soft_exit_floor_price"
                 if not reason and floor_triggered and floor_krw > 0 and cp <= floor_krw:
                     reason = "profit_floor"
                 if not reason and pos["held_days"] >= pos["max_hold"]:
@@ -559,6 +586,8 @@ class RiskManager:
                 exit_meta["effective_stop_price"] = effective_stop
                 if reason:
                     pass
+                elif soft_floor_krw > 0 and cp <= soft_floor_krw:
+                    reason = "soft_exit_floor_price"
                 elif floor_triggered and floor_krw > 0 and cp <= floor_krw:
                     reason = "profit_floor"
                 elif cp >= pos["tp"] and not pos.get("tp_triggered"):
