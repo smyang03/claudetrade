@@ -13,6 +13,11 @@ import sys, os, argparse
 from pathlib import Path
 from dotenv import load_dotenv
 
+if "pytest" in sys.modules:
+    import pytest
+
+    pytest.skip("script-style KIS trade smoke; run with python test_kr_trade.py", allow_module_level=True)
+
 load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 

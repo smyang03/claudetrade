@@ -1,5 +1,13 @@
 # CLAUDE.md
 
+## Encoding Safety Rules
+
+- Keep all source, docs, JSON, and scripts as UTF-8.
+- Do not rewrite large files wholesale when a focused patch is enough.
+- Do not use shell redirection, `Out-File`, or `Set-Content` to rewrite source files unless UTF-8 is explicitly controlled.
+- Before committing Korean text, run `python tools/check_mojibake.py --staged`.
+- If mojibake appears in existing lines, fix it from git history instead of guessing the intended Korean text.
+
 ## PEAD Input Policy (2026-04-24)
 
 - PEAD is an input-quality feature, not a standalone strategy.

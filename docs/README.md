@@ -1,24 +1,31 @@
-# Documentation Guide
+# ClaudeTrade Documentation Hub
 
-문서는 아래 기준으로 정리합니다.
+이 폴더는 개발 문서를 찾기 위한 진입점입니다. 기존 문서는 삭제하거나 이동하지 않고, 아래 기준 문서로 다시 정렬했습니다.
 
-- [trading_process.md](/E:/code/claudetrade/docs/trading_process.md)
-  - 현재 매매/판단/실행 흐름 기준 문서
-- [rsi_threshold_research.md](/E:/code/claudetrade/docs/rsi_threshold_research.md)
-  - 전략 파라미터 연구 메모
-- [KIS_API_TODO.md](/E:/code/claudetrade/docs/KIS_API_TODO.md)
-  - KIS API 확인 및 보완 작업 목록
-- [archive/DEVLOG.md](/E:/code/claudetrade/docs/archive/DEVLOG.md)
-  - 전체 개발 로그 원본
-- [archive/TRAINING_DEVLOG.md](/E:/code/claudetrade/docs/archive/TRAINING_DEVLOG.md)
-  - 트레이닝/실행 관련 상세 로그
-- [archive/DASHBOARD_DEVLOG.md](/E:/code/claudetrade/docs/archive/DASHBOARD_DEVLOG.md)
-  - 대시보드 변경 로그
-- [archive/DEBUG_개선.md](/E:/code/claudetrade/docs/archive/DEBUG_%EA%B0%9C%EC%84%A0.md)
-  - 디버그/버그 수정 기록
-- [plans/BRAIN_TRAIN_TODO.md](/E:/code/claudetrade/docs/plans/BRAIN_TRAIN_TODO.md)
-  - 보류 중인 브레인 학습 계획
-- [plans/PLAN_momentum_opening_gate.md](/E:/code/claudetrade/docs/plans/PLAN_momentum_opening_gate.md)
-  - 보류 중인 모멘텀 오프닝 게이트 설계안
+## 먼저 볼 문서
 
-운영에 직접 필요한 문서는 `README.md`, `DATA.md`, `docs/trading_process.md`를 우선 봅니다.
+- [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)
+  - 전체 문서 분류 기준과 현재 Git 상태 요약
+- [ARCHITECTURE_MAP.md](ARCHITECTURE_MAP.md)
+  - 시스템 구성도, 런타임 흐름, 상태 저장소 지도
+- [DEVELOPED_WORK.md](DEVELOPED_WORK.md)
+  - 개발 완료, QA 완료, 검증 리포트가 있는 항목
+- [TODO_ROADMAP.md](TODO_ROADMAP.md)
+  - 아직 해야 할 일, 진행 중 문서, 후속 작업
+- [DOCUMENTATION_INVENTORY.md](DOCUMENTATION_INVENTORY.md)
+  - 현재 확인한 전체 Markdown 파일 인벤토리
+
+## 원칙
+
+- 운영 기준 문서는 `docs/` 루트에 둡니다.
+- 계획 문서는 `docs/plans/`에 둡니다.
+- 완료 검증 리포트는 `docs/reports/`에 둡니다.
+- 오래된 개발 로그는 `docs/archive/`에 둡니다.
+- `data/**` 아래 Markdown은 실행 산출물로 보고, 운영 문서와 분리합니다.
+
+## 자주 쓰는 기존 문서
+
+- [trading_process.md](trading_process.md): 매매 프로세스
+- [rsi_threshold_research.md](rsi_threshold_research.md): RSI 기준 연구 메모
+- [KIS_API_TODO.md](KIS_API_TODO.md): KIS API 확인 및 보완 목록
+- [KIS_WS_FILL_SYNC_PLAN.md](KIS_WS_FILL_SYNC_PLAN.md): KIS 체결통보 WebSocket 연동 계획

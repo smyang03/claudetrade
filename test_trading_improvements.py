@@ -2191,6 +2191,135 @@ class BrainIntegrityTests(unittest.TestCase):
         self.assertEqual(normalized["correction_guide"]["KR"]["tuning_rules"], ["규칙A"])
         self.assertEqual(normalized["markets"]["KR"]["trained_days"], 1)
 
+    def test_next_issue_pattern_id_uses_max_valid_id(self):
+        patterns = [
+            {"id": "P001"},
+            {"id": "P003"},
+            {"id": "PX99"},
+            {"id": None},
+            {"type": "missing_id"},
+            "not_a_pattern",
+        ]
+
+        self.assertEqual(brain_module._next_issue_pattern_id(patterns), "P004")
+
+    def test_next_issue_pattern_id_starts_at_p001_without_valid_ids(self):
+        patterns = [{"id": "legacy"}, {"type": "missing_id"}]
+
+        self.assertEqual(brain_module._next_issue_pattern_id(patterns), "P001")
+        self.assertEqual(brain_module._next_issue_pattern_id([]), "P001")
+
+    def test_update_issue_pattern_allocates_after_max_id_without_collision(self):
+        patterns = [
+            {"id": "P001"},
+            {"id": "P002"},
+            {"id": "P004"},
+        ]
+        fake_brain = {"markets": {"KR": {"issue_patterns": patterns}}}
+        saved = []
+
+        with patch.object(brain_module, "load", return_value=fake_brain), \
+             patch.object(brain_module, "save", side_effect=saved.append):
+            brain_module.update_issue_pattern("KR", {
+                "type": "new_gap_case",
+                "description": "gap allocation must not duplicate P004",
+                "bull_hit": True,
+                "pnl_pct": 1.25,
+            })
+
+        ids = [p["id"] for p in patterns]
+        self.assertEqual(patterns[-1]["id"], "P005")
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(saved, [fake_brain])
+
+    def test_update_correction_guide_preserves_non_empty_guide_on_empty_input(self):
+        brain = {
+            "correction_guide": {
+                "KR": {
+                    "bull_adjustments": ["MACD 골든크로스 우선"],
+                    "bear_adjustments": [],
+                    "tuning_rules": ["거래량 증가 확인"],
+                    "today_notes": "기존 메모",
+                    "generated_date": "2026-04-20",
+                }
+            }
+        }
+        saved = []
+
+        with patch.object(brain_module, "load", return_value=brain), \
+             patch.object(brain_module, "save", side_effect=lambda payload: saved.append(payload)):
+            brain_module.update_correction_guide(
+                "KR",
+                {
+                    "bull_adjustments": [],
+                    "bear_adjustments": [],
+                    "tuning_rules": [],
+                    "today_notes": "",
+                },
+            )
+
+        self.assertEqual(saved, [])
+        self.assertEqual(brain["correction_guide"]["KR"]["bull_adjustments"], ["MACD 골든크로스 우선"])
+        self.assertEqual(brain["correction_guide"]["KR"]["tuning_rules"], ["거래량 증가 확인"])
+
+    def test_update_correction_guide_accepts_non_empty_input(self):
+        brain = {"correction_guide": {"KR": {"bull_adjustments": ["old"]}}}
+        saved = []
+
+        with patch.object(brain_module, "load", return_value=brain), \
+             patch.object(brain_module, "save", side_effect=lambda payload: saved.append(payload)):
+            brain_module.update_correction_guide(
+                "KR",
+                {
+                    "bull_adjustments": ["new"],
+                    "bear_adjustments": [],
+                    "tuning_rules": ["rule"],
+                    "today_notes": "",
+                },
+            )
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(brain["correction_guide"]["KR"]["bull_adjustments"], ["new"])
+        self.assertEqual(brain["correction_guide"]["KR"]["tuning_rules"], ["rule"])
+        self.assertIn("generated_date", brain["correction_guide"]["KR"])
+
+    def test_update_execution_pattern_writes_readable_execution_lessons(self):
+        brain = {
+            "markets": {
+                "KR": {
+                    "execution_patterns": {},
+                    "execution_lessons": [],
+                    "execution_stats": {
+                        "buy_order": 0,
+                        "buy_failed": 0,
+                        "sell_filled": 0,
+                        "sell_failed": 0,
+                    },
+                }
+            }
+        }
+        events = [
+            {"action": "buy_failed", "strategy": "momentum", "reason": "order_reject"},
+            {"action": "sell_failed", "strategy": "momentum", "reason": "pre_session_sell"},
+            {"action": "sell_filled", "strategy": "momentum", "reason": "pre_close", "pnl_pct": -1.2},
+            {"action": "sell_filled", "strategy": "momentum", "reason": "tp_analyst_sell", "pnl_pct": 1.5},
+        ]
+
+        with patch.object(brain_module, "load", return_value=brain), \
+             patch.object(brain_module, "save", lambda payload: None):
+            for event in events:
+                brain_module.update_execution_pattern("KR", event)
+
+        self.assertEqual(
+            brain["markets"]["KR"]["execution_lessons"],
+            [
+                "momentum 매수 실패 주요 사유: order_reject",
+                "청산 실패 주요 사유: pre_session_sell",
+                "손실 매도 주요 사유: pre_close",
+                "수익 청산 유효 패턴: tp_analyst_sell",
+            ],
+        )
+
 
 class DashboardLiveBrokerTruthTests(unittest.TestCase):
     def setUp(self):
