@@ -239,6 +239,8 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
         if ticker not in trade_ready_set or not isinstance(value, dict):
             continue
         price_targets[ticker] = dict(value)
+    missing_price_targets = [ticker for ticker in trade_ready if ticker not in price_targets]
+    price_target_ratio = (len(price_targets) / len(trade_ready)) if trade_ready else 1.0
 
     return {
         "watchlist": watchlist,
@@ -252,6 +254,12 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
         "recommended_strategy": {normalize_ticker(k, market): str(v) for k, v in recommended_strategy.items()},
         "max_position_pct": max_position_pct,
         "price_targets": price_targets,
+        "_price_target_coverage": {
+            "trade_ready_count": len(trade_ready),
+            "price_target_count": len(price_targets),
+            "missing": missing_price_targets,
+            "ratio": round(price_target_ratio, 4),
+        },
         "_parse_recovered": parse_recovered,
         "_fallback_mode": str(parsed.get("_fallback_mode", "") or ""),
     }

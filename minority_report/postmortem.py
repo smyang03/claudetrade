@@ -7,7 +7,7 @@
 - best_trade / worst_trade / worst_trade_reason 필드 추가
 - HALT / 거래 없는 날 postmortem 스킵 안전장치
 """
-import os, json, re, sys
+import os, json, re, sys, time, uuid
 import anthropic
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -355,18 +355,52 @@ def run(market: str, date: str, today_judgment: dict,
              f"bull={code_bull} bear={code_bear} neutral={code_neutral}")
 
     try:
+        started = time.monotonic()
         resp = client.messages.create(
             model=MODEL, max_tokens=2500,
             messages=[{"role": "user", "content": prompt}]
         )
+        duration_ms = int((time.monotonic() - started) * 1000)
         raw = resp.content[0].text.strip()
-        pm = _extract_json(raw)
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "postmortem")
+        call_id = f"postmortem_{market}_{date}_{uuid.uuid4().hex[:10]}"
+        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "postmortem", model=MODEL)
+        save_raw_call(
+            label="postmortem",
+            prompt=prompt, raw_response=raw, parsed={},
+            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            market=market, call_date=date,
+            model=MODEL,
+            call_id=call_id,
+            parse_stage="raw",
+            duration_ms=duration_ms,
+            extra={"_raw_only": True},
+        )
+        try:
+            pm = _extract_json(raw)
+        except Exception:
+            save_raw_call(
+                label="postmortem",
+                prompt=prompt, raw_response=raw, parsed={},
+                input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+                market=market, call_date=date,
+                model=MODEL,
+                call_id=call_id,
+                parse_error=True,
+                parse_stage="parse_failed",
+                duration_ms=duration_ms,
+                extra={"_raw_only": True},
+            )
+            raise
         save_raw_call(
             label="postmortem",
             prompt=prompt, raw_response=raw, parsed=pm,
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market, call_date=date,
+            model=MODEL,
+            call_id=call_id,
+            parse_error=False,
+            parse_stage="parsed",
+            duration_ms=duration_ms,
         )
         # Claude HIT/MISS를 코드 보정값으로 덮어쓴다 (응답 오염 제거)
         pm["bull_result"]    = code_bull
@@ -381,14 +415,17 @@ def run(market: str, date: str, today_judgment: dict,
             "bull_why": "응답 실패, 코드 보정",
             "bear_why": "응답 실패, 코드 보정",
             "neutral_why": "응답 실패, 코드 보정",
-            "key_lesson": "postmortem 응답 실패",
+            "key_lesson": "",
             "best_trade": None, "worst_trade": None, "worst_trade_reason": "",
-            "issue_type": "postmortem_error", "issue_desc": str(e)[:160], "pattern_id": None,
+            "issue_type": "", "issue_desc": "", "pattern_id": None,
+            "_system_error": True,
+            "_skip_issue_pattern": True,
+            "_system_error_detail": str(e)[:160],
             "brain_updates": {"bull_reliability_change": "stable",
                               "bear_reliability_change": "stable",
                               "new_lesson": None, "market_regime": "unknown"},
             "correction_guide": {"bull_adjustments": [], "bear_adjustments": [],
-                                 "tuning_rules": [], "today_notes": "postmortem 응답 실패"},
+                                 "tuning_rules": [], "today_notes": ""},
         }
 
     # ?? brain ?낅뜲?댄듃 ????????????????????????????????????????????????????????
@@ -411,14 +448,18 @@ def run(market: str, date: str, today_judgment: dict,
     if bu.get("market_regime") and bu["market_regime"] != "unknown":
         BrainDB.update_beliefs(market, {"market_regime": bu["market_regime"]})
 
-    BrainDB.update_issue_pattern(market, {
-        "matched_id":  pm.get("pattern_id"),
-        "type":        pm.get("issue_type", "unknown"),
-        "description": pm.get("issue_desc", ""),
-        "bull_hit":    pm["bull_result"] == "HIT",
-        "pnl_pct":     actual_result.get("pnl_pct", 0),
-        "insight":     "" if _is_placeholder_lesson(pm.get("key_lesson", "")) else pm.get("key_lesson", ""),
-    })
+    if not pm.get("_skip_issue_pattern"):
+        BrainDB.update_issue_pattern(market, {
+            "matched_id":  pm.get("pattern_id"),
+            "type":        pm.get("issue_type", "unknown"),
+            "description": pm.get("issue_desc", ""),
+            "bull_hit":    pm["bull_result"] == "HIT",
+            "pnl_pct":     actual_result.get("pnl_pct", 0),
+            "insight":     "" if _is_placeholder_lesson(pm.get("key_lesson", "")) else pm.get("key_lesson", ""),
+        })
+
+    policy_key_lesson = "" if pm.get("_system_error") else pm.get("key_lesson", "")
+    policy_issue_type = "" if pm.get("_system_error") else pm.get("issue_type", "")
 
     BrainDB.add_daily_record(market, {
         "date":              date,
@@ -435,8 +476,8 @@ def run(market: str, date: str, today_judgment: dict,
         "bull_reason":       judgments.get("bull", {}).get("key_reason", ""),
         "bear_reason":       judgments.get("bear", {}).get("key_reason", ""),
         "neutral_reason":    judgments.get("neutral", {}).get("key_reason", ""),
-        "key_lesson":        pm.get("key_lesson", ""),
-        "issue_type":        pm.get("issue_type", ""),
+        "key_lesson":        policy_key_lesson,
+        "issue_type":        policy_issue_type,
         "best_trade":        pm.get("best_trade"),
         "worst_trade":       pm.get("worst_trade"),
         "worst_trade_reason": pm.get("worst_trade_reason", ""),
@@ -457,7 +498,7 @@ def run(market: str, date: str, today_judgment: dict,
 
     # 당일 Claude 보정 지침 업데이트
     cg = pm.get("correction_guide", {})
-    if cg:
+    if cg and not pm.get("_system_error"):
         BrainDB.update_correction_guide(market, cg)
 
     log.info(

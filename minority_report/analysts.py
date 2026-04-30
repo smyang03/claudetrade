@@ -840,12 +840,13 @@ JSON으로만 응답 (다른 텍스트 없이):
         raw = resp.content[0].text.strip()
         result = _sanitize_analyst_result(_extract_json(raw), analyst_type)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
-                      f"analyst_{analyst_type}_r1")
+                      f"analyst_{analyst_type}_r1", model=R1_MODEL)
         save_raw_call(
             label=f"analyst_{analyst_type}_r1",
             prompt=prompt, raw_response=raw, parsed=result,
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
+            model=R1_MODEL,
         )
         log.info(f"[{analyst_type} R1] {result.get('stance','-')} "
                  f"conf={result.get('confidence',0):.2f} | "
@@ -917,12 +918,13 @@ JSON으로만 응답:
         raw = resp.content[0].text.strip()
         result = _extract_json(raw)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
-                      f"analyst_{analyst_type}_r2")
+                      f"analyst_{analyst_type}_r2", model=MODEL)
         save_raw_call(
             label=f"analyst_{analyst_type}_r2",
             prompt=prompt, raw_response=raw, parsed=result,
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
+            model=MODEL,
         )
 
         changed = result.get("changed", False)
@@ -1031,276 +1033,6 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
     )
     return {"bull": r2["bull"], "bear": r2["bear"], "neutral": r2["neutral"],
             "_debate": {"r1": r1, "changes": changes}}
-
-
-def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
-                   intraday_context: str = "",
-                   lesson_context: str = "",
-                   market_change_pct: Optional[float] = None,
-                   secondary_change_pct: Optional[float] = None) -> list:
-    """
-    오늘 집중 모니터링할 WATCH와 실제 매수 권한 TRADE_READY를 Claude가 분리 선택.
-    candidates: screen_market_kr/us 결과
-    """
-    global _LAST_SELECTION_META
-    if not candidates:
-        log.warning("[종목선택] 후보 없음 → 기본값 사용")
-        defaults = {
-            "KR": ["005930", "000660", "035420", "005380", "051910", "068270", "207940", "012450"],
-            "US": ["NVDA", "TSLA", "AAPL", "GOOGL", "NFLX", "AMD", "INTC", "PLTR"],
-        }
-        fallback = defaults.get(market, [])
-        _LAST_SELECTION_META = {
-            "watchlist": fallback,
-            "trade_ready": [],
-            "reasons": {},
-            "veto": {},
-            "risk_tags": {},
-            "recommended_strategy": {},
-            "max_position_pct": {},
-            "price_targets": {},
-        }
-        return fallback, {}
-
-    # KR 장전(08:30~09:05 KST) vol_ratio 마스킹 — 개장 전 거래량회전율은 신뢰 불가
-    from datetime import datetime as _dt
-    from zoneinfo import ZoneInfo as _ZI
-    _now_kr = _dt.now(_ZI("Asia/Seoul"))
-    _kr_premarket = (
-        market == "KR"
-        and (
-            (_now_kr.hour == 8 and _now_kr.minute >= 30)
-            or (_now_kr.hour == 9 and _now_kr.minute <= 5)
-        )
-    )
-    if _kr_premarket:
-        log.debug("[종목선택] KR 장전 — vol_ratio Claude 입력 마스킹 적용")
-
-    ranked_turnovers = _annotate_candidate_prompt_features(candidates[:50])
-    cand_lines = []
-    for c in candidates[:50]:
-        rate = _safe_float(c.get('change_rate', 0.0), 0.0)
-        rate_str = f"{rate:+.2f}%"
-        vr = _safe_float(c.get("vol_ratio", 0.0), 0.0)
-        price = _safe_float(c.get("price", 0), 0.0)
-        volume = _safe_float(c.get("volume", 0), 0.0)
-        turnover = price * volume
-        price_str = f"가격{price:,.0f}" if price > 0 else ""
-        turnover_str = f"거래대금{turnover/1e8:.1f}억" if market == "KR" and turnover > 0 else (
-            f"달러거래${turnover/1e6:.1f}M" if market == "US" and turnover > 0 else ""
-        )
-        if _kr_premarket:
-            vol_str = ""   # 장전 KR: vol_ratio 의미없음 → Claude 입력에서 제거
-        else:
-            vol_str = f"거래량{vr:.1f}배" if vr > 0 else ""
-        # 상대 강도 (RS)
-        if market == "KR":
-            mkt_type = c.get("market_type", "KOSPI")
-            base_pct = (secondary_change_pct if mkt_type == "KOSDAQ" and secondary_change_pct is not None
-                        else market_change_pct)
-            rs = rate - base_pct if base_pct is not None else None
-            _rs_tag = "KQ" if mkt_type == "KOSDAQ" else "KP"
-            rs_str = f"RS{rs:+.1f}%({_rs_tag})" if rs is not None else ""
-        else:  # US: S&P500 + NASDAQ 이중 RS
-            rs_sp = rate - market_change_pct if market_change_pct is not None else None
-            rs_nq = rate - secondary_change_pct if secondary_change_pct is not None else None
-            _rs_parts = []
-            if rs_sp is not None: _rs_parts.append(f"SP{rs_sp:+.1f}%")
-            if rs_nq is not None: _rs_parts.append(f"NQ{rs_nq:+.1f}%")
-            rs_str = "RS(" + "/".join(_rs_parts) + ")" if _rs_parts else ""
-        market_type = str(c.get("market_type", "") or "").strip()
-        category = str(c.get("category", "") or "").strip()
-        sector = str(c.get("sector", "") or "").strip()
-        above_ma60 = c.get("above_ma60")
-        from_high_pct = c.get("from_high_pct")
-        liquidity_bucket = str(c.get("liquidity_bucket", "") or "").strip() or _candidate_liquidity_bucket(turnover, ranked_turnovers)
-        from_high_bucket = str(c.get("from_high_bucket", "") or "").strip() or _candidate_pullback_bucket(from_high_pct)
-        feature_parts = []
-        if market_type:
-            feature_parts.append(f"board={market_type}")
-        if category:
-            feature_parts.append(f"category={category}")
-        if sector:
-            feature_parts.append(f"sector={sector}")
-        feature_parts.append(f"liq={liquidity_bucket}")
-        if from_high_pct is not None:
-            feature_parts.append(
-                f"from_high={_safe_float(from_high_pct, 0.0):+.1f}%({from_high_bucket})"
-            )
-        else:
-            feature_parts.append("from_high=unknown")
-        if above_ma60 is not None:
-            feature_parts.append("ma60=above" if bool(above_ma60) else "ma60=below")
-        cand_lines.append(
-            f"  {c.get('ticker')} {c.get('name','')} {price_str} {rate_str} {rs_str} {vol_str} {turnover_str} {' '.join(feature_parts)}".strip()
-        )
-    cand_text = "\n".join(cand_lines)
-
-    n_cands  = len([c for c in candidates if c.get("ticker")])
-    limits = selection_limits(market)
-    watch_max = min(limits["watch_max"], n_cands)
-    trade_max = min(limits["trade_max"], n_cands)
-
-    intraday_section = (
-        f"\n장중 현재 상황:\n{intraday_context}\n"
-        if intraday_context else ""
-    )
-    brain_section = ""
-    try:
-        from claude_memory import brain as BrainDB
-        brain_summary = BrainDB.generate_prompt_summary(market)
-        correction = json.dumps(
-            BrainDB.load().get("correction_guide", {}).get(market, {}),
-            ensure_ascii=False,
-        )
-        if brain_summary or correction != "{}":
-            brain_section = (
-                "\n학습/교정 요약:\n"
-                f"{brain_summary[:900]}\n"
-                f"correction_guide: {correction[:600]}\n"
-            )
-    except Exception as _e:
-        log.debug(f"[종목선택] brain context 생략: {_e}")
-
-    tuner_section = ""
-    try:
-        from strategy import param_tuner as _param_tuner
-        recent = _param_tuner.get_recent_history(market, days=5)[:8]
-        if recent:
-            slim = [
-                {
-                    "strategy": r.get("strategy"),
-                    "entries": r.get("entries"),
-                    "wins": r.get("wins"),
-                    "losses": r.get("losses"),
-                    "avg_pnl_pct": r.get("avg_pnl", r.get("avg_pnl_pct")),
-                }
-                for r in recent
-            ]
-            tuner_section = "\n최근 전략 튜닝 성과:\n" + json.dumps(slim, ensure_ascii=False)[:900] + "\n"
-    except Exception as _e:
-        log.debug(f"[종목선택] tuner context 생략: {_e}")
-
-    prompt = f"""오늘 {market} 세션에서 후보를 WATCH와 TRADE_READY로 분리하세요.
-합의 모드: {consensus_mode}
-후보 종목:
-{cand_text}
-
-시장 컨텍스트 (장전 분석):
-{digest_prompt[:400]}{intraday_section}{brain_section}{tuner_section}{_recent_selection_feedback_section(market)}
-규칙:
-- 후보 종목 중에서만 선택. 중복 없이 선택할 것.
-- watchlist는 넓은 감시 목록입니다. 최대 {watch_max}개까지 선택하세요.
-- trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개까지 선택하세요.
-- 좋은 후보가 부족하면 trade_ready는 0개도 허용됩니다.
-- 파생/레버리지/인버스 ETF, 저유동성, 초과열, 손절폭 과대 후보는 trade_ready에서 제외하세요.
-- trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}
-- trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}
-- Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.
-- Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.
-- Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.
-- Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.
-- Use recent selection feedback to calibrate trade_ready aggressiveness.
-- Recent selection feedback is historical only. Do not promote a ticker to trade_ready solely because it moved after watch_only earlier in the same session.
-- If a group shows high missed watch_only and today's candidate matches that group, do not leave it watch_only without a clear veto.
-- If a group shows high weak trade_ready, require stronger RS, liquidity, and intraday quality before marking trade_ready.
-- recommended_strategy and max_position_pct must reflect conviction and risk, not generic defaults.
-- reasons/veto/risk_tags는 반드시 한국어로 짧게 작성하세요.
-- JSON만 반환.
-
-{{
-  "watchlist":["code1","code2"],
-  "trade_ready":["code1"],
-  "reasons":{{"code1":"선택 이유"}},
-  "veto":{{"code2":"매수 제외 사유"}},
-  "recommended_strategy":{{"code1":"momentum|gap_pullback|mean_reversion|opening_range_pullback|observe"}},
-  "risk_tags":{{"code1":["태그1"]}},
-  "max_position_pct":{{"code1":20}}
-}}"""
-
-    fallback_meta = normalize_selection_result({"_parse_recovered": True}, candidates, market)
-    fallback = fallback_meta["watchlist"]
-
-    # US DEFENSIVE/HALT 모드 시 인버스 ETF만 남지 않도록 안정 종목 보호 목록
-    US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
-    US_STABLE_ANCHORS = ["T", "VZ", "XLU", "KO", "JNJ", "PG", "O", "VYM", "SCHD"]
-
-    import time as _time
-    last_err = None
-    resp = None
-    for _attempt in range(3):
-        try:
-            resp = client.messages.create(model=MODEL, max_tokens=1024,
-                                          messages=[{"role": "user", "content": prompt}])
-            last_err = None
-            break
-        except Exception as _e:
-            last_err = _e
-            _emsg = str(_e)
-            if ("529" in _emsg or "overloaded" in _emsg.lower()) and _attempt < 2:
-                _wait = 2 ** (_attempt + 1)   # 2s, 4s
-                log.warning(f"[ticker-selection] Claude 과부하(529) — {_wait}s 후 재시도 ({_attempt+1}/3)")
-                _time.sleep(_wait)
-            else:
-                break
-
-    try:
-        if last_err is not None:
-            raise last_err
-        raw = resp.content[0].text.strip()
-        result  = _extract_json(raw)
-        selection_meta = normalize_selection_result(result, candidates, market)
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers")
-        save_raw_call(
-            label="select_tickers",
-            prompt=prompt, raw_response=raw, parsed={**result, "_normalized": selection_meta},
-            input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
-            market=market,
-        )
-        tickers = selection_meta["watchlist"]
-        if not tickers:
-            raise ValueError("no valid tickers")
-
-        reasons = selection_meta.get("reasons", {})
-
-        # US DEFENSIVE/HALT 모드: 인버스 ETF만 선택된 경우 안정 종목 보완
-        if market == "US" and consensus_mode in ("DEFENSIVE", "HALT"):
-            non_inverse = [t for t in tickers if t not in US_INVERSE_ETFS]
-            if not non_inverse:
-                # 후보에서 안정 종목 찾기
-                valid = {str(c.get("ticker", "")).upper() for c in candidates if c.get("ticker")}
-                stable_in_candidates = [t for t in US_STABLE_ANCHORS if t in valid]
-                if stable_in_candidates:
-                    tickers = tickers[:1] + stable_in_candidates[: max(0, watch_max - 1)]
-                    selection_meta["watchlist"] = tickers
-                    selection_meta["trade_ready"] = [t for t in selection_meta["trade_ready"] if t in tickers]
-                    log.info(f"[ticker-selection] DEFENSIVE/HALT — 안정 종목 보완: {tickers}")
-        _LAST_SELECTION_META = selection_meta
-        log.info(
-            f"[ticker-selection] {market} watch={tickers} "
-            f"trade_ready={selection_meta.get('trade_ready', [])}"
-        )
-        analysis_log.info(
-            f"[selection] {market} watch={tickers} trade_ready={selection_meta.get('trade_ready', [])}",
-            extra={
-                "extra": {
-                    "event": "ticker_selection",
-                    "market": market,
-                    "consensus_mode": consensus_mode,
-                    "selected": tickers,
-                    "trade_ready": selection_meta.get("trade_ready", []),
-                    "veto": selection_meta.get("veto", {}),
-                    "risk_tags": selection_meta.get("risk_tags", {}),
-                    "candidate_count": len(candidates),
-                    "reasons": reasons,
-                }
-            },
-        )
-        return tickers, reasons
-    except Exception as e:
-        _LAST_SELECTION_META = fallback_meta
-        log.error(f"[ticker-selection] error: {e} -> fallback")
-        return fallback, fallback_meta.get("reasons", {})
 
 
 def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
@@ -1462,7 +1194,10 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 - 후보 종목 중에서만 고르세요.
 - watchlist는 선별 목록입니다. 최대 {watch_max}개, 보통 8~18개 수준으로 제한하세요.
 - trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개이며 0개도 허용됩니다.
+- trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}
 - 저유동성, 구조화 상품, 과열, 손절폭 과대 후보는 trade_ready에서 제외하세요.
+- Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.
+- Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.
 - Use recent selection feedback to calibrate trade_ready aggressiveness.
 - Recent selection feedback is historical only. Do not promote a ticker to trade_ready solely because it moved after watch_only earlier in the same session.
 - recent selection feedback을 반영해 missed watch_only가 높은 그룹은 명확한 veto 없이 watch_only로만 두지 마세요.
@@ -1472,7 +1207,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 - recommended_strategy, risk_tags, max_position_pct는 trade_ready 종목에 대해서만 채우세요.
 - price_targets는 trade_ready 종목에 대해서만 채우세요. watch_only 종목에는 price_targets를 쓰지 마세요.
 - price_targets 가격 단위는 시장 native 가격입니다. KR은 KRW, US는 USD입니다.
-- 각 price target에는 buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence, cancel_if_open_above, entry_rationale, exit_rationale, rationale, entry_basis_tags, exit_basis_tags, invalidation_conditions를 포함하세요.
+- 각 price target에는 buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence, cancel_if_open_above, entry_rationale, exit_rationale, rationale만 포함하세요.
 - Long 매수 기준 sell_target은 buy_zone_high보다 높고 stop_loss는 buy_zone_low보다 낮아야 합니다.
 - 응답이 길어질 것 같으면 watchlist를 줄이고 watch_only 종목의 optional field는 생략하세요.
 - JSON만 반환하세요.
@@ -1496,30 +1231,10 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
       "cancel_if_open_above":74500,
       "entry_rationale":"support pullback",
       "exit_rationale":"near resistance",
-      "rationale":"buy near support, sell into resistance",
-      "entry_basis_tags":["support","pullback"],
-      "exit_basis_tags":["resistance","risk_reward"],
-      "invalidation_conditions":["gap up without volume"]
+      "rationale":"buy near support, sell into resistance"
     }}
   }}
 }}"""
-
-    if "slot guide:" not in prompt:
-        prompt = prompt.replace(
-            "- Use recent selection feedback to calibrate trade_ready aggressiveness.",
-            f"- trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}\n"
-            "- Use recent selection feedback to calibrate trade_ready aggressiveness.",
-            1,
-        )
-
-    if "Treat exec= hints" not in prompt:
-        prompt = prompt.replace(
-            "- Use recent selection feedback to calibrate trade_ready aggressiveness.",
-            "- Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.\n"
-            "- Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.\n"
-            "- Use recent selection feedback to calibrate trade_ready aggressiveness.",
-            1,
-        )
 
     fallback_meta = normalize_selection_result(
         {
@@ -1564,7 +1279,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         raw = resp.content[0].text.strip()
         result = _extract_json(raw)
         selection_meta = normalize_selection_result(result, prompt_candidates, market)
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers")
+        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers", model=MODEL)
         save_raw_call(
             label="select_tickers",
             prompt=prompt,
@@ -1573,6 +1288,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             input_tokens=resp.usage.input_tokens,
             output_tokens=resp.usage.output_tokens,
             market=market,
+            model=MODEL,
         )
         if result.get("_fallback_mode") == "selection_partial":
             retry_candidates = _pick_selection_retry_candidates(prompt_candidates, result, market)
@@ -1597,7 +1313,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                     retry_raw = retry_resp.content[0].text.strip()
                     retry_result = _extract_json(retry_raw)
                     retry_meta = normalize_selection_result(retry_result, retry_candidates, market)
-                    credit_record(retry_resp.usage.input_tokens, retry_resp.usage.output_tokens, "select_tickers_retry")
+                    credit_record(retry_resp.usage.input_tokens, retry_resp.usage.output_tokens, "select_tickers_retry", model=MODEL)
                     save_raw_call(
                         label="select_tickers_retry",
                         prompt=retry_prompt,
@@ -1606,6 +1322,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                         input_tokens=retry_resp.usage.input_tokens,
                         output_tokens=retry_resp.usage.output_tokens,
                         market=market,
+                        model=MODEL,
                     )
                     if not retry_result.get("_parse_recovered") and retry_meta.get("watchlist"):
                         result = retry_result

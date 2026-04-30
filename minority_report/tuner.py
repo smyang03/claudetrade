@@ -199,6 +199,7 @@ JSON으로만 응답:
                 resp.usage.input_tokens,
                 resp.usage.output_tokens,
                 f"tune_{elapsed_min}min",
+                model=MODEL,
             )
             save_raw_call(
                 label=f"tune_{elapsed_min}min",
@@ -208,6 +209,8 @@ JSON으로만 응답:
                 input_tokens=resp.usage.input_tokens,
                 output_tokens=resp.usage.output_tokens,
                 market=market,
+                model=MODEL,
+                prompt_mode="intraday_tune",
             )
             log.info(
                 f"[intraday_tuning {elapsed_min}m] {result.get('action', '-')} "

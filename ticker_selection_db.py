@@ -21,9 +21,22 @@ _BOT_MODE = "paper" if _IS_PAPER else "live"
 _price_cache: dict[str, Optional[dict[str, Any]]] = {}
 
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        result = super().__exit__(exc_type, exc_value, traceback)
+        self.close()
+        return result
+
+
 def _conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10, factory=_ClosingConnection)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL").fetchone()
+        conn.execute("PRAGMA busy_timeout=10000").fetchone()
+    except Exception:
+        pass
+    return conn
 
 
 def init() -> None:

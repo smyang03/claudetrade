@@ -34,6 +34,43 @@ PERSONAS = {
     "neutral": "당신은 퀀트 통계 분석가입니다. 데이터 기반으로 냉정하게 판단합니다.",
 }
 
+PERSONA_FOCUS = {
+    "bull": "Focus on upside continuation, trend persistence, and whether remaining reward justifies holding.",
+    "bear": "Focus on downside risk, event risk, and whether open profit should be protected now.",
+    "neutral": "Focus on ATR/statistical fit, peak-to-current drawdown, and expected value of holding.",
+}
+
+TRAIL_GUIDE = """Trail guide:
+- 0.02 = tight protection; use when profit has reached target and momentum is fading or giveback risk is high.
+- 0.03 = normal protection; use when signals are mixed and volatility is ordinary.
+- 0.04 = wider room; use when trend is intact but normal pullbacks are likely.
+- 0.05 = widest room; use only for strong trend continuation with high noise, not for weak positions."""
+
+
+def _fallback_vote(reason: str) -> dict:
+    return {"action": "HOLD", "confidence": 0.0, "trail_pct": 0.03, "reason": reason, "fallback": True}
+
+
+def _coerce_vote(result: dict) -> dict:
+    action = str((result or {}).get("action", "HOLD") or "HOLD").strip().upper()
+    if action not in {"HOLD", "SELL"}:
+        action = "HOLD"
+    try:
+        confidence = float((result or {}).get("confidence", 0.0) or 0.0)
+    except Exception:
+        confidence = 0.0
+    try:
+        trail_pct = float((result or {}).get("trail_pct", 0.03) or 0.03)
+    except Exception:
+        trail_pct = 0.03
+    return {
+        "action": action,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "trail_pct": max(0.02, min(0.05, trail_pct)),
+        "reason": str((result or {}).get("reason", "") or ""),
+        "fallback": bool((result or {}).get("fallback", False)),
+    }
+
 
 def _ask_one(analyst_type: str, pos: dict, market: str,
              digest_prompt: str, rt_context: str = "") -> dict:
@@ -149,6 +186,11 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
 HOLD(보유) 또는 SELL(청산) 중 하나를 선택하고,
 HOLD 시 트레일링 폭(trail_pct: 0.02~0.05)을 제안하세요.
 
+Perspective focus:
+{PERSONA_FOCUS.get(analyst_type, "")}
+
+{TRAIL_GUIDE}
+
 JSON으로만 응답:
 {{
   "action": "HOLD" or "SELL",
@@ -164,22 +206,18 @@ JSON으로만 응답:
         )
         raw = resp.content[0].text.strip()
         result = extract_json(raw)
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor")
+        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor", model=MODEL)
         save_raw_call(
             label=f"hold_advisor_{analyst_type}",
             prompt=prompt, raw_response=raw, parsed=result,
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
+            model=MODEL,
         )
-        return {
-            "action":     result.get("action", "SELL").upper(),
-            "confidence": float(result.get("confidence", 0.5)),
-            "trail_pct":  max(0.02, min(0.05, float(result.get("trail_pct", 0.03)))),
-            "reason":     result.get("reason", ""),
-        }
+        return _coerce_vote(result)
     except Exception as e:
-        log.warning(f"[hold_advisor:{analyst_type}] 오류 → SELL 기본값: {e}")
-        return {"action": "SELL", "confidence": 0.5, "trail_pct": 0.03, "reason": "오류"}
+        log.warning(f"[hold_advisor:{analyst_type}] 오류 → HOLD fallback: {e}")
+        return _fallback_vote("error")
 
 
 def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> dict:
@@ -225,7 +263,7 @@ def ask(pos: dict, market: str, digest_prompt: str = "", delay: float = 0.5) -> 
     sell_score = sum(
         v["confidence"] for v in votes.values() if v["action"] == "SELL"
     )
-    action = "HOLD" if hold_score > sell_score else "SELL"
+    action = "SELL" if sell_score > hold_score and sell_score >= 0.7 else "HOLD"
 
     # trail_pct: HOLD 투표한 분석가들의 평균
     hold_voters = [v for v in votes.values() if v["action"] == "HOLD"]
