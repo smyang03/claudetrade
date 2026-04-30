@@ -150,6 +150,311 @@ class PathBRuntime:
             return False
         return bool(control.enabled)
 
+    def _audit_entry_scan_blocked(self, market: str, entry_gate: dict[str, Any]) -> None:
+        bot = getattr(self, "bot", None)
+        emit_signal = getattr(bot, "_audit_emit_signal", None)
+        active_episode = getattr(bot, "_audit_active_episode", None)
+        link_episode = getattr(bot, "_audit_link_signal_episode", None)
+        if not callable(emit_signal):
+            return
+        market_key = str(market or "").upper()
+        reason = str((entry_gate or {}).get("reason") or "NEW_BUY_BLOCKED")
+        scope = str((entry_gate or {}).get("scope") or "market")
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        episode_id = ""
+        if reason == "ORDER_UNKNOWN_UNRESOLVED" and callable(active_episode):
+            episode_id = active_episode(
+                market_key,
+                episode_type="ORDER_UNKNOWN_PAUSE",
+                scope=scope,
+                reason=reason,
+                payload={"stage": "pathb_entry_scan", "entry_gate": entry_gate},
+            )
+        try:
+            runs = self.adapter.get_waiting_runs(market_key, self.mode, self._session_date(market_key))
+        except Exception:
+            runs = []
+        for run in runs:
+            plan = self._plan_from_run(run)
+            if plan is None:
+                continue
+            try:
+                signal_id = emit_signal(
+                    market_key,
+                    plan.ticker,
+                    strategy="claude_price",
+                    signal_at=now_iso,
+                    signal_price=0.0,
+                    score=float(plan.confidence or 0.0),
+                    decision="BLOCKED",
+                    block_reason=reason,
+                    source="path_b_entry_scan_blocked",
+                    path_type="claude_price",
+                    path_run_id=plan.path_run_id,
+                    decision_id=plan.decision_id,
+                    payload={
+                        "entry_gate": entry_gate,
+                        "buy_zone_low": plan.buy_zone_low,
+                        "buy_zone_high": plan.buy_zone_high,
+                        "sell_target": plan.sell_target,
+                        "stop_loss": plan.stop_loss,
+                    },
+                )
+                if episode_id and callable(link_episode):
+                    link_episode(signal_id, episode_id, reason="ORDER_UNKNOWN_PATHB_BLOCKED")
+            except Exception:
+                pass
+
+    def _audit_pathb_price_seen(self, plan: PricePlan, current: float, *, source: str) -> None:
+        bot = getattr(self, "bot", None)
+        price_sample = getattr(bot, "_audit_emit_price_sample", None)
+        if not callable(price_sample):
+            return
+        try:
+            price_sample(
+                plan.market,
+                plan.ticker,
+                price=float(current or 0.0),
+                source=source,
+                decision_id=plan.decision_id,
+                path_run_id=plan.path_run_id,
+                payload={
+                    "buy_zone_low": plan.buy_zone_low,
+                    "buy_zone_high": plan.buy_zone_high,
+                    "sell_target": plan.sell_target,
+                    "stop_loss": plan.stop_loss,
+                },
+            )
+        except Exception:
+            pass
+
+    def _audit_pathb_zone_hit(self, plan: PricePlan, signal: EntrySignal) -> str:
+        bot = getattr(self, "bot", None)
+        emit_signal = getattr(bot, "_audit_emit_signal", None)
+        if not callable(emit_signal):
+            return ""
+        try:
+            return str(
+                emit_signal(
+                    plan.market,
+                    plan.ticker,
+                    strategy="claude_price",
+                    signal_at=datetime.now(KST).isoformat(timespec="seconds"),
+                    signal_price=float(signal.price or signal.limit_price or 0.0),
+                    risk_price_krw=self._price_to_krw(float(signal.limit_price or signal.price or 0.0), plan.market),
+                    score=float(plan.confidence or 0.0),
+                    decision="pathb_zone_hit",
+                    source="path_b",
+                    path_type="claude_price",
+                    path_run_id=plan.path_run_id,
+                    decision_id=plan.decision_id,
+                    payload={
+                        "reason": signal.reason,
+                        "limit_price": signal.limit_price,
+                        "buy_zone_low": plan.buy_zone_low,
+                        "buy_zone_high": plan.buy_zone_high,
+                    },
+                )
+            )
+        except Exception:
+            return ""
+
+    def _audit_pathb_exit_signal(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> str:
+        bot = getattr(self, "bot", None)
+        emit_signal = getattr(bot, "_audit_emit_signal", None)
+        if not callable(emit_signal):
+            return ""
+        try:
+            return str(
+                emit_signal(
+                    plan.market,
+                    plan.ticker,
+                    strategy="claude_price_exit",
+                    signal_at=datetime.now(KST).isoformat(timespec="seconds"),
+                    signal_price=float(signal.price or pos.get("display_current_price", 0) or 0.0),
+                    risk_price_krw=self._price_to_krw(float(signal.price or 0.0), plan.market),
+                    score=float(plan.confidence or 0.0),
+                    decision="pathb_exit_signal",
+                    source="path_b_exit",
+                    path_type="claude_price",
+                    path_run_id=plan.path_run_id,
+                    decision_id=plan.decision_id,
+                    payload={
+                        "reason": signal.reason,
+                        "close_reason": signal.close_reason,
+                        "qty": int(pos.get("qty", 0) or 0),
+                        "entry": pos.get("entry"),
+                        "display_avg_price": pos.get("display_avg_price"),
+                    },
+                )
+            )
+        except Exception:
+            return ""
+
+    def _audit_pathb_buy_sent(
+        self,
+        plan: PricePlan,
+        signal: EntrySignal,
+        *,
+        qty: int,
+        order_no: str,
+        risk_price_krw: float,
+        order_cost_krw: float,
+    ) -> str:
+        bot = getattr(self, "bot", None)
+        emit_signal = getattr(bot, "_audit_emit_signal", None)
+        audit_emit = getattr(bot, "_audit_try_emit", None)
+        if not callable(emit_signal):
+            return ""
+        try:
+            signal_id = str(
+                emit_signal(
+                    plan.market,
+                    plan.ticker,
+                    strategy="claude_price",
+                    signal_at=datetime.now(KST).isoformat(timespec="seconds"),
+                    signal_price=float(signal.price or signal.limit_price or 0.0),
+                    risk_price_krw=float(risk_price_krw or 0.0),
+                    score=float(plan.confidence or 0.0),
+                    decision="BUY_SIGNAL",
+                    source="path_b",
+                    path_type="claude_price",
+                    path_run_id=plan.path_run_id,
+                    decision_id=plan.decision_id,
+                    payload={
+                        "reason": signal.reason,
+                        "limit_price": signal.limit_price,
+                        "qty": int(qty or 0),
+                        "order_no": order_no,
+                        "order_cost_krw": order_cost_krw,
+                    },
+                )
+            )
+            if signal_id and callable(audit_emit):
+                audit_emit(
+                    {
+                        "kind": "trade_link",
+                        "signal_id": signal_id,
+                        "decision_id": plan.decision_id,
+                        "path_run_id": plan.path_run_id,
+                        "order_no": order_no,
+                        "entry_price": float(signal.limit_price or signal.price or 0.0),
+                        "payload": {"side": "buy", "path_type": "claude_price", "qty": int(qty or 0)},
+                    }
+                )
+            return signal_id
+        except Exception:
+            return ""
+
+    def _audit_pathb_buy_fill(
+        self,
+        run: dict[str, Any],
+        order: dict[str, Any],
+        *,
+        price: float,
+        qty: int,
+        partial: bool,
+    ) -> None:
+        bot = getattr(self, "bot", None)
+        price_sample = getattr(bot, "_audit_emit_price_sample", None)
+        audit_emit = getattr(bot, "_audit_try_emit", None)
+        if not callable(price_sample) and not callable(audit_emit):
+            return
+        try:
+            plan_json = run.get("plan") if isinstance(run.get("plan"), dict) else run.get("plan_json") or {}
+            market = str(order.get("market", "") or run.get("market", "") or plan_json.get("market", "") or "").upper()
+            ticker = str(order.get("ticker", "") or run.get("ticker", "") or plan_json.get("ticker", "") or "")
+            decision_id = str(order.get("v2_decision_id", "") or run.get("decision_id", "") or plan_json.get("decision_id", "") or "")
+            path_run_id = str(run.get("path_run_id", "") or order.get("pathb_path_run_id", "") or "")
+            order_no = str(order.get("order_no", "") or order.get("v2_execution_id", "") or "")
+            if callable(price_sample):
+                price_sample(
+                    market,
+                    ticker,
+                    price=float(price or 0.0),
+                    source="pathb:buy_fill_partial" if partial else "pathb:buy_fill",
+                    decision_id=decision_id,
+                    path_run_id=path_run_id,
+                    payload={"qty": int(qty or 0), "order_no": order_no, "partial": bool(partial)},
+                )
+            if callable(audit_emit):
+                audit_emit(
+                    {
+                        "kind": "trade_link",
+                        "decision_id": decision_id,
+                        "path_run_id": path_run_id,
+                        "order_no": order_no,
+                        "entry_price": float(price or 0.0),
+                        "payload": {"side": "buy_fill", "qty": int(qty or 0), "partial": bool(partial)},
+                    }
+                )
+        except Exception:
+            pass
+
+    def _audit_pathb_sell_sent(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        *,
+        signal_id: str,
+        qty: int,
+        order_no: str,
+        order_price: float,
+    ) -> None:
+        bot = getattr(self, "bot", None)
+        mark_decision = getattr(bot, "_audit_mark_signal_decision", None)
+        price_sample = getattr(bot, "_audit_emit_price_sample", None)
+        audit_emit = getattr(bot, "_audit_try_emit", None)
+        try:
+            if signal_id and callable(mark_decision):
+                mark_decision(
+                    plan.market,
+                    plan.ticker,
+                    signal_id=signal_id,
+                    decision="SELL_SIGNAL",
+                    signal_price=float(order_price or signal.price or 0.0),
+                    risk_price_krw=self._price_to_krw(float(order_price or signal.price or 0.0), plan.market),
+                    strategy="claude_price_exit",
+                    score=float(plan.confidence or 0.0),
+                    source="path_b_exit",
+                    path_type="claude_price",
+                    path_run_id=plan.path_run_id,
+                    decision_id=plan.decision_id,
+                    payload={"reason": signal.reason, "close_reason": signal.close_reason, "order_no": order_no, "qty": int(qty or 0)},
+                )
+            if callable(price_sample):
+                price_sample(
+                    plan.market,
+                    plan.ticker,
+                    price=float(order_price or signal.price or 0.0),
+                    source="pathb:sell_sent",
+                    decision_id=plan.decision_id,
+                    path_run_id=plan.path_run_id,
+                    signal_id=signal_id,
+                    payload={"reason": signal.reason, "close_reason": signal.close_reason, "order_no": order_no, "qty": int(qty or 0)},
+                )
+            entry_native = float(pos.get("display_avg_price", 0) or pos.get("avg_price", 0) or pos.get("entry_price", 0) or 0)
+            if entry_native <= 0 and str(plan.market or "").upper() == "KR":
+                entry_native = float(pos.get("entry", 0) or 0)
+            pnl_pct = ((float(order_price or 0.0) / entry_native - 1.0) * 100.0) if entry_native > 0 and float(order_price or 0.0) > 0 else None
+            if callable(audit_emit):
+                audit_emit(
+                    {
+                        "kind": "trade_link",
+                        "signal_id": signal_id,
+                        "decision_id": plan.decision_id,
+                        "path_run_id": plan.path_run_id,
+                        "order_no": order_no,
+                        "exit_price": float(order_price or 0.0),
+                        "pnl_pct": pnl_pct,
+                        "exit_reason": signal.close_reason,
+                        "payload": {"side": "sell", "reason": signal.reason, "qty": int(qty or 0)},
+                    }
+                )
+        except Exception:
+            pass
+
     def set_enabled(self, enabled: bool, *, updated_by: str = "telegram", reason: str = "") -> PathBControlState:
         state = self.control_store.save(
             enabled=bool(enabled),
@@ -191,10 +496,6 @@ class PathBRuntime:
         missing_price_targets: list[str] = []
         for ticker in trade_ready:
             key = self._ticker_key(market, ticker)
-            raw_plan = price_targets.get(ticker) or price_targets.get(key)
-            if not raw_plan:
-                missing_price_targets.append(key)
-                continue
             if self._active_path_for_ticker(market, key):
                 continue
             decision_id = str(decision_ids.get(ticker) or decision_ids.get(key) or "")
@@ -204,6 +505,20 @@ class PathBRuntime:
                 except Exception:
                     decision_id = ""
             if not decision_id:
+                continue
+            raw_plan = price_targets.get(ticker) or price_targets.get(key)
+            if not raw_plan:
+                missing_price_targets.append(key)
+                self._record_blocked(
+                    market,
+                    key,
+                    decision_id,
+                    "CLAUDE_PRICE_MISSING",
+                    {
+                        "trade_ready": list(trade_ready),
+                        "price_target_keys": list(price_targets.keys()) if isinstance(price_targets, dict) else [],
+                    },
+                )
                 continue
             plan, errors = parse_plan_from_claude(
                 decision_id=decision_id,
@@ -252,6 +567,7 @@ class PathBRuntime:
         self.reconcile_buy_pending_cancel_above(market, force=False)
         entry_gate = self._new_buy_block_state(market, strategy="path_b")
         if not bool(entry_gate.get("allowed", True)):
+            self._audit_entry_scan_blocked(market, entry_gate)
             log.warning(
                 f"[PathB entry scan blocked] {market} {entry_gate.get('reason')} "
                 f"scope={entry_gate.get('scope')}"
@@ -264,6 +580,7 @@ class PathBRuntime:
             current = self._current_native_price(market, plan.ticker)
             if current <= 0:
                 continue
+            self._audit_pathb_price_seen(plan, current, source="pathb:waiting_scan")
             signal = self.adapter.check_entry(plan.path_run_id, current)
             if signal.reason == "cancel_if_open_above":
                 self.adapter.cancel_plan(
@@ -275,6 +592,7 @@ class PathBRuntime:
                 continue
             if not signal.signal:
                 continue
+            self._audit_pathb_zone_hit(plan, signal)
             self._submit_buy(plan, signal)
 
     def reconcile_buy_pending_cancel_above(self, market: str, *, force: bool = False) -> dict[str, Any]:
@@ -329,6 +647,7 @@ class PathBRuntime:
             current = self._current_native_price(market, plan.ticker)
             if current <= 0:
                 continue
+            self._audit_pathb_price_seen(plan, current, source="pathb:exit_scan")
             hard_stop_price = self._native_hard_stop(pos, market)
             loss_cap_price = self._native_loss_cap_stop(pos, market)
             if (
@@ -373,6 +692,7 @@ class PathBRuntime:
                 runtime_mode=self.mode,
                 brain_snapshot_id=self._brain_snapshot_id(str(order.get("market", run.get("market", "KR")) or "KR")),
             )
+            self._audit_pathb_buy_fill(run, order, price=price, qty=qty, partial=True)
             return
         self.adapter.mark_filled(
             path_run_id,
@@ -382,6 +702,7 @@ class PathBRuntime:
             runtime_mode=self.mode,
             brain_snapshot_id=self._brain_snapshot_id(str(order.get("market", run.get("market", "KR")) or "KR")),
         )
+        self._audit_pathb_buy_fill(run, order, price=price, qty=qty, partial=False)
 
     def cancel_waiting(self, market: str, *, reason: str) -> int:
         count = 0
@@ -714,6 +1035,14 @@ class PathBRuntime:
             "original_order_cost_krw": order_cost,
             "adjusted_order_cost_krw": order_cost,
         })
+        self._audit_pathb_buy_sent(
+            plan,
+            signal,
+            qty=qty,
+            order_no=execution_id,
+            risk_price_krw=risk_price_krw,
+            order_cost_krw=order_cost,
+        )
         try:
             self.bot._block_entry(plan.ticker, 3, "pathb_buy_placed")
         except Exception:
@@ -743,6 +1072,7 @@ class PathBRuntime:
         if qty <= 0 or order_price < 0:
             pos.pop("pathb_closing", None)
             return False
+        audit_signal_id = self._audit_pathb_exit_signal(plan, pos, signal)
 
         try:
             pre = precheck_order(plan.ticker, qty, order_price, "sell", self.bot.token, market=market)
@@ -793,6 +1123,15 @@ class PathBRuntime:
             self.bot._save_positions()
         except Exception:
             pass
+        self._audit_pathb_sell_sent(
+            plan,
+            pos,
+            signal,
+            signal_id=audit_signal_id,
+            qty=qty,
+            order_no=execution_id,
+            order_price=order_price,
+        )
         log.warning(
             f"[PathB SELL SENT] {market} {plan.ticker} qty={qty} order_price={order_price:g} "
             f"order={execution_id} reason={signal.close_reason}"
@@ -1448,6 +1787,39 @@ class PathBRuntime:
             },
             merge_plan=True,
         )
+        try:
+            price_sample = getattr(self.bot, "_audit_emit_price_sample", None)
+            audit_emit = getattr(self.bot, "_audit_try_emit", None)
+            if callable(price_sample):
+                price_sample(
+                    market,
+                    plan.ticker,
+                    price=float(price_native or 0.0),
+                    source="pathb:sell_fill_confirmed",
+                    decision_id=plan.decision_id,
+                    path_run_id=plan.path_run_id,
+                    payload={
+                        "close_reason": close_reason,
+                        "order_no": execution_id,
+                        "qty": int(qty or 0),
+                        "pnl_pct": pnl_pct,
+                    },
+                )
+            if callable(audit_emit):
+                audit_emit(
+                    {
+                        "kind": "trade_link",
+                        "decision_id": plan.decision_id,
+                        "path_run_id": plan.path_run_id,
+                        "order_no": execution_id,
+                        "exit_price": float(price_native or 0.0),
+                        "pnl_pct": pnl_pct,
+                        "exit_reason": close_reason,
+                        "payload": {"side": "sell_fill_confirmed", "qty": int(qty or 0), **evidence},
+                    }
+                )
+        except Exception:
+            pass
         log.warning(
             f"[PathB SELL CLOSED] {market} {plan.ticker} qty={qty} price={price_native:g} "
             f"reason={close_reason} order={execution_id}"
@@ -2005,13 +2377,57 @@ class PathBRuntime:
             )
         except Exception as exc:
             log.warning(f"[PathB blocked record failed] {market} {ticker} {reason_code}: {exc}")
+        try:
+            bot = getattr(self, "bot", None)
+            emit_signal = getattr(bot, "_audit_emit_signal", None)
+            active_episode = getattr(bot, "_audit_active_episode", None)
+            link_episode = getattr(bot, "_audit_link_signal_episode", None)
+            if not callable(emit_signal):
+                return
+            signal_id = emit_signal(
+                market,
+                ticker,
+                strategy="claude_price",
+                signal_at=datetime.now(KST).isoformat(timespec="seconds"),
+                signal_price=0.0,
+                score=0.0,
+                decision="BLOCKED",
+                block_reason=reason_code,
+                source="path_b_blocked",
+                path_type="claude_price",
+                path_run_id=path_run_id,
+                decision_id=decision_id,
+                payload={**(payload or {}), "stage": "pathb_record_blocked"},
+            )
+            if reason_code == "ORDER_UNKNOWN_UNRESOLVED" and signal_id and callable(active_episode):
+                scope = str((payload or {}).get("scope") or "market")
+                episode_id = active_episode(
+                    market,
+                    episode_type="ORDER_UNKNOWN_PAUSE",
+                    scope=scope,
+                    reason=reason_code,
+                    ticker=ticker if scope == "ticker" else "",
+                    payload={"stage": "pathb_record_blocked", "reason_code": reason_code, "payload": payload or {}},
+                )
+                if episode_id and callable(link_episode):
+                    link_episode(signal_id, episode_id, reason="ORDER_UNKNOWN_PATHB_BLOCKED")
+        except Exception:
+            pass
 
     def _plan_from_run(self, run: dict[str, Any]) -> PricePlan | None:
         raw_plan = run.get("plan") or run.get("plan_json") or {}
         if not isinstance(raw_plan, dict):
             return None
         try:
-            return PricePlan(**{k: raw_plan.get(k) for k in PricePlan.__dataclass_fields__.keys()})
+            plan = PricePlan(**{k: raw_plan.get(k) for k in PricePlan.__dataclass_fields__.keys()})
+            errors = plan.validate(min_confidence=0.0)
+            if errors:
+                log.warning(
+                    f"[PathB plan reload invalid] {run.get('market', '')} "
+                    f"{run.get('ticker', raw_plan.get('ticker', ''))}: {errors}"
+                )
+                return None
+            return plan
         except Exception:
             plan, _errors = parse_plan_from_claude(
                 decision_id=str(run.get("decision_id", "") or raw_plan.get("decision_id", "") or ""),
@@ -2023,6 +2439,14 @@ class PathBRuntime:
                 prompt_version=str(raw_plan.get("prompt_version", "pathb_price_v1.0") or "pathb_price_v1.0"),
                 min_confidence=0.0,
             )
+            if plan is not None:
+                errors = plan.validate(min_confidence=0.0)
+                if errors:
+                    log.warning(
+                        f"[PathB plan reload invalid] {run.get('market', '')} "
+                        f"{run.get('ticker', raw_plan.get('ticker', ''))}: {errors}"
+                    )
+                    return None
             return plan
 
     def _current_native_price(self, market: str, ticker: str) -> float:

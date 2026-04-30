@@ -3514,6 +3514,66 @@ class PostmortemSelectionFeedbackTests(unittest.TestCase):
         self.assertEqual(captured["daily_record"][0], "KR")
         self.assertEqual(captured["daily_record"][1]["selection_feedback"], "- selected=10 watch_only=6")
 
+    def test_postmortem_exception_does_not_store_system_error_as_policy_pattern(self):
+        try:
+            from minority_report import postmortem as postmortem_module
+        except Exception as exc:
+            self.skipTest(f"postmortem import unavailable: {exc}")
+
+        captured = {"issue_pattern_calls": 0, "correction_guide_calls": 0}
+
+        def _raise_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            raise ValueError("Expecting ',' delimiter: line 1 column 2")
+
+        def _capture_issue_pattern(*args, **kwargs):
+            captured["issue_pattern_calls"] += 1
+
+        def _capture_daily_record(market, record):
+            captured["daily_record"] = (market, record)
+
+        def _capture_correction_guide(*args, **kwargs):
+            captured["correction_guide_calls"] += 1
+
+        judgment = {
+            "judgments": {
+                "bull": {"stance": "MILD_BULL", "key_reason": "bull"},
+                "bear": {"stance": "NEUTRAL", "key_reason": "bear"},
+                "neutral": {"stance": "NEUTRAL", "key_reason": "neutral"},
+            },
+            "consensus": {"mode": "NEUTRAL", "size": 10},
+        }
+        actual_result = {"market_change": 0.8, "pnl_pct": -0.3, "win": False}
+
+        with patch.object(postmortem_module.client.messages, "create", side_effect=_raise_create), \
+             patch.object(postmortem_module.BrainDB, "generate_prompt_summary", return_value="brain summary"), \
+             patch.object(postmortem_module.BrainDB, "get_recent_selection_feedback_text", return_value=""), \
+             patch.object(postmortem_module.BrainDB, "load", return_value={"markets": {"KR": {"recent_days": []}}}), \
+             patch.object(postmortem_module.BrainDB, "update_analyst", lambda *args, **kwargs: None), \
+             patch.object(postmortem_module.BrainDB, "update_mode_performance", lambda *args, **kwargs: None), \
+             patch.object(postmortem_module.BrainDB, "update_beliefs", lambda *args, **kwargs: None), \
+             patch.object(postmortem_module.BrainDB, "update_issue_pattern", side_effect=_capture_issue_pattern), \
+             patch.object(postmortem_module.BrainDB, "add_daily_record", side_effect=_capture_daily_record), \
+             patch.object(postmortem_module.BrainDB, "update_strategy_performance", lambda *args, **kwargs: None), \
+             patch.object(postmortem_module.BrainDB, "update_debate_outcome", lambda *args, **kwargs: None), \
+             patch.object(postmortem_module.BrainDB, "update_correction_guide", side_effect=_capture_correction_guide):
+            pm = postmortem_module.run(
+                market="KR",
+                date="2026-04-22",
+                today_judgment=judgment,
+                actual_result=actual_result,
+                digest_prompt="market digest",
+                trade_log=[],
+                decision_event_log=[],
+            )
+
+        self.assertTrue(pm["_system_error"])
+        self.assertTrue(pm["_skip_issue_pattern"])
+        self.assertEqual(captured["issue_pattern_calls"], 0)
+        self.assertEqual(captured["correction_guide_calls"], 0)
+        self.assertEqual(captured["daily_record"][1]["key_lesson"], "")
+        self.assertEqual(captured["daily_record"][1]["issue_type"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

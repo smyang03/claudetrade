@@ -95,6 +95,44 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["status"], "WAITING")
             self.assertEqual(run["path_type"], "claude_price")
 
+    def test_register_from_selection_meta_audits_missing_price_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=EventStore(Path(tmp) / "events.db"))
+            runtime.control_store = _Control()
+            runtime._record_blocked = Mock()
+
+            runs = runtime.register_from_selection_meta(
+                "KR",
+                {
+                    "trade_ready": ["005930"],
+                    "v2_decision_ids": {"005930": "dec1"},
+                    "price_targets": {},
+                },
+            )
+
+            self.assertEqual(runs, [])
+            runtime._record_blocked.assert_called_once()
+            self.assertEqual(runtime._record_blocked.call_args.args[3], "CLAUDE_PRICE_MISSING")
+
+    def test_plan_from_run_rejects_invalid_reloaded_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=EventStore(Path(tmp) / "events.db"))
+            plan = make_price_plan(
+                decision_id="dec1",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            ).to_dict()
+            plan["buy_zone_low"] = 0
+
+            self.assertIsNone(runtime._plan_from_run({"market": "KR", "ticker": "005930", "plan": plan}))
+
     def test_scan_waiting_entries_cancels_above_open_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()

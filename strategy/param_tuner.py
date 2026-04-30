@@ -458,7 +458,7 @@ JSON으로만 응답 (비활성 전략 제외):
         # credit tracking
         try:
             from credit_tracker import record as _cr
-            _cr(resp.usage.input_tokens, resp.usage.output_tokens, "param_tuner")
+            _cr(resp.usage.input_tokens, resp.usage.output_tokens, "param_tuner", model=model)
         except Exception:
             pass
 
@@ -471,6 +471,7 @@ JSON으로만 응답 (비활성 전략 제외):
                 input_tokens=resp.usage.input_tokens,
                 output_tokens=resp.usage.output_tokens,
                 market=market,
+                model=model,
             )
         except Exception:
             pass

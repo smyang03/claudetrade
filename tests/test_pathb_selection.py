@@ -35,6 +35,8 @@ class PathBSelectionTests(unittest.TestCase):
         self.assertEqual(meta["trade_ready"], ["NVDA"])
         self.assertEqual(meta["recommended_strategy"]["NVDA"], "momentum")
         self.assertEqual(meta["price_targets"], {})
+        self.assertEqual(meta["_price_target_coverage"]["missing"], ["NVDA"])
+        self.assertEqual(meta["_price_target_coverage"]["ratio"], 0.0)
 
 
 if __name__ == "__main__":
