@@ -346,19 +346,21 @@ _WATCH_ONLY_HARD_KEYWORDS = (
 )
 _WATCH_ONLY_SOFT_KEYWORDS = (
     "rs",
-    "rs ?쎌꽭",
-    "?쎌꽭",
+    "rs 약",
+    "rs 약세",
+    "약세",
     "pullback",
-    "?뚮┝",
-    "諛섎벑",
+    "눌림",
+    "반등",
     "watch",
-    "媛먯떆",
-    "watch",
+    "감시",
+    "관찰",
     "ma60",
     "deep",
-    "?뚮났",
+    "회복",
     "trend",
-    "遺?곹빀",
+    "추세 약",
+    "부적합",
 )
 _RAW_SCREEN_TOP_N_DEFAULTS = {"KR": 80, "US": 80}
 _DYNAMIC_UNIVERSE_TOP_N_DEFAULTS = {"KR": 40, "US": 40}
@@ -3900,7 +3902,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 c.get("ticker") for c in candidates if c.get("ticker")
             ]
             log.info(
-                f"[?섎룞 醫낅ぉ ?ъ꽑???꾨즺] {target_market}: watch={selected} "
+                f"[수동 종목 재선정 완료] {target_market}: watch={selected} "
                 f"trade_ready={sel_meta.get('trade_ready', [])}"
             )
             judgment_log.info(
@@ -4278,7 +4280,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         """ticker 吏꾩엯??minutes遺??숈븞 李⑤떒"""
         import time as _time
         self._entry_blocked[ticker] = _time.time() + minutes * 60
-        log.info(f"[吏꾩엯 李⑤떒] {ticker} {minutes}遺?({reason})")
+        log.info(f"[진입 차단] {ticker} {minutes}분({reason})")
     def _is_entry_blocked(self, ticker: str) -> bool:
         """李⑤떒 以묒씠硫?True, 留뚮즺?먯쑝硫??쒓굅 ??False"""
         import time as _time
@@ -4341,10 +4343,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         detail: str = "",
     ) -> None:
         key = (str(market or ""), str(ticker or ""), str(event or ""))
-        signature = (str(strategy or ""), round(float(price or 0), 4), str(reason or ""), str(mode or ""), str(summary or ""))
+        _detail_key = str(detail or "")[:80]
+        signature = (str(strategy or ""), round(float(price or 0), 4), str(reason or ""), str(mode or ""), str(summary or ""), _detail_key)
         if self._last_tg_signal_state.get(key) == signature:
             return
         self._last_tg_signal_state[key] = signature
+        _effective_summary = summary or (str(detail or "")[:200] if detail else "")
         try:
             signal_state_alert(
                 event=event,
@@ -4354,7 +4358,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 price=price,
                 reason=reason,
                 mode=mode,
-                summary=summary,
+                summary=_effective_summary,
                 order_cost_krw=order_cost_krw,
             )
         except Exception as e:
@@ -5823,8 +5827,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self.risk.trade_log.append(evt)
                 self.risk.all_trade_log.append(evt)
                 log.info(
-                    f"[二쇰Ц 泥닿껐 諛섏쁺] {ticker} {order.get('qty')}二?"
-                    f"| 二쇰Ц踰덊샇={order.get('order_no', '')}"
+                    f"[주문 체결 반영] {ticker} {order.get('qty')}주 "
+                    f"| 주문번호={order.get('order_no', '')}"
                 )
                 fill_confirm_alert(
                     market=market,
@@ -6233,15 +6237,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._exit_process_lock.release()
     def _pre_session_position_review(self, market: str):
         """???쒖옉 ??蹂댁쑀 ?ъ???Claude 寃??
-        SELL 寃곗젙 醫낅ぉ? _pre_session_sell_queue???댁븘?먭퀬,
-        startup guard ?댁젣 ??run_cycle?먯꽌 利됱떆 留ㅻ룄.
+        SELL 결정 종목은 _pre_session_sell_queue에 담아두고,
+        startup guard 해제 후 run_cycle에서 즉시 매도한다.
         """
         if not self._should_run_pre_session_review(market):
             self._pre_session_sell_queue[market] = []
             if self._has_broker_sync_risk(market):
-                log.warning(f"[?μ쟾 由щ럭] {market} 釉뚮줈而??숆린??遺덉떊 ?곹깭 ??由щ럭/SELL ?덉빟 蹂대쪟")
+                log.warning(f"[오전 리뷰] {market} 브로커 동기화 불신 상태 - 리뷰/SELL 예약 보류")
             else:
-                log.info(f"[?μ쟾 由щ럭] {market} ?μ쨷 ?ъ떆??媛먯? ??由щ럭/SELL ?덉빟 嫄대꼫?")
+                log.info(f"[오전 리뷰] {market} 장중 재시작 감지 - 리뷰/SELL 예약 건너뜀")
             return
         positions = [p for p in self.risk.positions
                      if self._ticker_market(p.get("ticker", "")) == market]
@@ -6256,10 +6260,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self._pre_session_sell_queue[market].append(pos)
                 sell_reason = str(pos.get("pending_next_open_reason", "") or "").strip()
                 sell_list.append((ticker, sell_reason))
-                log.info(f"[?μ쟾 由щ럭] {ticker} ???꾩씪 ?λ쭏媛?SELL ?덉빟 ?좎?")
+                log.info(f"[오전 리뷰] {ticker} 전일 장마감 SELL 예약 유지")
                 continue
             if float(pos.get("entry", 0) or 0) <= 0:
-                log.warning(f"[?μ쟾 由щ럭] {ticker} entry=0 ??hold_advisor 嫄대꼫?, HOLD ?좎?")
+                log.warning(f"[오전 리뷰] {ticker} entry=0 - hold_advisor 건너뜀, HOLD 유지")
                 hold_list.append((ticker, "entry price missing"))
                 continue
             try:
@@ -6271,7 +6275,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     decision_stage="PRE_SESSION",
                 )
             except Exception as e:
-                log.warning(f"[?μ쟾 由щ럭] {ticker} hold_advisor ?ㅻ쪟 ??HOLD ?좎?: {e}")
+                log.warning(f"[오전 리뷰] {ticker} hold_advisor 오류 - HOLD 유지: {e}")
                 hold_list.append((ticker, "advisor error default hold"))
                 continue
             action = advice.get("action", "HOLD")
@@ -6289,7 +6293,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         p2["pending_next_open_sell"] = False
                         p2["pending_next_open_reason"] = ""
                 sell_list.append((ticker, reason))
-                log.info(f"[?μ쟾 由щ럭] {ticker} ??SELL ?덉빟: {reason}")
+                log.info(f"[오전 리뷰] {ticker} SELL 예약: {reason}")
             else:
                 trail_pct = advice.get("trail_pct", pos.get("trail_pct", 0.03))
                 for p2 in self.risk.positions:
@@ -6303,7 +6307,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             p2["trail_pct"] = trail_pct
                             p2["hold_advice"] = advice
                 hold_list.append((ticker, reason))
-                log.info(f"[?μ쟾 由щ럭] {ticker} ??{action} ?좎?: {reason}")
+                log.info(f"[오전 리뷰] {ticker} {action} 유지: {reason}")
         # ?? ?붾젅洹몃옩 ?뚮┝ ???????????????????????????????????????????????????
         lines = [f"?똿 <b>[???쒖옉 ???ъ????먭?] {market}</b>"]
         if sell_list:
@@ -7497,9 +7501,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.today_tickers[market] = selected
             self._entry_timing_mark_candidates(market, selected, "session_open")
             self.today_ticker_reasons[market] = sel_reasons or {}
-            # ?쇰꼸: selected 移댁슫??(?몄뀡 ?쒖옉 ???좏깮??醫낅ぉ ??
+            # 퍼널: selected 카운트 (세션 시작 시 선택된 종목 수)
             self._funnel[market]["selected"] += len(selected)
-            log.info(f"[醫낅ぉ?좏깮 ?뺤젙] {market}: watch={selected} trade_ready={sel_meta.get('trade_ready', [])}")
+            log.info(f"[종목선택 확정] {market}: watch={selected} trade_ready={sel_meta.get('trade_ready', [])}")
             try:
                 _tsdb_ids = tsdb.insert_batch(
                     today, market, "initial", selected, candidates, sel_reasons, consensus["mode"],
@@ -7555,9 +7559,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if not _from_shared_cache:
                 shared_judgment_cache.save(market, today, self.today_judgment)
         else:
-            # ?먮떒? ?ъ궗?⑺븯??醫낅ぉ? ??긽 ?덈줈 ?ㅽ겕由щ떇
-            # (reused=True ???꾨궇 ??λ맂 醫낅ぉ??洹몃?濡?怨좎젙?섎뒗 臾몄젣 諛⑹?)
-            log.info(f"[醫낅ぉ ?ъ뒪?щ━?? {market} ?먮떒 ?ъ궗??+ 醫낅ぉ留??덈줈 ?좏깮 (mode={consensus['mode']})")
+            # 판단은 재사용하되 종목은 항상 새로 스크리닝한다.
+            # reused=True 때 전날 저장된 종목을 그대로 고정하는 문제를 막는다.
+            log.info(f"[종목 재스크리닝] {market} 판단 재사용 + 종목만 새로 선택 (mode={consensus['mode']})")
             if market == "KR":
                 fresh_candidates = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                 if fresh_candidates:
@@ -7615,7 +7619,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     c.get("ticker") for c in fresh_candidates if c.get("ticker")
                 ]
                 log.info(
-                    f"[醫낅ぉ ?ъ꽑???꾨즺] {market}: watch={fresh_selected} "
+                    f"[종목 재선정 완료] {market}: watch={fresh_selected} "
                     f"trade_ready={fresh_meta.get('trade_ready', [])}"
                 )
                 judgment_log.info(
@@ -7918,8 +7922,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._last_entry_scan_at[market] = now_ts
         _regular_min = int(os.getenv("US_ENTRY_SCAN_REGULAR_INTERVAL_MIN", "5")) if market == "US" else _ENTRY_SCAN_REGULAR_INTERVAL_MIN
         log.info(
-            f"[{market} ?뷀듃由??ㅼ틪] interval={int(interval_sec/60)}遺?"
-            f"(?μ큹 {_ENTRY_SCAN_OPENING_MIN}遺?{_ENTRY_SCAN_OPENING_INTERVAL_MIN}遺? ?댄썑={_regular_min}遺?"
+            f"[{market} 엔트리 스캔] interval={int(interval_sec/60)}분"
+            f"(초반 {_ENTRY_SCAN_OPENING_MIN}분={_ENTRY_SCAN_OPENING_INTERVAL_MIN}분 이후={_regular_min}분)"
         )
         try:
             self.run_cycle(market)
@@ -8468,7 +8472,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                        block_reason_="entry_blackout")
                     continue
                 if self._is_entry_blocked(ticker):
-                    log.debug(f"  [{ticker}] 吏꾩엯 李⑤떒 以?(荑⑤떎??")
+                    log.debug(f"  [{ticker}] 진입 차단 중(쿨다운)")
                     continue
                 if self._has_same_day_trade(ticker, market):
                     self._bump_runtime_reason(market, ticker, "same_day_reentry_blocked")
@@ -8877,7 +8881,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     _vol_found = False  # ?대뒓 ?꾨왂?대뱺 vol ?⑦꽩 諛쒓껄
                     # vol ratio classification - ASCII-only patterns (mojibake regex removed).
                     # Detail format: "gap_pullback: ... vol=0.85 ..." or "mean_reversion: ... vol=1.2 ..."
-                    _vm = _re.search(r"vol=([0-9.]+)", detail)
+                    _vm = _re.search(r"vol=([0-9.]+)", detail)
                     if _vm:
                         _vv = float(_vm.group(1))
                         _vol_found = True
@@ -9592,7 +9596,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _sl_cnt_now = self._daily_sl_count.get(market, 0)
                 if _sl_cnt_now >= 3:
                     log.warning(
-                        f"  [{ticker}] ?뱀씪 ?먯젅 {_sl_cnt_now}?????좉퇋 吏꾩엯 李⑤떒"
+                        f"  [{ticker}] 당일 손절 {_sl_cnt_now}회 - 신규 진입 차단"
                     )
                     continue
                 elif _sl_cnt_now == 2:
@@ -11014,7 +11018,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             c.get("ticker") for c in tune_cands if c.get("ticker")
                         ]
                         log.info(
-                            f"[?쒕꼫 醫낅ぉ媛깆떊 ?꾨즺] {market}: watch={tune_tickers} "
+                            f"[튜너 종목갱신 완료] {market}: watch={tune_tickers} "
                             f"trade_ready={tune_meta.get('trade_ready', [])}"
                         )
                         tune_excluded = [c.get("ticker", "") for c in tune_cands if c.get("ticker", "") not in tune_tickers]
@@ -11022,7 +11026,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         watchlist_alert(market, new_mode, tune_tickers, tune_reasons, tune_excluded, trigger="rescreen",
                                         mode_order_limit_krw=_mode_order_limit)
                 except Exception as te:
-                    log.warning(f"[?쒕꼫 醫낅ぉ媛깆떊 ?ㅽ뙣] {te}")
+                    log.warning(f"[튜너 종목갱신 실패] {te}")
             sl_adj = result.get("sl_adj", 0)
             if sl_adj != 0:
                 adj_clamped = max(-0.10, min(0.10, float(sl_adj)))  # 짹10% ?대궡濡??쒗븳
@@ -11579,7 +11583,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             c.get("ticker") for c in reinvoke_cands if c.get("ticker")
                         ]
                         log.info(
-                            f"[醫낅ぉ ?ъ꽑???꾨즺] {market}: watch={new_tickers} "
+                            f"[종목 재선정 완료] {market}: watch={new_tickers} "
                             f"trade_ready={reinvoke_meta.get('trade_ready', [])}"
                         )
                         reinvoke_excluded = [c.get("ticker", "") for c in reinvoke_cands if c.get("ticker", "") not in new_tickers]
@@ -11588,7 +11592,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                         mode_order_limit_krw=_mode_order_limit)
                         # ?ㅼ쓬 run_cycle遺????醫낅ぉ ?ъ슜 (WS???ㅼ쓬 ?ъ떆????媛깆떊)
                 except Exception as te:
-                    log.error(f"[醫낅ぉ ?ъ꽑???ㅽ뙣] {te}")
+                    log.error(f"[종목 재선정 실패] {te}")
             analyst_reinvoke_alert(
                 market, trigger, old_mode, new_consensus["mode"],
                 new_judgments, new_consensus,
@@ -12342,9 +12346,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if market == "KR" and self._last_kr_candidates:
             try:
                 save_kr_screen_cache(self._last_kr_candidates)
-                log.info(f"[KR ?ㅽ겕由щ꼫 罹먯떆] session_close ????꾨즺 ({len(self._last_kr_candidates)}醫낅ぉ)")
+                log.info(f"[KR 스크리너 캐시] session_close 저장 완료 ({len(self._last_kr_candidates)}종목)")
             except Exception as _e:
-                log.warning(f"[KR ?ㅽ겕由щ꼫 罹먯떆] session_close ????ㅽ뙣: {_e}")
+                log.warning(f"[KR 스크리너 캐시] session_close 저장 실패: {_e}")
         self._audit_flush_outcomes(market, force_close=True)
         if hasattr(self, "_active_session_date") and isinstance(self._active_session_date, dict):
             self._active_session_date[market] = None
@@ -12526,10 +12530,10 @@ def main(is_paper: bool = True):
     kr_mid_session = kr_open <= now_t < kr_close
     us_mid_session = now_t >= us_open or now_t < us_close  # ?먯젙 嫄몄묠
     if kr_mid_session and "KR" in enabled_markets:
-        log.info("[startup] KR ?몄뀡 吏꾪뻾 以???session_open 利됱떆 ?ㅽ뻾")
+        log.info("[startup] KR 세션 진행 중 - session_open 즉시 실행")
         bot.session_open("KR", trigger="startup_mid_session")
     if us_mid_session and "US" in enabled_markets:
-        log.info("[startup] US ?몄뀡 吏꾪뻾 以???session_open 利됱떆 ?ㅽ뻾")
+        log.info("[startup] US 세션 진행 중 - session_open 즉시 실행")
         bot.session_open("US", trigger="startup_mid_session")
     while True:
         schedule.run_pending()
