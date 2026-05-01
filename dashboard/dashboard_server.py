@@ -3683,12 +3683,12 @@ def api_history_equity():
             for item in snapshot_rows
         }
         labels = sorted(set(list(pnl_by_date.keys()) + list(snapshot_map.keys())))
-        trade_today = date.today().isoformat()
-        if current_asset > 0 and trade_today not in labels:
-            labels.append(trade_today)
+        session_label = _session_trade_date(market).isoformat()
+        if current_asset > 0 and session_label not in labels:
+            labels.append(session_label)
         labels = sorted(set(labels))
         if not labels and current_asset > 0:
-            labels = [trade_today]
+            labels = [session_label]
         equity = [0.0] * len(labels)
         pnl = [round(pct_by_date.get(label, 0.0), 4) for label in labels]
         wins = [pnl_by_date.get(label, 0.0) > 0 for label in labels]
@@ -3696,7 +3696,7 @@ def api_history_equity():
         if labels:
             if labels[-1] in snapshot_map and snapshot_map[labels[-1]] > 0:
                 equity[-1] = snapshot_map[labels[-1]]
-            elif labels[-1] == trade_today and current_asset > 0:
+            elif labels[-1] == session_label and current_asset > 0:
                 equity[-1] = current_asset
             else:
                 equity[-1] = current_asset
@@ -6180,17 +6180,22 @@ async function loadSummary() {
     posBoard.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px 0">현재 보유 포지션이 없습니다</div>';
   } else {
   posBoard.innerHTML = positions.map(pos => {
-    // US 포지션: display 필드(USD) 우선, 없으면 내부 KRW 값을 환율로 나눔
-    const avgPrice = !isKR && usdKrw > 0
-      ? Number(pos.display_avg_price || (pos.avg_price > 0 ? pos.avg_price / usdKrw : pos.entry > 0 ? pos.entry / usdKrw : 0))
-      : Number(pos.avg_price || pos.entry || 0);
-    const curPrice = !isKR && usdKrw > 0
-      ? Number(pos.display_current_price || (pos.current_price > 0 ? pos.current_price / usdKrw : 0))
-      : Number(pos.current_price || 0);
+    const isKR    = MARKET === 'KR';
+    const usdKrw  = Number(t.usd_krw || t.usdKrw || 0);
+    const storageCurrency = String(pos.currency || pos.display_currency || '').toUpperCase();
+    const nativePrice = (displayValue, rawValue, fallbackValue = 0) => {
+      const display = Number(displayValue || 0);
+      if (display > 0) return display;
+      const raw = Number(rawValue || fallbackValue || 0);
+      if (!(raw > 0)) return 0;
+      if (!isKR && storageCurrency !== 'USD' && usdKrw > 0) return raw / usdKrw;
+      return raw;
+    };
+    const avgPrice = nativePrice(pos.display_avg_price, pos.avg_price, pos.entry);
+    const curPrice = nativePrice(pos.display_current_price, pos.current_price, pos.avg_price || pos.entry);
     const qty      = Number(pos.qty || 0);
     const pnl      = avgPrice > 0 ? ((curPrice / avgPrice) - 1) * 100 : Number(pos.pnl_pct || 0);
     const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
-    const isKR    = MARKET === 'KR';
     const fmtEntryPx = v => {
       if (!(v > 0)) return '--';
       if (isKR) return fmt.price(v);

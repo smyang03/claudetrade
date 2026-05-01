@@ -1,11 +1,12 @@
 {
   "meta": {
-    "version": 2603,
+    "version": 2628,
     "created": "2026-03-19",
     "last_updated": "2026-05-01",
     "trained_days_kr": 30,
-    "trained_days_us": 30,
-    "description": "Claude 마이너리티 리포트 판단 메모리"
+    "trained_days_us": 31,
+    "description": "Claude 마이너리티 리포트 판단 메모리",
+    "brain_quality_cleaned_at": "2026-05-01T03:54:10+00:00"
   },
   "markets": {
     "KR": {
@@ -154,471 +155,6 @@
         }
       },
       "issue_patterns": [
-        {
-          "id": "P001",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P002",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P003",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P004",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P005",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 1,
-          "bear_hit": 0,
-          "bull_accuracy": 1.0,
-          "bear_accuracy": 0.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.4360207020724095,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P006",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P007",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P008",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P009",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P010",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 1,
-          "bear_hit": 0,
-          "bull_accuracy": 1.0,
-          "bear_accuracy": 0.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.4360207020724095,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P011",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P012",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P013",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P014",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P015",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 1,
-          "bear_hit": 0,
-          "bull_accuracy": 1.0,
-          "bear_accuracy": 0.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.4360207020724095,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P016",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P017",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P018",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P019",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P020",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 1,
-          "bear_hit": 0,
-          "bull_accuracy": 1.0,
-          "bear_accuracy": 0.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.4360207020724095,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P021",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P022",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P023",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P024",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P025",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P026",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 1,
-          "bear_hit": 0,
-          "bull_accuracy": 1.0,
-          "bear_accuracy": 0.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.4360207020724095,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P027",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P028",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P029",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P030",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P031",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 1,
-          "bear_hit": 0,
-          "bull_accuracy": 1.0,
-          "bear_accuracy": 0.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.4360207020724095,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
         {
           "id": "P032",
           "type": "신호오류",
@@ -950,21 +486,6 @@
           "examples": []
         },
         {
-          "id": "P054",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
           "id": "P055",
           "type": "타이밍",
           "description": "062970 stop_loss 15:56장종료직전 미체결로손실고정",
@@ -1152,119 +673,170 @@
           "rate": 0.0,
           "current_threshold": -0.003,
           "insight": "초기값: 지수 -0.3% 이상 하락 시 하향 조정",
-          "last_seen": "2026-04-16"
+          "last_seen": "2026-04-16",
+          "adjusted": 0,
+          "adjusted_rate": 0.0,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "mid_session_upgrade": {
           "count": 0,
           "correct": 0,
           "rate": 0.0,
           "insight": "초기값: 미확정",
-          "last_seen": "2026-04-16"
+          "last_seen": "2026-04-16",
+          "adjusted": 0,
+          "adjusted_rate": 0.0,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "30min_tune": {
           "count": 53,
           "correct": 6,
           "rate": 0.113,
           "insight": "개장 대비 -0.25% 소폭 하락이나 30분 기울기 N/A·경고 없음·거래량 normal로 아침 CAUTIOUS 판단 유지 조건 충족, 포지션 최대 손실 -1.1%(046890)로 SL 여유 있어 파라미터 조정 불필요",
-          "last_seen": "2026-04-30"
+          "last_seen": "2026-04-30",
+          "adjusted": 6,
+          "adjusted_rate": 0.113,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
           "count": 42,
           "correct": 9,
           "rate": 0.214,
           "insight": "개장 대비 -0.92% 하락 + 최근 30분 기울기 -0.67%p 하락세로 아침 CAUTIOUS 판단과 동일 방향 약세 확인, 보유 포지션(017510) +0.3% 소폭 수익으로 위기 없으나 시장 약세 지속에 따라 momentum wait +5분 및 entry cutoff +0.02 소폭 강화로 신규 진입 문턱 높임",
-          "last_seen": "2026-04-30"
+          "last_seen": "2026-04-30",
+          "adjusted": 9,
+          "adjusted_rate": 0.214,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "120min_tune": {
           "count": 35,
           "correct": 11,
           "rate": 0.314,
           "insight": "지수 -0.88%로 약세나 최근 30분 기울기 +0.38%p 상승 반전 중이며 아침 MILD_BULL 방향과 일치하므로 MAINTAIN 유지, 세션 잔여 37분·거래량 low 감안해 현행 runtime 조정값(wait+5m, cutoff+0.02, atr-0.01/-0.01) 그대로 동결",
-          "last_seen": "2026-04-30"
+          "last_seen": "2026-04-30",
+          "adjusted": 11,
+          "adjusted_rate": 0.314,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "150min_tune": {
           "count": 31,
           "correct": 10,
           "rate": 0.323,
           "insight": "개장 대비 -1.09% 하락 + 최근 30분 기울기 -0.21%p 하락 지속으로 아침 MILD_BULL 판단과 반대 방향 확인, 마감 6분 전 블랙아웃 직전 신규 진입 실익 없어 wait 연장·cutoff 강화·ATR cap 추가 축소로 리스크 최소화",
-          "last_seen": "2026-04-30"
+          "last_seen": "2026-04-30",
+          "adjusted": 10,
+          "adjusted_rate": 0.323,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "180min_tune": {
           "count": 31,
           "correct": 9,
           "rate": 0.29,
           "insight": "개장 대비 -1.38% 하락 + 최근 30분 기울기 -0.29%p 낙하 지속 + 마감 27분 전 blackout 구간 진입으로 신규 진입 실익 없음 — 대기 시간 최대(+15m), 진입 컷오프 최대 강화(+0.08), ATR 캡 최대 축소(-0.02/-0.02)로 사실상 신규 진입 차단 유지",
-          "last_seen": "2026-04-30"
+          "last_seen": "2026-04-30",
+          "adjusted": 9,
+          "adjusted_rate": 0.29,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "210min_tune": {
           "count": 28,
           "correct": 9,
           "rate": 0.321,
           "insight": "지수 -0.42% 하락 + 30분 기울기 -0.84%p 낙하로 아침 CAUTIOUS 판단과 동일 방향 약세 확인, 보유 포지션 없어 손실 위험 없으나 모멘텀 진입 대기 시간을 현재 40분에서 +5분 연장해 추가 하락 필터링",
-          "last_seen": "2026-04-30"
+          "last_seen": "2026-04-30",
+          "adjusted": 9,
+          "adjusted_rate": 0.321,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "240min_tune": {
           "count": 25,
           "correct": 8,
           "rate": 0.32,
           "insight": "지수 +0.19% 및 30분 기울기 +0.24%p 상승으로 아침 MODERATE_BULL 방향 유지, 138360 +3.5% 수익 중이며 경고 없음—현 runtime 조정값(wait -5m, atr +0.01) 그대로 유지가 최적",
-          "last_seen": "2026-04-29"
+          "last_seen": "2026-04-29",
+          "adjusted": 8,
+          "adjusted_rate": 0.32,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "270min_tune": {
           "count": 22,
           "correct": 7,
           "rate": 0.318,
           "insight": "지수 +0.34% 및 30분 기울기 +0.14%p 상승으로 아침 MODERATE_BULL 방향과 일치, 138360 +3.5% 수익 중 경고 없음 — 현재 runtime 조정값(wait=-5m, atr=+0.01) 유지가 적절하며 추가 변경 불필요",
-          "last_seen": "2026-04-29"
+          "last_seen": "2026-04-29",
+          "adjusted": 7,
+          "adjusted_rate": 0.318,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "300min_tune": {
           "count": 21,
           "correct": 5,
           "rate": 0.238,
           "insight": "지수 +0.73% 상승 + 30분 기울기 +0.39%p 상승으로 아침 MODERATE_BULL 방향 일치, 경고 없음·포지션 +3.5% 수익 안정적 — 현재 runtime 조정값 유지가 최적",
-          "last_seen": "2026-04-29"
+          "last_seen": "2026-04-29",
+          "adjusted": 5,
+          "adjusted_rate": 0.238,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "330min_tune": {
           "count": 21,
           "correct": 5,
           "rate": 0.238,
           "insight": "지수 +0.55% 유지로 아침 MODERATE_BULL 방향 일치하나 30분 기울기 -0.17%p 하락 전환 및 마감 66분 전 mid-late 구간으로 신규 진입 공격성 확대 불필요, 현재 runtime 조정값(-5m wait, ATR +0.01) 그대로 유지가 적절.",
-          "last_seen": "2026-04-29"
+          "last_seen": "2026-04-29",
+          "adjusted": 5,
+          "adjusted_rate": 0.238,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "360min_tune": {
           "count": 19,
           "correct": 5,
           "rate": 0.263,
           "insight": "지수 개장 대비 +0.69% 상승, 최근 30분 기울기 +0.13%p 상승으로 아침 MODERATE_BULL 판단과 동일 방향 유지 — 경고 없음·보유 포지션 +3.5% 수익 안정, 잔여 36분 세션 후반으로 현 runtime 조정값(wait=-5m, atr_cap+0.01) 그대로 유지가 적정.",
-          "last_seen": "2026-04-29"
+          "last_seen": "2026-04-29",
+          "adjusted": 5,
+          "adjusted_rate": 0.263,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "390min_tune": {
           "count": 15,
           "correct": 5,
           "rate": 0.333,
           "insight": "지수 개장 대비 +0.85% 상승 + 30분 기울기 +0.17%p 상승으로 아침 MODERATE_BULL 방향과 일치, 보유 포지션 138360 +3.5% 안정적이며 경고 없음 — 장 마감 5분 잔여로 신규 진입 실익 없어 기존 파라미터 유지",
-          "last_seen": "2026-04-29"
+          "last_seen": "2026-04-29",
+          "adjusted": 5,
+          "adjusted_rate": 0.333,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "420min_tune": {
           "count": 15,
           "correct": 5,
           "rate": 0.333,
           "insight": "지수 개장 대비 +0.75% 양호하나 최근 30분 기울기 -0.10%p 하락·거래량 normal·경고 없음으로 아침 MODERATE_BULL 방향성 유지, 잔여 25분 close_guard 구간에서 기존 runtime 조정값(wait -5m, atr_cap +0.01) 그대로 유지하며 신규 병목 없음",
-          "last_seen": "2026-04-29"
+          "last_seen": "2026-04-29",
+          "adjusted": 5,
+          "adjusted_rate": 0.333,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "450min_tune": {
           "count": 3,
           "correct": 0,
           "rate": 0.0,
           "insight": "Historically low precision (0% over 3 trials); treat as weak context only. (Context: 지수 +0.82% 소폭 상승이나 오전 MILD_BEAR 판단을 뒤집을 만한 강력한 반등 신호 부재, 거래량 normal 수준으로 추세 전환 미확)",
-          "last_seen": "2026-04-16"
+          "last_seen": "2026-04-16",
+          "adjusted": 0,
+          "adjusted_rate": 0.0,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "90min_tune": {
           "count": 36,
           "correct": 7,
           "rate": 0.194,
           "insight": "개장 대비 -1.26% 하락 + 최근 30분 기울기 -0.34%p 낙하 지속으로 아침 CAUTIOUS Bear 근거(RSI 과매수+MACD 축소)가 현실화 중이며, 보유 momentum 포지션(017510) -0.5% 손실 중이므로 신규 진입 문턱 강화 및 ATR cap 소폭 축소로 추가 손실 노출 제한",
-          "last_seen": "2026-04-30"
+          "last_seen": "2026-04-30",
+          "adjusted": 7,
+          "adjusted_rate": 0.194,
+          "metric_semantics": "adjusted_not_accuracy"
         }
       },
       "current_beliefs": {
@@ -1303,12 +875,13 @@
           "bull_reason": "삼성전자·SK하이닉스·NAVER 모두 MACD 골든크로스 신호가 동시 출현하며 반등 모멘텀이 형성되고 있습니다.",
           "bear_reason": "반도체 양대 주축 동반 하락 및 저거래량 속 골든크로스는 신뢰도 낮은 기술적 신호로, 실질적 매수 동력 부재 확인",
           "neutral_reason": "MACD 골든크로스로 단기 반등 신호가 있으나 RSI 미약·거래량 부진·원화 약세(1,504원)가 상승 탄력을 제한",
-          "key_lesson": "오류로 자동 판정",
+          "key_lesson": "",
           "issue_type": "미분류",
           "best_trade": null,
           "worst_trade": null,
           "worst_trade_reason": "",
-          "trades": 0
+          "trades": 0,
+          "key_lesson_cleaned_reason": "placeholder_or_corrupt"
         },
         {
           "date": "2026-03-23",
@@ -1325,12 +898,13 @@
           "bull_reason": "SK하이닉스 MACD 골든크로스(52주 고점 90%) + NAVER MACD 골든크로스(RSI 39.9 과매도 근접) 2개 기술적 신호 동시 확인, 코스피 +0.31% 양호한 시장 분위기 지지",
           "bear_reason": "USD/KRW 1,504.17로 판단 기준선(1,450) 대폭 초과 — 단독으로도 DEFENSIVE 기본값 적용, BULL 분석가의 MACD 골든크로스 2종목은 기술적 반등 신호에 불과하며 거래량 0.0배 신뢰도 미확인으로 환율 위험 신호를 상쇄 불가",
           "neutral_reason": "MACD 골든크로스(SK하이닉스·NAVER) 2개 Bull 신호 vs 삼성전자 MACD 데드크로스·USD/KRW 1,504.17 고환율·전종목 거래량 0.0배 데이터 미확인으로 신호가 균등 분포하여 방향성 판단 불가",
-          "key_lesson": "오류로 자동 판정",
+          "key_lesson": "",
           "issue_type": "미분류",
           "best_trade": null,
           "worst_trade": null,
           "worst_trade_reason": "",
-          "trades": 0
+          "trades": 0,
+          "key_lesson_cleaned_reason": "placeholder_or_corrupt"
         },
         {
           "date": "2026-03-24",
@@ -1347,12 +921,13 @@
           "bull_reason": "전 종목 MACD 데드크로스 동시 발생 + 코스피 -6.49% 급락 확인, RSI는 50~57로 과매도 미도달이라 추가 하락 여지 존재하나 서킷브레이커 미발동으로 HALT 기준 미충족",
           "bear_reason": "USD/KRW 1,486.3원(임계치 1,450원 대폭 초과), 코스피 -6.49% 급락, 전 종목 MACD 데드크로스 동시 발생으로 복수 위험 신호 동시 충족 — HALT 기준 명확히 해당",
           "neutral_reason": "코스피 -6.49% 급락·전 종목 MACD 데드크로스·USD/KRW 1,486.3원으로 하락 신호 3:0 우세하나, RSI 50~57대 과매도 미도달 및 VKOSPI 데이터 누락으로 불확실성 잔존해 HALT 전환 근거 불충분",
-          "key_lesson": "오류로 자동 판정",
+          "key_lesson": "",
           "issue_type": "미분류",
           "best_trade": null,
           "worst_trade": null,
           "worst_trade_reason": "",
-          "trades": 0
+          "trades": 0,
+          "key_lesson_cleaned_reason": "placeholder_or_corrupt"
         },
         {
           "date": "2026-03-25",
@@ -1369,12 +944,13 @@
           "bull_reason": "코스피 +2.74% 강한 반등과 SK하이닉스 +5.68%(52주 고점 88% 근접, RSI 53.8)의 모멘텀 주도는 유효한 상승 신호이며, MACD 데드크로스는 미해소이나 가격 모멘텀 자체가 선행 지표로 작용 중",
           "bear_reason": "USD/KRW 1,498.34로 1,450원 임계치를 크게 상회하여 판단 기준상 기본값 DEFENSIVE 적용되며, VKOSPI 데이터 미확인 및 전 종목 MACD 데드크로스·거래량 0.0배로 코스피 +2.74% 반등의 신뢰도를 확인할 수 없음",
           "neutral_reason": "코스피 +2.74% 반등·SK하이닉스 +5.68% 상승 긍정 신호 vs 전종목 MACD 데드크로스·USD/KRW 1,498·거래량 0.0배 신뢰도 저하로 상승/하락 신호 균등 구조 유지",
-          "key_lesson": "오류로 자동 판정",
+          "key_lesson": "",
           "issue_type": "미분류",
           "best_trade": null,
           "worst_trade": null,
           "worst_trade_reason": "",
-          "trades": 0
+          "trades": 0,
+          "key_lesson_cleaned_reason": "placeholder_or_corrupt"
         },
         {
           "date": "2026-03-26",
@@ -1391,12 +967,13 @@
           "bull_reason": "코스피 +1.59% 상승 모멘텀 및 SK하이닉스 52주위치 89%(신고가 5% 이내) 유효하나, 전 종목 MACD 데드크로스 미해소 및 거래량 0.0배 데이터 이상으로 확신도 소폭 하향 조정",
           "bear_reason": "USD/KRW 1,501.99원으로 1,400원 임계치를 100원 이상 초과하는 극단적 환율 수준 + 전 종목 MACD 데드크로스 지속 + 거래량 0.0배 데이터 이상으로 복수 위험 신호 동시 발생, BULL 분석가의 RSI 반등 가능성 및 52주 고점 근접 논거는 위험 신호가 존재하는 상황에서 기술적 반등 신호만으로 판단하는 금지 조건에 해당",
           "neutral_reason": "거래량 0.0배 데이터 이상으로 신뢰도 심각하게 훼손된 상황에서 코스피 +1.59% 상승 vs 전 종목 MACD 데드크로스+USD/KRW 1,501.99 극단 환율의 상충 신호가 균등하게 혼재하여 방향성 판단 불가",
-          "key_lesson": "오류로 자동 판정",
+          "key_lesson": "",
           "issue_type": "미분류",
           "best_trade": null,
           "worst_trade": null,
           "worst_trade_reason": "",
-          "trades": 6
+          "trades": 6,
+          "key_lesson_cleaned_reason": "placeholder_or_corrupt"
         },
         {
           "date": "2026-03-27",
@@ -1567,12 +1144,13 @@
           "bull_reason": "NAVER RSI 20.3 과매도+BB하단+거래량 1.9배 급증, 현대차 RSI 23.8 과매도+BB하단으로 기술적 신호 2개 이상 충족, LG화학 MACD 골든크로스 추가 지지, 코스피 +1.36% 상승 배경",
           "bear_reason": "USD/KRW 1,501.26으로 환율 고점(1,400원 초과) 위험신호 유효 + 전종목 MACD 데드크로스 우세 + 거래량 0.0배 다수로 신뢰도 미흡 — BULL 분석가의 RSI 과매도 반등 논거는 기술적 반등 신호에 불과하며 판단 기준상 위험신호 존재 시 NEUTRAL 이상 판단 불가",
           "neutral_reason": "상승신호(LG화학 골든크로스·삼성전자·000660 강상승) 3개 vs 하락신호(NAVER·현대차 과매도·전종목 데드크로스 우위·환율1501 고점) 3개로 신호 균등 1:1이며, 거래량 0.0배 다수로 데이터 신뢰도 미흡해 어느 방향도 2:1 우위 미충족",
-          "key_lesson": "오류로 자동 판정",
+          "key_lesson": "",
           "issue_type": "미분류",
           "best_trade": null,
           "worst_trade": null,
           "worst_trade_reason": "",
-          "trades": 0
+          "trades": 0,
+          "key_lesson_cleaned_reason": "placeholder_or_corrupt"
         },
         {
           "date": "2026-04-09",
@@ -3091,27 +2669,563 @@
       },
       "execution_lessons": [
         "손실 매도 주요 사유: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell",
-        "수익 청산 유효 패턴: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell",
-        "손실 매도 주요 사유: intraday_review_sell"
+        "수익 청산 유효 패턴: intraday_review_sell"
       ],
       "execution_stats": {
         "buy_order": 34,
         "buy_failed": 22,
         "sell_filled": 34,
         "sell_failed": 119
-      }
+      },
+      "archived_issue_patterns": [
+        {
+          "id": "P001",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P002",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P003",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P004",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P005",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.4360207020724095,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P006",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P007",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P008",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P009",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P010",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.4360207020724095,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P011",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P012",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P013",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P014",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P015",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.4360207020724095,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P016",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P017",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P018",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P019",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P020",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.4360207020724095,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P021",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P022",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P023",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P024",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P025",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P026",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.4360207020724095,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P027",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P028",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P029",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P030",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P031",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.4360207020724095,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P054",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        }
+      ]
     },
     "US": {
-      "trained_days": 30,
+      "trained_days": 31,
       "training_period": {
         "phase1": "2025-01-01 ~ 2025-04-30 (조정장 50일)",
         "phase2": "2025-05-01 ~ 2025-09-30 (강세장 100일)",
@@ -3121,53 +3235,53 @@
       "current_regime": "unknown",
       "analyst_performance": {
         "bull": {
-          "total": 47,
-          "hit": 27,
+          "total": 48,
+          "hit": 28,
           "miss": 20,
-          "rate": 0.574,
-          "recent_7d": {
-            "total": 7,
-            "hit": 4,
-            "rate": 0.571
-          },
-          "recent_30d": {
-            "total": 29,
-            "hit": 16,
-            "rate": 0.552
-          },
-          "trend": "stable"
-        },
-        "bear": {
-          "total": 47,
-          "hit": 25,
-          "miss": 22,
-          "rate": 0.532,
+          "rate": 0.583,
           "recent_7d": {
             "total": 7,
             "hit": 3,
             "rate": 0.429
           },
           "recent_30d": {
-            "total": 29,
+            "total": 30,
+            "hit": 16,
+            "rate": 0.533
+          },
+          "trend": "declining"
+        },
+        "bear": {
+          "total": 48,
+          "hit": 26,
+          "miss": 22,
+          "rate": 0.542,
+          "recent_7d": {
+            "total": 7,
+            "hit": 2,
+            "rate": 0.286
+          },
+          "recent_30d": {
+            "total": 30,
             "hit": 17,
-            "rate": 0.586
+            "rate": 0.567
           },
           "trend": "declining"
         },
         "neutral": {
-          "total": 47,
-          "hit": 26,
+          "total": 48,
+          "hit": 27,
           "miss": 21,
-          "rate": 0.553,
+          "rate": 0.562,
           "recent_7d": {
             "total": 7,
             "hit": 3,
             "rate": 0.429
           },
           "recent_30d": {
-            "total": 29,
-            "hit": 14,
-            "rate": 0.483
+            "total": 30,
+            "hit": 15,
+            "rate": 0.5
           },
           "trend": "declining"
         }
@@ -3199,9 +3313,9 @@
           "win_rate": 0.0
         },
         "MILD_BULL": {
-          "count": 14,
-          "avg_pnl": 0.217,
-          "win_rate": 0.286
+          "count": 15,
+          "avg_pnl": 0.2868,
+          "win_rate": 0.333
         },
         "NEUTRAL": {
           "count": 6,
@@ -3237,9 +3351,9 @@
           "avg_pnl": 2.2046
         },
         "gap_pullback": {
-          "count": 24,
-          "win_rate": 0.583,
-          "avg_pnl": -0.023
+          "count": 25,
+          "win_rate": 0.6,
+          "avg_pnl": -0.0038
         },
         "mean_reversion": {
           "count": 1,
@@ -3247,92 +3361,17 @@
           "avg_pnl": 1.0399
         },
         "momentum": {
-          "count": 2,
+          "count": 3,
           "win_rate": 1.0,
-          "avg_pnl": 5.726
+          "avg_pnl": 4.7096
         },
         "claude_price": {
-          "count": 20,
-          "win_rate": 0.5,
-          "avg_pnl": 0.0459
+          "count": 21,
+          "win_rate": 0.476,
+          "avg_pnl": 0.0294
         }
       },
       "issue_patterns": [
-        {
-          "id": "P001",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P002",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P003",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P004",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 1,
-          "bear_hit": 0,
-          "bull_accuracy": 1.0,
-          "bear_accuracy": 0.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.014500252751999941,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
-          "id": "P005",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 1,
-          "bear_hit": 0,
-          "bull_accuracy": 1.0,
-          "bear_accuracy": 0.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.2802541168326624,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
         {
           "id": "P006",
           "type": "리스크편차",
@@ -3496,21 +3535,6 @@
           "best_mode": "미확정",
           "avg_pnl_when_followed": 0.0,
           "insight": "VIX고변동+MACD데드크로스에도섹터로테이션(XLF+1.59%)시반등가능",
-          "examples": []
-        },
-        {
-          "id": "P017",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 1,
-          "bear_hit": 0,
-          "bull_accuracy": 1.0,
-          "bear_accuracy": 0.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.0,
-          "insight": "오류로 자동 판정",
           "examples": []
         },
         {
@@ -3724,21 +3748,6 @@
           "examples": []
         },
         {
-          "id": "P032",
-          "type": "미분류",
-          "description": "",
-          "count": 1,
-          "bull_hit": 0,
-          "bear_hit": 1,
-          "bull_accuracy": 0.0,
-          "bear_accuracy": 1.0,
-          "best_strategy": "미확정",
-          "best_mode": "미확정",
-          "avg_pnl_when_followed": 0.055634278340920953,
-          "insight": "오류로 자동 판정",
-          "examples": []
-        },
-        {
           "id": "P033",
           "type": "과신",
           "description": "Bull이MODERATE_BULL과잉판단",
@@ -3941,112 +3950,160 @@
           "rate": 0.0,
           "current_threshold": -0.005,
           "insight": "초기값: 지수 -0.5% 이상 하락 시 하향 조정",
-          "last_seen": "2026-04-16"
+          "last_seen": "2026-04-16",
+          "adjusted": 0,
+          "adjusted_rate": 0.0,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "fomc_halt": {
           "count": 0,
           "correct": 0,
           "rate": 0.0,
           "insight": "FOMC 발표일 HALT 효과",
-          "last_seen": "2026-04-16"
+          "last_seen": "2026-04-16",
+          "adjusted": 0,
+          "adjusted_rate": 0.0,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "30min_tune": {
-          "count": 76,
+          "count": 77,
           "correct": 7,
-          "rate": 0.092,
-          "insight": "개장 30분 지수 변화 +0.00%, 30분 기울기 N/A(첫 샘플), 경고 없음, 거래량 normal로 아침 MILD_BULL 판단을 뒤집을 반대 신호 부재; 현재 포지션 STX +3.0% 수익 유지, INTC -0.7%/EAT -1.4% 손실은 SL 여유 범위 내(INTC SL 133,502 대비 현재 136,658, EAT SL 206,444 대비 218,987)이며 지수 약세 동반 없으므로 TIGHTEN 불필요.",
-          "last_seen": "2026-04-30"
+          "rate": 0.091,
+          "insight": "Historically low precision (9% over 77 trials); treat as weak context only. (Context: 개장 대비 +0.52% 상승으로 아침 MODERATE_BULL 방향과 일치하고, 30분 기울기 N/A 구간이나 지수 방향 동일·경고 없음·포지션)",
+          "last_seen": "2026-05-01",
+          "adjusted": 7,
+          "adjusted_rate": 0.092,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
-          "count": 51,
+          "count": 52,
           "correct": 4,
-          "rate": 0.078,
-          "insight": "개장 후 60분 지수 +0.10% 및 최근 30분 기울기 +0.10%p 상승으로 아침 MILD_BULL 방향과 일치, 경고 없음·거래량 정상·포지션 병목 없어 현 파라미터 유지가 적절",
-          "last_seen": "2026-04-30"
+          "rate": 0.077,
+          "insight": "Historically low precision (8% over 52 trials); treat as weak context only. (Context: 지수 +0.77% 유지 및 최근 30분 기울기 +0.25%p 상승세로 아침 MODERATE_BULL 방향 일치 확인, 경고 없고 거래량 norm)",
+          "last_seen": "2026-05-01",
+          "adjusted": 4,
+          "adjusted_rate": 0.078,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "90min_tune": {
           "count": 39,
           "correct": 5,
           "rate": 0.128,
-          "insight": "개장 대비 +0.44% 상승 + 최근 30분 기울기 +0.34%p 상승세로 아침 MILD_BULL 방향과 일치하며 경고 없음 — momentum wait 5분 단축 및 cutoff 소폭 완화로 상승 모멘텀 포착 효율 개선",
-          "last_seen": "2026-05-01"
+          "insight": "Below-average precision (13% over 39 trials); use with caution. (Context: 개장 대비 +0.44% 상승 + 최근 30분 기울기 +0.34%p 상승세로 아침 MILD_BULL 방향과 일치하며 경고 없음 — momentum)",
+          "last_seen": "2026-05-01",
+          "adjusted": 5,
+          "adjusted_rate": 0.128,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "120min_tune": {
           "count": 31,
           "correct": 1,
           "rate": 0.032,
-          "insight": "개장 대비 +0.50% 상승 및 최근 30분 기울기 +0.06%p 상승 지속으로 아침 MILD_BULL 판단과 방향 일치, QCOM +2.4%·GOOGL +0.9%·EAT +0.5% 등 포지션 전반 양호하며 경고 없음, 현재 runtime 조정값(wait -5m, cutoff -0.03) 유지가 적절",
-          "last_seen": "2026-05-01"
+          "insight": "Historically low precision (3% over 31 trials); treat as weak context only. (Context: 개장 대비 +0.50% 상승 및 최근 30분 기울기 +0.06%p 상승 지속으로 아침 MILD_BULL 판단과 방향 일치, QCOM +2.4%·)",
+          "last_seen": "2026-05-01",
+          "adjusted": 1,
+          "adjusted_rate": 0.032,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "150min_tune": {
           "count": 26,
           "correct": 2,
           "rate": 0.077,
-          "insight": "지수 +0.40% 개장 대비 양호하나 최근 30분 -0.11%p 하락 기울기와 거래량 low로 모멘텀 둔화 중 — 방향 반전 신호 없어 MILD_BULL 유지, 현재 runtime 조정값(wait -5m, cutoff -0.03) 그대로 유지하며 추가 조정 불필요",
-          "last_seen": "2026-05-01"
+          "insight": "Historically low precision (8% over 26 trials); treat as weak context only. (Context: 지수 +0.40% 개장 대비 양호하나 최근 30분 -0.11%p 하락 기울기와 거래량 low로 모멘텀 둔화 중 — 방향 반전 신호 없어 MILD)",
+          "last_seen": "2026-05-01",
+          "adjusted": 2,
+          "adjusted_rate": 0.077,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "180min_tune": {
           "count": 21,
           "correct": 2,
           "rate": 0.095,
-          "insight": "개장 대비 +0.56% 상승 및 최근 30분 기울기 +0.16%p 상승으로 아침 MILD_BULL 방향 일치, 경고 없음·거래량 low 감안 시 현 runtime 조정(wait -5m, cutoff -0.03) 유지가 적절하며 추가 변경 불필요",
-          "last_seen": "2026-05-01"
+          "insight": "Historically low precision (10% over 21 trials); treat as weak context only. (Context: 개장 대비 +0.56% 상승 및 최근 30분 기울기 +0.16%p 상승으로 아침 MILD_BULL 방향 일치, 경고 없음·거래량 low 감안 시)",
+          "last_seen": "2026-05-01",
+          "adjusted": 2,
+          "adjusted_rate": 0.095,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "210min_tune": {
           "count": 15,
           "correct": 1,
           "rate": 0.067,
-          "insight": "지수 +0.49% 상승으로 아침 MILD_BULL 판단 유지 근거 충분하나 최근 30분 기울기 -0.06%p 하락 전환 및 거래량 low로 모멘텀 소진 징후 감지되어 현 runtime 조정값(wait -5m, cutoff -0.03) 유지하되 추가 완화 없이 현상 유지",
-          "last_seen": "2026-05-01"
+          "insight": "Historically low precision (7% over 15 trials); treat as weak context only. (Context: 지수 +0.49% 상승으로 아침 MILD_BULL 판단 유지 근거 충분하나 최근 30분 기울기 -0.06%p 하락 전환 및 거래량 low로 모멘)",
+          "last_seen": "2026-05-01",
+          "adjusted": 1,
+          "adjusted_rate": 0.067,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "240min_tune": {
           "count": 14,
           "correct": 1,
           "rate": 0.071,
-          "insight": "개장 대비 +0.72% 상승 + 최근 30분 기울기 +0.22%p 상승으로 아침 MILD_BULL 방향 일치, 거래량 low이나 경고 없음, 기존 runtime 조정(wait -5m, cutoff -0.03) 유지가 적절하며 추가 변경 불필요",
-          "last_seen": "2026-05-01"
+          "insight": "Historically low precision (7% over 14 trials); treat as weak context only. (Context: 개장 대비 +0.72% 상승 + 최근 30분 기울기 +0.22%p 상승으로 아침 MILD_BULL 방향 일치, 거래량 low이나 경고 없음, 기)",
+          "last_seen": "2026-05-01",
+          "adjusted": 1,
+          "adjusted_rate": 0.071,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "270min_tune": {
           "count": 9,
           "correct": 1,
           "rate": 0.111,
-          "insight": "개장 대비 +0.90% 상승에 최근 30분 기울기 +0.19%p 상승 지속으로 아침 MILD_BULL 방향 일치, 거래량 low이나 경고 없음 — 현행 runtime 조정값(-5min wait, -0.03 cutoff) 유지가 적절",
-          "last_seen": "2026-05-01"
+          "insight": "Below-average precision (11% over 9 trials); use with caution. (Context: 개장 대비 +0.90% 상승에 최근 30분 기울기 +0.19%p 상승 지속으로 아침 MILD_BULL 방향 일치, 거래량 low이나 경고 없음 )",
+          "last_seen": "2026-05-01",
+          "adjusted": 1,
+          "adjusted_rate": 0.111,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "300min_tune": {
           "count": 9,
           "correct": 0,
           "rate": 0.0,
-          "insight": "개장 대비 +0.99% 상승에 30분 기울기 +0.09%p 상승 유지로 아침 MILD_BULL 방향과 일치하며 경고 없음, 기존 runtime 조정값(wait -5m, cutoff -0.03) 그대로 유지가 적절",
-          "last_seen": "2026-05-01"
+          "insight": "Historically low precision (0% over 9 trials); treat as weak context only. (Context: 개장 대비 +0.99% 상승에 30분 기울기 +0.09%p 상승 유지로 아침 MILD_BULL 방향과 일치하며 경고 없음, 기존 runtime )",
+          "last_seen": "2026-05-01",
+          "adjusted": 0,
+          "adjusted_rate": 0.0,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "330min_tune": {
-          "count": 7,
+          "count": 8,
           "correct": 0,
           "rate": 0.0,
-          "insight": "Historically low precision (0% over 7 trials); treat as weak context only. (Context: 개장 대비 +0.13% 및 최근 30분 기울기 +0.02%p 상승으로 아침 MODERATE_BULL 방향 일치, 경고 없음·거래량 low이나 모)",
-          "last_seen": "2026-04-28"
+          "insight": "Historically low precision (0% over 8 trials); treat as weak context only. (Context: 개장 대비 +1.06% 상승 및 최근 30분 기울기 +0.06%p 상승 지속으로 MILD_BULL 방향 일치, 경고 없음 확인, 잔여 52분·저)",
+          "last_seen": "2026-05-01",
+          "adjusted": 0,
+          "adjusted_rate": 0.0,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "360min_tune": {
-          "count": 6,
+          "count": 7,
           "correct": 1,
-          "rate": 0.167,
-          "insight": "개장 대비 +0.08%로 MODERATE_BULL 기조 유지되나 30분 기울기 -0.05%p 하락·거래량 low·잔여 53분 후반부 세션으로 신규 진입 여건 소폭 약화 → wait +1분·cutoff +0.02 상향으로 저품질 신호 필터 강화, 기존 포지션(최대 손실 -1.0%)은 SL 여유 충분해 조정 불필요",
-          "last_seen": "2026-04-28"
+          "rate": 0.143,
+          "insight": "Below-average precision (14% over 7 trials); use with caution. (Context: 지수 +1.07% 상승 및 최근 30분 기울기 +0.02%p 상승 지속으로 아침 MILD_BULL 판단과 동일 방향 확인, 잔여 22분 마감 근)",
+          "last_seen": "2026-05-01",
+          "adjusted": 1,
+          "adjusted_rate": 0.143,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "390min_tune": {
           "count": 6,
           "correct": 0,
           "rate": 0.0,
           "insight": "Historically low precision (0% over 6 trials); treat as weak context only. (Context: 경과 390분(마감 22분 전) 지수 +0.11% 유지·30분 기울기 +0.02%p 상승으로 아침 MODERATE_BULL 방향 일치, 경고 없)",
-          "last_seen": "2026-04-28"
+          "last_seen": "2026-04-28",
+          "adjusted": 0,
+          "adjusted_rate": 0.0,
+          "metric_semantics": "adjusted_not_accuracy"
         },
         "420min_tune": {
           "count": 2,
           "correct": 0,
           "rate": 0.0,
           "insight": "Historically low precision (0% over 2 trials); treat as weak context only. (Context: 지수 +1.04% 상승 및 30분 기울기 +0.13%p 상승으로 아침 CAUTIOUS 판단과 방향 불일치하나 close_guard blackou)",
-          "last_seen": "2026-04-23"
+          "last_seen": "2026-04-23",
+          "adjusted": 0,
+          "adjusted_rate": 0.0,
+          "metric_semantics": "adjusted_not_accuracy"
         }
       },
       "current_beliefs": {
@@ -4249,12 +4306,13 @@
           "bull_reason": "알파벳 RSI 22.0 극단 과매도 + 거래량 1.2배 신호 2개 충족으로 판단 기준 충족, MACD 데드크로스·VIX 29.9는 매크로 참고 수준이며 기술적 평균회귀 패턴 우선",
           "bear_reason": "VIX 29.9(기준치 25 초과) + 전 종목 MACD 데드크로스 동시 진행 + NVDA/TSLA/AAPL/GOOG 전반적 하락(-1.62%~-2.76%) 등 복수 위험신호 동시 발생 — BULL의 RSI 22 평균회귀 논거는 고변동성 국면에서 신뢰도 제한적",
           "neutral_reason": "하락신호 4:1 압도(NVDA -2.17%, TSLA -2.76%, AAPL -1.62%, GOOG -2.34%) + 전종목 MACD 데드크로스 + VIX 29.9 고변동성 유지, BULL 분석가의 RSI 22 평균회귀 논거는 MACD 미해소 환경에서 신뢰도 제한적이며 BEAR 분석가의 DEFENSIVE 82% 확신도는 판단 기준 초과로 미동조",
-          "key_lesson": "오류로 자동 판정",
+          "key_lesson": "",
           "issue_type": "미분류",
           "best_trade": null,
           "worst_trade": null,
           "worst_trade_reason": "",
-          "trades": 0
+          "trades": 0,
+          "key_lesson_cleaned_reason": "placeholder_or_corrupt"
         },
         {
           "date": "2026-04-01",
@@ -4447,12 +4505,13 @@
           "bull_reason": "XLK +0.80% 기술주 섹터 강세 + NVDA·AAPL·GOOGL·INTC·AMD·RKT·BP 골든크로스 다수 확인으로 전문 영역 판단 기준(신호 2개 이상) 충족, 테슬라 데드크로스는 개별 종목 이슈로 섹터 전반 모멘텀 훼손 불충분",
           "bear_reason": "VIX/DXY 미수신으로 핵심 위험 지표 확인 불가 + TSLA 데드크로스(-5.42%, RSI 38.6) 및 XLY -1.50% 소비재 섹터 약세는 실질 위험 신호이며, 골든크로스 다수는 VIX 확인 없이 BULL 판단 근거로 불충분",
           "neutral_reason": "골든크로스 7종목 대 데드크로스 6종목의 약한 상승 우위 + XLK +0.80% 기술주 섹터 강세 유지되나, VIX/DXY 미수신 + TSLA -5.42% 데드크로스 + XLY -1.50% 소비재 약세로 신호 상충 → 2:1 미만 우위로 MILD_BULL 경계 유지",
-          "key_lesson": "오류로 자동 판정",
+          "key_lesson": "",
           "issue_type": "미분류",
           "best_trade": null,
           "worst_trade": null,
           "worst_trade_reason": "",
-          "trades": 0
+          "trades": 0,
+          "key_lesson_cleaned_reason": "placeholder_or_corrupt"
         },
         {
           "date": "2026-04-13",
@@ -4723,6 +4782,29 @@
           "worst_trade_reason": "",
           "trades": 8,
           "selection_feedback": "- 최근 20일 selected=1225 trade_ready=102 watch_only=1123 traded=20\n- trade_ready 3d: hit_rate=57.5% avg_fwd=+1.0% avg_runup=+8.4% avg_dd=-4.8% (n=40)\n- watch_only 3d: avg_fwd=+1.9% avg_runup=+7.4% avg_dd=-3.8% (n=902)\n- missed watch_only: runup>=5.0% 520건 (57.6%)\n- weak trade_ready: forward_3d<=0 17건 (42.5%)\n- by category: most_actives selected=158 miss_watch=53.6%(n=56) weak_TR=47.4%(n=19) watch_ru"
+        },
+        {
+          "date": "2026-04-30",
+          "mode": "MILD_BULL",
+          "pnl_pct": 1.2634531845820802,
+          "market_change": 1.0241045388987566,
+          "win": true,
+          "bull_result": "HIT",
+          "bear_result": "HIT",
+          "neutral_result": "HIT",
+          "bull_stance": "MODERATE_BULL",
+          "bear_stance": "CAUTIOUS",
+          "neutral_stance": "MILD_BULL",
+          "bull_reason": "NVDA(RSI 88.8+MACD GC+52주 100%), AAPL(MACD GC+프리마켓 +0.28%+실적 pre), GOOGL(RSI 78+MACD GC+프리마켓 +7.16%+52주 98%) 등 다수 종목에서 2개 이상 기술적 신호 확인되며 MODERATE_BULL 유지; 과매수 심화는 리스크이나 골든크로스 22:8 우위와 GOOGL 실적 서프라이즈가 상승 모멘텀 지지",
+          "bear_reason": "NVDA/AMD/AMZN/INTC RSI 87~90 광범위 과매수 + AAPL 실적 pre(2026-05-01 임박) 불확실성 + S&P500 실질 횡보(-0.04%) 레짐 유지로 기술적 과열 해소 없이 상방 신호만 부각되는 구조",
+          "neutral_reason": "골든크로스 신호 우위(22:8, 2.75:1)는 유효하나 NVDA/AMD/AMZN/INTC RSI 87~90 광범위 과매수 + 실적시즌 불확실성(AAPL pre, AMZN post) + HYG -0.34% 신용 약세 + VIX/DXY 데이터 누락으로 신호 강도가 MODERATE_BULL 수준에 미달",
+          "key_lesson": "",
+          "issue_type": "",
+          "best_trade": null,
+          "worst_trade": null,
+          "worst_trade_reason": "",
+          "trades": 18,
+          "selection_feedback": "- 최근 20일 selected=1230 trade_ready=113 watch_only=1117 traded=23\n- trade_ready 3d: hit_rate=57.5% avg_fwd=+1.0% avg_runup=+8.4% avg_dd=-4.8% (n=40)\n- watch_only 3d: avg_fwd=+1.9% avg_runup=+7.4% avg_dd=-3.8% (n=902)\n- missed watch_only: runup>=5.0% 520건 (57.6%)\n- weak trade_ready: forward_3d<=0 17건 (42.5%)\n- by category: most_actives selected=171 miss_watch=53.6%(n=56) weak_TR=47.4%(n=19) watch_ru"
         }
       ],
       "debate_history": [
@@ -5580,6 +5662,46 @@
           },
           "changes": [],
           "consensus_shifted": false,
+          "outcome": "correct"
+        },
+        {
+          "date": "2026-05-01",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.68,
+              "key_reason": "광범위한 골든크로스(25개 종목) + 거래량 폭증 종목 다수(QCOM 3.7배, AMZN 2.1배, PI 2.5배) + S&P500 +1.02%"
+            },
+            "bear": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.62,
+              "key_reason": "S&P500 +1.02%, 나스닥 +0.89% 상승 기조이나 광범위한 과매수 신호(RSI 80+대 다수: GKOS, QCOM, VISN, GTX"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "광폭 기술주 상승(GTX +21.82%, QCOM +15.12%, MYRG +15.58%, WCC +14.27%) vs 방어주 약세(CHKP -"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.68,
+              "key_reason": "MACD 골든크로스 다중 확인(25개 종목) + 거래량 폭증(QCOM 3.7배, AMZN 2.1배, PI 2.5배) + S&P500 +1.02%"
+            },
+            "bear": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.6,
+              "key_reason": "S&P500 +1.02% 상승 기조와 MACD 골든크로스 다수(20개+) 확인으로 중기 추세 강세 유효하나, RSI 80+ 과매수 종목 10개 "
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.6,
+              "key_reason": "BULL·BEAR 분석가 모두 MODERATE_BULL로 수렴했으나 핵심 논거(RSI 80+ 과매수 10종목, QCOM 3.7배·PI 2.5배·"
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
           "outcome": null
         }
       ],
@@ -5696,26 +5818,12 @@
           "action": "buy_order",
           "strategy": "gap_pullback",
           "reason": "gap_pullback 진입",
-          "count": 5,
-          "success": 5,
+          "count": 7,
+          "success": 7,
           "fail": 0,
           "avg_pnl_pct": 0.0,
-          "last_detail": "선택이유: 당일 +11.12%, RS SP+10.3%. near_high, ma60 above, liq=high, turn $4.4B. ATR 2.8%(low) → 타이트한 손절 가능. earn=pre 주의이나 blackout 중이므로 단기 price action 중심.",
+          "last_detail": "선택이유: RS+14.5% at_high, earn=post_1, liq=mid, mean_reversion 셋업. 실적 후 반등 모멘텀, ma60 below지만 earn post 갭 구조로 trade_ready 포함.",
           "examples": [
-            {
-              "date": "2026-04-07",
-              "ticker": "SLNO",
-              "detail": "선택이유: +32% 급등 모멘텀 지속 여부 주시",
-              "selected_reason": "+32% 급등 모멘텀 지속 여부 주시",
-              "pnl_pct": 0.0
-            },
-            {
-              "date": "2026-04-09",
-              "ticker": "UAL",
-              "detail": "선택이유: 항공 대형주 13.75% 급등 추세",
-              "selected_reason": "항공 대형주 13.75% 급등 추세",
-              "pnl_pct": 0.0
-            },
             {
               "date": "2026-04-15",
               "ticker": "RGTI",
@@ -5736,9 +5844,23 @@
               "detail": "선택이유: 당일 +11.12%, RS SP+10.3%. near_high, ma60 above, liq=high, turn $4.4B. ATR 2.8%(low) → 타이트한 손절 가능. earn=pre 주의이나 blackout 중이므로 단기 price action 중심.",
               "selected_reason": "당일 +11.12%, RS SP+10.3%. near_high, ma60 above, liq=high, turn $4.4B. ATR 2.8%(low) → 타이트한 손절 가능. earn=pre 주의이나 blackout 중이므로 단기 price action 중심.",
               "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-05-01",
+              "ticker": "STX",
+              "detail": "선택이유: RS+11% at_high, ma60 above, liq=high, atr=mid, gap_pullback. 강한 RS와 유동성으로 trade_ready 승격.",
+              "selected_reason": "RS+11% at_high, ma60 above, liq=high, atr=mid, gap_pullback. 강한 RS와 유동성으로 trade_ready 승격.",
+              "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-05-01",
+              "ticker": "EAT",
+              "detail": "선택이유: RS+14.5% at_high, earn=post_1, liq=mid, mean_reversion 셋업. 실적 후 반등 모멘텀, ma60 below지만 earn post 갭 구조로 trade_ready 포함.",
+              "selected_reason": "RS+14.5% at_high, earn=post_1, liq=mid, mean_reversion 셋업. 실적 후 반등 모멘텀, ma60 below지만 earn post 갭 구조로 trade_ready 포함.",
+              "pnl_pct": 0.0
             }
           ],
-          "last_seen": "2026-04-28"
+          "last_seen": "2026-05-01"
         },
         "sell_filled|gap_pullback|max_hold_final": {
           "action": "sell_filled",
@@ -5934,26 +6056,47 @@
           "action": "sell_filled",
           "strategy": "claude_price",
           "reason": "intraday_review_sell",
-          "count": 2,
-          "success": 2,
+          "count": 6,
+          "success": 6,
           "fail": 0,
-          "avg_pnl_pct": -0.1334,
-          "last_detail": "entry=51,498 hold_days=0",
-          "last_seen": "2026-04-30",
+          "avg_pnl_pct": -0.2455,
+          "last_detail": "entry=550,456 hold_days=0",
+          "last_seen": "2026-05-01",
           "examples": [
-            {
-              "date": "2026-04-28",
-              "ticker": "INTC",
-              "detail": "entry=123,276 hold_days=0",
-              "selected_reason": "",
-              "pnl_pct": -0.6589873568702448
-            },
             {
               "date": "2026-04-30",
               "ticker": "TEVA",
               "detail": "entry=51,498 hold_days=0",
               "selected_reason": "",
               "pnl_pct": 0.3922785703365992
+            },
+            {
+              "date": "2026-05-01",
+              "ticker": "INTC",
+              "detail": "entry=137,603 hold_days=0",
+              "selected_reason": "",
+              "pnl_pct": -0.6906467875147643
+            },
+            {
+              "date": "2026-05-01",
+              "ticker": "VIAV",
+              "detail": "entry=77,487 hold_days=0",
+              "selected_reason": "",
+              "pnl_pct": -3.633504761904753
+            },
+            {
+              "date": "2026-05-01",
+              "ticker": "QCOM",
+              "detail": "entry=267,176 hold_days=0",
+              "selected_reason": "",
+              "pnl_pct": 0.1838432217434335
+            },
+            {
+              "date": "2026-05-01",
+              "ticker": "GOOGL",
+              "detail": "entry=550,456 hold_days=0",
+              "selected_reason": "",
+              "pnl_pct": 2.9340146132189218
             }
           ]
         },
@@ -5976,28 +6119,182 @@
               "pnl_pct": 2.587144681671394
             }
           ]
+        },
+        "sell_filled|gap_pullback|profit_floor": {
+          "action": "sell_filled",
+          "strategy": "gap_pullback",
+          "reason": "profit_floor",
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "avg_pnl_pct": 0.4567,
+          "last_detail": "entry=966,629 hold_days=0",
+          "last_seen": "2026-05-01",
+          "examples": [
+            {
+              "date": "2026-05-01",
+              "ticker": "STX",
+              "detail": "entry=966,629 hold_days=0",
+              "selected_reason": "",
+              "pnl_pct": 0.45674257924632244
+            }
+          ]
+        },
+        "buy_order|momentum|momentum 진입": {
+          "action": "buy_order",
+          "strategy": "momentum",
+          "reason": "momentum 진입",
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "avg_pnl_pct": 0.0,
+          "last_detail": "선택이유: RS +17.3%/+17.2%, at_high(+17.5%), ma60 above, gap_pullback fit, ATR mid(4.3%). liq=mid, 강한 방향성. momentum 슬롯.",
+          "last_seen": "2026-05-01",
+          "examples": [
+            {
+              "date": "2026-05-01",
+              "ticker": "PI",
+              "detail": "선택이유: RS +17.3%/+17.2%, at_high(+17.5%), ma60 above, gap_pullback fit, ATR mid(4.3%). liq=mid, 강한 방향성. momentum 슬롯.",
+              "selected_reason": "RS +17.3%/+17.2%, at_high(+17.5%), ma60 above, gap_pullback fit, ATR mid(4.3%). liq=mid, 강한 방향성. momentum 슬롯.",
+              "pnl_pct": 0.0
+            }
+          ]
         }
       },
       "execution_lessons": [
-        "청산 실패 주요 사유: pre_session_sell",
-        "손실 매도 주요 사유: pre_close",
-        "손실 매도 주요 사유: pre_close",
-        "손실 매도 주요 사유: pre_close",
-        "손실 매도 주요 사유: intraday_review_sell",
         "손실 매도 주요 사유: intraday_review_sell",
         "수익 청산 유효 패턴: tp_analyst_sell",
         "수익 청산 유효 패턴: pre_close",
-        "수익 청산 유효 패턴: pre_close",
         "손실 매도 주요 사유: pre_close",
-        "수익 청산 유효 패턴: pre_close",
         "수익 청산 유효 패턴: intraday_review_sell"
       ],
       "execution_stats": {
-        "buy_order": 8,
+        "buy_order": 11,
         "buy_failed": 0,
-        "sell_filled": 21,
+        "sell_filled": 26,
         "sell_failed": 1
-      }
+      },
+      "archived_issue_patterns": [
+        {
+          "id": "P001",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P002",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P003",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P004",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.014500252751999941,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P005",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.2802541168326624,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P017",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        },
+        {
+          "id": "P032",
+          "type": "미분류",
+          "description": "",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "미확정",
+          "best_mode": "미확정",
+          "avg_pnl_when_followed": 0.055634278340920953,
+          "insight": "오류로 자동 판정",
+          "examples": [],
+          "archive_reason": "placeholder_or_corrupt",
+          "archived_at": "2026-05-01T03:54:10+00:00"
+        }
+      ]
     }
   },
   "cross_market": {
@@ -6041,20 +6338,12 @@
     }
   },
   "hold_advisor_performance": {
-    "total": 96,
+    "total": 97,
     "hold_count": 18,
     "hold_success": 2,
-    "sell_count": 78,
+    "sell_count": 79,
     "hold_avg_extra_pnl": -11.603,
     "recent": [
-      {
-        "date": "2026-04-28",
-        "market": "KR",
-        "ticker": "452260",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -5.0102
-      },
       {
         "date": "2026-04-28",
         "market": "KR",
@@ -6206,6 +6495,14 @@
         "decision": "SELL",
         "success": true,
         "extra_pnl_pct": 2.934
+      },
+      {
+        "date": "2026-05-01",
+        "market": "US",
+        "ticker": "PI",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 2.6768
       }
     ]
   },

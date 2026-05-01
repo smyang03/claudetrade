@@ -370,6 +370,7 @@ def _path_b_live_summary(
     unknown = [run for run in pathb_runs if str(run.get("status", "")) == "ORDER_UNKNOWN"]
     metrics = _path_b_metrics(pathb_runs)
     comparison = _path_performance_comparison(events or [], pathb_runs)
+    consistency_health = _path_b_consistency_health(pathb_runs, events or [], broker_truth)
     config = _path_b_config(runtime_mode)
     control = _path_b_control_state(runtime_mode)
     return {
@@ -378,6 +379,7 @@ def _path_b_live_summary(
         "runs": len(pathb_runs),
         "metrics": metrics,
         "path_comparison": comparison,
+        "consistency_health": consistency_health,
         "charts": _path_b_charts(pathb_runs, metrics),
         "selection": _path_b_selection_snapshot(
             market=market,
@@ -739,6 +741,160 @@ def _apply_lifecycle_status(run: dict[str, Any], overrides: dict[str, dict[str, 
     out["status_lifecycle_event_type"] = override.get("event_type", "")
     out["status_lifecycle_at"] = override.get("occurred_at", "")
     return out
+
+
+def _path_b_consistency_health(
+    runs: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    broker_truth: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    issues: list[dict[str, Any]] = []
+    runs_by_id = {str(run.get("path_run_id", "") or ""): run for run in runs}
+    pathb_ids = {path_run_id for path_run_id in runs_by_id if path_run_id}
+    pathb_keys = {
+        (
+            str(run.get("decision_id", "") or ""),
+            _ticker_key(str(run.get("market", "") or ""), run.get("ticker", "")),
+        )
+        for run in runs
+    }
+    status_event_types = {
+        "CLAUDE_PRICE_PLAN_CREATED",
+        "CLAUDE_PRICE_WAITING",
+        "CLAUDE_PRICE_HIT",
+        "CLAUDE_PRICE_CANCELLED",
+        "CLAUDE_PRICE_EXPIRED",
+        "ORDER_SENT",
+        "ORDER_ACKED",
+        "PARTIAL_FILLED",
+        "FILLED",
+        "SELL_SENT",
+        "SELL_ACKED",
+        "SELL_PARTIAL_FILLED",
+        "CLOSED",
+        "ORDER_UNKNOWN",
+    }
+    execution_required_types = {
+        "ORDER_SENT",
+        "ORDER_ACKED",
+        "PARTIAL_FILLED",
+        "FILLED",
+        "SELL_SENT",
+        "SELL_ACKED",
+        "SELL_PARTIAL_FILLED",
+        "CLOSED",
+    }
+    for run in runs:
+        status = str(run.get("status", "") or "")
+        stored_status = str(run.get("stored_status", status) or status)
+        if bool(run.get("status_from_lifecycle", False)) and stored_status != status:
+            issues.append(
+                {
+                    "code": "raw_status_differs_from_lifecycle",
+                    "path_run_id": run.get("path_run_id", ""),
+                    "ticker": run.get("ticker", ""),
+                    "stored_status": stored_status,
+                    "effective_status": status,
+                    "lifecycle_event_type": run.get("status_lifecycle_event_type", ""),
+                    "lifecycle_at": run.get("status_lifecycle_at", ""),
+                }
+            )
+        if status == "ORDER_UNKNOWN" or stored_status == "ORDER_UNKNOWN":
+            evidence = _broker_evidence_for_path_run(run, broker_truth)
+            plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+            issues.append(
+                {
+                    "code": "active_order_unknown",
+                    "path_run_id": run.get("path_run_id", ""),
+                    "ticker": run.get("ticker", ""),
+                    "stored_status": stored_status,
+                    "effective_status": status,
+                    "resolution": str(plan.get("order_unknown_resolution", "") or ""),
+                    "broker_position_evidence": bool(
+                        plan.get("broker_position_evidence", False)
+                        or evidence.get("broker_position_evidence", False)
+                    ),
+                    "broker_open_order_evidence": bool(
+                        plan.get("broker_open_order_evidence", False)
+                        or evidence.get("broker_open_order_evidence", False)
+                    ),
+                    "broker_today_fill_evidence": bool(
+                        plan.get("broker_today_fill_evidence", False)
+                        or evidence.get("broker_today_fill_evidence", False)
+                    ),
+                }
+            )
+    for event in events:
+        event_type = str(event.get("event_type", "") or "")
+        if event_type not in status_event_types:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        path_run_id = str(payload.get("path_run_id", "") or "")
+        path_type = str(payload.get("path_type", "") or "")
+        market = str(event.get("market", "") or "")
+        ticker = _ticker_key(market, event.get("ticker", ""))
+        decision_id = str(event.get("decision_id", "") or "")
+        decision_match = (decision_id, ticker) in pathb_keys
+        pathb_related = path_type == "claude_price" or path_run_id in pathb_ids or decision_match
+        if not pathb_related:
+            continue
+        if not decision_id:
+            issues.append(
+                {
+                    "code": "pathb_lifecycle_missing_decision_id",
+                    "event_id": event.get("event_id", 0),
+                    "event_type": event_type,
+                    "path_run_id": path_run_id,
+                    "ticker": ticker,
+                }
+            )
+        if not path_run_id:
+            issues.append(
+                {
+                    "code": "pathb_lifecycle_missing_path_run_id",
+                    "event_id": event.get("event_id", 0),
+                    "event_type": event_type,
+                    "decision_id": decision_id,
+                    "ticker": ticker,
+                }
+            )
+        elif path_run_id not in pathb_ids:
+            issues.append(
+                {
+                    "code": "lifecycle_path_run_missing",
+                    "event_id": event.get("event_id", 0),
+                    "event_type": event_type,
+                    "path_run_id": path_run_id,
+                    "ticker": ticker,
+                }
+            )
+        elif path_type != "claude_price":
+            issues.append(
+                {
+                    "code": "pathb_lifecycle_missing_path_type",
+                    "event_id": event.get("event_id", 0),
+                    "event_type": event_type,
+                    "path_run_id": path_run_id,
+                    "ticker": ticker,
+                }
+            )
+        if event_type in execution_required_types and not str(event.get("execution_id", "") or ""):
+            issues.append(
+                {
+                    "code": "pathb_lifecycle_missing_execution_id",
+                    "event_id": event.get("event_id", 0),
+                    "event_type": event_type,
+                    "path_run_id": path_run_id,
+                    "ticker": ticker,
+                }
+            )
+    return {
+        "ok": len(issues) == 0,
+        "issue_count": len(issues),
+        "checked_runs": len(runs),
+        "checked_events": len(events),
+        "issues": issues[:20],
+    }
 
 
 def _broker_evidence_for_path_run(run: dict[str, Any], broker_truth: dict[str, Any] | None) -> dict[str, Any]:

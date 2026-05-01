@@ -274,10 +274,12 @@ JSON으로만 응답:
                 f"{result.get('reason', '')[:60]}"
             )
             key = f"{(elapsed_min // 30) * 30}min_tune"
+            adjusted = result.get("action") != "MAINTAIN"
+            # Legacy parameter name: BrainDB records this as adjustment frequency, not hit accuracy.
             BrainDB.update_tuning_pattern(
                 market,
                 key,
-                correct=(result.get("action") != "MAINTAIN"),
+                correct=adjusted,
                 new_insight=result.get("reason", ""),
             )
             return result

@@ -96,12 +96,150 @@ def _is_empty_correction_guide(guide: dict) -> bool:
     return not str(guide.get("today_notes", "") or "").strip()
 
 
+_PLACEHOLDER_TEXT_MARKERS = (
+    "오류로 자동 판정",
+    "응답 실패",
+    "자동 판정",
+    "자동 생성 실패",
+)
+_MOJIBAKE_TEXT_MARKERS = (
+    "\ufffd",
+    "?섏",
+    "?ㅽ",
+    "?좏",
+    "?먯",
+    "?꾩",
+    "?댁",
+    "泥",
+    "紐",
+    "筌",
+    "揶",
+    "醫",
+    "諛",
+    "袁",
+    "癰",
+    "疫",
+    "野",
+    "瑗",
+    "濡",
+    "遺",
+    "鍮",
+)
+_EMPTY_TEXT_VALUES = {"", "-", "none", "n/a", "null", "없음", "해당 없음"}
+
+
+def _has_mojibake_text(value) -> bool:
+    text = str(value or "")
+    return any(marker in text for marker in _MOJIBAKE_TEXT_MARKERS)
+
+
+def _is_placeholder_text(value, *, empty_is_placeholder: bool = True) -> bool:
+    text = str(value or "").strip()
+    if empty_is_placeholder and text.lower() in _EMPTY_TEXT_VALUES:
+        return True
+    if any(marker in text for marker in _PLACEHOLDER_TEXT_MARKERS):
+        return True
+    return _has_mojibake_text(text)
+
+
+def _is_prompt_safe_text(value, *, allow_empty: bool = False) -> bool:
+    if value is None:
+        return allow_empty
+    text = str(value).strip()
+    if allow_empty and not text:
+        return True
+    return not _is_placeholder_text(text)
+
+
+def _clean_prompt_text_list(values: list, *, max_items: Optional[int] = None) -> list[str]:
+    cleaned: list[str] = []
+    seen = set()
+    for value in values or []:
+        text = str(value or "").strip()
+        if not text or _is_placeholder_text(text):
+            continue
+        if text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    if max_items is not None:
+        return cleaned[-max_items:]
+    return cleaned
+
+
+def _is_valid_issue_pattern(pattern: dict) -> bool:
+    if not isinstance(pattern, dict):
+        return False
+    description = pattern.get("description", "")
+    insight = pattern.get("insight", "")
+    if not _is_prompt_safe_text(description):
+        return False
+    return _is_prompt_safe_text(insight, allow_empty=True)
+
+
+def _format_issue_pattern_summary(patterns: list) -> str:
+    lines: list[str] = []
+    for pattern in patterns or []:
+        if not _is_valid_issue_pattern(pattern):
+            continue
+        insight = str(pattern.get("insight", "") or "").strip() or "none"
+        lines.append(
+            "\n".join([
+                f"  [{pattern.get('id', '-')}] {pattern.get('type', 'unknown')} ({pattern.get('count', 0)}건)",
+                f"    설명: {str(pattern.get('description', '')).strip()}",
+                (
+                    f"    Bull 적중률 {pattern.get('bull_accuracy', 0)*100:.0f}%  "
+                    f"평균수익 {pattern.get('avg_pnl_when_followed', 0):+.2f}%"
+                ),
+                f"    인사이트: {insight}",
+            ])
+        )
+    return "\n".join(lines)
+
+
+def _format_tuning_pattern_summary(tuning: dict, today_dt: date) -> str:
+    lines: list[str] = []
+    for key, value in (tuning or {}).items():
+        count = int(value.get("count", 0) or 0)
+        if count == 0:
+            continue
+        adjusted = int(value.get("adjusted", value.get("correct", 0)) or 0)
+        rate = float(value.get("adjusted_rate", value.get("rate", 0.0)) or 0.0)
+        insight = str(value.get("insight", "") or "").strip()
+        if _is_placeholder_text(insight):
+            insight = ""
+        last_seen_str = value.get("last_seen", "")
+        if last_seen_str:
+            try:
+                days_ago = (today_dt - datetime.strptime(last_seen_str, "%Y-%m-%d").date()).days
+                recency_tag = "" if days_ago <= 7 else f" [{days_ago}일 전]"
+            except Exception:
+                recency_tag = ""
+        else:
+            recency_tag = " [최근일 미확인]"
+        insight_suffix = f" | {insight}" if insight else ""
+        lines.append(
+            f"  {key}{recency_tag}: {count}건 중 {adjusted}건 조정 "
+            f"({rate*100:.0f}%){insight_suffix}"
+        )
+    return "\n".join(lines)
+
+
 def _normalize_brain(brain: dict) -> dict:
     brain = _ensure_extensions(brain)
     meta = brain.setdefault("meta", {})
     correction_guide = brain.setdefault("correction_guide", {})
     for market in ("KR", "US"):
         market_payload = brain["markets"][market]
+        market_payload["execution_lessons"] = _clean_prompt_text_list(
+            market_payload.get("execution_lessons", []) or [],
+            max_items=12,
+        )
+        beliefs = market_payload.setdefault("current_beliefs", {})
+        beliefs["learned_lessons"] = _clean_prompt_text_list(
+            beliefs.get("learned_lessons", []) or [],
+            max_items=10,
+        )
         recent_days = _normalize_recent_days(market_payload.get("recent_days", []) or [])
         market_payload["recent_days"] = recent_days
         market_payload["debate_history"] = _normalize_debate_history(
@@ -295,7 +433,7 @@ def update_execution_pattern(market: str, event: dict):
     item.setdefault("examples", []).append(example)
     item["examples"] = item["examples"][-5:]
 
-    lessons = m.setdefault("execution_lessons", [])
+    lessons = _clean_prompt_text_list(m.setdefault("execution_lessons", []))
     if action == "buy_failed" and reason not in ("pending_order", "already_holding"):
         lessons.append(f"{strategy} 매수 실패 주요 사유: {reason}")
     elif action == "sell_failed":
@@ -304,13 +442,13 @@ def update_execution_pattern(market: str, event: dict):
         lessons.append(f"손실 매도 주요 사유: {reason}")
     elif action == "sell_filled" and pnl_pct > 0:
         lessons.append(f"수익 청산 유효 패턴: {reason}")
-    m["execution_lessons"] = lessons[-12:]
+    m["execution_lessons"] = _clean_prompt_text_list(lessons, max_items=12)
     save(brain)
 
 
 def _build_execution_summary(market_data: dict) -> tuple[str, str]:
     patterns = market_data.get("execution_patterns", {}) or {}
-    lessons = market_data.get("execution_lessons", []) or []
+    lessons = _clean_prompt_text_list(market_data.get("execution_lessons", []) or [])
 
     if patterns:
         top_items = sorted(
@@ -413,6 +551,9 @@ def update_issue_pattern(market: str, pattern_update: dict):
             (p for p in patterns if isinstance(p, dict) and p.get("id") == matched_id),
             None,
         )
+    incoming_description = pattern_update.get("description", "")
+    if not existing and not _is_prompt_safe_text(incoming_description):
+        return
 
     if existing:
         # 기존 패턴 업데이트
@@ -431,7 +572,7 @@ def update_issue_pattern(market: str, pattern_update: dict):
         existing["avg_pnl_when_followed"] = round(
             (prev * (cnt - 1) + pattern_update.get("pnl_pct", 0)) / cnt, 4
         )
-        if pattern_update.get("insight_update"):
+        if pattern_update.get("insight_update") and _is_prompt_safe_text(pattern_update.get("insight_update")):
             existing["insight"] = pattern_update["insight_update"]
         if pattern_update.get("example"):
             existing.setdefault("examples", []).append(
@@ -442,10 +583,16 @@ def update_issue_pattern(market: str, pattern_update: dict):
     else:
         # 신규 패턴 추가
         new_id = _next_issue_pattern_id(patterns)
+        pattern_type = pattern_update.get("type", "unknown")
+        if _is_placeholder_text(pattern_type):
+            pattern_type = "unknown"
+        insight = pattern_update.get("insight", "")
+        if not _is_prompt_safe_text(insight, allow_empty=True):
+            insight = ""
         new_pattern = {
             "id":          new_id,
-            "type":        pattern_update.get("type", "unknown"),
-            "description": pattern_update.get("description", ""),
+            "type":        pattern_type,
+            "description": str(incoming_description).strip(),
             "count":       1,
             "bull_hit":    1 if pattern_update.get("bull_hit") else 0,
             "bear_hit":    1 if not pattern_update.get("bull_hit") else 0,
@@ -454,7 +601,7 @@ def update_issue_pattern(market: str, pattern_update: dict):
             "best_strategy": pattern_update.get("best_strategy", "unknown"),
             "best_mode":     pattern_update.get("best_mode", "unknown"),
             "avg_pnl_when_followed": pattern_update.get("pnl_pct", 0.0),
-            "insight":  pattern_update.get("insight", ""),
+            "insight":  insight,
             "examples": [pattern_update["example"]]
                          if pattern_update.get("example") else []
         }
@@ -473,19 +620,32 @@ def update_tuning_pattern(market: str, pattern_key: str,
     today_str = datetime.now().date().isoformat()
 
     if pattern_key not in tp:
-        tp[pattern_key] = {"count": 0, "correct": 0, "rate": 0.0, "insight": "", "last_seen": today_str}
+        tp[pattern_key] = {
+            "count": 0,
+            "correct": 0,
+            "rate": 0.0,
+            "adjusted": 0,
+            "adjusted_rate": 0.0,
+            "metric_semantics": "adjusted_not_accuracy",
+            "insight": "",
+            "last_seen": today_str,
+        }
 
-    tp[pattern_key]["count"] += 1
+    item = tp[pattern_key]
+    item["adjusted"] = int(item.get("adjusted", item.get("correct", 0)) or 0)
+    item["adjusted_rate"] = float(item.get("adjusted_rate", item.get("rate", 0.0)) or 0.0)
+    item["metric_semantics"] = "adjusted_not_accuracy"
+    item["count"] = int(item.get("count", 0) or 0) + 1
     if correct:
-        tp[pattern_key]["correct"] += 1
-    tp[pattern_key]["rate"] = round(
-        tp[pattern_key]["correct"] / tp[pattern_key]["count"], 3
-    )
-    tp[pattern_key]["last_seen"] = today_str
-    if new_insight:
-        tp[pattern_key]["insight"] = new_insight
+        item["adjusted"] += 1
+    item["adjusted_rate"] = round(item["adjusted"] / item["count"], 3)
+    item["correct"] = item["adjusted"]
+    item["rate"] = item["adjusted_rate"]
+    item["last_seen"] = today_str
+    if new_insight and _is_prompt_safe_text(new_insight):
+        item["insight"] = new_insight
     if new_threshold is not None:
-        tp[pattern_key]["current_threshold"] = new_threshold
+        item["current_threshold"] = new_threshold
 
     save(brain)
 
@@ -550,10 +710,14 @@ def update_beliefs(market: str, beliefs_update: dict):
             beliefs[key] = beliefs_update[key]
 
     if "new_lesson" in beliefs_update:
-        beliefs.setdefault("learned_lessons", []).append(
-            beliefs_update["new_lesson"]
+        if _is_prompt_safe_text(beliefs_update["new_lesson"]):
+            beliefs.setdefault("learned_lessons", []).append(
+                str(beliefs_update["new_lesson"]).strip()
+            )
+        beliefs["learned_lessons"] = _clean_prompt_text_list(
+            beliefs.get("learned_lessons", []),
+            max_items=10,
         )
-        beliefs["learned_lessons"] = beliefs["learned_lessons"][-10:]
 
     if "add_avoid" in beliefs_update:
         beliefs.setdefault("avoid", [])
@@ -659,93 +823,67 @@ def generate_analyst_summary(market: str, analyst_type: str) -> str:
     return "\n".join(parts)
 
 def generate_prompt_summary(market: str) -> str:
-    """
-    매일 장 시작 전 Claude에 주입할 브레인 요약 텍스트를 만든다.
-    """
+    """Build the operational brain summary injected into Claude prompts."""
     brain = load()
     m = brain["markets"][market]
 
-    if m["trained_days"] == 0:
+    if m.get("trained_days", 0) == 0:
         return f"[{market}] 아직 학습 데이터가 없습니다. 기본 규칙 중심으로 판단하세요."
 
     perf = m["analyst_performance"]
     modes = m["mode_performance"]
     beliefs = m["current_beliefs"]
-    patterns = m["issue_patterns"]
-    recent = m["recent_days"][-5:]
-    tuning = m["tuning_patterns"]
+    patterns = m.get("issue_patterns", [])
+    recent = m.get("recent_days", [])[-5:]
+    tuning = m.get("tuning_patterns", {})
     execution_txt, execution_lessons_txt = _build_execution_summary(m)
     selection_feedback_txt = get_recent_selection_feedback_text(market, days=20, max_chars=900)
 
-    recent_txt = ""
-    for r in reversed(recent):
-        win_mark = "WIN" if r.get("win") else "LOSS"
-        recent_txt += (
-            f"  {r['date']} {r['mode']:<18} "
-            f"실현 {r.get('pnl_pct', 0):+.2f}%  {win_mark}\n"
+    recent_lines = []
+    for row in reversed(recent):
+        win_mark = "WIN" if row.get("win") else "LOSS"
+        recent_lines.append(
+            f"  {row.get('date', '-')} {row.get('mode', 'unknown'):<18} "
+            f"실현 {row.get('pnl_pct', 0):+.2f}%  {win_mark}"
         )
+    recent_txt = "\n".join(recent_lines)
 
     top_patterns = sorted(
-        [p for p in patterns if p.get("description", "").strip()],
-        key=lambda x: x["count"], reverse=True
+        [pattern for pattern in patterns if _is_valid_issue_pattern(pattern)],
+        key=lambda item: item.get("count", 0),
+        reverse=True,
     )[:3]
-    pattern_txt = ""
-    for p in top_patterns:
-        pattern_txt += (
-            f"  [{p['id']}] {p['type']} ({p['count']}건)\n"
-            f"    Bull 적중률 {p['bull_accuracy']*100:.0f}%  "
-            f"평균수익 {p.get('avg_pnl_when_followed', 0):+.2f}%\n"
-            f"    인사이트: {p['insight']}\n"
-        )
-
-    tuning_txt = ""
-    today_dt = datetime.now().date()
-    for k, v in tuning.items():
-        if v["count"] == 0:
-            continue
-        rate = v["rate"]
-        cnt = v["count"]
-        correct = v["correct"]
-        insight = v.get("insight", "")
-
-        last_seen_str = v.get("last_seen", "")
-        if last_seen_str:
-            try:
-                days_ago = (today_dt - datetime.strptime(last_seen_str, "%Y-%m-%d").date()).days
-                recency_tag = "" if days_ago <= 7 else f" [{days_ago}일 전]"
-            except Exception:
-                recency_tag = ""
-        else:
-            recency_tag = " [최근일 미확인]"
-
-        tuning_txt += (
-            f"  {k}{recency_tag}: {cnt}건 중 {correct}건 적중 "
-            f"({rate*100:.0f}%) | {insight}\n"
-        )
+    pattern_txt = _format_issue_pattern_summary(top_patterns)
+    tuning_txt = _format_tuning_pattern_summary(tuning, datetime.now().date())
 
     best_mode = max(
         modes.items(),
-        key=lambda x: x[1]["avg_pnl"] if x[1]["count"] > 0 else -99,
+        key=lambda item: item[1].get("avg_pnl", -99) if item[1].get("count", 0) > 0 else -99,
+        default=("unknown", {"avg_pnl": 0.0}),
     )
 
     def _consec_badge(atype: str) -> str:
-        n = _count_consecutive_result(m.get("recent_days", []), atype, "MISS")
-        return f" {n}x_miss" if n >= 3 else ""
+        misses = _count_consecutive_result(m.get("recent_days", []), atype, "MISS")
+        return f" {misses}x_miss" if misses >= 3 else ""
 
     mode_perf_lines = []
-    for _mode, _v in modes.items():
-        if _v["count"] > 0:
+    for mode_name, mode_data in modes.items():
+        if mode_data.get("count", 0) > 0:
             mode_perf_lines.append(
-                f"  {_mode:<14}{_v['count']:>3}건  평균 {_v['avg_pnl']:+.2f}%  승률 {_v['win_rate']*100:.0f}%"
+                f"  {mode_name:<14}{mode_data.get('count', 0):>3}건  "
+                f"평균 {mode_data.get('avg_pnl', 0):+.2f}%  "
+                f"승률 {mode_data.get('win_rate', 0)*100:.0f}%"
             )
         else:
-            mode_perf_lines.append(f"  {_mode:<14}  - (데이터 없음)")
+            mode_perf_lines.append(f"  {mode_name:<14}  - (데이터 없음)")
     mode_perf_txt = "\n".join(mode_perf_lines)
-    learned_lessons = "\n".join(f"  - {l}" for l in beliefs.get("learned_lessons", [])) or "  none"
+
+    safe_lessons = _clean_prompt_text_list(beliefs.get("learned_lessons", []) or [])
+    learned_lessons = "\n".join(f"  - {lesson}" for lesson in safe_lessons) or "  none"
 
     summary = f"""
 ============================================================
-[{market} 시장 판단 메모리 | 학습 {m['trained_days']}일]
+[{market} 시장 판단 메모리 | 학습 {m.get('trained_days', 0)}일]
 ============================================================
 
 분석가 적중률 요약
@@ -753,15 +891,18 @@ def generate_prompt_summary(market: str) -> str:
   Bear:    {perf['bear']['rate']*100:.1f}%  (최근7일 {perf['bear']['recent_7d']['rate']*100:.1f}%  {perf['bear']['trend']}){_consec_badge('bear')}
   Neutral: {perf['neutral']['rate']*100:.1f}%  (최근7일 {perf['neutral']['recent_7d']['rate']*100:.1f}%  {perf['neutral']['trend']}){_consec_badge('neutral')}
 
-모드별 평균 수익 (최상위: {best_mode[0]} {best_mode[1]['avg_pnl']:+.2f}%)
+모드별 평균 수익 (최상위 {best_mode[0]} {best_mode[1].get('avg_pnl', 0):+.2f}%)
 {mode_perf_txt}
 
 Recent issue patterns
 {pattern_txt if pattern_txt else '  none'}
+
 Tuning patterns
 {tuning_txt if tuning_txt else '  none'}
+
 Recent 5 sessions
 {recent_txt if recent_txt else '  none'}
+
 Current beliefs
   market_regime: {beliefs.get('market_regime', 'unknown')}
   bull_reliability: {beliefs.get('bull_reliability', 'unknown')}
@@ -777,7 +918,7 @@ Learned lessons
 """
     summary += f"""
 
-📌 Recent Selection Feedback
+Recent Selection Feedback
 {selection_feedback_txt if selection_feedback_txt else '  아직 없음'}
 """
     summary += f"""
@@ -1025,5 +1166,3 @@ if __name__ == "__main__":
     print(generate_prompt_summary("KR"))
     print("\n[US 요약]")
     print(generate_prompt_summary("US"))
-
-

@@ -696,7 +696,8 @@ def daily_summary(
 
 
 def decision_event_alert(event: dict) -> str:
-    event_name = _ko_event(str(event.get("event", "")))
+    raw_event = str(event.get("event") or event.get("action") or "")
+    event_name = _ko_event(raw_event)
     market = str(event.get("market", "KR"))
     ticker = _display_ticker(str(event.get("ticker", "-")), market, str(event.get("name", "") or ""))
     strategy = _ko_strategy(str(event.get("strategy", "") or ""))
@@ -704,6 +705,17 @@ def decision_event_alert(event: dict) -> str:
     detail = str(event.get("detail", "") or "")
     reason = _ko_reason(str(event.get("reason", "") or ""))
     price = float(event.get("price", 0) or 0)
+    if price <= 0:
+        price_native = float(event.get("price_native", 0) or 0)
+        price_krw = float(event.get("price_krw", 0) or 0)
+        if market == "US":
+            if price_native > 0:
+                price = price_native
+            elif price_krw > 0:
+                rate = _env_usd_krw_rate()
+                price = price_krw / rate if rate > 0 else 0.0
+        else:
+            price = price_krw if price_krw > 0 else price_native
     pnl_pct = float(event.get("pnl_pct", 0) or 0)
     pnl_krw = int(float(event.get("pnl_krw", 0) or 0))
     order_no = str(event.get("order_no", "") or "")
@@ -816,7 +828,7 @@ def trade_alert(
     side: str,
     ticker: str,
     qty: int,
-    price: int,
+    price: float,
     strategy: str,
     tp: int,
     sl: int,
