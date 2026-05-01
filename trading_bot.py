@@ -4338,6 +4338,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         summary: str = "",
         qty: int = 0,
         order_cost_krw: float = 0.0,
+        detail: str = "",
     ) -> None:
         key = (str(market or ""), str(ticker or ""), str(event or ""))
         signature = (str(strategy or ""), round(float(price or 0), 4), str(reason or ""), str(mode or ""), str(summary or ""))
