@@ -1656,28 +1656,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "trade_ready_conversion_review",
             "selection",
             "prompt_hint",
-            "trade_ready ?鍮??ㅼ젣 ?좏샇 ?꾪솚?⑥씠 ??뒿?덈떎. trade_ready ?밴꺽 湲곗???蹂댁닔?곸쑝濡??ш??좏븯?몄슂.",
+            "trade_ready 종목의 실제 신호 전환율이 낮습니다. trade_ready 기준과 veto 사유를 재검토하세요.",
         )
         _append(
             "watch_only_missed_runup_ratio",
             "watch_only_missed_runup_review",
             "selection",
             "prompt_hint",
-            "watch_only?먯꽌 ?볦튇 ?곸듅 鍮꾩쑉???믪뒿?덈떎. watch_only ?좎? 湲곗?怨?veto ?덉쭏???ш??좏븯?몄슂.",
+            "watch_only에서 놓친 상승 비율이 높습니다. 명확한 veto 없이 watch_only로만 두지 말고 trade_ready 전환 기준을 재검토하세요.",
         )
         _append(
             "continuation_average_pnl",
             "continuation_shadow_review",
             "strategy",
             "strategy_review",
-            "continuation ?깃낵媛 ?쏀빀?덈떎. live ?ъ쭊?낅낫?ㅻ뒗 shadow 愿李곗쓣 ?곗꽑?섏꽭??",
+            "continuation 성과가 약합니다. live 진입 확대보다 shadow 관찰을 우선하고 근거를 재검토하세요.",
         )
         _append(
             "unanimous_mismatch_count",
             "unanimous_override_review",
             "consensus",
             "logic_review",
-            "?꾩썝?⑹쓽? 理쒖쥌?⑹쓽 遺덉씪移섍? 媛먯??⑸땲?? unanimous override 寃쎈줈瑜??먭??섏꽭??",
+            "분석가 만장일치와 최종 결과 불일치가 감지됐습니다. unanimous override 경로를 재검토하세요.",
         )
         affordability_events = [
             event
@@ -1690,7 +1690,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "market": market,
                 "scope": "execution",
                 "action": "prompt_hint",
-                "summary": "?ㅽ뻾 媛??湲덉븸/?섎웾 遺議??щ?媛 諛섎났?먯뒿?덈떎. affordability fail ?댁쑀瑜?selection/entry 由щ럭??諛섏쁺?섏꽭??",
+                "summary": "주문 가능 금액/수량 부족이 반복됐습니다. affordability fail 사유를 selection/entry 리뷰에 반영하세요.",
                 "metric_key": "affordability_fail_count",
                 "metric_value": len(affordability_events),
                 "sample_count": len(affordability_events),
@@ -6811,12 +6811,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 )
             except Exception as exc:
                 log.warning(f"micro_probe outcome 湲곕줉 ?ㅽ뙣: {exc}")
-        raw_exit = self.price_cache_raw.get(ex["ticker"], ex["exit_price"])
+        raw_exit_cached = self.price_cache_raw.get(ex["ticker"], 0)
+        raw_exit = raw_exit_cached or ex["exit_price"]
+        event_price_native = float(raw_exit or 0)
+        if market == "US" and not raw_exit_cached and event_price_native > 0 and self.usd_krw_rate > 0:
+            event_price_native = event_price_native / float(self.usd_krw_rate)
         self._record_decision_event(
             market, "sell_filled", ex["ticker"],
             strategy=ex.get("strategy", ""),
             qty=ex.get("qty", 0),
-            price_native=raw_exit,
+            price_native=event_price_native,
             price_krw=ex.get("exit_price", 0),
             reason=reason,
             detail=f"entry={ex.get('entry', 0):,.0f} hold_days={ex.get('held_days', 0)}",
@@ -6826,7 +6830,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             source_strategy=ex.get("source_strategy", ""),
             micro_probe=bool(ex.get("micro_probe")),
             micro_probe_reason=ex.get("micro_probe_reason", ""),
-            actual_fill_price=raw_exit,
+            actual_fill_price=event_price_native,
             **exit_meta,
         )
         self._v2_record_lifecycle_event(
@@ -6855,14 +6859,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     market=market,
                     execution_id=str(result.get("order_no", "") or ex.get("v2_execution_id", "") or ""),
                     close_reason=_v2_close_reason(reason),
-                    price=float(raw_exit or 0),
+                    price=float(event_price_native or 0),
                 )
             except Exception as _pathb_close_e:
                 log.error(f"[PathB external close sync] {market} {ex.get('ticker')}: {_pathb_close_e}", exc_info=True)
         ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
         _exit_buy_path = "path_b" if (ex.get("pathb_path_run_id") or ex.get("path_type") == "claude_price") else "path_a"
+        alert_exit_price = event_price_native
         pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), reason, market=market, name=ex_name, usd_krw=self.usd_krw_rate, buy_path=_exit_buy_path)
-        trade_alert("sell", ex["ticker"], ex["qty"], int(raw_exit), ex["strategy"], 0, 0, reason=reason, market=market, name=ex_name, usd_krw=self.usd_krw_rate, buy_path=_exit_buy_path)
+        trade_alert("sell", ex["ticker"], ex["qty"], alert_exit_price, ex["strategy"], 0, 0, reason=reason, market=market, name=ex_name, usd_krw=self.usd_krw_rate, buy_path=_exit_buy_path)
         try:
             _perf_strategy = str(ex.get("strategy", "unknown") or "unknown")
             if _perf_strategy not in ("broker_sync", "broker_balance", ""):
@@ -11053,6 +11058,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 log.warning(f"[REVERSE] ?쒕꼫 ?먮떒: {result.get('reason','')} ??{len(reverse_targets)}媛??ъ???泥?궛")
                 for pos in reverse_targets:
                     cp = self.price_cache.get(pos["ticker"], pos["current_price"])
+                    alert_cp = float(cp or 0)
+                    if market == "US":
+                        raw_cp = float(self.price_cache_raw.get(pos["ticker"], 0) or 0)
+                        if raw_cp > 0:
+                            alert_cp = raw_cp
+                        elif alert_cp > 0 and self.usd_krw_rate > 0:
+                            alert_cp = alert_cp / float(self.usd_krw_rate)
                     if not self.is_paper:
                         place_order(pos["ticker"], pos["qty"], 0, "sell",
                                     self.token, market=self._ticker_market(pos["ticker"]))
@@ -11060,7 +11072,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if ex:
                         ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
                         pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "tuner_reverse", market=market, name=ex_name, usd_krw=self.usd_krw_rate)
-                        trade_alert("sell", ex["ticker"], ex["qty"], int(cp),
+                        trade_alert("sell", ex["ticker"], ex["qty"], alert_cp,
                                     ex["strategy"], 0, 0, reason="tuner_reverse", market=market, name=ex_name, usd_krw=self.usd_krw_rate)
             self._persist_live_judgment(market)
         warning = result.get("warning")
@@ -11929,10 +11941,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         risk_label = "VKOSPI" if market == "KR" else "VIX"
         pnl_pct   = self._daily_pnl_pct(market)
         pnl_krw   = int(self.risk.daily_pnl)
-        dashboard_push(market, mode, self.risk.positions,
-                       self.risk.cash, pnl_pct, pnl_krw, judgments, tickers,
+        market_positions = [
+            p for p in list(self.risk.positions)
+            if self._ticker_market(p.get("ticker", "")) == market
+        ]
+        equity_ctx = self._market_equity_reference_context(market)
+        broker_state = dict(self._broker_state.get(market, {}) or {})
+        broker_snapshot = dict(
+            broker_state.get("last_snapshot")
+            or broker_state.get("last_trusted_snapshot")
+            or {}
+        )
+        stock_value_krw = float(
+            broker_snapshot.get("eval_krw")
+            if broker_snapshot.get("eval_krw") is not None
+            else equity_ctx.get("position_krw", 0)
+            or 0
+        )
+        total_equity_krw = float(equity_ctx.get("total_krw", 0) or 0)
+        market_cash_krw = float(equity_ctx.get("cash_krw", 0) or 0)
+        dashboard_push(market, mode, market_positions,
+                       market_cash_krw, pnl_pct, pnl_krw, judgments, tickers,
                        max_order_krw=int(self.risk.max_order_krw),
                        total_fee=int(self.risk.total_fee),
+                       stock_value_krw=stock_value_krw,
+                       total_equity_krw=total_equity_krw,
                        risk_value=risk_value,
                        risk_label=risk_label,
                        mode_order_limit_krw=self.risk.calc_order_budget(self.today_judgment.get("consensus", {}).get("size", 50)))

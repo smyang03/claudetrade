@@ -57,7 +57,7 @@ PROFIT_FLOOR_EXIT_PCT = float(os.getenv("PROFIT_FLOOR_EXIT_PCT", "0.5"))
 
 HARD_RULES = {
     "max_daily_loss_pct":   float(os.getenv("MAX_DAILY_LOSS_PCT",   "-3.0")),   # 일일 최대 손실 (%)
-    "max_single_loss_pct":  float(os.getenv("MAX_SINGLE_LOSS_PCT",  "-3.0")),   # 단일 종목 최대 손실 (%)
+    "max_single_loss_pct":  float(os.getenv("MAX_SINGLE_LOSS_PCT",  "-2.0")),   # 단일 종목 최대 손실 (%)
     "take_profit_pct":      float(os.getenv("TAKE_PROFIT_PCT",       "6.0")),   # 기본 TP (%)
     "max_positions":          int(os.getenv("MAX_POSITIONS",            "3")),   # 동시 보유 최대 종목 수
     "max_pyramid":            int(os.getenv("MAX_PYRAMID",              "2")),   # 동일 종목 최대 추가매수 횟수
