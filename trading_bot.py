@@ -4336,6 +4336,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         reason: str = "",
         mode: str = "",
         summary: str = "",
+        qty: int = 0,
         order_cost_krw: float = 0.0,
     ) -> None:
         key = (str(market or ""), str(ticker or ""), str(event or ""))
@@ -8873,37 +8874,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     # ?꾨왂 ?섎굹?쇰룄 vol=?쀬씠硫?volume_low, ?꾨왂 vol=0/1?대㈃ data_missing
                     _vol_fail = False   # ?대뒓 ?꾨왂?대뱺 vol 誘몃떖
                     _vol_found = False  # ?대뒓 ?꾨왂?대뱺 vol ?⑦꽩 諛쒓껄
-                    # ?쒖? ?뺤떇: vol=ratio(紐⑺몴>X)???? (媛?닃由?OR?뚮┝/蹂??
-                    for _vpat in [
-                        r"媛?닃由?^|]*?vol=([0-9.]+)\(紐⑺몴>[0-9.]+\)(????",
-                        r"OR?뚮┝[^|]*?vol=([0-9.]+)\(紐⑺몴>[0-9.]+\)(????",
-                        r"蹂??^|]*?vol=([0-9.]+)\(紐⑺몴>[0-9.]+\)(????",
-                    ]:
-                        _vm = _re.search(_vpat, detail)
-                        if not _vm:
-                            continue
+                    # vol ratio classification - ASCII-only patterns (mojibake regex removed).
+                    # Detail format: "gap_pullback: ... vol=0.85 ..." or "mean_reversion: ... vol=1.2 ..."
+                    _vm = _re.search(r"vol=([0-9.]+)", detail)
+                    if _vm:
                         _vv = float(_vm.group(1))
-                        _vok = _vm.group(2) == "OK"
                         _vol_found = True
                         if not volume_missing_detected and (_vv == 0.0 or _vv == 1.0):
                             vol_state = "missing"
                             if "data_missing" not in reasons:
                                 reasons.append("data_missing")
-                            break  # data_missing???뺤젙?섎㈃ ??蹂??꾩슂 ?놁쓬
-                        if not _vok:
-                            _vol_fail = True
-                    # ?곗냽吏꾩엯 ?꾩슜 ?뺤떇: vol=????ratio)
-                    _cvm = _re.search(r"?곗냽吏꾩엯[^|]*?vol=(????\(([0-9.]+)\)", detail)
-                    if _cvm:
-                        _cv_ok    = _cvm.group(1) == "OK"
-                        _cv_ratio = float(_cvm.group(2))
-                        _vol_found = True
-                        if not volume_missing_detected and (_cv_ratio == 0.0 or _cv_ratio == 1.0):
-                            vol_state = "missing"
-                            if "data_missing" not in reasons:
-                                reasons.append("data_missing")
-                        elif not _cv_ok:
-                            _vol_fail = True
                     # Final volume classification unless missing was already determined.
                     if not volume_missing_detected and vol_state != "missing":
                         if _vol_fail:
