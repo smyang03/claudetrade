@@ -628,63 +628,30 @@ def _build_selection_retry_prompt(
     watch_max = min(selection_limits(market)["watch_max"], len(retry_candidates))
     trade_max = min(selection_limits(market)["trade_max"], len(retry_candidates))
     watch_floor = min(watch_max, 10 if len(retry_candidates) >= 15 else max(1, len(retry_candidates) // 2))
-    return f"""이전 종목선정 응답이 잘려서 다시 묻습니다. 이번에는 아주 짧게 답하세요.
+    return f"""이전 종목선정 응답이 잘려서 다시 묻습니다. 이번에는 watchlist/trade_ready/reasons만 반환하세요.
 시장: {market}
 모드: {consensus_mode}
 후보:
 {chr(10).join(lines)}
 
 {COMMON_DECISION_CONTRACT}
-{SELECTION_EXECUTION_PHASE_CONTRACT}
-{SIZING_DECISION_CONTRACT}
-{PRICE_PLAN_CONTRACT}
-{HARD_SOFT_RULE_CONTRACT}
 
 Required output rules:
 - keep a broad watchlist: if candidates >= 15 and mode is not DEFENSIVE/HALT, return at least {watch_floor} watchlist names.
-- required fields: watchlist, trade_ready, reasons, price_targets
-- price_targets is required for every trade_ready ticker. Do not add price_targets for watch_only tickers.
-- price_targets prices must be native market prices: KR=KRW, US=USD.
-- price_targets fields: reference_price, buy_zone_low, buy_zone_high, sell_target, stop_loss, reward_risk, risk_pct, reward_pct, hold_days, confidence, cancel_if_open_above, target_basis, invalid_if, entry_rationale, exit_rationale, rationale.
-- price target rationale fields must be short: entry_rationale, exit_rationale, rationale <= 40 chars each.
+- required fields: watchlist, trade_ready, reasons
+- DO NOT include price_targets in this response. Price plans will be requested separately.
+- reasons는 종목당 15자 이내로 짧게.
 
 규칙:
 - 후보 중에서만 선택
 - watchlist 최대 {watch_max}개
 - trade_ready 최대 {trade_max}개
 - JSON만 반환
-- 필수 필드만 반환: watchlist, trade_ready, reasons, price_targets
-- reasons는 짧게
-- price_targets 안의 entry_rationale, exit_rationale, rationale도 각각 40자 이내로 짧게
 
 {{
   "watchlist":["code1","code2"],
   "trade_ready":["code1"],
-  "reasons":{{"code1":"짧은 이유"}},
-  "allocation_intent":{{"code1":"probe|small|normal|aggressive"}},
-  "max_order_cap_pct":{{"code1":35}},
-  "risk_budget_pct":{{"code1":0.35}},
-  "size_reason":{{"code1":"short sizing reason"}},
-  "price_targets":{{
-    "code1":{{
-      "reference_price":73200,
-      "buy_zone_low":73000,
-      "buy_zone_high":73500,
-      "sell_target":76000,
-      "stop_loss":71000,
-      "reward_risk":1.5,
-      "risk_pct":2.7,
-      "reward_pct":3.4,
-      "hold_days":1,
-      "confidence":0.65,
-      "cancel_if_open_above":74500,
-      "target_basis":"support pullback",
-      "invalid_if":"breaks support",
-      "entry_rationale":"support pullback",
-      "exit_rationale":"near resistance",
-      "rationale":"buy near support"
-    }}
-  }}
+  "reasons":{{"code1":"짧은 이유"}}
 }}"""
 
 
