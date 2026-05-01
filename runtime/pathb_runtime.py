@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -12,6 +13,7 @@ from config.v2 import DEFAULT_V2_CONFIG, V2Config
 from decision.claude_price_plan import PricePlan, parse_plan_from_claude
 from execution.claude_price_adapter import ClaudePriceAdapter, EntrySignal
 from execution.claude_price_sell_manager import ClaudePriceSellManager, ExitSignal
+from execution.path_arbiter import SameDayReentryGuard
 from execution.safety_gate import PathBSafetyGate, SafetyContext
 from kis_api import cancel_order, get_balance, get_price, place_order, precheck_order
 from lifecycle.event_store import EventStore
@@ -23,6 +25,13 @@ from telegram_reporter import buy_order_alert, send as tg_send
 
 KST = ZoneInfo("Asia/Seoul")
 log = get_trading_logger()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 @dataclass(frozen=True)
@@ -108,6 +117,7 @@ class PathBRuntime:
         self.adapter = ClaudePriceAdapter(self.store, self.config)
         self.sell_manager = ClaudePriceSellManager(self.adapter, self.config)
         self.safety_gate = PathBSafetyGate(self.config)
+        self.reentry_guard = SameDayReentryGuard(self.store, self.config)
         self.control_store = PathBControlStore(self.mode)
         self._last_entry_scan_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._last_exit_scan_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
@@ -124,6 +134,10 @@ class PathBRuntime:
         return {
             "enabled": self.is_enabled(),
             "configured_enabled": bool(self.config.pathb_enabled),
+            "market_live_enabled": {
+                "KR": self._market_live_enabled("KR"),
+                "US": self._market_live_enabled("US"),
+            },
             "mode": self.config.pathb_mode,
             "runtime_mode": self.mode,
             "operator_enabled": control.enabled,
@@ -135,6 +149,219 @@ class PathBRuntime:
             "updated_at": control.updated_at,
             "updated_by": control.updated_by,
             "reason": control.reason,
+            "consistency_health": {
+                market: self.consistency_health(market)
+                for market in ("KR", "US")
+            },
+        }
+
+    def consistency_health(self, market: str) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        session_date = self._session_date(market_key)
+        issues: list[dict[str, Any]] = []
+        try:
+            runs = self.store.path_runs_for_session(
+                market=market_key,
+                runtime_mode=self.mode,
+                session_date=session_date,
+                path_type="claude_price",
+            )
+        except Exception as exc:
+            return {
+                "market": market_key,
+                "session_date": session_date,
+                "ok": False,
+                "issue_count": 1,
+                "checked_runs": 0,
+                "checked_events": 0,
+                "issues": [{"code": "pathb_runs_unreadable", "error": str(exc)}],
+            }
+        try:
+            events = self.store.events_for_session(
+                market=market_key,
+                runtime_mode=self.mode,
+                session_date=session_date,
+            )
+        except Exception as exc:
+            events = []
+            issues.append({"code": "lifecycle_events_unreadable", "error": str(exc)})
+
+        runs_by_id = {str(run.get("path_run_id", "") or ""): run for run in runs}
+        pathb_ids = {path_run_id for path_run_id in runs_by_id if path_run_id}
+        pathb_keys = {
+            (
+                str(run.get("decision_id", "") or ""),
+                self._ticker_key(market_key, str(run.get("ticker", "") or "")),
+            )
+            for run in runs
+        }
+        closed_lifecycle: dict[str, dict[str, Any]] = {}
+        lifecycle_status_types = {
+            "CLAUDE_PRICE_PLAN_CREATED",
+            "CLAUDE_PRICE_WAITING",
+            "CLAUDE_PRICE_HIT",
+            "CLAUDE_PRICE_CANCELLED",
+            "CLAUDE_PRICE_EXPIRED",
+            "ORDER_SENT",
+            "ORDER_ACKED",
+            "PARTIAL_FILLED",
+            "FILLED",
+            "SELL_SENT",
+            "SELL_ACKED",
+            "SELL_PARTIAL_FILLED",
+            "CLOSED",
+            "ORDER_UNKNOWN",
+        }
+        execution_required_types = {
+            "ORDER_SENT",
+            "ORDER_ACKED",
+            "PARTIAL_FILLED",
+            "FILLED",
+            "SELL_SENT",
+            "SELL_ACKED",
+            "SELL_PARTIAL_FILLED",
+            "CLOSED",
+        }
+        for event in events:
+            event_type = str(event.get("event_type", "") or "")
+            if event_type not in lifecycle_status_types:
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            payload_path_run_id = str(payload.get("path_run_id", "") or "")
+            payload_path_type = str(payload.get("path_type", "") or "")
+            event_decision_id = str(event.get("decision_id", "") or "")
+            event_ticker = self._ticker_key(market_key, str(event.get("ticker", "") or ""))
+            decision_match = (event_decision_id, event_ticker) in pathb_keys
+            pathb_related = (
+                payload_path_type == "claude_price"
+                or payload_path_run_id in pathb_ids
+                or decision_match
+            )
+            if not pathb_related:
+                continue
+            if not event_decision_id:
+                issues.append(
+                    {
+                        "code": "pathb_lifecycle_missing_decision_id",
+                        "event_id": event.get("event_id", 0),
+                        "event_type": event_type,
+                        "path_run_id": payload_path_run_id,
+                        "ticker": event_ticker,
+                    }
+                )
+            if payload_path_run_id:
+                if event_type == "CLOSED":
+                    closed_lifecycle[payload_path_run_id] = event
+                if payload_path_run_id not in pathb_ids:
+                    issues.append(
+                        {
+                            "code": "lifecycle_path_run_missing",
+                            "event_id": event.get("event_id", 0),
+                            "event_type": event_type,
+                            "path_run_id": payload_path_run_id,
+                            "ticker": event_ticker,
+                        }
+                    )
+            else:
+                issues.append(
+                    {
+                        "code": "pathb_lifecycle_missing_path_run_id",
+                        "event_id": event.get("event_id", 0),
+                        "event_type": event_type,
+                        "decision_id": event_decision_id,
+                        "ticker": event_ticker,
+                    }
+                )
+            if payload_path_run_id in pathb_ids and payload_path_type != "claude_price":
+                issues.append(
+                    {
+                        "code": "pathb_lifecycle_missing_path_type",
+                        "event_id": event.get("event_id", 0),
+                        "event_type": event_type,
+                        "path_run_id": payload_path_run_id,
+                        "ticker": event_ticker,
+                    }
+                )
+            if event_type in execution_required_types and not str(event.get("execution_id", "") or ""):
+                issues.append(
+                    {
+                        "code": "pathb_lifecycle_missing_execution_id",
+                        "event_id": event.get("event_id", 0),
+                        "event_type": event_type,
+                        "path_run_id": payload_path_run_id,
+                        "ticker": event_ticker,
+                    }
+                )
+
+        market_data = self.broker_truth.market_snapshot(market_key)
+        broker_available = not (
+            bool(market_data.get("missing"))
+            or bool(market_data.get("stale"))
+            or str(market_data.get("error", "") or "")
+        )
+        open_statuses = {"PARTIAL_FILLED", "FILLED", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED"}
+        for run in runs:
+            path_run_id = str(run.get("path_run_id", "") or "")
+            status = str(run.get("status", "") or "")
+            plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+            ticker = self._ticker_key(market_key, str(run.get("ticker", "") or ""))
+            if status == "ORDER_UNKNOWN":
+                issues.append(
+                    {
+                        "code": "active_order_unknown",
+                        "path_run_id": path_run_id,
+                        "ticker": ticker,
+                        "resolution": str(plan.get("order_unknown_resolution", "") or ""),
+                        "broker_position_evidence": bool(plan.get("broker_position_evidence", False)),
+                        "broker_open_order_evidence": bool(plan.get("broker_open_order_evidence", False)),
+                        "broker_today_fill_evidence": bool(plan.get("broker_today_fill_evidence", False)),
+                    }
+                )
+            closed_event = closed_lifecycle.get(path_run_id)
+            if closed_event and status != "CLOSED":
+                issues.append(
+                    {
+                        "code": "raw_status_lags_closed_lifecycle",
+                        "path_run_id": path_run_id,
+                        "ticker": ticker,
+                        "stored_status": status,
+                        "closed_event_id": closed_event.get("event_id", 0),
+                    }
+                )
+            if status in open_statuses:
+                local_pos = self._find_position(market_key, ticker, path_run_id=path_run_id)
+                broker_positions = (
+                    self._broker_rows_for_ticker(market_data.get("positions", []), market_key, ticker)
+                    if broker_available
+                    else []
+                )
+                if not broker_available:
+                    issues.append(
+                        {
+                            "code": "broker_truth_unavailable_for_open_pathb",
+                            "path_run_id": path_run_id,
+                            "ticker": ticker,
+                            "broker_truth_stale": bool(market_data.get("stale")),
+                            "broker_truth_error": str(market_data.get("error", "") or ""),
+                        }
+                    )
+                elif local_pos is None and not broker_positions and not closed_event:
+                    issues.append(
+                        {
+                            "code": "open_pathb_missing_position_evidence",
+                            "path_run_id": path_run_id,
+                            "ticker": ticker,
+                            "stored_status": status,
+                        }
+                    )
+        return {
+            "market": market_key,
+            "session_date": session_date,
+            "ok": len(issues) == 0,
+            "issue_count": len(issues),
+            "checked_runs": len(runs),
+            "checked_events": len(events),
+            "issues": issues[:20],
         }
 
     def is_enabled(self) -> bool:
@@ -149,6 +376,18 @@ class PathBRuntime:
         if control.emergency_disabled:
             return False
         return bool(control.enabled)
+
+    def _market_live_enabled(self, market: str) -> bool:
+        if self.is_paper:
+            return True
+        market_key = str(market or "").upper()
+        if not market_key:
+            return True
+        primary = f"PATHB_{market_key}_LIVE_ENABLED"
+        legacy = f"{market_key}_CLAUDE_PRICE_LIVE_ENABLED"
+        if os.getenv(primary) is not None:
+            return _env_bool(primary, True)
+        return _env_bool(legacy, True)
 
     def _audit_entry_scan_blocked(self, market: str, entry_gate: dict[str, Any]) -> None:
         bot = getattr(self, "bot", None)
@@ -488,12 +727,42 @@ class PathBRuntime:
         if not self.is_enabled():
             return []
         market = str(market or "").upper()
+        if not self._market_live_enabled(market):
+            log.warning(f"[PathB paper-only] {market} live Claude Price registration skipped")
+            return []
         trade_ready = list(meta.get("trade_ready") or [])
         price_targets = meta.get("price_targets") or {}
         decision_ids = meta.get("v2_decision_ids") or {}
         session_date = self._session_date(market)
         registered: list[str] = []
         missing_price_targets: list[str] = []
+        entry_gate = self._new_buy_block_state(market, strategy="path_b_plan_registration")
+        if not bool(entry_gate.get("allowed", True)):
+            reason = str(entry_gate.get("reason") or "ORDER_UNKNOWN_UNRESOLVED")
+            for ticker in trade_ready:
+                key = self._ticker_key(market, ticker)
+                decision_id = str(decision_ids.get(ticker) or decision_ids.get(key) or "")
+                if not decision_id:
+                    try:
+                        decision_id = str(self.bot._v2_decision_id_for_ticker(market, key) or "")
+                    except Exception:
+                        decision_id = ""
+                self._record_blocked(
+                    market,
+                    key,
+                    decision_id,
+                    reason,
+                    {
+                        **(entry_gate.get("details") or {}),
+                        "stage": "pathb_plan_registration",
+                        "scope": entry_gate.get("scope", ""),
+                    },
+                )
+            log.warning(
+                f"[PathB plan registration blocked] {market} {reason} "
+                f"scope={entry_gate.get('scope', '')} trade_ready={trade_ready}"
+            )
+            return []
         for ticker in trade_ready:
             key = self._ticker_key(market, ticker)
             if self._active_path_for_ticker(market, key):
@@ -565,6 +834,9 @@ class PathBRuntime:
         self._last_entry_scan_at[market] = time.time()
         self.reconcile_order_unknowns(market, force=False)
         self.reconcile_buy_pending_cancel_above(market, force=False)
+        if not self._market_live_enabled(market):
+            self.cancel_waiting(market, reason="PATHB_MANUALLY_DISABLED")
+            return
         entry_gate = self._new_buy_block_state(market, strategy="path_b")
         if not bool(entry_gate.get("allowed", True)):
             self._audit_entry_scan_blocked(market, entry_gate)
@@ -958,10 +1230,53 @@ class PathBRuntime:
 
     def _submit_buy(self, plan: PricePlan, signal: EntrySignal) -> bool:
         market = plan.market
+        if not self._market_live_enabled(market):
+            self._record_blocked(
+                market,
+                plan.ticker,
+                plan.decision_id,
+                "PATHB_MANUALLY_DISABLED",
+                {"market_live_enabled": False, "paper_only": True},
+                plan.path_run_id,
+            )
+            self.adapter.cancel_plan(
+                plan.path_run_id,
+                reason="PATHB_MANUALLY_DISABLED",
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+            )
+            return False
         entry_gate = self._new_buy_block_state(market, plan.ticker, strategy="path_b")
         if not bool(entry_gate.get("allowed", True)):
             reason = str(entry_gate.get("reason") or "MARKET_CLOSED")
             self._record_blocked(market, plan.ticker, plan.decision_id, reason, entry_gate, plan.path_run_id)
+            return False
+        reentry = self.reentry_guard.evaluate(
+            market=market,
+            runtime_mode=self.mode,
+            session_date=plan.session_date,
+            ticker=plan.ticker,
+            now=datetime.now(KST),
+        )
+        if not reentry.allowed:
+            self._record_blocked(
+                market,
+                plan.ticker,
+                plan.decision_id,
+                reentry.reason_code,
+                {
+                    **(reentry.details or {}),
+                    "message": reentry.message,
+                    "stage": "pathb_same_day_reentry",
+                },
+                plan.path_run_id,
+            )
+            self.adapter.cancel_plan(
+                plan.path_run_id,
+                reason=reentry.reason_code,
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+            )
             return False
         risk_price_krw = self._price_to_krw(signal.limit_price, market)
         cash_krw = float(getattr(getattr(self.bot, "risk", None), "cash", 0) or 0)
@@ -1270,6 +1585,7 @@ class PathBRuntime:
             "market": market_key,
             "checked": 0,
             "kept_open": 0,
+            "kept_open_local": 0,
             "closed": 0,
             "order_unknown": 0,
             "broker_truth_unavailable": 0,
@@ -1313,6 +1629,7 @@ class PathBRuntime:
         if not path_run_id or plan is None:
             return "errors"
         ticker = self._ticker_key(market, plan.ticker)
+        local_pos = self._find_position(market, plan.ticker, path_run_id=path_run_id)
         positions = self._broker_rows_for_ticker(market_data.get("positions", []), market, ticker)
         if positions:
             return "kept_open"
@@ -1337,6 +1654,11 @@ class PathBRuntime:
                 evidence=evidence,
             )
             return "closed"
+        if local_pos is not None and int(float(local_pos.get("qty", 0) or 0)) > 0:
+            # KIS balance can lag fills by several seconds. A live local Path B
+            # position is enough to keep exit monitoring active until broker
+            # sell-fill evidence or a later fresh balance snapshot confirms close.
+            return "kept_open_local"
         self.adapter.mark_order_unknown(
             path_run_id,
             detail="filled_position_missing_without_sell_ccld",
@@ -1908,7 +2230,9 @@ class PathBRuntime:
             "market": market_key,
             "checked": 0,
             "recovered_fill": 0,
+            "recovered_position": 0,
             "recovered_open_order": 0,
+            "recovered_closed": 0,
             "auto_cleared_no_broker_evidence": 0,
             "path_a_origin_possible": 0,
             "broker_no_evidence": 0,
@@ -2026,19 +2350,102 @@ class PathBRuntime:
                 next_retry=False,
             )
             return "permanent_order_reject"
-        if session_end:
-            self._set_order_unknown_resolution(
-                path_run_id,
-                "session_end_unresolved",
-                {"session_end_unresolved": True},
-                next_retry=False,
-            )
-            return "session_end_unresolved"
         if not force and not self._unknown_recheck_due(run):
             return "skipped"
 
         ticker = self._ticker_key(market, plan.ticker)
         plan_json = run.get("plan") or {}
+        closed_lifecycle = self._pathb_closed_lifecycle_evidence(
+            market,
+            ticker,
+            plan.session_date,
+            path_run_id=path_run_id,
+            decision_id=str(run.get("decision_id", "") or plan.decision_id or ""),
+        )
+        if closed_lifecycle:
+            self.store.update_path_run(
+                path_run_id,
+                status="CLOSED",
+                plan={
+                    "order_unknown_resolution": "pathb_closed_lifecycle_recovered",
+                    "order_unknown_resolution_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "next_broker_truth_recheck_at": "",
+                    "close_reason": str(closed_lifecycle.get("close_reason", "") or "CLOSED_USER_MANUAL"),
+                    "exit_execution_id": str(closed_lifecycle.get("execution_id", "") or ""),
+                    "exit_fill_confirmed": bool(closed_lifecycle.get("execution_id", "")),
+                    "pnl_pct": float(closed_lifecycle.get("pnl_pct", 0) or 0),
+                    "pathb_closed_lifecycle_evidence": closed_lifecycle,
+                },
+                merge_plan=True,
+            )
+            return "recovered_closed"
+        market_data = self.broker_truth.market_snapshot(market)
+        market_data_available = not (
+            bool(market_data.get("missing"))
+            or bool(market_data.get("stale"))
+            or str(market_data.get("error", "") or "")
+        )
+        if market_data_available:
+            positions = self._broker_rows_for_ticker(market_data.get("positions", []), market, ticker)
+            open_orders = self._broker_rows_for_ticker(market_data.get("open_orders", []), market, ticker)
+            fills = self._broker_rows_for_ticker(market_data.get("today_fills", []), market, ticker)
+            evidence_payload = {
+                "broker_truth_last_success_at": str(market_data.get("last_success_at", "") or ""),
+                "broker_position_evidence": bool(positions),
+                "broker_open_order_evidence": bool(open_orders),
+                "broker_today_fill_evidence": bool(fills),
+            }
+            exact_fill = self._match_pathb_fill_by_execution(plan_json, fills)
+            if exact_fill.get("row"):
+                self._recover_order_unknown_fill(path_run_id, plan, run, positions, dict(exact_fill["row"]), evidence_payload)
+                return "recovered_fill"
+            exact_open = self._match_pathb_open_order_by_execution(plan_json, open_orders)
+            if exact_open.get("row"):
+                row = dict(exact_open["row"])
+                execution_id = str(row.get("order_no", "") or (run.get("plan") or {}).get("entry_execution_id") or "")
+                qty = int(row.get("order_qty", 0) or row.get("qty", 0) or 0)
+                price = float(row.get("avg_price", 0) or row.get("price", 0) or plan.buy_zone_high)
+                if execution_id:
+                    if not (run.get("plan") or {}).get("entry_execution_id"):
+                        self.adapter.mark_order_sent(
+                            path_run_id,
+                            execution_id=execution_id,
+                            price=price,
+                            qty=qty,
+                            runtime_mode=self.mode,
+                            brain_snapshot_id=self._brain_snapshot_id(market),
+                        )
+                    self.adapter.mark_order_acked(
+                        path_run_id,
+                        execution_id=execution_id,
+                        runtime_mode=self.mode,
+                        brain_snapshot_id=self._brain_snapshot_id(market),
+                    )
+                self._set_order_unknown_resolution(
+                    path_run_id,
+                    "pathb_open_order_recovered",
+                    {**evidence_payload, "recovered_execution_id": execution_id, "recovered_qty": qty, "recovered_price": price},
+                    next_retry=True,
+                )
+                return "recovered_open_order"
+            if positions and str(plan_json.get("entry_execution_id", "") or ""):
+                row = dict(positions[0])
+                qty = int(float(row.get("qty", 0) or row.get("filled_qty", 0) or 0))
+                price = float(row.get("avg_price", 0) or row.get("current_price", 0) or plan.buy_zone_high)
+                row["filled_qty"] = qty
+                row["avg_price"] = price
+                row["order_no"] = str(plan_json.get("entry_execution_id", "") or row.get("order_no", "") or "")
+                row["side"] = "buy"
+                self._recover_order_unknown_fill(
+                    path_run_id,
+                    plan,
+                    run,
+                    positions,
+                    row,
+                    evidence_payload,
+                    resolution="pathb_position_recovered",
+                )
+                return "recovered_position"
         path_a_lifecycle = self._path_a_lifecycle_evidence(
             market,
             ticker,
@@ -2069,6 +2476,14 @@ class PathBRuntime:
 
         market_data = self.broker_truth.market_snapshot(market)
         if bool(market_data.get("missing")) or bool(market_data.get("stale")) or str(market_data.get("error", "") or ""):
+            if session_end:
+                self._set_order_unknown_resolution(
+                    path_run_id,
+                    "session_end_unresolved",
+                    {"session_end_unresolved": True},
+                    next_retry=False,
+                )
+                return "session_end_unresolved"
             self._set_order_unknown_resolution(
                 path_run_id,
                 "broker_truth_unavailable",
@@ -2092,37 +2507,7 @@ class PathBRuntime:
             self._set_order_unknown_resolution(path_run_id, "ambiguous_broker_truth", evidence_payload, next_retry=True)
             return "ambiguous_broker_truth"
         if fill_match.get("row"):
-            row = dict(fill_match["row"])
-            qty = int(row.get("filled_qty", 0) or row.get("qty", 0) or row.get("order_qty", 0) or 0)
-            price = float(row.get("avg_price", 0) or row.get("fill_price", 0) or row.get("current_price", 0) or plan.buy_zone_high)
-            execution_id = str(row.get("order_no", "") or (run.get("plan") or {}).get("entry_execution_id") or "")
-            expected_qty = int((run.get("plan") or {}).get("entry_qty", 0) or 0)
-            partial = bool(expected_qty and qty > 0 and qty < expected_qty)
-            if partial:
-                self.adapter.mark_partial_filled(
-                    path_run_id,
-                    price=price,
-                    qty=qty,
-                    execution_id=execution_id,
-                    runtime_mode=self.mode,
-                    brain_snapshot_id=self._brain_snapshot_id(market),
-                )
-            else:
-                self.adapter.mark_filled(
-                    path_run_id,
-                    price=price,
-                    qty=qty,
-                    execution_id=execution_id,
-                    runtime_mode=self.mode,
-                    brain_snapshot_id=self._brain_snapshot_id(market),
-                )
-            self._attach_recovered_broker_position(plan, positions, row, qty, price, execution_id)
-            self._set_order_unknown_resolution(
-                path_run_id,
-                "pathb_fill_recovered",
-                {**evidence_payload, "recovered_execution_id": execution_id, "recovered_qty": qty, "recovered_price": price},
-                next_retry=False,
-            )
+            self._recover_order_unknown_fill(path_run_id, plan, run, positions, dict(fill_match["row"]), evidence_payload)
             return "recovered_fill"
 
         open_match = self._match_pathb_open_order(plan, open_orders)
@@ -2158,6 +2543,33 @@ class PathBRuntime:
             )
             return "recovered_open_order"
 
+        if positions:
+            row = dict(positions[0])
+            qty = int(float(row.get("qty", 0) or row.get("filled_qty", 0) or 0))
+            price = float(row.get("avg_price", 0) or row.get("current_price", 0) or plan.buy_zone_high)
+            row["filled_qty"] = qty
+            row["avg_price"] = price
+            row["order_no"] = str(plan_json.get("entry_execution_id", "") or row.get("order_no", "") or "")
+            row["side"] = "buy"
+            self._recover_order_unknown_fill(
+                path_run_id,
+                plan,
+                run,
+                positions,
+                row,
+                evidence_payload,
+                resolution="pathb_position_recovered",
+            )
+            return "recovered_position"
+
+        if session_end:
+            self._set_order_unknown_resolution(
+                path_run_id,
+                "session_end_unresolved",
+                {"session_end_unresolved": True},
+                next_retry=False,
+            )
+            return "session_end_unresolved"
         if auto_clear_no_evidence:
             self._set_order_unknown_resolution(
                 path_run_id,
@@ -2232,6 +2644,45 @@ class PathBRuntime:
             run for run in retryable
             if not allowed_sessions or str(run.get("session_date", "") or "") in allowed_sessions
         ]
+
+    def _pathb_closed_lifecycle_evidence(
+        self,
+        market: str,
+        ticker: str,
+        session_date: str,
+        *,
+        path_run_id: str,
+        decision_id: str = "",
+    ) -> dict[str, Any]:
+        events = self.store.events_for_session(market=market, runtime_mode=self.mode, session_date=session_date)
+        key = self._ticker_key(market, ticker)
+        evidence: dict[str, Any] = {}
+        for event in events:
+            if self._ticker_key(market, str(event.get("ticker", "") or "")) != key:
+                continue
+            if str(event.get("event_type", "") or "") != "CLOSED":
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            payload_path_run_id = str(payload.get("path_run_id", "") or "")
+            payload_path_type = str(payload.get("path_type", "") or "")
+            event_decision_id = str(event.get("decision_id", "") or "")
+            same_path_run = bool(path_run_id and payload_path_run_id == path_run_id)
+            same_decision_pathb = bool(
+                decision_id
+                and event_decision_id == decision_id
+                and payload_path_type == "claude_price"
+            )
+            if not same_path_run and not same_decision_pathb:
+                continue
+            evidence = {
+                "event_id": event.get("event_id", 0),
+                "execution_id": str(event.get("execution_id", "") or ""),
+                "reason_code": str(event.get("reason_code", "") or ""),
+                "close_reason": str(payload.get("close_reason", "") or event.get("reason_code", "") or ""),
+                "pnl_pct": float(payload.get("pnl_pct", 0) or 0),
+                "path_run_id": payload_path_run_id,
+            }
+        return evidence
 
     def _due_order_unknown_runs(self, market: str) -> list[dict[str, Any]]:
         return [run for run in self._order_unknown_runs(market) if self._unknown_recheck_due(run)]
@@ -2345,6 +2796,80 @@ class PathBRuntime:
         if len(candidates) > 1:
             return {"ambiguous": True, "rows": candidates[:3]}
         return {}
+
+    def _match_pathb_fill_by_execution(self, plan_json: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+        execution_id = str(plan_json.get("entry_execution_id", "") or "")
+        if not execution_id:
+            return {}
+        candidates = [
+            row for row in rows
+            if self._side_matches(row, "buy")
+            and int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) > 0
+            and str(row.get("order_no", "") or "") == execution_id
+        ]
+        if len(candidates) == 1:
+            return {"row": candidates[0]}
+        if len(candidates) > 1:
+            return {"ambiguous": True, "rows": candidates[:3]}
+        return {}
+
+    def _match_pathb_open_order_by_execution(self, plan_json: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+        execution_id = str(plan_json.get("entry_execution_id", "") or "")
+        if not execution_id:
+            return {}
+        candidates = [
+            row for row in rows
+            if self._side_matches(row, "buy")
+            and int(row.get("remaining_qty", 0) or 0) > 0
+            and str(row.get("order_no", "") or "") == execution_id
+        ]
+        if len(candidates) == 1:
+            return {"row": candidates[0]}
+        if len(candidates) > 1:
+            return {"ambiguous": True, "rows": candidates[:3]}
+        return {}
+
+    def _recover_order_unknown_fill(
+        self,
+        path_run_id: str,
+        plan: PricePlan,
+        run: dict[str, Any],
+        positions: list[dict[str, Any]],
+        row: dict[str, Any],
+        evidence_payload: dict[str, Any],
+        *,
+        resolution: str = "pathb_fill_recovered",
+    ) -> None:
+        qty = int(row.get("filled_qty", 0) or row.get("qty", 0) or row.get("order_qty", 0) or 0)
+        price = float(row.get("avg_price", 0) or row.get("fill_price", 0) or row.get("current_price", 0) or plan.buy_zone_high)
+        execution_id = str(row.get("order_no", "") or (run.get("plan") or {}).get("entry_execution_id") or "")
+        expected_qty = int((run.get("plan") or {}).get("entry_qty", 0) or 0)
+        partial = bool(expected_qty and qty > 0 and qty < expected_qty)
+        if partial:
+            self.adapter.mark_partial_filled(
+                path_run_id,
+                price=price,
+                qty=qty,
+                execution_id=execution_id,
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(plan.market),
+            )
+        else:
+            self.adapter.mark_filled(
+                path_run_id,
+                price=price,
+                qty=qty,
+                execution_id=execution_id,
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(plan.market),
+            )
+        self._attach_recovered_broker_position(plan, positions, row, qty, price, execution_id)
+        self._set_order_unknown_resolution(
+            path_run_id,
+            resolution,
+            {**evidence_payload, "recovered_execution_id": execution_id, "recovered_qty": qty, "recovered_price": price},
+            next_retry=False,
+        )
 
     def _match_pathb_open_order(self, plan: PricePlan, rows: list[dict[str, Any]]) -> dict[str, Any]:
         candidates = [row for row in rows if self._side_matches(row, "buy") and int(row.get("remaining_qty", 0) or 0) > 0]
@@ -2889,22 +3414,29 @@ class PathBRuntime:
                 run for run in self.store.path_runs_for_session(
                     market=market_key,
                     runtime_mode=self.mode,
-                    session_date=self._session_date(market_key),
                     status="ORDER_UNKNOWN",
                     path_type="claude_price",
                 )
+                if (
+                    str((run.get("plan") or {}).get("order_unknown_resolution", "") or "")
+                    in self.ORDER_UNKNOWN_OPEN_RETRY_RESOLUTIONS
+                    and not self._is_permanent_order_failure(
+                        str((run.get("plan") or {}).get("order_unknown_detail", "") or "")
+                    )
+                )
             ]
-            return len(unresolved) >= 2
+            return bool(unresolved)
         except Exception:
             return False
 
     def _new_buy_block_state(self, market: str, ticker: str = "", strategy: str = "path_b") -> dict[str, Any]:
         fn = getattr(self.bot, "_new_buy_block_state", None)
+        gate: dict[str, Any] | None = None
         if callable(fn):
             try:
-                return dict(fn(market, ticker=ticker, strategy=strategy) or {"allowed": True})
+                gate = dict(fn(market, ticker=ticker, strategy=strategy) or {"allowed": True})
             except TypeError:
-                return dict(fn(market, ticker, strategy) or {"allowed": True})
+                gate = dict(fn(market, ticker, strategy) or {"allowed": True})
             except Exception as exc:
                 return {
                     "allowed": False,
@@ -2913,6 +3445,8 @@ class PathBRuntime:
                     "scope": "market",
                     "details": {"error": str(exc), "stage": "pathb_new_buy_gate"},
                 }
+            if not bool(gate.get("allowed", True)):
+                return gate
         if self._order_unknown_blocked(market):
             return {
                 "allowed": False,
@@ -2921,6 +3455,8 @@ class PathBRuntime:
                 "scope": "market",
                 "details": {"market": str(market or "").upper(), "ticker": str(ticker or ""), "strategy": strategy},
             }
+        if gate is not None:
+            return gate
         return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": {}}
 
     def _broker_trust_level(self, market: str) -> str:

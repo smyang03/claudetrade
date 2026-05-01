@@ -93,6 +93,13 @@ def _runtime(bot: _Bot, store: EventStore) -> PathBRuntime:
 
 
 class PathBClaudeContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._pathb_env = patch.dict("os.environ", {"PATHB_KR_LIVE_ENABLED": "true"})
+        self._pathb_env.start()
+
+    def tearDown(self) -> None:
+        self._pathb_env.stop()
+
     def test_claude_like_valid_payload_buy_and_sell_path_no_crash(self) -> None:
         candidates = [{"ticker": "005930"}, {"ticker": "000660"}]
         claude_payload = {

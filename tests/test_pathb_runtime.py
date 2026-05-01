@@ -6,7 +6,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 from decision.claude_price_plan import make_price_plan
+from execution.claude_price_adapter import EntrySignal
 from lifecycle.event_store import EventStore
+from lifecycle.models import LifecycleEvent
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
 from runtime.pathb_runtime import PathBControlState, PathBRuntime
 
@@ -55,6 +57,13 @@ class _Control:
 
 
 class PathBRuntimeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._pathb_env = patch.dict("os.environ", {"PATHB_KR_LIVE_ENABLED": "true"})
+        self._pathb_env.start()
+
+    def tearDown(self) -> None:
+        self._pathb_env.stop()
+
     def test_brain_snapshot_id_has_cold_start_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()
@@ -94,6 +103,99 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertIsNotNone(run)
             self.assertEqual(run["status"], "WAITING")
             self.assertEqual(run["path_type"], "claude_price")
+
+    def test_register_from_selection_meta_blocks_when_active_order_unknown_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            bot._new_buy_block_state = lambda *args, **kwargs: {"allowed": True, "blocked": False}
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            existing = make_price_plan(
+                decision_id="dec_unknown",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(existing, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_order_unknown(
+                existing.path_run_id,
+                detail="buy_order_exception:timeout",
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+            )
+
+            created = runtime.register_from_selection_meta(
+                "KR",
+                {
+                    "trade_ready": ["000660"],
+                    "v2_decision_ids": {"000660": "dec2"},
+                    "price_targets": {
+                        "000660": {
+                            "buy_zone_low": 150_000,
+                            "buy_zone_high": 151_000,
+                            "sell_target": 155_000,
+                            "stop_loss": 148_000,
+                            "hold_days": 1,
+                            "confidence": 0.7,
+                            "entry_rationale": "support pullback",
+                            "exit_rationale": "resistance target",
+                            "rationale": "support pullback",
+                        }
+                    },
+                },
+            )
+
+            self.assertEqual(created, [])
+            self.assertEqual(
+                len(
+                    store.path_runs_for_session(
+                        market="KR",
+                        runtime_mode="live",
+                        session_date="2026-04-27",
+                        path_type="claude_price",
+                    )
+                ),
+                1,
+            )
+
+    def test_kr_live_disabled_keeps_claude_price_paper_only(self) -> None:
+        meta = {
+            "trade_ready": ["005930"],
+            "v2_decision_ids": {"005930": "dec1"},
+            "price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                    "entry_rationale": "support pullback",
+                    "exit_rationale": "resistance target",
+                    "rationale": "support pullback",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            with patch.dict("os.environ", {"PATHB_KR_LIVE_ENABLED": "false"}):
+                self.assertEqual(runtime.register_from_selection_meta("KR", meta), [])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=True, store=store)
+            runtime.control_store = _Control()
+            with patch.dict("os.environ", {"PATHB_KR_LIVE_ENABLED": "false"}):
+                self.assertEqual(len(runtime.register_from_selection_meta("KR", meta)), 1)
 
     def test_register_from_selection_meta_audits_missing_price_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -300,6 +402,147 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(summary["missing_positions"], 1)
             self.assertEqual(run["status"], "CLOSED")
             self.assertNotEqual(run["status"], "ORDER_UNKNOWN")
+
+    def test_filled_reconcile_keeps_local_pathb_position_when_broker_balance_lags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda: "token",
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [],
+                date_provider=lambda market: "2026-04-27",
+            )
+            plan = make_price_plan(
+                decision_id="dec1",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=52_200,
+                qty=2,
+                execution_id="buy1",
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+            )
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 52_200,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+
+            summary = runtime.reconcile_filled_positions("KR", force=True)
+            run = store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["kept_open_local"], 1)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(run["plan"]["entry_execution_id"], "buy1")
+
+    def test_submit_buy_same_day_reentry_guard_blocks_before_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            plan = make_price_plan(
+                decision_id="dec1",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            store.append(
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id="path_a_decision",
+                    execution_id="sell1",
+                    reason_code="CLOSED_STOP_LOSS",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"close_reason": "CLOSED_STOP_LOSS", "pnl_pct": -2.0},
+                )
+            )
+
+            with patch("runtime.pathb_runtime.precheck_order") as precheck, patch("runtime.pathb_runtime.place_order") as place:
+                accepted = runtime._submit_buy(
+                    plan,
+                    EntrySignal(True, "buy_zone_hit", price=52_100, limit_price=52_100, path_run_id=plan.path_run_id),
+                )
+
+            run = store.find_path_run(plan.path_run_id)
+            self.assertFalse(accepted)
+            precheck.assert_not_called()
+            place.assert_not_called()
+            self.assertEqual(run["status"], "CANCELLED")
+            self.assertEqual(run["plan"]["cancel_reason"], "SAME_DAY_REENTRY_COOLDOWN")
+
+    def test_consistency_health_reports_missing_pathb_lifecycle_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            plan = make_price_plan(
+                decision_id="dec1",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id="dec1",
+                    execution_id="buy1",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"order_no": "buy1", "qty": 1},
+                )
+            )
+
+            health = runtime.consistency_health("KR")
+
+            self.assertFalse(health["ok"])
+            self.assertIn(
+                "pathb_lifecycle_missing_path_run_id",
+                {issue["code"] for issue in health["issues"]},
+            )
 
     def test_order_acked_cancel_above_requests_cancel_and_confirms(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

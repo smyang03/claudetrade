@@ -58,6 +58,45 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(captured["market"], "US")
         self.assertEqual(captured["session_date"], "2026-04-28")
 
+    def test_history_equity_live_us_uses_session_trade_date(self) -> None:
+        class FakeDate(date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 5, 1)
+
+        broker = {
+            "us_cash_krw": 1_000_000,
+            "us_eval_krw": 250_000,
+        }
+        broker_rows = [
+            {
+                "side": "sell",
+                "pnl_known": True,
+                "date": "2026-04-30",
+                "pnl": 10_000,
+                "pnl_pct": 1.25,
+            }
+        ]
+
+        with patch.object(dashboard_server, "date", FakeDate), patch.object(
+            dashboard_server, "_session_trade_date", return_value=date(2026, 4, 30)
+        ), patch.object(
+            dashboard_server, "_broker_snapshot", return_value=broker
+        ), patch.object(
+            dashboard_server, "_persist_broker_equity_snapshot"
+        ), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", return_value=broker_rows
+        ), patch.object(
+            dashboard_server, "_load_broker_equity_snapshots", return_value=[]
+        ):
+            res = app.test_client().get("/api/history/equity?market=US&mode=live")
+
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data["labels"], ["2026-04-30"])
+        self.assertNotIn("2026-05-01", data["labels"])
+        self.assertEqual(data["equity"], [1_250_000])
+
 
 if __name__ == "__main__":
     unittest.main()

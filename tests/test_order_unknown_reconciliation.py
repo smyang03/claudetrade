@@ -160,6 +160,135 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             self.assertEqual(run["status"], "FILLED")
             self.assertEqual(run["plan"]["order_unknown_resolution"], "pathb_fill_recovered")
 
+    def test_pathb_closed_lifecycle_recovers_order_unknown_before_path_a_heuristic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [],
+            )
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={"entry_execution_id": "buy1", "entry_qty": 1},
+                merge_plan=True,
+            )
+            runtime.store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id=plan.decision_id,
+                    execution_id="buy1",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"order_no": "buy1", "qty": 1},
+                )
+            )
+            runtime.store.append(
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id=plan.decision_id,
+                    execution_id="sell1",
+                    reason_code="CLOSED_USER_MANUAL",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={
+                        "path_type": "claude_price",
+                        "path_run_id": plan.path_run_id,
+                        "close_reason": "CLOSED_USER_MANUAL",
+                        "pnl_pct": 1.2,
+                    },
+                )
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_closed"], 1)
+            self.assertEqual(summary["path_a_origin_possible"], 0)
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "pathb_closed_lifecycle_recovered")
+            self.assertEqual(run["plan"]["exit_execution_id"], "sell1")
+
+    def test_exact_pathb_broker_fill_recovers_before_path_a_heuristic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": [{"ticker": "005930", "qty": 1, "avg_price": 100, "current_price": 102}]},
+                ccld_provider=lambda market, day: [
+                    {"ticker": "005930", "side": "buy", "order_qty": 1, "filled_qty": 1, "remaining_qty": 0, "avg_price": 100, "order_no": "pathb_buy"}
+                ],
+            )
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={"entry_execution_id": "pathb_buy", "entry_qty": 1},
+                merge_plan=True,
+            )
+            runtime.store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id="path_a_decision",
+                    execution_id="path_a_buy",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"path_type": "timing_adapter", "order_no": "path_a_buy", "qty": 1},
+                )
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_fill"], 1)
+            self.assertEqual(summary["path_a_origin_possible"], 0)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "pathb_fill_recovered")
+
+    def test_pathb_broker_position_recovers_before_path_a_heuristic_when_execution_id_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": [{"ticker": "005930", "qty": 1, "avg_price": 100, "current_price": 102}]},
+                ccld_provider=lambda market, day: [],
+            )
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={"entry_execution_id": "pathb_buy", "entry_qty": 1},
+                merge_plan=True,
+            )
+            runtime.store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id="path_a_decision",
+                    execution_id="path_a_buy",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"path_type": "timing_adapter", "order_no": "path_a_buy", "qty": 1},
+                )
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_position"], 1)
+            self.assertEqual(summary["path_a_origin_possible"], 0)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "pathb_position_recovered")
+            self.assertEqual(len(runtime.bot.risk.positions), 1)
+
     def test_broker_open_order_recovers_order_acked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan = _runtime(
