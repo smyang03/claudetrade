@@ -2390,6 +2390,32 @@ def _today_signal_digest(market: str, selected_count: int = 0, universe_count: i
     return summary
 
 
+def _count_today_entries(mode: str, market: str) -> int:
+    """오늘 날짜의 진입(type=entry) 건수를 live_decisions.jsonl에서 집계합니다."""
+    today = date.today().isoformat()
+    path = get_runtime_path("state", f"{mode}_decisions.jsonl")
+    if not path.exists():
+        return 0
+    count = 0
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                ev = json.loads(line)
+                if ev.get("type") != "entry":
+                    continue
+                sd = str(ev.get("session_date", "") or ev.get("timestamp", "")[:10])
+                if sd != today:
+                    continue
+                if market and ev.get("market", "").upper() != market.upper():
+                    continue
+                count += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return count
+
+
 def _ml_db_digest(market: str) -> dict:
     db_path = BASE_DIR / "data" / "ml" / "decisions.db"
     digest = {
@@ -3053,9 +3079,11 @@ def api_summary():
             "usd_krw":        usd_krw,
             "positions":      positions,
             "position_count": len(positions),
-            "position_limit": MAX_POSITIONS,
-            "position_remaining": max(MAX_POSITIONS - len(positions), 0),
+            "position_limit": int(os.getenv("KR_MAX_POSITIONS" if market == "KR" else "US_MAX_POSITIONS", str(MAX_POSITIONS)) or MAX_POSITIONS),
+            "position_remaining": max(int(os.getenv("KR_MAX_POSITIONS" if market == "KR" else "US_MAX_POSITIONS", str(MAX_POSITIONS)) or MAX_POSITIONS) - len(positions), 0),
             "pyramid_limit": MAX_PYRAMID,
+            "entries_today": _count_today_entries(mode, market),
+            "max_daily_entries": int(os.getenv("V2_MAX_DAILY_ENTRIES", "20") or 20),
             "pending_orders": pending_orders,
             "pending_count":  len(pending_orders),
             "live_updated":   live.get("updated_at", ""),
@@ -5344,6 +5372,13 @@ PAGE_TODAY_HTML = """
   <div id="adaptive-meta" style="font-size:12px;color:var(--text-dim);margin-top:8px">--</div>
   <div id="adaptive-breakdown" style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.7">--</div>
 </div>
+<div id="holdings-entry-bar" style="display:flex;align-items:center;gap:16px;padding:10px 14px;margin-bottom:12px;background:var(--card);border-radius:8px;border:1px solid var(--border);font-size:13px">
+  <span style="color:var(--text-dim)">보유</span>
+  <span id="bar-position-count" style="font-weight:700;color:var(--text)">--</span>
+  <span style="color:var(--border)">|</span>
+  <span style="color:var(--text-dim)">오늘 진입</span>
+  <span id="bar-entry-count" style="font-weight:700;color:var(--text)">--</span>
+</div>
 <div id="position-board" style="display:flex;flex-wrap:nowrap;gap:10px;margin-bottom:20px;overflow-x:auto;overflow-y:hidden;padding-bottom:6px;scrollbar-width:thin"></div>
 
 <!-- 미체결 주문 -->
@@ -6174,6 +6209,12 @@ async function loadSummary() {
       : '--';
   }
   renderAdaptive(t, 'adaptive-title', 'adaptive-meta', 'adaptive-breakdown');
+
+  // 보유/진입 상태 바
+  const barPos = document.getElementById('bar-position-count');
+  const barEnt = document.getElementById('bar-entry-count');
+  if (barPos) barPos.textContent = `${t.position_count ?? positions.length}/${t.position_limit || 0}개`;
+  if (barEnt) barEnt.textContent = `${t.entries_today ?? 0}/${t.max_daily_entries || 0}회`;
 
   if (!posBoard) return;
   if (positions.length === 0) {
@@ -7062,6 +7103,12 @@ async function loadSummary() {
   }
 
   renderAdaptive(t, 'adaptive-title', 'adaptive-meta', 'adaptive-breakdown');
+
+  // 보유/진입 상태 바
+  const barPos2 = document.getElementById('bar-position-count');
+  const barEnt2 = document.getElementById('bar-entry-count');
+  if (barPos2) barPos2.textContent = `${t.position_count ?? (t.positions || []).length}/${t.position_limit || 0}개`;
+  if (barEnt2) barEnt2.textContent = `${t.entries_today ?? 0}/${t.max_daily_entries || 0}회`;
 
   const positions = t.positions || [];
   const posBoard = document.getElementById('position-board');
