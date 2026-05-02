@@ -13,6 +13,32 @@ from bot.session_date import KST, resolve_session_date_str
 from preopen.storage import load_preopen_state, save_outcome_record, save_preopen_state
 
 
+def _num(value) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _classify_outcome(record: dict) -> str:
+    values = [
+        _num(record.get("post_open_30m_return_pct")),
+        _num(record.get("post_open_60m_return_pct")),
+        _num(record.get("open_to_close_pct")),
+    ]
+    values = [v for v in values if v is not None]
+    if not values:
+        return "pending_price_provider"
+    score = values[-1]
+    if score >= 0.5:
+        return "WIN"
+    if score <= -0.5:
+        return "LOSS"
+    return "FLAT"
+
+
 def update_once(market: str, *, offset_min: int) -> dict:
     market = "US" if str(market or "").upper() == "US" else "KR"
     session_date = resolve_session_date_str(market)
@@ -41,6 +67,7 @@ def update_once(market: str, *, offset_min: int) -> dict:
             "open_to_high_pct": candidate.get("open_to_high_pct"),
             "open_to_close_pct": candidate.get("open_to_close_pct"),
         }
+        record["outcome_status"] = _classify_outcome(record)
         key = f"outcome_{int(offset_min)}m_captured_at"
         candidate[key] = captured_at
         save_outcome_record(market, session_date, record)
