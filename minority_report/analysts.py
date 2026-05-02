@@ -107,7 +107,7 @@ def _recover_partial_selection_json(s: str) -> dict:
     return recovered
 
 
-def _extract_json(text: str) -> dict:
+def _extract_json_legacy_dead(text: str) -> dict:
     """Claude 응답에서 JSON 추출 — 형식 무관하게 견고하게 파싱"""
     def _fix(s: str) -> str:
         # trailing comma
@@ -1437,6 +1437,10 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                     if not retry_result.get("_parse_recovered") and retry_meta.get("watchlist"):
                         result = retry_result
                         selection_meta = retry_meta
+                        selection_meta["_trade_ready_without_price_targets_allowed"] = list(
+                            dict.fromkeys(selection_meta.get("trade_ready") or [])
+                        )
+                        selection_meta["_trade_ready_without_price_targets_source"] = "selection_retry"
                         selection_meta["active_lessons"] = {
                             "primary": active_lesson_meta,
                             "retry": retry_active_lesson_meta,

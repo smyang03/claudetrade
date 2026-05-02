@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -285,9 +286,16 @@ class BrokerTruthSnapshot:
     def write_snapshot(self, snapshot: dict[str, Any]) -> None:
         safe = mask_sensitive(snapshot)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(safe, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(self.path)
+        tmp = self.path.with_name(f"{self.path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+        try:
+            tmp.write_text(json.dumps(safe, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, self.path)
+        finally:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
 
     def _is_market_stale(self, market_data: dict[str, Any]) -> bool:
         if bool(market_data.get("missing")):

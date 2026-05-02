@@ -12,11 +12,11 @@ class LiveConfigSourceTests(unittest.TestCase):
 
         self.assertEqual(failing, [])
         effective = config["effective"]
-        self.assertEqual(effective.get("KR_MAX_POSITIONS"), "10")
+        self.assertEqual(effective.get("KR_MAX_POSITIONS"), "15")
         self.assertEqual(effective.get("US_MAX_POSITIONS"), "10")
-        self.assertEqual(effective.get("V2_MAX_DAILY_ENTRIES"), "10")
-        self.assertEqual(effective.get("PATHB_MAX_POSITIONS"), "10")
-        self.assertEqual(effective.get("PATHB_MAX_DAILY_ENTRIES"), "10")
+        self.assertEqual(effective.get("V2_MAX_DAILY_ENTRIES"), "20")
+        self.assertEqual(effective.get("PATHB_MAX_POSITIONS"), "15")
+        self.assertEqual(effective.get("PATHB_MAX_DAILY_ENTRIES"), "20")
         self.assertEqual(effective.get("KR_REENTRY_COOLDOWN_MINUTES"), "120")
         self.assertEqual(effective.get("US_REENTRY_COOLDOWN_MINUTES"), "90")
 

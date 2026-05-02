@@ -154,7 +154,7 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
     disp_entry = float(pos.get("display_avg_price", 0) or 0)
     disp_cp    = float(pos.get("display_current_price", 0) or 0)
     # USD/KRW 환율: entry(KRW) / disp_entry(USD)로 역산
-    fx_rate = (entry / disp_entry) if (market == "US" and disp_entry > 0) else 1.0
+    fx_rate = (entry / disp_entry) if (market == "US" and disp_entry > 0) else 0.0
 
     if market == "US" and disp_entry > 0:
         show_entry = disp_entry
@@ -192,7 +192,8 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
         try:
             from datetime import datetime as _dt
             _et = _dt.fromisoformat(_entry_time)
-            held_min = max(0, int((_dt.now() - _et).total_seconds() / 60))
+            _now = _dt.now(_et.tzinfo) if _et.tzinfo is not None else _dt.now()
+            held_min = max(0, int((_now - _et).total_seconds() / 60))
         except Exception:
             pass
     peak_pnl_pct = float(pos.get("peak_pnl_pct") or 0)

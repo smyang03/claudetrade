@@ -344,6 +344,24 @@ def build_active_lesson_context(
     char_limit = max_chars if max_chars is not None else _env_int(char_env, char_default, 120, 1200)
     enabled = _env_bool("ACTIVE_LESSONS_ENABLED", False)
     shadow = _env_bool("ACTIVE_LESSONS_SHADOW", True)
+    if not enabled:
+        return {
+            "section": "",
+            "preview": "",
+            "items": [],
+            "ignored": [],
+            "metadata": {
+                "enabled": enabled,
+                "shadow": shadow,
+                "retry": bool(retry),
+                "injected": False,
+                "ids": [],
+                "count": 0,
+                "chars": 0,
+                "ignored_count": 0,
+                "disabled_skipped": True,
+            },
+        }
 
     selected, ignored = _select_items(normalized_market, item_limit)
     preview = _format_section(selected, char_limit)

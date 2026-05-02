@@ -223,6 +223,49 @@ class PathBSellReconcileTests(unittest.TestCase):
             self.assertFalse(run["plan"]["broker_today_sell_fill_evidence"])
             self.assertEqual(len(runtime.bot.risk.positions), 1)
 
+    def test_session_end_exit_unknown_partial_sell_stays_retryable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": [{"ticker": "SNAP", "qty": 7, "avg_price": 6.0, "current_price": 6.1}]},
+                ccld_provider=lambda market, day: [],
+            )
+            runtime.finalize_sell_pending_at_session_close("US")
+            runtime.broker_truth.ccld_provider = lambda market, day: [
+                {"ticker": "SNAP", "side": "sell", "order_no": "sell1", "order_qty": 12, "filled_qty": 5, "remaining_qty": 7, "avg_price": 6.1}
+            ]
+
+            summary = runtime.reconcile_order_unknowns("US", force=True, session_end=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["session_end_unresolved"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "session_end_unresolved")
+            self.assertTrue(run["plan"]["session_end_partial_sell_fill"])
+            self.assertEqual(run["plan"]["remaining_qty"], 7)
+            self.assertTrue(run["plan"]["next_broker_truth_recheck_at"])
+
+    def test_session_end_exit_unknown_open_sell_order_stays_retryable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": [{"ticker": "SNAP", "qty": 12, "avg_price": 6.0, "current_price": 6.1}]},
+                ccld_provider=lambda market, day: [],
+            )
+            runtime.finalize_sell_pending_at_session_close("US")
+            runtime.broker_truth.ccld_provider = lambda market, day: [
+                {"ticker": "SNAP", "side": "sell", "order_no": "sell1", "order_qty": 12, "filled_qty": 0, "remaining_qty": 12, "avg_price": 0}
+            ]
+
+            summary = runtime.reconcile_order_unknowns("US", force=True, session_end=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["session_end_unresolved"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "session_end_unresolved")
+            self.assertTrue(run["plan"]["session_end_open_sell_order"])
+            self.assertTrue(run["plan"]["next_broker_truth_recheck_at"])
+
     def test_stale_filled_without_broker_position_recovers_from_ccld_sell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")

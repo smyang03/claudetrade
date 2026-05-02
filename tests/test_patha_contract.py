@@ -87,6 +87,62 @@ class PathAContractTests(unittest.TestCase):
         self.assertEqual(meta["_missing_price_target_demoted"], ["TWLO"])
         self.assertEqual(list(meta["price_targets"].keys()), ["TEAM"])
 
+    def test_retry_trade_ready_without_price_targets_stays_executable(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.today_judgment = {"market": "US", "consensus": {"mode": "MODERATE_BULL"}}
+        bot.selection_stages = {"KR": {}, "US": {}}
+        bot.selection_meta = {"KR": {}, "US": {}}
+        bot.trade_ready_tickers = {"KR": [], "US": []}
+        bot.enable_continuation_live = False
+        bot.enable_kr_momentum_shrink = True
+        bot.v2 = None
+        bot.pathb = None
+
+        raw_meta = {
+            "watchlist": ["TWLO"],
+            "trade_ready": ["TWLO"],
+            "_trade_ready_without_price_targets_allowed": ["TWLO"],
+            "_trade_ready_without_price_targets_source": "selection_retry",
+            "price_targets": {},
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = bot._apply_selection_meta("US", ["TWLO"])
+
+        self.assertEqual(meta["trade_ready"], ["TWLO"])
+        self.assertEqual(meta["_missing_price_target_demoted"], [])
+        self.assertEqual(meta["_missing_price_target_allowed"], ["TWLO"])
+        self.assertEqual(meta["price_targets"], {})
+        self.assertTrue(bot._is_trade_ready_ticker("US", "TWLO"))
+
+    def test_soft_watch_promotion_without_price_targets_updates_trade_ready(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.today_judgment = {"market": "US", "consensus": {"mode": "MODERATE_BULL"}}
+        bot.selection_meta = {
+            "KR": {},
+            "US": {
+                "watchlist": ["TWLO"],
+                "trade_ready": [],
+                "reasons": {"TWLO": "soft setup can be rechecked intraday"},
+                "price_targets": {},
+            },
+        }
+        bot.trade_ready_tickers = {"KR": [], "US": []}
+        bot.today_ticker_reasons = {"KR": {}, "US": {"TWLO": "soft setup can be rechecked intraday"}}
+        bot.enable_continuation_live = False
+        bot.enable_kr_momentum_shrink = True
+
+        promoted = bot._promote_trade_ready_ticker(
+            "US",
+            "TWLO",
+            strategy_name="opening_range_pullback",
+        )
+
+        self.assertTrue(promoted)
+        self.assertEqual(bot.trade_ready_tickers["US"], ["TWLO"])
+        self.assertEqual(bot.selection_meta["US"]["_missing_price_target_allowed"], ["TWLO"])
+        self.assertEqual(bot.selection_meta["US"]["price_targets"], {})
+
     def test_pathb_disable_flags_do_not_block_path_a_safety_gate(self) -> None:
         gate = SafetyGate(V2Config(pathb_enabled=False, pathb_emergency_disable=True))
         decision = gate.evaluate(

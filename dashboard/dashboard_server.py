@@ -20,6 +20,7 @@ import json, sys, os, re, subprocess, threading, atexit, time as _time, sqlite3
 from collections import Counter
 from contextlib import contextmanager
 from typing import Optional
+import uuid
 
 # .env 로드 (trading_bot과 동일한 환경변수 사용)
 try:
@@ -138,7 +139,7 @@ def _clear_state_file_alert(path: Path) -> None:
 
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}")
     try:
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, path)
@@ -214,9 +215,28 @@ def _runtime_env(mode: str) -> dict:
     return {str(k): v for k, v in (data or {}).items() if v is not None}
 
 
+def _start_config_env_overrides(mode: str) -> dict:
+    if _normalize_mode(mode) != "live":
+        return {}
+    base_env = _runtime_env(mode)
+    disabled = str(base_env.get("V2_START_CONFIG_DISABLED", "") or "").strip().lower()
+    if disabled in {"1", "true", "yes", "y", "on"}:
+        return {}
+    path = BASE_DIR / "config" / "v2_start_config.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    overrides = data.get("env_overrides") if isinstance(data, dict) else {}
+    if not isinstance(overrides, dict):
+        return {}
+    return {str(k): str(v).lower() if isinstance(v, bool) else str(v) for k, v in overrides.items() if v is not None}
+
+
 def _get_env_int(mode: str, key: str, default: int) -> int:
     env = _runtime_env(mode)
-    raw = env.get(key) or os.getenv(key)
+    overrides = _start_config_env_overrides(mode)
+    raw = overrides.get(key) or env.get(key) or os.getenv(key)
     try:
         return int(raw) if raw else default
     except (ValueError, TypeError):
@@ -1671,7 +1691,7 @@ def _load_claude_control(mode: str = "paper") -> dict:
             if ts:
                 last_dt = datetime.fromisoformat(ts)
                 if last_dt.tzinfo is None:
-                    last_dt = KST.localize(last_dt)
+                    last_dt = last_dt.replace(tzinfo=KST)
                 stale = datetime.now(KST) - last_dt > timedelta(minutes=10)
             else:
                 stale = True
@@ -2361,6 +2381,8 @@ def _normalize_percent_value(value: float) -> float:
 
 
 def _session_trade_date(market: str, now_dt=None):
+    if now_dt is None:
+        now_dt = datetime.now(KST)
     return resolve_session_date(market, now_dt)
 
 

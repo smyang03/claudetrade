@@ -26,6 +26,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 KST = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
 
+from bot.session_date import resolve_session_date
+
 LIVE_CONFIG_KEYS = {
     "ENABLED_MARKETS",
     "KR_FIXED_ORDER_KRW",
@@ -216,11 +218,9 @@ def _repo_text(*parts: str) -> str:
 
 
 def _session_date_guess(market: str) -> str:
-    """Preflight-only session date estimate. TradingBot owns the authoritative value."""
+    """Preflight session date using the same boundary rules as TradingBot."""
     now = _now_kst()
-    if market.upper() == "US" and now.hour < 9:
-        return (now - timedelta(days=1)).date().isoformat()
-    return now.date().isoformat()
+    return resolve_session_date(market, now).isoformat()
 
 
 def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckResult], dict[str, Any]]:

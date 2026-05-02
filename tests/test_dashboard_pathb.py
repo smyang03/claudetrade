@@ -42,6 +42,14 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertIn("metrics", data["path_b_live"])
         self.assertIn("charts", data["path_b_live"])
 
+    def test_live_limits_use_start_config_overrides(self) -> None:
+        self.assertEqual(dashboard_server._get_env_int("live", "KR_MAX_POSITIONS", 10), 15)
+        self.assertEqual(dashboard_server._get_env_int("live", "US_MAX_POSITIONS", 10), 10)
+
+    def test_dashboard_default_live_but_paper_mode_explicit(self) -> None:
+        self.assertEqual(dashboard_server._normalize_mode(None), "live")
+        self.assertEqual(dashboard_server._normalize_mode("paper"), "paper")
+
     def test_v2_ops_market_uses_session_trade_date(self) -> None:
         captured = {}
 

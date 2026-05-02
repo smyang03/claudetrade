@@ -72,7 +72,7 @@ def _brain_payload() -> dict:
 
 
 class ActiveLessonBuilderTests(unittest.TestCase):
-    def test_shadow_default_selects_but_does_not_inject(self) -> None:
+    def test_disabled_lessons_do_not_query_or_inject(self) -> None:
         with patch.object(active_lessons, "_load_lesson_candidates", return_value=_lesson_payload()), \
              patch.object(active_lessons, "_load_brain", return_value=_brain_payload()), \
              patch.dict(os.environ, {
@@ -83,9 +83,10 @@ class ActiveLessonBuilderTests(unittest.TestCase):
             result = active_lessons.build_active_lesson_context("US")
 
         self.assertEqual(result["section"], "")
-        self.assertIn("[active lessons]", result["preview"])
+        self.assertEqual(result["preview"], "")
         self.assertFalse(result["metadata"]["injected"])
-        self.assertGreaterEqual(result["metadata"]["count"], 1)
+        self.assertEqual(result["metadata"]["count"], 0)
+        self.assertTrue(result["metadata"]["disabled_skipped"])
 
     def test_filters_system_issues_and_legacy_by_default(self) -> None:
         with patch.object(active_lessons, "_load_lesson_candidates", return_value=_lesson_payload()), \

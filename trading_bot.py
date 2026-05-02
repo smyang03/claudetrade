@@ -1995,29 +1995,46 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if str(raw_key or "").strip().upper() == key and isinstance(raw_plan, dict) and raw_plan:
                     return raw_plan
         return {}
-    def _enforce_trade_ready_price_targets(self, market: str, meta: dict) -> dict:
+    def _enforce_trade_ready_price_targets(
+        self,
+        market: str,
+        meta: dict,
+        allow_missing_price_targets=None,
+    ) -> dict:
         normalized_meta = dict(meta or {})
         ready = list(dict.fromkeys(normalized_meta.get("trade_ready") or []))
         price_targets = normalized_meta.get("price_targets") or {}
+        allowed_missing = {
+            self._selection_ticker_key(market, ticker)
+            for ticker in (allow_missing_price_targets or [])
+            if self._selection_ticker_key(market, ticker)
+        }
         if not ready:
             normalized_meta["_missing_price_target_demoted"] = []
+            normalized_meta["_missing_price_target_allowed"] = []
             normalized_meta["price_targets"] = {}
             return normalized_meta
         kept: list[str] = []
         missing: list[str] = []
+        allowed: list[str] = []
         for ticker in ready:
             key = self._selection_ticker_key(market, ticker)
             if self._selection_price_target_for_ticker(market, price_targets, ticker):
                 kept.append(ticker)
+            elif key in allowed_missing:
+                kept.append(ticker)
+                allowed.append(key)
             elif key:
                 missing.append(key)
         missing = list(dict.fromkeys(missing))
+        allowed = list(dict.fromkeys(allowed))
         if missing:
             runtime_filtered = dict(normalized_meta.get("_runtime_filtered_trade_ready") or {})
             for key in missing:
                 runtime_filtered[key] = "missing_price_target"
             normalized_meta["_runtime_filtered_trade_ready"] = runtime_filtered
             normalized_meta["_missing_price_target_demoted"] = missing
+            normalized_meta["_missing_price_target_allowed"] = allowed
             normalized_meta["trade_ready"] = kept
             coverage = dict(normalized_meta.get("_price_target_coverage") or {})
             coverage.update({
@@ -2025,6 +2042,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "covered_trade_ready_count": len(kept),
                 "price_target_count": len(price_targets) if isinstance(price_targets, dict) else 0,
                 "missing": missing,
+                "allowed_missing": allowed,
                 "ratio": round((len(kept) / len(ready)) if ready else 1.0, 4),
                 "runtime_enforced": True,
             })
@@ -2044,6 +2062,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         else:
             normalized_meta["_missing_price_target_demoted"] = []
+            normalized_meta["_missing_price_target_allowed"] = allowed
         normalized_meta["price_targets"] = self._merge_selection_price_targets(
             market,
             list(normalized_meta.get("trade_ready") or []),
@@ -2422,7 +2441,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             }
         mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
         meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
-        meta = self._enforce_trade_ready_price_targets(market, meta)
+        allow_missing_price_targets = meta.get("_trade_ready_without_price_targets_allowed") or []
+        meta = self._enforce_trade_ready_price_targets(
+            market,
+            meta,
+            allow_missing_price_targets=allow_missing_price_targets,
+        )
         stages = {
             "raw": {
                 "watchlist": list(dict.fromkeys(raw_meta.get("watchlist") or selected or [])),
@@ -2765,7 +2789,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             list(meta.get("watchlist") or []),
             mode=mode,
         )
-        meta = self._enforce_trade_ready_price_targets(market, meta)
+        allowed_without_targets = list(meta.get("_trade_ready_without_price_targets_allowed") or [])
+        allowed_without_targets.append(normalized)
+        meta["_trade_ready_without_price_targets_allowed"] = list(dict.fromkeys(allowed_without_targets))
+        meta = self._enforce_trade_ready_price_targets(
+            market,
+            meta,
+            allow_missing_price_targets=meta["_trade_ready_without_price_targets_allowed"],
+        )
         if normalized not in set(meta.get("trade_ready") or []):
             return False
         self.selection_meta[market] = meta
@@ -7505,6 +7536,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 kr_cash   = float(bal_kr.get("cash", 0) or 0) + float(bal_kr.get("total_eval", 0) or 0)
                 new_max   = min(env_cap, int(kr_cash * order_pct))
             if new_max > 0:
+                self.risk.max_order_krw = float(new_max)
         # ── 데이터 무결성 자동 평가 ───────────────────────────────────────────
                 _log_normal("info", f"[max_order update] {market} {new_max:,} KRW")
         except Exception as _mo_e:

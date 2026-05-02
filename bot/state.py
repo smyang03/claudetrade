@@ -6,6 +6,8 @@ trading_bot.py에서 이동 (로직 변경 없음)
 
 import json
 import os
+import threading
+import uuid
 from datetime import datetime, timedelta, time as dt_time
 from typing import Optional
 
@@ -38,7 +40,7 @@ def _atomic_json_dump(path, payload, *, indent=2, default=str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, ensure_ascii=False, indent=indent, default=default)
     json.loads(text)
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}")
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
@@ -211,7 +213,7 @@ class StateMixin:
         try:
             last_dt = datetime.fromisoformat(ts)
             if last_dt.tzinfo is None:
-                last_dt = KST.localize(last_dt)
+                last_dt = last_dt.replace(tzinfo=KST)
         except Exception:
             control["last_result_status"] = "error"
             control["last_error"] = control.get("last_error") or "이전 Claude 재판단 시각이 손상되어 상태를 정리했습니다."

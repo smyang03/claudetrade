@@ -2338,15 +2338,7 @@ class PathBRuntime:
         return summary
 
     def finalize_order_unknowns_at_session_close(self, market: str) -> dict[str, Any]:
-        summary = self.reconcile_order_unknowns(str(market or "").upper(), force=True, session_end=False)
-        final = self.reconcile_order_unknowns(str(market or "").upper(), force=True, session_end=True)
-        merged = dict(summary)
-        for key, value in final.items():
-            if isinstance(value, int):
-                merged[key] = int(merged.get(key, 0) or 0) + value
-            elif key == "errors":
-                merged[key] = list(merged.get(key, []) or []) + list(value or [])
-        return merged
+        return self.reconcile_order_unknowns(str(market or "").upper(), force=True, session_end=True)
 
     def _reconcile_order_unknown_run(
         self,
@@ -2758,6 +2750,14 @@ class PathBRuntime:
         if filled_qty > 0:
             remaining = max(0, int(requested_qty or filled_qty) - int(filled_qty))
             self._update_local_pathb_remaining_qty(plan, remaining)
+            if session_end:
+                self._set_order_unknown_resolution(
+                    path_run_id,
+                    "session_end_unresolved",
+                    {**evidence, "session_end_partial_sell_fill": True, "remaining_qty": int(remaining)},
+                    next_retry=True,
+                )
+                return "session_end_unresolved"
             self.sell_manager.mark_sell_partial(
                 path_run_id,
                 execution_id=execution_id,
@@ -2771,6 +2771,14 @@ class PathBRuntime:
             return "session_end_unresolved" if session_end else "ambiguous_broker_truth"
 
         if open_matches:
+            if session_end:
+                self._set_order_unknown_resolution(
+                    path_run_id,
+                    "session_end_unresolved",
+                    {**evidence, "session_end_open_sell_order": True},
+                    next_retry=True,
+                )
+                return "session_end_unresolved"
             self.sell_manager.mark_sell_acked(
                 path_run_id,
                 execution_id=execution_id or str(open_matches[0].get("order_no", "") or ""),
