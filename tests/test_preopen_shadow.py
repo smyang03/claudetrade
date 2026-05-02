@@ -218,6 +218,21 @@ class PreopenShadowTests(unittest.TestCase):
             payload["performance_summary"]["review_status"],
             "collect_5_to_10_sessions_before_enabling_behavior",
         )
+        self.assertEqual(payload["summary"]["empty_reason"], "ready")
+        self.assertTrue(payload["recent_sessions"])
+        self.assertIn("scheduler_guidance", payload)
+        self.assertIn("candidates", payload["paths"])
+
+    def test_dashboard_payload_explains_missing_collector(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                payload = load_preopen_dashboard("US", session_date="2026-05-02")
+
+        self.assertEqual(payload["summary"]["collector_status"], "missing")
+        self.assertEqual(payload["summary"]["empty_reason"], "collector_not_run")
+        self.assertIn("preopen_collector.py --market US", payload["next_actions"][0])
+        self.assertEqual(payload["scheduler_guidance"]["market"], "US")
 
     def test_dashboard_api_returns_shadow_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -242,6 +257,8 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["collector_status"], "ok")
         self.assertEqual(payload["summary"]["provider"], "seed_watchlist")
         self.assertEqual(payload["performance_summary"]["review_status"], "collect_5_to_10_sessions_before_enabling_behavior")
+        self.assertIn("recent_sessions", payload)
+        self.assertIn("next_actions", payload)
 
 
 if __name__ == "__main__":
