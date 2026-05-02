@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import sqlite3
+import tempfile
 from datetime import date
 import unittest
 from unittest.mock import patch
@@ -104,6 +108,205 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(data["labels"], ["2026-04-30"])
         self.assertNotIn("2026-05-01", data["labels"])
         self.assertEqual(data["equity"], [1_250_000])
+
+    def test_history_equity_live_splits_trading_pnl_and_cash_flow(self) -> None:
+        snapshots = [
+            {
+                "market": "US",
+                "date": "2026-04-29",
+                "asset_krw": 1_000_000,
+                "unrealized_krw": 0,
+            },
+            {
+                "market": "US",
+                "date": "2026-04-30",
+                "asset_krw": 1_200_000,
+                "unrealized_krw": 10_000,
+            },
+        ]
+        broker_rows = [
+            {
+                "side": "sell",
+                "pnl_known": True,
+                "date": "2026-04-30",
+                "pnl": 5_000,
+                "pnl_pct": 0.5,
+            }
+        ]
+
+        with patch.object(
+            dashboard_server, "_session_trade_date", return_value=date(2026, 4, 30)
+        ), patch.object(
+            dashboard_server, "_broker_snapshot", return_value={}
+        ), patch.object(
+            dashboard_server, "_persist_broker_equity_snapshot"
+        ), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", return_value=broker_rows
+        ), patch.object(
+            dashboard_server, "_load_broker_equity_snapshots", return_value=snapshots
+        ):
+            res = app.test_client().get(
+                "/api/history/equity?market=US&mode=live&period=custom&start=2026-04-29&end=2026-04-30"
+            )
+
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data["labels"], ["2026-04-29", "2026-04-30"])
+        self.assertEqual(data["equity"], [1_000_000, 1_200_000])
+        self.assertEqual(data["trading_pnl_krw"], [0.0, 15_000.0])
+        self.assertEqual(data["cumulative_trading_pnl_krw"], [0.0, 15_000.0])
+        self.assertEqual(data["cash_flow_krw"], [0.0, 185_000.0])
+        self.assertEqual(data["cumulative_cash_flow_krw"], [0.0, 185_000.0])
+        self.assertEqual(data["pnl"], [0.0, 1.5])
+        self.assertEqual(data["basis"], "broker_asset_reconstructed")
+        self.assertEqual(data["reconciliation_basis"], "broker_asset_trading_pnl_cashflow")
+
+    def test_chart_equity_live_uses_broker_payload_not_historical_records(self) -> None:
+        snapshots = [
+            {
+                "market": "KR",
+                "date": "2026-04-29",
+                "asset_krw": 1_000_000,
+                "unrealized_krw": 0,
+            }
+        ]
+
+        with patch.object(
+            dashboard_server, "_session_trade_date", return_value=date(2026, 4, 29)
+        ), patch.object(
+            dashboard_server, "_broker_snapshot", return_value={}
+        ), patch.object(
+            dashboard_server, "_persist_broker_equity_snapshot"
+        ), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", return_value=[]
+        ), patch.object(
+            dashboard_server, "_load_broker_equity_snapshots", return_value=snapshots
+        ), patch.object(
+            dashboard_server, "load_records_filtered", side_effect=AssertionError("historical records should not be used")
+        ):
+            res = app.test_client().get("/api/chart/equity?market=KR&mode=live&period=3month")
+
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data["labels"], ["2026-04-29"])
+        self.assertEqual(data["equity"], [1_000_000])
+        self.assertEqual(data["asset_basis"], "kis_broker_account")
+
+    def test_judgment_candidates_do_not_let_legacy_hide_newer_live_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_dir = Path(tmp)
+            (log_dir / "20260418_US.json").write_text(json.dumps({"date": "2026-04-18"}), encoding="utf-8")
+            (log_dir / "live_20260501_US.json").write_text(json.dumps({"date": "2026-05-01"}), encoding="utf-8")
+            (log_dir / "paper_20260503_US.json").write_text(json.dumps({"date": "2026-05-03"}), encoding="utf-8")
+
+            with patch.object(dashboard_server, "LOG_DIR", log_dir):
+                names = [path.name for path in dashboard_server._judgment_candidates("US", "live")]
+
+        self.assertEqual(names[-1], "live_20260501_US.json")
+        self.assertNotIn("paper_20260503_US.json", names)
+
+    def test_preferred_analysis_log_uses_mode_prefixed_file_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            analysis_dir = root / "logs" / "analysis"
+            analysis_dir.mkdir(parents=True)
+            (analysis_dir / "analysis_20260503.jsonl").write_text("{}\n", encoding="utf-8")
+            (analysis_dir / "paper_analysis_20260503.jsonl").write_text("{}\n", encoding="utf-8")
+            (analysis_dir / "live_analysis_20260503.jsonl").write_text("{}\n", encoding="utf-8")
+
+            with patch.object(dashboard_server, "BASE_DIR", root):
+                self.assertEqual(
+                    dashboard_server._preferred_analysis_log_path("20260503", "paper").name,
+                    "paper_analysis_20260503.jsonl",
+                )
+                self.assertEqual(
+                    dashboard_server._preferred_analysis_log_path("20260503", "live").name,
+                    "live_analysis_20260503.jsonl",
+                )
+
+    def test_runtime_events_read_mode_prefixed_trading_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            system_dir = Path(tmp)
+            (system_dir / "trading_20260502.log").write_text(
+                "2026-05-02 23:00:00 [INFO] bot | [PAPER BUY] AAPL 1@9999 | gap | 주문번호=old\n",
+                encoding="utf-8",
+            )
+            (system_dir / "live_trading_20260502.log").write_text(
+                "2026-05-02 23:01:00 [INFO] bot | [PAPER BUY] AAPL 1@190.5 | gap | 주문번호=live\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(dashboard_server, "SYSTEM_LOG_DIR", system_dir), patch.object(
+                dashboard_server, "_session_trade_date", return_value=date(2026, 5, 2)
+            ):
+                events = dashboard_server._parse_runtime_events("US", mode="live")
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["ticker"], "AAPL")
+        self.assertEqual(events[0]["price"], 190.5)
+
+    def test_position_chart_uses_entry_date_range_and_buy_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_dir = root / "data"
+            db_dir.mkdir(parents=True)
+            db_path = db_dir / "intraday_strategy_log.db"
+            con = sqlite3.connect(db_path)
+            try:
+                con.execute(
+                    """
+                    CREATE TABLE intraday_strategy_log (
+                        ts TEXT NOT NULL,
+                        session_date TEXT NOT NULL,
+                        market TEXT NOT NULL,
+                        ticker TEXT NOT NULL,
+                        strategy_name TEXT NOT NULL,
+                        stage TEXT NOT NULL,
+                        price REAL,
+                        bot_mode TEXT NOT NULL DEFAULT 'paper'
+                    )
+                    """
+                )
+                con.executemany(
+                    """
+                    INSERT INTO intraday_strategy_log
+                    (ts, session_date, market, ticker, strategy_name, stage, price, bot_mode)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        ("2026-04-30T09:00:00", "2026-04-30", "KR", "005930", "gap", "probe", 100.0, "live"),
+                        ("2026-04-30T09:31:00", "2026-04-30", "KR", "005930", "gap", "trade", 102.0, "live"),
+                        ("2026-05-01T10:00:00", "2026-05-01", "KR", "005930", "gap", "probe", 108.0, "live"),
+                    ],
+                )
+                con.commit()
+            finally:
+                con.close()
+
+            with patch.object(dashboard_server, "BASE_DIR", root), patch.object(
+                dashboard_server, "_session_trade_date", return_value=date(2026, 5, 1)
+            ), patch.object(
+                dashboard_server, "_saved_positions_for_market", return_value=[]
+            ):
+                res = app.test_client().get(
+                    "/api/position/chart?market=KR&mode=live&ticker=005930&entry_date=2026-04-30&fill_time=093000&avg_price=101&current_price=109"
+                )
+
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data["range_start"], "2026-04-30")
+        self.assertEqual(data["range_end"], "2026-05-01")
+        self.assertEqual(data["source"], "position_overview_strategy_samples")
+        self.assertEqual(data["labels"], ["04-30 09:30", "04-30 09:31", "05-01 10:00", "현재"])
+        self.assertEqual(data["point_kinds"], ["buy_fill", "strategy_sample", "strategy_sample", "current_position"])
+        self.assertEqual(data["buy_markers"], [
+            {
+                "label": "04-30 09:30",
+                "price": 101.0,
+                "source": "position_entry",
+                "timestamp": "2026-04-30T09:30:00",
+            }
+        ])
 
 
 if __name__ == "__main__":

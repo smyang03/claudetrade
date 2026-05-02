@@ -80,6 +80,8 @@ state/paper_*.json
 state/paper_*.jsonl
 state/live_*.json
 state/live_*.jsonl
+# Preopen shadow basket 런타임 상태 (날짜별, 스케줄러별 — 재수집 가능)
+state/preopen_*.json
 # 날짜별 유니버스 스냅샷 (재생성 가능)
 data/universe/
 # 거래소 resolve 캐시 (런타임 갱신)

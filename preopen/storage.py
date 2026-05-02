@@ -31,6 +31,17 @@ def log_path(kind: str, market: str, session_date: str | None = None) -> Path:
     return get_runtime_path("logs", "preopen", f"{_date_ymd(session_date)}_{market_key}_{kind}.jsonl")
 
 
+def scheduler_state_path(mode: str = "live") -> Path:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    return get_runtime_path("state", f"preopen_scheduler_{runtime_mode}.json")
+
+
+def scheduler_event_path(mode: str = "live") -> Path:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    today = datetime.now(KST).strftime("%Y%m%d")
+    return get_runtime_path("logs", "preopen", f"{today}_scheduler_{runtime_mode}.jsonl")
+
+
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
@@ -110,6 +121,81 @@ def save_outcome_record(market: str, session_date: str, record: dict[str, Any]) 
     payload.setdefault("market", _market_key(market))
     payload.setdefault("session_date", session_date)
     append_jsonl(log_path("outcome", market, session_date), payload)
+
+
+def load_preopen_scheduler_state(mode: str = "live") -> dict[str, Any]:
+    path = scheduler_state_path(mode)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_preopen_scheduler_state(mode: str, state: dict[str, Any]) -> Path:
+    path = scheduler_state_path(mode)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(state or {})
+    payload.setdefault("mode", "live" if str(mode or "").lower() == "live" else "paper")
+    payload["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return path
+
+
+def save_preopen_scheduler_event(mode: str, event: dict[str, Any]) -> None:
+    payload = dict(event or {})
+    payload.setdefault("ts", datetime.now(KST).isoformat(timespec="seconds"))
+    payload.setdefault("mode", "live" if str(mode or "").lower() == "live" else "paper")
+    append_jsonl(scheduler_event_path(mode), payload)
+
+
+def _parse_iso_age_sec(value: str) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=KST)
+        return round((datetime.now(KST) - parsed.astimezone(KST)).total_seconds(), 2)
+    except Exception:
+        return None
+
+
+def load_preopen_scheduler_dashboard(mode: str = "live", *, limit: int = 20) -> dict[str, Any]:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    state = load_preopen_scheduler_state(runtime_mode)
+    heartbeat_age = _parse_iso_age_sec(str(state.get("last_tick_at", "") or "")) if state else None
+    try:
+        interval_sec = int(state.get("interval_sec", 60) or 60)
+    except Exception:
+        interval_sec = 60
+    if not state:
+        status = "missing"
+    elif heartbeat_age is None:
+        status = "unknown"
+    elif heartbeat_age <= max(180, interval_sec * 3):
+        status = "active"
+    else:
+        status = "stale"
+    events = read_jsonl_tail(scheduler_event_path(runtime_mode), limit=limit)
+    last_job = {}
+    for event in reversed(events):
+        if event.get("event") in {"job_success", "job_failed", "job_timeout", "job_dry_run"}:
+            last_job = event
+            break
+    return {
+        "mode": runtime_mode,
+        "status": status,
+        "state": state,
+        "heartbeat_age_sec": heartbeat_age,
+        "last_tick_at": state.get("last_tick_at", "") if state else "",
+        "last_job": last_job,
+        "recent_events": events,
+        "state_path": str(scheduler_state_path(runtime_mode)),
+        "event_path": str(scheduler_event_path(runtime_mode)),
+        "start_command": "python tools/preopen_scheduler.py --mode live --markets KR,US --loop",
+    }
 
 
 def read_jsonl_tail(path: Path, limit: int = 100) -> list[dict[str, Any]]:
@@ -265,6 +351,7 @@ def _scheduler_guidance(market: str) -> dict[str, Any]:
             "market": "US",
             "collector_windows_kst": ["17:00-22:25"],
             "outcome_offsets_min": [5, 30, 60],
+            "automatic_command": "python tools/preopen_scheduler.py --mode live --markets KR,US --loop",
             "commands": [
                 "python tools/preopen_collector.py --market US --mode live --once",
                 "python tools/preopen_outcome_updater.py --market US --offset-min 5 --once",
@@ -276,6 +363,7 @@ def _scheduler_guidance(market: str) -> dict[str, Any]:
         "market": "KR",
         "collector_windows_kst": ["08:00-09:00"],
         "outcome_offsets_min": [5, 30, 60],
+        "automatic_command": "python tools/preopen_scheduler.py --mode live --markets KR,US --loop",
         "commands": [
             "python tools/preopen_collector.py --market KR --mode live --once",
             "python tools/preopen_outcome_updater.py --market KR --offset-min 5 --once",
@@ -285,7 +373,13 @@ def _scheduler_guidance(market: str) -> dict[str, Any]:
     }
 
 
-def load_preopen_dashboard(market: str, *, session_date: str | None = None, limit: int = 50) -> dict[str, Any]:
+def load_preopen_dashboard(
+    market: str,
+    *,
+    session_date: str | None = None,
+    limit: int = 50,
+    mode: str = "live",
+) -> dict[str, Any]:
     market_key = _market_key(market)
     session_date = session_date or resolve_session_date_str(market_key)
     state = load_preopen_state(market_key, session_date=session_date, max_age_min=24 * 60) or {}
@@ -316,6 +410,7 @@ def load_preopen_dashboard(market: str, *, session_date: str | None = None, limi
         "rank_diff": rank_diff,
         "outcome": outcome,
         "performance_summary": _performance_summary(rank_diff, outcome),
+        "scheduler": load_preopen_scheduler_dashboard(mode=mode, limit=20),
         "recent_sessions": list_preopen_sessions(market_key, limit=20),
         "next_actions": _next_actions(market_key, empty_reason),
         "scheduler_guidance": _scheduler_guidance(market_key),

@@ -16,6 +16,7 @@ Flask 기반 트레이딩 대시보드 웹서버
 from flask import Flask, jsonify, redirect, render_template_string, request
 from pathlib import Path
 from datetime import datetime, date, timedelta, time as dt_time
+import copy
 import json, sys, os, re, subprocess, threading, atexit, time as _time, sqlite3
 from collections import Counter
 from contextlib import contextmanager
@@ -80,6 +81,8 @@ except Exception:
 app = Flask(__name__)
 
 _BROKER_REALIZED_CACHE: dict[tuple[str, str], dict] = {}
+_BROKER_SNAPSHOT_CACHE: dict[str, dict] = {}
+_BROKER_TRADE_BUNDLE_CACHE: dict[tuple[str, str, str, str, str], dict] = {}
 _KIS_RUNTIME_LOCK = threading.Lock()
 
 
@@ -187,16 +190,18 @@ def _judgment_path(market: str, trade_date: str, mode: str) -> Path:
 
 def _judgment_candidates(market: str, mode: str) -> list[Path]:
     runtime_mode = _normalize_mode(mode)
-    preferred = sorted(LOG_DIR.glob(f"{runtime_mode}_*_{market}.json"))
-    legacy = sorted(LOG_DIR.glob(f"*_{market}.json"))
-    seen = set()
-    ordered = []
-    for path in preferred + legacy:
-        if path in seen:
+    pattern = re.compile(rf"(?:(?P<mode>live|paper)_)?(?P<day>\d{{8}})_{re.escape(market)}\.json$")
+    candidates: list[tuple[str, int, Path]] = []
+    for path in LOG_DIR.glob(f"*_{market}.json"):
+        match = pattern.fullmatch(path.name)
+        if not match:
             continue
-        seen.add(path)
-        ordered.append(path)
-    return ordered
+        file_mode = match.group("mode") or ""
+        if file_mode and file_mode != runtime_mode:
+            continue
+        # 같은 날짜라면 mode 전용 파일이 레거시 파일보다 우선되도록 뒤쪽에 둔다.
+        candidates.append((match.group("day"), 1 if file_mode == runtime_mode else 0, path))
+    return [path for _, _, path in sorted(candidates, key=lambda item: (item[0], item[1], item[2].name))]
 
 
 def _runtime_env_path(mode: str) -> Path:
@@ -346,7 +351,7 @@ def _date_str_prefix(date_str: str) -> str:
 def _preferred_analysis_log_path(date_str: str, mode: str) -> Optional[Path]:
     analysis_dir = BASE_DIR / "logs" / "analysis"
     mode_name = _normalize_mode(mode)
-    prefixes = ((mode_name + "_") if mode_name != "paper" else "", "")
+    prefixes = (mode_name + "_", "")
     for prefix in prefixes:
         candidate = analysis_dir / f"{prefix}analysis_{date_str}.jsonl"
         if candidate.exists():
@@ -675,8 +680,13 @@ def _normalized_trades(rec: dict, market: str) -> list:
     return result
 
 
-def _log_path_for_date(rec_date: str) -> Path:
+def _log_path_for_date(rec_date: str, mode: Optional[str] = None) -> Path:
     ymd = (rec_date or "").replace("-", "")[:8]
+    if mode:
+        runtime_mode = _normalize_mode(mode)
+        preferred = SYSTEM_LOG_DIR / f"{runtime_mode}_trading_{ymd}.log"
+        if preferred.exists():
+            return preferred
     return SYSTEM_LOG_DIR / f"trading_{ymd}.log"
 
 
@@ -1239,11 +1249,7 @@ def _trade_stats_from_rows(trades: list, days: int) -> dict:
     }
 
 
-def _parse_runtime_events(market: str, limit: int = 200) -> list:
-    path = _log_path_for_date(_session_trade_date(market).isoformat())
-    if not path.exists():
-        return []
-
+def _parse_runtime_events(market: str, limit: int = 200, mode: Optional[str] = None) -> list:
     ts_re = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
     trailing_re = re.compile(r"\[TRAILING\]\s+(?P<ticker>[A-Z0-9]+)\s+trail_sl=(?P<price>[0-9,]+(?:\.[0-9]+)?)")
     buy_re = re.compile(r"\[PAPER BUY\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<qty>\d+)@(?P<price>[0-9,]+(?:\.[0-9]+)?)")
@@ -1252,9 +1258,24 @@ def _parse_runtime_events(market: str, limit: int = 200) -> list:
     sell_fail_re = re.compile(r"sell order failed \[(?P<ticker>[A-Z0-9]+)\]:\s*(?P<reason>.+)$")
     cycle_err_re = re.compile(r"cycle error \[(?P<ticker>[A-Z0-9]+)\]:\s*(?P<reason>.+)$")
 
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    candidate_dates = [_session_trade_date(market).isoformat()]
+    system_date = datetime.now(KST).date().isoformat()
+    if system_date not in candidate_dates:
+        candidate_dates.append(system_date)
+
+    lines: list[str] = []
+    seen_paths: set[str] = set()
+    for log_date in candidate_dates:
+        path = _log_path_for_date(log_date, mode=mode)
+        path_key = str(path)
+        if path_key in seen_paths or not path.exists():
+            continue
+        seen_paths.add(path_key)
+        try:
+            lines.extend(path.read_text(encoding="utf-8").splitlines())
+        except Exception:
+            continue
+    if not lines:
         return []
 
     events = []
@@ -1500,6 +1521,16 @@ def _load_broker_trade_bundle(market: str, period: str, start: str, end: str, mo
         "latest_fill": "",
         "error": "",
     }
+    runtime_mode = _normalize_mode(mode)
+    cache_key = (runtime_mode, str(market or "").upper(), str(period or ""), str(start or ""), str(end or ""))
+    now_ts = _time.time()
+    try:
+        ttl_sec = max(int(os.getenv("DASHBOARD_BROKER_TRADE_CACHE_SEC", "120") or 120), 0)
+    except Exception:
+        ttl_sec = 120
+    cached = _BROKER_TRADE_BUNDLE_CACHE.get(cache_key)
+    if ttl_sec > 0 and cached and now_ts - float(cached.get("ts", 0) or 0) < ttl_sec:
+        return copy.deepcopy(cached.get("value", meta))
 
     start_s = d_start.strftime("%Y%m%d")
     end_s = d_end.strftime("%Y%m%d")
@@ -1523,6 +1554,8 @@ def _load_broker_trade_bundle(market: str, period: str, start: str, end: str, mo
                 )
     except Exception as e:
         meta["error"] = str(e)
+        if ttl_sec > 0:
+            _BROKER_TRADE_BUNDLE_CACHE[cache_key] = {"ts": now_ts, "value": copy.deepcopy(meta)}
         return meta
 
     for row in broker_rows or []:
@@ -1581,6 +1614,8 @@ def _load_broker_trade_bundle(market: str, period: str, start: str, end: str, mo
     if dedup:
         latest = dedup[0]
         meta["latest_fill"] = f"{latest.get('date', '')} {latest.get('time', '')}".strip()
+    if ttl_sec > 0:
+        _BROKER_TRADE_BUNDLE_CACHE[cache_key] = {"ts": now_ts, "value": copy.deepcopy(meta)}
     return meta
 
 
@@ -1979,6 +2014,16 @@ def _resolve_review_position(market: str, ticker: str, mode: str = "paper") -> t
 
 def _broker_snapshot(mode: str = "paper") -> dict:
     """KIS 브로커 기준 KR/US 통합 스냅샷."""
+    runtime_mode = _normalize_mode(mode)
+    now_ts = _time.time()
+    try:
+        ttl_sec = max(int(os.getenv("DASHBOARD_BROKER_SNAPSHOT_CACHE_SEC", "20") or 20), 0)
+    except Exception:
+        ttl_sec = 20
+    cached = _BROKER_SNAPSHOT_CACHE.get(runtime_mode)
+    if ttl_sec > 0 and cached and now_ts - float(cached.get("ts", 0) or 0) < ttl_sec:
+        return copy.deepcopy(cached.get("value", {}))
+
     try:
         with _kis_runtime(mode):
             kis_profile = get_kis_profile_summary()
@@ -1995,7 +2040,6 @@ def _broker_snapshot(mode: str = "paper") -> dict:
     except Exception:
         return {}
 
-    runtime_mode = _normalize_mode(mode)
     usd_krw = _get_usd_krw_cached()
 
     kr_cash = float(kr.get("cash", 0) or 0)
@@ -2032,7 +2076,7 @@ def _broker_snapshot(mode: str = "paper") -> dict:
             total += pnl_native if market == "KR" else pnl_native * usd_krw
         return total
 
-    return {
+    result = {
         "source": source,
         "kis_profile": kis_profile,
         "usd_krw": usd_krw,
@@ -2052,6 +2096,9 @@ def _broker_snapshot(mode: str = "paper") -> dict:
             "US": _unrealized_krw(us.get("stocks", []), "US"),
         },
     }
+    if ttl_sec > 0:
+        _BROKER_SNAPSHOT_CACHE[runtime_mode] = {"ts": now_ts, "value": copy.deepcopy(result)}
+    return result
 
 
 def _market_asset_krw_from_broker_snapshot(broker: dict, market: str) -> float:
@@ -2073,6 +2120,13 @@ def _persist_broker_equity_snapshot(broker: dict, mode: str = "paper") -> None:
             "date": today_kr,
             "asset_krw": round(_market_asset_krw_from_broker_snapshot(broker, "KR"), 6),
             "unrealized_krw": round(float((broker.get("unrealized_krw", {}) or {}).get("KR", 0) or 0), 6),
+            "cash_krw": round(float(broker.get("kr_cash_effective", broker.get("kr_cash", 0)) or 0), 6),
+            "eval_krw": round(float(broker.get("kr_eval", 0) or 0), 6),
+            "orderable_cash_krw": round(float(broker.get("kr_orderable_cash", 0) or 0), 6),
+            "native_cash": round(float(broker.get("kr_cash_effective", broker.get("kr_cash", 0)) or 0), 6),
+            "native_eval": round(float(broker.get("kr_eval", 0) or 0), 6),
+            "native_currency": "KRW",
+            "usd_krw": round(float(broker.get("usd_krw", 0) or 0), 6),
             "source": str(broker.get("source", "broker") or "broker"),
             "captured_at": datetime.now(KST).isoformat(),
         },
@@ -2081,6 +2135,14 @@ def _persist_broker_equity_snapshot(broker: dict, mode: str = "paper") -> None:
             "date": today_us,
             "asset_krw": round(_market_asset_krw_from_broker_snapshot(broker, "US"), 6),
             "unrealized_krw": round(float((broker.get("unrealized_krw", {}) or {}).get("US", 0) or 0), 6),
+            "cash_krw": round(float(broker.get("us_cash_krw", 0) or 0), 6),
+            "eval_krw": round(float(broker.get("us_eval_krw", 0) or 0), 6),
+            "orderable_cash_krw": round(float(broker.get("us_orderable_cash_krw", 0) or 0), 6),
+            "native_cash": round(float(broker.get("us_cash_usd", 0) or 0), 6),
+            "native_eval": round(float(broker.get("us_eval_usd", 0) or 0), 6),
+            "native_orderable_cash": round(float(broker.get("us_orderable_cash_usd", 0) or 0), 6),
+            "native_currency": "USD",
+            "usd_krw": round(float(broker.get("usd_krw", 0) or 0), 6),
             "source": str(broker.get("source", "broker") or "broker"),
             "captured_at": datetime.now(KST).isoformat(),
         },
@@ -2127,6 +2189,155 @@ def _load_broker_equity_snapshots(market: str, period: str, start: str, end: str
         return []
     rows.sort(key=lambda r: str(r.get("date", "")))
     return rows
+
+
+def _live_equity_payload(
+    market: str,
+    period: str,
+    start: str,
+    end: str,
+    mode: str = "live",
+    broker: Optional[dict] = None,
+    persist_broker: bool = True,
+) -> dict:
+    """KIS 계좌자산과 매매손익, 입출금/환전 추정치를 분리한 라이브 equity payload."""
+    market = str(market or "").upper() or best_market_with_data()
+    mode = _normalize_mode(mode)
+    if broker is None:
+        broker = _broker_snapshot(mode=mode)
+    if broker and persist_broker:
+        _persist_broker_equity_snapshot(broker, mode=mode)
+
+    current_asset = _market_asset_krw_from_broker_snapshot(broker or {}, market) if broker else 0.0
+    current_unrealized = float(((broker or {}).get("unrealized_krw", {}) or {}).get(market, 0) or 0)
+
+    broker_rows = _broker_trade_rows_with_pnl(market, period, start, end, mode=mode)
+    realized_by_date: dict[str, float] = {}
+    for row in broker_rows:
+        side = str(row.get("side", "") or "").lower()
+        if side != "sell" or not bool(row.get("pnl_known", True)):
+            continue
+        trade_date = str(row.get("date", "") or "")[:10]
+        if not trade_date:
+            continue
+        realized_by_date[trade_date] = realized_by_date.get(trade_date, 0.0) + float(row.get("pnl", 0) or 0)
+
+    snapshot_rows = _load_broker_equity_snapshots(market, period, start, end, mode=mode)
+    snapshot_asset_map: dict[str, float] = {}
+    snapshot_unrealized_map: dict[str, float] = {}
+    snapshot_source_map: dict[str, str] = {}
+    for item in snapshot_rows:
+        label = str(item.get("date", "") or "")[:10]
+        if not label:
+            continue
+        asset = float(item.get("asset_krw", 0) or 0)
+        if asset > 0:
+            snapshot_asset_map[label] = asset
+        snapshot_unrealized_map[label] = float(item.get("unrealized_krw", 0) or 0)
+        snapshot_source_map[label] = str(item.get("source", "") or "")
+
+    session_label = _session_trade_date(market).isoformat()
+    if current_asset > 0:
+        snapshot_asset_map[session_label] = current_asset
+        snapshot_unrealized_map[session_label] = current_unrealized
+        snapshot_source_map[session_label] = str((broker or {}).get("source", "broker") or "broker")
+
+    labels = sorted(set(realized_by_date.keys()) | set(snapshot_asset_map.keys()))
+    if not labels and current_asset > 0:
+        labels = [session_label]
+
+    equity_values: list[Optional[float]] = []
+    last_known: Optional[float] = None
+    for label in labels:
+        if label in snapshot_asset_map and snapshot_asset_map[label] > 0:
+            value: Optional[float] = snapshot_asset_map[label]
+        elif last_known is not None:
+            value = last_known + float(realized_by_date.get(label, 0.0) or 0.0)
+        else:
+            value = None
+        equity_values.append(value)
+        if value is not None:
+            last_known = value
+
+    for i in range(len(labels) - 2, -1, -1):
+        if equity_values[i] is not None:
+            continue
+        next_value = equity_values[i + 1]
+        if next_value is None:
+            continue
+        next_label = labels[i + 1]
+        equity_values[i] = next_value - float(realized_by_date.get(next_label, 0.0) or 0.0)
+
+    equity = [float(v or 0.0) for v in equity_values]
+    unrealized: list[float] = []
+    last_unrealized = 0.0
+    for label in labels:
+        if label in snapshot_unrealized_map:
+            last_unrealized = float(snapshot_unrealized_map.get(label, 0.0) or 0.0)
+        unrealized.append(last_unrealized)
+
+    realized_series: list[float] = []
+    trading_pnl_series: list[float] = []
+    cumulative_trading_pnl: list[float] = []
+    cash_flow_series: list[float] = []
+    cumulative_cash_flow: list[float] = []
+    pnl_pct_series: list[float] = []
+    wins: list[bool] = []
+    cumulative_trade = 0.0
+    cumulative_flow = 0.0
+    for idx, label in enumerate(labels):
+        realized = float(realized_by_date.get(label, 0.0) or 0.0)
+        previous_unrealized = unrealized[idx - 1] if idx > 0 else 0.0
+        unrealized_delta = unrealized[idx] - previous_unrealized
+        trading_pnl = realized + unrealized_delta
+        if idx == 0:
+            asset_delta = 0.0
+            cash_flow = 0.0
+            base_equity = equity[idx] - trading_pnl
+        else:
+            asset_delta = equity[idx] - equity[idx - 1]
+            cash_flow = asset_delta - trading_pnl
+            base_equity = equity[idx - 1]
+        cumulative_trade += trading_pnl
+        cumulative_flow += cash_flow
+        pnl_pct = (trading_pnl / base_equity * 100.0) if base_equity > 0 else 0.0
+        realized_series.append(round(realized, 6))
+        trading_pnl_series.append(round(trading_pnl, 6))
+        cumulative_trading_pnl.append(round(cumulative_trade, 6))
+        cash_flow_series.append(round(cash_flow, 6))
+        cumulative_cash_flow.append(round(cumulative_flow, 6))
+        pnl_pct_series.append(round(pnl_pct, 4))
+        wins.append(trading_pnl > 0)
+
+    starting_asset = equity[0] if equity else 0.0
+    starting_capital = starting_asset - (cumulative_trading_pnl[0] if cumulative_trading_pnl else 0.0)
+    source = snapshot_source_map.get(labels[-1], str((broker or {}).get("source", "") or "")) if labels else ""
+    return {
+        "labels": labels,
+        "equity": [round(v, 6) for v in equity],
+        "account_asset_krw": [round(v, 6) for v in equity],
+        "pnl": pnl_pct_series,
+        "wins": wins,
+        "modes": ["" for _ in labels],
+        "realized_pnl_krw": realized_series,
+        "unrealized_krw": [round(v, 6) for v in unrealized],
+        "trading_pnl_krw": trading_pnl_series,
+        "daily_trading_pnl_krw": trading_pnl_series,
+        "cumulative_trading_pnl_krw": cumulative_trading_pnl,
+        "cash_flow_krw": cash_flow_series,
+        "cash_flow_estimate_krw": cash_flow_series,
+        "cumulative_cash_flow_krw": cumulative_cash_flow,
+        "cumulative_cash_flow_estimate_krw": cumulative_cash_flow,
+        "starting_asset_krw": round(starting_asset, 6),
+        "starting_capital_krw": round(starting_capital, 6),
+        "basis": "broker_asset_reconstructed",
+        "reconciliation_basis": "broker_asset_trading_pnl_cashflow",
+        "asset_basis": "kis_broker_account",
+        "performance_basis": "realized_pnl_plus_unrealized_delta",
+        "cash_flow_basis": "asset_delta_minus_trading_pnl",
+        "cash_flow_label": "입출금/환전 추정",
+        "source": source,
+    }
 
 
 def _broker_realized_pnl_krw(market: str, trade_date: str, mode: str = "paper") -> float:
@@ -2904,7 +3115,7 @@ def _session_status(market: str) -> dict:
     }
 
 
-def _claude_reinvoke_stats_today(market: str) -> dict:
+def _claude_reinvoke_stats_today(market: str, mode: Optional[str] = None) -> dict:
     empty = {
         "count": 0, "changed": 0, "unchanged": 0,
         "wins": 0, "losses": 0, "flats": 0,
@@ -2917,7 +3128,7 @@ def _claude_reinvoke_stats_today(market: str) -> dict:
             candidate_dates.append(prev_date)
     lines = []
     for log_date in candidate_dates:
-        path = _log_path_for_date(log_date)
+        path = _log_path_for_date(log_date, mode=mode)
         if not path.exists():
             continue
         try:
@@ -3119,6 +3330,45 @@ def api_summary():
                 if base_equity > 0:
                     pnl_pct = (float(pnl_krw) / base_equity) * 100.0
 
+    live_equity_summary: dict = {}
+    if _is_live_mode(mode):
+        try:
+            live_equity_summary = _live_equity_payload(
+                market,
+                "all",
+                "",
+                "",
+                mode=mode,
+                broker=broker,
+                persist_broker=False,
+            )
+        except Exception:
+            live_equity_summary = {}
+
+    def _latest_series_value(payload: dict, key: str, default: float = 0.0) -> float:
+        values = payload.get(key, []) if isinstance(payload, dict) else []
+        if isinstance(values, list) and values:
+            return float(values[-1] or 0.0)
+        return default
+
+    account_asset_krw = float(cum_asset or 0.0)
+    market_asset_krw = float(us_asset if market == "US" else kr_asset)
+    trading_pnl_krw = float(pnl_krw or 0.0)
+    trading_pnl_pct = float(pnl_pct or 0.0)
+    cumulative_trading_pnl_krw = _latest_series_value(
+        live_equity_summary,
+        "cumulative_trading_pnl_krw",
+        trading_pnl_krw,
+    )
+    cash_flow_estimate_krw = _latest_series_value(live_equity_summary, "cash_flow_krw", 0.0)
+    cumulative_cash_flow_estimate_krw = _latest_series_value(
+        live_equity_summary,
+        "cumulative_cash_flow_krw",
+        0.0,
+    )
+    starting_asset_krw = float(live_equity_summary.get("starting_asset_krw", 0.0) or 0.0)
+    starting_capital_krw = float(live_equity_summary.get("starting_capital_krw", 0.0) or 0.0)
+
     metrics = [_record_metrics(r, market) for r in records]
     wins      = [m for m in metrics if m.get("win")]
     total_pnl = sum(m.get("pnl_pct", 0) for m in metrics)
@@ -3164,8 +3414,20 @@ def api_summary():
     return jsonify({
         "today": {
             "date":           summary_date,
-                    "pnl_pct":        round(pnl_pct, 4),
+            "pnl_pct":        round(pnl_pct, 4),
             "pnl_krw":        round(pnl_krw, 0),
+            "account_asset_krw": round(account_asset_krw, 0),
+            "market_asset_krw": round(market_asset_krw, 0),
+            "trading_pnl_krw": round(trading_pnl_krw, 0),
+            "trading_pnl_pct": round(trading_pnl_pct, 4),
+            "cumulative_trading_pnl_krw": round(cumulative_trading_pnl_krw, 0),
+            "cash_flow_estimate_krw": round(cash_flow_estimate_krw, 0),
+            "cumulative_cash_flow_estimate_krw": round(cumulative_cash_flow_estimate_krw, 0),
+            "starting_asset_krw": round(starting_asset_krw, 0),
+            "starting_capital_krw": round(starting_capital_krw, 0),
+            "cash_flow_label": "입출금/환전 추정",
+            "account_asset_source": "kis_broker_account" if broker else asset_source,
+            "performance_basis": "broker_realized_plus_unrealized" if broker else "engine_fallback",
             "realized_pnl_krw": round(realized_pnl_krw, 0),
             "unrealized_pnl_krw": round(unrealized_pnl_krw, 0),
             "asset_source":   asset_source,
@@ -3445,64 +3707,210 @@ def api_position_chart():
     if not ticker:
         return jsonify({"ok": False, "error": "ticker required", "labels": [], "prices": []}), 400
     session_date = request.args.get("session_date") or _session_trade_date(market).isoformat()
+    pos = next(
+        (
+            p for p in _saved_positions_for_market(market, mode=mode)
+            if (str(p.get("ticker", "") or "").upper() if market == "US" else str(p.get("ticker", "") or "")) == ticker
+        ),
+        {},
+    )
+    entry_date = (
+        request.args.get("entry_date")
+        or request.args.get("entry_session_date")
+        or pos.get("entry_session_date")
+        or pos.get("entry_date")
+        or pos.get("session_date")
+        or session_date
+    )
+    entry_date = str(entry_date or session_date)[:10]
+    fill_time = str(request.args.get("fill_time") or pos.get("fill_time") or "").strip()
+    avg_price_arg = request.args.get("avg_price") or request.args.get("display_avg_price")
+    try:
+        entry_price = float(avg_price_arg or pos.get("display_avg_price", pos.get("avg_price", pos.get("entry", 0))) or 0)
+    except Exception:
+        entry_price = 0.0
+    current_price_arg = request.args.get("current_price") or request.args.get("display_current_price")
+    try:
+        current_price = float(current_price_arg or pos.get("display_current_price", pos.get("current_price", 0)) or 0)
+    except Exception:
+        current_price = 0.0
+    if market == "US":
+        usd_krw = _get_usd_krw_cached()
+        currency = str(pos.get("currency") or pos.get("display_currency") or request.args.get("currency") or "").upper()
+        if currency != "USD" and usd_krw > 0 and entry_price > 5000:
+            entry_price = entry_price / usd_krw
+        if currency != "USD" and usd_krw > 0 and current_price > 5000:
+            current_price = current_price / usd_krw
+    d_session = _parse_date(session_date)
+    d_entry = _parse_date(entry_date)
+    if d_entry == date.min or d_entry > d_session:
+        d_entry = d_session
+        entry_date = session_date[:10]
+    range_start = d_entry.isoformat()
+    range_end = d_session.isoformat() if d_session != date.min else session_date[:10]
     labels: list[str] = []
     prices: list[float] = []
     stages: list[str] = []
+    point_kinds: list[str] = []
+    buy_markers: list[dict] = []
     source = "intraday_strategy_log"
     db_path = BASE_DIR / "data" / "intraday_strategy_log.db"
     if db_path.exists():
         try:
-            with sqlite3.connect(str(db_path)) as con:
-                def _rows_for_session(session_key: str):
+            con = sqlite3.connect(str(db_path))
+            try:
+                def _rows_for_range(start_key: str, end_key: str):
                     return con.execute(
                         """
-                        SELECT ts, price, stage
+                        SELECT ts, price, stage, session_date
                         FROM intraday_strategy_log
-                        WHERE bot_mode=? AND session_date=? AND market=? AND UPPER(ticker)=? AND price IS NOT NULL AND price > 0
+                        WHERE bot_mode=? AND session_date>=? AND session_date<=? AND market=? AND UPPER(ticker)=? AND price IS NOT NULL AND price > 0
                         ORDER BY ts ASC
                         """,
-                        (mode, session_key, market, ticker.upper()),
+                        (mode, start_key, end_key, market, ticker.upper()),
                     ).fetchall()
-                rows = _rows_for_session(session_date)
+                rows = _rows_for_range(range_start, range_end)
                 if not rows:
                     latest = con.execute(
                         """
                         SELECT session_date
                         FROM intraday_strategy_log
-                        WHERE bot_mode=? AND market=? AND UPPER(ticker)=? AND price IS NOT NULL AND price > 0
+                        WHERE bot_mode=? AND session_date>=? AND market=? AND UPPER(ticker)=? AND price IS NOT NULL AND price > 0
                         ORDER BY session_date DESC
                         LIMIT 1
                         """,
-                        (mode, market, ticker.upper()),
+                        (mode, range_start, market, ticker.upper()),
                     ).fetchone()
                     if latest and latest[0]:
                         session_date = str(latest[0])
-                        rows = _rows_for_session(session_date)
+                        range_start = session_date
+                        range_end = session_date
+                        rows = _rows_for_range(session_date, session_date)
+            finally:
+                con.close()
+            def _chart_label(ts_value: str, multi_day_value: bool) -> str:
+                ts_s = str(ts_value or "")
+                if multi_day_value and len(ts_s) >= 16:
+                    return f"{ts_s[5:10]} {ts_s[11:16]}"
+                return (ts_s[11:16] if len(ts_s) >= 16 else "") or ts_s[:16]
+
+            def _fill_time_parts(raw_value: str) -> tuple[str, str]:
+                raw_s = str(raw_value or "").strip()
+                if not raw_s:
+                    return "", ""
+                digits = re.sub(r"\D", "", raw_s)
+                if len(digits) >= 6:
+                    hms = f"{digits[:2]}:{digits[2:4]}:{digits[4:6]}"
+                    return hms[:5], hms
+                if len(digits) >= 4:
+                    hms = f"{digits[:2]}:{digits[2:4]}:00"
+                    return hms[:5], hms
+                if ":" in raw_s:
+                    hms = raw_s[:8] if len(raw_s) >= 8 else f"{raw_s[:5]}:00"
+                    return hms[:5], hms
+                return "", ""
+
             last_label = None
-            for ts, price, stage in rows:
-                label = str(ts or "")[11:16] or str(ts or "")[:16]
-                if label == last_label and prices:
-                    prices[-1] = float(price or 0)
-                    stages[-1] = str(stage or "")
+            points: list[dict] = []
+            multi_day = range_start != range_end
+            for ts, price, stage, row_session_date in rows:
+                ts_s = str(ts or "")
+                label = _chart_label(ts_s, multi_day)
+                point = {
+                    "label": label,
+                    "price": round(float(price or 0), 6),
+                    "stage": str(stage or ""),
+                    "kind": "strategy_sample",
+                    "ts": ts_s,
+                    "session_date": str(row_session_date or ""),
+                }
+                if label == last_label and points:
+                    points[-1] = point
                     continue
-                labels.append(label)
-                prices.append(round(float(price or 0), 6))
-                stages.append(str(stage or ""))
+                points.append(point)
                 last_label = label
+
+            fill_hhmm, fill_hms = _fill_time_parts(fill_time)
+            entry_ts = f"{entry_date}T{fill_hms}" if fill_hms else ""
+            if points:
+                def _point_on_or_after_entry(point: dict) -> bool:
+                    point_session = str(point.get("session_date") or "")[:10]
+                    if point_session > entry_date:
+                        return True
+                    if point_session < entry_date:
+                        return False
+                    if fill_hhmm:
+                        return str(point.get("ts") or "")[11:16] >= fill_hhmm
+                    return True
+
+                points = [point for point in points if _point_on_or_after_entry(point)]
+
+            if entry_price > 0:
+                marker_ts = entry_ts or f"{entry_date}T00:00:00"
+                marker_label = _chart_label(marker_ts, multi_day) if entry_ts else "매수"
+                buy_point = {
+                    "label": marker_label,
+                    "price": round(entry_price, 6),
+                    "stage": "buy_fill",
+                    "kind": "buy_fill",
+                    "ts": marker_ts,
+                    "session_date": entry_date,
+                }
+                same_label_idx = next((idx for idx, point in enumerate(points) if point.get("label") == marker_label), None)
+                if same_label_idx is not None:
+                    points[same_label_idx] = buy_point
+                else:
+                    insert_idx = len(points)
+                    if entry_ts:
+                        insert_idx = next(
+                            (idx for idx, point in enumerate(points) if str(point.get("ts") or "") > entry_ts),
+                            len(points),
+                        )
+                    points.insert(insert_idx, buy_point)
+
+            if current_price > 0:
+                if not points or abs(float(points[-1].get("price") or 0) - current_price) > 0.000001:
+                    points.append({
+                        "label": "현재",
+                        "price": round(current_price, 6),
+                        "stage": "current",
+                        "kind": "current_position",
+                        "ts": "",
+                        "session_date": session_date,
+                    })
+
+            marker_index = next((idx for idx, point in enumerate(points) if point.get("kind") == "buy_fill"), None)
+            if points:
+                max_points = max(int(request.args.get("max_points", "140") or 140), 40)
+                if len(points) > max_points:
+                    step = max((len(points) + max_points - 1) // max_points, 1)
+                    keep = set(range(0, len(points), step))
+                    keep.add(len(points) - 1)
+                    if marker_index is not None:
+                        keep.add(marker_index)
+                    points = [point for idx, point in enumerate(points) if idx in keep]
+                    marker_index = next((idx for idx, point in enumerate(points) if point.get("kind") == "buy_fill"), None)
+                labels = [str(point["label"]) for point in points]
+                prices = [float(point["price"]) for point in points]
+                stages = [str(point.get("stage", "")) for point in points]
+                point_kinds = [str(point.get("kind", "")) for point in points]
+                if marker_index is not None:
+                    marker_point = points[marker_index]
+                    buy_markers.append({
+                        "label": marker_point["label"],
+                        "price": round(float(marker_point["price"] or 0), 6),
+                        "timestamp": marker_point.get("ts", ""),
+                        "source": "position_entry",
+                    })
+                has_strategy_samples = any(point.get("kind") == "strategy_sample" for point in points)
+                source = "position_overview_strategy_samples" if has_strategy_samples else "position_overview"
         except Exception as exc:
             _record_state_file_alert(db_path, exc, category="position_chart")
-            labels, prices, stages = [], [], []
+            labels, prices, stages, point_kinds, buy_markers = [], [], [], [], []
     if len(prices) < 2:
         source = "position_fallback"
-        pos = next(
-            (
-                p for p in _saved_positions_for_market(market, mode=mode)
-                if (str(p.get("ticker", "") or "").upper() if market == "US" else str(p.get("ticker", "") or "")) == ticker
-            ),
-            {},
-        )
-        avg_price = float(pos.get("display_avg_price", pos.get("avg_price", pos.get("entry", 0))) or 0)
-        cur_price = float(pos.get("display_current_price", pos.get("current_price", avg_price)) or 0)
+        avg_price = entry_price or float(pos.get("display_avg_price", pos.get("avg_price", pos.get("entry", 0))) or 0)
+        cur_price = current_price or float(pos.get("display_current_price", pos.get("current_price", avg_price)) or 0)
         if market == "US":
             usd_krw = _get_usd_krw_cached()
             currency = str(pos.get("currency") or pos.get("display_currency") or "").upper()
@@ -3511,19 +3919,32 @@ def api_position_chart():
                     avg_price = avg_price / usd_krw
                 if cur_price > 5000:
                     cur_price = cur_price / usd_krw
-        labels = ["entry", "current"] if avg_price > 0 or cur_price > 0 else []
+        labels = ["매수", "현재"] if avg_price > 0 or cur_price > 0 else []
         prices = [round(avg_price, 6), round(cur_price or avg_price, 6)] if labels else []
         stages = ["entry", "current"] if labels else []
+        point_kinds = ["buy_fill", "current_position"] if labels else []
+        if labels:
+            buy_markers = [{
+                "label": "매수",
+                "price": round(entry_price if entry_price > 0 else avg_price, 6),
+                "timestamp": entry_date,
+                "source": "position_entry",
+            }]
     return jsonify({
         "ok": True,
         "mode": mode,
         "market": market,
         "ticker": ticker,
         "session_date": session_date,
+        "range_start": range_start,
+        "range_end": range_end,
+        "auto_period_days": max((d_session - d_entry).days + 1, 1) if d_session != date.min and d_entry != date.min else 1,
         "source": source,
         "labels": labels,
         "prices": prices,
         "stages": stages,
+        "point_kinds": point_kinds,
+        "buy_markers": buy_markers,
         "count": len(prices),
     })
 
@@ -3532,11 +3953,12 @@ def api_position_chart():
 def api_preopen():
     market = str(request.args.get("market", current_market()) or "KR").upper()
     market = "US" if market == "US" else "KR"
+    mode = _request_mode()
     session_date = request.args.get("session_date") or _session_trade_date(market).isoformat()
     limit = int(request.args.get("limit", "50") or 50)
     try:
         from preopen.storage import load_preopen_dashboard
-        return jsonify(load_preopen_dashboard(market, session_date=session_date, limit=limit))
+        return jsonify(load_preopen_dashboard(market, session_date=session_date, limit=limit, mode=mode))
     except Exception as exc:
         return jsonify({
             "market": market,
@@ -3591,7 +4013,7 @@ def api_claude_status():
     session = _session_status(market)
     live = _load_live_status(market, mode=mode)
     claude = live.get("claude", {}) if isinstance(live, dict) else {}
-    stats = _claude_reinvoke_stats_today(market)
+    stats = _claude_reinvoke_stats_today(market, mode=mode)
     return jsonify({
         "market": market,
         "mode": mode,
@@ -3684,6 +4106,10 @@ def api_equity_chart():
     period  = request.args.get("period", "all")
     start   = request.args.get("start", "")
     end     = request.args.get("end", "")
+    mode    = _request_mode()
+    if _is_live_mode(mode):
+        return jsonify(_live_equity_payload(market, period, start, end, mode=mode))
+
     records = load_records_filtered(market, period, start, end)
 
     labels, values, pnls, wins, modes = [], [], [], [], []
@@ -4126,56 +4552,7 @@ def api_history_equity():
     end     = request.args.get("end", "")
     mode = _request_mode()
     if _is_live_mode(mode):
-        broker = _broker_snapshot(mode=mode)
-        if broker:
-            _persist_broker_equity_snapshot(broker, mode=mode)
-        current_asset = _market_asset_krw_from_broker_snapshot(broker, market)
-        broker_rows = _broker_trade_rows_with_pnl(market, period, start, end, mode=mode)
-        pnl_by_date: dict[str, float] = {}
-        pct_by_date: dict[str, float] = {}
-        for row in broker_rows:
-            if row.get("side") != "sell" or not bool(row.get("pnl_known", True)):
-                continue
-            trade_date = str(row.get("date", "") or "")[:10]
-            pnl_by_date[trade_date] = pnl_by_date.get(trade_date, 0.0) + float(row.get("pnl", 0) or 0)
-            pct_by_date[trade_date] = pct_by_date.get(trade_date, 0.0) + float(row.get("pnl_pct", 0) or 0)
-        snapshot_rows = _load_broker_equity_snapshots(market, period, start, end, mode=mode)
-        snapshot_map = {
-            str(item.get("date", "") or "")[:10]: float(item.get("asset_krw", 0) or 0)
-            for item in snapshot_rows
-        }
-        labels = sorted(set(list(pnl_by_date.keys()) + list(snapshot_map.keys())))
-        session_label = _session_trade_date(market).isoformat()
-        if current_asset > 0 and session_label not in labels:
-            labels.append(session_label)
-        labels = sorted(set(labels))
-        if not labels and current_asset > 0:
-            labels = [session_label]
-        equity = [0.0] * len(labels)
-        pnl = [round(pct_by_date.get(label, 0.0), 4) for label in labels]
-        wins = [pnl_by_date.get(label, 0.0) > 0 for label in labels]
-        modes = ["" for _ in labels]
-        if labels:
-            if labels[-1] in snapshot_map and snapshot_map[labels[-1]] > 0:
-                equity[-1] = snapshot_map[labels[-1]]
-            elif labels[-1] == session_label and current_asset > 0:
-                equity[-1] = current_asset
-            else:
-                equity[-1] = current_asset
-            for i in range(len(labels) - 2, -1, -1):
-                next_label = labels[i + 1]
-                if labels[i] in snapshot_map and snapshot_map[labels[i]] > 0:
-                    equity[i] = snapshot_map[labels[i]]
-                else:
-                    equity[i] = equity[i + 1] - float(pnl_by_date.get(next_label, 0.0) or 0.0)
-        return jsonify({
-            "labels": labels,
-            "equity": equity,
-            "pnl": pnl,
-            "wins": wins,
-            "modes": modes,
-            "basis": "broker_asset_reconstructed",
-        })
+        return jsonify(_live_equity_payload(market, period, start, end, mode=mode))
 
     records = load_records_filtered(market, period, start, end)
 
@@ -4453,7 +4830,7 @@ def api_signals_recent():
         })
     # 최신순으로 뒤집는다
     events.reverse()
-    runtime_events = _parse_runtime_events(market, limit=n)
+    runtime_events = _parse_runtime_events(market, limit=n, mode=mode)
     merged = events + runtime_events
     merged.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     dedup = []
@@ -4942,7 +5319,7 @@ def api_tickers_today():
                         if not selection_reasons.get(t):
                             selection_reasons[t] = watch_detail
 
-    runtime_events = _parse_runtime_events(market, limit=200)
+    runtime_events = _parse_runtime_events(market, limit=200, mode=mode)
     for ev in reversed(runtime_events):
         t = ev.get("ticker", "")
         if not t:
@@ -4981,11 +5358,11 @@ def api_tickers_today():
 
     def _today_watchlist_history(_market: str) -> dict:
         day_str = _market_log_date_str(_market)
-        sys_path = BASE_DIR / "logs" / "system" / f"trading_{day_str}.log"
+        sys_path = _log_path_for_date(day_str, mode=mode)
         # US 자정 세션: session date = 어제, 시스템 날짜 = 오늘 → 오늘 로그도 함께 읽기
         _now = datetime.now(KST)
         sysdate_str = _now.strftime("%Y%m%d")
-        sysdate_path = BASE_DIR / "logs" / "system" / f"trading_{sysdate_str}.log"
+        sysdate_path = _log_path_for_date(sysdate_str, mode=mode)
         initial: list[str] = []
         history: list[dict] = []
         current: list[str] = []
@@ -5684,6 +6061,10 @@ const RESULT_KO = {
   changed: '변경',
   unchanged: '유지',
   completed: '완료',
+  job_success: '성공',
+  job_failed: '실패',
+  job_timeout: '타임아웃',
+  job_dry_run: '리허설',
 };
 
 const SOURCE_KO = {
@@ -5861,12 +6242,12 @@ PAGE_TODAY_HTML = """
 <!-- 5 요약 카드 -->
 <div class="grid-5">
   <div class="card cyan">
-    <div class="card-label">오늘 손익</div>
+    <div class="card-label">매매 손익</div>
     <div class="card-value" id="today-pnl">--</div>
     <div class="card-sub"  id="today-krw">--</div>
   </div>
   <div class="card blue">
-    <div class="card-label">누적 자산</div>
+    <div class="card-label">계좌 자산</div>
     <div class="card-value" id="cumulative">--</div>
     <div class="card-sub"  id="today-mode">모드: --</div>
     <div class="card-sub"  id="cumulative-pnl">누적 손익: --</div>
@@ -5959,7 +6340,7 @@ PAGE_TODAY_HTML = """
 <!-- 2 차트 -->
 <div class="grid-2">
   <div class="card blue">
-    <div class="section-title">누적 자산 곡선</div>
+    <div class="section-title">계좌 자산 / 매매성과</div>
     <div class="chart-container"><canvas id="equityChart"></canvas></div>
   </div>
   <div class="card purple">
@@ -6073,22 +6454,39 @@ async function loadEquityChart() {
   if (!d.labels) return;
 
   const colors = (d.wins || []).map(w => w ? 'rgba(16,185,129,0.8)' : 'rgba(239,68,68,0.8)');
+  const liveAssetBasis = d.asset_basis === 'kis_broker_account';
+  const datasets = [
+    {
+      type: 'line', label: liveAssetBasis ? '계좌 자산(KIS)' : '누적 자산', data: d.equity,
+      borderColor: 'rgba(6,182,212,0.9)', backgroundColor: 'rgba(6,182,212,0.05)',
+      borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1', fill: true,
+    },
+  ];
+  if (Array.isArray(d.cumulative_trading_pnl_krw) && d.cumulative_trading_pnl_krw.length) {
+    datasets.push({
+      type: 'line', label: '누적 매매손익', data: d.cumulative_trading_pnl_krw,
+      borderColor: 'rgba(16,185,129,0.95)', backgroundColor: 'rgba(16,185,129,0.04)',
+      borderWidth: 2, pointRadius: 0, tension: 0.25, yAxisID: 'y1', fill: false,
+    });
+  }
+  if (Array.isArray(d.cumulative_cash_flow_krw) && d.cumulative_cash_flow_krw.some(v => Math.abs(Number(v || 0)) > 0)) {
+    datasets.push({
+      type: 'line', label: '입출금/환전 추정', data: d.cumulative_cash_flow_krw,
+      borderColor: 'rgba(245,158,11,0.9)', backgroundColor: 'rgba(245,158,11,0.04)',
+      borderWidth: 2, pointRadius: 0, tension: 0.2, yAxisID: 'y1', fill: false,
+      borderDash: [5, 4],
+    });
+  }
+  datasets.push({
+    type: 'bar', label: liveAssetBasis ? '매매손익%' : '일간 손익%', data: d.pnl,
+    backgroundColor: colors, yAxisID: 'y2', barThickness: 'flex',
+  });
   if (charts.equity) charts.equity.destroy();
   charts.equity = new Chart(document.getElementById('equityChart').getContext('2d'), {
     type: 'bar',
     data: {
       labels: d.labels,
-      datasets: [
-        {
-          type: 'line', label: '누적 자산', data: d.equity,
-          borderColor: 'rgba(6,182,212,0.9)', backgroundColor: 'rgba(6,182,212,0.05)',
-          borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1', fill: true,
-        },
-        {
-          type: 'bar', label: '일간 손익%', data: d.pnl,
-          backgroundColor: colors, yAxisID: 'y2', barThickness: 'flex',
-        }
-      ]
+      datasets,
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -6691,15 +7089,21 @@ async function loadSummary() {
   }[rawAssetSource] || (rawAssetSource || '기준 미상'));
 
   const pnlEl = document.getElementById('today-pnl');
-  pnlEl.textContent = fmt.pct(t.pnl_pct);
-  pnlEl.className = 'card-value ' + colorClass(t.pnl_pct);
-  document.getElementById('today-krw').textContent = fmt.krw(t.pnl_krw);
-  document.getElementById('cumulative').textContent = fmt.asset(t.cumulative);
+  const tradingPct = Number(t.trading_pnl_pct ?? t.pnl_pct ?? 0);
+  const tradingKrw = Number(t.trading_pnl_krw ?? t.pnl_krw ?? 0);
+  const accountAsset = Number(t.account_asset_krw ?? t.cumulative ?? 0);
+  pnlEl.textContent = fmt.pct(tradingPct);
+  pnlEl.className = 'card-value ' + colorClass(tradingPct);
+  document.getElementById('today-krw').textContent =
+    `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
+  document.getElementById('cumulative').textContent = fmt.asset(accountAsset);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
     const assetBreakdown = formatAssetBreakdown(t);
-    cumulativePnl.textContent =
-      `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}${assetBreakdown ? ` · ${assetBreakdown}` : ''} · 자산 ${assetSourceLabel}`;
+    const flowLabel = t.cash_flow_label || '입출금/환전 추정';
+    cumulativePnl.innerHTML =
+      `<div>매매누적 ${fmt.krw(t.cumulative_trading_pnl_krw ?? tradingKrw)} · ${flowLabel} ${fmt.krw(t.cumulative_cash_flow_estimate_krw || 0)}</div>`
+      + `<div>현재 매매 ${fmt.krw(tradingKrw)}${assetBreakdown ? ` · ${assetBreakdown}` : ''} · 자산 ${assetSourceLabel}</div>`;
   }
   const orderBreakdown = formatOrderableBreakdown(t);
   document.getElementById('today-mode').innerHTML =
@@ -7093,22 +7497,39 @@ async function loadHistEquity() {
   if (!d.labels) return;
 
   const colors = (d.wins || []).map(w => w ? 'rgba(16,185,129,0.75)' : 'rgba(239,68,68,0.75)');
+  const liveAssetBasis = d.asset_basis === 'kis_broker_account';
+  const datasets = [
+    {
+      type: 'line', label: liveAssetBasis ? '계좌 자산(KIS)' : '누적 자산', data: d.equity,
+      borderColor: 'rgba(59,130,246,0.9)', backgroundColor: 'rgba(59,130,246,0.05)',
+      borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1', fill: true,
+    },
+  ];
+  if (Array.isArray(d.cumulative_trading_pnl_krw) && d.cumulative_trading_pnl_krw.length) {
+    datasets.push({
+      type: 'line', label: '누적 매매손익', data: d.cumulative_trading_pnl_krw,
+      borderColor: 'rgba(16,185,129,0.9)', backgroundColor: 'rgba(16,185,129,0.04)',
+      borderWidth: 2, pointRadius: 0, tension: 0.25, yAxisID: 'y1', fill: false,
+    });
+  }
+  if (Array.isArray(d.cumulative_cash_flow_krw) && d.cumulative_cash_flow_krw.some(v => Math.abs(Number(v || 0)) > 0)) {
+    datasets.push({
+      type: 'line', label: '입출금/환전 추정', data: d.cumulative_cash_flow_krw,
+      borderColor: 'rgba(245,158,11,0.9)', backgroundColor: 'rgba(245,158,11,0.04)',
+      borderWidth: 2, pointRadius: 0, tension: 0.2, yAxisID: 'y1', fill: false,
+      borderDash: [5, 4],
+    });
+  }
+  datasets.push({
+    type: 'bar', label: liveAssetBasis ? '매매손익%' : '일별 손익%', data: d.pnl,
+    backgroundColor: colors, yAxisID: 'y2', barThickness: 'flex',
+  });
   if (charts.histEquity) charts.histEquity.destroy();
   charts.histEquity = new Chart(document.getElementById('histEquityChart').getContext('2d'), {
     type: 'bar',
     data: {
       labels: d.labels,
-      datasets: [
-        {
-          type: 'line', label: '누적 자산', data: d.equity,
-          borderColor: 'rgba(59,130,246,0.9)', backgroundColor: 'rgba(59,130,246,0.05)',
-          borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1', fill: true,
-        },
-        {
-          type: 'bar', label: '일별 손익%', data: d.pnl,
-          backgroundColor: colors, yAxisID: 'y2', barThickness: 'flex',
-        }
-      ]
+      datasets,
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -7571,31 +7992,66 @@ async function loadPositionCharts(positions) {
     const canvasId = 'pos-chart-' + safeId;
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
-    const d = await apiGet('/api/position/chart', 'market=' + encodeURIComponent(MARKET) + '&ticker=' + encodeURIComponent(ticker))
+    const chartParams = new URLSearchParams();
+    chartParams.set('market', MARKET);
+    chartParams.set('ticker', ticker);
+    if (pos.entry_date) chartParams.set('entry_date', String(pos.entry_date).slice(0, 10));
+    if (pos.entry_session_date) chartParams.set('entry_session_date', String(pos.entry_session_date).slice(0, 10));
+    if (pos.fill_time) chartParams.set('fill_time', String(pos.fill_time));
+    if (pos.display_avg_price || pos.avg_price) chartParams.set('avg_price', String(pos.display_avg_price || pos.avg_price));
+    if (pos.display_current_price || pos.current_price) chartParams.set('current_price', String(pos.display_current_price || pos.current_price));
+    if (pos.currency || pos.display_currency) chartParams.set('currency', String(pos.currency || pos.display_currency));
+    const d = await apiGet('/api/position/chart', chartParams.toString())
       .then(r => r.json()).catch(() => ({}));
-    const labels = d.labels || [];
-    const prices = (d.prices || []).map(Number).filter(v => Number.isFinite(v));
+    const rawPrices = (d.prices || []).map(Number);
+    const labels = (d.labels || []).slice(0, rawPrices.length);
+    const prices = rawPrices.map(v => Number.isFinite(v) ? v : null);
+    const pointKinds = (d.point_kinds || []).slice(0, prices.length);
+    const finitePrices = prices.filter(v => Number.isFinite(v));
     const meta = document.getElementById(canvasId + '-meta');
-    if (meta) meta.textContent = d.source ? `${d.source} · ${prices.length}점` : '';
-    if (prices.length < 2) return;
+    if (meta) {
+      const days = Number(d.auto_period_days || 0);
+      const rangeText = days > 1 ? `${days}일` : (d.range_start || d.session_date || '');
+      const markerText = (d.buy_markers || []).length ? ' · 매수점' : '';
+      const sourceText = String(d.source || '').startsWith('position_overview') ? ' · 요약선' : '';
+      meta.textContent = d.source ? `${rangeText} · ${finitePrices.length}점${markerText}${sourceText}` : '';
+    }
+    if (finitePrices.length < 2) return;
     const key = 'position_' + MARKET + '_' + safeId;
     if (charts[key]) charts[key].destroy();
-    const first = prices[0] || 0;
-    const last = prices[prices.length - 1] || 0;
+    const buyIdx = pointKinds.indexOf('buy_fill');
+    const first = Number.isFinite(prices[buyIdx]) ? prices[buyIdx] : (finitePrices[0] || 0);
+    const last = finitePrices[finitePrices.length - 1] || 0;
     const color = last >= first ? '#22c55e' : '#ef4444';
+    const markerData = (d.buy_markers || [])
+      .map(m => ({ x: m.label, y: Number(m.price || 0) }))
+      .filter(m => m.x && Number.isFinite(m.y) && m.y > 0);
+    const datasets = [{
+      data: prices,
+      borderColor: color,
+      backgroundColor: color + '22',
+      borderWidth: 1.5,
+      fill: true,
+      tension: 0.18,
+      pointRadius: ctx => ['buy_fill', 'current_position'].includes(pointKinds[ctx.dataIndex]) ? 2.5 : 0,
+      pointHoverRadius: ctx => ['buy_fill', 'current_position'].includes(pointKinds[ctx.dataIndex]) ? 4 : 0
+    }];
+    if (markerData.length) {
+      datasets.push({
+        type: 'scatter',
+        data: markerData,
+        borderColor: '#f59e0b',
+        backgroundColor: '#f59e0b',
+        pointRadius: 4,
+        pointHoverRadius: 5,
+        showLine: false,
+      });
+    }
     charts[key] = new Chart(canvas.getContext('2d'), {
       type: 'line',
       data: {
         labels,
-        datasets: [{
-          data: prices,
-          borderColor: color,
-          backgroundColor: color + '22',
-          borderWidth: 1.5,
-          fill: true,
-          tension: 0.25,
-          pointRadius: 0
-        }]
+        datasets
       },
       options: {
         responsive: true,
@@ -7618,14 +8074,17 @@ async function loadSummary() {
   window.__todaySummary = t;
 
   const pnlEl = document.getElementById('today-pnl');
+  const tradingPct = Number(t.trading_pnl_pct ?? t.pnl_pct ?? 0);
+  const tradingKrw = Number(t.trading_pnl_krw ?? t.pnl_krw ?? 0);
+  const accountAsset = Number(t.account_asset_krw ?? t.cumulative ?? 0);
   if (pnlEl) {
-    pnlEl.textContent = fmt.pct(t.pnl_pct || 0);
-    pnlEl.className = 'card-value ' + colorClass(t.pnl_pct || 0);
+    pnlEl.textContent = fmt.pct(tradingPct);
+    pnlEl.className = 'card-value ' + colorClass(tradingPct);
   }
   const todayKrw = document.getElementById('today-krw');
-  if (todayKrw) todayKrw.textContent = fmt.krw(t.pnl_krw || 0);
+  if (todayKrw) todayKrw.textContent = `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
   const cumulative = document.getElementById('cumulative');
-  if (cumulative) cumulative.textContent = fmt.asset(t.cumulative || 0);
+  if (cumulative) cumulative.textContent = fmt.asset(accountAsset);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
     const assetBreakdown = formatAssetBreakdown(t);
@@ -7639,7 +8098,10 @@ async function loadSummary() {
       'broker+live_fallback': '브로커 기준 · 라이브 보정',
       internal_fallback: '엔진 추정',
     }[rawAssetSource] || (rawAssetSource || '기준 미상'));
-    cumulativePnl.textContent = `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}${assetBreakdown ? ` · ${assetBreakdown}` : ''} · 자산 ${assetSourceLabel}`;
+    const flowLabel = t.cash_flow_label || '입출금/환전 추정';
+    cumulativePnl.innerHTML =
+      `<div>매매누적 ${fmt.krw(t.cumulative_trading_pnl_krw ?? tradingKrw)} · ${flowLabel} ${fmt.krw(t.cumulative_cash_flow_estimate_krw || 0)}</div>`
+      + `<div>현재 매매 ${fmt.krw(tradingKrw)}${assetBreakdown ? ` · ${assetBreakdown}` : ''} · 자산 ${assetSourceLabel}</div>`;
   }
 
   const sess = t.session || {};
@@ -8491,6 +8953,92 @@ loadAll();
 """
 
 PAGE_PATHB_HTML = """
+<style>
+.pathb-broker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+.pathb-broker-card {
+  border: 1px solid rgba(100,116,139,0.28);
+  background: rgba(15,23,42,0.42);
+  border-radius: 8px;
+  padding: 12px;
+}
+.pathb-broker-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.pathb-broker-market {
+  font-family: var(--mono);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+.pathb-broker-badge {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid rgba(100,116,139,0.28);
+}
+.pathb-broker-badge.ok {
+  color: #34d399;
+  background: rgba(16,185,129,0.12);
+  border-color: rgba(16,185,129,0.28);
+}
+.pathb-broker-badge.stale {
+  color: #fbbf24;
+  background: rgba(245,158,11,0.12);
+  border-color: rgba(245,158,11,0.3);
+}
+.pathb-broker-badge.missing {
+  color: #f87171;
+  background: rgba(239,68,68,0.12);
+  border-color: rgba(239,68,68,0.28);
+}
+.pathb-broker-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.pathb-broker-stat {
+  background: rgba(2,6,23,0.28);
+  border: 1px solid rgba(100,116,139,0.16);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.pathb-broker-stat span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-bottom: 2px;
+}
+.pathb-broker-stat strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.pathb-broker-meta {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.pathb-broker-error {
+  margin-top: 7px;
+  color: #fca5a5;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.pathb-broker-hint {
+  color: #fbbf24;
+  margin-top: 3px;
+}
+</style>
 <main>
   <section class="section">
     <div class="section-title">B플랜 실시간</div>
@@ -8584,6 +9132,94 @@ PAGE_PATHB_HTML = """
   </section>
 </main>
 <script>
+function pathbEscapeHtml(v) {
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+function compactBrokerError(error) {
+  const raw = String(error || '');
+  if (!raw) return '';
+  const parts = [];
+  if (raw.includes('Failed to establish a new connection') || raw.includes('NewConnectionError')) {
+    parts.push('연결 실패');
+  } else if (raw.toLowerCase().includes('timed out') || raw.toLowerCase().includes('timeout')) {
+    parts.push('타임아웃');
+  } else if (raw.includes('Max retries exceeded')) {
+    parts.push('재시도 초과');
+  } else {
+    parts.push('조회 오류');
+  }
+  if (raw.includes('액세스 권한') || raw.includes('WinError 10013')) {
+    parts.push('소켓 접근 차단');
+  }
+  const win = raw.match(/WinError\\s*\\d+/i);
+  if (win) parts.push(win[0]);
+  const host = raw.match(/host='([^']+)'/);
+  if (host) parts.push(host[1]);
+  return parts.filter(Boolean).join(' · ') || raw.slice(0, 160);
+}
+function brokerErrorHint(error) {
+  const raw = String(error || '');
+  if (!raw) return '';
+  if (raw.includes('WinError 10013') || raw.includes('액세스 권한')) {
+    return '로컬 Windows 보안 정책, 백신, 방화벽, VPN/프록시가 KIS HTTPS 소켓을 막는 상태입니다.';
+  }
+  if (raw.includes('Failed to establish a new connection') || raw.includes('NewConnectionError')) {
+    return 'KIS 서버까지 새 연결을 만들지 못했습니다. 네트워크 또는 보안 정책을 확인해야 합니다.';
+  }
+  if (raw.toLowerCase().includes('timed out') || raw.toLowerCase().includes('timeout')) {
+    return 'KIS 응답 지연 또는 네트워크 지연으로 조회가 만료됐습니다.';
+  }
+  return '';
+}
+function formatBrokerTime(value) {
+  const raw = String(value || '');
+  if (!raw) return '-';
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return raw;
+  return dt.toLocaleString('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+function renderBrokerTruthCard(mkt, bt) {
+  const missing = !!bt.missing;
+  const stale = !!bt.stale;
+  const cls = missing ? 'missing' : stale ? 'stale' : 'ok';
+  const status = missing ? '조회 대기' : stale ? '오래됨' : '정상';
+  const error = String(bt.error || '');
+  const compact = compactBrokerError(error);
+  const hint = brokerErrorHint(error);
+  const ttl = Number(bt.ttl_sec || 0);
+  const sourceText = stale
+    ? '마지막 정상 스냅샷 기준입니다. 새 KIS 조회가 성공하면 자동 갱신됩니다.'
+    : 'KIS 계좌 조회 기준입니다.';
+  return `
+    <div class="pathb-broker-card">
+      <div class="pathb-broker-head">
+        <div class="pathb-broker-market">${mkt}</div>
+        <div class="pathb-broker-badge ${cls}">${status}</div>
+      </div>
+      <div class="pathb-broker-stats">
+        <div class="pathb-broker-stat"><span>보유</span><strong>${(bt.positions || []).length}</strong></div>
+        <div class="pathb-broker-stat"><span>미체결</span><strong>${(bt.open_orders || []).length}</strong></div>
+        <div class="pathb-broker-stat"><span>당일체결</span><strong>${(bt.today_fills || []).length}</strong></div>
+      </div>
+      <div class="pathb-broker-meta">
+        마지막 정상 ${formatBrokerTime(bt.last_success_at)} · 최근 시도 ${formatBrokerTime(bt.last_attempt_at)}${ttl ? ` · TTL ${ttl}s` : ''}<br>
+        ${sourceText}
+      </div>
+      ${compact ? `<div class="pathb-broker-error" title="${pathbEscapeHtml(error)}">오류 ${pathbEscapeHtml(compact)}${hint ? `<div class="pathb-broker-hint">${pathbEscapeHtml(hint)}</div>` : ''}</div>` : ''}
+    </div>`;
+}
 async function loadPathB() {
   const market = (window.MARKET || localStorage.getItem('market') || 'KR');
   const mode = localStorage.getItem('runtime_mode') || 'live';
@@ -8630,11 +9266,8 @@ async function loadPathB() {
   renderBucketMonitor(d.bucket_monitor || {});
   const brokerTruth = d.broker_truth || {};
   const brokerMarkets = brokerTruth.markets || {};
-  document.getElementById('pathb-broker-truth').innerHTML = ['KR', 'US'].map(mkt => {
-    const bt = brokerMarkets[mkt] || {};
-    const err = bt.error ? ` | 오류 ${bt.error}` : '';
-    return `${mkt}: ${bt.missing ? '계좌 조회 대기' : (bt.stale ? '계좌 조회 오래됨' : '계좌 조회 정상')} | 보유 ${(bt.positions || []).length}개 | 미체결 ${(bt.open_orders || []).length}개 | 당일체결 ${(bt.today_fills || []).length}개 | 마지막 ${bt.last_success_at || '-'}${err}`;
-  }).join('<br>');
+  document.getElementById('pathb-broker-truth').innerHTML =
+    `<div class="pathb-broker-grid">${['KR', 'US'].map(mkt => renderBrokerTruthCard(mkt, brokerMarkets[mkt] || {})).join('')}</div>`;
   renderPathComparison(b.path_comparison || {});
   const watchRows = (sel.watch_rows || []).map(r => `
     <tr>
@@ -9181,14 +9814,84 @@ setInterval(loadPathB, 10000);
 # ── Flask 라우트 ───────────────────────────────────────────────────
 
 PAGE_PREOPEN_HTML = """
+<style>
+.preopen-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.preopen-refresh-btn {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 15px 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(6,182,212,0.52);
+  background:
+    linear-gradient(180deg, rgba(8,145,178,0.28), rgba(8,47,73,0.22));
+  color: #cffafe;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 18px rgba(6,182,212,0.08);
+}
+.preopen-refresh-btn:hover {
+  background:
+    linear-gradient(180deg, rgba(8,145,178,0.38), rgba(8,47,73,0.30));
+  border-color: rgba(103,232,249,0.72);
+  color: #ecfeff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 24px rgba(6,182,212,0.13);
+}
+.preopen-refresh-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(6,182,212,0.22), 0 10px 24px rgba(6,182,212,0.13);
+}
+.preopen-refresh-btn:active {
+  transform: translateY(1px);
+}
+.preopen-refresh-btn[disabled] {
+  opacity: 0.72;
+  cursor: wait;
+}
+.preopen-refresh-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(103,232,249,0.28);
+  background: rgba(6,182,212,0.20);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+}
+.preopen-refresh-text {
+  line-height: 1;
+}
+.preopen-refresh-btn.loading .preopen-refresh-icon {
+  animation: preopen-spin 0.8s linear infinite;
+}
+@keyframes preopen-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+</style>
 <main>
   <section class="section">
     <div class="section-head">
       <div><h2>장전 후보 관찰</h2><p>주문/매수 후보에 영향 없는 장전 관찰 데이터</p></div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="preopen-toolbar">
         <select id="preopen-session-select" class="select" onchange="selectPreopenSession(this.value)"></select>
         <input id="preopen-session-date" class="input" type="date" style="width:150px">
-        <button class="btn small" onclick="loadPreopen()">새로고침</button>
+        <button id="preopen-refresh-btn" class="preopen-refresh-btn" type="button" onclick="loadPreopen(this)" title="장전 후보 데이터 새로고침">
+          <span class="preopen-refresh-icon" aria-hidden="true">↻</span>
+          <span class="preopen-refresh-text">데이터 갱신</span>
+        </button>
       </div>
     </div>
     <div class="grid-4">
@@ -9202,6 +9905,11 @@ PAGE_PREOPEN_HTML = """
       <div class="card"><div class="card-sub">Top3 매수 후보</div><div class="metric" id="preopen-top3-ready">-</div></div>
       <div class="card"><div class="card-sub">30분 평균</div><div class="metric" id="preopen-avg30">-</div></div>
       <div class="card"><div class="card-sub">60분 평균</div><div class="metric" id="preopen-avg60">-</div></div>
+    </div>
+    <div class="grid-3" style="margin-top:12px">
+      <div class="card"><div class="card-sub">자동 스케줄러</div><div class="metric" id="preopen-scheduler-status">-</div></div>
+      <div class="card"><div class="card-sub">마지막 확인</div><div class="metric" id="preopen-scheduler-last">-</div></div>
+      <div class="card"><div class="card-sub">최근 작업</div><div class="metric" id="preopen-scheduler-job">-</div></div>
     </div>
     <div id="preopen-empty-banner" class="card" style="margin-top:12px;padding:12px;display:none"></div>
     <div class="muted" id="preopen-source-status" style="margin-top:8px">-</div>
@@ -9259,6 +9967,15 @@ function koPreopenReason(v) {
   };
   return m[v] || v || '-';
 }
+function koPreopenSchedulerStatus(v) {
+  const m = {
+    missing: '미실행',
+    active: '동작중',
+    stale: '오래됨',
+    unknown: '미확인',
+  };
+  return m[v] || v || '-';
+}
 function tableOrEmpty(rows, headers, mapper) {
   if (!rows || !rows.length) return '<div class="muted">데이터 없음</div>';
   return '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
@@ -9295,61 +10012,83 @@ function renderPreopenBanner(summary, actions) {
     : '';
   banner.innerHTML = `<div style="font-weight:700">${koPreopenReason(reason)}</div><div class="muted" style="margin-top:4px">장전 shadow 데이터가 아직 완전히 쌓이지 않았습니다. 기존 주문 로직에는 영향이 없습니다.</div>${actionHtml}`;
 }
-async function loadPreopen() {
+async function loadPreopen(button) {
+  const manualButton = button && button.classList ? button : null;
+  if (manualButton) {
+    manualButton.disabled = true;
+    manualButton.classList.add('loading');
+    manualButton.setAttribute('aria-busy', 'true');
+  }
   const market = getMarket();
   const dateInput = document.getElementById('preopen-session-date');
   if (preopenLastMarket && preopenLastMarket !== market && dateInput) dateInput.value = '';
   preopenLastMarket = market;
   const sessionDate = dateInput && dateInput.value ? dateInput.value : '';
-  const query = 'market=' + encodeURIComponent(market) + (sessionDate ? '&session_date=' + encodeURIComponent(sessionDate) : '');
-  const d = await apiGet('/api/preopen', query).then(r => r.json()).catch(() => ({}));
-  const s = d.summary || {};
-  if (dateInput && !dateInput.value && d.session_date) dateInput.value = d.session_date;
-  renderPreopenSessions(d.recent_sessions || [], d.session_date || '');
-  renderPreopenBanner(s, d.next_actions || []);
-  document.getElementById('preopen-status').textContent = koResult(s.collector_status || '-');
-  document.getElementById('preopen-count').textContent = s.candidate_count ?? 0;
-  document.getElementById('preopen-age').textContent = s.state_age_min === null || s.state_age_min === undefined ? '-' : `${s.state_age_min}분`;
-  document.getElementById('preopen-diff-count').textContent = s.rank_diff_count ?? 0;
-  const ps = d.performance_summary || {};
-  document.getElementById('preopen-top3-selected').textContent = ps.top3_selected ?? 0;
-  document.getElementById('preopen-top3-ready').textContent = ps.top3_trade_ready ?? 0;
-  document.getElementById('preopen-avg30').textContent = ps.avg_30m_return_pct === null || ps.avg_30m_return_pct === undefined ? '-' : fmtPreopen(ps.avg_30m_return_pct) + '%';
-  document.getElementById('preopen-avg60').textContent = ps.avg_60m_return_pct === null || ps.avg_60m_return_pct === undefined ? '-' : fmtPreopen(ps.avg_60m_return_pct) + '%';
-  document.getElementById('preopen-source-status').textContent =
-    `session=${d.session_date || '-'} · provider=${s.provider || '-'} · token=${s.token_status || '-'} · source=${s.source_status || '-'} · data=${s.data_quality || '-'} · reason=${koPreopenReason(s.empty_reason)} · review=${ps.review_status || '-'}`;
-  document.getElementById('preopen-candidates').innerHTML = tableOrEmpty(
-    d.candidates || [],
-    ['순위','종목','점수','등급','provider','data','stale','변동%','거래대금','스프레드','태그'],
-    r => [fmtPreopen(r.shadow_preopen_rank), r.ticker || '', fmtPreopen(r.preopen_score), r.preopen_grade || '',
-          r.provider || r.source || '-', r.data_quality || '-', r.stale ? '예' : '-',
-          fmtPreopen(r.extended_change_pct ?? r.gap_pct), fmtPreopen(r.extended_dollar_volume), fmtPreopen(r.spread_pct), tags(r.risk_tags)]
-  );
-  document.getElementById('preopen-rank-diff').innerHTML = tableOrEmpty(
-    d.rank_diff || [],
-    ['종목','장전 순위','Claude 순위','차이','선택','매수 후보','주문','사유'],
-    r => [r.ticker || '', fmtPreopen(r.shadow_preopen_rank), fmtPreopen(r.actual_selection_rank), fmtPreopen(r.rank_delta),
-          r.actual_selected ? '예' : '-', r.actual_trade_ready ? '예' : '-', r.actual_ordered ? '예' : '-', r.actual_rejection_reason || '']
-  );
-  document.getElementById('preopen-outcome').innerHTML = tableOrEmpty(
-    d.outcome || [],
-    ['종목','경과','상태','5분','30분','60분','최대상승','최대하락','고가','종가'],
-    r => [r.ticker || '', fmtPreopen(r.offset_min), koPreopenOutcome(r.outcome_status || ''), fmtPreopen(r.post_open_5m_return_pct),
-          fmtPreopen(r.post_open_30m_return_pct), fmtPreopen(r.post_open_60m_return_pct),
-          fmtPreopen(r.max_runup_pct ?? r.post_open_mfe_pct), fmtPreopen(r.max_drawdown_pct ?? r.post_open_mae_pct),
-          fmtPreopen(r.open_to_high_pct), fmtPreopen(r.open_to_close_pct)]
-  );
-  const guidance = d.scheduler_guidance || {};
-  const actionRows = (d.next_actions || []).map((a, i) => ({kind:'next', idx:i + 1, command:a}))
-    .concat((guidance.commands || []).map((a, i) => ({kind:'schedule', idx:i + 1, command:a})));
-  document.getElementById('preopen-actions').innerHTML = tableOrEmpty(
-    actionRows,
-    ['구분','순서','명령/확인'],
-    r => [r.kind === 'next' ? '다음 작업' : '스케줄', r.idx, `<code>${r.command}</code>`]
-  );
-  const paths = d.paths || {};
-  document.getElementById('preopen-paths').innerHTML =
-    `state: ${paths.state || '-'}<br>candidates: ${paths.candidates || '-'}<br>rank_diff: ${paths.rank_diff || '-'}<br>outcome: ${paths.outcome || '-'}`;
+  const query = 'market=' + encodeURIComponent(market) + '&mode=' + encodeURIComponent(MODE) + (sessionDate ? '&session_date=' + encodeURIComponent(sessionDate) : '');
+  try {
+    const d = await apiGet('/api/preopen', query).then(r => r.json()).catch(() => ({}));
+    const s = d.summary || {};
+    if (dateInput && !dateInput.value && d.session_date) dateInput.value = d.session_date;
+    renderPreopenSessions(d.recent_sessions || [], d.session_date || '');
+    renderPreopenBanner(s, d.next_actions || []);
+    document.getElementById('preopen-status').textContent = koResult(s.collector_status || '-');
+    document.getElementById('preopen-count').textContent = s.candidate_count ?? 0;
+    document.getElementById('preopen-age').textContent = s.state_age_min === null || s.state_age_min === undefined ? '-' : `${s.state_age_min}분`;
+    document.getElementById('preopen-diff-count').textContent = s.rank_diff_count ?? 0;
+    const ps = d.performance_summary || {};
+    document.getElementById('preopen-top3-selected').textContent = ps.top3_selected ?? 0;
+    document.getElementById('preopen-top3-ready').textContent = ps.top3_trade_ready ?? 0;
+    document.getElementById('preopen-avg30').textContent = ps.avg_30m_return_pct === null || ps.avg_30m_return_pct === undefined ? '-' : fmtPreopen(ps.avg_30m_return_pct) + '%';
+    document.getElementById('preopen-avg60').textContent = ps.avg_60m_return_pct === null || ps.avg_60m_return_pct === undefined ? '-' : fmtPreopen(ps.avg_60m_return_pct) + '%';
+    const scheduler = d.scheduler || {};
+    const lastJob = scheduler.last_job || {};
+    document.getElementById('preopen-scheduler-status').textContent = koPreopenSchedulerStatus(scheduler.status || 'missing');
+    document.getElementById('preopen-scheduler-last').textContent =
+      scheduler.last_tick_at ? `${fmtPreopen(scheduler.heartbeat_age_sec)}초 전` : '-';
+    document.getElementById('preopen-scheduler-job').textContent =
+      lastJob.event ? `${lastJob.market || '-'} ${lastJob.kind || '-'} ${koResult(lastJob.event || '')}` : '-';
+    document.getElementById('preopen-source-status').textContent =
+      `session=${d.session_date || '-'} · provider=${s.provider || '-'} · token=${s.token_status || '-'} · source=${s.source_status || '-'} · data=${s.data_quality || '-'} · reason=${koPreopenReason(s.empty_reason)} · review=${ps.review_status || '-'}`;
+    document.getElementById('preopen-candidates').innerHTML = tableOrEmpty(
+      d.candidates || [],
+      ['순위','종목','점수','등급','provider','data','stale','변동%','거래대금','스프레드','태그'],
+      r => [fmtPreopen(r.shadow_preopen_rank), r.ticker || '', fmtPreopen(r.preopen_score), r.preopen_grade || '',
+            r.provider || r.source || '-', r.data_quality || '-', r.stale ? '예' : '-',
+            fmtPreopen(r.extended_change_pct ?? r.gap_pct), fmtPreopen(r.extended_dollar_volume), fmtPreopen(r.spread_pct), tags(r.risk_tags)]
+    );
+    document.getElementById('preopen-rank-diff').innerHTML = tableOrEmpty(
+      d.rank_diff || [],
+      ['종목','장전 순위','Claude 순위','차이','선택','매수 후보','주문','사유'],
+      r => [r.ticker || '', fmtPreopen(r.shadow_preopen_rank), fmtPreopen(r.actual_selection_rank), fmtPreopen(r.rank_delta),
+            r.actual_selected ? '예' : '-', r.actual_trade_ready ? '예' : '-', r.actual_ordered ? '예' : '-', r.actual_rejection_reason || '']
+    );
+    document.getElementById('preopen-outcome').innerHTML = tableOrEmpty(
+      d.outcome || [],
+      ['종목','경과','상태','5분','30분','60분','최대상승','최대하락','고가','종가'],
+      r => [r.ticker || '', fmtPreopen(r.offset_min), koPreopenOutcome(r.outcome_status || ''), fmtPreopen(r.post_open_5m_return_pct),
+            fmtPreopen(r.post_open_30m_return_pct), fmtPreopen(r.post_open_60m_return_pct),
+            fmtPreopen(r.max_runup_pct ?? r.post_open_mfe_pct), fmtPreopen(r.max_drawdown_pct ?? r.post_open_mae_pct),
+            fmtPreopen(r.open_to_high_pct), fmtPreopen(r.open_to_close_pct)]
+    );
+    const guidance = d.scheduler_guidance || {};
+    const actionRows = (d.next_actions || []).map((a, i) => ({kind:'next', idx:i + 1, command:a}))
+      .concat(guidance.automatic_command ? [{kind:'auto', idx:1, command:guidance.automatic_command}] : [])
+      .concat((guidance.commands || []).map((a, i) => ({kind:'schedule', idx:i + 1, command:a})));
+    document.getElementById('preopen-actions').innerHTML = tableOrEmpty(
+      actionRows,
+      ['구분','순서','명령/확인'],
+      r => [r.kind === 'next' ? '다음 작업' : (r.kind === 'auto' ? '자동 실행' : '수동 명령'), r.idx, `<code>${r.command}</code>`]
+    );
+    const paths = d.paths || {};
+    document.getElementById('preopen-paths').innerHTML =
+      `state: ${paths.state || '-'}<br>candidates: ${paths.candidates || '-'}<br>rank_diff: ${paths.rank_diff || '-'}<br>outcome: ${paths.outcome || '-'}`;
+  } finally {
+    if (manualButton) {
+      manualButton.disabled = false;
+      manualButton.classList.remove('loading');
+      manualButton.removeAttribute('aria-busy');
+    }
+  }
 }
 loadPreopen();
 setInterval(loadPreopen, 30000);
