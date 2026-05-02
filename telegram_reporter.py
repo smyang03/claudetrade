@@ -28,6 +28,14 @@ _IS_PAPER = str(os.getenv("KIS_IS_PAPER", "true")).strip().lower() != "false"
 MODE_LABEL = "모의" if _IS_PAPER else "실전"
 
 
+def _positive_float_or_none(value) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _env_flag(name: str, default: bool = False) -> bool:
     raw = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
     return raw in ("1", "true", "yes", "on", "y")
@@ -90,6 +98,72 @@ _REASON_KO_MAP = {
     "DEFENSIVE": "방어 모드",
 }
 
+_ANALYST_KO_MAP = {
+    "bull": "상승 분석가",
+    "bear": "하락 분석가",
+    "neutral": "중립 분석가",
+    "Bull": "상승 분석가",
+    "Bear": "하락 분석가",
+    "Neutral": "중립 분석가",
+}
+
+_ACTION_KO_MAP = {
+    "BUY": "매수",
+    "SELL": "매도",
+    "HOLD": "보유 유지",
+    "TRAIL": "트레일링 유지",
+    "MAINTAIN": "유지",
+    "ON": "켜짐",
+    "OFF": "꺼짐",
+    "buy": "매수",
+    "sell": "매도",
+    "hold": "보유 유지",
+    "trail": "트레일링 유지",
+}
+
+_PATH_KO_MAP = {
+    "path_a": "A플랜(타이밍 어댑터)",
+    "timing_adapter": "A플랜(타이밍 어댑터)",
+    "a": "A플랜(타이밍 어댑터)",
+    "Path A": "A플랜(타이밍 어댑터)",
+    "path_b": "B플랜(클로드 가격)",
+    "claude_price": "B플랜(클로드 가격)",
+    "b": "B플랜(클로드 가격)",
+    "Path B": "B플랜(클로드 가격)",
+    "local": "로컬 상태",
+    "manual_or_broker": "수동/브로커 동기화",
+}
+
+_SOURCE_KO_MAP = {
+    "broker_truth": "계좌 조회",
+    "broker_account": "계좌 조회",
+    "broker_balance": "브로커 잔고",
+    "broker_sync": "브로커 동기화",
+    "local_fallback": "로컬 보완",
+    "position_fallback": "포지션 보완",
+    "internal_fallback": "엔진 추정",
+    "order_fill": "체결 조회",
+    "system_log": "시스템 로그",
+    "default": "기본값",
+    "telegram": "텔레그램",
+    "operator": "운영자",
+}
+
+_RESULT_KO_MAP = {
+    "HIT": "적중",
+    "MISS": "실패",
+    "PARTIAL": "부분 적중",
+    "WIN": "승",
+    "LOSS": "패",
+    "FLAT": "보합",
+    "hit": "적중",
+    "miss": "실패",
+    "partial": "부분 적중",
+    "win": "승",
+    "loss": "패",
+    "flat": "보합",
+}
+
 
 def _ko_mode(v: str) -> str:
     return _MODE_KO_MAP.get(v or "", v or "-")
@@ -105,6 +179,28 @@ def _ko_event(v: str) -> str:
 
 def _ko_reason(v: str) -> str:
     return _REASON_KO_MAP.get(v or "", v or "-")
+
+
+def _ko_analyst(v: str) -> str:
+    return _ANALYST_KO_MAP.get(v or "", v or "-")
+
+
+def _ko_action(v: str) -> str:
+    return _ACTION_KO_MAP.get(v or "", v or "-")
+
+
+def _ko_path(v: str) -> str:
+    raw = str(v or "")
+    return _PATH_KO_MAP.get(raw, _PATH_KO_MAP.get(raw.strip().lower(), raw or "-"))
+
+
+def _ko_source(v: str) -> str:
+    raw = str(v or "")
+    return _SOURCE_KO_MAP.get(raw, _SOURCE_KO_MAP.get(raw.strip().lower(), raw or "-"))
+
+
+def _ko_result(v: str) -> str:
+    return _RESULT_KO_MAP.get(v or "", v or "-")
 
 
 def _latest_name_map(market: str) -> dict[str, str]:
@@ -146,9 +242,9 @@ def display_ticker(ticker: str, market: str = "KR", name: str = "") -> str:
 
 def _path_label(value: str = "") -> str:
     key = str(value or "").strip().lower()
-    if key in {"path_b", "claude_price", "b"}:
+    if key in {"path_b", "path b", "claude_price", "b"}:
         return "B플랜 | Claude 지정가"
-    if key in {"path_a", "timing_adapter", "a"}:
+    if key in {"path_a", "path a", "timing_adapter", "a"}:
         return "A플랜 | Timing Adapter"
     return ""
 
@@ -249,14 +345,14 @@ def morning_briefing(
     credit_line = _credit_line()
     ctx = (digest or {}).get("context", {}) or {}
     risk_label = "VKOSPI" if market == "KR" else "VIX"
-    risk_value = float(ctx.get("vix", 0) or 0)
-    risk_line = f"\n📣 {risk_label}: {risk_value:.1f} ({_risk_status_label(risk_value)})" if risk_value > 0 else ""
+    risk_value = _positive_float_or_none(ctx.get("vkospi") if market == "KR" else ctx.get("vix"))
+    risk_line = f"\n📣 {risk_label}: {risk_value:.1f} ({_risk_status_label(risk_value)})" if risk_value is not None else ""
 
     r1_section = ""
     if round1_judgments:
         def _r1_line(atype: str, icon: str) -> str:
             j = round1_judgments.get(atype, {})
-            return f"{icon} {j.get('stance','-')} ({int(j.get('confidence',0)*100)}%): {j.get('key_reason','')[:60]}"
+            return f"{icon} {_ko_analyst(atype)} {_ko_mode(j.get('stance','-'))} ({int(j.get('confidence',0)*100)}%): {j.get('key_reason','')[:60]}"
 
         r1_section = (
             f"\n🧭 <b>1라운드 판단</b>\n"
@@ -272,8 +368,8 @@ def morning_briefing(
         for c in debate_changes:
             icon = icon_map.get(c.get("analyst"), "⚪")
             lines.append(
-                f"  {icon} {str(c.get('analyst', '')).upper()}: "
-                f"{c.get('r1_stance', '-')} → <b>{c.get('r2_stance', '-')}</b>"
+                f"  {icon} {_ko_analyst(str(c.get('analyst', '') or ''))}: "
+                f"{_ko_mode(c.get('r1_stance', '-'))} → <b>{_ko_mode(c.get('r2_stance', '-'))}</b>"
             )
         debate_section = f"\n🗣 <b>2라운드 변경</b>\n" + "\n".join(lines) + "\n"
 
@@ -284,9 +380,9 @@ def morning_briefing(
         f"{r1_section}{debate_section}"
         f"🎯 <b>최종 합의: {_ko_mode(mode)}</b>  비중 {size}%\n"
         f"\n🧠 <b>최종 판단</b>\n"
-        f"🟢 Bull ({int(bull['confidence']*100)}%): {bull['key_reason']}\n"
-        f"🔴 Bear ({int(bear['confidence']*100)}%): {bear['key_reason']}\n"
-        f"⚪ Neutral ({int(neut['confidence']*100)}%): {neut['key_reason']}\n"
+        f"🟢 상승 분석가 ({int(bull['confidence']*100)}%): {bull['key_reason']}\n"
+        f"🔴 하락 분석가 ({int(bear['confidence']*100)}%): {bear['key_reason']}\n"
+        f"⚪ 중립 분석가 ({int(neut['confidence']*100)}%): {neut['key_reason']}\n"
         f"\n💰 예수금 {cash:,}원{risk_line}\n"
         f"{credit_line}\n"
         f"📣 다음 재판단: 30분 후\n"
@@ -376,7 +472,7 @@ def analyst_reinvoke_alert(
     if round1_judgments:
         def _r1(atype: str, icon: str) -> str:
             j = round1_judgments.get(atype, {})
-            return f"{icon} {j.get('stance','-')} ({int(j.get('confidence',0)*100)}%): {j.get('key_reason','')[:50]}"
+            return f"{icon} {_ko_analyst(atype)} {_ko_mode(j.get('stance','-'))} ({int(j.get('confidence',0)*100)}%): {j.get('key_reason','')[:50]}"
 
         r1_section = (
             f"\n🧭 <b>1라운드</b>\n"
@@ -391,7 +487,7 @@ def analyst_reinvoke_alert(
         icon_map = {"bull": "🟢", "bear": "🔴", "neutral": "⚪"}
         for c in debate_changes:
             icon = icon_map.get(c.get("analyst"), "⚪")
-            lines.append(f"  {icon} {str(c.get('analyst', '')).upper()}: {c.get('r1_stance', '-')} → <b>{c.get('r2_stance', '-')}</b>")
+            lines.append(f"  {icon} {_ko_analyst(str(c.get('analyst', '') or ''))}: {_ko_mode(c.get('r1_stance', '-'))} → <b>{_ko_mode(c.get('r2_stance', '-'))}</b>")
         debate_section = f"\n🗣 <b>2라운드 변경</b>\n" + "\n".join(lines) + "\n"
 
     text = (
@@ -401,9 +497,9 @@ def analyst_reinvoke_alert(
         f"모드: {mode_line}\n"
         f"사이즈: {size}%"
         f"{r1_section}{debate_section}\n"
-        f"🟢 Bull ({int(bull.get('confidence', 0) * 100)}%): {bull.get('key_reason', '')}\n"
-        f"🔴 Bear ({int(bear.get('confidence', 0) * 100)}%): {bear.get('key_reason', '')}\n"
-        f"⚪ Neutral ({int(neut.get('confidence', 0) * 100)}%): {neut.get('key_reason', '')}\n"
+        f"🟢 상승 분석가 ({int(bull.get('confidence', 0) * 100)}%): {bull.get('key_reason', '')}\n"
+        f"🔴 하락 분석가 ({int(bear.get('confidence', 0) * 100)}%): {bear.get('key_reason', '')}\n"
+        f"⚪ 중립 분석가 ({int(neut.get('confidence', 0) * 100)}%): {neut.get('key_reason', '')}\n"
         f"━━━━━━━━━━━"
     )
     send(text)
@@ -577,9 +673,9 @@ def trailing_alert(
 ) -> str:
     ticker_disp = _display_ticker(ticker, market, name)
     title_map = {
-        "sell": "TP→분석가 SELL",
-        "hold": "TP→분석가 HOLD",
-        "trail": "TP 도달 → 트레일링",
+        "sell": "목표가 도달 → 분석가 매도 권고",
+        "hold": "목표가 도달 → 분석가 보유 유지",
+        "trail": "목표가 도달 → 트레일링",
     }
     lines = [ticker_disp]
     if trail_pct > 0:
@@ -597,9 +693,9 @@ def watchlist_change_alert(
 ) -> str:
     lines = []
     if removed:
-        lines.append("OUT: " + ", ".join(removed))
+        lines.append("제외: " + ", ".join(removed))
     if added:
-        lines.append("IN: " + ", ".join(added))
+        lines.append("추가: " + ", ".join(added))
     if reason:
         lines.append(f"사유: {reason}")
     return block_alert("종목 교체", lines, market=market, icon="🔁")
@@ -684,9 +780,9 @@ def daily_summary(
         f"거래: {trades}건  승률: {win_rate*100:.1f}%\n"
         f"누적: {cumulative:,.0f}원\n\n"
         f"판단 결과\n"
-        f"  Bull:    {postmortem.get('bull_result', '?')}\n"
-        f"  Bear:    {postmortem.get('bear_result', '?')}\n"
-        f"  Neutral: {postmortem.get('neutral_result', '?')}\n\n"
+        f"  상승 분석가: {_ko_result(postmortem.get('bull_result', '?'))}\n"
+        f"  하락 분석가: {_ko_result(postmortem.get('bear_result', '?'))}\n"
+        f"  중립 분석가: {_ko_result(postmortem.get('neutral_result', '?'))}\n\n"
         f"{lesson_block}"
         f"{credit_line}\n"
         f"━━━━━━━━━━━"
@@ -808,9 +904,9 @@ def dashboard_push(
         f"수수료누적: {total_fee:,.0f}원\n\n"
         f"보유 포지션:\n{pos_lines}\n\n"
         f"판단 요약\n"
-        f"  Bull {_ko_mode(bull.get('stance', '-'))} ({int((bull.get('confidence', 0) or 0) * 100)}%)\n"
-        f"  Bear {_ko_mode(bear.get('stance', '-'))} ({int((bear.get('confidence', 0) or 0) * 100)}%)\n"
-        f"  Neutral {_ko_mode(neut.get('stance', '-'))} ({int((neut.get('confidence', 0) or 0) * 100)}%)\n\n"
+        f"  상승 분석가 {_ko_mode(bull.get('stance', '-'))} ({int((bull.get('confidence', 0) or 0) * 100)}%)\n"
+        f"  하락 분석가 {_ko_mode(bear.get('stance', '-'))} ({int((bear.get('confidence', 0) or 0) * 100)}%)\n"
+        f"  중립 분석가 {_ko_mode(neut.get('stance', '-'))} ({int((neut.get('confidence', 0) or 0) * 100)}%)\n\n"
         f"감시종목: {tickers_txt}"
     )
     send(text)
@@ -858,7 +954,7 @@ def trade_alert(
         tp_txt = f"{int(float(tp or 0)):,}원"
         sl_txt = f"{int(float(sl or 0)):,}원"
 
-    extra_line = f"TP: {tp_txt} / SL: {sl_txt}" if side == "buy" else f"사유: {_ko_reason(reason) if reason else reason}"
+    extra_line = f"목표가: {tp_txt} / 손절가: {sl_txt}" if side == "buy" else f"사유: {_ko_reason(reason) if reason else reason}"
     path = _path_line(buy_path)
     path_text = f"{path}\n" if path else ""
     text = (

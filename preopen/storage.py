@@ -131,6 +131,42 @@ def read_jsonl_tail(path: Path, limit: int = 100) -> list[dict[str, Any]]:
     return rows[-max(1, int(limit)):]
 
 
+def _avg(values: list[float]) -> float | None:
+    clean = [float(v) for v in values if v is not None]
+    if not clean:
+        return None
+    return round(sum(clean) / len(clean), 4)
+
+
+def _performance_summary(rank_diff: list[dict[str, Any]], outcome: list[dict[str, Any]]) -> dict[str, Any]:
+    top3 = []
+    for row in rank_diff:
+        try:
+            if row.get("shadow_preopen_rank") is not None and int(row.get("shadow_preopen_rank") or 999) <= 3:
+                top3.append(row)
+        except Exception:
+            continue
+    outcome_30m = []
+    outcome_60m = []
+    for row in outcome:
+        try:
+            if row.get("post_open_30m_return_pct") is not None:
+                outcome_30m.append(float(row.get("post_open_30m_return_pct")))
+            if row.get("post_open_60m_return_pct") is not None:
+                outcome_60m.append(float(row.get("post_open_60m_return_pct")))
+        except Exception:
+            continue
+    return {
+        "rank_diff_rows": len(rank_diff),
+        "outcome_rows": len(outcome),
+        "top3_selected": sum(1 for row in top3 if row.get("actual_selected")),
+        "top3_trade_ready": sum(1 for row in top3 if row.get("actual_trade_ready")),
+        "avg_30m_return_pct": _avg(outcome_30m),
+        "avg_60m_return_pct": _avg(outcome_60m),
+        "review_status": "collect_5_to_10_sessions_before_enabling_behavior",
+    }
+
+
 def load_preopen_dashboard(market: str, *, session_date: str | None = None, limit: int = 50) -> dict[str, Any]:
     market_key = _market_key(market)
     session_date = session_date or resolve_session_date_str(market_key)
@@ -152,10 +188,13 @@ def load_preopen_dashboard(market: str, *, session_date: str | None = None, limi
             "outcome_count": len(outcome),
             "token_status": state.get("token_status", "") if state else "",
             "source_status": state.get("source_status", "") if state else "",
+            "provider": state.get("provider", "") if state else "",
+            "data_quality": state.get("data_quality", "") if state else "",
         },
         "candidates": candidates,
         "rank_diff": rank_diff,
         "outcome": outcome,
+        "performance_summary": _performance_summary(rank_diff, outcome),
         "paths": {
             "state": str(state_path(market_key, session_date)),
             "rank_diff": str(log_path("rank_diff", market_key, session_date)),

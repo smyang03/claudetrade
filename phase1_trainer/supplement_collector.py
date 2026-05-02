@@ -8,6 +8,7 @@ supplement_collector.py - 보조 데이터 수집
 import os, json, time, requests
 from pathlib import Path
 from datetime import datetime, date, timedelta
+from typing import Optional
 from dotenv import load_dotenv
 import sys
 sys.path.insert(0,str(Path(__file__).parent.parent))
@@ -26,6 +27,58 @@ SUPP_DIR = Path(__file__).parent.parent/"data"/"supplement"
 SUPP_DIR.mkdir(parents=True,exist_ok=True)
 (SUPP_DIR/"kr").mkdir(exist_ok=True)
 (SUPP_DIR/"us").mkdir(exist_ok=True)
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _positive_float_or_none(value, *, minimum: float = 0.0) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed != parsed or parsed in (float("inf"), float("-inf")) or parsed <= minimum:
+        return None
+    return parsed
+
+
+def _metric_result(value=None, source: str = "", fallback_used: bool = False, error: str = "") -> dict:
+    return {
+        "value": _positive_float_or_none(value),
+        "source": source,
+        "fallback_used": bool(fallback_used),
+        "error": str(error or "")[:160],
+    }
+
+
+def _apply_metric(data: dict, field: str, result: dict) -> None:
+    value = result.get("value")
+    data[field] = value
+    data.setdefault("sources", {})[field] = result.get("source", "")
+    data.setdefault("fallback_used", {})[field] = bool(result.get("fallback_used", False))
+    if value is None:
+        flags = data.setdefault("data_quality_flags", [])
+        flag = f"{field}_missing"
+        if flag not in flags:
+            flags.append(flag)
+    if result.get("error"):
+        data.setdefault("collection_errors", {})[field] = result.get("error")
+
+
+def _yf_close_for_date(symbol: str, target_date: str) -> Optional[float]:
+    try:
+        import yfinance as yf
+        start_dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+        end_dt = start_dt + timedelta(days=1)
+        hist = yf.Ticker(symbol).history(start=start_dt.isoformat(), end=end_dt.isoformat())
+        if hist.empty:
+            hist = yf.Ticker(symbol).history(period="5d")
+        if hist.empty:
+            return None
+        return _positive_float_or_none(hist["Close"].iloc[-1])
+    except Exception:
+        return None
 
 def _kis_token():
     resp=requests.post(f"{KIS_BASE}/oauth2/tokenP",
@@ -65,53 +118,97 @@ def fetch_investor_flow_kr(ticker: str, target_date: str, token: str) -> dict:
         return {}
 
 @log_retry(max_retries=3, delay=12.0, logger=log)
-def fetch_vix(target_date: str) -> float:
-    """Alpha Vantage - VIX"""
-    if not AV_KEY: return 0.0
-    url = "https://www.alphavantage.co/query"
-    params = {"function":"TIME_SERIES_DAILY","symbol":"VIX",
-              "apikey":AV_KEY,"outputsize":"compact"}
-    try:
-        resp = requests.get(url,params=params,timeout=20)
-        data = resp.json()
-        ts   = data.get("Time Series (Daily)",{})
-        row  = ts.get(target_date,{})
-        return float(row.get("4. close",0))
-    except: return 0.0
-
-@log_retry(max_retries=3, delay=12.0, logger=log)
-def fetch_usd_krw(target_date: str) -> float:
-    """환율 USD/KRW (AlphaVantage 우선 → yfinance 폴백)"""
-    # 1차: AlphaVantage FX_DAILY (역사 데이터)
+def fetch_vix_detail(target_date: str) -> dict:
+    """Alpha Vantage VIX with yfinance fallback."""
+    fallback_error = ""
     if AV_KEY:
         try:
             url = "https://www.alphavantage.co/query"
-            params = {"function": "FX_DAILY", "from_symbol": "USD", "to_symbol": "KRW",
-                      "apikey": AV_KEY, "outputsize": "compact"}
+            params = {
+                "function": "TIME_SERIES_DAILY",
+                "symbol": "VIX",
+                "apikey": AV_KEY,
+                "outputsize": "compact",
+            }
             resp = requests.get(url, params=params, timeout=20)
-            ts   = resp.json().get("Time Series FX (Daily)", {})
-            row  = ts.get(target_date, {})
-            rate = float(row.get("4. close", 0))
-            if rate > 100:
-                return rate
-        except Exception:
-            pass
+            ts = resp.json().get("Time Series (Daily)", {})
+            row = ts.get(target_date, {})
+            value = _positive_float_or_none(row.get("4. close"))
+            if value is not None:
+                return _metric_result(value, "alpha_vantage:VIX")
+        except Exception as e:
+            fallback_error = str(e)
 
-    # 2차: yfinance (최근 데이터 / 무료)
-    try:
-        import yfinance as yf
-        hist = yf.Ticker("USDKRW=X").history(start=target_date, end=target_date)
-        if hist.empty:
-            # 당일 데이터가 없으면 최근 1일 조회
-            hist = yf.Ticker("USDKRW=X").history(period="5d")
-        if not hist.empty:
-            rate = float(hist["Close"].iloc[-1])
-            if rate > 100:
-                return round(rate, 2)
-    except Exception:
-        pass
+    value = _yf_close_for_date("^VIX", target_date)
+    return _metric_result(value, "yfinance:^VIX", fallback_used=bool(AV_KEY), error=fallback_error)
 
-    return 0.0
+
+def fetch_vix(target_date: str) -> Optional[float]:
+    return fetch_vix_detail(target_date).get("value")
+
+
+@log_retry(max_retries=3, delay=12.0, logger=log)
+def fetch_usd_krw_detail(target_date: str) -> dict:
+    """USD/KRW via Alpha Vantage with yfinance fallback."""
+    fallback_error = ""
+    if AV_KEY:
+        try:
+            url = "https://www.alphavantage.co/query"
+            params = {
+                "function": "FX_DAILY",
+                "from_symbol": "USD",
+                "to_symbol": "KRW",
+                "apikey": AV_KEY,
+                "outputsize": "compact",
+            }
+            resp = requests.get(url, params=params, timeout=20)
+            ts = resp.json().get("Time Series FX (Daily)", {})
+            row = ts.get(target_date, {})
+            rate = _positive_float_or_none(row.get("4. close"), minimum=100)
+            if rate is not None:
+                return _metric_result(rate, "alpha_vantage:FX_DAILY")
+        except Exception as e:
+            fallback_error = str(e)
+
+    rate = _yf_close_for_date("USDKRW=X", target_date)
+    if rate is not None and rate > 100:
+        return _metric_result(
+            round(rate, 2),
+            "yfinance:USDKRW=X",
+            fallback_used=bool(AV_KEY),
+            error=fallback_error,
+        )
+    source = "alpha_vantage,yfinance:USDKRW=X" if AV_KEY else "yfinance:USDKRW=X"
+    return _metric_result(None, source, fallback_used=bool(AV_KEY), error=fallback_error)
+
+
+def fetch_usd_krw(target_date: str) -> Optional[float]:
+    return fetch_usd_krw_detail(target_date).get("value")
+
+
+@log_retry(max_retries=3, delay=12.0, logger=log)
+def fetch_dxy_detail(target_date: str) -> dict:
+    """DXY daily close via yfinance."""
+    value = _yf_close_for_date("DX-Y.NYB", target_date)
+    return _metric_result(value, "yfinance:DX-Y.NYB")
+
+
+def fetch_dxy(target_date: str) -> Optional[float]:
+    return fetch_dxy_detail(target_date).get("value")
+
+
+@log_retry(max_retries=3, delay=12.0, logger=log)
+def fetch_vkospi_detail(target_date: str) -> dict:
+    """VKOSPI daily close via yfinance symbols."""
+    for symbol in ("^KS200VOL", "^VKOSPI"):
+        value = _yf_close_for_date(symbol, target_date)
+        if value is not None:
+            return _metric_result(value, f"yfinance:{symbol}", fallback_used=(symbol != "^KS200VOL"))
+    return _metric_result(None, "yfinance:^KS200VOL,^VKOSPI", fallback_used=True)
+
+
+def fetch_vkospi(target_date: str) -> Optional[float]:
+    return fetch_vkospi_detail(target_date).get("value")
 
 def collect_kr_supplement(target_date: str):
     path = SUPP_DIR/"kr"/f"{target_date}.json"
@@ -119,7 +216,17 @@ def collect_kr_supplement(target_date: str):
         log.debug(f"[SKIP] KR supplement {target_date}")
         return
     log.info(f"[KR supplement] {target_date}")
-    data = {"date": target_date, "flows": {}, "usd_krw": 0, "vkospi": 0}
+    data = {
+        "date": target_date,
+        "collected_at": _now_iso(),
+        "flows": {},
+        "usd_krw": None,
+        "vkospi": None,
+        "data_quality_flags": [],
+        "sources": {},
+        "fallback_used": {},
+        "collection_errors": {},
+    }
     KR_FLOW_TICKERS = [
         "005930","000660","035420","005380","000270",
         "051910","006400","035720","068270","028260","012330","003550",
@@ -133,9 +240,14 @@ def collect_kr_supplement(target_date: str):
     except Exception as e:
         log.warning(f"KIS 수급 실패: {e}")
     try:
-        data["usd_krw"] = fetch_usd_krw(target_date)
+        _apply_metric(data, "usd_krw", fetch_usd_krw_detail(target_date))
         time.sleep(12)
-    except: pass
+    except Exception as e:
+        _apply_metric(data, "usd_krw", _metric_result(None, "collector_exception", error=str(e)))
+    try:
+        _apply_metric(data, "vkospi", fetch_vkospi_detail(target_date))
+    except Exception as e:
+        _apply_metric(data, "vkospi", _metric_result(None, "collector_exception", error=str(e)))
     with open(path,"w",encoding="utf-8") as f:
         json.dump(data,f,ensure_ascii=False,indent=2)
     log.info(f"  ✅ KR supplement 저장: {path.name}")
@@ -144,12 +256,30 @@ def collect_us_supplement(target_date: str):
     path = SUPP_DIR/"us"/f"{target_date}.json"
     if path.exists(): return
     log.info(f"[US supplement] {target_date}")
-    data = {"date":target_date,"vix":0,"dxy":0,"oil_wti":0,
-            "fomc":False,"cpi_day":False,"nfp_day":False}
+    data = {
+        "date": target_date,
+        "collected_at": _now_iso(),
+        "vix": None,
+        "dxy": None,
+        "oil_wti": None,
+        "fomc": False,
+        "cpi_day": False,
+        "nfp_day": False,
+        "data_quality_flags": [],
+        "sources": {},
+        "fallback_used": {},
+        "collection_errors": {},
+    }
     try:
-        data["vix"] = fetch_vix(target_date)
+        _apply_metric(data, "vix", fetch_vix_detail(target_date))
         time.sleep(12)
-    except: pass
+    except Exception as e:
+        _apply_metric(data, "vix", _metric_result(None, "collector_exception", error=str(e)))
+    try:
+        _apply_metric(data, "dxy", fetch_dxy_detail(target_date))
+    except Exception as e:
+        _apply_metric(data, "dxy", _metric_result(None, "collector_exception", error=str(e)))
+    _apply_metric(data, "oil_wti", _metric_result(None, "not_configured"))
     with open(path,"w",encoding="utf-8") as f:
         json.dump(data,f,ensure_ascii=False,indent=2)
     log.info(f"  ✅ US supplement 저장: {path.name}")

@@ -36,6 +36,10 @@ def update_once(market: str, *, offset_min: int) -> dict:
             "post_open_60m_return_pct": candidate.get("post_open_60m_return_pct"),
             "post_open_mfe_pct": candidate.get("post_open_mfe_pct"),
             "post_open_mae_pct": candidate.get("post_open_mae_pct"),
+            "max_runup_pct": candidate.get("max_runup_pct", candidate.get("post_open_mfe_pct")),
+            "max_drawdown_pct": candidate.get("max_drawdown_pct", candidate.get("post_open_mae_pct")),
+            "open_to_high_pct": candidate.get("open_to_high_pct"),
+            "open_to_close_pct": candidate.get("open_to_close_pct"),
         }
         key = f"outcome_{int(offset_min)}m_captured_at"
         candidate[key] = captured_at

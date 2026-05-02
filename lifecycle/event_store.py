@@ -9,6 +9,14 @@ from runtime_paths import get_runtime_path
 from lifecycle.models import LifecycleEvent, normalize_event_type, utc_now_iso
 
 
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        try:
+            return bool(super().__exit__(exc_type, exc_value, traceback))
+        finally:
+            self.close()
+
+
 class EventStore:
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path is not None else get_runtime_path("data", "v2_event_store.db")
@@ -16,7 +24,7 @@ class EventStore:
         self.init()
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path), timeout=30)
+        conn = sqlite3.connect(str(self.path), timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -24,9 +32,7 @@ class EventStore:
         return conn
 
     def init(self) -> None:
-        with sqlite3.connect(str(self.path), timeout=30) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
+        with self.connect() as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS lifecycle_events (

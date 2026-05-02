@@ -61,6 +61,7 @@ class KisWebSocketNoticeParserTests(unittest.TestCase):
         self.assertEqual(event["filled_time"], "093000")
         self.assertEqual(event["side"], "buy")
         self.assertEqual(event["market"], "KR")
+        self.assertTrue(event["raw_hash"])
 
     def test_parse_us_fill_notice_uses_decimal_price(self) -> None:
         ws = kis_api.KISWebSocket("token", [], market="US")
@@ -189,6 +190,67 @@ class TradingBotFillNoticeTests(unittest.TestCase):
         self.assertEqual(pathb_order["qty"], 3)
         self.assertEqual(pathb_order["filled_price_native"], 70100.0)
         self.assertTrue(bot.pathb.on_buy_fill.call_args.kwargs["partial"])
+
+    def test_duplicate_ws_raw_hash_is_not_applied_twice(self) -> None:
+        order = {
+            "market": "KR",
+            "ticker": "005930",
+            "qty": 10,
+            "order_no": "ord-dup",
+            "raw_price": 70000,
+            "pathb_path_run_id": "pathb-dup",
+        }
+        bot = _bot_with_pending(order)
+        event = {
+            "order_no": "ord-dup",
+            "ticker": "005930",
+            "filled_qty": 3,
+            "filled_price": 70100,
+            "filled_time": "093001",
+            "side": "buy",
+            "raw_hash": "same-raw-payload",
+        }
+
+        with patch.object(trading_bot, "fill_confirm_alert"):
+            trading_bot.TradingBot._on_fill_notice(bot, dict(event))
+            trading_bot.TradingBot._on_fill_notice(bot, dict(event))
+
+        self.assertEqual(bot.pending_orders[0]["qty"], 7)
+        self.assertEqual(bot.pending_orders[0]["filled_qty_accum"], 3)
+        self.assertEqual(len(bot.risk.positions), 1)
+        bot.pathb.on_buy_fill.assert_called_once()
+
+    def test_fill_ledger_evicts_oldest_keys_after_max_size(self) -> None:
+        bot = SimpleNamespace()
+
+        with patch.dict("os.environ", {"FILL_LEDGER_MAX_KEYS": "100"}):
+            for idx in range(101):
+                self.assertFalse(trading_bot._fill_ledger_seen_or_mark(bot, f"fill-{idx}"))
+
+        self.assertEqual(len(bot._applied_fill_keys), 100)
+        self.assertNotIn("fill-0", bot._applied_fill_keys)
+        self.assertIn("fill-100", bot._applied_fill_keys)
+        self.assertEqual(len(bot._applied_fill_key_order), 100)
+        self.assertEqual(set(bot._applied_fill_key_order), bot._applied_fill_keys)
+
+    def test_fill_ledger_duplicate_key_still_skips_without_growing_order(self) -> None:
+        bot = SimpleNamespace()
+
+        self.assertFalse(trading_bot._fill_ledger_seen_or_mark(bot, "same-fill"))
+        self.assertTrue(trading_bot._fill_ledger_seen_or_mark(bot, "same-fill"))
+
+        self.assertEqual(bot._applied_fill_keys, {"same-fill"})
+        self.assertEqual(list(bot._applied_fill_key_order), ["same-fill"])
+
+    def test_fill_ledger_initializes_order_deque_when_missing(self) -> None:
+        bot = SimpleNamespace(_applied_fill_keys={"old-fill"})
+
+        self.assertFalse(trading_bot._fill_ledger_seen_or_mark(bot, "new-fill"))
+
+        self.assertIn("old-fill", bot._applied_fill_keys)
+        self.assertIn("new-fill", bot._applied_fill_keys)
+        self.assertTrue(hasattr(bot, "_applied_fill_key_order"))
+        self.assertEqual(set(bot._applied_fill_key_order), bot._applied_fill_keys)
 
     def test_sell_or_invalid_notice_is_ignored(self) -> None:
         bot = _bot_with_pending({"market": "KR", "ticker": "005930", "qty": 5, "order_no": "ord-ignore"})

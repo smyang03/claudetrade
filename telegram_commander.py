@@ -13,7 +13,17 @@ import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from logger import get_trading_logger
-from telegram_reporter import _display_ticker
+from telegram_reporter import (
+    _display_ticker,
+    _ko_action,
+    _ko_analyst,
+    _ko_mode,
+    _ko_path,
+    _ko_reason,
+    _ko_result,
+    _ko_source,
+    _ko_strategy,
+)
 from bot.log_sanitizer import mask_secrets
 
 log = get_trading_logger()
@@ -32,7 +42,7 @@ HELP_TEXT = """━━━━━━━━━━━━━━━━━━━━━�
   /trades        — 전체 매매내역 (기본 20건)
                    예) /trades 30  /trades 005930
   /pos           — 보유 포지션 목록
-  /review        — 보유 포지션 즉시 Claude 재판단 (SELL이면 즉시 매도)
+  /review        — 보유 포지션 즉시 Claude 재판단 (매도 권고면 즉시 매도)
   /mode          — 현재 합의 모드
   /brain         — 누적 학습 요약
   /credit        — AI 크레딧 사용량
@@ -42,13 +52,13 @@ HELP_TEXT = """━━━━━━━━━━━━━━━━━━━━━�
   /setorder [금액]     — 최대 주문금액 변경  예) /setorder 300000
   /setloss [숫자]      — 일일 손실 한도 변경 %  예) /setloss -5.0
   /setsl [숫자]        — 종목당 손절 기준 변경 %  예) /setsl -3.0
-  /settp [숫자]        — 기본 TP 기준 변경 %  예) /settp 6.0
-  /trail on|off        — 트레일링 스탑 ON/OFF
+  /settp [숫자]        — 기본 목표가 기준 변경 %  예) /settp 6.0
+  /trail on|off        — 트레일링 스탑 켜기/끄기
   /trail_pct [숫자]    — 트레일링 폭 변경 %  예) /trail_pct 2
-  /trail_analyst on|off — TP 시 분석가 합의 ON/OFF
-  /entry               — entry_priority cutoff 상태 조회
-  /entry on|off        — cutoff 활성/비활성 토글
-  /entry cutoff [값]   — cutoff 임계값 변경  예) /entry cutoff 0.3
+  /trail_analyst on|off — 목표가 도달 시 분석가 합의 켜기/끄기
+  /entry               — 진입 우선순위 임계값 상태 조회
+  /entry on|off        — 임계값 활성/비활성 토글
+  /entry cutoff [값]   — 임계값 변경  예) /entry cutoff 0.3
 
 <b>액션</b>
   /claude        — Claude 긴급 재판단 트리거
@@ -94,10 +104,10 @@ def _handle(text: str, bot) -> str:
                 try:
                     return msg + "\n\n" + _cmd_closeall(bot)
                 except Exception as e:
-                    return msg + f"\n\nclose-all request failed: {e}"
+                    return msg + f"\n\n전체 청산 요청 실패: {e}"
             return msg
         except Exception as e:
-            return f"V2 command failed: {e}"
+            return f"V2 명령 처리 실패: {e}"
 
     # ── 현재 상태 ─────────────────────────────────────────────────────────────
     if cmd in ("/s", "/status"):
@@ -182,18 +192,18 @@ def _handle(text: str, bot) -> str:
             return f"현재 종목 손절 기준: <b>{HARD_RULES['max_single_loss_pct']}%</b>\n변경: /setsl -3.0"
         return _cmd_setsl(bot, args[0])
 
-    # ── 기본 TP 변경 ──────────────────────────────────────────────────────────
+    # ── 기본 목표가 변경 ───────────────────────────────────────────────────────
     if cmd == "/settp":
         if not args:
             from risk_manager import HARD_RULES
-            return f"현재 기본 TP: <b>{HARD_RULES['take_profit_pct']}%</b>\n변경: /settp 6.0"
+            return f"현재 기본 목표가: <b>{HARD_RULES['take_profit_pct']}%</b>\n변경: /settp 6.0"
         return _cmd_settp(bot, args[0])
 
     # ── 트레일링 스탑 설정 ────────────────────────────────────────────────────
     if cmd == "/trail":
         if not args:
-            st = "ON" if bot.enable_trailing_stop else "OFF"
-            an = "ON" if bot.enable_trailing_analyst else "OFF"
+            st = "켜짐" if bot.enable_trailing_stop else "꺼짐"
+            an = "켜짐" if bot.enable_trailing_analyst else "꺼짐"
             return (f"📈 <b>트레일링 스탑</b>\n"
                     f"  상태: {st}  폭: {bot.trailing_stop_pct*100:.1f}%\n"
                     f"  분석가 합의: {an}\n"
@@ -207,7 +217,7 @@ def _handle(text: str, bot) -> str:
 
     if cmd == "/trail_analyst":
         if not args:
-            st = "ON" if bot.enable_trailing_analyst else "OFF"
+            st = "켜짐" if bot.enable_trailing_analyst else "꺼짐"
             return f"현재 분석가 합의: {st}\n변경: /trail_analyst on|off"
         return _cmd_trail_analyst(bot, args[0])
 
@@ -259,8 +269,8 @@ def _legacy_cmd_status(bot) -> str:
         pnl_krw = int(bot.risk.daily_pnl)
         pnl_icon = "🟢" if pnl_pct > 0 else "🔴" if pnl_pct < 0 else "⚪"
         lines.append(
-            f"\n<b>{market}</b>  모드: {mode}\n"
-            f"{pnl_icon} 오늘 P&L: {pnl_pct:+.2f}%  {pnl_krw:+,}원"
+            f"\n<b>{market}</b>  모드: {_ko_mode(mode)}\n"
+            f"{pnl_icon} 오늘 손익: {pnl_pct:+.2f}%  {pnl_krw:+,}원"
         )
 
     # 포지션
@@ -307,7 +317,7 @@ def _status_positions(bot) -> list[str]:
         adv = p.get("hold_advice") or {}
         if adv:
             action = str(adv.get("action", "") or "")
-            claude_state = {"TRAIL": "트레일링 유지", "SELL": "매도 권고", "HOLD": "홀드 유지"}.get(action, action or "점검 완료")
+            claude_state = _ko_action(action) if action else "점검 완료"
         elif p.get("pending_next_open_sell"):
             claude_state = "다음 세션 청산 예정"
         lines.append(
@@ -338,7 +348,7 @@ def _cmd_status(bot) -> str:
     return (
         f"📊 <b>[현재 상태 {now}]</b>\n"
         f"시장: <b>{market}</b> | 세션: {session_label}\n"
-        f"모드: <b>{mode}</b>\n"
+        f"모드: <b>{_ko_mode(mode)}</b>\n"
         f"오늘 손익: {pnl_pct:+.2f}%  {pnl_krw:+,}원\n"
         f"현금: {cash:,.0f}원\n"
         f"주식평가: {stock_value:,.0f}원\n"
@@ -409,7 +419,7 @@ def _cmd_pnl(bot) -> str:
         for t in sell_trades:
             pnl    = t.get("pnl", 0)
             pct    = t.get("pnl_pct", 0.0)
-            reason = t.get("reason", "-")
+            reason = _ko_reason(t.get("reason", "-"))
             ticker = t.get("ticker", "-")
             qty    = t.get("qty", 0)
             price  = t.get("price", 0)
@@ -429,13 +439,13 @@ def _cmd_pnl(bot) -> str:
         brain  = BrainDB.load()
         perf   = brain["markets"][market]["analyst_performance"]
 
-        trend_icon = {"improving": "↑", "declining": "↓", "stable": "→"}
+        trend_icon = {"improving": "개선↑", "declining": "악화↓", "stable": "유지→"}
         for atype, icon_a in [("bull", "🟢"), ("bear", "🔴"), ("neutral", "⚪")]:
             p  = perf[atype]
             r7 = p.get("recent_7d", {}).get("rate", p["rate"]) * 100
             ti = trend_icon.get(p.get("trend", "stable"), "→")
             lines.append(
-                f"  {icon_a} {atype.capitalize():<7} "
+                f"  {icon_a} {_ko_analyst(atype)} "
                 f"누적 {p['rate']*100:.1f}% ({p['total']}일)  "
                 f"최근7일 {r7:.1f}% {ti}"
             )
@@ -450,8 +460,8 @@ def _cmd_pnl(bot) -> str:
             # 샘플 수 부족 경고 (30건 미만은 통계 신뢰도 낮음)
             sample_warn = " ⚠소표본" if hold_n < 30 else ""
             lines.append(
-                f"\n  📈 TP 후 분석가 합의 (총 {hp['total']}건)\n"
-                f"     HOLD {hold_n}건 성공 {hold_ok}건 ({hold_pct:.0f}%){sample_warn}"
+                f"\n  📈 목표가 도달 후 분석가 합의 (총 {hp['total']}건)\n"
+                f"     보유 유지 {hold_n}건 성공 {hold_ok}건 ({hold_pct:.0f}%){sample_warn}"
                 + (f"  평균 추가수익 {extra:+.2f}%" if hold_n > 0 else "")
             )
     except Exception as e:
@@ -509,7 +519,7 @@ def _cmd_positions(bot) -> str:
             if tp > 0:
                 parts.append(f"최초 목표 {px(tp)}")
             if tp_price > 0:
-                parts.append(f"TP 달성가 {px(tp_price)}")
+                parts.append(f"목표가 달성가 {px(tp_price)}")
             dist_pct = ((trail_sl / cur - 1) * 100) if cur > 0 else 0.0
             parts.append(f"현재 스탑 {px(trail_sl)} 이하 시 자동 매도 ({dist_pct:+.1f}%)")
             parts.append("상방 목표 고정 없음")
@@ -531,7 +541,7 @@ def _cmd_positions(bot) -> str:
         adv = p.get("hold_advice")
         if adv:
             action = adv.get("action", "")
-            action_ko = {"TRAIL": "트레일링 유지", "SELL": "매도 권고", "HOLD": "홀드 유지"}.get(action, action)
+            action_ko = _ko_action(action) if action else "점검 완료"
             votes = adv.get("votes", {}) or {}
             reason = ""
             for v in votes.values():
@@ -552,6 +562,8 @@ def _cmd_positions(bot) -> str:
         strat = p.get("strategy", "")
         if strat in ("broker_balance", "broker_sync", ""):
             strat = ""
+        else:
+            strat = _ko_strategy(strat)
         sub = " · ".join(filter(None, [strat, f"{qty}주", f"{held}일째" if held else ""]))
 
         block = [f"{pnl_icon} <b>{ticker_disp}</b>  {pnl:+.2f}%  <b>{pnl_str}</b>"]
@@ -646,7 +658,7 @@ def _cmd_positions_from_broker_truth(bot) -> str:
         and bool((markets.get(market) or {}).get("stale"))
         and bool((markets.get(market) or {}).get("last_success_at"))
     ]
-    lines = ["<b>보유 포지션</b>", "기준: 계좌 조회 snapshot"]
+    lines = ["<b>보유 포지션</b>", "기준: 계좌 조회 스냅샷"]
     if stale_markets:
         lines.append("주의: 오래된 계좌 조회 - " + ", ".join(stale_markets))
     local_fallback_markets = sorted({
@@ -655,6 +667,7 @@ def _cmd_positions_from_broker_truth(bot) -> str:
         if str(pos.get("source", "") or "") == "local_fallback"
     })
     if local_fallback_markets:
+        lines.append("로컬 보완 기준: " + ", ".join(local_fallback_markets))
         lines.append("Local fallback: " + ", ".join(local_fallback_markets))
     if not positions:
         return "\n".join(lines + ["계좌 기준 보유 포지션 없음"])
@@ -667,10 +680,13 @@ def _cmd_positions_from_broker_truth(bot) -> str:
         pnl_pct = float(pos.get("pnl_pct", 0) or ((cur / entry - 1) * 100 if entry > 0 and cur > 0 else 0.0))
         path_label = str(pos.get("buy_path_label", "") or "")
         source = str(pos.get("source", "") or "")
+        source_label = _ko_source(source)
+        if source and source not in source_label:
+            source_label = f"{source_label} ({source})"
         lines.append(
             f"{ticker_disp} | {qty}주 | {pnl_pct:+.2f}% | "
-            f"{_fmt_price_for_market(entry, market)} -> {_fmt_price_for_market(cur, market)} | "
-            f"{path_label} | {source}"
+            f"{_fmt_price_for_market(entry, market)} → {_fmt_price_for_market(cur, market)} | "
+            f"{_ko_path(path_label)} | {source_label}"
         )
     return "\n".join(lines)
 
@@ -686,7 +702,7 @@ def _cmd_mode(bot) -> str:
     score_txt = f"  점수: {score:+.3f}" if score is not None else ""
     return (
         f"⚖️ <b>현재 합의 모드</b>\n"
-        f"모드: <b>{mode}</b>  포지션 {size}%{score_txt}"
+        f"모드: <b>{_ko_mode(mode)}</b>  포지션 {size}%{score_txt}"
     )
 
 
@@ -728,19 +744,19 @@ def _cmd_judge(bot) -> str:
     return (
         f"🧠 <b>오늘 아침 판단</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"⚖️ 합의: <b>{mode}</b>  {consensus.get('size','-')}%\n\n"
-        f"🟢 Bull ({int(bull.get('confidence',0)*100)}%)\n"
+        f"⚖️ 합의: <b>{_ko_mode(mode)}</b>  {consensus.get('size','-')}%\n\n"
+        f"🟢 상승 분석가 ({int(bull.get('confidence',0)*100)}%)\n"
         f"  {bull.get('key_reason','')}\n\n"
-        f"🔴 Bear ({int(bear.get('confidence',0)*100)}%)\n"
+        f"🔴 하락 분석가 ({int(bear.get('confidence',0)*100)}%)\n"
         f"  {bear.get('key_reason','')}\n\n"
-        f"⚪ Neutral ({int(neut.get('confidence',0)*100)}%)\n"
+        f"⚪ 중립 분석가 ({int(neut.get('confidence',0)*100)}%)\n"
         f"  {neut.get('key_reason','')}"
     )
 
 
 def _cmd_reinvoke(bot) -> str:
     if hasattr(bot, "is_claude_reinvoke_enabled") and not bot.is_claude_reinvoke_enabled():
-        return "Claude 재판단 기능이 현재 OFF 상태입니다."
+        return "Claude 재판단 기능이 현재 꺼진 상태입니다."
     if not bot.session_active:
         return "❌ 세션이 활성화되어 있지 않습니다."
     market = bot.today_judgment.get("market") if bot.today_judgment else None
@@ -793,7 +809,7 @@ def _cmd_close(bot, ticker: str) -> str:
             return (
                 f"{icon} <b>[수동 청산]</b> {ticker_disp}\n"
                 f"  {pos['qty']}주 @{raw_price:,}{'원' if market == 'KR' else '$'}\n"
-                f"  P&L: {pnl:+,}원"
+                f"  손익: {pnl:+,}원"
             )
         else:
             return f"❌ 청산 실패: {result.get('msg','')}"
@@ -831,7 +847,7 @@ def _cmd_risk(bot) -> str:
         f"━━━━━━━━━━━━━━━━\n"
         f"  일일 손실 한도:  <b>{dl:.1f}%</b>  ← /setloss\n"
         f"  종목 손절 기준:  <b>{sl:.1f}%</b>  ← /setsl\n"
-        f"  기본 TP 기준:    <b>{tp:.1f}%</b>  ← /settp\n"
+        f"  기본 목표가 기준: <b>{tp:.1f}%</b>  ← /settp\n"
         f"  1회 최대주문:    <b>{int(bot.risk.max_order_krw):,}원</b>  ← /setorder\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"  오늘 수익률: <b>{daily_ret:+.2f}%</b>"
@@ -890,7 +906,7 @@ def _cmd_settp(bot, val: str) -> str:
         HARD_RULES["take_profit_pct"] = pct
         log.info(f"[commander] take_profit_pct 변경: {old} → {pct}")
         return (
-            f"✅ <b>기본 TP 기준 변경</b>\n"
+            f"✅ <b>기본 목표가 기준 변경</b>\n"
             f"  {old:.1f}% → <b>{pct:.1f}%</b>\n"
             f"  (재시작 시 .env 값으로 복원)"
         )
@@ -902,10 +918,10 @@ def _cmd_trail(bot, val: str) -> str:
     v = val.strip().lower()
     if v in ("on", "1", "true"):
         bot.enable_trailing_stop = True
-        return "✅ 트레일링 스탑 <b>ON</b>"
+        return "✅ 트레일링 스탑 <b>켜짐</b>"
     elif v in ("off", "0", "false"):
         bot.enable_trailing_stop = False
-        return "⏹ 트레일링 스탑 <b>OFF</b> (TP 즉시 청산)"
+        return "⏹ 트레일링 스탑 <b>꺼짐</b> (목표가 도달 시 즉시 청산)"
     return "❌ on 또는 off 를 입력하세요."
 
 
@@ -924,30 +940,30 @@ def _cmd_trail_analyst(bot, val: str) -> str:
     v = val.strip().lower()
     if v in ("on", "1", "true"):
         bot.enable_trailing_analyst = True
-        return "✅ 분석가 합의 <b>ON</b> (TP 시 3명 판단)"
+        return "✅ 분석가 합의 <b>켜짐</b> (목표가 도달 시 3명 판단)"
     elif v in ("off", "0", "false"):
         bot.enable_trailing_analyst = False
-        return "⏹ 분석가 합의 <b>OFF</b> (트레일링 즉시 활성화)"
+        return "⏹ 분석가 합의 <b>꺼짐</b> (트레일링 즉시 활성화)"
     return "❌ on 또는 off 를 입력하세요."
 
 
 def _cmd_entry_status(bot) -> str:
     enabled = getattr(bot, "entry_priority_cutoff_enabled", False)
     cutoff  = getattr(bot, "entry_priority_cutoff", 0.20)
-    st = "ON" if enabled else "OFF"
+    st = "켜짐" if enabled else "꺼짐"
     return (
-        f"📊 <b>entry_priority</b>\n"
-        f"  신호 정렬: 항상 활성 (score 높은 순)\n"
-        f"  cutoff: <b>{st}</b>  임계값: {cutoff:.2f}\n"
+        f"📊 <b>진입 우선순위</b>\n"
+        f"  신호 정렬: 항상 활성 (점수 높은 순)\n"
+        f"  임계값 필터: <b>{st}</b>  기준값: {cutoff:.2f}\n"
         f"변경: /entry on|off | /entry cutoff 0.3"
     )
 
 
 def _cmd_entry_toggle(bot, val: str) -> str:
     bot.entry_priority_cutoff_enabled = (val == "on")
-    st = "ON" if bot.entry_priority_cutoff_enabled else "OFF"
+    st = "켜짐" if bot.entry_priority_cutoff_enabled else "꺼짐"
     cutoff = getattr(bot, "entry_priority_cutoff", 0.20)
-    return f"✅ entry_priority cutoff: <b>{st}</b>  임계값: {cutoff:.2f}"
+    return f"✅ 진입 우선순위 임계값 필터: <b>{st}</b>  기준값: {cutoff:.2f}"
 
 
 def _cmd_entry_cutoff(bot, val: str) -> str:
@@ -956,8 +972,8 @@ def _cmd_entry_cutoff(bot, val: str) -> str:
         if not 0.0 <= v <= 2.0:
             return "❌ 임계값은 0~2 사이로 입력하세요."
         bot.entry_priority_cutoff = v
-        st = "ON" if getattr(bot, "entry_priority_cutoff_enabled", False) else "OFF"
-        return f"✅ cutoff 임계값 → <b>{v:.2f}</b>  (cutoff {st})"
+        st = "켜짐" if getattr(bot, "entry_priority_cutoff_enabled", False) else "꺼짐"
+        return f"✅ 임계값 → <b>{v:.2f}</b>  (필터 {st})"
     except ValueError:
         return "❌ 숫자를 입력하세요. 예) /entry cutoff 0.3"
 
@@ -1017,7 +1033,7 @@ def _cmd_trades(bot, args: list) -> str:
             ticker_disp = _display_symbol(ticker, mkt, t.get("name", "") or "")
             qty    = t.get("qty", 0)
             price  = t.get("price", 0)
-            strat  = t.get("strategy", "-")
+            strat  = _ko_strategy(t.get("strategy", "-"))
 
             if side == "buy":
                 fee_r = 0.00015
@@ -1031,7 +1047,7 @@ def _cmd_trades(bot, args: list) -> str:
             else:
                 pnl    = t.get("pnl", 0)
                 pct    = t.get("pnl_pct", 0.0)
-                reason = t.get("reason", "-")
+                reason = _ko_reason(t.get("reason", "-"))
                 unit   = "원" if mkt == "KR" else "$"
                 ic     = "🟢" if pnl > 0 else "🔴"
                 lines.append(
@@ -1141,8 +1157,8 @@ def _legacy_cmd_status_runtime(bot) -> str:
         pnl_krw = int(bot.risk.daily_pnl)
         pnl_icon = "📈" if pnl_pct > 0 else "📉" if pnl_pct < 0 else "➖"
         lines.append(
-            f"\n<b>{market}</b>  모드: {mode}\n"
-            f"{pnl_icon} 오늘 P&L: {pnl_pct:+.2f}%  {pnl_krw:+,}원"
+            f"\n<b>{market}</b>  모드: {_ko_mode(mode)}\n"
+            f"{pnl_icon} 오늘 손익: {pnl_pct:+.2f}%  {pnl_krw:+,}원"
         )
 
     pos = bot.risk.positions

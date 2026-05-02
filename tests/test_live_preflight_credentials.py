@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+import unittest
+from unittest.mock import patch
+
+from tools import live_preflight
+
+
+def _base_config(effective: dict[str, str]) -> dict:
+    defaults = {
+        "ENABLED_MARKETS": "KR,US",
+        "PATHB_ENABLED": "true",
+        "PATHB_MAX_POSITIONS": "1",
+        "PATHB_MAX_DAILY_ENTRIES": "1",
+        "PATHB_INTRADAY_ONLY": "true",
+        "PATHB_EMERGENCY_DISABLE": "false",
+        "US_FIXED_ORDER_KRW": "100000",
+        "US_MIN_ORDER_KRW": "50000",
+        "USD_KRW_RATE": "1300",
+        "CLAUDE_SELECTION_MAX_TOKENS": "6000",
+        "CLAUDE_SELECTION_RETRY_MAX_TOKENS": "3500",
+        "KIS_IS_PAPER_US": "false",
+    }
+    merged = {**defaults, **effective}
+    return {
+        "env_path": "E:/code/claudetrade/.missing-test-env",
+        "start_config": {},
+        "base_env": {},
+        "overrides": {},
+        "effective": merged,
+    }
+
+
+def _credential_check(effective: dict[str, str]):
+    with patch.object(live_preflight, "load_effective_config", return_value=_base_config(effective)):
+        checks, _config = live_preflight._config_checks("live", allow_config_conflicts=True)
+    return next(check for check in checks if check.name == "kis.us_credentials")
+
+
+class LivePreflightCredentialModeTests(unittest.TestCase):
+    def test_us_credentials_reports_fallback_shared_kr(self) -> None:
+        check = _credential_check(
+            {
+                "KIS_ACCOUNT_NO": "11111111-01",
+                "KIS_APP_KEY": "kr-key",
+                "KIS_APP_SECRET": "kr-secret",
+                "KIS_ACCOUNT_NO_US": "",
+                "KIS_APP_KEY_US": "",
+                "KIS_APP_SECRET_US": "",
+            }
+        )
+
+        self.assertEqual(check.status, "WARN")
+        self.assertEqual(check.data["credential_mode"], "fallback_shared_kr")
+        self.assertTrue(check.data["fallback_to_kr_allowed"])
+
+    def test_us_credentials_reports_separate_us(self) -> None:
+        check = _credential_check(
+            {
+                "KIS_ACCOUNT_NO": "11111111-01",
+                "KIS_APP_KEY": "kr-key",
+                "KIS_APP_SECRET": "kr-secret",
+                "KIS_ACCOUNT_NO_US": "22222222-01",
+                "KIS_APP_KEY_US": "us-key",
+                "KIS_APP_SECRET_US": "us-secret",
+            }
+        )
+
+        self.assertEqual(check.status, "PASS")
+        self.assertEqual(check.data["credential_mode"], "separate_us")
+        self.assertFalse(check.data["fallback_to_kr_allowed"])
+
+
+if __name__ == "__main__":
+    unittest.main()

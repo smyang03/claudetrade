@@ -757,6 +757,7 @@ class TradingBotGateTests(unittest.TestCase):
         bot._or_low = {}
         bot.risk = SimpleNamespace(positions=[])
         bot.token = "test-token"
+        bot.tokens = {"KR": "test-token", "US": "test-token"}
         bot._persist_live_judgment = lambda market: None
         return bot
 
@@ -1746,6 +1747,7 @@ class TradingBotRecoveryTests(unittest.TestCase):
         bot.current_market = None
         bot.enable_trailing_stop = True
         bot.token = "test-token"
+        bot.tokens = {"KR": "test-token", "US": "test-token"}
         bot.price_cache = {}
         bot.price_cache_raw = {}
         bot._save_positions = Mock()

@@ -39,6 +39,21 @@ _KR_SECTOR_TICKER_MAP: dict[str, list[str]] = {
 _BEAR_MODES = {"MILD_BEAR", "CAUTIOUS_BEAR", "DEFENSIVE", "HALT"}
 
 
+def _positive_float_or_zero(value) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return parsed if parsed > 0 else 0.0
+
+
+def _float_or_zero(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def apply_cross_asset_adjust(
     params: dict,
     context: dict,
@@ -62,10 +77,10 @@ def apply_cross_asset_adjust(
     adj = 0.0
 
     # KR은 vkospi, US는 vix 사용
-    vix     = float(context.get("vix", 0) or 0)
-    vkospi  = float(context.get("vkospi", 0) or 0)
+    vix     = _positive_float_or_zero(context.get("vix"))
+    vkospi  = _positive_float_or_zero(context.get("vkospi"))
     fear_idx = vkospi if market == "KR" else vix   # 공포지수 통합
-    usd_krw = float(context.get("usd_krw", 0) or 0)
+    usd_krw = _positive_float_or_zero(context.get("usd_krw"))
     sectors = context.get("sectors", {}) or {}
 
     # ── 공포지수 기반 보정 (VIX / VKOSPI 공통 스케일) ────────────────────────
@@ -95,7 +110,7 @@ def apply_cross_asset_adjust(
     if market == "US" and ticker and sectors:
         for etf, tickers in _SECTOR_TICKER_MAP.items():
             if ticker.upper() in tickers:
-                chg = float(sectors.get(etf, 0) or 0)
+                chg = _float_or_zero(sectors.get(etf))
                 if chg >= 1.0:
                     sector_adj -= 0.10   # 섹터 강세: 완화
                 elif chg <= -1.0:
@@ -153,10 +168,10 @@ def apply_cross_asset_adjust(
 def get_vix_regime(context: dict, market: str) -> str:
     """VIX / VKOSPI 수준 문자열 반환 (로그용)"""
     if market == "KR":
-        idx = float(context.get("vkospi", 0) or 0)
+        idx = _positive_float_or_zero(context.get("vkospi"))
         label = "VKOSPI"
     else:
-        idx = float(context.get("vix", 0) or 0)
+        idx = _positive_float_or_zero(context.get("vix"))
         label = "VIX"
     if idx <= 0:
         return f"{label}=unknown"

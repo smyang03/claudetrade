@@ -34,6 +34,13 @@ def _env_bool(name: str, default: bool) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _bot_token(bot: Any, market: str, *, force_refresh: bool = False) -> str:
+    getter = getattr(bot, "_token_for_market", None)
+    if callable(getter):
+        return str(getter(str(market or "KR").upper(), force_refresh=force_refresh) or "")
+    return str(getattr(bot, "token", "") or "")
+
+
 @dataclass(frozen=True)
 class PathBControlState:
     enabled: bool = True
@@ -124,7 +131,7 @@ class PathBRuntime:
         self._last_unknown_reconcile_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self.broker_truth = BrokerTruthSnapshot(
             runtime_mode=self.mode,
-            token_provider=lambda: str(getattr(self.bot, "token", "") or ""),
+            token_provider=lambda market="KR": _bot_token(self.bot, market),
             balance_provider=self._balance_for_snapshot,
             date_provider=lambda market: self._session_date(str(market or "").upper()),
         )
@@ -1329,7 +1336,7 @@ class PathBRuntime:
             brain_snapshot_id=self._brain_snapshot_id(market),
         )
         try:
-            pre = precheck_order(plan.ticker, qty, signal.limit_price, "buy", self.bot.token, market=market)
+            pre = precheck_order(plan.ticker, qty, signal.limit_price, "buy", _bot_token(self.bot, market), market=market)
         except Exception as exc:
             self._record_blocked(market, plan.ticker, plan.decision_id, "BROKER_UNTRUSTED", {"precheck_exception": str(exc)}, plan.path_run_id)
             return False
@@ -1343,7 +1350,7 @@ class PathBRuntime:
             )
             return False
         try:
-            result = place_order(plan.ticker, qty, signal.limit_price, "buy", self.bot.token, market=market)
+            result = place_order(plan.ticker, qty, signal.limit_price, "buy", _bot_token(self.bot, market), market=market)
         except Exception as exc:
             self.adapter.mark_order_unknown(
                 plan.path_run_id,
@@ -1441,7 +1448,7 @@ class PathBRuntime:
         audit_signal_id = self._audit_pathb_exit_signal(plan, pos, signal)
 
         try:
-            pre = precheck_order(plan.ticker, qty, order_price, "sell", self.bot.token, market=market)
+            pre = precheck_order(plan.ticker, qty, order_price, "sell", _bot_token(self.bot, market), market=market)
         except Exception as exc:
             pos.pop("pathb_closing", None)
             self._note_sell_failure(market, plan.ticker, signal.reason, f"pathb_precheck_exception:{exc}")
@@ -1454,7 +1461,7 @@ class PathBRuntime:
             return False
 
         try:
-            result = place_order(plan.ticker, qty, order_price, "sell", self.bot.token, market=market)
+            result = place_order(plan.ticker, qty, order_price, "sell", _bot_token(self.bot, market), market=market)
         except Exception as exc:
             self.adapter.mark_order_unknown(
                 plan.path_run_id,
@@ -1523,7 +1530,7 @@ class PathBRuntime:
             return 0
         key = self._ticker_key(market, ticker)
         try:
-            balance = get_balance(self.bot.token, market=market, force_refresh=True)
+            balance = get_balance(_bot_token(self.bot, market), market=market, force_refresh=True)
         except Exception as exc:
             log.warning(f"[PathB broker truth] {market} {key} balance refresh failed after sell: {exc}")
             return None
@@ -1537,7 +1544,8 @@ class PathBRuntime:
         getter = getattr(self.bot, "_get_balance_with_token_refresh", None)
         if callable(getter):
             return getter(str(market or "").upper(), force_refresh_balance=bool(force))
-        return get_balance(self.bot.token, market=str(market or "").upper(), force_refresh=bool(force))
+        market_key = str(market or "").upper()
+        return get_balance(_bot_token(self.bot, market_key), market=market_key, force_refresh=bool(force))
 
     def refresh_broker_truth(self, market: str, *, force: bool = False, ttl_sec: int | None = None) -> dict[str, Any]:
         market_key = str(market or "").upper()
@@ -1725,7 +1733,7 @@ class PathBRuntime:
                     plan.ticker,
                     execution_id,
                     qty,
-                    self.bot.token,
+                    _bot_token(self.bot, market),
                     market=market,
                     price=order_price,
                 )
@@ -3228,7 +3236,7 @@ class PathBRuntime:
         if raw > 0:
             return raw
         try:
-            info = get_price(key, self.bot.token, market=market)
+            info = get_price(key, _bot_token(self.bot, market), market=market)
             price = float(info.get("price", 0) or 0)
             if price > 0:
                 self.bot.price_cache_raw[key] = price

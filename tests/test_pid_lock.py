@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import trading_bot
+from tools.live_preflight import _pid_lock_check
 
 
 def _runtime_path(root: Path):
@@ -65,6 +66,19 @@ class BotPidLockTests(unittest.TestCase):
                 pid_file.write_text(json.dumps({"pid": os.getpid(), "mode": "paper"}), encoding="utf-8")
                 trading_bot._clear_bot_pid_file(is_paper=True)
                 self.assertFalse(pid_file.exists())
+
+    def test_preflight_pid_check_reports_stale_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "state" / "live_trading_bot.pid"
+            pid_file.parent.mkdir(parents=True, exist_ok=True)
+            pid_file.write_text(json.dumps({"pid": 123456, "mode": "live"}), encoding="utf-8")
+
+            with patch("tools.live_preflight._pid_alive", return_value=False):
+                check = _pid_lock_check("runtime.bot_pid_lock", pid_file, expected_mode="live")
+
+            self.assertEqual(check.status, "WARN")
+            self.assertTrue(check.data["auto_fix"])
+            self.assertEqual(check.data["category"], "runtime_pid_lock")
 
 
 if __name__ == "__main__":

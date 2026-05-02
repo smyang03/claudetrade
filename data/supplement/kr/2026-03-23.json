@@ -2,5 +2,20 @@
   "date": "2026-03-23",
   "flows": {},
   "usd_krw": 1504.21,
-  "vkospi": 0
+  "vkospi": null,
+  "collected_at": "2026-03-24T08:30:37",
+  "sources": {
+    "usd_krw": "historical",
+    "vkospi": "backfill_offline"
+  },
+  "fallback_used": {
+    "usd_krw": false,
+    "vkospi": false
+  },
+  "data_quality_flags": [
+    "vkospi_missing"
+  ],
+  "collection_errors": [],
+  "backfilled_at": "2026-05-03T00:33:51",
+  "backfill_version": "p0_data_quality_backfill_v1"
 }

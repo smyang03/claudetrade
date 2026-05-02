@@ -37,6 +37,7 @@ Thumbs.db
 
 # Data (runtime-generated, regeneratable)
 data/cache/
+data/backups/
 data/backtest/
 data/backtest_audit/
 data/daily_digest/

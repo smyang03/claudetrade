@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -31,40 +32,94 @@ def _seed_tickers(market: str, explicit: str = "") -> list[str]:
     return ["005930", "000660", "035420", "035720", "005380", "068270"]
 
 
-def _read_kis_token_status(mode: str) -> str:
-    path = get_runtime_path("state", f"{mode}_kis_token.json")
-    if not path.exists():
-        return "token_unavailable"
-    try:
-        if path.stat().st_size <= 0:
-            return "token_unavailable"
-    except Exception:
-        return "token_unavailable"
-    return "token_present_read_only"
+def _token_paths(mode: str, market: str) -> list[Path]:
+    market_key = _market_key(market).lower()
+    paths = [get_runtime_path("state", f"{mode}_kis_token_{market_key}.json")]
+    legacy = get_runtime_path("state", f"{mode}_kis_token.json")
+    if market_key == "kr":
+        paths.append(legacy)
+    else:
+        paths.append(legacy)
+    return list(dict.fromkeys(paths))
 
 
-def _collect_us_seed_candidates(tickers: list[str], captured_at: str, session_date: str) -> list[dict]:
+def _read_kis_token_state(mode: str, market: str) -> dict:
+    for path in _token_paths(mode, market):
+        if not path.exists():
+            continue
+        try:
+            if path.stat().st_size <= 0:
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            expires_raw = str(data.get("expires_at", "") or "")
+            if not expires_raw:
+                return {"status": "token_invalid", "path": str(path), "detail": "missing expires_at"}
+            expires_at = datetime.fromisoformat(expires_raw)
+            if expires_at.tzinfo is None:
+                now = datetime.now()
+            else:
+                now = datetime.now(tz=expires_at.tzinfo)
+            minutes_left = (expires_at - now).total_seconds() / 60.0
+            if minutes_left <= 10:
+                return {
+                    "status": "token_expired",
+                    "path": str(path),
+                    "detail": f"expires_at={expires_raw}, minutes_left={minutes_left:.1f}",
+                }
+            return {
+                "status": "token_present_read_only",
+                "path": str(path),
+                "detail": f"expires_at={expires_raw}, minutes_left={minutes_left:.1f}",
+            }
+        except Exception as exc:
+            return {"status": "token_invalid", "path": str(path), "detail": str(exc)}
+    return {"status": "token_unavailable", "path": "", "detail": "token file not found"}
+
+
+def _collect_us_seed_candidates(
+    tickers: list[str],
+    captured_at: str,
+    session_date: str,
+    *,
+    source_status: str,
+    data_quality: str,
+    stale: bool,
+) -> list[dict]:
     candidates = []
     for ticker in tickers:
         candidates.append(normalize_candidate({
             "ticker": ticker,
             "name": ticker,
             "source": "seed_watchlist",
-            "source_status": "ranking_provider_not_configured",
+            "provider": "seed_watchlist",
+            "source_status": source_status,
+            "data_quality": data_quality,
+            "stale": stale,
             "quality_tags": ["seed_only"],
             "risk_tags": [],
         }, market="US", session_date=session_date, captured_at=captured_at))
     return candidates
 
 
-def _collect_kr_seed_candidates(tickers: list[str], captured_at: str, session_date: str) -> list[dict]:
+def _collect_kr_seed_candidates(
+    tickers: list[str],
+    captured_at: str,
+    session_date: str,
+    *,
+    source_status: str,
+    data_quality: str,
+    stale: bool,
+) -> list[dict]:
     candidates = []
     for ticker in tickers:
         candidates.append(normalize_candidate({
             "ticker": ticker,
             "name": ticker,
             "source": "seed_watchlist",
-            "source_status": "kis_rank_not_called_by_shadow_collector",
+            "provider": "seed_watchlist",
+            "source_status": source_status,
+            "data_quality": data_quality,
+            "stale": stale,
             "quality_tags": ["seed_only"],
             "risk_tags": [],
             "open_volume_confirmation": None,
@@ -78,20 +133,52 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
     session_date = resolve_session_date_str(market)
     seed_tickers = _seed_tickers(market, tickers)
 
-    token_status = ""
-    if market == "KR":
-        token_status = _read_kis_token_status(mode)
+    token_state = _read_kis_token_state(mode, market)
+    token_status = token_state.get("status", "token_unavailable")
+    token_bad = token_status in {"token_expired", "token_invalid"}
+    source_status = "seed_only"
+    data_quality = "seed_only"
+    stale = False
+
+    if token_bad:
+        raw_candidates = []
+        source_status = f"kis_enrichment_skipped_{token_status}"
+        data_quality = token_status
+        stale = True
+    elif market == "KR":
         if token_status == "token_unavailable":
             raw_candidates = []
+            source_status = "kis_enrichment_skipped_token_unavailable"
+            data_quality = "unavailable"
+            stale = True
         else:
-            raw_candidates = _collect_kr_seed_candidates(seed_tickers, captured_at, session_date)
+            source_status = "kis_rank_not_called_by_shadow_collector"
+            raw_candidates = _collect_kr_seed_candidates(
+                seed_tickers,
+                captured_at,
+                session_date,
+                source_status=source_status,
+                data_quality=data_quality,
+                stale=stale,
+            )
     else:
-        raw_candidates = _collect_us_seed_candidates(seed_tickers, captured_at, session_date)
+        if token_status == "token_unavailable":
+            source_status = "seed_only_no_kis_token"
+        else:
+            source_status = "ranking_provider_not_configured"
+        raw_candidates = _collect_us_seed_candidates(
+            seed_tickers,
+            captured_at,
+            session_date,
+            source_status=source_status,
+            data_quality=data_quality,
+            stale=stale,
+        )
 
     candidates = score_candidates(market, raw_candidates)
     collector_status = "ok" if candidates else "no_candidates"
-    if market == "KR" and token_status == "token_unavailable":
-        collector_status = "token_unavailable"
+    if token_status in {"token_unavailable", "token_expired", "token_invalid"} and not candidates:
+        collector_status = token_status
     state = {
         "market": market,
         "session_date": session_date,
@@ -99,7 +186,12 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
         "collector_status": collector_status,
         "collector_mode": "shadow_only",
         "token_status": token_status,
-        "source_status": "seed_only",
+        "token_detail": token_state.get("detail", ""),
+        "token_path": token_state.get("path", ""),
+        "source_status": source_status,
+        "provider": "seed_watchlist",
+        "data_quality": data_quality,
+        "stale": stale,
         "candidate_count": len(candidates),
         "excluded_count": sum(1 for c in candidates if c.get("preopen_grade") == "X"),
         "candidates": candidates,

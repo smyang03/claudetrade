@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import kis_api
@@ -22,6 +25,7 @@ class _Resp:
 class KisTokenAutoRefreshTests(unittest.TestCase):
     def setUp(self) -> None:
         kis_api._TOKEN_ALIAS.clear()
+        kis_api._TOKEN_MARKET.clear()
 
     def test_kis_get_refreshes_once_on_expired_token_and_retries_request(self) -> None:
         calls: list[str] = []
@@ -44,7 +48,7 @@ class KisTokenAutoRefreshTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(calls, ["Bearer expired_token", "Bearer fresh_token"])
-        token_mock.assert_called_once_with(force_refresh=True)
+        token_mock.assert_called_once_with(force_refresh=True, market="KR")
 
     def test_known_expired_token_is_aliased_without_refetching_token(self) -> None:
         kis_api._TOKEN_ALIAS["expired_token"] = "fresh_token"
@@ -64,6 +68,42 @@ class KisTokenAutoRefreshTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(calls, ["Bearer fresh_token"])
         token_mock.assert_not_called()
+
+    def test_force_refresh_failure_preserves_existing_token_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            token_path = Path(tmp) / "live_kis_token.json"
+            original = {
+                "access_token": "old_token",
+                "expires_at": "2099-01-01T00:00:00",
+                "issued_at": "2099-01-01T00:00:00",
+                "context": {"base_url": "https://example.invalid"},
+            }
+            token_path.write_text(json.dumps(original), encoding="utf-8")
+            profile = kis_api.KISMarketProfile(
+                market="KR",
+                account_no="12345678-01",
+                app_key="app-key",
+                app_secret="app-secret",
+                is_paper=False,
+                base_url="https://example.invalid",
+                ws_url="",
+                token_file=str(token_path),
+                credential_mode="primary",
+                shared_with_kr=True,
+            )
+
+            with patch("kis_api.get_kis_market_profile", return_value=profile), patch(
+                "kis_api._token_file_for_market",
+                return_value=token_path,
+            ), patch(
+                "kis_api._kis_post",
+                side_effect=kis_api.requests.exceptions.ConnectionError("blocked"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    kis_api.get_access_token(force_refresh=True, market="KR")
+
+            self.assertTrue(token_path.exists())
+            self.assertEqual(json.loads(token_path.read_text(encoding="utf-8")), original)
 
 
 if __name__ == "__main__":

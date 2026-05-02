@@ -88,6 +88,7 @@ from kis_api import (
     screen_market_us,
     save_kr_screen_cache,
     is_trading_halted,
+    get_kis_market_profile,
     _US_SCREEN_CACHE_PATH,
     _daily_ohlcv_us_alpha,
     _daily_ohlcv_us_yf,
@@ -238,6 +239,62 @@ def _log_risk(level: str, message: str, *args, **kwargs) -> None:
     _split_log(risk_log, level, message, *args, **kwargs)
 def _log_flow(level: str, message: str, *args, **kwargs) -> None:
     _split_log(flow_log, level, message, *args, **kwargs)
+def _bot_token_for_market(bot, market: str = "KR", *, force_refresh: bool = False) -> str:
+    getter = getattr(bot, "_token_for_market", None)
+    if callable(getter):
+        return str(getter(str(market or "KR").upper(), force_refresh=force_refresh) or "")
+    return str(getattr(bot, "token", "") or "")
+def _fill_ledger_key(market: str, order_no: str, event: dict, *, source: str) -> str:
+    market_key = str(market or "KR").upper()
+    order_key = str(order_no or "").strip()
+    if not order_key:
+        return ""
+    native_id = str(
+        event.get("execution_id")
+        or event.get("fill_id")
+        or event.get("raw_hash")
+        or ""
+    ).strip()
+    if not native_id:
+        return ""
+    return f"{market_key}:{source}:{order_key}:{native_id}"
+def _fill_ledger_seen_or_mark(bot, key: str) -> bool:
+    if not key:
+        return False
+    ledger = getattr(bot, "_applied_fill_keys", None)
+    if not isinstance(ledger, set):
+        ledger = set()
+        setattr(bot, "_applied_fill_keys", ledger)
+    order = getattr(bot, "_applied_fill_key_order", None)
+    if not isinstance(order, deque):
+        order = deque(ledger)
+        setattr(bot, "_applied_fill_key_order", order)
+    if key in ledger:
+        return True
+    try:
+        max_keys = int(os.getenv("FILL_LEDGER_MAX_KEYS", "5000"))
+    except Exception:
+        max_keys = 5000
+    max_keys = max(100, max_keys)
+    ledger.add(key)
+    order.append(key)
+    while len(ledger) > max_keys and order:
+        ledger.discard(order.popleft())
+    if len(ledger) != len(order) or set(order) != ledger:
+        seen_order = set()
+        normalized_order = deque()
+        for item in order:
+            if item in ledger and item not in seen_order:
+                normalized_order.append(item)
+                seen_order.add(item)
+        for item in ledger:
+            if item not in seen_order:
+                normalized_order.append(item)
+        order = normalized_order
+        while len(ledger) > max_keys and order:
+            ledger.discard(order.popleft())
+        setattr(bot, "_applied_fill_key_order", order)
+    return False
 def _bot_pid_file(is_paper: bool = True) -> Path:
     _mode = "paper" if is_paper else "live"
     return get_runtime_path("state", f"{_mode}_trading_bot.pid")
@@ -482,7 +539,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.is_paper = is_paper
         self.enabled_markets = _enabled_markets_from_env()
         self.startup_disabled_markets: dict[str, str] = {}
-        self.token = self._get_startup_token_with_backoff()
+        self.tokens: dict[str, str] = {}
+        self.token = ""
         self.v2 = _V2LifecycleRuntime(self, is_paper=is_paper) if _V2_LIFECYCLE_AVAILABLE else None
         self.usd_krw_rate = float(os.getenv("USD_KRW_RATE", "1350"))
         if self.v2 is None:
@@ -601,6 +659,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.selection_stages: dict[str, dict] = {"KR": {}, "US": {}}
         self.candidate_health_trackers: dict[str, Optional[CandidateHealthTracker]] = {"KR": None, "US": None}
         self.today_universe: dict = {}
+        self._applied_fill_keys: set[str] = set()
+        self._applied_fill_key_order: deque[str] = deque()
         self.tuning_count = 0
         self._last_tune_result: dict[str, dict] = {"KR": {}, "US": {}}
         self._tune_maintain_streak: dict[str, int] = {"KR": 0, "US": 0}
@@ -814,30 +874,49 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             pass
         log.info(f"init | {'paper' if is_paper else 'live'}")
-    def _get_startup_token_with_backoff(self) -> str:
+    def _get_startup_token_with_backoff(self, market: str = "KR") -> str:
+        market_key = str(market or "KR").upper()
         attempts = max(1, int(os.getenv("STARTUP_TOKEN_ATTEMPTS", "3")))
         delay_sec = max(0.0, float(os.getenv("STARTUP_TOKEN_BACKOFF_SEC", "5")))
         last_error: Optional[Exception] = None
         for attempt in range(1, attempts + 1):
             try:
-                return get_access_token()
+                token = get_access_token(market=market_key)
+                if not hasattr(self, "tokens"):
+                    self.tokens = {}
+                self.tokens[market_key] = token
+                if market_key == "KR" or not self.token:
+                    self.token = token
+                return token
             except Exception as exc:
                 last_error = exc
                 if attempt < attempts:
-                    log.warning(f"[startup token] get_access_token failed ({attempt}/{attempts}): {exc}")
+                    log.warning(f"[startup token] {market_key} get_access_token failed ({attempt}/{attempts}): {exc}")
                     time.sleep(delay_sec * attempt)
-        raise RuntimeError(f"KIS startup token failed after {attempts} attempts: {last_error}") from last_error
+        raise RuntimeError(f"KIS {market_key} startup token failed after {attempts} attempts: {last_error}") from last_error
+
+    def _token_for_market(self, market: str, *, force_refresh: bool = False) -> str:
+        market_key = str(market or "KR").upper()
+        if hasattr(self, "enabled_markets") and not self._market_enabled(market_key):
+            return ""
+        if not hasattr(self, "tokens"):
+            self.tokens = {}
+        if force_refresh or not self.tokens.get(market_key):
+            token = self._get_startup_token_with_backoff(market_key) if not force_refresh else get_access_token(force_refresh=True, market=market_key)
+            self.tokens[market_key] = token
+            if market_key == "KR" or not self.token:
+                self.token = token
+        return self.tokens.get(market_key, self.token)
 
     def _get_balance_with_token_refresh(self, market: str, *, force_refresh_balance: bool = False) -> dict:
         market = str(market or "KR").upper()
         if hasattr(self, "enabled_markets") and not self._market_enabled(market):
             return {"cash": 0, "total_eval": 0, "stocks": []}
         try:
-            return get_balance(self.token, market=market, force_refresh=force_refresh_balance)
+            return get_balance(self._token_for_market(market), market=market, force_refresh=force_refresh_balance)
         except KISTokenExpiredError as exc:
             log.warning(f"[startup balance] {market} token expired; forcing KIS token refresh: {exc}")
-            self.token = get_access_token(force_refresh=True)
-            return get_balance(self.token, market=market, force_refresh=True)
+            return get_balance(self._token_for_market(market, force_refresh=True), market=market, force_refresh=True)
     def _enter_market_task(self, market: str, owner: str) -> bool:
         """같은 시장에서 상위 스케줄 작업이 겹치지 않게 막는다."""
         current = self._market_task_owner.get(market)
@@ -1884,7 +1963,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _screen_market_candidates(self, market: str, mode: str) -> list[dict]:
         top_n = self._screen_top_n_for_market(market)
         if market == "KR":
-            return screen_market_kr(self.token, top_n=top_n, mode=mode)
+            return screen_market_kr(self._token_for_market("KR"), top_n=top_n, mode=mode)
         return screen_market_us(top_n=top_n, mode=mode)
     def _trade_ready_slot_config(self, mode: str, market: str = "") -> dict[str, int]:
         family = _mode_family(mode)
@@ -2639,6 +2718,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return float(value or 0)
         except Exception:
             return 0.0
+    @staticmethod
+    def _positive_float_or_none(value) -> Optional[float]:
+        try:
+            parsed = float(value)
+        except Exception:
+            return None
+        return parsed if parsed > 0 else None
     def _selection_reference_for_ticker(self, market: str, ticker: str) -> dict:
         raw = self._selection_meta_value(market, ticker, "price_targets")
         if not isinstance(raw, dict):
@@ -3276,7 +3362,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 signal_row=signal_row,
             )
             return False
-        precheck = precheck_order(ticker, qty, precheck_px, "buy", self.token, market=market)
+        precheck = precheck_order(ticker, qty, precheck_px, "buy", self._token_for_market(market), market=market)
         if not precheck.get("ok"):
             self._record_decision_event(
                 market,
@@ -3311,7 +3397,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 pass
             return False
         try:
-            result = place_order(ticker, qty, order_px, "buy", self.token, market=market)
+            result = place_order(ticker, qty, order_px, "buy", self._token_for_market(market), market=market)
         except Exception as exc:
             self._record_decision_event(
                 market,
@@ -4241,7 +4327,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         target_usable = self._MIN_SIGNAL_ROWS
         if lookback_days is None:
             lookback_days = 365 if market == "KR" else max(260, target_usable + 120)
-        df = get_daily_ohlcv(ticker, self.token, lookback_days=lookback_days, market=market)
+        df = get_daily_ohlcv(ticker, self._token_for_market(market), lookback_days=lookback_days, market=market)
         usable = self._signal_usable_rows(df)
         source = "primary"
         if market == "US" and usable < target_usable:
@@ -4342,16 +4428,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         results[f"KIS 모드"] = f"OK | {mode_label} ({server_type})"
         results["KIS 서버"]  = f"OK | {server_url}"
         # 2. KIS 토큰
-        results["KIS 토큰"] = "OK" if self.token else "FAIL - 토큰 없음"
+        _tokens = getattr(self, "tokens", {}) or {}
+        results["KIS 토큰"] = "OK" if (_tokens.get("KR") or _tokens.get("US") or self.token) else "FAIL - 토큰 없음"
         # 3. KIS 시세 (삼성전자)
         try:
-            price_info = get_price("005930", self.token, market="KR")
+            price_info = get_price("005930", self._token_for_market("KR"), market="KR")
             results["KIS price (005930)"] = f"OK | {price_info['price']:,} KRW"
         except Exception as e:
             results["KIS 시세 (005930)"] = f"FAIL - {e}"
         # 4. KIS 잔고
         try:
-            bal = get_balance(self.token, market="KR")
+            bal = get_balance(self._token_for_market("KR"), market="KR")
             total = bal["cash"] + bal["total_eval"]
             results["KIS 잔고"] = (
                 f"OK | 총 {total:,}원 (현금 {bal['cash']:,} + 평가 {bal['total_eval']:,})"
@@ -4393,7 +4480,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         av_key2 = _os.getenv("ALPHA_VANTAGE_KEY_2", "")
         if av_key:
             try:
-                candles = get_daily_ohlcv("NVDA", self.token, lookback_days=5, market="US")
+                candles = get_daily_ohlcv("NVDA", self._token_for_market("US"), lookback_days=5, market="US")
                 results["Alpha Vantage KEY-1"] = (
                     f"OK | {len(candles)} candles" if not candles.empty else "WARN - empty data"
                 )
@@ -4822,7 +4909,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         pending_by_key = self._pending_orders_by_key()
         for market in ("KR", "US"):
             try:
-                balance = get_balance(self.token, market=market)
+                balance = get_balance(self._token_for_market(market), market=market)
                 broker_balances[market] = self._normalize_broker_balance(balance, market)
                 broker_ok[market] = True
                 self._set_broker_state(
@@ -5204,7 +5291,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         kr_total, us_total_krw = 0.0, 0.0
         kr_ok, us_ok = False, False
         try:
-            bal_kr = get_balance(self.token, market="KR")
+            bal_kr = get_balance(self._token_for_market("KR"), market="KR")
             kr_total = float(bal_kr.get("cash", 0)) + float(bal_kr.get("total_eval", 0))
             kr_ok = True
             self._set_broker_state(
@@ -5216,7 +5303,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._set_broker_state("KR", trust_level="degraded", error=str(e))
             log.warning(f"[누적자산 동기화] KR 잔고 조회 실패: {e}")
         try:
-            bal_us = get_balance(self.token, market="US")
+            bal_us = get_balance(self._token_for_market("US"), market="US")
             us_cash_usd = float(bal_us.get("cash", 0))
             us_eval_usd = float(bal_us.get("total_eval", 0))
             us_total_krw = (us_cash_usd + us_eval_usd) * self.usd_krw_rate
@@ -5414,7 +5501,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         return float(self.risk.session_start_equity or 0)
     def _market_broker_total_equity_krw(self, market: str, force_refresh: bool = False) -> float:
         try:
-            balance = get_balance(self.token, market=market, force_refresh=force_refresh)
+            balance = get_balance(self._token_for_market(market), market=market, force_refresh=force_refresh)
             snapshot = self._broker_snapshot_from_balance(market, balance)
             self._set_broker_state(market, trust_level="trusted", snapshot=snapshot)
             return float(snapshot.get("total_krw", 0) or 0)
@@ -5562,7 +5649,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         bal_kr = {"cash": 0, "total_eval": 0, "stocks": []}
         if self._market_enabled("KR"):
             try:
-                bal_kr = get_balance(self.token, market="KR")
+                bal_kr = get_balance(self._token_for_market("KR"), market="KR")
                 self._set_broker_state(
                     "KR",
                     trust_level="trusted",
@@ -5571,8 +5658,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except KISTokenExpiredError as e:
                 log.warning(f"[브로커 런타임 동기화] KR 토큰 만료 감지 → 강제 갱신 후 재시도: {e}")
                 try:
-                    self.token = get_access_token(force_refresh=True)
-                    bal_kr = get_balance(self.token, market="KR")
+                    bal_kr = get_balance(self._token_for_market("KR", force_refresh=True), market="KR")
                     self._set_broker_state(
                         "KR",
                         trust_level="trusted",
@@ -5599,7 +5685,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         us_ok = False
         if self._market_enabled("US"):
             try:
-                bal_us = get_balance(self.token, market="US")
+                bal_us = get_balance(self._token_for_market("US"), market="US")
                 broker_us = self._normalize_broker_balance(bal_us, "US")
                 us_ok = True
                 self._set_broker_state(
@@ -5610,8 +5696,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except KISTokenExpiredError as e:
                 log.warning(f"[브로커 런타임 동기화] US 토큰 만료 감지 → 강제 갱신 후 재시도: {e}")
                 try:
-                    self.token = get_access_token(force_refresh=True)
-                    bal_us = get_balance(self.token, market="US")
+                    bal_us = get_balance(self._token_for_market("US", force_refresh=True), market="US")
                     broker_us = self._normalize_broker_balance(bal_us, "US")
                     us_ok = True
                     self._set_broker_state(
@@ -5954,14 +6039,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 try:
                     fill = (
                         get_order_fill_kr(
-                            self.token,
+                            _bot_token_for_market(self, "KR"),
                             order_no=order_no,
                             ticker=ticker,
                             trade_date=datetime.now(KST).strftime("%Y%m%d"),
                         )
                         if market == "KR"
                         else get_order_fill_us(
-                            self.token,
+                            _bot_token_for_market(self, "US"),
                             order_no=order_no,
                             ticker=ticker,
                             created_at=order.get("created_at", ""),
@@ -6286,8 +6371,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._us_order_blocked[normalized] = reason
     def _us_order_block_reason(self, ticker: str) -> str:
         return self._us_order_blocked.get(ticker.upper(), "")
-    def _refresh_token(self):
-        self.token = get_access_token()
+    def _refresh_token(self, market: str = "KR"):
+        self._token_for_market(market, force_refresh=True)
     def _ticker_market(self, ticker: str) -> str:
         return "US" if ticker.isalpha() else "KR"
     def _price_to_krw(self, price: float, market: str) -> float:
@@ -7007,7 +7092,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False
         order_px = self._compute_order_price("sell", market, float(raw_px))
         try:
-            precheck = precheck_order(cand["ticker"], cand["qty"], order_px, "sell", self.token, market=market)
+            precheck = precheck_order(cand["ticker"], cand["qty"], order_px, "sell", self._token_for_market(market), market=market)
         except Exception as _pre_e:
             self._note_sell_failure(market, cand["ticker"], reason, str(_pre_e))
             log.error(f"sell precheck exception [{cand['ticker']}]: {_pre_e}")
@@ -7023,7 +7108,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if precheck.get("reason") == "insufficient_holding" and not has_pending_buy:
                 precheck = precheck_order(
                     cand["ticker"], cand["qty"], order_px, "sell",
-                    self.token, market=market, force_refresh=True
+                    self._token_for_market(market), market=market, force_refresh=True
                 )
             log.error(f"sell precheck failed [{cand['ticker']}]: {precheck.get('msg','주문 불가')}")
             self._record_decision_event(
@@ -7045,7 +7130,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self._write_live_status(market, force=True)
             return False
         try:
-            result = place_order(cand["ticker"], cand["qty"], order_px, "sell", self.token, market=market)
+            result = place_order(cand["ticker"], cand["qty"], order_px, "sell", self._token_for_market(market), market=market)
         except Exception as _pe:
             self._note_sell_failure(market, cand["ticker"], reason, str(_pe))
             log.error(f"sell order exception [{cand['ticker']}]: {_pe}")
@@ -7067,7 +7152,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 # 브로커 실제 잔고 확인 후에만 포지션 제거 (VTS API 오류로 인한 오제거 방지)
                 broker_has = False
                 try:
-                    bal_chk = get_balance(self.token, market=market, force_refresh=True)
+                    bal_chk = get_balance(self._token_for_market(market), market=market, force_refresh=True)
                     broker_tickers = {s["ticker"].upper() if market == "US" else s["ticker"]
                                       for s in bal_chk.get("stocks", [])}
                     chk_key = cand["ticker"].upper() if market == "US" else cand["ticker"]
@@ -7528,11 +7613,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             env_cap   = int(os.getenv("MAX_ORDER_KRW", "500000" if self.is_paper else "2000000"))
             order_pct = float(os.getenv("MAX_ORDER_PCT", "0.05"))
             if market == "US":
-                bal_us    = get_balance(self.token, market="US")
+                bal_us    = get_balance(self._token_for_market("US"), market="US")
                 us_cash   = float(bal_us.get("cash", 0) or 0) * self.usd_krw_rate
                 new_max   = min(env_cap, int(us_cash * order_pct))
             else:
-                bal_kr    = get_balance(self.token, market="KR")
+                bal_kr    = get_balance(self._token_for_market("KR"), market="KR")
                 kr_cash   = float(bal_kr.get("cash", 0) or 0) + float(bal_kr.get("total_eval", 0) or 0)
                 new_max   = min(env_cap, int(kr_cash * order_pct))
             if new_max > 0:
@@ -7566,7 +7651,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         for pos in self.risk.positions:
             if self._ticker_market(pos["ticker"]) == market:
                 try:
-                    price_info = get_price(pos["ticker"], self.token, market=market)
+                    price_info = get_price(pos["ticker"], self._token_for_market(market), market=market)
                     raw_price = price_info["price"]
                     self.price_cache_raw[pos["ticker"]] = raw_price
                     self.price_cache[pos["ticker"]] = self._price_to_krw(raw_price, market)
@@ -7806,8 +7891,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 )
             # ── VIX 동적 사이즈 보정 (US 전용, 항상 최신 digest 기준) ─────────
             if market == "US":
-                vix = float((digest.get("context") or {}).get("vix") or 0)
-                if vix > 0:
+                vix = self._positive_float_or_none((digest.get("context") or {}).get("vix"))
+                if vix is not None:
                     vix_mult = 1.0
                     for threshold, mult in _VIX_SIZE_TIERS:
                         if vix >= threshold:
@@ -8034,7 +8119,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.warning(f"[장전 포지션 리뷰 오류] {market}: {_psr_e}")
         selected = self.today_tickers.get(market, [])
         try:
-            balance = get_balance(self.token, market=market)
+            balance = get_balance(self._token_for_market(market), market=market)
         except Exception as e:
             log.warning(f"balance lookup failed [{market}]: {e}")
             balance = {"stocks": [], "total_eval": 0, "cash": 0, "total_profit": 0, "profit_rate": 0.0}
@@ -8047,7 +8132,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.info(f"[{reason}] consensus={consensus['mode']}")
         log.info(f"consensus: {consensus['mode']} size={consensus['size']}%")
         self.ws = KISWebSocket(
-            self.token, selected,
+            self._token_for_market(market), selected,
             on_tick=self._on_tick,
             on_notice=self._on_fill_notice,
             market=market,
@@ -8093,8 +8178,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             or (self.today_judgment.get("digest_raw", {}) or {}).get("context", {})
             or {}
         )
-        vix        = float(ctx.get("vix") or 0) or None
-        usd_krw    = float(self.usd_krw_rate or 0) or None
+        vix        = self._positive_float_or_none(ctx.get("vix"))
+        usd_krw    = self._positive_float_or_none(self.usd_krw_rate)
         all_strats = [
             "opening_range_pullback",
             "gap_pullback",
@@ -8182,6 +8267,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.debug(f"[WS 체결통보] {ticker} 주문번호={order_no} → pending 미매칭 (이미 처리됨)")
             return
         market = matched.get("market", "KR")
+        fill_key = _fill_ledger_key(market, order_no, event, source="websocket_notice")
+        if _fill_ledger_seen_or_mark(self, fill_key):
+            log.debug(f"[WS 체결통보] {ticker} 주문번호={order_no} → duplicate fill key skipped")
+            return
         matched["filled_price_native"] = filled_price
         matched["fill_time"] = filled_time
         # broker_pos 구성 (WS 체결가 기준)
@@ -8589,17 +8678,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     import yfinance as _yf
                     _vix_live = float(_yf.Ticker("^VIX").history(period="1d")["Close"].iloc[-1])
                     if _vix_live > 0:
-                        _vix_prev = float(_ca_context.get("vix", 0) or 0)
+                        _vix_prev = self._positive_float_or_none(_ca_context.get("vix"))
                         _ca_context = {**_ca_context, "vix": round(_vix_live, 2)}
                         self._vix_refresh_at = _now_ts
-                        log.info(f"[VIX 갱신] {_vix_prev:.1f} → {_vix_live:.1f}")
+                        _vix_prev_text = f"{_vix_prev:.1f}" if _vix_prev is not None else "N/A"
+                        log.info(f"[VIX 갱신] {_vix_prev_text} → {_vix_live:.1f}")
                 except Exception as _ve:
                     log.debug(f"[VIX 갱신 실패] {_ve}")
         self._ca_context_last = _ca_context   # param_tuner가 참조
         _fear_label = get_vix_regime(_ca_context, market)
         if _ca_context:
+            _usd_krw_display = self._positive_float_or_none(_ca_context.get("usd_krw"))
+            _usd_krw_text = f"USD/KRW {_usd_krw_display:,.0f}" if _usd_krw_display is not None else "USD/KRW N/A"
             log.debug(f"[{market}] cross-asset 보정 적용 | {_fear_label} | "
-                      f"USD/KRW {_ca_context.get('usd_krw', 0):,.0f}")
+                      f"{_usd_krw_text}")
         _voted_strat = _analyst_strategy_vote(_judgments)
         # KR 전략 우선순위: 분석가 다수결 전략을 맨 앞으로 올린 뒤 기본 순서 유지.
         # continuation은 개장 초반 예외 신호라 기본 순서에 넣지 않고 별도 조건으로만 허용한다.
@@ -8651,7 +8743,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                     log.info(f"[주문차단 {market}] {ticker} — {_order_blk}")
                     continue
-                price_info = get_price(ticker, self.token, market=market)
+                price_info = get_price(ticker, self._token_for_market(market), market=market)
                 price = price_info["price"]
                 risk_price = self._price_to_krw(price, market)
                 if self.enable_slippage_guard:
@@ -8723,7 +8815,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     # KR: 1회 재조회 시도 — API 노이즈 vs 실제 급등 구분
                     if market == "KR":
                         try:
-                            _retry_info = get_price(ticker, self.token, market=market)
+                            _retry_info = get_price(ticker, self._token_for_market(market), market=market)
                             _retry_px = _retry_info["price"]
                             if _retry_px > 0 and abs(_retry_px - _prev_price) / _prev_price <= 0.30:
                                 # 재조회 결과가 정상 → 첫 조회가 오류였음, 정상 가격 사용
@@ -10703,7 +10795,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             signal_row=_s_row,
                         )
                         continue
-                    precheck = precheck_order(_s_tk, qty, precheck_px, "buy", self.token, market=market)
+                    precheck = precheck_order(_s_tk, qty, precheck_px, "buy", self._token_for_market(market), market=market)
                     if not precheck.get("ok"):
                         self._record_decision_event(
                             market, "buy_failed", _s_tk, strategy=_s_strat, qty=qty,
@@ -10749,7 +10841,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             log.warning(f"[V2 rate limit] {market} {_s_tk} buy order blocked")
                             continue
                     try:
-                        result = place_order(_s_tk, qty, order_px, "buy", self.token, market=market)
+                        result = place_order(_s_tk, qty, order_px, "buy", self._token_for_market(market), market=market)
                     except Exception as e:
                         self._record_decision_event(
                             market, "buy_failed", _s_tk, strategy=_s_strat, qty=qty,
@@ -10977,7 +11069,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         if _t2_blocked:
                             log.debug(f"  [Tier2] {_t2_ticker} 주문차단: {_t2_blocked}")
                             continue
-                        _t2_price_info = get_price(_t2_ticker, self.token, market="US")
+                        _t2_price_info = get_price(_t2_ticker, self._token_for_market("US"), market="US")
                         _t2_price = _t2_price_info["price"]
                         if _t2_price <= 0:
                             continue
@@ -11083,13 +11175,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             continue
                         _t2_order_px = self._compute_order_price("buy", "US", float(_t2_price))
                         _t2_pre = precheck_order(
-                            _t2_ticker, _t2_qty, _t2_order_px, "buy", self.token, market="US"
+                            _t2_ticker, _t2_qty, _t2_order_px, "buy", self._token_for_market("US"), market="US"
                         )
                         if not _t2_pre.get("ok"):
                             log.info(f"  [Tier2] {_t2_ticker} precheck 실패: {_t2_pre.get('msg')}")
                             continue
                         _t2_result = place_order(
-                            _t2_ticker, _t2_qty, _t2_order_px, "buy", self.token, market="US"
+                            _t2_ticker, _t2_qty, _t2_order_px, "buy", self._token_for_market("US"), market="US"
                         )
                         if not _t2_result["success"]:
                             log.error(f"  [Tier2] {_t2_ticker} 주문실패: {_t2_result.get('msg')}")
@@ -11172,7 +11264,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         if self._is_entry_blocked(_t2_ticker):
                             log.debug(f"  [KR Tier2] {_t2_ticker} 진입 쿨다운 — 스킵")
                             continue
-                        _t2_price_info = get_price(_t2_ticker, self.token, market="KR")
+                        _t2_price_info = get_price(_t2_ticker, self._token_for_market("KR"), market="KR")
                         if not _t2_price_info:
                             continue
                         _t2_risk_price = int(_t2_price_info.get("price", 0) or 0)
@@ -11260,7 +11352,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             continue
                         _t2_result = place_order(
                             _t2_ticker, _t2_qty, 0, "buy",
-                            self.token, market="KR",
+                            self._token_for_market("KR"), market="KR",
                         )
                         if not _t2_result["success"]:
                             log.error(f"  [KR Tier2] {_t2_ticker} 주문실패: {_t2_result.get('msg')}")
@@ -11469,7 +11561,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             alert_cp = alert_cp / float(self.usd_krw_rate)
                     if not self.is_paper:
                         place_order(pos["ticker"], pos["qty"], 0, "sell",
-                                    self.token, market=self._ticker_market(pos["ticker"]))
+                                    self._token_for_market(self._ticker_market(pos["ticker"])), market=self._ticker_market(pos["ticker"]))
                     ex = self.risk.close_position(pos["ticker"], cp, "tuner_reverse")
                     if ex:
                         ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
@@ -11916,8 +12008,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             # VIX 동적 사이즈 보정 (재판단 경로)
             if market == "US":
                 _digest_ctx = (self.today_judgment.get("digest_raw") or {}).get("context") or {}
-                _vix = float(_digest_ctx.get("vix") or 0)
-                if _vix > 0:
+                _vix = self._positive_float_or_none(_digest_ctx.get("vix"))
+                if _vix is not None:
                     _vm = 1.0
                     for _thr, _m in _VIX_SIZE_TIERS:
                         if _vix >= _thr:
@@ -12338,8 +12430,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         judgments = self.today_judgment.get("judgments", {})
         tickers   = self.today_tickers.get(market, [])
         digest_ctx = (self.today_judgment.get("digest_raw") or {}).get("context") or {}
-        risk_value = float(digest_ctx.get("vix", 0) or 0)
         risk_label = "VKOSPI" if market == "KR" else "VIX"
+        risk_value_opt = self._positive_float_or_none(digest_ctx.get("vkospi") if market == "KR" else digest_ctx.get("vix"))
+        risk_value = risk_value_opt or 0.0
         pnl_pct   = self._daily_pnl_pct(market)
         pnl_krw   = int(self.risk.daily_pnl)
         market_positions = [
@@ -12388,8 +12481,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         today = self._current_session_date_str(market)
         # 장 마감 직전 마지막으로 브로커 잔고/체결을 동기화해 미체결 오판을 줄인다.
         try:
-            broker_kr = self._normalize_broker_balance(get_balance(self.token, market="KR", force_refresh=True), "KR")
-            broker_us = self._normalize_broker_balance(get_balance(self.token, market="US", force_refresh=True), "US")
+            broker_kr = self._normalize_broker_balance(get_balance(self._token_for_market("KR"), market="KR", force_refresh=True), "KR")
+            broker_us = self._normalize_broker_balance(get_balance(self._token_for_market("US"), market="US", force_refresh=True), "US")
             self._reconcile_pending_orders(broker_kr, broker_us)
         except Exception as e:
             self._flag_execution_issue(market, "session_close_sync_failed")
@@ -12690,7 +12783,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         log.info(f"[training record 저장] {path.name} "
                  f"| events={len(self._session_events)}")
         try:
-            balance = get_balance(self.token, market=market)
+            balance = get_balance(self._token_for_market(market), market=market)
         except Exception as e:
             log.warning(f"balance lookup failed [{market}]: {e}")
             balance = {"stocks": [], "total_eval": 0, "cash": 0, "total_profit": 0, "profit_rate": 0.0}
@@ -12915,7 +13008,8 @@ def main(is_paper: bool = True):
     def _midnight_token_refresh():
         """KIS 토큰 자정 무효화 대응 — 00:01에 강제 갱신 후 브로커 상태 복구"""
         try:
-            bot.token = get_access_token(force_refresh=True)
+            for _mkt in sorted(getattr(bot, "enabled_markets", {"KR", "US"})):
+                bot._token_for_market(_mkt, force_refresh=True)
             bot._sync_runtime_with_broker()
             log.info("[자정 토큰 갱신] 완료")
         except Exception as e:

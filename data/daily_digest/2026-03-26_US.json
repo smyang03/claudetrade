@@ -94,5 +94,84 @@
     "pnl_pct": 0,
     "win": false
   },
-  "built_at": "2026-03-26T23:33:58.197848"
+  "built_at": "2026-03-26T23:33:58.197848",
+  "breadth_summary": {
+    "market": "US",
+    "source": "digest_or_screen",
+    "universe_count": 3,
+    "valid_change_count": 3,
+    "advancers": 2,
+    "decliners": 1,
+    "unchanged": 0,
+    "advance_ratio": 0.667,
+    "decline_ratio": 0.333,
+    "golden_cross": 0,
+    "dead_cross": 3,
+    "rsi_overbought": 0,
+    "rsi_oversold": 0,
+    "volume_spike": 0,
+    "volume_extreme": 0,
+    "near_52w_high": 0,
+    "at_52w_high": 0,
+    "above_ma60": 0,
+    "below_ma60": 0,
+    "earnings_pre": 0,
+    "earnings_post": 0,
+    "top_positive": [
+      {
+        "ticker": "TSLA",
+        "name": "테슬라",
+        "change_pct": 0.57,
+        "rsi": 37.5,
+        "macd": "데드크로스",
+        "vol_ratio": 1.01
+      },
+      {
+        "ticker": "AAPL",
+        "name": "애플",
+        "change_pct": 0.06,
+        "rsi": 33.6,
+        "macd": "데드크로스",
+        "vol_ratio": 0.7
+      },
+      {
+        "ticker": "NVDA",
+        "name": "엔비디아",
+        "change_pct": -0.25,
+        "rsi": 39.3,
+        "macd": "데드크로스",
+        "vol_ratio": 0.73
+      }
+    ],
+    "top_negative": [
+      {
+        "ticker": "NVDA",
+        "name": "엔비디아",
+        "change_pct": -0.25,
+        "rsi": 39.3,
+        "macd": "데드크로스",
+        "vol_ratio": 0.73
+      },
+      {
+        "ticker": "AAPL",
+        "name": "애플",
+        "change_pct": 0.06,
+        "rsi": 33.6,
+        "macd": "데드크로스",
+        "vol_ratio": 0.7
+      },
+      {
+        "ticker": "TSLA",
+        "name": "테슬라",
+        "change_pct": 0.57,
+        "rsi": 37.5,
+        "macd": "데드크로스",
+        "vol_ratio": 1.01
+      }
+    ],
+    "sector_counts": {},
+    "category_counts": {},
+    "sector_changes": {},
+    "data_quality_flags": []
+  }
 }

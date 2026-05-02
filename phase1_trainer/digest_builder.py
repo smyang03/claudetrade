@@ -534,6 +534,61 @@ def _positive_float_or_none(value) -> Optional[float]:
     return parsed
 
 
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        parsed = float(value)
+        if np.isnan(parsed) or np.isinf(parsed):
+            return None
+        return parsed
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        return value.isoformat()
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    return value
+
+
+def _write_json_safe(path: Path, payload: dict) -> dict:
+    safe_payload = _json_safe(payload)
+    path.write_text(json.dumps(safe_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return safe_payload
+
+
+_POSITIVE_SUPPLEMENT_METRICS = {"vix", "dxy", "vkospi", "usd_krw", "oil_wti", "tnx"}
+
+
+def _merge_live_context_with_supp(live: dict, supp: dict) -> dict:
+    merged = dict(live or {})
+    for key, value in (supp or {}).items():
+        if key in _POSITIVE_SUPPLEMENT_METRICS and _positive_float_or_none(value) is None and key in merged:
+            continue
+        merged[key] = value
+    return merged
+
+
+def _clean_data_quality_flags(flags, context: dict) -> list[str]:
+    cleaned: list[str] = []
+    for raw_flag in flags or []:
+        flag = str(raw_flag)
+        if flag.endswith("_missing"):
+            metric = flag[: -len("_missing")]
+            if metric in _POSITIVE_SUPPLEMENT_METRICS and _positive_float_or_none(context.get(metric)) is not None:
+                continue
+        if flag not in cleaned:
+            cleaned.append(flag)
+    return cleaned
+
+
 def _metric_prompt_value(value, label: str, digits: int = 1) -> str:
     parsed = _positive_float_or_none(value)
     if parsed is None:
@@ -682,18 +737,24 @@ def build_breadth_summary(market: str, items, context: Optional[dict] = None) ->
 
     ctx = context or {}
     data_quality_flags: list[str] = []
+    def _add_quality_flag(flag: str) -> None:
+        if flag not in data_quality_flags:
+            data_quality_flags.append(flag)
+
+    for flag in ctx.get("data_quality_flags") or []:
+        _add_quality_flag(str(flag))
     if str(market or "").upper() == "US":
         if _positive_float_or_none(ctx.get("vix")) is None:
-            data_quality_flags.append("vix_missing")
+            _add_quality_flag("vix_missing")
         if _positive_float_or_none(ctx.get("dxy")) is None:
-            data_quality_flags.append("dxy_missing")
+            _add_quality_flag("dxy_missing")
     else:
-        if ctx.get("vkospi") is None:
-            data_quality_flags.append("vkospi_missing")
+        if _positive_float_or_none(ctx.get("vkospi")) is None:
+            _add_quality_flag("vkospi_missing")
 
     advance_ratio = round(advancers / total, 3) if total else 0.0
     decline_ratio = round(decliners / total, 3) if total else 0.0
-    return {
+    summary = {
         "market": str(market or "").upper(),
         "source": "digest_or_screen",
         "universe_count": total,
@@ -722,6 +783,7 @@ def build_breadth_summary(market: str, items, context: Optional[dict] = None) ->
         "sector_changes": ctx.get("sectors") or ctx.get("kr_sectors") or {},
         "data_quality_flags": data_quality_flags,
     }
+    return _json_safe(summary)
 
 
 def _format_breadth_summary(summary: dict) -> list[str]:
@@ -1243,13 +1305,11 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     # supplement 없으면 live yfinance fallback
     if not supp.get("kospi"):
         live = fetch_live_context_kr()
-        supp = {**live, **supp}  # supp 기존값 우선
+        supp = _merge_live_context_with_supp(live, supp)  # supp valid values win
 
     # ── Layer A: 시장 컨텍스트 (~150 토큰) ───────────────────────────────────
-    _vkospi_val = supp.get("vkospi")
-    if _vkospi_val == 0:
-        _vkospi_val = None  # 0은 결측으로 처리
-    _usd_krw_val = supp.get("usd_krw") or None
+    _vkospi_val = _positive_float_or_none(supp.get("vkospi"))
+    _usd_krw_val = _positive_float_or_none(supp.get("usd_krw"))
     layer_a = {
         "kospi":           supp.get("kospi", {}),
         "kosdaq":          supp.get("kosdaq", {}),
@@ -1262,8 +1322,12 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         "fomc":            target_date in FOMC_DATES,
         "options_expiry":  supp.get("options_expiry", False),
         "kr_sectors":      supp.get("kr_sectors", {}),
+        "data_quality_flags": supp.get("data_quality_flags", []),
+        "data_sources":    supp.get("sources", {}),
+        "fallback_used":   supp.get("fallback_used", {}),
         "day_of_week":     datetime.strptime(target_date, "%Y-%m-%d").strftime("%A"),
     }
+    layer_a["data_quality_flags"] = _clean_data_quality_flags(layer_a.get("data_quality_flags"), layer_a)
 
     # ── Layer B: 종목 핵심 지표 (~300 토큰) ──────────────────────────────────
     # VKOSPI 20+ 이면 인버스 ETF 포함 (결측(None)은 0으로 처리)
@@ -1399,8 +1463,7 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
 
     # 저장
     path = DIGEST_DIR / f"{target_date}_KR.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(digest, f, ensure_ascii=False, indent=2)
+    digest = _write_json_safe(path, digest)
 
     log.info(f"  ✅ KR digest 저장: {path.name} "
              f"(뉴스 {len(layer_c)}건, 공시 {len(disclosures)}건, "
@@ -1419,7 +1482,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     # supplement 없으면 live yfinance fallback
     if not supp.get("sp500"):
         live = fetch_live_context_us()
-        supp = {**live, **supp}  # supp 기존값 우선
+        supp = _merge_live_context_with_supp(live, supp)  # supp valid values win
 
     is_fomc      = target_date in FOMC_DATES
     is_fomc_week = any(
@@ -1430,15 +1493,18 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
 
     _us_vix = _positive_float_or_none(supp.get("vix"))
     _us_dxy = _positive_float_or_none(supp.get("dxy"))
+    _us_usd_krw = _positive_float_or_none(supp.get("usd_krw"))
+    _us_oil_wti = _positive_float_or_none(supp.get("oil_wti"))
+    _us_tnx = _positive_float_or_none(supp.get("tnx"))
     layer_a = {
         "sp500":      supp.get("sp500", {}),
         "nasdaq":     supp.get("nasdaq", {}),
         "vix":        _us_vix,
         "dxy":        _us_dxy,
-        "usd_krw":    supp.get("usd_krw", 0),
-        "oil_wti":    supp.get("oil_wti", 0),
+        "usd_krw":    _us_usd_krw,
+        "oil_wti":    _us_oil_wti,
         # 채권 / 신용 (시장 위험 지표)
-        "tnx":        supp.get("tnx", 0),         # 10년 국채금리 (%)
+        "tnx":        _us_tnx,                    # 10년 국채금리 (%)
         "hyg":        supp.get("hyg", {}),         # 하이일드 ETF 등락
         # 섹터 ETF 등락 (시장 흐름 파악)
         "sectors":    supp.get("sectors", {}),
@@ -1452,7 +1518,11 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         "cpi_day":    supp.get("cpi_day", False),
         "nfp_day":    supp.get("nfp_day", False),
         "premarket":  supp.get("premarket", {}),
+        "data_quality_flags": supp.get("data_quality_flags", []),
+        "data_sources": supp.get("sources", {}),
+        "fallback_used": supp.get("fallback_used", {}),
     }
+    layer_a["data_quality_flags"] = _clean_data_quality_flags(layer_a.get("data_quality_flags"), layer_a)
 
     # VIX 25+ 이상이면 인버스 ETF 포함 (약세 헤지 구간)
     _vix = _us_vix or 0
@@ -1591,8 +1661,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     }
 
     path = DIGEST_DIR / f"{target_date}_US.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(digest, f, ensure_ascii=False, indent=2)
+    digest = _write_json_safe(path, digest)
     _persist_pead_shadow_rows("US", target_date, shadow_rows)
 
     log.info(f"  ✅ US digest 저장: {path.name}")

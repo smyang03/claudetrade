@@ -86,5 +86,86 @@
     "pnl_pct": 0.4360207020724095,
     "win": true
   },
-  "built_at": "2026-03-27T08:50:10.960678"
+  "built_at": "2026-03-27T08:50:10.960678",
+  "breadth_summary": {
+    "market": "KR",
+    "source": "digest_or_screen",
+    "universe_count": 3,
+    "valid_change_count": 3,
+    "advancers": 0,
+    "decliners": 3,
+    "unchanged": 0,
+    "advance_ratio": 0.0,
+    "decline_ratio": 1.0,
+    "golden_cross": 0,
+    "dead_cross": 3,
+    "rsi_overbought": 0,
+    "rsi_oversold": 0,
+    "volume_spike": 0,
+    "volume_extreme": 0,
+    "near_52w_high": 0,
+    "at_52w_high": 0,
+    "above_ma60": 0,
+    "below_ma60": 0,
+    "earnings_pre": 0,
+    "earnings_post": 0,
+    "top_positive": [
+      {
+        "ticker": "035420",
+        "name": "NAVER",
+        "change_pct": -1.86,
+        "rsi": 42.7,
+        "macd": "데드크로스",
+        "vol_ratio": 0.0
+      },
+      {
+        "ticker": "005930",
+        "name": "삼성전자",
+        "change_pct": -4.71,
+        "rsi": 54.0,
+        "macd": "데드크로스",
+        "vol_ratio": 0.0
+      },
+      {
+        "ticker": "000660",
+        "name": "SK하이닉스",
+        "change_pct": -6.23,
+        "rsi": 58.6,
+        "macd": "데드크로스",
+        "vol_ratio": 0.0
+      }
+    ],
+    "top_negative": [
+      {
+        "ticker": "000660",
+        "name": "SK하이닉스",
+        "change_pct": -6.23,
+        "rsi": 58.6,
+        "macd": "데드크로스",
+        "vol_ratio": 0.0
+      },
+      {
+        "ticker": "005930",
+        "name": "삼성전자",
+        "change_pct": -4.71,
+        "rsi": 54.0,
+        "macd": "데드크로스",
+        "vol_ratio": 0.0
+      },
+      {
+        "ticker": "035420",
+        "name": "NAVER",
+        "change_pct": -1.86,
+        "rsi": 42.7,
+        "macd": "데드크로스",
+        "vol_ratio": 0.0
+      }
+    ],
+    "sector_counts": {},
+    "category_counts": {},
+    "sector_changes": {},
+    "data_quality_flags": [
+      "vkospi_missing"
+    ]
+  }
 }

@@ -44,31 +44,31 @@ def _extract_json(text: str) -> dict:
     def _fix(s: str) -> str:
         return re.sub(r",(\s*[}\]])", r"\1", s)
 
-    # 1) ```json ... ``` ?먮뒗 ``` ... ``` 釉붾줉 (?먯슃??留ㅼ묶?쇰줈 以묒꺽 {} ?ы븿)
+    # 1) ```json ... ``` 또는 ``` ... ``` 블록 (탐욕적 매칭으로 중첩 {} 포함)
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if m:
         return json.loads(_fix(m.group(1)))
-    # 2) { ... } 吏곸젒 異붿텧 ??泥?踰덉㎏ { 遺??留덉?留?} 源뚯?
+    # 2) { ... } 직접 추출 — 첫 번째 { 부터 마지막 } 까지
     start = text.find("{")
     end   = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         return json.loads(_fix(text[start:end + 1]))
-    raise ValueError(f"JSON 異붿텧 ?ㅽ뙣: {text[:200]}")
+    raise ValueError(f"JSON 추출 실패: {text[:200]}")
 
 
 def _format_trade_log(trade_log: list) -> str:
     """체결 내역을 Claude 프롬프트용 텍스트로 변환한다."""
     if not trade_log:
-        return "  (泥닿껐 ?놁쓬)"
+        return "  (체결 없음)"
     lines = []
     for t in trade_log:
-        side  = "留ㅼ닔" if t.get("side") == "buy" else "留ㅻ룄"
+        side  = "매수" if t.get("side") == "buy" else "매도"
         pnl   = t.get("pnl", 0)
         pnl_s = f" PnL {pnl:+,}" if pnl else ""
         lines.append(
-            f"  [{side}] {t.get('ticker','-')} {t.get('qty',0)}二?"
+            f"  [{side}] {t.get('ticker','-')} {t.get('qty',0)}주"
             f"@{t.get('price', t.get('entry', 0)):,} "
-            f"?꾨왂:{t.get('strategy','-')}{pnl_s}"
+            f"전략:{t.get('strategy','-')}{pnl_s}"
         )
     return "\n".join(lines)
 
@@ -88,7 +88,7 @@ def _strategy_pnl(trade_log: list) -> dict:
 _BULL_STANCES    = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL", "CAUTIOUS"}
 _NEUTRAL_STANCES = {"NEUTRAL"}
 _BEAR_STANCES    = {"MILD_BEAR", "CAUTIOUS_BEAR"}
-_AVOID_STANCES   = {"DEFENSIVE", "HALT"}   # 諛⑺뼢 ?덉륫 ?꾨떂 ???몄텧 ?뚰뵾媛 留욎븯?붽?濡??먯젙
+_AVOID_STANCES   = {"DEFENSIVE", "HALT"}   # 방향 예측 아님 — 노출 회피가 맞았는가로 판정
 
 _HIT_THRESHOLD   = 0.5   # 방향성 판단 HIT 최소 임계값
 _FLAT_THRESHOLD  = 0.5   # NEUTRAL HIT: |시장| <= 0.5%
@@ -99,9 +99,9 @@ _AVOID_MISS      = 1.0   # DEFENSIVE MISS: 시장 >= +1.0% (상승 기회 놓침
 def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
     """
     분석가 스탠스 + 실제 시장 등락으로 HIT/MISS/PARTIAL 결과를 계산한다.
-    Claude ?먭린?됯? ?명뼢 ?쒓굅??
+    Claude 자기평가 영향 제거용.
 
-    BULL/BEAR: 諛⑺뼢 ?덉륫 ?뺥솗??
+    BULL/BEAR: 방향 예측 정확도
     - BULL HIT:    시장 >= +0.5%
     - BULL PARTIAL: 0% < 시장 < +0.5%
     - BULL MISS:   시장 <= 0%
@@ -109,10 +109,10 @@ def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
     - BEAR PARTIAL: -0.5% < 시장 < 0%
     - BEAR MISS:   시장 >= 0%
 
-    NEUTRAL: ?〓낫 ?덉륫 ?뺥솗??
+    NEUTRAL: 횡보 예측 정확도
     - HIT: |시장| <= 0.5%, PARTIAL: <= 1.5%, MISS: > 1.5%
 
-    DEFENSIVE/HALT: ?몄텧 ?뚰뵾 ?곸젅??("??? ?몄텧???좊━?덈뒗媛")
+    DEFENSIVE/HALT: 노출 회피 적절성("왜 노출을 줄이는가")
     - HIT:    시장 < -0.5%  (리스크 회피 판단 정당)
     - PARTIAL: -0.5% <= 시장 < +1.0% (중립, 회피가 과하지는 않음)
     - MISS:   시장 >= +1.0% (강한 상승 놓침, 회피가 잘못된 판단)
@@ -140,7 +140,7 @@ def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
 
 def _format_decision_event_log(decision_event_log: list) -> str:
     if not decision_event_log:
-        return "  (?섏궗寃곗젙 濡쒓렇 ?놁쓬)"
+        return "  (의사결정 로그 없음)"
     lines = []
     for e in decision_event_log[-20:]:
         ts = str(e.get("timestamp", ""))[11:19]
@@ -179,7 +179,7 @@ def run(market: str, date: str, today_judgment: dict,
         actual_result: dict, digest_prompt: str,
         trade_log: list = None, decision_event_log: list = None) -> dict:
     """
-    ??留덇컧 ??Claude ?ы썑 遺꾩꽍.
+    장 마감 후 Claude 사후 분석.
 
     Parameters
     ----------
@@ -428,7 +428,7 @@ def run(market: str, date: str, today_judgment: dict,
                                  "tuning_rules": [], "today_notes": ""},
         }
 
-    # ?? brain ?낅뜲?댄듃 ????????????????????????????????????????????????????????
+    # ── brain 업데이트 ───────────────────────────────────────────────
     recent = BrainDB.load()["markets"][market].get("recent_days", [])
 
     BrainDB.update_analyst(market, "bull",    pm["bull_result"]    == "HIT", recent)
@@ -441,7 +441,7 @@ def run(market: str, date: str, today_judgment: dict,
 
 
     bu = pm.get("brain_updates", {})
-    # new_lesson ?놁쑝硫?key_lesson??fallback?쇰줈 ?ъ슜
+    # new_lesson 없으면 key_lesson을 fallback으로 사용
     lesson_to_save = bu.get("new_lesson") or pm.get("key_lesson")
     if lesson_to_save and not _is_placeholder_lesson(lesson_to_save):
         BrainDB.update_beliefs(market, {"new_lesson": lesson_to_save})
@@ -490,7 +490,7 @@ def run(market: str, date: str, today_judgment: dict,
         avg_pnl = sum(pnls) / len(pnls)
         BrainDB.update_strategy_performance(market, strat, avg_pnl, avg_pnl > 0)
 
-    # ?? ?좊줎 寃곌낵 ?뺣떟 ?щ? ?낅뜲?댄듃 ?????????????????????????????????????????
+    # ── 토론 결과 정답 여부 업데이트 ─────────────────────────────────
     try:
         BrainDB.update_debate_outcome(market, date, actual_result.get("win", False))
     except Exception as e:

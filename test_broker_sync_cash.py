@@ -35,6 +35,7 @@ class BrokerSyncCashTests(unittest.TestCase):
         bot = trading_bot_module.TradingBot.__new__(trading_bot_module.TradingBot)
         bot.is_paper = True
         bot.token = "test-token"
+        bot.tokens = {"KR": "test-token", "US": "test-token"}
         bot.usd_krw_rate = 1460.0
         bot.risk = RiskManager(init_cash=0, max_order_krw=0, market="KR")
         bot.pending_orders = []

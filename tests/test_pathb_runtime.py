@@ -7,10 +7,11 @@ from unittest.mock import Mock, patch
 
 from decision.claude_price_plan import make_price_plan
 from execution.claude_price_adapter import EntrySignal
+from execution.claude_price_sell_manager import ExitSignal
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
-from runtime.pathb_runtime import PathBControlState, PathBRuntime
+from runtime.pathb_runtime import PathBControlState, PathBRuntime, _bot_token
 
 
 class _Risk:
@@ -37,6 +38,7 @@ class _Bot:
         self.price_cache = {}
         self._v2_same_day_stop_tickers = {"KR": set(), "US": set()}
         self.saved_positions = False
+        self.blocked_entries = []
 
     def _current_session_date_str(self, market: str) -> str:
         return "2026-04-27"
@@ -49,6 +51,24 @@ class _Bot:
 
     def _save_positions(self) -> None:
         self.saved_positions = True
+
+    def _add_pending_order(self, order: dict) -> None:
+        self.pending_orders.append(dict(order))
+
+    def _block_entry(self, ticker: str, minutes: int, reason: str) -> None:
+        self.blocked_entries.append((ticker, minutes, reason))
+
+
+class _MarketTokenBot(_Bot):
+    def __init__(self) -> None:
+        super().__init__()
+        self.token = "legacy-token"
+        self.token_calls: list[tuple[str, bool]] = []
+
+    def _token_for_market(self, market: str, *, force_refresh: bool = False) -> str:
+        market_key = str(market or "").upper()
+        self.token_calls.append((market_key, bool(force_refresh)))
+        return f"token-{market_key}-{int(bool(force_refresh))}"
 
 
 class _Control:
@@ -63,6 +83,129 @@ class PathBRuntimeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._pathb_env.stop()
+
+    def test_bot_token_helper_uses_market_token_when_available(self) -> None:
+        bot = _MarketTokenBot()
+
+        token = _bot_token(bot, "US", force_refresh=True)
+
+        self.assertEqual(token, "token-US-1")
+        self.assertEqual(bot.token_calls, [("US", True)])
+
+    def test_bot_token_helper_falls_back_to_legacy_token(self) -> None:
+        bot = _Bot()
+        bot.token = "legacy-only"
+
+        self.assertEqual(_bot_token(bot, "US"), "legacy-only")
+
+    def test_pathb_broker_truth_provider_passes_market_to_bot_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            runtime = PathBRuntime(bot, is_paper=False, store=EventStore(Path(tmp) / "events.db"))
+
+            token = runtime.broker_truth._token("US")
+
+        self.assertEqual(token, "token-US-0")
+        self.assertIn(("US", False), bot.token_calls)
+
+    def test_balance_snapshot_uses_market_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            runtime = PathBRuntime(bot, is_paper=False, store=EventStore(Path(tmp) / "events.db"))
+
+            with patch("runtime.pathb_runtime.get_balance", return_value={"cash": 0, "stocks": []}) as get_balance:
+                runtime._balance_for_snapshot("US", True)
+
+        get_balance.assert_called_once_with("token-US-0", market="US", force_refresh=True)
+
+    def test_pathb_buy_entry_uses_market_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            bot.current_market = "US"
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            plan = make_price_plan(
+                decision_id="dec_us_buy",
+                ticker="AAPL",
+                market="US",
+                session_date="2026-05-01",
+                buy_zone_low=180,
+                buy_zone_high=181,
+                sell_target=190,
+                stop_loss=175,
+                hold_days=1,
+                confidence=0.8,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+
+            with patch("runtime.pathb_runtime.precheck_order", return_value={"ok": True}) as precheck, patch(
+                "runtime.pathb_runtime.place_order",
+                return_value={"success": True, "order_no": "us-buy-1"},
+            ) as place:
+                accepted = runtime._submit_buy(
+                    plan,
+                    EntrySignal(True, "buy_zone_hit", price=180.5, limit_price=180.5, path_run_id=plan.path_run_id),
+                )
+
+        self.assertTrue(accepted)
+        self.assertEqual(precheck.call_args.args[4], "token-US-0")
+        self.assertEqual(precheck.call_args.kwargs["market"], "US")
+        self.assertEqual(place.call_args.args[4], "token-US-0")
+        self.assertEqual(place.call_args.kwargs["market"], "US")
+
+    def test_pathb_sell_exit_uses_market_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            bot.current_market = "US"
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            plan = make_price_plan(
+                decision_id="dec_us_sell",
+                ticker="AAPL",
+                market="US",
+                session_date="2026-05-01",
+                buy_zone_low=180,
+                buy_zone_high=181,
+                sell_target=190,
+                stop_loss=175,
+                hold_days=1,
+                confidence=0.8,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=180,
+                qty=2,
+                execution_id="us-buy-1",
+                runtime_mode="live",
+                brain_snapshot_id="brain-us",
+            )
+            pos = {
+                "ticker": "AAPL",
+                "market": "US",
+                "qty": 2,
+                "entry": 180.0,
+                "path_type": "claude_price",
+                "pathb_path_run_id": plan.path_run_id,
+            }
+
+            with patch("runtime.pathb_runtime.precheck_order", return_value={"ok": True}) as precheck, patch(
+                "runtime.pathb_runtime.place_order",
+                return_value={"success": True, "order_no": "us-sell-1"},
+            ) as place:
+                accepted = runtime._submit_sell(
+                    plan,
+                    pos,
+                    ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 190.0, plan.path_run_id),
+                )
+
+        self.assertTrue(accepted)
+        self.assertEqual(precheck.call_args.args[4], "token-US-0")
+        self.assertEqual(precheck.call_args.kwargs["market"], "US")
+        self.assertEqual(place.call_args.args[4], "token-US-0")
+        self.assertEqual(place.call_args.kwargs["market"], "US")
 
     def test_brain_snapshot_id_has_cold_start_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

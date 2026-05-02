@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import socket
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     from zoneinfo import ZoneInfo
@@ -223,6 +227,111 @@ def _session_date_guess(market: str) -> str:
     return resolve_session_date(market, now).isoformat()
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        if sys.platform.startswith("win"):
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return str(pid) in (result.stdout or "")
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _pid_lock_check(name: str, path: Path, *, expected_mode: str = "") -> CheckResult:
+    data: dict[str, Any] = {"path": str(path), "category": "runtime_pid_lock"}
+    if not path.exists():
+        return CheckResult(name, "PASS", "pid lock file is absent", data)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            data["state"] = "invalid_json_root"
+            return CheckResult(name, "WARN", "pid lock file root is not an object", data)
+    except Exception as exc:
+        data["state"] = "unreadable"
+        data["error"] = str(exc)
+        return CheckResult(name, "WARN", f"pid lock file unreadable: {exc}", data)
+
+    pid = _int_value(raw.get("pid"), 0)
+    alive = _pid_alive(pid)
+    data.update({"pid": pid, "alive": alive, "state": raw, "auto_fix": not alive})
+    if expected_mode:
+        actual_mode = str(raw.get("mode", "") or "")
+        data["expected_mode"] = expected_mode
+        if actual_mode and actual_mode != expected_mode:
+            data["mode_mismatch"] = actual_mode
+    if alive:
+        return CheckResult(name, "WARN", "pid lock is active; do not start a duplicate process", data)
+    return CheckResult(name, "WARN", "stale pid lock is present; guardian may remove it after process check", data)
+
+
+def _default_kis_base_url(mode: str) -> str:
+    return (
+        "https://openapivts.koreainvestment.com:29443"
+        if str(mode or "").lower() == "paper"
+        else "https://openapi.koreainvestment.com:9443"
+    )
+
+
+def _host_port_from_url(raw_url: str, *, default_url: str) -> tuple[str, int, str]:
+    raw = str(raw_url or "").strip() or default_url
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    parsed = urlparse(raw)
+    host = str(parsed.hostname or "").strip()
+    if not host:
+        fallback = urlparse(default_url)
+        host = str(fallback.hostname or "").strip()
+    port = int(parsed.port or (443 if parsed.scheme == "https" else 80))
+    return host, port, raw
+
+
+def _kis_socket_check(name: str, raw_url: str, *, mode: str, timeout_sec: float) -> CheckResult:
+    host, port, normalized_url = _host_port_from_url(raw_url, default_url=_default_kis_base_url(mode))
+    data = {
+        "url": normalized_url,
+        "host": host,
+        "port": port,
+        "timeout_sec": timeout_sec,
+        "python_executable": sys.executable,
+        "powershell_check": f"Test-NetConnection {host} -Port {port}",
+        "firewall_allow_rule": (
+            f'New-NetFirewallRule -DisplayName "Allow KIS API Python {port}" '
+            f'-Direction Outbound -Program "{sys.executable}" '
+            f"-Action Allow -Protocol TCP -RemotePort {port}"
+        ),
+    }
+    try:
+        with socket.create_connection((host, port), timeout=timeout_sec):
+            pass
+        return CheckResult(name, "PASS", f"Python can open TCP connection to {host}:{port}", data)
+    except Exception as exc:
+        data["error"] = f"{type(exc).__name__}: {exc}"
+        return CheckResult(name, "FAIL", f"Python cannot open TCP connection to {host}:{port}", data)
+
+
+def _kis_network_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
+    effective: dict[str, str] = config.get("effective", {})
+    timeout_sec = _float_value(effective.get("KIS_NETWORK_CHECK_TIMEOUT_SEC", "3"), 3.0)
+    default_url = _default_kis_base_url(mode)
+    kr_url = str(effective.get("KIS_BASE_URL") or default_url)
+    us_url = str(effective.get("KIS_BASE_URL_US") or kr_url)
+    targets = [("KR", kr_url)]
+    if us_url != kr_url:
+        targets.append(("US", us_url))
+    return [
+        _kis_socket_check(f"network.kis_rest_python_socket.{market.lower()}", url, mode=mode, timeout_sec=timeout_sec)
+        for market, url in targets
+    ]
+
+
 def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckResult], dict[str, Any]]:
     checks: list[CheckResult] = []
     config = load_effective_config(mode)
@@ -403,6 +512,13 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     if is_paper_us == "true" and mode == "live":
         cred_status = "FAIL"
         cred_notes.append("KIS_IS_PAPER_US=true in live mode")
+    us_credential_mode = (
+        "separate_us"
+        if us_account and us_app and us_secret
+        else "fallback_shared_kr"
+        if kr_account and kr_app and kr_secret
+        else "missing"
+    )
     checks.append(
         CheckResult(
             "kis.us_credentials",
@@ -413,6 +529,8 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
                 "KIS_APP_KEY_US_present": bool(us_app),
                 "KIS_APP_SECRET_US_present": bool(us_secret),
                 "KIS_IS_PAPER_US": is_paper_us,
+                "credential_mode": us_credential_mode,
+                "fallback_to_kr_allowed": us_credential_mode == "fallback_shared_kr",
             },
         )
     )
@@ -683,7 +801,10 @@ def _token_checks(mode: str) -> list[CheckResult]:
                 },
             )
         )
-        helper_ok = "get_access_token(force_refresh=True)" in _repo_text("trading_bot.py") and "_get_balance_with_token_refresh" in _repo_text("trading_bot.py")
+        trading_text = _repo_text("trading_bot.py")
+        helper_ok = "_get_balance_with_token_refresh" in trading_text and bool(
+            re.search(r"get_access_token\(\s*force_refresh\s*=\s*True", trading_text)
+        )
         refresh_status = "FAIL" if status == "FAIL" or not helper_ok else ("WARN" if status == "WARN" else "PASS")
         refresh_detail = (
             "token expired or refresh helper missing"
@@ -710,6 +831,20 @@ def _token_checks(mode: str) -> list[CheckResult]:
 def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
     checks: list[CheckResult] = []
     effective: dict[str, str] = config.get("effective", {})
+    checks.append(
+        _pid_lock_check(
+            "runtime.bot_pid_lock",
+            ROOT / "state" / f"{mode}_trading_bot.pid",
+            expected_mode=mode,
+        )
+    )
+    checks.append(
+        _pid_lock_check(
+            "runtime.dashboard_pid_lock",
+            ROOT / "state" / "dashboard_server.pid",
+            expected_mode="dashboard_server",
+        )
+    )
     brain_candidates = [
         ROOT / "state" / "brain.json",
         ROOT / "claude_memory" / "brain.json",
@@ -832,8 +967,15 @@ def _static_code_checks() -> list[CheckResult]:
 
     selection_retry_prompt = _func_block(analysts, "_build_selection_retry_prompt")
 
+    atomic_write_present = (
+        ("tmp.replace(self.path)" in broker_truth or "os.replace(tmp, self.path)" in broker_truth)
+        and "mask_sensitive" in broker_truth
+    )
+    token_refresh_helper_present = "_get_balance_with_token_refresh" in trading and bool(
+        re.search(r"get_access_token\(\s*force_refresh\s*=\s*True", trading)
+    )
     markers = {
-        "code.token_refresh_helper": "_get_balance_with_token_refresh" in trading and "get_access_token(force_refresh=True)" in trading,
+        "code.token_refresh_helper": token_refresh_helper_present,
         "code.pathb_startup_recovery": "self.pathb.recover_on_startup()" in trading,
         "code.session_active_attribute": "self.session_active = False" in trading and "self.session_active = True" in trading,
         "code.current_market_attribute": "self.current_market = market" in trading,
@@ -866,7 +1008,7 @@ def _static_code_checks() -> list[CheckResult]:
         "dashboard.pathb_state_truth": "path_runs_for_session" in ops_summary and "path_b_live" in ops_summary,
         "dashboard.broker_truth_uses_snapshot": "broker_truth" in ops_summary and "load_broker_truth_snapshot" in ops_summary and "pathb-broker-truth" in dashboard,
         "telegram.broker_truth_uses_snapshot": "broker_truth" in v2_telegram and "_cmd_positions_from_broker_truth" in telegram_commander,
-        "broker_truth.atomic_write_marker": "tmp.replace(self.path)" in broker_truth and "mask_sensitive" in broker_truth,
+        "broker_truth.atomic_write_marker": atomic_write_present,
         "broker_truth.positions_from_broker": "positions" in broker_truth and "normalize_position" in broker_truth,
         "broker_truth.open_orders_from_broker": "open_orders" in broker_truth and "remaining_qty" in broker_truth,
         "broker_truth.today_fills_from_broker": "today_fills" in broker_truth and "filled_qty" in broker_truth,
@@ -883,7 +1025,14 @@ def _static_code_checks() -> list[CheckResult]:
         "us.order_unknown_scope": "block_state(market=market" in v2_runtime and "paused_markets" in _repo_text("execution", "order_state.py"),
     }
     for name, ok in markers.items():
-        checks.append(CheckResult(name, "PASS" if ok else "FAIL", "marker found" if ok else "marker missing"))
+        checks.append(
+            CheckResult(
+                name,
+                "PASS" if ok else "FAIL",
+                "marker found" if ok else "marker missing",
+                {"category": "code_marker", "guardian_severity": "soft_fail"},
+            )
+        )
 
     timing_runtime_present = "WAIT_TIMING" in trading and "TIMING_EXPIRED" in trading
     timing_enum_present = "WAIT_TIMING" in _repo_text("lifecycle", "models.py") and "TIMING_EXPIRED" in _repo_text("lifecycle", "models.py")
@@ -894,7 +1043,12 @@ def _static_code_checks() -> list[CheckResult]:
             "Path A WAIT_TIMING/TIMING_EXPIRED runtime markers found"
             if timing_runtime_present
             else ("lifecycle enum supports WAIT_TIMING/TIMING_EXPIRED, but Path A runtime wiring is not proven" if timing_enum_present else "timing lifecycle markers missing"),
-            {"runtime_markers": timing_runtime_present, "enum_markers": timing_enum_present},
+            {
+                "runtime_markers": timing_runtime_present,
+                "enum_markers": timing_enum_present,
+                "category": "code_marker",
+                "guardian_severity": "soft_fail",
+            },
         )
     )
 
@@ -1321,6 +1475,7 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     checks: list[CheckResult] = []
     config_checks, config = _config_checks(mode, allow_config_conflicts)
     checks.extend(config_checks)
+    checks.extend(_kis_network_checks(config, mode))
     checks.extend(_db_checks(mode))
     checks.extend(_token_checks(mode))
     checks.extend(_state_checks(config, mode))

@@ -168,7 +168,7 @@ class BrokerTruthSnapshot:
         *,
         runtime_mode: str = "live",
         path: str | Path | None = None,
-        token_provider: Callable[[], str] | None = None,
+        token_provider: Callable[..., str] | None = None,
         balance_provider: Callable[[str, bool], dict[str, Any]] | None = None,
         ccld_provider: Callable[[str, str], list[dict[str, Any]]] | None = None,
         date_provider: Callable[[str], str] | None = None,
@@ -332,7 +332,7 @@ class BrokerTruthSnapshot:
             return self.balance_provider(market, force)
         import kis_api
 
-        token = self._token()
+        token = self._token(market)
         return kis_api.get_balance(token, market=market, force_refresh=force)
 
     def _get_today_orders(self, market: str) -> list[dict[str, Any]]:
@@ -340,7 +340,7 @@ class BrokerTruthSnapshot:
             return [normalize_order(market, row) for row in self.ccld_provider(market, self._trade_date_yyyymmdd(market))]
         import kis_api
 
-        token = self._token()
+        token = self._token(market)
         today = self._trade_date_yyyymmdd(market)
         if market == "US":
             rows = kis_api.inquire_ccnl_us(token, start_date=today, end_date=today, filled_code="00")
@@ -348,12 +348,15 @@ class BrokerTruthSnapshot:
             rows = kis_api.inquire_daily_ccld_kr(token, start_date=today, end_date=today, filled_code="00")
         return [normalize_order(market, row) for row in rows]
 
-    def _token(self) -> str:
+    def _token(self, market: str = "KR") -> str:
         if self.token_provider is not None:
-            return str(self.token_provider() or "")
+            try:
+                return str(self.token_provider(str(market or "").upper()) or "")
+            except TypeError:
+                return str(self.token_provider() or "")
         import kis_api
 
-        return kis_api.get_access_token()
+        return kis_api.get_access_token(market=str(market or "KR").upper())
 
     def _trade_date_yyyymmdd(self, market: str) -> str:
         if self.date_provider is not None:

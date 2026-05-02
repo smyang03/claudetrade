@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import sqlite3
 import tempfile
 import unittest
 
@@ -24,6 +25,18 @@ class LiveDbIntegrityTests(unittest.TestCase):
                 for table, required in REQUIRED_TABLE_COLUMNS.items():
                     found = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
                     self.assertFalse(required - found, table)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_event_store_context_manager_closes_connection(self) -> None:
+        tmp = tempfile.mkdtemp()
+        try:
+            store = EventStore(Path(tmp) / "events.db")
+            with store.connect() as conn:
+                conn.execute("SELECT 1").fetchone()
+
+            with self.assertRaises(sqlite3.ProgrammingError):
+                conn.execute("SELECT 1").fetchone()
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

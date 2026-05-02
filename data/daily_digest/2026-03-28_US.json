@@ -176,5 +176,119 @@
     "pnl_pct": 0,
     "win": false
   },
-  "built_at": "2026-03-28T18:23:44.560938"
+  "built_at": "2026-03-28T18:23:44.560938",
+  "breadth_summary": {
+    "market": "US",
+    "source": "digest_or_screen",
+    "universe_count": 7,
+    "valid_change_count": 7,
+    "advancers": 2,
+    "decliners": 5,
+    "unchanged": 0,
+    "advance_ratio": 0.286,
+    "decline_ratio": 0.714,
+    "golden_cross": 1,
+    "dead_cross": 6,
+    "rsi_overbought": 0,
+    "rsi_oversold": 2,
+    "volume_spike": 0,
+    "volume_extreme": 0,
+    "near_52w_high": 0,
+    "at_52w_high": 0,
+    "above_ma60": 0,
+    "below_ma60": 0,
+    "earnings_pre": 0,
+    "earnings_post": 0,
+    "top_positive": [
+      {
+        "ticker": "TSLA",
+        "name": "테슬라",
+        "change_pct": 0.57,
+        "rsi": 37.5,
+        "macd": "데드크로스",
+        "vol_ratio": 1.01
+      },
+      {
+        "ticker": "AAPL",
+        "name": "애플",
+        "change_pct": 0.06,
+        "rsi": 33.6,
+        "macd": "데드크로스",
+        "vol_ratio": 0.7
+      },
+      {
+        "ticker": "NVDA",
+        "name": "엔비디아",
+        "change_pct": -0.25,
+        "rsi": 39.3,
+        "macd": "데드크로스",
+        "vol_ratio": 0.73
+      },
+      {
+        "ticker": "AMZN",
+        "name": "아마존",
+        "change_pct": -1.38,
+        "rsi": 38.2,
+        "macd": "골든크로스",
+        "vol_ratio": 0.78
+      },
+      {
+        "ticker": "META",
+        "name": "메타",
+        "change_pct": -1.84,
+        "rsi": 23.9,
+        "macd": "데드크로스",
+        "vol_ratio": 0.86
+      }
+    ],
+    "top_negative": [
+      {
+        "ticker": "GOOGL",
+        "name": "알파벳",
+        "change_pct": -3.85,
+        "rsi": 38.2,
+        "macd": "데드크로스",
+        "vol_ratio": 1.25
+      },
+      {
+        "ticker": "MSFT",
+        "name": "마이크로소프트",
+        "change_pct": -2.68,
+        "rsi": 20.7,
+        "macd": "데드크로스",
+        "vol_ratio": 1.22
+      },
+      {
+        "ticker": "META",
+        "name": "메타",
+        "change_pct": -1.84,
+        "rsi": 23.9,
+        "macd": "데드크로스",
+        "vol_ratio": 0.86
+      },
+      {
+        "ticker": "AMZN",
+        "name": "아마존",
+        "change_pct": -1.38,
+        "rsi": 38.2,
+        "macd": "골든크로스",
+        "vol_ratio": 0.78
+      },
+      {
+        "ticker": "NVDA",
+        "name": "엔비디아",
+        "change_pct": -0.25,
+        "rsi": 39.3,
+        "macd": "데드크로스",
+        "vol_ratio": 0.73
+      }
+    ],
+    "sector_counts": {},
+    "category_counts": {},
+    "sector_changes": {},
+    "data_quality_flags": [
+      "vix_missing",
+      "dxy_missing"
+    ]
+  }
 }

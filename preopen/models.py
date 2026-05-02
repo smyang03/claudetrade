@@ -19,6 +19,7 @@ class PreopenCandidate:
     market: str = ""
     session_date: str = ""
     source: str = ""
+    provider: str = ""
     detected_at: str = ""
     captured_at: str = ""
     first_detected_at: str = ""
@@ -33,10 +34,15 @@ class PreopenCandidate:
     actual_ordered: bool | None = None
     actual_rejection_reason: str | None = None
     source_overlap_count: int = 1
+    data_quality: str = "unknown"
+    stale: bool = False
     risk_tags: list[str] = field(default_factory=list)
     quality_tags: list[str] = field(default_factory=list)
     pattern_tags: list[str] = field(default_factory=list)
     preopen_reason: list[str] = field(default_factory=list)
+    price: float | None = None
+    gap_pct: float | None = None
+    volume_ratio: float | None = None
     extended_price: float | None = None
     regular_prev_close: float | None = None
     extended_change_pct: float | None = None
@@ -53,6 +59,10 @@ class PreopenCandidate:
     post_open_60m_return_pct: float | None = None
     post_open_mfe_pct: float | None = None
     post_open_mae_pct: float | None = None
+    max_runup_pct: float | None = None
+    max_drawdown_pct: float | None = None
+    open_to_high_pct: float | None = None
+    open_to_close_pct: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,6 +76,7 @@ def normalize_candidate(raw: dict[str, Any], *, market: str, session_date: str, 
         market=market,
         session_date=session_date,
         source=str(raw.get("source", "") or "unknown"),
+        provider=str(raw.get("provider", "") or raw.get("source", "") or "unknown"),
         detected_at=str(raw.get("detected_at", "") or captured_at),
         captured_at=str(raw.get("captured_at", "") or captured_at),
         first_detected_at=str(raw.get("first_detected_at", "") or captured_at),
@@ -74,6 +85,18 @@ def normalize_candidate(raw: dict[str, Any], *, market: str, session_date: str, 
     for key, value in raw.items():
         if key in candidate:
             candidate[key] = value
+    if candidate.get("provider") in ("", None):
+        candidate["provider"] = candidate.get("source", "unknown")
+    if candidate.get("source") in ("", None):
+        candidate["source"] = candidate.get("provider", "unknown")
+    if candidate.get("price") is None and candidate.get("extended_price") is not None:
+        candidate["price"] = candidate.get("extended_price")
+    if candidate.get("extended_price") is None and candidate.get("price") is not None:
+        candidate["extended_price"] = candidate.get("price")
+    if candidate.get("gap_pct") is None and candidate.get("extended_change_pct") is not None:
+        candidate["gap_pct"] = candidate.get("extended_change_pct")
+    if candidate.get("extended_change_pct") is None and candidate.get("gap_pct") is not None:
+        candidate["extended_change_pct"] = candidate.get("gap_pct")
     candidate["ticker"] = ticker
     candidate["market"] = market
     candidate["session_date"] = session_date

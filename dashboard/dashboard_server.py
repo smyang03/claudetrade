@@ -52,6 +52,7 @@ from kis_api import (
     get_balance,
     get_price,
     get_usd_krw,
+    get_kis_profile_summary,
     inquire_daily_ccld_kr,
     inquire_ccnl_us,
 )
@@ -257,7 +258,7 @@ def _kis_runtime(mode: str):
     attrs = [
         "APP_KEY", "APP_SECRET", "ACCOUNT_NO", "IS_PAPER",
         "ACCOUNT_NO_US", "APP_KEY_US", "APP_SECRET_US", "IS_PAPER_US",
-        "BASE_URL", "WS_URL", "TOKEN_FILE",
+        "BASE_URL", "BASE_URL_US", "WS_URL", "WS_URL_US", "TOKEN_FILE",
     ]
     with _KIS_RUNTIME_LOCK:
         previous = {name: getattr(_kis_api_module, name) for name in attrs}
@@ -277,10 +278,30 @@ def _kis_runtime(mode: str):
                     "https://openapivts.koreainvestment.com:29443" if is_paper else "https://openapi.koreainvestment.com:9443",
                 ) or ""
             )
+            base_url_us = str(
+                env.get(
+                    "KIS_BASE_URL_US",
+                    base_url
+                    if is_paper_us == is_paper
+                    else "https://openapivts.koreainvestment.com:29443"
+                    if is_paper_us
+                    else "https://openapi.koreainvestment.com:9443",
+                ) or ""
+            )
             ws_url = (
                 "ws://ops.koreainvestment.com:31000"
                 if is_paper
                 else "ws://ops.koreainvestment.com:21000"
+            )
+            ws_url_us = str(
+                env.get(
+                    "KIS_WS_URL_US",
+                    ws_url
+                    if is_paper_us == is_paper
+                    else "ws://ops.koreainvestment.com:31000"
+                    if is_paper_us
+                    else "ws://ops.koreainvestment.com:21000",
+                ) or ""
             )
 
             _kis_api_module.APP_KEY = app_key
@@ -292,7 +313,9 @@ def _kis_runtime(mode: str):
             _kis_api_module.APP_SECRET_US = app_secret_us
             _kis_api_module.IS_PAPER_US = is_paper_us
             _kis_api_module.BASE_URL = base_url
+            _kis_api_module.BASE_URL_US = base_url_us
             _kis_api_module.WS_URL = ws_url
+            _kis_api_module.WS_URL_US = ws_url_us
             _kis_api_module.TOKEN_FILE = get_runtime_path("state", f"{runtime_mode}_kis_token.json")
             yield
         finally:
@@ -1483,7 +1506,7 @@ def _load_broker_trade_bundle(market: str, period: str, start: str, end: str, mo
     rows: list[dict] = []
     try:
         with _kis_runtime(mode):
-            token = get_access_token()
+            token = get_access_token(market=market)
             if market == "KR":
                 broker_rows = inquire_daily_ccld_kr(
                     token,
@@ -1711,7 +1734,7 @@ def _load_broker_positions(market: str, mode: str = "paper"):
     """KIS 브로커 잔고에서 현재 보유 포지션을 직접 읽어 대시보드에 표시한다."""
     try:
         with _kis_runtime(mode):
-            token = get_access_token()
+            token = get_access_token(market=market)
             bal = get_balance(token, market=market, force_refresh=True)
     except Exception:
         return None
@@ -1958,13 +1981,15 @@ def _broker_snapshot(mode: str = "paper") -> dict:
     """KIS 브로커 기준 KR/US 통합 스냅샷."""
     try:
         with _kis_runtime(mode):
-            token = get_access_token()
+            kis_profile = get_kis_profile_summary()
             try:
-                kr = get_balance(token, market="KR", force_refresh=True)
+                token_kr = get_access_token(market="KR")
+                kr = get_balance(token_kr, market="KR", force_refresh=True)
             except Exception:
                 kr = {}
             try:
-                us = get_balance(token, market="US", force_refresh=True)
+                token_us = get_access_token(market="US")
+                us = get_balance(token_us, market="US", force_refresh=True)
             except Exception:
                 us = {}
     except Exception:
@@ -2009,6 +2034,7 @@ def _broker_snapshot(mode: str = "paper") -> dict:
 
     return {
         "source": source,
+        "kis_profile": kis_profile,
         "usd_krw": usd_krw,
         "kr_cash": kr_cash,
         "kr_cash_effective": kr_cash_effective,
@@ -2115,7 +2141,7 @@ def _broker_realized_pnl_krw(market: str, trade_date: str, mode: str = "paper") 
     usd_krw = _get_usd_krw_cached()
     try:
         with _kis_runtime(mode):
-            token = get_access_token()
+            token = get_access_token(market=market)
             if market == "KR":
                 rows = inquire_daily_ccld_kr(token, start_date=trade_date, end_date=trade_date)
             else:
@@ -3608,7 +3634,7 @@ def api_claude_trigger():
     session = _session_status(market)
     control = _load_claude_control(mode=mode)
     if not bool(control.get("enabled", True)):
-        return jsonify({"ok": False, "error": "Claude 재판단 기능이 OFF 상태입니다"}), 400
+        return jsonify({"ok": False, "error": "Claude 재판단 기능이 꺼진 상태입니다"}), 400
     if not session.get("active"):
         return jsonify({"ok": False, "error": f"{market} 세션이 현재 비활성 상태입니다"}), 400
     control["pending_trigger"] = {
@@ -3982,7 +4008,7 @@ def api_brain_history():
     })
 
 
-# ?? ?좉퇋 API ?붾뱶?ъ씤??????????????????????????????????????????????????????????
+# ── 신규 API 엔드포인트 ─────────────────────────────────────────────
 
 @app.route("/api/stats/period")
 def api_stats_period():
@@ -4569,7 +4595,7 @@ def api_refresh_prices():
     if is_live:
         try:
             with _kis_runtime(mode):
-                token = get_access_token()
+                token = get_access_token(market=market)
                 for pos in positions:
                     ticker = pos.get("ticker", "")
                     if not ticker:
@@ -5130,7 +5156,7 @@ def api_tickers_today():
     })
 
 
-# ?? HTML ?ы띁 ?????????????????????????????????????????????????????????????????
+# ── HTML 헬퍼 ─────────────────────────────────────────────────────
 
 def _head(title: str) -> str:
     return f"""<!DOCTYPE html>
@@ -5168,7 +5194,7 @@ body {{
   min-height: 100vh;
 }}
 
-/* ?? ?ㅻ뜑 ?? */
+/* ── 헤더 ── */
 header {{
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 24px; height: 56px;
@@ -5377,7 +5403,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
   letter-spacing: 2px; padding: 6px 12px; border-bottom: 1px solid var(--border);
 }}
 
-/* ?? Brain ?곹깭 ?? */
+/* ── Brain 상태 ── */
 .brain-stats {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 12px; }}
 .brain-stat {{
   background: rgba(255,255,255,0.03); border-radius: 8px;
@@ -5538,7 +5564,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (modeBtn) modeBtn.classList.add('active');
 });
 
-// ?? ?щ㎎???????????????????????????????????????????????????????????????????????
+// ── 포맷터 ───────────────────────────────────────────────────────
 const fmt = {
   pct:   v => (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%',
   krw:   v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString() + '원',
@@ -5612,6 +5638,85 @@ const REGIME_KO = {
   unknown: '미확인',
 };
 
+const ANALYST_KO = {
+  bull: '상승 분석가',
+  bear: '하락 분석가',
+  neutral: '중립 분석가',
+  Bull: '상승 분석가',
+  Bear: '하락 분석가',
+  Neutral: '중립 분석가',
+  analyst: '분석가',
+};
+
+const ACTION_KO = {
+  BUY: '매수',
+  SELL: '매도',
+  HOLD: '보유 유지',
+  TRAIL: '트레일링 유지',
+  MAINTAIN: '유지',
+  buy: '매수',
+  sell: '매도',
+  hold: '보유 유지',
+  trail: '트레일링 유지',
+};
+
+const RESULT_KO = {
+  HIT: '적중',
+  MISS: '실패',
+  PARTIAL: '부분 적중',
+  WIN: '승',
+  LOSS: '패',
+  FLAT: '보합',
+  hit: '적중',
+  miss: '실패',
+  partial: '부분 적중',
+  win: '승',
+  loss: '패',
+  flat: '보합',
+  idle: '대기',
+  ok: '정상',
+  error: '오류',
+  failed: '실패',
+  success: '성공',
+  running: '실행중',
+  stopped: '중지',
+  pending: '대기',
+  changed: '변경',
+  unchanged: '유지',
+  completed: '완료',
+};
+
+const SOURCE_KO = {
+  broker_truth: '계좌 조회',
+  broker_account: '계좌 조회',
+  broker_balance: '브로커 잔고',
+  broker_sync: '브로커 동기화',
+  local_fallback: '로컬 보완',
+  position_fallback: '포지션 보완',
+  internal_fallback: '엔진 추정',
+  'broker+paper_us_cash_estimated': '브로커 기준 · US 모의현금 추정',
+  'broker+paper_us_cash_estimated+live_fallback': '브로커 기준 · US 모의보정',
+  'broker+live_fallback': '브로커 기준 · 라이브 보정',
+  order_fill: '체결 조회',
+  pending_order: '미체결 주문',
+  system_log: '시스템 로그',
+  default: '기본값',
+  telegram: '텔레그램',
+  operator: '운영자',
+  dashboard: '대시보드',
+  trading_bot: '트레이딩 봇',
+  pathb: 'B플랜',
+  none: '없음',
+};
+
+const LOG_LEVEL_KO = {
+  ERROR: '오류',
+  CRITICAL: '치명',
+  WARNING: '경고',
+  INFO: '정보',
+  DEBUG: '디버그',
+};
+
 const MODE_DESC = {
   AGGRESSIVE: '강한 리스크온, 진입 적극',
   MODERATE_BULL: '상승 우위, 공격성 높음',
@@ -5628,6 +5733,23 @@ function koMode(v) { return MODE_KO[v] || v || '-'; }
 function modeDescription(v) { return MODE_DESC[v] || ''; }
 function koStrategy(v) { return STRATEGY_KO[v] || v || '-'; }
 function koRegime(v) { return REGIME_KO[v] || MODE_KO[v] || v || '-'; }
+function koAnalyst(v) { return ANALYST_KO[v] || v || '-'; }
+function koAction(v) { return ACTION_KO[v] || v || '-'; }
+function koResult(v) { return RESULT_KO[v] || v || '-'; }
+function koSource(v) { return SOURCE_KO[v] || v || '-'; }
+function koLevel(v) { const raw = String(v || '').toUpperCase(); return LOG_LEVEL_KO[raw] || v || '-'; }
+function koOnOff(v) { return v ? '켜짐' : '꺼짐'; }
+function koLogCategory(v) {
+  const m = {
+    ORDER_UNKNOWN: '주문상태 불명',
+    SAFETY_BLOCKED: '안전 차단',
+    TIMING_EXPIRED: '타이밍 만료',
+    broker_truth: '계좌 조회',
+    state_json: '상태 JSON',
+    risk: '리스크',
+  };
+  return m[v] || v || '-';
+}
 
 function renderAdaptive(t, titleId, metaId, breakdownId) {
   const adaptive = t.adaptive || {};
@@ -5639,11 +5761,11 @@ function renderAdaptive(t, titleId, metaId, breakdownId) {
     const claudeBadge = claudeAdjCount > 0 ? ` · Claude 조정 ${claudeAdjCount}개` : '';
     titleEl.textContent = adaptive.enabled
       ? `현재 모드 ${koMode(t.mode || '-')} · 전략 ${(adaptive.rows || []).length}개${claudeBadge}`
-      : 'Adaptive 파라미터 비활성';
+      : '적응형 파라미터 비활성';
   }
   if (metaEl) {
     const changedCount  = (adaptive.rows || []).filter(r => (r.changed || []).length > 0).length;
-    const perfSources   = Array.from(new Set((adaptive.rows || []).map(r => r.perf_source || 'none'))).join(', ');
+    const perfSources   = Array.from(new Set((adaptive.rows || []).map(r => koSource(r.perf_source || 'none')))).join(', ');
     const claudeRows    = (adaptive.rows || []).filter(r => r.claude);
     const claudeInfo    = claudeRows.length
       ? ` · Claude 검토 ${claudeRows.length}개 (${claudeRows.filter(r => r.claude_adjusted).length}개 조정)`
@@ -5692,7 +5814,7 @@ function colorVar(v) {
   return v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--muted)';
 }
 
-// ?? ?쒓퀎 ???????????????????????????????????????????????????????????????????????
+// ── 시계 ───────────────────────────────────────────────────────────
 function updateClock() {
   const el = document.getElementById('clock');
   if (!el) return;
@@ -5776,7 +5898,7 @@ PAGE_TODAY_HTML = """
   <div id="ml-db-meta" style="font-size:12px;color:var(--text-dim);margin-top:8px">--</div>
   <div id="ml-db-breakdown" style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.6">--</div>
 </div>
-<div class="section-title" style="margin-top:-4px">Adaptive 파라미터</div>
+<div class="section-title" style="margin-top:-4px">적응형 파라미터</div>
 <div class="card" style="padding:16px;margin-bottom:20px">
   <div id="adaptive-title" style="font-size:14px;font-weight:700;color:var(--text)">확인 중..</div>
   <div id="adaptive-meta" style="font-size:12px;color:var(--text-dim);margin-top:8px">--</div>
@@ -5804,7 +5926,7 @@ PAGE_TODAY_HTML = """
       <div id="claude-error-line" style="font-size:12px;color:#f87171"></div>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <button id="claude-toggle-btn" class="apply-btn" onclick="toggleClaudeReinvoke()">OFF</button>
+      <button id="claude-toggle-btn" class="apply-btn" onclick="toggleClaudeReinvoke()">꺼짐</button>
       <button id="claude-trigger-btn" class="apply-btn" onclick="triggerClaudeReinvoke()">지금 실행</button>
     </div>
   </div>
@@ -5915,17 +6037,17 @@ async function loadJudgments() {
     // 1라운드와 토론 후 스탠스 변경 여부 표시
     const r1stance = info.r1_stance || '';
     const debateHtml = (r1stance && r1stance !== info.stance)
-      ? `<div style="font-size:11px;color:#f59e0b;margin-top:4px">토론 후 변경: ${r1stance} → <b>${info.stance}</b></div>`
-      : (r1stance ? `<div style="font-size:11px;color:#475569;margin-top:4px">토론 후 유지: ${info.stance}</div>` : '');
+      ? `<div style="font-size:11px;color:#f59e0b;margin-top:4px">토론 후 변경: ${koMode(r1stance)} → <b>${koMode(info.stance)}</b></div>`
+      : (r1stance ? `<div style="font-size:11px;color:#475569;margin-top:4px">토론 후 유지: ${koMode(info.stance)}</div>` : '');
     return `
     <div class="analyst-card">
       <div class="analyst-header">
         <div class="analyst-icon ${iconClass}">${label[0]}</div>
         <div>
           <div class="analyst-name">${label}</div>
-          <div class="analyst-stance ${stanceClass}">${info.stance || '-'}</div>
+          <div class="analyst-stance ${stanceClass}">${koMode(info.stance || '-')}</div>
         </div>
-        ${res ? `<div style="margin-left:auto"><span class="result-badge ${rb}">${res}</span></div>` : ''}
+        ${res ? `<div style="margin-left:auto"><span class="result-badge ${rb}">${koResult(res)}</span></div>` : ''}
       </div>
       <div class="analyst-confidence">신뢰도 ${conf}%</div>
       <div class="conf-bar"><div class="conf-bar-fill" style="width:${conf}%;background:${barC}"></div></div>
@@ -6375,7 +6497,7 @@ async function loadMonitorTickers() {
     </div>`;
   }).join('');
 
-  // ?좏깮 ?????꾨낫 紐⑸줉 (?묓엺 ?뺥깭)
+  // 선택 제외 후보 목록 (접힌 상태)
   const notSel = d.not_selected || [];
   if (notSel.length > 0) {
     const notSelDiv = document.createElement('div');
@@ -6672,7 +6794,7 @@ async function loadSummary() {
     // 종목명 (display_ticker에 이미 이름 없으면 name 표시)
     const tickerDisp = pos.display_ticker || pos.ticker;
     const nameDisp   = pos.name && !tickerDisp.includes(pos.name) ? pos.name : '';
-    // 트레일링 / SL / TP
+    // 트레일링 / 손절 / 목표
     const isTrailing = pos.trailing;
     const trailSlRaw = Number(pos.trail_sl || 0);
     const trailPct   = Number(pos.trail_pct || 0);
@@ -6694,7 +6816,7 @@ async function loadSummary() {
     if (isTrailing && trailSl > 0) {
       const distPct = curPrice > 0 ? ((trailSl / curPrice - 1) * 100).toFixed(1) : '';
       const tpTxt = fmtPx(tp) ? `최초 목표 ${fmtPx(tp)}` : '';
-      const trailStartTxt = fmtPx(tpPrice) ? `TP 달성가 ${fmtPx(tpPrice)}` : '';
+      const trailStartTxt = fmtPx(tpPrice) ? `목표가 달성가 ${fmtPx(tpPrice)}` : '';
       const stopTxt = `현재 스탑 ${fmtPx(trailSl)} 이하 시 자동 매도 (현재가 대비 ${distPct}%)`;
       stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${[tpTxt, trailStartTxt, stopTxt, '상방 목표 고정 없음'].filter(Boolean).join(' · ')}`;
     } else if (sl > 0 || tp > 0) {
@@ -6710,7 +6832,7 @@ async function loadSummary() {
     // Claude 판단
     const adv       = pos.hold_advice;
     const advAction = adv ? (adv.action || '') : '';
-    const advLabel  = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? 'TP 달성 → 트레일링 유지' : advAction === 'HOLD' ? '홀드 유지' : '';
+    const advLabel  = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? '목표가 달성 → 트레일링 유지' : advAction === 'HOLD' ? '보유 유지' : '';
     let advReasonText = '';
     if (adv && adv.votes) {
       const reasons = Object.values(adv.votes).filter(v => v.action === advAction && v.reason).map(v => v.reason);
@@ -6811,7 +6933,7 @@ async function reviewPosition(market, ticker, cardId) {
     if (!res.ok || data.error) {
       if (status) status.textContent = '❌ ' + (data.error || '오류');
     } else {
-      const actionKo = data.action === 'SELL' ? '매도 권고' : data.action === 'TRAIL' ? '트레일링 유지' : '홀드 유지';
+      const actionKo = data.action === 'SELL' ? '매도 권고' : data.action === 'TRAIL' ? '트레일링 유지' : '보유 유지';
       const votes    = data.votes || {};
       const reasons  = Object.values(votes).filter(v => v.reason).map(v => v.reason);
       const reason   = reasons.length ? reasons[0].slice(0, 80) : '';
@@ -7013,7 +7135,7 @@ async function loadMonthly() {
     historyTitles[2].textContent = '월별 청산 성과 요약';
   }
 
-  // ?붾퀎 李⑦듃
+  // 월별 차트
   const labels = rows.map(r => r.month);
   const pnls   = rows.map(r => r.total_pnl);
   const bgs    = pnls.map(v => v >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)');
@@ -7331,14 +7453,14 @@ function renderTrades(trades) {
     const matchTitle = [t.matched_order_no ? `주문 ${t.matched_order_no}` : '', t.matched_date || t.matched_time ? `${t.matched_date || ''} ${t.matched_time || ''}`.trim() : ''].filter(Boolean).join(' · ');
 
     if (t.source_kind_label) {
-      sourceBadge = `<div style="display:inline-block;margin-top:4px;padding:1px 6px;border-radius:999px;background:rgba(148,163,184,0.16);color:#cbd5e1;font-size:10px">${t.source_kind_label}</div>`;
+      sourceBadge = `<div style="display:inline-block;margin-top:4px;padding:1px 6px;border-radius:999px;background:rgba(148,163,184,0.16);color:#cbd5e1;font-size:10px">${koSource(t.source_kind_label)}</div>`;
     }
 
     html += `
     <tr>
       <td class="${sideCls}" style="font-weight:600;white-space:nowrap">${sideLbl}<div style="font-size:10px;color:var(--muted);margin-top:4px">${timeLbl}</div></td>
       <td style="font-weight:600">${t.display_ticker || t.ticker || '-'}</td>
-      <td><span style="color:var(--blue)">${t.strategy || '-'}</span></td>
+      <td><span style="color:var(--blue)">${koStrategy(t.strategy || '-')}</span></td>
       <td><span title="${matchTitle.replace(/"/g,'&quot;')}" style="display:inline-block;padding:2px 8px;border-radius:999px;background:${matchInfo[1]};color:${matchInfo[2]};font-size:11px;font-weight:700">${matchInfo[0]}</span></td>
       <td style="line-height:1.45">
         <div>${price}</div>
@@ -7627,7 +7749,7 @@ async function loadSummary() {
       const stratLabel = !stratRaw || stratRaw === 'broker_balance' || stratRaw === 'broker_sync' ? '' : stratRaw;
       const tickerDisp2 = pos.display_ticker || pos.ticker;
       const nameDisp2   = pos.name && !tickerDisp2.includes(pos.name) ? pos.name : '';
-      // 트레일링 / SL / TP
+      // 트레일링 / 손절 / 목표
       const isTrailing = pos.trailing;
       const trailSlRaw = Number(pos.trail_sl || 0);
       const slRaw = Number(pos.sl || 0);
@@ -7648,7 +7770,7 @@ async function loadSummary() {
       if (isTrailing && trailSl > 0) {
         const distPct = curPx > 0 ? ((trailSl / curPx - 1) * 100).toFixed(1) : '';
         const tpTxt = fmtPx(tp) ? `최초 목표 ${fmtPx(tp)}` : '';
-        const trailStartTxt = fmtPx(tpPrice) ? `TP 달성가 ${fmtPx(tpPrice)}` : '';
+        const trailStartTxt = fmtPx(tpPrice) ? `목표가 달성가 ${fmtPx(tpPrice)}` : '';
         const stopTxt = `현재 스탑 ${fmtPx(trailSl)} 이하 시 자동 매도 (현재가 대비 ${distPct}%)`;
         stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${[tpTxt, trailStartTxt, stopTxt, '상방 목표 고정 없음'].filter(Boolean).join(' · ')}`;
       } else if (sl > 0 || tp > 0) {
@@ -7674,7 +7796,7 @@ async function loadSummary() {
       const entryDate = pos.entry_date ? pos.entry_date.slice(5) : '';
       const adv = pos.hold_advice;
       const advAction = adv ? (adv.action || '') : '';
-      const advLabel = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? 'TP 달성 → 트레일링 유지' : advAction === 'HOLD' ? '홀드 유지' : '';
+      const advLabel = advAction === 'SELL' ? '매도 권고' : advAction === 'TRAIL' ? '목표가 달성 → 트레일링 유지' : advAction === 'HOLD' ? '보유 유지' : '';
       let advReasonText2 = '';
       if (adv && adv.votes) {
         const reasons2 = Object.values(adv.votes).filter(v => v.action === advAction && v.reason).map(v => v.reason);
@@ -7790,21 +7912,21 @@ async function loadClaudeControl() {
   const status = d.last_result_status || 'idle';
   const stats = d.stats || {};
 
-  badge.textContent = enabled ? 'ON' : 'OFF';
+  badge.textContent = enabled ? '켜짐' : '꺼짐';
   badge.style.color = enabled ? 'var(--green)' : 'var(--red)';
   stateLine.textContent = enabled ? `활성 상태${sess.label ? ' | ' + sess.label : ''}` : '비활성 상태';
   metaLine.textContent = [
     d.last_trigger_at ? `마지막 트리거 ${String(d.last_trigger_at).slice(11, 19)}` : '',
-    d.last_result_at ? `마지막 결과 ${status}` : '',
+    d.last_result_at ? `마지막 결과 ${koResult(status)}` : '',
     pending ? `대기 ${pending.market} ${String(pending.requested_at || '').slice(11, 19)}` : '',
     stats.count ? `오늘 적중 ${stats.win_rate}% (${stats.wins}/${stats.count})` : ''
   ].filter(Boolean).join(' | ') || '--';
   const statsLine = stats.count
-    ? `오늘 판단 ${stats.count}건 · 모드변경 ${stats.changed}건 · 유지 ${stats.unchanged}건 · HIT ${stats.wins} / MISS ${stats.losses} / FLAT ${stats.flats} · 누적 ${fmt.krw(stats.pnl_krw || 0)}`
+    ? `오늘 판단 ${stats.count}건 · 모드변경 ${stats.changed}건 · 유지 ${stats.unchanged}건 · 적중 ${stats.wins} / 실패 ${stats.losses} / 보합 ${stats.flats} · 누적 ${fmt.krw(stats.pnl_krw || 0)}`
     : '';
   errLine.textContent = [statsLine, d.last_error || ''].filter(Boolean).join(' | ');
 
-  toggleBtn.textContent = enabled ? 'OFF로 전환' : 'ON으로 전환';
+  toggleBtn.textContent = enabled ? '끄기' : '켜기';
   toggleBtn.style.background = enabled ? '#7f1d1d' : '#065f46';
   triggerBtn.disabled = !enabled || !sess.active;
   triggerBtn.style.opacity = triggerBtn.disabled ? '0.5' : '1';
@@ -7924,9 +8046,9 @@ async function loadClaudeNarrative() {
       'judgment',
       `오늘 합의: ${koMode(judgments.consensus.mode || '-')}`,
       [
-        bull.key_reason ? `Bull: ${bull.key_reason}` : '',
-        bear.key_reason ? `Bear: ${bear.key_reason}` : '',
-        neutral.key_reason ? `Neutral: ${neutral.key_reason}` : '',
+        bull.key_reason ? `상승 분석가: ${bull.key_reason}` : '',
+        bear.key_reason ? `하락 분석가: ${bear.key_reason}` : '',
+        neutral.key_reason ? `중립 분석가: ${neutral.key_reason}` : '',
       ].filter(Boolean).join('<br>'),
       judgments.date || ''
     ));
@@ -7935,7 +8057,7 @@ async function loadClaudeNarrative() {
   (judgments.debate_changes || []).slice(0, 3).forEach(ch => {
     rows.push(timelineRow(
       'debate',
-      `${ch.analyst || 'analyst'} 의견 변경`,
+      `${koAnalyst(ch.analyst || 'analyst')} 의견 변경`,
       `${koMode(ch.r1_stance || '-')} → ${koMode(ch.r2_stance || '-')}<br>${ch.reason || ''}`,
       '토론'
     ));
@@ -7945,7 +8067,7 @@ async function loadClaudeNarrative() {
     rows.push(timelineRow(
       'pick',
       `${t.display_ticker || t.ticker} 선택`,
-      `${t.select_reason || '선택 이유 없음'}${t.last_event_ko ? `<br>현재 상태: ${t.last_event_ko}` : (t.last_event ? `<br>현재 상태: ${t.last_event}` : '')}`,
+      `${t.select_reason || '선택 이유 없음'}${t.last_event_ko ? `<br>현재 상태: ${t.last_event_ko}` : (t.last_event ? `<br>현재 상태: ${koEvent(t.last_event)}` : '')}`,
       tickers.mode || ''
     ));
   });
@@ -8078,12 +8200,12 @@ PAGE_ANALYTICS_HTML = """
           <th>손익률</th>
           <th>시장%</th>
           <th>판정</th>
-          <th>Bull</th>
-          <th>Bear</th>
-          <th>Neutral</th>
+          <th>상승</th>
+          <th>하락</th>
+          <th>중립</th>
           <th>거래수</th>
           <th>교훈</th>
-          <th>Best / Worst</th>
+          <th>최고 / 최악</th>
         </tr>
       </thead>
       <tbody id="brain-history-tbody"></tbody>
@@ -8218,7 +8340,7 @@ async function loadBrain() {
           <div style="font-family:var(--mono);font-size:12px;line-height:2;color:var(--muted)">
             <div>영향률 <span style="color:${col}">${rate}%</span></div>
             <div>총 판단 <span style="color:var(--text)">${v.total || 0}건</span></div>
-            <div>HIT <span class="up">${v.hit || v.hits || 0}</span> / MISS <span class="down">${v.miss || v.misses || 0}</span> / PARTIAL <span class="neutral-color">${v.partial || v.partials || Math.max((v.total || 0) - (v.hit || v.hits || 0) - (v.miss || v.misses || 0), 0)}</span></div>
+            <div>적중 <span class="up">${v.hit || v.hits || 0}</span> / 실패 <span class="down">${v.miss || v.misses || 0}</span> / 부분 <span class="neutral-color">${v.partial || v.partials || Math.max((v.total || 0) - (v.hit || v.hits || 0) - (v.miss || v.misses || 0), 0)}</span></div>
             ${v.recent_streak !== undefined ? `<div>최근 연속 <span style="color:var(--text)">${v.recent_streak}</span></div>` : ''}
             ${v.avg_confidence !== undefined ? `<div>평균 신뢰도 <span style="color:var(--text)">${Math.round((v.avg_confidence||0)*100)}%</span></div>` : ''}
           </div>
@@ -8299,7 +8421,7 @@ async function loadBrainHistory() {
   function resultBadge(r) {
     if (!r) return '<span style="color:var(--muted)">-</span>';
     const col = r === 'HIT' ? 'var(--green)' : r === 'MISS' ? 'var(--red)' : 'var(--yellow)';
-    return `<span style="color:${col};font-weight:600">${r}</span>`;
+    return `<span style="color:${col};font-weight:600">${koResult(r)}</span>`;
   }
 
   // 테이블 rows
@@ -8312,7 +8434,7 @@ async function loadBrainHistory() {
       const mktChg = Number(day.market_change || 0);
       const pnlCol = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--muted)';
       const mktCol = mktChg > 0 ? 'var(--green)' : mktChg < 0 ? 'var(--red)' : 'var(--muted)';
-      const win    = day.win ? '<span style="color:var(--green)">WIN</span>' : '<span style="color:var(--red)">LOSS</span>';
+      const win    = day.win ? '<span style="color:var(--green)">승</span>' : '<span style="color:var(--red)">패</span>';
       const mode   = day.mode || '-';
       const modeCol = mode.includes('BULL') ? 'var(--green)' : mode.includes('BEAR') || mode === 'HALT' ? 'var(--red)' : mode === 'DEFENSIVE' ? 'var(--yellow)' : 'var(--cyan)';
       const lesson  = (day.key_lesson || '').slice(0, 80) || '-';
@@ -8320,12 +8442,12 @@ async function loadBrainHistory() {
       const best    = day.best_trade  ? `<span style="color:var(--green)">${day.best_trade}</span>`  : '-';
       const worst   = day.worst_trade ? `<span style="color:var(--red)">${day.worst_trade}</span>`   : '-';
       // 분석가 이유 tooltip
-      const bullTitle  = `${day.bull_stance||''}: ${day.bull_reason||''}`.replace(/"/g,'&quot;');
-      const bearTitle  = `${day.bear_stance||''}: ${day.bear_reason||''}`.replace(/"/g,'&quot;');
-      const neutTitle  = `${day.neutral_stance||''}: ${day.neutral_reason||''}`.replace(/"/g,'&quot;');
+      const bullTitle  = `${koMode(day.bull_stance||'')}: ${day.bull_reason||''}`.replace(/"/g,'&quot;');
+      const bearTitle  = `${koMode(day.bear_stance||'')}: ${day.bear_reason||''}`.replace(/"/g,'&quot;');
+      const neutTitle  = `${koMode(day.neutral_stance||'')}: ${day.neutral_reason||''}`.replace(/"/g,'&quot;');
       return `<tr>
         <td style="font-family:var(--mono);white-space:nowrap">${day.date || '-'}</td>
-        <td><span style="color:${modeCol};font-weight:600">${mode}</span></td>
+        <td><span style="color:${modeCol};font-weight:600">${koMode(mode)}</span></td>
         <td style="font-family:var(--mono);color:${pnlCol}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</td>
         <td style="font-family:var(--mono);color:${mktCol}">${mktChg >= 0 ? '+' : ''}${mktChg.toFixed(2)}%</td>
         <td>${win}</td>
@@ -8490,10 +8612,11 @@ async function loadPathB() {
   const src = cfg.source || {};
   const conflicts = src.conflicts || {};
   const conflictText = Object.keys(conflicts).length
-    ? ` | 설정 충돌 ${Object.entries(conflicts).map(([k, v]) => `${koConfigKey(k)} ${v.runtime_env}→${v.start_config}`).join(', ')}`
+    ? ` | 설정 충돌 ${Object.entries(conflicts).map(([k, v]) => `${koConfigKey(k)} ${koConfigValue(v.runtime_env)}→${koConfigValue(v.start_config)}`).join(', ')}`
     : '';
+  const ctlReason = koPathBReason(ctl.reason || '');
   document.getElementById('pathb-limits').textContent =
-    `1회 예산 ${fmtMoney(cfg.fixed_order_krw || 0)}원 | 투입금액 ${fmtMoney(m.deployed_value || 0)}원 | 동시보유 ${cfg.max_positions || 0}개 | 하루 진입 ${cfg.max_daily_entries || 0}회 | 최소 신뢰도 ${cfg.min_confidence || 0} | 당일청산 ${cfg.intraday_only ? '사용' : '미사용'} | 설정 ${src.start_config_applied ? '시작설정 적용' : 'env 기준'} | 제어 ${koControlBy(ctl.updated_by || 'default')} ${ctl.reason || ''}${conflictText}`;
+    `1회 예산 ${fmtMoney(cfg.fixed_order_krw || 0)}원 | 투입금액 ${fmtMoney(m.deployed_value || 0)}원 | 동시보유 ${cfg.max_positions || 0}개 | 하루 진입 ${cfg.max_daily_entries || 0}회 | 최소 신뢰도 ${cfg.min_confidence || 0} | 당일청산 ${cfg.intraday_only ? '사용' : '미사용'} | 설정 ${src.start_config_applied ? '시작설정 적용' : '환경변수 기준'} | 제어 ${koControlBy(ctl.updated_by || 'default')}${ctlReason ? ' ' + ctlReason : ''}${conflictText}`;
   const sel = b.selection || {};
   const sc = sel.counts || {};
   const noPlan = (sel.no_plan_reasons || []).map(koPathBSelectionReason).filter(Boolean);
@@ -8502,7 +8625,7 @@ async function loadPathB() {
     `Claude 입력 후보 ${sc.universe || 0}개 | Claude 관찰 ${sc.watchlist || 0}개 | 원래 매수 후보 ${sc.raw_trade_ready || 0}개 | 실제 적용 매수 후보 ${sc.applied_trade_ready || 0}개 | 가격목표 ${sc.price_targets || 0}개 | 생성된 B플랜 ${sc.registered_plans || 0}개`
     + `<br>상태: ${(noPlan.length ? noPlan.join(' / ') : '정상')}`
     + (missing ? `<br>가격목표 누락: ${missing}` : '')
-    + (sel.fallback_mode ? `<br>Claude 응답 복구 모드: ${sel.fallback_mode}` : '');
+    + (sel.fallback_mode ? `<br>Claude 응답 복구 모드: ${koFallbackMode(sel.fallback_mode)}` : '');
   renderEntryTiming(d.entry_timing || {});
   renderBucketMonitor(d.bucket_monitor || {});
   const brokerTruth = d.broker_truth || {};
@@ -8538,14 +8661,14 @@ async function loadPathB() {
       <td>${p.qty || ''}</td>
       <td>${p.entry || ''}</td>
       <td>${p.current_price || ''}</td>
-      <td>${p.strategy || ''}</td>
+      <td>${koStrategy(p.strategy || '')}</td>
       <td>${p.target || ''}</td>
       <td>${p.stop_loss || ''}</td>
-      <td>${p.source === 'broker_truth' ? '계좌 조회' : '로컬 fallback'}</td>
+      <td>${koSource(p.source || '')}</td>
     </tr>
   `).join('');
   document.getElementById('pathb-position-paths').innerHTML = posRows
-    ? `<table><thead><tr><th>종목</th><th>매수 경로</th><th>수량</th><th>진입가</th><th>현재가</th><th>전략</th><th>B 목표</th><th>B 손절</th><th>상태 기준</th></tr></thead><tbody>${posRows}</tbody></table>`
+    ? `<table><thead><tr><th>종목</th><th>매수 경로</th><th>수량</th><th>진입가</th><th>현재가</th><th>전략</th><th>B플랜 목표</th><th>B플랜 손절</th><th>상태 기준</th></tr></thead><tbody>${posRows}</tbody></table>`
     : '<div class="muted">현재 보유 포지션이 없습니다.</div>';
   drawPathBCharts(b.charts || {});
   const rows = (b.active || []).map(r => `
@@ -8641,11 +8764,29 @@ function koConfigKey(v) {
   return m[v] || v || '';
 }
 
+function koConfigValue(v) {
+  const raw = String(v ?? '');
+  const lower = raw.toLowerCase();
+  if (lower === 'true') return '사용';
+  if (lower === 'false') return '미사용';
+  return raw;
+}
+
 function koControlBy(v) {
   const m = {
     default: '기본값',
     telegram: '텔레그램',
     operator: '운영자'
+  };
+  return m[v] || v || '';
+}
+
+function koFallbackMode(v) {
+  const m = {
+    json_repair: 'JSON 복구',
+    partial_json: '부분 JSON 복구',
+    text_extract: '본문 추출',
+    cached_selection: '캐시 판단 사용',
   };
   return m[v] || v || '';
 }
@@ -8664,7 +8805,8 @@ function koPathBStatus(v) {
     CLOSED: '청산 완료',
     EXPIRED: '매수 미도달',
     CANCELLED: '취소',
-    ORDER_UNKNOWN: '주문상태 불명'
+    ORDER_UNKNOWN: '주문상태 불명',
+    UNKNOWN: '미확인'
   };
   return m[v] || v || '-';
 }
@@ -8696,7 +8838,13 @@ function koPathBReason(v) {
     PATHB_MAX_POSITIONS: 'B플랜 최대 보유 제한',
     PATH_DUPLICATE_HOLDING: '같은 종목 중복 보유 차단',
     PATHB_MANUALLY_DISABLED: 'B플랜 수동 중지',
-    PATHB_EMERGENCY_DISABLED: 'B플랜 긴급 중지'
+    PATHB_EMERGENCY_DISABLED: 'B플랜 긴급 중지',
+    continuation_shadow_only: '연속 상승 전략 비활성',
+    total_cap_reached: '전체 보유 한도 도달',
+    pathb_on: 'B플랜 켜짐',
+    pathb_off: 'B플랜 꺼짐',
+    pathb_kill: 'B플랜 긴급 중지',
+    pathb_closeall: 'B플랜 전체 청산'
   };
   return m[v] || v || '';
 }
@@ -8755,8 +8903,10 @@ function koPathBWatchState(v) {
 
 function koBuyPath(v) {
   const m = {
-    path_a: 'Path A - Timing Adapter',
-    path_b: 'Path B - Claude Price',
+    path_a: 'A플랜(타이밍 어댑터)',
+    path_b: 'B플랜(클로드 가격)',
+    timing_adapter: 'A플랜(타이밍 어댑터)',
+    claude_price: 'B플랜(클로드 가격)',
     manual_or_broker: '수동/브로커 동기화'
   };
   return m[v] || v || '';
@@ -8764,9 +8914,13 @@ function koBuyPath(v) {
 
 function drawPathBCharts(chartsData) {
   if (typeof Chart === 'undefined') return;
+  const statusData = {
+    ...(chartsData.status || {}),
+    labels: ((chartsData.status || {}).labels || []).map(koPathBStatus)
+  };
   drawLineChart('pathbPnlChart', 'pathbPnl', chartsData.pnl || {}, '누적 수익률 %', '#10b981');
   drawBarChart('pathbOutcomeChart', 'pathbOutcome', chartsData.outcomes || {}, '#3b82f6');
-  drawDoughnutChart('pathbStatusChart', 'pathbStatus', chartsData.status || {});
+  drawDoughnutChart('pathbStatusChart', 'pathbStatus', statusData);
 }
 
 function renderPathComparison(cmp) {
@@ -9024,32 +9178,33 @@ setInterval(loadPathB, 10000);
 """
 
 
-# ?? Flask ?쇱슦?????????????????????????????????????????????????????????????????
+# ── Flask 라우트 ───────────────────────────────────────────────────
 
 PAGE_PREOPEN_HTML = """
 <main>
   <section class="section">
     <div class="section-head">
-      <div><h2>장전 후보 Shadow</h2><p>주문/TRADE_READY에 영향 없는 preopen 관찰 데이터</p></div>
+      <div><h2>장전 후보 관찰</h2><p>주문/매수 후보에 영향 없는 장전 관찰 데이터</p></div>
       <button class="btn small" onclick="loadPreopen()">새로고침</button>
     </div>
     <div class="grid-4">
       <div class="card"><div class="card-sub">수집 상태</div><div class="metric" id="preopen-status">-</div></div>
       <div class="card"><div class="card-sub">후보 수</div><div class="metric" id="preopen-count">-</div></div>
       <div class="card"><div class="card-sub">상태 나이</div><div class="metric" id="preopen-age">-</div></div>
-      <div class="card"><div class="card-sub">Rank Diff</div><div class="metric" id="preopen-diff-count">-</div></div>
+      <div class="card"><div class="card-sub">순위 차이</div><div class="metric" id="preopen-diff-count">-</div></div>
     </div>
+    <div class="muted" id="preopen-source-status" style="margin-top:8px">-</div>
   </section>
   <section class="section">
-    <div class="section-head"><h2>Top Preopen Candidates</h2></div>
+    <div class="section-head"><h2>상위 장전 후보</h2></div>
     <div id="preopen-candidates" class="table-wrap"></div>
   </section>
   <section class="section">
-    <div class="section-head"><h2>Rank Diff</h2></div>
+    <div class="section-head"><h2>순위 차이</h2></div>
     <div id="preopen-rank-diff" class="table-wrap"></div>
   </section>
   <section class="section">
-    <div class="section-head"><h2>Post-open Outcome</h2></div>
+    <div class="section-head"><h2>개장 후 결과</h2></div>
     <div id="preopen-outcome" class="table-wrap"></div>
   </section>
 </main>
@@ -9062,6 +9217,16 @@ function fmtPreopen(v) {
 function tags(v) {
   return Array.isArray(v) ? v.join(', ') : (v || '-');
 }
+function koPreopenOutcome(v) {
+  const m = {
+    WIN: '승',
+    LOSS: '패',
+    FLAT: '보합',
+    PENDING: '대기',
+    NO_DATA: '데이터 없음',
+  };
+  return m[v] || v || '';
+}
 function tableOrEmpty(rows, headers, mapper) {
   if (!rows || !rows.length) return '<div class="muted">데이터 없음</div>';
   return '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
@@ -9072,28 +9237,33 @@ async function loadPreopen() {
   const market = getMarket();
   const d = await apiGet('/api/preopen', 'market=' + encodeURIComponent(market)).then(r => r.json()).catch(() => ({}));
   const s = d.summary || {};
-  document.getElementById('preopen-status').textContent = s.collector_status || '-';
+  document.getElementById('preopen-status').textContent = koResult(s.collector_status || '-');
   document.getElementById('preopen-count').textContent = s.candidate_count ?? 0;
-  document.getElementById('preopen-age').textContent = s.state_age_min === null || s.state_age_min === undefined ? '-' : `${s.state_age_min}m`;
+  document.getElementById('preopen-age').textContent = s.state_age_min === null || s.state_age_min === undefined ? '-' : `${s.state_age_min}분`;
   document.getElementById('preopen-diff-count').textContent = s.rank_diff_count ?? 0;
+  const ps = d.performance_summary || {};
+  document.getElementById('preopen-source-status').textContent =
+    `provider=${s.provider || '-'} · token=${s.token_status || '-'} · source=${s.source_status || '-'} · data=${s.data_quality || '-'} · review=${ps.review_status || '-'}`;
   document.getElementById('preopen-candidates').innerHTML = tableOrEmpty(
     d.candidates || [],
-    ['순위','종목','점수','등급','변동%','거래대금','스프레드','태그'],
+    ['순위','종목','점수','등급','provider','data','stale','변동%','거래대금','스프레드','태그'],
     r => [fmtPreopen(r.shadow_preopen_rank), r.ticker || '', fmtPreopen(r.preopen_score), r.preopen_grade || '',
-          fmtPreopen(r.extended_change_pct), fmtPreopen(r.extended_dollar_volume), fmtPreopen(r.spread_pct), tags(r.risk_tags)]
+          r.provider || r.source || '-', r.data_quality || '-', r.stale ? '예' : '-',
+          fmtPreopen(r.extended_change_pct ?? r.gap_pct), fmtPreopen(r.extended_dollar_volume), fmtPreopen(r.spread_pct), tags(r.risk_tags)]
   );
   document.getElementById('preopen-rank-diff').innerHTML = tableOrEmpty(
     d.rank_diff || [],
-    ['종목','Preopen','Claude','차이','선택','TradeReady','주문','사유'],
+    ['종목','장전 순위','Claude 순위','차이','선택','매수 후보','주문','사유'],
     r => [r.ticker || '', fmtPreopen(r.shadow_preopen_rank), fmtPreopen(r.actual_selection_rank), fmtPreopen(r.rank_delta),
-          r.actual_selected ? 'Y' : '-', r.actual_trade_ready ? 'Y' : '-', r.actual_ordered ? 'Y' : '-', r.actual_rejection_reason || '']
+          r.actual_selected ? '예' : '-', r.actual_trade_ready ? '예' : '-', r.actual_ordered ? '예' : '-', r.actual_rejection_reason || '']
   );
   document.getElementById('preopen-outcome').innerHTML = tableOrEmpty(
     d.outcome || [],
-    ['종목','Offset','상태','5m','30m','60m','MFE','MAE'],
-    r => [r.ticker || '', fmtPreopen(r.offset_min), r.outcome_status || '', fmtPreopen(r.post_open_5m_return_pct),
+    ['종목','경과','상태','5분','30분','60분','최대상승','최대하락','고가','종가'],
+    r => [r.ticker || '', fmtPreopen(r.offset_min), koPreopenOutcome(r.outcome_status || ''), fmtPreopen(r.post_open_5m_return_pct),
           fmtPreopen(r.post_open_30m_return_pct), fmtPreopen(r.post_open_60m_return_pct),
-          fmtPreopen(r.post_open_mfe_pct), fmtPreopen(r.post_open_mae_pct)]
+          fmtPreopen(r.max_runup_pct ?? r.post_open_mfe_pct), fmtPreopen(r.max_drawdown_pct ?? r.post_open_mae_pct),
+          fmtPreopen(r.open_to_high_pct), fmtPreopen(r.open_to_close_pct)]
   );
 }
 loadPreopen();
@@ -9175,11 +9345,11 @@ function renderLogs() {
     <tbody>${rows.map(row => `
       <tr>
         <td>${escapeHtml(String(row.timestamp || '').replace('T', ' ').slice(0, 19))}</td>
-        <td class="${logLevelClass(row.level)}">${escapeHtml(row.level || '-')}</td>
-        <td>${escapeHtml(row.source || '-')}</td>
+        <td class="${logLevelClass(row.level)}">${escapeHtml(koLevel(row.level))}</td>
+        <td>${escapeHtml(koSource(row.source || '-'))}</td>
         <td>${escapeHtml(row.market || '-')}</td>
         <td>${escapeHtml(row.ticker || '-')}</td>
-        <td>${escapeHtml(row.category || '-')}</td>
+        <td>${escapeHtml(koLogCategory(row.category || '-'))}</td>
         <td style="max-width:720px;white-space:normal;word-break:break-word">${escapeHtml(row.message || '')}</td>
       </tr>`).join('')}</tbody>
   </table>`;
@@ -9283,7 +9453,7 @@ def page_logs():
     return render_template_string(html)
 
 
-# ?? ?ㅽ뻾 ??????????????????????????????????????????????????????????????????????
+# ── 실행 ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     _write_pid_file(DASHBOARD_PID_PATH, "dashboard_server", [sys.executable, str(Path(__file__).resolve())])

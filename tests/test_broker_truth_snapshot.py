@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot, load_broker_truth_snapshot
 
@@ -96,6 +97,45 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             )
             snapshot.refresh_market("US", force=True, ttl_sec=30)
             self.assertEqual(seen, ["20260426"])
+
+    def test_token_provider_receives_market_argument(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            seen: list[str] = []
+
+            def token_provider(market: str) -> str:
+                seen.append(market)
+                return f"token-{market}"
+
+            snapshot = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "snapshot.json",
+                token_provider=token_provider,
+            )
+
+            with patch("kis_api.get_balance", return_value={"cash": 0, "stocks": []}) as get_balance, patch(
+                "kis_api.inquire_ccnl_us", return_value=[]
+            ) as inquire_us:
+                snapshot.refresh_market("US", force=True, ttl_sec=30)
+
+        self.assertEqual(seen, ["US", "US"])
+        get_balance.assert_called_once_with("token-US", market="US", force_refresh=True)
+        inquire_us.assert_called_once()
+        self.assertEqual(inquire_us.call_args.args[0], "token-US")
+
+    def test_legacy_no_arg_token_provider_remains_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "snapshot.json",
+                token_provider=lambda: "legacy-token",
+            )
+
+            with patch("kis_api.get_balance", return_value={"cash": 0, "stocks": []}) as get_balance, patch(
+                "kis_api.inquire_daily_ccld_kr", return_value=[]
+            ):
+                snapshot.refresh_market("KR", force=True, ttl_sec=30)
+
+        get_balance.assert_called_once_with("legacy-token", market="KR", force_refresh=True)
 
 
 if __name__ == "__main__":

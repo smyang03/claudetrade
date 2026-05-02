@@ -1,9 +1,28 @@
 {
   "date": "2026-03-21",
-  "vix": 0.0,
-  "dxy": 0,
-  "oil_wti": 0,
+  "vix": null,
+  "dxy": null,
+  "oil_wti": null,
   "fomc": false,
   "cpi_day": false,
-  "nfp_day": false
+  "nfp_day": false,
+  "collected_at": "2026-03-22T22:00:24",
+  "sources": {
+    "vix": "backfill_offline",
+    "dxy": "backfill_offline",
+    "oil_wti": "backfill_offline"
+  },
+  "fallback_used": {
+    "vix": false,
+    "dxy": false,
+    "oil_wti": false
+  },
+  "data_quality_flags": [
+    "vix_missing",
+    "dxy_missing",
+    "oil_wti_missing"
+  ],
+  "collection_errors": [],
+  "backfilled_at": "2026-05-03T00:33:51",
+  "backfill_version": "p0_data_quality_backfill_v1"
 }

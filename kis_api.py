@@ -12,6 +12,7 @@ import math
 import requests
 import threading
 import pandas as pd
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 from dotenv import load_dotenv
@@ -43,18 +44,29 @@ if ACCOUNT_NO and "-" not in ACCOUNT_NO:
         f"KIS_ACCOUNT_NO 포맷 오류: '{ACCOUNT_NO}' — 'XXXXXXXXXX-XX' 형식으로 입력하세요."
     )
 
-BASE_URL = os.getenv(
-    "KIS_BASE_URL",
-    (
-    "https://openapivts.koreainvestment.com:29443"
-    if IS_PAPER
-    else "https://openapi.koreainvestment.com:9443"
-    ),
+def _default_base_url(is_paper: bool) -> str:
+    return (
+        "https://openapivts.koreainvestment.com:29443"
+        if is_paper
+        else "https://openapi.koreainvestment.com:9443"
+    )
+
+
+def _default_ws_url(is_paper: bool) -> str:
+    return (
+        "ws://ops.koreainvestment.com:31000"
+        if is_paper
+        else "ws://ops.koreainvestment.com:21000"
+    )
+
+
+BASE_URL = os.getenv("KIS_BASE_URL", _default_base_url(IS_PAPER))
+BASE_URL_US = os.getenv("KIS_BASE_URL_US", "").strip() or (
+    BASE_URL if IS_PAPER_US == IS_PAPER else _default_base_url(IS_PAPER_US)
 )
-WS_URL = (
-    "ws://ops.koreainvestment.com:31000"
-    if IS_PAPER
-    else "ws://ops.koreainvestment.com:21000"
+WS_URL = _default_ws_url(IS_PAPER)
+WS_URL_US = os.getenv("KIS_WS_URL_US", "").strip() or (
+    WS_URL if IS_PAPER_US == IS_PAPER else _default_ws_url(IS_PAPER_US)
 )
 TOKEN_FILE = get_runtime_path("state", f"{'paper' if IS_PAPER else 'live'}_kis_token.json")
 KIS_HTTP_TIMEOUT = float(os.getenv("KIS_HTTP_TIMEOUT", "10"))
@@ -71,6 +83,117 @@ _KIS_HTTP_LOCK = threading.Lock()
 _KIS_LAST_CALL_TS = 0.0
 _TOKEN_ALIAS_LOCK = threading.Lock()
 _TOKEN_ALIAS: dict[str, str] = {}
+_TOKEN_MARKET: dict[str, str] = {}
+
+
+@dataclass(frozen=True)
+class KISMarketProfile:
+    market: str
+    account_no: str
+    app_key: str
+    app_secret: str
+    is_paper: bool
+    base_url: str
+    ws_url: str
+    token_file: str
+    credential_mode: str
+    shared_with_kr: bool
+
+
+def _normalize_market(market: str = "KR") -> str:
+    market_key = str(market or "KR").strip().upper()
+    return "US" if market_key == "US" else "KR"
+
+
+def _fingerprint(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _market_profile_values(market: str) -> tuple[str, str, str, bool, str, str]:
+    market_key = _normalize_market(market)
+    if market_key == "US":
+        return ACCOUNT_NO_US, APP_KEY_US, APP_SECRET_US, bool(IS_PAPER_US), BASE_URL_US, WS_URL_US
+    return ACCOUNT_NO, APP_KEY, APP_SECRET, bool(IS_PAPER), BASE_URL, WS_URL
+
+
+def _profile_shares_kr_token(market: str) -> bool:
+    market_key = _normalize_market(market)
+    if market_key == "KR":
+        return True
+    _, kr_key, kr_secret, kr_paper, kr_base, _ = _market_profile_values("KR")
+    _, us_key, us_secret, us_paper, us_base, _ = _market_profile_values("US")
+    return (
+        kr_key == us_key
+        and kr_secret == us_secret
+        and kr_paper == us_paper
+        and kr_base == us_base
+    )
+
+
+def _token_file_for_market(market: str):
+    market_key = _normalize_market(market)
+    if _profile_shares_kr_token(market_key):
+        return TOKEN_FILE
+    _, _, _, is_paper, _, _ = _market_profile_values(market_key)
+    mode = "paper" if is_paper else "live"
+    return get_runtime_path("state", f"{mode}_kis_token_{market_key.lower()}.json")
+
+
+def get_kis_market_profile(market: str = "KR") -> KISMarketProfile:
+    market_key = _normalize_market(market)
+    account_no, app_key, app_secret, is_paper, base_url, ws_url = _market_profile_values(market_key)
+    shared = _profile_shares_kr_token(market_key)
+    if market_key == "KR":
+        mode = "primary"
+    elif shared:
+        mode = "fallback_shared_kr"
+    else:
+        mode = "separate_us"
+    return KISMarketProfile(
+        market=market_key,
+        account_no=account_no,
+        app_key=app_key,
+        app_secret=app_secret,
+        is_paper=bool(is_paper),
+        base_url=base_url,
+        ws_url=ws_url,
+        token_file=str(_token_file_for_market(market_key)),
+        credential_mode=mode,
+        shared_with_kr=shared,
+    )
+
+
+def get_kis_profile_summary() -> dict:
+    profiles = {market: get_kis_market_profile(market) for market in ("KR", "US")}
+    return {
+        market: {
+            "market": profile.market,
+            "account_present": bool(profile.account_no),
+            "app_key_fingerprint": _fingerprint(profile.app_key) if profile.app_key else "",
+            "is_paper": profile.is_paper,
+            "base_url": profile.base_url,
+            "token_file": profile.token_file,
+            "credential_mode": profile.credential_mode,
+            "shared_with_kr": profile.shared_with_kr,
+        }
+        for market, profile in profiles.items()
+    }
+
+
+def _base_url(market: str = "KR") -> str:
+    return get_kis_market_profile(market).base_url
+
+
+def _ws_url(market: str = "KR") -> str:
+    return get_kis_market_profile(market).ws_url
+
+
+def _remember_token_market(token: str, market: str) -> None:
+    token_s = str(token or "").strip()
+    if not token_s:
+        return
+    with _TOKEN_ALIAS_LOCK:
+        _TOKEN_MARKET[token_s] = _normalize_market(market)
 
 # ── US 거래소 코드 영속 캐시 ────────────────────────────────────────────────────
 from pathlib import Path as _Path
@@ -196,6 +319,27 @@ def _set_bearer(headers: dict, token: str) -> None:
         headers["authorization"] = f"Bearer {token}"
 
 
+def _market_from_headers(headers: Optional[dict], token: str = "") -> str:
+    if isinstance(headers, dict):
+        raw = str(headers.get("x-kis-market") or headers.get("X-KIS-Market") or "").strip().upper()
+        if raw in {"KR", "US"}:
+            return raw
+        app_key = str(headers.get("appkey") or "").strip()
+        us_profile = get_kis_market_profile("US")
+        kr_profile = get_kis_market_profile("KR")
+        if app_key and app_key == us_profile.app_key and not us_profile.shared_with_kr:
+            return "US"
+        if app_key and app_key == kr_profile.app_key:
+            return "KR"
+    token_s = str(token or "").strip()
+    if token_s:
+        with _TOKEN_ALIAS_LOCK:
+            market = _TOKEN_MARKET.get(token_s)
+        if market in {"KR", "US"}:
+            return market
+    return "KR"
+
+
 def _response_is_token_expired(resp) -> bool:
     if getattr(resp, "status_code", 0) != 500:
         return False
@@ -213,19 +357,22 @@ def _kis_request(method: str, url: str, **kwargs):
     if isinstance(headers, dict):
         headers = dict(headers)
         old_token = _bearer_from_headers(headers)
+        request_market = _market_from_headers(headers, old_token)
         if old_token:
             with _TOKEN_ALIAS_LOCK:
-                aliased = _TOKEN_ALIAS.get(old_token)
+                aliased = _TOKEN_ALIAS.get(f"{request_market}:{old_token}") or _TOKEN_ALIAS.get(old_token)
             if aliased:
                 _set_bearer(headers, aliased)
                 kwargs["headers"] = headers
     else:
         old_token = ""
+        request_market = "KR"
     requester = requests.get if method == "GET" else requests.post
     resp = requester(url, timeout=timeout, **kwargs)
     if old_token and "/oauth2/tokenP" not in url and _response_is_token_expired(resp):
-        fresh_token = get_access_token(force_refresh=True)
+        fresh_token = get_access_token(force_refresh=True, market=request_market)
         with _TOKEN_ALIAS_LOCK:
+            _TOKEN_ALIAS[f"{request_market}:{old_token}"] = fresh_token
             _TOKEN_ALIAS[old_token] = fresh_token
         retry_headers = dict(kwargs.get("headers") or {})
         _set_bearer(retry_headers, fresh_token)
@@ -243,12 +390,14 @@ def _kis_post(url: str, **kwargs):
     return _kis_request("POST", url, **kwargs)
 
 
-def _token_cache_context() -> dict:
-    app_key_fingerprint = hashlib.sha256((APP_KEY or "").encode("utf-8")).hexdigest()[:12]
+def _token_cache_context(market: str = "KR") -> dict:
+    profile = get_kis_market_profile("KR" if _profile_shares_kr_token(market) else market)
     return {
-        "base_url": BASE_URL,
-        "app_key_fingerprint": app_key_fingerprint,
-        "is_paper": bool(IS_PAPER),
+        "market": profile.market,
+        "base_url": profile.base_url,
+        "app_key_fingerprint": _fingerprint(profile.app_key),
+        "is_paper": bool(profile.is_paper),
+        "credential_mode": profile.credential_mode,
     }
 
 
@@ -273,56 +422,62 @@ class KISOrderHTTPError(RuntimeError):
         super().__init__(message)
 
 
-def load_token():
-    if not TOKEN_FILE.exists():
+def load_token(market: str = "KR"):
+    profile = get_kis_market_profile(market)
+    token_file = _token_file_for_market(profile.market)
+    if not token_file.exists():
         return None
-    with open(TOKEN_FILE, encoding="utf-8") as f:
+    with open(token_file, encoding="utf-8") as f:
         data = json.load(f)
-    if data.get("context") != _token_cache_context():
+    if data.get("context") != _token_cache_context(profile.market):
         return None
     # 발급일이 오늘이 아니면 재발급 (KIS 토큰은 당일 자정 이후 무효화됨)
     issued_at = data.get("issued_at", "")
     if issued_at[:10] != datetime.today().strftime("%Y-%m-%d"):
         return None
     if datetime.now() < datetime.fromisoformat(data["expires_at"]) - timedelta(minutes=10):
+        _remember_token_market(data.get("access_token", ""), profile.market)
         return data
     return None
 
 
-def save_token(token, expires_in):
+def save_token(token, expires_in, market: str = "KR"):
+    profile = get_kis_market_profile(market)
+    token_file = _token_file_for_market(profile.market)
     expires_at = (datetime.now() + timedelta(seconds=expires_in)).isoformat()
     issued_at = datetime.now().isoformat()
-    with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+    with open(token_file, "w", encoding="utf-8") as f:
         json.dump(
             {
                 "access_token": token,
                 "expires_at": expires_at,
                 "issued_at": issued_at,
-                "context": _token_cache_context(),
+                "context": _token_cache_context(profile.market),
             },
             f,
         )
+    _remember_token_market(token, profile.market)
 
 
-def get_access_token(force_refresh: bool = False):
-    if force_refresh and TOKEN_FILE.exists():
-        TOKEN_FILE.unlink()
-    cached = load_token()
+def get_access_token(force_refresh: bool = False, market: str = "KR"):
+    profile = get_kis_market_profile(market)
+    token_file = _token_file_for_market(profile.market)
+    cached = None if force_refresh else load_token(profile.market)
     if cached:
         return cached["access_token"]
-    if not APP_KEY or not APP_SECRET:
-        raise RuntimeError("KIS_APP_KEY/KIS_APP_SECRET 값이 비어 있습니다. .env를 확인하세요.")
+    if not profile.app_key or not profile.app_secret:
+        raise RuntimeError(f"KIS {profile.market} APP_KEY/APP_SECRET 값이 비어 있습니다. .env를 확인하세요.")
 
     last_error = None
     for attempt in range(1, max(1, KIS_TOKEN_RETRY) + 1):
         try:
             resp = _kis_post(
-                f"{BASE_URL}/oauth2/tokenP",
-                json={"grant_type": "client_credentials", "appkey": APP_KEY, "appsecret": APP_SECRET},
+                f"{profile.base_url}/oauth2/tokenP",
+                json={"grant_type": "client_credentials", "appkey": profile.app_key, "appsecret": profile.app_secret},
             )
             resp.raise_for_status()
             data = resp.json()
-            save_token(data["access_token"], int(data.get("expires_in", 86400)))
+            save_token(data["access_token"], int(data.get("expires_in", 86400)), market=profile.market)
             return data["access_token"]
         except requests.exceptions.Timeout as e:
             last_error = e
@@ -333,19 +488,24 @@ def get_access_token(force_refresh: bool = False):
             break
 
     raise RuntimeError(
-        "KIS 토큰 발급 연결 실패. "
-        f"URL={BASE_URL}/oauth2/tokenP, timeout={KIS_HTTP_TIMEOUT}s, retries={KIS_TOKEN_RETRY}. "
+        f"KIS {profile.market} 토큰 발급 연결 실패. "
+        f"URL={profile.base_url}/oauth2/tokenP, timeout={KIS_HTTP_TIMEOUT}s, retries={KIS_TOKEN_RETRY}. "
         "망/방화벽에서 KIS 도메인(210.107.75.32) 29443/9443 포트 차단 여부를 확인하고, "
         "필요 시 KIS_BASE_URL/KIS_HTTP_TIMEOUT 값을 조정하세요."
     ) from last_error
 
 
-def _headers(token, tr_id=""):
+def _headers(token, tr_id="", market: str = "KR"):
+    profile = get_kis_market_profile(market)
+    token_s = str(token or "").strip()
+    if not token_s:
+        token_s = get_access_token(market=profile.market)
+    _remember_token_market(token_s, profile.market)
     h = {
         "Content-Type": "application/json",
-        "authorization": f"Bearer {token}",
-        "appkey": APP_KEY,
-        "appsecret": APP_SECRET,
+        "authorization": f"Bearer {token_s}",
+        "appkey": profile.app_key,
+        "appsecret": profile.app_secret,
         "custtype": "P",
     }
     if tr_id:
@@ -353,8 +513,9 @@ def _headers(token, tr_id=""):
     return h
 
 
-def get_hashkey(body, token):
-    resp = _kis_post(f"{BASE_URL}/uapi/hashkey", headers=_headers(token), json=body, timeout=10)
+def get_hashkey(body, token, market: str = "KR"):
+    profile = get_kis_market_profile(market)
+    resp = _kis_post(f"{profile.base_url}/uapi/hashkey", headers=_headers(token, market=profile.market), json=body, timeout=10)
     resp.raise_for_status()
     return resp.json()["HASH"]
 
@@ -419,8 +580,8 @@ def _probe_us_exchange_code(ticker: str, token: str):
     for order_exch, quote_exch in _US_QUOTE_CODE_MAP.items():
         try:
             resp = _kis_get(
-                f"{BASE_URL}/uapi/overseas-price/v1/quotations/price",
-                headers=_headers(token, "HHDFS00000300"),
+                f"{_base_url('US')}/uapi/overseas-price/v1/quotations/price",
+                headers=_headers(token, "HHDFS00000300", market="US"),
                 params={"AUTH": "", "EXCD": quote_exch, "SYMB": normalized},
                 timeout=10,
             )
@@ -511,8 +672,8 @@ def _get_us_quote_codes(ticker: str, token: str) -> tuple[str, str]:
 def _get_price_us_kis(ticker: str, token: str) -> dict:
     _, quote_exch = _get_us_quote_codes(ticker, token)
     resp = _kis_get(
-        f"{BASE_URL}/uapi/overseas-price/v1/quotations/price",
-        headers=_headers(token, "HHDFS00000300"),
+        f"{_base_url('US')}/uapi/overseas-price/v1/quotations/price",
+        headers=_headers(token, "HHDFS00000300", market="US"),
         params={
             "AUTH": "",
             "EXCD": quote_exch,
@@ -781,8 +942,8 @@ def _daily_ohlcv_us_kis(ticker: str, token: str, lookback_days: int = 200) -> pd
     end_dt = datetime.now()
     start_dt = end_dt - timedelta(days=max(lookback_days, 30) * 3)
     resp = _kis_get(
-        f"{BASE_URL}/uapi/overseas-price/v1/quotations/dailyprice",
-        headers=_headers(token, "HHDFS76240000"),
+        f"{_base_url('US')}/uapi/overseas-price/v1/quotations/dailyprice",
+        headers=_headers(token, "HHDFS76240000", market="US"),
         params={
             "AUTH": "",
             "EXCD": quote_exch,
@@ -1041,11 +1202,12 @@ def _get_us_cash_snapshot(token: str) -> dict:
     if IS_PAPER_US:
         return {"cash": 0.0, "orderable_cash": 0.0, "currency": "USD"}
 
-    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    profile = get_kis_market_profile("US")
+    acnt_no, acnt_prdt = profile.account_no.split("-")
     def _fetch():
         resp = _kis_get(
-            f"{BASE_URL}/uapi/overseas-stock/v1/trading/foreign-margin",
-            headers=_headers(token, "TTTC2101R"),
+            f"{profile.base_url}/uapi/overseas-stock/v1/trading/foreign-margin",
+            headers=_headers(token, "TTTC2101R", market="US"),
             params={
                 "CANO": acnt_no,
                 "ACNT_PRDT_CD": acnt_prdt,
@@ -1092,12 +1254,13 @@ def _get_balance_us_present_fallback(token: str) -> dict:
 
     inquire-balance가 실전에서 간헐적으로 500을 반환할 때 사용한다.
     """
-    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    profile = get_kis_market_profile("US")
+    acnt_no, acnt_prdt = profile.account_no.split("-")
     tr_id = "VTRP6504R" if IS_PAPER_US else "CTRP6504R"
     def _fetch():
         resp = _kis_get(
-            f"{BASE_URL}/uapi/overseas-stock/v1/trading/inquire-present-balance",
-            headers=_headers(token, tr_id),
+            f"{profile.base_url}/uapi/overseas-stock/v1/trading/inquire-present-balance",
+            headers=_headers(token, tr_id, market="US"),
             params={
                 "CANO": acnt_no,
                 "ACNT_PRDT_CD": acnt_prdt,
@@ -1160,14 +1323,15 @@ def _get_balance_us(token, force_refresh: bool = False) -> dict:
     NASD로 조회하면 모의투자에서 미국 전체 잔고 반환.
     외화(USD) 기준 → KRW 환산은 호출자가 처리.
     """
-    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    profile = get_kis_market_profile("US")
+    acnt_no, acnt_prdt = profile.account_no.split("-")
     tr_id = "VTTS3012R" if IS_PAPER_US else "TTTS3012R"
     cache_key = ("US",)
 
     def _fetch():
         resp = _kis_get(
-            f"{BASE_URL}/uapi/overseas-stock/v1/trading/inquire-balance",
-            headers=_headers(token, tr_id),
+            f"{profile.base_url}/uapi/overseas-stock/v1/trading/inquire-balance",
+            headers=_headers(token, tr_id, market="US"),
             params={
                 "CANO":           acnt_no,
                 "ACNT_PRDT_CD":   acnt_prdt,
@@ -1492,9 +1656,10 @@ def inquire_ccnl_us(token: str,
                     side_code: str = "00",
                     filled_code: str = "00",
                     sort_sqn: str = "DS") -> list[dict]:
-    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    profile = get_kis_market_profile("US")
+    acnt_no, acnt_prdt = profile.account_no.split("-")
     tr_id = "VTTS3035R" if IS_PAPER_US else "TTTS3035R"
-    headers = _headers(token, tr_id)
+    headers = _headers(token, tr_id, market="US")
     headers["custtype"] = "P"
     pdno = "" if IS_PAPER_US else (ticker or "%")
     ovrs_excg_cd = "" if IS_PAPER_US else "%"
@@ -1504,7 +1669,7 @@ def inquire_ccnl_us(token: str,
 
     def _fetch():
         resp = _kis_get(
-            f"{BASE_URL}/uapi/overseas-stock/v1/trading/inquire-ccnl",
+            f"{profile.base_url}/uapi/overseas-stock/v1/trading/inquire-ccnl",
             headers=headers,
             params={
                 "CANO": acnt_no,
@@ -1936,7 +2101,8 @@ _US_EXCHANGE_MAP = {
 
 
 def _submit_order_us_once(ticker, qty, price, side, token) -> dict:
-    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    profile = get_kis_market_profile("US")
+    acnt_no, acnt_prdt = profile.account_no.split("-")
     qty_i = int(qty or 0)
     price_f = float(price or 0)
     tr_map = {
@@ -1958,11 +2124,11 @@ def _submit_order_us_once(ticker, qty, price, side, token) -> dict:
         "ORD_DVSN":        "00",   # 모의투자는 지정가(00)만 가능
         "SLL_TYPE":        "" if side == "buy" else "00",
     }
-    headers = _headers(token, tr_map[(side, IS_PAPER_US)])
+    headers = _headers(token, tr_map[(side, IS_PAPER_US)], market="US")
     headers["custtype"] = "P"
-    headers["hashkey"]  = get_hashkey(body, token)
+    headers["hashkey"]  = get_hashkey(body, token, market="US")
     resp = _kis_post(
-        f"{BASE_URL}/uapi/overseas-stock/v1/trading/order",
+        f"{profile.base_url}/uapi/overseas-stock/v1/trading/order",
         headers=headers,
         json=body,
         timeout=15,
@@ -2087,7 +2253,8 @@ def _cancel_order_kr(ticker, order_no, qty, token, price=0) -> dict:
 
 
 def _cancel_order_us(ticker, order_no, qty, token, price=0) -> dict:
-    acnt_no, acnt_prdt = ACCOUNT_NO_US.split("-")
+    profile = get_kis_market_profile("US")
+    acnt_no, acnt_prdt = profile.account_no.split("-")
     ticker_u = str(ticker or "").strip().upper()
     qty_i = int(qty or 0)
     price_f = float(price or 0)
@@ -2103,11 +2270,11 @@ def _cancel_order_us(ticker, order_no, qty, token, price=0) -> dict:
         "MGCO_APTM_ODNO": "",
         "ORD_SVR_DVSN_CD": "0",
     }
-    headers = _headers(token, "VTTT1004U" if IS_PAPER_US else "TTTT1004U")
+    headers = _headers(token, "VTTT1004U" if IS_PAPER_US else "TTTT1004U", market="US")
     headers["custtype"] = "P"
-    headers["hashkey"] = get_hashkey(body, token)
+    headers["hashkey"] = get_hashkey(body, token, market="US")
     resp = _kis_post(
-        f"{BASE_URL}/uapi/overseas-stock/v1/trading/order-rvsecncl",
+        f"{profile.base_url}/uapi/overseas-stock/v1/trading/order-rvsecncl",
         headers=headers,
         json=body,
         timeout=15,
@@ -3081,9 +3248,10 @@ class KISWebSocket:
         self._hts_id: str = os.getenv("KIS_HTS_ID", "")
 
     def _get_ws_key(self):
+        profile = get_kis_market_profile(self.market)
         resp = _kis_post(
-            f"{BASE_URL}/oauth2/Approval",
-            json={"grant_type": "client_credentials", "appkey": APP_KEY, "secretkey": APP_SECRET},
+            f"{profile.base_url}/oauth2/Approval",
+            json={"grant_type": "client_credentials", "appkey": profile.app_key, "secretkey": profile.app_secret},
             timeout=10,
         )
         resp.raise_for_status()
@@ -3133,9 +3301,9 @@ class KISWebSocket:
         US: H0GSCNI9(모의) / H0GSCNI0(실전)
         """
         if market == "US":
-            tr_id = "H0GSCNI9" if IS_PAPER else "H0GSCNI0"
+            tr_id = "H0GSCNI9" if get_kis_market_profile("US").is_paper else "H0GSCNI0"
         else:
-            tr_id = "H0STCNI9" if IS_PAPER else "H0STCNI0"
+            tr_id = "H0STCNI9" if get_kis_market_profile("KR").is_paper else "H0STCNI0"
         return json.dumps(
             {
                 "header": {
@@ -3171,8 +3339,9 @@ class KISWebSocket:
             filled_time  = d.get("STCK_CNTG_HOUR", "").strip()
             ticker       = d.get("STCK_SHRN_ISCD", "").strip()
             side         = "buy" if d.get("SELN_BYOV_CLS", "") == "2" else "sell"
-            # dedupe
-            key = (order_no, filled_qty, filled_time)
+            raw_hash = hashlib.sha256(decrypted.encode("utf-8", errors="ignore")).hexdigest()[:24]
+            # transport-level dedupe only. Accounting idempotency is handled by the bot/fill ledger.
+            key = (market, order_no, raw_hash)
             if key in self._seen_fills:
                 return None
             self._seen_fills.add(key)
@@ -3184,6 +3353,7 @@ class KISWebSocket:
                 "filled_time":  filled_time,
                 "side":         side,
                 "market":       market,
+                "raw_hash":     raw_hash,
             }
         except Exception as e:
             log.warning(f"[KIS WS] 체결통보 파싱 오류 ({market}): {e}")
@@ -3214,7 +3384,7 @@ class KISWebSocket:
             if self.on_notice and self._hts_id:
                 ws.send(self._sub_notice("KR"))
                 ws.send(self._sub_notice("US"))
-                log.info(f"[KIS WS] KR+US 체결통보 구독 등록 ({'모의' if IS_PAPER else '실전'})")
+                log.info(f"[KIS WS] KR+US 체결통보 구독 등록 ({'모의' if get_kis_market_profile(self.market).is_paper else '실전'})")
             elif self.on_notice and not self._hts_id:
                 log.warning("[KIS WS] KIS_HTS_ID 미설정 — 체결통보 구독 스킵")
 
@@ -3289,7 +3459,7 @@ class KISWebSocket:
             except Exception:
                 pass
 
-        self.ws = websocket.WebSocketApp(WS_URL, on_open=on_open, on_message=on_message)
+        self.ws = websocket.WebSocketApp(_ws_url(self.market), on_open=on_open, on_message=on_message)
         threading.Thread(target=self.ws.run_forever, daemon=True).start()
 
     def stop(self):

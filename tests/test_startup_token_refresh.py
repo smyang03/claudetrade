@@ -11,6 +11,7 @@ class StartupTokenRefreshTests(unittest.TestCase):
     def test_startup_balance_refreshes_bot_token_on_kis_expiry(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         bot.token = "expired_token"
+        bot.tokens = {"KR": "expired_token"}
 
         with patch(
             "trading_bot.get_balance",
@@ -26,7 +27,7 @@ class StartupTokenRefreshTests(unittest.TestCase):
 
         self.assertEqual(balance["cash"], 100_000)
         self.assertEqual(bot.token, "fresh_token")
-        token_mock.assert_called_once_with(force_refresh=True)
+        token_mock.assert_called_once_with(force_refresh=True, market="KR")
         self.assertEqual(get_balance_mock.call_count, 2)
         self.assertEqual(get_balance_mock.call_args_list[0].kwargs["market"], "KR")
         self.assertEqual(get_balance_mock.call_args_list[1].kwargs["market"], "KR")
@@ -34,6 +35,7 @@ class StartupTokenRefreshTests(unittest.TestCase):
 
     def test_startup_token_helper_retries_with_backoff(self) -> None:
         bot = TradingBot.__new__(TradingBot)
+        bot.tokens = {}
 
         with patch.dict(
             "os.environ",
@@ -47,12 +49,15 @@ class StartupTokenRefreshTests(unittest.TestCase):
 
         self.assertEqual(token, "fresh_token")
         self.assertEqual(token_mock.call_count, 2)
+        self.assertEqual(token_mock.call_args_list[0].kwargs["market"], "KR")
+        self.assertEqual(token_mock.call_args_list[1].kwargs["market"], "KR")
         sleep_mock.assert_called_once_with(0.25)
 
     def test_disabled_market_balance_lookup_returns_empty_without_kis_call(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         bot.enabled_markets = {"US"}
         bot.token = "token"
+        bot.tokens = {"US": "token"}
 
         with patch("trading_bot.get_balance") as get_balance_mock:
             balance = bot._get_balance_with_token_refresh("KR")
