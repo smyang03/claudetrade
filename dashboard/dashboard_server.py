@@ -9185,7 +9185,11 @@ PAGE_PREOPEN_HTML = """
   <section class="section">
     <div class="section-head">
       <div><h2>장전 후보 관찰</h2><p>주문/매수 후보에 영향 없는 장전 관찰 데이터</p></div>
-      <button class="btn small" onclick="loadPreopen()">새로고침</button>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="preopen-session-select" class="select" onchange="selectPreopenSession(this.value)"></select>
+        <input id="preopen-session-date" class="input" type="date" style="width:150px">
+        <button class="btn small" onclick="loadPreopen()">새로고침</button>
+      </div>
     </div>
     <div class="grid-4">
       <div class="card"><div class="card-sub">수집 상태</div><div class="metric" id="preopen-status">-</div></div>
@@ -9193,6 +9197,13 @@ PAGE_PREOPEN_HTML = """
       <div class="card"><div class="card-sub">상태 나이</div><div class="metric" id="preopen-age">-</div></div>
       <div class="card"><div class="card-sub">순위 차이</div><div class="metric" id="preopen-diff-count">-</div></div>
     </div>
+    <div class="grid-4" style="margin-top:12px">
+      <div class="card"><div class="card-sub">Top3 선택</div><div class="metric" id="preopen-top3-selected">-</div></div>
+      <div class="card"><div class="card-sub">Top3 매수 후보</div><div class="metric" id="preopen-top3-ready">-</div></div>
+      <div class="card"><div class="card-sub">30분 평균</div><div class="metric" id="preopen-avg30">-</div></div>
+      <div class="card"><div class="card-sub">60분 평균</div><div class="metric" id="preopen-avg60">-</div></div>
+    </div>
+    <div id="preopen-empty-banner" class="card" style="margin-top:12px;padding:12px;display:none"></div>
     <div class="muted" id="preopen-source-status" style="margin-top:8px">-</div>
   </section>
   <section class="section">
@@ -9207,8 +9218,14 @@ PAGE_PREOPEN_HTML = """
     <div class="section-head"><h2>개장 후 결과</h2></div>
     <div id="preopen-outcome" class="table-wrap"></div>
   </section>
+  <section class="section">
+    <div class="section-head"><h2>운영 가이드</h2></div>
+    <div id="preopen-actions" class="table-wrap"></div>
+    <div id="preopen-paths" class="muted" style="margin-top:10px;line-height:1.7"></div>
+  </section>
 </main>
 <script>
+let preopenLastMarket = '';
 function fmtPreopen(v) {
   if (v === null || v === undefined || v === '') return '-';
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2);
@@ -9224,8 +9241,23 @@ function koPreopenOutcome(v) {
     FLAT: '보합',
     PENDING: '대기',
     NO_DATA: '데이터 없음',
+    pending_price_provider: '가격 대기',
   };
   return m[v] || v || '';
+}
+function koPreopenReason(v) {
+  const m = {
+    collector_not_run: 'collector 미실행',
+    token_expired: '토큰 만료',
+    token_unavailable: '토큰 없음',
+    token_invalid: '토큰 오류',
+    state_stale: '상태 오래됨',
+    no_candidates: '후보 없음',
+    waiting_for_claude_selection: 'Claude 선택 대기',
+    waiting_for_outcome_update: '결과 업데이트 대기',
+    ready: '준비됨',
+  };
+  return m[v] || v || '-';
 }
 function tableOrEmpty(rows, headers, mapper) {
   if (!rows || !rows.length) return '<div class="muted">데이터 없음</div>';
@@ -9233,17 +9265,59 @@ function tableOrEmpty(rows, headers, mapper) {
     rows.map(r => '<tr>' + mapper(r).map(c => `<td>${c}</td>`).join('') + '</tr>').join('') +
     '</tbody></table>';
 }
+function renderPreopenSessions(rows, current) {
+  const select = document.getElementById('preopen-session-select');
+  if (!select) return;
+  const options = [`<option value="">현재 세션</option>`].concat((rows || []).map(r => {
+    const label = `${r.session_date} · 후보 ${r.candidate_count ?? r.candidates_count ?? 0} · ${r.collector_status || (r.state_exists ? 'state' : 'log')}`;
+    const sel = r.session_date === current ? ' selected' : '';
+    return `<option value="${r.session_date}"${sel}>${label}</option>`;
+  }));
+  select.innerHTML = options.join('');
+}
+function selectPreopenSession(value) {
+  const input = document.getElementById('preopen-session-date');
+  if (input) input.value = value || '';
+  loadPreopen();
+}
+function renderPreopenBanner(summary, actions) {
+  const banner = document.getElementById('preopen-empty-banner');
+  if (!banner) return;
+  const reason = summary.empty_reason || '';
+  if (summary.has_data && reason === 'ready') {
+    banner.style.display = 'none';
+    banner.innerHTML = '';
+    return;
+  }
+  banner.style.display = 'block';
+  const actionHtml = (actions || []).length
+    ? `<div style="margin-top:8px;color:var(--muted)">다음 작업: ${(actions || []).map(a => `<code>${a}</code>`).join(' · ')}</div>`
+    : '';
+  banner.innerHTML = `<div style="font-weight:700">${koPreopenReason(reason)}</div><div class="muted" style="margin-top:4px">장전 shadow 데이터가 아직 완전히 쌓이지 않았습니다. 기존 주문 로직에는 영향이 없습니다.</div>${actionHtml}`;
+}
 async function loadPreopen() {
   const market = getMarket();
-  const d = await apiGet('/api/preopen', 'market=' + encodeURIComponent(market)).then(r => r.json()).catch(() => ({}));
+  const dateInput = document.getElementById('preopen-session-date');
+  if (preopenLastMarket && preopenLastMarket !== market && dateInput) dateInput.value = '';
+  preopenLastMarket = market;
+  const sessionDate = dateInput && dateInput.value ? dateInput.value : '';
+  const query = 'market=' + encodeURIComponent(market) + (sessionDate ? '&session_date=' + encodeURIComponent(sessionDate) : '');
+  const d = await apiGet('/api/preopen', query).then(r => r.json()).catch(() => ({}));
   const s = d.summary || {};
+  if (dateInput && !dateInput.value && d.session_date) dateInput.value = d.session_date;
+  renderPreopenSessions(d.recent_sessions || [], d.session_date || '');
+  renderPreopenBanner(s, d.next_actions || []);
   document.getElementById('preopen-status').textContent = koResult(s.collector_status || '-');
   document.getElementById('preopen-count').textContent = s.candidate_count ?? 0;
   document.getElementById('preopen-age').textContent = s.state_age_min === null || s.state_age_min === undefined ? '-' : `${s.state_age_min}분`;
   document.getElementById('preopen-diff-count').textContent = s.rank_diff_count ?? 0;
   const ps = d.performance_summary || {};
+  document.getElementById('preopen-top3-selected').textContent = ps.top3_selected ?? 0;
+  document.getElementById('preopen-top3-ready').textContent = ps.top3_trade_ready ?? 0;
+  document.getElementById('preopen-avg30').textContent = ps.avg_30m_return_pct === null || ps.avg_30m_return_pct === undefined ? '-' : fmtPreopen(ps.avg_30m_return_pct) + '%';
+  document.getElementById('preopen-avg60').textContent = ps.avg_60m_return_pct === null || ps.avg_60m_return_pct === undefined ? '-' : fmtPreopen(ps.avg_60m_return_pct) + '%';
   document.getElementById('preopen-source-status').textContent =
-    `provider=${s.provider || '-'} · token=${s.token_status || '-'} · source=${s.source_status || '-'} · data=${s.data_quality || '-'} · review=${ps.review_status || '-'}`;
+    `session=${d.session_date || '-'} · provider=${s.provider || '-'} · token=${s.token_status || '-'} · source=${s.source_status || '-'} · data=${s.data_quality || '-'} · reason=${koPreopenReason(s.empty_reason)} · review=${ps.review_status || '-'}`;
   document.getElementById('preopen-candidates').innerHTML = tableOrEmpty(
     d.candidates || [],
     ['순위','종목','점수','등급','provider','data','stale','변동%','거래대금','스프레드','태그'],
@@ -9265,6 +9339,17 @@ async function loadPreopen() {
           fmtPreopen(r.max_runup_pct ?? r.post_open_mfe_pct), fmtPreopen(r.max_drawdown_pct ?? r.post_open_mae_pct),
           fmtPreopen(r.open_to_high_pct), fmtPreopen(r.open_to_close_pct)]
   );
+  const guidance = d.scheduler_guidance || {};
+  const actionRows = (d.next_actions || []).map((a, i) => ({kind:'next', idx:i + 1, command:a}))
+    .concat((guidance.commands || []).map((a, i) => ({kind:'schedule', idx:i + 1, command:a})));
+  document.getElementById('preopen-actions').innerHTML = tableOrEmpty(
+    actionRows,
+    ['구분','순서','명령/확인'],
+    r => [r.kind === 'next' ? '다음 작업' : '스케줄', r.idx, `<code>${r.command}</code>`]
+  );
+  const paths = d.paths || {};
+  document.getElementById('preopen-paths').innerHTML =
+    `state: ${paths.state || '-'}<br>candidates: ${paths.candidates || '-'}<br>rank_diff: ${paths.rank_diff || '-'}<br>outcome: ${paths.outcome || '-'}`;
 }
 loadPreopen();
 setInterval(loadPreopen, 30000);
