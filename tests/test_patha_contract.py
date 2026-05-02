@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from bot.candidate_policy import normalize_selection_result
 from config.v2 import V2Config
@@ -11,6 +12,7 @@ from execution.safety_gate import SafetyContext, SafetyGate
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEventType
 from runtime.v2_lifecycle_runtime import V2LifecycleRuntime
+from trading_bot import TradingBot
 
 
 class PathAContractTests(unittest.TestCase):
@@ -42,6 +44,48 @@ class PathAContractTests(unittest.TestCase):
         self.assertEqual(meta["trade_ready"], ["005930", "000660"])
         self.assertIn("005930", meta["price_targets"])
         self.assertNotIn("035420", meta["price_targets"])
+
+    def test_missing_price_targets_are_demoted_before_path_a_trade_ready(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.today_judgment = {"market": "US", "consensus": {"mode": "MODERATE_BULL"}}
+        bot.selection_stages = {"KR": {}, "US": {}}
+        bot.selection_meta = {"KR": {}, "US": {}}
+        bot.trade_ready_tickers = {"KR": [], "US": []}
+        bot.v2 = None
+        bot.pathb = None
+
+        raw_meta = {
+            "watchlist": ["TWLO", "TEAM"],
+            "trade_ready": ["TWLO", "TEAM"],
+            "recommended_strategy": {
+                "TWLO": "opening_range_pullback",
+                "TEAM": "gap_pullback",
+            },
+            "price_targets": {
+                "TEAM": {
+                    "buy_zone_low": 100.0,
+                    "buy_zone_high": 101.0,
+                    "sell_target": 106.0,
+                    "stop_loss": 98.0,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = bot._apply_selection_meta("US", ["TWLO", "TEAM"])
+
+        self.assertEqual(meta["watchlist"], ["TWLO", "TEAM"])
+        self.assertEqual(meta["trade_ready"], ["TEAM"])
+        self.assertEqual(bot.trade_ready_tickers["US"], ["TEAM"])
+        self.assertFalse(bot._is_trade_ready_ticker("US", "TWLO"))
+        self.assertEqual(
+            meta["_runtime_filtered_trade_ready"].get("TWLO"),
+            "missing_price_target",
+        )
+        self.assertEqual(meta["_missing_price_target_demoted"], ["TWLO"])
+        self.assertEqual(list(meta["price_targets"].keys()), ["TEAM"])
 
     def test_pathb_disable_flags_do_not_block_path_a_safety_gate(self) -> None:
         gate = SafetyGate(V2Config(pathb_enabled=False, pathb_emergency_disable=True))

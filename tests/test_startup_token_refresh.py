@@ -32,6 +32,34 @@ class StartupTokenRefreshTests(unittest.TestCase):
         self.assertEqual(get_balance_mock.call_args_list[1].kwargs["market"], "KR")
         self.assertTrue(get_balance_mock.call_args_list[1].kwargs["force_refresh"])
 
+    def test_startup_token_helper_retries_with_backoff(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+
+        with patch.dict(
+            "os.environ",
+            {"STARTUP_TOKEN_ATTEMPTS": "2", "STARTUP_TOKEN_BACKOFF_SEC": "0.25"},
+            clear=False,
+        ), patch(
+            "trading_bot.get_access_token",
+            side_effect=[RuntimeError("network"), "fresh_token"],
+        ) as token_mock, patch("trading_bot.time.sleep") as sleep_mock:
+            token = bot._get_startup_token_with_backoff()
+
+        self.assertEqual(token, "fresh_token")
+        self.assertEqual(token_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(0.25)
+
+    def test_disabled_market_balance_lookup_returns_empty_without_kis_call(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.enabled_markets = {"US"}
+        bot.token = "token"
+
+        with patch("trading_bot.get_balance") as get_balance_mock:
+            balance = bot._get_balance_with_token_refresh("KR")
+
+        self.assertEqual(balance, {"cash": 0, "total_eval": 0, "stocks": []})
+        get_balance_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

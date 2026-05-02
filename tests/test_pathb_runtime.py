@@ -731,8 +731,9 @@ class PathBRuntimeTests(unittest.TestCase):
                 )
 
             advisor_pos = advisor_ask.call_args.args[0]
-            self.assertEqual(advisor_pos["current_price"], 101.25)
+            self.assertEqual(advisor_pos["current_price"], 101.25 * 1350)
             self.assertEqual(advisor_pos["display_current_price"], 101.25)
+            self.assertEqual(advisor_pos["display_avg_price"], 100.0)
             self.assertEqual(decision["decision"], "CARRY")
 
     def test_cached_carry_does_not_block_hard_target_exit(self) -> None:

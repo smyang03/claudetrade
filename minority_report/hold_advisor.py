@@ -283,7 +283,7 @@ JSON으로만 응답:
 
     try:
         resp = client.messages.create(
-            model=MODEL, max_tokens=320,
+            model=MODEL, max_tokens=700,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.content[0].text.strip()
@@ -438,14 +438,36 @@ def _log_decision(ticker: str, market: str, pos: dict,
         today   = datetime.now().strftime("%Y-%m-%d")
         log_file = log_dir / f"decisions_{today}.jsonl"
 
+        entry_price = float(pos.get("entry", 0) or 0)
+        current_price = float(pos.get("current_price", 0) or 0)
+        tp_price = float(pos.get("tp", 0) or 0)
+        price_currency = "KRW"
+        if str(market or "").upper() == "US":
+            display_entry = float(pos.get("display_avg_price", 0) or 0)
+            display_current = float(pos.get("display_current_price", 0) or 0)
+            if display_entry > 0:
+                fx_rate = (entry_price / display_entry) if entry_price > 0 else 0.0
+                entry_price = display_entry
+                if display_current > 0:
+                    current_price = display_current
+                elif current_price > 1000 and fx_rate > 0:
+                    current_price = current_price / fx_rate
+                display_tp = float(pos.get("display_tp_price", 0) or 0)
+                if display_tp > 0:
+                    tp_price = display_tp
+                elif tp_price > 1000 and fx_rate > 0:
+                    tp_price = tp_price / fx_rate
+                price_currency = "USD"
+
         entry = {
             "ts":         datetime.now().isoformat(timespec="seconds"),
             "ticker":     ticker,
             "market":     market,
-            "entry":      pos.get("entry", 0),
-            "tp_price":   pos.get("tp", 0),
-            "current":    pos.get("current_price", 0),
-            "pnl_pct":    round((pos.get("current_price", 0) / pos.get("entry", 1) - 1) * 100, 3),
+            "entry":      entry_price,
+            "tp_price":   tp_price,
+            "current":    current_price,
+            "price_currency": price_currency,
+            "pnl_pct":    round((current_price / entry_price - 1) * 100, 3) if entry_price and current_price else 0.0,
             "held_days":  pos.get("held_days", 0),
             "decision":   action,
             "decision_stage": decision_stage,

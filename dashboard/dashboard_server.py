@@ -5,7 +5,9 @@ Flask 기반 트레이딩 대시보드 웹서버
 페이지:
   /            오늘 현황
   /pathb       B플랜 실시간
+  /preopen     장전 후보
   /analytics   분석
+  /logs        위험/오류 로그
 
 실행: python dashboard_server.py
 접속: http://localhost:5000
@@ -14,7 +16,7 @@ Flask 기반 트레이딩 대시보드 웹서버
 from flask import Flask, jsonify, redirect, render_template_string, request
 from pathlib import Path
 from datetime import datetime, date, timedelta, time as dt_time
-import json, sys, os, re, subprocess, threading, atexit, time as _time
+import json, sys, os, re, subprocess, threading, atexit, time as _time, sqlite3
 from collections import Counter
 from contextlib import contextmanager
 from typing import Optional
@@ -37,6 +39,7 @@ KST = ZoneInfo("Asia/Seoul")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from runtime_paths import get_runtime_path
+from bot.session_date import resolve_session_date
 try:
     from interface.v2_ops_summary import build_v2_ops_summary
 except Exception:
@@ -98,19 +101,53 @@ PAPER_CASH = float(os.getenv("PAPER_CASH", "10000000"))
 MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "10") or 10)
 MAX_PYRAMID = int(os.getenv("MAX_PYRAMID", "8") or 8)
 SYSTEM_LOG_DIR = get_runtime_path("logs", "system", make_parents=False)
+RISK_LOG_DIR = get_runtime_path("logs", "risk", make_parents=False)
+_STATE_FILE_ALERTS: dict[str, dict] = {}
 
 
 def _normalize_mode(mode: Optional[str]) -> str:
-    value = str(mode or "paper").strip().lower()
-    return value if value in ("paper", "live") else "paper"
+    value = str(mode or "live").strip().lower()
+    return value if value in ("paper", "live") else "live"
 
 
-def _request_mode(default: str = "paper") -> str:
+def _request_mode(default: str = "live") -> str:
     mode = request.args.get("mode")
     if mode is None and request.is_json:
         body = request.get_json(silent=True) or {}
         mode = body.get("mode")
     return _normalize_mode(mode or default)
+
+
+def _record_state_file_alert(path: Path, exc: Exception, *, category: str = "state_json") -> None:
+    key = str(path)
+    _STATE_FILE_ALERTS[key] = {
+        "timestamp": datetime.now(KST).isoformat(timespec="seconds"),
+        "level": "ERROR",
+        "source": "dashboard",
+        "category": category,
+        "market": "",
+        "ticker": "",
+        "message": f"{path.name} JSON load failed: {exc}",
+        "path": key,
+    }
+
+
+def _clear_state_file_alert(path: Path) -> None:
+    _STATE_FILE_ALERTS.pop(str(path), None)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
 
 
 def _is_live_mode(mode: Optional[str]) -> bool:
@@ -175,6 +212,15 @@ def _runtime_env(mode: str) -> dict:
     except Exception:
         return {}
     return {str(k): v for k, v in (data or {}).items() if v is not None}
+
+
+def _get_env_int(mode: str, key: str, default: int) -> int:
+    env = _runtime_env(mode)
+    raw = env.get(key) or os.getenv(key)
+    try:
+        return int(raw) if raw else default
+    except (ValueError, TypeError):
+        return default
 
 
 def _runtime_bool(values: dict, key: str, default: bool) -> bool:
@@ -1565,7 +1611,9 @@ def _load_live_status(market: str, mode: str = "paper") -> dict:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+        _clear_state_file_alert(path)
+    except Exception as exc:
+        _record_state_file_alert(path, exc)
         return {}
     changed = False
     positions = []
@@ -1597,7 +1645,10 @@ def _load_live_status(market: str, mode: str = "paper") -> dict:
         data["pending_count"] = len(pending_orders)
         changed = True
     if changed:
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        try:
+            _atomic_write_text(path, json.dumps(data, ensure_ascii=False))
+        except Exception as exc:
+            _record_state_file_alert(path, exc, category="state_json_write")
     return data
 
 
@@ -1700,16 +1751,16 @@ def _load_open_positions(mode: str = "paper") -> list:
     if not path.exists():
         return []
     try:
-        return json.loads(path.read_text(encoding="utf-8")) or []
-    except Exception:
+        data = json.loads(path.read_text(encoding="utf-8")) or []
+        _clear_state_file_alert(path)
+        return data
+    except Exception as exc:
+        _record_state_file_alert(path, exc)
         return []
 
 
 def _save_open_positions(items: list, mode: str = "paper") -> None:
-    _open_positions_path(mode).write_text(
-        json.dumps(items or [], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    _atomic_write_text(_open_positions_path(mode), json.dumps(items or [], ensure_ascii=False, indent=2))
 
 
 def _merge_position_context(base: dict, overlay: Optional[dict]) -> dict:
@@ -2310,11 +2361,7 @@ def _normalize_percent_value(value: float) -> float:
 
 
 def _session_trade_date(market: str, now_dt=None):
-    now_dt = now_dt or datetime.now(KST)
-    current_date = now_dt.date()
-    if market == "US" and now_dt.time() < dt_time(5, 0):
-        return current_date - timedelta(days=1)
-    return current_date
+    return resolve_session_date(market, now_dt)
 
 
 def _extract_none_reason_tags(detail: str) -> list[str]:
@@ -2391,8 +2438,26 @@ def _today_signal_digest(market: str, selected_count: int = 0, universe_count: i
 
 
 def _count_today_entries(mode: str, market: str) -> int:
-    """오늘 날짜의 진입(type=entry) 건수를 live_decisions.jsonl에서 집계합니다."""
-    today = date.today().isoformat()
+    """당일 매수 체결 건수.
+    live 모드: 브로커 truth 스냅샷의 today_fills(side=buy) 기준.
+              KR = KST 당일, US = KST 06:00 전이면 전날(ET 당일) 세션.
+    paper 모드: decisions.jsonl 기준 (session_date 일치).
+    """
+    mkt = str(market or "").upper()
+    if mode == "live":
+        try:
+            snap_path = get_runtime_path("state", "live_broker_truth_snapshot.json")
+            if not snap_path.exists():
+                snap_path = get_runtime_path("state", "broker_truth_snapshot.json")
+            if snap_path.exists():
+                snap = json.loads(snap_path.read_text(encoding="utf-8", errors="replace"))
+                fills = (snap.get("markets") or {}).get(mkt, {}).get("today_fills", [])
+                return sum(1 for f in fills if str(f.get("side", "")).lower() == "buy")
+        except Exception:
+            pass
+        return 0
+    # paper: decisions.jsonl 기준
+    session_date = _session_trade_date(mkt).isoformat()
     path = get_runtime_path("state", f"{mode}_decisions.jsonl")
     if not path.exists():
         return 0
@@ -2404,9 +2469,9 @@ def _count_today_entries(mode: str, market: str) -> int:
                 if ev.get("type") != "entry":
                     continue
                 sd = str(ev.get("session_date", "") or ev.get("timestamp", "")[:10])
-                if sd != today:
+                if sd != session_date:
                     continue
-                if market and ev.get("market", "").upper() != market.upper():
+                if mkt and ev.get("market", "").upper() != mkt:
                     continue
                 count += 1
             except Exception:
@@ -2928,7 +2993,8 @@ def api_summary():
     mode        = _request_mode()
     today_rec   = load_today(market)
     result      = today_rec.get("actual_result", {})
-    live        = _load_live_status(market, mode=mode)   # 장중 실시간 상태
+    raw_live    = _load_live_status(market, mode=mode)   # 장중/최근 실시간 상태
+    live        = raw_live
 
     # 장중이면 라이브 상태를 우선 사용하고, 없으면 일별 기록을 쓴다
     if not _is_fresh_live_status(live, today_rec):
@@ -3041,6 +3107,11 @@ def api_summary():
     if not summary_date or summary_date[:10] != expected_date:
         summary_date = expected_date
     risk = _current_risk_snapshot(market, today_rec)
+    broker_status = raw_live.get("broker", {}) if isinstance(raw_live.get("broker", {}), dict) else {}
+    state_alerts = [
+        alert for alert in _STATE_FILE_ALERTS.values()
+        if f"{mode}_" in str(alert.get("path", "")) or not str(alert.get("path", ""))
+    ]
 
     return jsonify({
         "today": {
@@ -3079,14 +3150,18 @@ def api_summary():
             "usd_krw":        usd_krw,
             "positions":      positions,
             "position_count": len(positions),
-            "position_limit": int(os.getenv("KR_MAX_POSITIONS" if market == "KR" else "US_MAX_POSITIONS", str(MAX_POSITIONS)) or MAX_POSITIONS),
-            "position_remaining": max(int(os.getenv("KR_MAX_POSITIONS" if market == "KR" else "US_MAX_POSITIONS", str(MAX_POSITIONS)) or MAX_POSITIONS) - len(positions), 0),
+            "position_limit": _get_env_int(mode, "KR_MAX_POSITIONS" if market == "KR" else "US_MAX_POSITIONS", MAX_POSITIONS),
+            "position_remaining": max(_get_env_int(mode, "KR_MAX_POSITIONS" if market == "KR" else "US_MAX_POSITIONS", MAX_POSITIONS) - len(positions), 0),
             "pyramid_limit": MAX_PYRAMID,
             "entries_today": _count_today_entries(mode, market),
-            "max_daily_entries": int(os.getenv("V2_MAX_DAILY_ENTRIES", "20") or 20),
+            "max_daily_entries": _get_env_int(mode, "V2_MAX_DAILY_ENTRIES", 20),
             "pending_orders": pending_orders,
             "pending_count":  len(pending_orders),
             "live_updated":   live.get("updated_at", ""),
+            "state_alerts":   state_alerts,
+            "broker_trust":   broker_status.get("trust_level", ""),
+            "broker_last_ok_at": broker_status.get("last_ok_at", ""),
+            "broker_last_error": broker_status.get("last_error", ""),
             "session":        _session_status(market),
             "risk_label":     risk.get("risk_label", ""),
             "risk_value":     risk.get("risk_value", ""),
@@ -3118,6 +3193,317 @@ def api_v2_ops():
     summary = build_v2_ops_summary(market=market, runtime_mode=mode, session_date=session_date)
     _enrich_bucket_monitor_tickers(summary, market=market, mode=mode)
     return jsonify(summary)
+
+
+def _tail_lines(path: Path, max_lines: int = 600) -> list[str]:
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        return [line.rstrip("\n") for line in lines[-max_lines:]]
+    except Exception:
+        return []
+
+
+def _alert_dates_for_market(market: str) -> list[str]:
+    dates = [datetime.now(KST).strftime("%Y%m%d")]
+    try:
+        session_day = _session_trade_date(market).strftime("%Y%m%d")
+        if session_day not in dates:
+            dates.append(session_day)
+    except Exception:
+        pass
+    return dates
+
+
+def _parse_jsonl_alerts(path: Path, *, source: str, market: str, limit: int) -> list[dict]:
+    alerts = []
+    interesting = (
+        "ORDER_UNKNOWN", "SAFETY_BLOCKED", "TIMING_EXPIRED", "broker_truth",
+        "cycle error", "halt", "risk", "failed", "오류", "실패",
+    )
+    for raw in _tail_lines(path, limit * 4):
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except Exception:
+            continue
+        level = str(row.get("level", "") or "").upper()
+        message = str(row.get("message", "") or "")
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        ticker = str(extra.get("ticker") or row.get("ticker") or "")
+        row_market = str(extra.get("market") or row.get("market") or market or "")
+        text = f"{level} {message} {json.dumps(extra, ensure_ascii=False)}"
+        if level not in {"ERROR", "WARNING", "CRITICAL"} and not any(k.lower() in text.lower() for k in interesting):
+            continue
+        alerts.append({
+            "timestamp": row.get("timestamp", ""),
+            "level": level or "INFO",
+            "source": source,
+            "category": extra.get("event") or row.get("func") or path.stem,
+            "market": row_market,
+            "ticker": ticker,
+            "message": message,
+            "path": str(path),
+        })
+    return alerts[-limit:]
+
+
+def _parse_text_log_alerts(path: Path, *, source: str, market: str, limit: int) -> list[dict]:
+    alerts = []
+    patterns = re.compile(
+        r"ERROR|WARNING|CRITICAL|ORDER_UNKNOWN|SAFETY_BLOCKED|TIMING_EXPIRED|broker_truth|cycle error|halt|risk",
+        re.IGNORECASE,
+    )
+    ts_re = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+    ticker_re = re.compile(r"\[(?P<ticker>[A-Z0-9.\-]+)\]")
+    for line in _tail_lines(path, limit * 4):
+        if not patterns.search(line):
+            continue
+        ts_match = ts_re.search(line)
+        ticker_match = ticker_re.search(line)
+        level = "ERROR" if "ERROR" in line.upper() else "WARNING" if "WARNING" in line.upper() else "INFO"
+        alerts.append({
+            "timestamp": ts_match.group("ts").replace(" ", "T") if ts_match else "",
+            "level": level,
+            "source": source,
+            "category": path.stem,
+            "market": market,
+            "ticker": ticker_match.group("ticker") if ticker_match else "",
+            "message": line[-1200:],
+            "path": str(path),
+        })
+    return alerts[-limit:]
+
+
+def _pathb_alerts_from_summary(market: str, mode: str, limit: int) -> list[dict]:
+    if build_v2_ops_summary is None:
+        return []
+    try:
+        session_date = _session_trade_date(market).isoformat() if market in {"KR", "US"} else None
+        summary = build_v2_ops_summary(market=market, runtime_mode=mode, session_date=session_date)
+    except Exception as exc:
+        return [{
+            "timestamp": datetime.now(KST).isoformat(timespec="seconds"),
+            "level": "ERROR",
+            "source": "pathb",
+            "category": "v2_ops_summary",
+            "market": market,
+            "ticker": "",
+            "message": f"V2 ops summary failed: {exc}",
+            "path": "",
+        }]
+    alerts = []
+    pathb = summary.get("path_b_live") if isinstance(summary.get("path_b_live"), dict) else {}
+    for row in pathb.get("order_unknown", []) or []:
+        alerts.append({
+            "timestamp": row.get("updated_at") or row.get("created_at") or "",
+            "level": "ERROR",
+            "source": "pathb",
+            "category": "ORDER_UNKNOWN",
+            "market": row.get("market", market),
+            "ticker": row.get("ticker", ""),
+            "message": f"주문상태 불명: {row.get('order_unknown_resolution') or row.get('status') or ''} {row.get('path_run_id') or ''}".strip(),
+            "path": "data/v2_event_store.db",
+        })
+    health = pathb.get("consistency_health") if isinstance(pathb.get("consistency_health"), dict) else {}
+    for issue in health.get("issues", []) or []:
+        alerts.append({
+            "timestamp": datetime.now(KST).isoformat(timespec="seconds"),
+            "level": "WARNING",
+            "source": "pathb",
+            "category": issue.get("code", "consistency"),
+            "market": issue.get("market", market),
+            "ticker": issue.get("ticker", ""),
+            "message": json.dumps(issue, ensure_ascii=False),
+            "path": "data/v2_event_store.db",
+        })
+    broker_truth = summary.get("broker_truth") if isinstance(summary.get("broker_truth"), dict) else {}
+    for mkt, data in (broker_truth.get("markets") or {}).items():
+        if market and mkt != market:
+            continue
+        if data.get("missing") or data.get("stale") or data.get("error"):
+            alerts.append({
+                "timestamp": broker_truth.get("generated_at", ""),
+                "level": "WARNING",
+                "source": "broker_truth",
+                "category": "broker_truth",
+                "market": mkt,
+                "ticker": "",
+                "message": f"계좌 조회 상태: missing={bool(data.get('missing'))}, stale={bool(data.get('stale'))}, error={data.get('error') or '-'}",
+                "path": "state/live_broker_truth_snapshot.json",
+            })
+    return alerts[-limit:]
+
+
+@app.route("/api/logs/alerts")
+def api_logs_alerts():
+    mode = _request_mode()
+    market = str(request.args.get("market", best_market_with_data()) or "KR").upper()
+    limit = min(int(request.args.get("limit", "200") or 200), 500)
+    alerts: list[dict] = list(_STATE_FILE_ALERTS.values())
+    dates = _alert_dates_for_market(market)
+    for day in dates:
+        error_jsonl = SYSTEM_LOG_DIR / f"{mode}_error_{day}.jsonl"
+        alerts.extend(_parse_jsonl_alerts(error_jsonl, source="system_error", market=market, limit=limit))
+        if not error_jsonl.exists():
+            alerts.extend(_parse_text_log_alerts(SYSTEM_LOG_DIR / f"{mode}_error_{day}.log", source="system_error", market=market, limit=limit))
+        alerts.extend(_parse_jsonl_alerts(SYSTEM_LOG_DIR / f"{mode}_trading_{day}.jsonl", source="trading", market=market, limit=limit))
+        risk_jsonl = RISK_LOG_DIR / f"{mode}_risk_{day}.jsonl"
+        alerts.extend(_parse_jsonl_alerts(risk_jsonl, source="risk", market=market, limit=limit))
+        if not risk_jsonl.exists():
+            alerts.extend(_parse_text_log_alerts(RISK_LOG_DIR / f"{mode}_risk_{day}.log", source="risk", market=market, limit=limit))
+    alerts.extend(_pathb_alerts_from_summary(market, mode, limit))
+    if market in {"KR", "US"}:
+        alerts = [
+            a for a in alerts
+            if not str(a.get("market") or "").strip() or str(a.get("market")).upper() == market
+        ]
+    severity_rank = {"CRITICAL": 4, "ERROR": 3, "WARNING": 2, "INFO": 1}
+    dedup = {}
+    for alert in alerts:
+        key = (
+            str(alert.get("timestamp", "")),
+            str(alert.get("source", "")),
+            str(alert.get("category", "")),
+            str(alert.get("ticker", "")),
+            str(alert.get("message", ""))[:220],
+        )
+        dedup[key] = alert
+    rows = sorted(
+        dedup.values(),
+        key=lambda a: (str(a.get("timestamp", "")), severity_rank.get(str(a.get("level", "")).upper(), 0)),
+        reverse=True,
+    )
+    return jsonify({
+        "ok": True,
+        "mode": mode,
+        "market": market,
+        "count": len(rows[:limit]),
+        "alerts": rows[:limit],
+        "state_file_alerts": list(_STATE_FILE_ALERTS.values()),
+    })
+
+
+@app.route("/api/position/chart")
+def api_position_chart():
+    mode = _request_mode()
+    market = str(request.args.get("market", best_market_with_data()) or "KR").upper()
+    ticker = str(request.args.get("ticker", "") or "").strip()
+    if market == "US":
+        ticker = ticker.upper()
+    if not ticker:
+        return jsonify({"ok": False, "error": "ticker required", "labels": [], "prices": []}), 400
+    session_date = request.args.get("session_date") or _session_trade_date(market).isoformat()
+    labels: list[str] = []
+    prices: list[float] = []
+    stages: list[str] = []
+    source = "intraday_strategy_log"
+    db_path = BASE_DIR / "data" / "intraday_strategy_log.db"
+    if db_path.exists():
+        try:
+            with sqlite3.connect(str(db_path)) as con:
+                def _rows_for_session(session_key: str):
+                    return con.execute(
+                        """
+                        SELECT ts, price, stage
+                        FROM intraday_strategy_log
+                        WHERE bot_mode=? AND session_date=? AND market=? AND UPPER(ticker)=? AND price IS NOT NULL AND price > 0
+                        ORDER BY ts ASC
+                        """,
+                        (mode, session_key, market, ticker.upper()),
+                    ).fetchall()
+                rows = _rows_for_session(session_date)
+                if not rows:
+                    latest = con.execute(
+                        """
+                        SELECT session_date
+                        FROM intraday_strategy_log
+                        WHERE bot_mode=? AND market=? AND UPPER(ticker)=? AND price IS NOT NULL AND price > 0
+                        ORDER BY session_date DESC
+                        LIMIT 1
+                        """,
+                        (mode, market, ticker.upper()),
+                    ).fetchone()
+                    if latest and latest[0]:
+                        session_date = str(latest[0])
+                        rows = _rows_for_session(session_date)
+            last_label = None
+            for ts, price, stage in rows:
+                label = str(ts or "")[11:16] or str(ts or "")[:16]
+                if label == last_label and prices:
+                    prices[-1] = float(price or 0)
+                    stages[-1] = str(stage or "")
+                    continue
+                labels.append(label)
+                prices.append(round(float(price or 0), 6))
+                stages.append(str(stage or ""))
+                last_label = label
+        except Exception as exc:
+            _record_state_file_alert(db_path, exc, category="position_chart")
+            labels, prices, stages = [], [], []
+    if len(prices) < 2:
+        source = "position_fallback"
+        pos = next(
+            (
+                p for p in _saved_positions_for_market(market, mode=mode)
+                if (str(p.get("ticker", "") or "").upper() if market == "US" else str(p.get("ticker", "") or "")) == ticker
+            ),
+            {},
+        )
+        avg_price = float(pos.get("display_avg_price", pos.get("avg_price", pos.get("entry", 0))) or 0)
+        cur_price = float(pos.get("display_current_price", pos.get("current_price", avg_price)) or 0)
+        if market == "US":
+            usd_krw = _get_usd_krw_cached()
+            currency = str(pos.get("currency") or pos.get("display_currency") or "").upper()
+            if currency != "USD" and usd_krw > 0:
+                if avg_price > 5000:
+                    avg_price = avg_price / usd_krw
+                if cur_price > 5000:
+                    cur_price = cur_price / usd_krw
+        labels = ["entry", "current"] if avg_price > 0 or cur_price > 0 else []
+        prices = [round(avg_price, 6), round(cur_price or avg_price, 6)] if labels else []
+        stages = ["entry", "current"] if labels else []
+    return jsonify({
+        "ok": True,
+        "mode": mode,
+        "market": market,
+        "ticker": ticker,
+        "session_date": session_date,
+        "source": source,
+        "labels": labels,
+        "prices": prices,
+        "stages": stages,
+        "count": len(prices),
+    })
+
+
+@app.route("/api/preopen")
+def api_preopen():
+    market = str(request.args.get("market", current_market()) or "KR").upper()
+    market = "US" if market == "US" else "KR"
+    session_date = request.args.get("session_date") or _session_trade_date(market).isoformat()
+    limit = int(request.args.get("limit", "50") or 50)
+    try:
+        from preopen.storage import load_preopen_dashboard
+        return jsonify(load_preopen_dashboard(market, session_date=session_date, limit=limit))
+    except Exception as exc:
+        return jsonify({
+            "market": market,
+            "session_date": session_date,
+            "summary": {
+                "collector_status": "unavailable",
+                "error": str(exc),
+                "candidate_count": 0,
+                "rank_diff_count": 0,
+                "outcome_count": 0,
+            },
+            "candidates": [],
+            "rank_diff": [],
+            "outcome": [],
+        })
 
 
 def _enrich_bucket_monitor_tickers(summary: dict, *, market: Optional[str], mode: str) -> None:
@@ -4999,7 +5385,9 @@ def _header_html(active_page: str) -> str:
     pages = [
         ("/",          "오늘 현황"),
         ("/pathb",     "B플랜 실시간"),
+        ("/preopen",   "장전 후보"),
         ("/analytics", "분석"),
+        ("/logs",      "로그"),
     ]
     nav_links = "".join(
         f'<a href="{url}" class="{"active" if url == active_page else ""}">{label}</a>'
@@ -5042,7 +5430,7 @@ COMMON_JS_BLOCK = """
 <script>
 // 공통 상태
 let MARKET = localStorage.getItem('market') || 'KR';
-let MODE   = localStorage.getItem('runtime_mode') || 'paper';
+let MODE   = localStorage.getItem('runtime_mode') || 'live';
 let PERIOD = localStorage.getItem('period') || 'month';
 let DATE_START = localStorage.getItem('date_start') || '';
 let DATE_END   = localStorage.getItem('date_end')   || '';
@@ -6147,13 +6535,16 @@ async function loadSummary() {
   const d = await apiGet('/api/summary', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.today) return;
   const t = d.today, p = d.period;
-  const assetSourceLabel = {
+  const rawAssetSource = String(t.asset_source || '');
+  const assetSourceLabel = (MODE === 'live' && rawAssetSource.includes('paper'))
+    ? '브로커 기준'
+    : ({
     broker: '브로커 기준',
     'broker+paper_us_cash_estimated': '브로커 기준 · US 모의현금 추정',
     'broker+paper_us_cash_estimated+live_fallback': '브로커 기준 · US 모의보정',
     'broker+live_fallback': '브로커 기준 · 라이브 보정',
     internal_fallback: '엔진 추정',
-  }[t.asset_source || ''] || (t.asset_source || '기준 미상');
+  }[rawAssetSource] || (rawAssetSource || '기준 미상'));
 
   const pnlEl = document.getElementById('today-pnl');
   pnlEl.textContent = fmt.pct(t.pnl_pct);
@@ -7027,6 +7418,54 @@ TODAY_SUMMARY_OVERRIDE_JS = """
 
 TODAY_SUMMARY_OVERRIDE_JS_V2 = """
 <script>
+async function loadPositionCharts(positions) {
+  if (typeof Chart === 'undefined' || !Array.isArray(positions)) return;
+  await Promise.all(positions.map(async pos => {
+    const ticker = String(pos.ticker || '').trim();
+    if (!ticker) return;
+    const safeId = ticker.replace(/[^A-Za-z0-9_-]/g, '_');
+    const canvasId = 'pos-chart-' + safeId;
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const d = await apiGet('/api/position/chart', 'market=' + encodeURIComponent(MARKET) + '&ticker=' + encodeURIComponent(ticker))
+      .then(r => r.json()).catch(() => ({}));
+    const labels = d.labels || [];
+    const prices = (d.prices || []).map(Number).filter(v => Number.isFinite(v));
+    const meta = document.getElementById(canvasId + '-meta');
+    if (meta) meta.textContent = d.source ? `${d.source} · ${prices.length}점` : '';
+    if (prices.length < 2) return;
+    const key = 'position_' + MARKET + '_' + safeId;
+    if (charts[key]) charts[key].destroy();
+    const first = prices[0] || 0;
+    const last = prices[prices.length - 1] || 0;
+    const color = last >= first ? '#22c55e' : '#ef4444';
+    charts[key] = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          data: prices,
+          borderColor: color,
+          backgroundColor: color + '22',
+          borderWidth: 1.5,
+          fill: true,
+          tension: 0.25,
+          pointRadius: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+        scales: {
+          x: { display: false },
+          y: { display: false }
+        }
+      }
+    });
+  }));
+}
+
 async function loadSummary() {
   const d = await apiGet('/api/summary', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.today) return;
@@ -7046,13 +7485,16 @@ async function loadSummary() {
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
     const assetBreakdown = formatAssetBreakdown(t);
-    const assetSourceLabel = {
+    const rawAssetSource = String(t.asset_source || '');
+    const assetSourceLabel = (MODE === 'live' && rawAssetSource.includes('paper'))
+      ? '브로커 기준'
+      : ({
       broker: '브로커 기준',
       'broker+paper_us_cash_estimated': '브로커 기준 · US 모의현금 추정',
       'broker+paper_us_cash_estimated+live_fallback': '브로커 기준 · US 모의보정',
       'broker+live_fallback': '브로커 기준 · 라이브 보정',
       internal_fallback: '엔진 추정',
-    }[t.asset_source || ''] || (t.asset_source || '기준 미상');
+    }[rawAssetSource] || (rawAssetSource || '기준 미상'));
     cumulativePnl.textContent = `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}${assetBreakdown ? ` · ${assetBreakdown}` : ''} · 자산 ${assetSourceLabel}`;
   }
 
@@ -7064,8 +7506,12 @@ async function loadSummary() {
     const orderTxt = t.mode_order_limit_krw ? ` | 최대매수 ${fmt.asset(t.mode_order_limit_krw)}` : '';
     const cashBreakdown = formatOrderableBreakdown(t);
     const cashTxt = cashBreakdown ? ` | 주문가능 ${cashBreakdown}` : '';
+    const brokerTxt = t.broker_trust ? ` | 브로커 ${t.broker_trust}${t.broker_last_ok_at ? ' ' + String(t.broker_last_ok_at).slice(11, 19) : ''}` : '';
+    const alertTxt = (t.state_alerts || []).length
+      ? `<div style="margin-top:6px;color:#ef4444;font-size:12px">상태 파일 경고 ${(t.state_alerts || []).length}건 · 로그 탭 확인</div>`
+      : '';
     const descTxt = modeDescription(t.mode) ? `<div style="margin-top:6px;color:var(--muted);font-size:12px">${modeDescription(t.mode)}</div>` : '';
-    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${cashTxt}${sessTxt}${riskText}${descTxt}`;
+    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${cashTxt}${sessTxt}${riskText}${brokerTxt}${descTxt}${alertTxt}`;
   }
 
   const wrEl = document.getElementById('win-rate');
@@ -7151,6 +7597,9 @@ async function loadSummary() {
         : (netPnl2 >= 0 ? '+$' : '-$') + Math.abs(netPnl2).toFixed(2);
       const netColor2 = netPnl2 >= 0 ? 'var(--green)' : 'var(--red)';
       const pnlKrwText = !isKRW && usdKrw > 0 ? fmt.krw(netPnl2 * usdKrw) : '';
+      const valueText2 = isKRW
+        ? fmt.asset(curTotal)
+        : `${fmtUsd(curTotal)}${usdKrw > 0 ? ' · ' + fmt.asset(curTotal * usdKrw) : ''}`;
       // 전략명 정제
       const stratRaw = pos.strategy || '';
       const stratLabel = !stratRaw || stratRaw === 'broker_balance' || stratRaw === 'broker_sync' ? '' : stratRaw;
@@ -7187,6 +7636,18 @@ async function loadSummary() {
         const tpTxt = fmtPx(tp) ? `목표 ${fmtPx(tp)}${tpPct}` : '';
         stopLine = [slTxt, tpTxt].filter(Boolean).join(' · ');
       }
+      const pathbPlan = pos.pathb_plan || {};
+      const pathbBuyLow = Number(pathbPlan.buy_zone_low || 0);
+      const pathbBuyHigh = Number(pathbPlan.buy_zone_high || 0);
+      const pathbTarget = Number(pathbPlan.sell_target || 0);
+      const pathbStop = Number(pathbPlan.stop_loss || 0);
+      const pathbLine = (pathbBuyLow || pathbBuyHigh || pathbTarget || pathbStop)
+        ? [
+            (pathbBuyLow || pathbBuyHigh) ? `B플랜 매수존 ${fmtPx(pathbBuyLow) || '-'}~${fmtPx(pathbBuyHigh) || '-'}` : '',
+            pathbTarget ? `목표 ${fmtPx(pathbTarget)}` : '',
+            pathbStop ? `손절 ${fmtPx(pathbStop)}` : ''
+          ].filter(Boolean).join(' · ')
+        : '';
       const heldDays = pos.held_days || 0;
       const entryDate = pos.entry_date ? pos.entry_date.slice(5) : '';
       const adv = pos.hold_advice;
@@ -7204,7 +7665,9 @@ async function loadSummary() {
              ${advReasonText2 ? `<span style="color:#94a3b8;display:block;margin-top:3px;max-height:120px;overflow-y:auto;line-height:1.45;padding-right:4px;white-space:normal">→ ${advReasonText2}</span>` : ''}
            </div>`
         : '';
-      const cardId2 = 'pos-card-us-' + pos.ticker;
+      const safeTickerId2 = String(pos.ticker || '').replace(/[^A-Za-z0-9_-]/g, '_');
+      const cardId2 = 'pos-card-' + safeTickerId2;
+      const chartId2 = 'pos-chart-' + safeTickerId2;
       return `
         <div class="card" id="${cardId2}" style="min-width:260px;flex:0 0 280px;padding:14px 16px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px">
@@ -7222,19 +7685,26 @@ async function loadSummary() {
             <div><div style="font-size:10px;color:var(--text-dim)">매수가</div><div style="font-family:var(--mono);font-size:12px">${entry}</div></div>
             <div><div style="font-size:10px;color:var(--text-dim)">현재가</div><div style="font-family:var(--mono);font-size:12px">${cur}</div></div>
           </div>
+          <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--text-dim);margin-bottom:5px">
+            <span>평가 ${valueText2}</span>
+            <span id="${chartId2}-meta"></span>
+          </div>
+          <div style="height:58px;margin:5px 0 7px 0"><canvas id="${chartId2}"></canvas></div>
           ${stopLine ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px">${stopLine}</div>` : ''}
+          ${pathbLine ? `<div style="font-size:10px;color:#93c5fd;margin-top:2px">${pathbLine}</div>` : ''}
           ${advHtml}
           <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <button onclick="reviewPosition('US','${pos.ticker}','${cardId2}')"
+            <button onclick="reviewPosition(MARKET,'${pos.ticker}','${cardId2}')"
               style="font-size:10px;padding:3px 10px;border:1px solid rgba(100,116,139,0.4);border-radius:4px;background:rgba(100,116,139,0.1);color:var(--text-dim);cursor:pointer"
               id="${cardId2}-btn">Claude 재판단</button>
-            <button onclick="immediatelySell('US','${pos.ticker}','${cardId2}')"
+            <button onclick="immediatelySell(MARKET,'${pos.ticker}','${cardId2}')"
               style="font-size:10px;padding:3px 10px;border:1px solid rgba(239,68,68,0.5);border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;cursor:pointer"
               id="${cardId2}-sell-btn">즉시 매도</button>
             <span id="${cardId2}-status" style="font-size:10px;color:var(--text-dim)"></span>
           </div>
         </div>`;
     }).join('');
+    loadPositionCharts(positions);
   }
 
 }
@@ -8534,6 +9004,185 @@ setInterval(loadPathB, 10000);
 
 # ?? Flask ?쇱슦?????????????????????????????????????????????????????????????????
 
+PAGE_PREOPEN_HTML = """
+<main>
+  <section class="section">
+    <div class="section-head">
+      <div><h2>장전 후보 Shadow</h2><p>주문/TRADE_READY에 영향 없는 preopen 관찰 데이터</p></div>
+      <button class="btn small" onclick="loadPreopen()">새로고침</button>
+    </div>
+    <div class="grid-4">
+      <div class="card"><div class="card-sub">수집 상태</div><div class="metric" id="preopen-status">-</div></div>
+      <div class="card"><div class="card-sub">후보 수</div><div class="metric" id="preopen-count">-</div></div>
+      <div class="card"><div class="card-sub">상태 나이</div><div class="metric" id="preopen-age">-</div></div>
+      <div class="card"><div class="card-sub">Rank Diff</div><div class="metric" id="preopen-diff-count">-</div></div>
+    </div>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>Top Preopen Candidates</h2></div>
+    <div id="preopen-candidates" class="table-wrap"></div>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>Rank Diff</h2></div>
+    <div id="preopen-rank-diff" class="table-wrap"></div>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>Post-open Outcome</h2></div>
+    <div id="preopen-outcome" class="table-wrap"></div>
+  </section>
+</main>
+<script>
+function fmtPreopen(v) {
+  if (v === null || v === undefined || v === '') return '-';
+  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2);
+  return String(v);
+}
+function tags(v) {
+  return Array.isArray(v) ? v.join(', ') : (v || '-');
+}
+function tableOrEmpty(rows, headers, mapper) {
+  if (!rows || !rows.length) return '<div class="muted">데이터 없음</div>';
+  return '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
+    rows.map(r => '<tr>' + mapper(r).map(c => `<td>${c}</td>`).join('') + '</tr>').join('') +
+    '</tbody></table>';
+}
+async function loadPreopen() {
+  const market = getMarket();
+  const d = await apiGet('/api/preopen', 'market=' + encodeURIComponent(market)).then(r => r.json()).catch(() => ({}));
+  const s = d.summary || {};
+  document.getElementById('preopen-status').textContent = s.collector_status || '-';
+  document.getElementById('preopen-count').textContent = s.candidate_count ?? 0;
+  document.getElementById('preopen-age').textContent = s.state_age_min === null || s.state_age_min === undefined ? '-' : `${s.state_age_min}m`;
+  document.getElementById('preopen-diff-count').textContent = s.rank_diff_count ?? 0;
+  document.getElementById('preopen-candidates').innerHTML = tableOrEmpty(
+    d.candidates || [],
+    ['순위','종목','점수','등급','변동%','거래대금','스프레드','태그'],
+    r => [fmtPreopen(r.shadow_preopen_rank), r.ticker || '', fmtPreopen(r.preopen_score), r.preopen_grade || '',
+          fmtPreopen(r.extended_change_pct), fmtPreopen(r.extended_dollar_volume), fmtPreopen(r.spread_pct), tags(r.risk_tags)]
+  );
+  document.getElementById('preopen-rank-diff').innerHTML = tableOrEmpty(
+    d.rank_diff || [],
+    ['종목','Preopen','Claude','차이','선택','TradeReady','주문','사유'],
+    r => [r.ticker || '', fmtPreopen(r.shadow_preopen_rank), fmtPreopen(r.actual_selection_rank), fmtPreopen(r.rank_delta),
+          r.actual_selected ? 'Y' : '-', r.actual_trade_ready ? 'Y' : '-', r.actual_ordered ? 'Y' : '-', r.actual_rejection_reason || '']
+  );
+  document.getElementById('preopen-outcome').innerHTML = tableOrEmpty(
+    d.outcome || [],
+    ['종목','Offset','상태','5m','30m','60m','MFE','MAE'],
+    r => [r.ticker || '', fmtPreopen(r.offset_min), r.outcome_status || '', fmtPreopen(r.post_open_5m_return_pct),
+          fmtPreopen(r.post_open_30m_return_pct), fmtPreopen(r.post_open_60m_return_pct),
+          fmtPreopen(r.post_open_mfe_pct), fmtPreopen(r.post_open_mae_pct)]
+  );
+}
+loadPreopen();
+setInterval(loadPreopen, 30000);
+</script>
+"""
+
+
+PAGE_LOGS_HTML = """
+<main>
+  <section class="section">
+    <div class="section-title">위험 / 오류 로그</div>
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+      <div class="card"><div class="card-sub">전체 알림</div><div class="metric" id="log-count">-</div></div>
+      <div class="card"><div class="card-sub">에러</div><div class="metric danger" id="log-errors">-</div></div>
+      <div class="card"><div class="card-sub">경고</div><div class="metric" id="log-warnings">-</div></div>
+      <div class="card"><div class="card-sub">상태 파일</div><div class="metric" id="log-state">-</div></div>
+    </div>
+    <div class="period-bar" style="margin-top:12px">
+      <button class="period-btn active" data-log-filter="all" onclick="setLogFilter('all')">전체</button>
+      <button class="period-btn" data-log-filter="error" onclick="setLogFilter('error')">에러</button>
+      <button class="period-btn" data-log-filter="order" onclick="setLogFilter('order')">주문 위험</button>
+      <button class="period-btn" data-log-filter="broker" onclick="setLogFilter('broker')">브로커</button>
+      <button class="period-btn" data-log-filter="pathb" onclick="setLogFilter('pathb')">B플랜</button>
+      <button class="apply-btn" onclick="loadLogs()">새로고침</button>
+      <span id="log-updated" class="muted" style="font-size:12px"></span>
+    </div>
+  </section>
+  <section class="section">
+    <div id="logs-table" class="table-wrap"></div>
+  </section>
+</main>
+<script>
+let LOG_FILTER = 'all';
+let LOG_ROWS = [];
+
+function escapeHtml(v) {
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
+function setLogFilter(filter) {
+  LOG_FILTER = filter;
+  document.querySelectorAll('[data-log-filter]').forEach(btn => btn.classList.toggle('active', btn.dataset.logFilter === filter));
+  renderLogs();
+}
+
+function logLevelClass(level) {
+  const v = String(level || '').toUpperCase();
+  if (v === 'ERROR' || v === 'CRITICAL') return 'danger';
+  if (v === 'WARNING') return 'warn';
+  return '';
+}
+
+function logMatchesFilter(row) {
+  const hay = `${row.level || ''} ${row.source || ''} ${row.category || ''} ${row.message || ''}`.toLowerCase();
+  if (LOG_FILTER === 'error') return hay.includes('error') || hay.includes('critical');
+  if (LOG_FILTER === 'order') return hay.includes('order') || hay.includes('주문') || hay.includes('safety') || hay.includes('timing');
+  if (LOG_FILTER === 'broker') return hay.includes('broker') || hay.includes('계좌');
+  if (LOG_FILTER === 'pathb') return hay.includes('pathb') || hay.includes('b플랜') || hay.includes('order_unknown');
+  return true;
+}
+
+function renderLogs() {
+  const rows = LOG_ROWS.filter(logMatchesFilter);
+  const table = document.getElementById('logs-table');
+  if (!table) return;
+  if (!rows.length) {
+    table.innerHTML = '<div class="muted">표시할 위험/오류 로그가 없습니다.</div>';
+    return;
+  }
+  table.innerHTML = `<table>
+    <thead><tr><th>시간</th><th>등급</th><th>출처</th><th>시장</th><th>종목</th><th>분류</th><th>메시지</th></tr></thead>
+    <tbody>${rows.map(row => `
+      <tr>
+        <td>${escapeHtml(String(row.timestamp || '').replace('T', ' ').slice(0, 19))}</td>
+        <td class="${logLevelClass(row.level)}">${escapeHtml(row.level || '-')}</td>
+        <td>${escapeHtml(row.source || '-')}</td>
+        <td>${escapeHtml(row.market || '-')}</td>
+        <td>${escapeHtml(row.ticker || '-')}</td>
+        <td>${escapeHtml(row.category || '-')}</td>
+        <td style="max-width:720px;white-space:normal;word-break:break-word">${escapeHtml(row.message || '')}</td>
+      </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+async function loadLogs() {
+  const d = await apiGet('/api/logs/alerts', 'market=' + encodeURIComponent(MARKET) + '&limit=250').then(r => r.json()).catch(() => ({}));
+  LOG_ROWS = d.alerts || [];
+  const errors = LOG_ROWS.filter(r => ['ERROR', 'CRITICAL'].includes(String(r.level || '').toUpperCase())).length;
+  const warnings = LOG_ROWS.filter(r => String(r.level || '').toUpperCase() === 'WARNING').length;
+  const stateAlerts = (d.state_file_alerts || []).length;
+  document.getElementById('log-count').textContent = LOG_ROWS.length;
+  document.getElementById('log-errors').textContent = errors;
+  document.getElementById('log-warnings').textContent = warnings;
+  document.getElementById('log-state').textContent = stateAlerts;
+  document.getElementById('log-updated').textContent = '갱신 ' + new Date().toLocaleTimeString();
+  renderLogs();
+}
+
+loadLogs();
+setInterval(loadLogs, 15000);
+</script>
+"""
+
+
 @app.route("/")
 def page_today():
     html = (
@@ -8576,6 +9225,18 @@ def page_pathb():
     return render_template_string(html)
 
 
+@app.route("/preopen")
+def page_preopen():
+    html = (
+        _head("장전 후보")
+        + _header_html("/preopen")
+        + COMMON_JS_BLOCK
+        + PAGE_PREOPEN_HTML
+        + "</body></html>"
+    )
+    return render_template_string(html)
+
+
 @app.route("/analytics")
 def page_analytics():
     html = (
@@ -8583,6 +9244,18 @@ def page_analytics():
         + _header_html("/analytics")
         + COMMON_JS_BLOCK
         + PAGE_ANALYTICS_HTML
+        + "</body></html>"
+    )
+    return render_template_string(html)
+
+
+@app.route("/logs")
+def page_logs():
+    html = (
+        _head("로그")
+        + _header_html("/logs")
+        + COMMON_JS_BLOCK
+        + PAGE_LOGS_HTML
         + "</body></html>"
     )
     return render_template_string(html)
@@ -8599,6 +9272,8 @@ if __name__ == "__main__":
     print()
     print("  /            오늘 현황")
     print("  /pathb       B플랜 실시간")
+    print("  /preopen     장전 후보")
     print("  /analytics   분석")
+    print("  /logs        위험/오류 로그")
     print("=" * 52)
     app.run(host="0.0.0.0", port=5000, debug=False)

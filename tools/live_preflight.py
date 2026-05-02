@@ -830,6 +830,8 @@ def _static_code_checks() -> list[CheckResult]:
         match = re.search(rf"^def\s+{re.escape(name)}\b.*?(?=^def\s+|\Z)", source, re.M | re.S)
         return match.group(0) if match else ""
 
+    selection_retry_prompt = _func_block(analysts, "_build_selection_retry_prompt")
+
     markers = {
         "code.token_refresh_helper": "_get_balance_with_token_refresh" in trading and "get_access_token(force_refresh=True)" in trading,
         "code.pathb_startup_recovery": "self.pathb.recover_on_startup()" in trading,
@@ -854,7 +856,11 @@ def _static_code_checks() -> list[CheckResult]:
         "code.path_arbiter_wired": "PathExecutionArbiter" in v2_runtime and "arbitrate_path_a_entry" in trading and "PATHB_ORDER_UNKNOWN_SAME_TICKER" in arbiter,
         "code.same_day_reentry_guard_wired": "SameDayReentryGuard" in v2_runtime and "_v2_same_day_reentry_decision" in trading and "KR_REENTRY_COOLDOWN_MINUTES" in _repo_text("config", "v2.py"),
         "claude.price_targets_required": "price_targets is required for every trade_ready ticker" in analysts,
-        "claude.retry_prompt_price_targets": "price_targets 안의 entry_rationale" in analysts and '"price_targets"' in analysts,
+        "claude.retry_prompt_omits_price_targets": (
+            "DO NOT include price_targets in this response" in selection_retry_prompt
+            and '"price_targets"' not in selection_retry_prompt
+            and "entry_rationale" not in selection_retry_prompt
+        ),
         "claude.no_same_session_watch_chase": "Do not promote a ticker to trade_ready solely because it moved after watch_only earlier in the same session" in analysts,
         "dashboard.path_comparison": "pathbCompareChart" in dashboard and "path_comparison" in ops_summary,
         "dashboard.pathb_state_truth": "path_runs_for_session" in ops_summary and "path_b_live" in ops_summary,

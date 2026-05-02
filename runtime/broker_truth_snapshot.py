@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -353,12 +353,15 @@ class BrokerTruthSnapshot:
             digits = re.sub(r"[^0-9]", "", raw)
             if len(digits) >= 8:
                 return digits[:8]
-        return self._today_yyyymmdd()
+        return self._session_yyyymmdd(market)
 
     @staticmethod
-    def _today_yyyymmdd() -> str:
-        current = datetime.now(KST) if KST is not None else datetime.now()
-        return current.strftime("%Y%m%d")
+    def _session_yyyymmdd(market: str = "KR") -> str:
+        now = datetime.now(KST) if KST is not None else datetime.now()
+        # US 세션은 KST 기준 전날 밤 시작 → KST 06:00 이전이면 전날 날짜(ET 당일)
+        if str(market).upper() == "US" and now.hour < 6:
+            now = now - timedelta(days=1)
+        return now.strftime("%Y%m%d")
 
 
 def load_broker_truth_snapshot(runtime_mode: str = "live", *, path: str | Path | None = None) -> dict[str, Any]:

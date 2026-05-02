@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover - python<3.9 fallback
 
 from risk_manager import HARD_RULES
 from logger import get_trading_logger
+from bot.session_date import resolve_session_date
 
 log = get_trading_logger()
 KST = ZoneInfo("Asia/Seoul")
@@ -27,11 +28,7 @@ _ec_cache: dict = {}
 
 def _market_session_date(market: str, now_dt=None):
     """시장 세션 기준 날짜. US는 KST 자정~05:00 구간을 전일 세션으로 본다."""
-    now_dt = now_dt or datetime.now(KST)
-    d = now_dt.date()
-    if market == "US" and now_dt.time() < dt_time(5, 0):
-        return d - timedelta(days=1)
-    return d
+    return resolve_session_date(market, now_dt)
 
 
 def _market_close_anchor_at(market: str, now_dt: datetime) -> datetime:

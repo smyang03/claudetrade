@@ -201,6 +201,28 @@ class PathBSellReconcileTests(unittest.TestCase):
             self.assertEqual(run["status"], "ORDER_UNKNOWN")
             self.assertIn("session_end_unresolved", run["plan"]["order_unknown_detail"])
 
+    def test_exit_order_unknown_does_not_recover_from_entry_buy_fill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": [{"ticker": "SNAP", "qty": 12, "avg_price": 6.0, "current_price": 6.1}]},
+                ccld_provider=lambda market, day: [
+                    {"ticker": "SNAP", "side": "buy", "order_no": "buy1", "order_qty": 12, "filled_qty": 12, "remaining_qty": 0, "avg_price": 6.0}
+                ],
+            )
+
+            sell_summary = runtime.finalize_sell_pending_at_session_close("US")
+            unknown_summary = runtime.finalize_order_unknowns_at_session_close("US")
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(sell_summary["order_unknown"], 1)
+            self.assertEqual(unknown_summary["recovered_fill"], 0)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "session_end_unresolved")
+            self.assertEqual(run["plan"]["order_unknown_side"], "exit")
+            self.assertFalse(run["plan"]["broker_today_sell_fill_evidence"])
+            self.assertEqual(len(runtime.bot.risk.positions), 1)
+
     def test_stale_filled_without_broker_position_recovers_from_ccld_sell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")

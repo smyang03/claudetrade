@@ -5,6 +5,7 @@ trading_bot.py에서 이동 (로직 변경 없음)
 """
 
 import json
+import os
 from datetime import datetime, timedelta, time as dt_time
 from typing import Optional
 
@@ -32,6 +33,26 @@ CLAUDE_CONTROL_FILE.parent.mkdir(parents=True, exist_ok=True)
 DAILY_BASELINE_FILE = get_runtime_path("state", "daily_baseline.json")
 
 
+def _atomic_json_dump(path, payload, *, indent=2, default=str) -> None:
+    """Write JSON through a temp file so readers never see a partial document."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, ensure_ascii=False, indent=indent, default=default)
+    json.loads(text)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+
 class StateMixin:
 
     @property
@@ -46,16 +67,14 @@ class StateMixin:
         """
         carry = list(self.risk.positions)  # 보유 중인 모든 포지션 저장
         _path = get_runtime_path("state", f"{self._mode}_open_positions.json")
-        with open(_path, "w", encoding="utf-8") as f:
-            json.dump(carry, f, ensure_ascii=False, indent=2, default=str)
+        _atomic_json_dump(_path, carry, indent=2, default=str)
         if carry:
             log.info(f"[포지션 저장] {[p['ticker'] for p in carry]} ({len(carry)}개) → {_path}")
 
     def _save_pending_orders(self):
         self._normalize_pending_orders()
         _path = get_runtime_path("state", f"{self._mode}_pending_orders.json")
-        with open(_path, "w", encoding="utf-8") as f:
-            json.dump(self.pending_orders, f, ensure_ascii=False, indent=2, default=str)
+        _atomic_json_dump(_path, self.pending_orders, indent=2, default=str)
 
     def _parse_pending_created_at(self, order: dict):
         raw = order.get("created_at", "")

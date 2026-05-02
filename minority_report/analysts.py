@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_analysis_logger, get_judgment_logger, get_minority_logger
 from credit_tracker import record as credit_record
 from minority_report.raw_call_logger import save as save_raw_call
+from minority_report.active_lessons import build_active_lesson_context
 from bot.candidate_policy import normalize_selection_result, selection_limits
 from minority_report.prompt_contracts import (
     COMMON_DECISION_CONTRACT,
@@ -584,6 +585,7 @@ def _build_selection_retry_prompt(
     retry_candidates: list[dict],
     market_change_pct: Optional[float] = None,
     secondary_change_pct: Optional[float] = None,
+    active_lessons_context: str = "",
 ) -> str:
     lines = []
     for candidate in retry_candidates:
@@ -628,12 +630,13 @@ def _build_selection_retry_prompt(
     watch_max = min(selection_limits(market)["watch_max"], len(retry_candidates))
     trade_max = min(selection_limits(market)["trade_max"], len(retry_candidates))
     watch_floor = min(watch_max, 10 if len(retry_candidates) >= 15 else max(1, len(retry_candidates) // 2))
+    active_section = f"\n{active_lessons_context[:500]}\n" if active_lessons_context else ""
     return f"""이전 종목선정 응답이 잘려서 다시 묻습니다. 이번에는 watchlist/trade_ready/reasons만 반환하세요.
 시장: {market}
 모드: {consensus_mode}
 후보:
 {chr(10).join(lines)}
-
+{active_section}
 {COMMON_DECISION_CONTRACT}
 
 Required output rules:
@@ -1251,7 +1254,20 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         log.debug(f"[ticker-selection] tuner context skipped: {_e}")
 
     selection_feedback = _recent_selection_feedback_section(market)
-    lesson_section = f"\n{lesson_context[:500]}\n" if lesson_context else ""
+    active_lessons = build_active_lesson_context(market)
+    active_lesson_meta = dict(active_lessons.get("metadata") or {})
+    log.info(
+        f"[active_lessons] {market} selected={active_lesson_meta.get('count', 0)} "
+        f"injected={active_lesson_meta.get('injected', False)} "
+        f"shadow={active_lesson_meta.get('shadow', True)} "
+        f"chars={active_lesson_meta.get('chars', 0)}"
+    )
+    active_lesson_section = str(active_lessons.get("section") or "")
+    lesson_section = (
+        f"\n{active_lesson_section}\n"
+        if active_lesson_section
+        else (f"\n{lesson_context[:500]}\n" if lesson_context else "")
+    )
     prompt = f"""오늘 {market} 세션에서 후보를 WATCH와 TRADE_READY로 분리하세요.
 합의 모드: {consensus_mode}
 후보 종목:
@@ -1280,6 +1296,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 - recommended_strategy and max_position_pct must reflect conviction and risk, not generic defaults.
 - max_order_cap_pct, allocation_intent, and risk_budget_pct must reflect conviction and risk, not generic defaults.
 - max_position_pct is a legacy alias for max_order_cap_pct. It caps the system order budget and is not final portfolio weight or final quantity.
+- price_targets is required for every trade_ready ticker in the primary response.
 - recommended_strategy, risk_tags, max_position_pct는 trade_ready 종목에 대해서만 채우세요.
 - price_targets는 trade_ready 종목에 대해서만 채우세요. watch_only 종목에는 price_targets를 쓰지 마세요.
 - price_targets 가격 단위는 시장 native 가격입니다. KR은 KRW, US는 USD입니다.
@@ -1376,16 +1393,20 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             market=market,
             model=MODEL,
             prompt_version="selection_rank_v3+execution_plan_v1",
+            extra={"active_lessons": active_lesson_meta},
         )
         if result.get("_fallback_mode") == "selection_partial":
             retry_candidates = _pick_selection_retry_candidates(prompt_candidates, result, market)
             if retry_candidates:
+                retry_active_lessons = build_active_lesson_context(market, retry=True)
+                retry_active_lesson_meta = dict(retry_active_lessons.get("metadata") or {})
                 retry_prompt = _build_selection_retry_prompt(
                     market,
                     consensus_mode,
                     retry_candidates,
                     market_change_pct=market_change_pct,
                     secondary_change_pct=secondary_change_pct,
+                    active_lessons_context=str(retry_active_lessons.get("section") or ""),
                 )
                 log.info(
                     f"[ticker-selection] {market} partial recovery -> lightweight retry "
@@ -1411,10 +1432,15 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                         market=market,
                         model=MODEL,
                         prompt_version="selection_retry_v2+execution_plan_v1",
+                        extra={"active_lessons": retry_active_lesson_meta},
                     )
                     if not retry_result.get("_parse_recovered") and retry_meta.get("watchlist"):
                         result = retry_result
                         selection_meta = retry_meta
+                        selection_meta["active_lessons"] = {
+                            "primary": active_lesson_meta,
+                            "retry": retry_active_lesson_meta,
+                        }
                         log.info(
                             f"[ticker-selection] {market} lightweight retry accepted: "
                             f"watch={retry_meta.get('watchlist', [])} "
@@ -1427,6 +1453,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                         )
                 except Exception as retry_exc:
                     log.warning(f"[ticker-selection] {market} lightweight retry failed: {retry_exc}")
+        selection_meta.setdefault("active_lessons", active_lesson_meta)
         tickers = selection_meta["watchlist"]
         if not tickers:
             raise ValueError("no valid tickers")

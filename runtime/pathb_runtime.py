@@ -1934,7 +1934,11 @@ class PathBRuntime:
             pos = self._find_position(market, ticker, path_run_id=path_run_id) or self._find_position(market, ticker)
             requested_qty = int((pos or {}).get("qty", 0) or 0)
         execution_id = str(plan_json.get("exit_execution_id", "") or "")
-        sell_fills = self._matching_sell_fills(fills, execution_id=execution_id)
+        sell_fills = self._matching_sell_fills(
+            fills,
+            execution_id=execution_id,
+            strict_execution=bool(execution_id),
+        )
         filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in sell_fills)
         fill_price = self._weighted_fill_price(sell_fills)
         remaining_balance_qty = self._broker_position_qty(positions)
@@ -1990,7 +1994,11 @@ class PathBRuntime:
                 return "order_unknown"
             return "partial"
 
-        open_matches = self._matching_sell_open_orders(open_orders, execution_id=execution_id)
+        open_matches = self._matching_sell_open_orders(
+            open_orders,
+            execution_id=execution_id,
+            strict_execution=bool(execution_id),
+        )
         if open_matches:
             if session_end:
                 self.adapter.mark_order_unknown(
@@ -2051,19 +2059,31 @@ class PathBRuntime:
             merge_plan=True,
         )
 
-    def _matching_sell_fills(self, fills: list[dict[str, Any]], *, execution_id: str = "") -> list[dict[str, Any]]:
+    def _matching_sell_fills(
+        self,
+        fills: list[dict[str, Any]],
+        *,
+        execution_id: str = "",
+        strict_execution: bool = False,
+    ) -> list[dict[str, Any]]:
         rows = [row for row in fills if self._side_matches(row, "sell") and int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) > 0]
         if execution_id:
             matched = [row for row in rows if str(row.get("order_no", "") or "") == execution_id]
-            if matched:
+            if matched or strict_execution:
                 return matched
         return rows
 
-    def _matching_sell_open_orders(self, open_orders: list[dict[str, Any]], *, execution_id: str = "") -> list[dict[str, Any]]:
+    def _matching_sell_open_orders(
+        self,
+        open_orders: list[dict[str, Any]],
+        *,
+        execution_id: str = "",
+        strict_execution: bool = False,
+    ) -> list[dict[str, Any]]:
         rows = [row for row in open_orders if self._side_matches(row, "sell") and int(row.get("remaining_qty", 0) or 0) > 0]
         if execution_id:
             matched = [row for row in rows if str(row.get("order_no", "") or "") == execution_id]
-            if matched:
+            if matched or strict_execution:
                 return matched
         return rows
 
@@ -2355,6 +2375,7 @@ class PathBRuntime:
 
         ticker = self._ticker_key(market, plan.ticker)
         plan_json = run.get("plan") or {}
+        exit_unknown = self._order_unknown_is_exit_side(run)
         closed_lifecycle = self._pathb_closed_lifecycle_evidence(
             market,
             ticker,
@@ -2395,6 +2416,17 @@ class PathBRuntime:
                 "broker_open_order_evidence": bool(open_orders),
                 "broker_today_fill_evidence": bool(fills),
             }
+            if exit_unknown:
+                return self._reconcile_exit_order_unknown_run(
+                    path_run_id,
+                    plan,
+                    run,
+                    positions,
+                    open_orders,
+                    fills,
+                    evidence_payload,
+                    session_end=session_end,
+                )
             exact_fill = self._match_pathb_fill_by_execution(plan_json, fills)
             if exact_fill.get("row"):
                 self._recover_order_unknown_fill(path_run_id, plan, run, positions, dict(exact_fill["row"]), evidence_payload)
@@ -2501,6 +2533,17 @@ class PathBRuntime:
             "broker_open_order_evidence": bool(open_orders),
             "broker_today_fill_evidence": bool(fills),
         }
+        if exit_unknown:
+            return self._reconcile_exit_order_unknown_run(
+                path_run_id,
+                plan,
+                run,
+                positions,
+                open_orders,
+                fills,
+                evidence_payload,
+                session_end=session_end,
+            )
 
         fill_match = self._match_pathb_fill(plan, fills)
         if fill_match.get("ambiguous"):
@@ -2644,6 +2687,116 @@ class PathBRuntime:
             run for run in retryable
             if not allowed_sessions or str(run.get("session_date", "") or "") in allowed_sessions
         ]
+
+    @staticmethod
+    def _order_unknown_is_exit_side(run: dict[str, Any]) -> bool:
+        plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        detail = str(plan.get("order_unknown_detail", "") or "").lower()
+        pending_reason = str(plan.get("pending_close_reason", "") or "").lower()
+        return bool(
+            plan.get("exit_execution_id")
+            or plan.get("exit_qty")
+            or plan.get("sell_order_sent_at")
+            or "sell_" in detail
+            or "closed_" in pending_reason
+            or "pre_close" in pending_reason
+        )
+
+    def _reconcile_exit_order_unknown_run(
+        self,
+        path_run_id: str,
+        plan: PricePlan,
+        run: dict[str, Any],
+        positions: list[dict[str, Any]],
+        open_orders: list[dict[str, Any]],
+        fills: list[dict[str, Any]],
+        evidence_payload: dict[str, Any],
+        *,
+        session_end: bool,
+    ) -> str:
+        plan_json = run.get("plan") or {}
+        execution_id = str(plan_json.get("exit_execution_id", "") or "")
+        requested_qty = int(plan_json.get("exit_qty", 0) or 0)
+        if requested_qty <= 0:
+            pos = self._find_position(plan.market, plan.ticker, path_run_id=path_run_id) or self._find_position(plan.market, plan.ticker)
+            requested_qty = int((pos or {}).get("qty", 0) or 0)
+
+        sell_fills = self._matching_sell_fills(
+            fills,
+            execution_id=execution_id,
+            strict_execution=bool(execution_id),
+        )
+        filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in sell_fills)
+        remaining_balance_qty = self._broker_position_qty(positions)
+        open_matches = self._matching_sell_open_orders(
+            open_orders,
+            execution_id=execution_id,
+            strict_execution=bool(execution_id),
+        )
+        evidence = {
+            **evidence_payload,
+            "order_unknown_side": "exit",
+            "exit_execution_id": execution_id,
+            "broker_today_sell_fill_evidence": bool(sell_fills),
+            "broker_sell_fill_qty": int(filled_qty),
+            "broker_position_qty_after_sell": int(remaining_balance_qty),
+            "broker_open_sell_order_evidence": bool(open_matches),
+        }
+
+        if requested_qty > 0 and filled_qty >= requested_qty:
+            self._finalize_pathb_sell_close(
+                plan,
+                price=self._weighted_fill_price(sell_fills) or float(plan_json.get("exit_order_price", 0) or 0),
+                qty=requested_qty,
+                execution_id=execution_id or str((sell_fills[0] if sell_fills else {}).get("order_no", "") or ""),
+                close_reason=str(plan_json.get("pending_close_reason") or run.get("pending_close_reason") or "CLOSED_CLAUDE_PRICE_PRE_CLOSE"),
+                evidence=evidence,
+            )
+            self._set_order_unknown_resolution(path_run_id, "pathb_sell_fill_recovered", evidence, next_retry=False)
+            return "recovered_closed"
+
+        if filled_qty > 0:
+            remaining = max(0, int(requested_qty or filled_qty) - int(filled_qty))
+            self._update_local_pathb_remaining_qty(plan, remaining)
+            self.sell_manager.mark_sell_partial(
+                path_run_id,
+                execution_id=execution_id,
+                price=self._weighted_fill_price(sell_fills) or float(plan_json.get("exit_order_price", 0) or 0),
+                filled_qty=int(filled_qty),
+                remaining_qty=int(remaining),
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(plan.market),
+            )
+            self._set_order_unknown_resolution(path_run_id, "partial_sell_fill", evidence, next_retry=not session_end)
+            return "session_end_unresolved" if session_end else "ambiguous_broker_truth"
+
+        if open_matches:
+            self.sell_manager.mark_sell_acked(
+                path_run_id,
+                execution_id=execution_id or str(open_matches[0].get("order_no", "") or ""),
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(plan.market),
+                detail="pathb_sell_open_order_recovered",
+            )
+            self._set_order_unknown_resolution(path_run_id, "pathb_sell_open_order_recovered", evidence, next_retry=True)
+            return "recovered_open_order"
+
+        if session_end:
+            self._set_order_unknown_resolution(
+                path_run_id,
+                "session_end_unresolved",
+                {**evidence, "session_end_unresolved": True},
+                next_retry=False,
+            )
+            return "session_end_unresolved"
+
+        self._set_order_unknown_resolution(
+            path_run_id,
+            "sell_fill_not_confirmed" if remaining_balance_qty > 0 else "broker_no_sell_evidence",
+            evidence,
+            next_retry=True,
+        )
+        return "ambiguous_broker_truth"
 
     def _pathb_closed_lifecycle_evidence(
         self,
@@ -3211,7 +3364,7 @@ class PathBRuntime:
         self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
         log.warning(
             f"[PathB carry review] {plan.market} {plan.ticker} decision={decision} "
-            f"pnl={self._position_pnl_pct(pos, current):+.2f}% close_in={float(minutes_to_close or 0):.1f}m"
+            f"pnl={self._position_pnl_pct(pos, current, plan.market):+.2f}% close_in={float(minutes_to_close or 0):.1f}m"
         )
         return {"reviewed": True, **payload}
 
@@ -3251,8 +3404,20 @@ class PathBRuntime:
 
             advisor_pos = dict(pos)
             advisor_current = float(current or 0)
-            advisor_pos["current_price"] = advisor_current
-            if str(plan.market or "").upper() == "US":
+            market_key = str(plan.market or "").upper()
+            if market_key == "US":
+                fx = self._usd_krw()
+                advisor_pos["display_current_price"] = advisor_current
+                if fx > 0:
+                    advisor_pos["current_price"] = advisor_current * fx
+                if float(advisor_pos.get("display_avg_price", 0) or 0) <= 0 and fx > 0:
+                    entry_value = float(advisor_pos.get("entry", 0) or advisor_pos.get("avg_price", 0) or 0)
+                    if entry_value > 1000:
+                        advisor_pos["display_avg_price"] = entry_value / fx
+                    elif entry_value > 0:
+                        advisor_pos["display_avg_price"] = entry_value
+            else:
+                advisor_pos["current_price"] = advisor_current
                 advisor_pos["display_current_price"] = advisor_current
             advisor_pos["pathb_plan"] = plan.to_dict()
             advisor_pos["minutes_to_close"] = float(minutes_to_close or 0)
@@ -3323,12 +3488,34 @@ class PathBRuntime:
                 return vote_reason[:500]
         return ""
 
-    @staticmethod
-    def _position_pnl_pct(pos: dict[str, Any], current: float) -> float:
-        entry = float(pos.get("entry", 0) or pos.get("avg_price", 0) or pos.get("entry_price", 0) or 0)
-        if entry <= 0 or float(current or 0) <= 0:
+    def _position_pnl_pct(self, pos: dict[str, Any], current: float, market: str = "") -> float:
+        market_key = str(market or pos.get("market", "") or "").upper()
+        current_native = float(current or 0)
+        if market_key == "US":
+            fx = self._usd_krw()
+            entry = float(pos.get("display_avg_price", 0) or 0)
+            if entry <= 0:
+                entry = float(
+                    pos.get("avg_price", 0)
+                    or pos.get("entry_price", 0)
+                    or pos.get("entry", 0)
+                    or 0
+                )
+                if entry > 1000 and fx > 0:
+                    entry = entry / fx
+            if current_native > 1000 and fx > 0:
+                current_native = current_native / fx
+        else:
+            entry = float(
+                pos.get("entry", 0)
+                or pos.get("avg_price", 0)
+                or pos.get("display_avg_price", 0)
+                or pos.get("entry_price", 0)
+                or 0
+            )
+        if entry <= 0 or current_native <= 0:
             return 0.0
-        return (float(current or 0) / entry - 1.0) * 100.0
+        return (current_native / entry - 1.0) * 100.0
 
     def _pre_close_force_exit(self, path_run_id: str, minutes_to_close: float) -> bool:
         if not bool(self.config.pathb_intraday_only):

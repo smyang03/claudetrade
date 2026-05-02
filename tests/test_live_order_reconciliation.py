@@ -27,11 +27,21 @@ def _bot_with_pending(order: dict) -> SimpleNamespace:
     bot.pathb = _PathB()
     bot._funnel = {"KR": {"filled": 0}, "US": {"filled": 0}}
     bot._ticker_market = lambda ticker: "US" if str(ticker).replace(".", "").isalpha() else "KR"
+    bot._local_filled_qty_for_order = (
+        lambda market, ticker, order_no: trading_bot.TradingBot._local_filled_qty_for_order(
+            bot,
+            market,
+            ticker,
+            order_no,
+        )
+    )
     bot._make_position_from_broker = lambda fill_order, broker_pos: {
         "market": fill_order.get("market", "KR"),
         "ticker": fill_order.get("ticker", ""),
         "qty": int(fill_order.get("qty", 0) or 0),
         "entry": float(broker_pos.get("avg_price", 0) or 0),
+        "order_no": fill_order.get("order_no", ""),
+        "v2_execution_id": fill_order.get("v2_execution_id", fill_order.get("order_no", "")),
         "position_id": "pos1",
     }
     bot._entry_timing_filled = Mock()
@@ -69,6 +79,75 @@ class LiveOrderReconciliationTests(unittest.TestCase):
         bot._save_pending_orders.assert_called_once()
         self.assertEqual(bot.pathb.calls[0][0]["qty"], 3)
         self.assertTrue(bot.pathb.calls[0][2])
+
+    def test_rest_cumulative_partial_does_not_duplicate_already_filled_qty(self) -> None:
+        bot = _bot_with_pending(
+            {
+                "market": "KR",
+                "ticker": "005930",
+                "qty": 7,
+                "order_no": "order1",
+                "raw_price": 70000,
+                "filled_qty_accum": 3,
+                "filled_price_native": 70100,
+                "partial_fill_at": "2026-04-29T09:30:00+09:00",
+            }
+        )
+        bot.risk.positions.append(
+            {
+                "market": "KR",
+                "ticker": "005930",
+                "qty": 3,
+                "entry": 70100,
+                "order_no": "order1",
+                "v2_execution_id": "order1",
+            }
+        )
+
+        with patch(
+            "trading_bot.get_order_fill_kr",
+            return_value={"filled_qty": 3, "fill_price": 70100, "order_time": "093000"},
+        ):
+            trading_bot.TradingBot._reconcile_pending_orders(bot, broker_kr={}, broker_us={})
+
+        self.assertEqual(len(bot.risk.positions), 1)
+        self.assertEqual(bot.pending_orders[0]["qty"], 7)
+        bot._save_positions.assert_not_called()
+
+    def test_rest_cumulative_full_after_partial_applies_only_remaining_qty(self) -> None:
+        bot = _bot_with_pending(
+            {
+                "market": "KR",
+                "ticker": "005930",
+                "qty": 7,
+                "order_no": "order1",
+                "raw_price": 70000,
+                "filled_qty_accum": 3,
+                "filled_price_native": 70100,
+                "partial_fill_at": "2026-04-29T09:30:00+09:00",
+            }
+        )
+        bot.risk.positions.append(
+            {
+                "market": "KR",
+                "ticker": "005930",
+                "qty": 3,
+                "entry": 70100,
+                "order_no": "order1",
+                "v2_execution_id": "order1",
+            }
+        )
+
+        with patch(
+            "trading_bot.get_order_fill_kr",
+            return_value={"filled_qty": 10, "fill_price": 70100, "order_time": "093500"},
+        ), patch.object(trading_bot, "fill_confirm_alert"):
+            trading_bot.TradingBot._reconcile_pending_orders(bot, broker_kr={}, broker_us={})
+
+        self.assertEqual([pos["qty"] for pos in bot.risk.positions], [3, 7])
+        self.assertEqual(bot.pending_orders, [])
+        bot._save_positions.assert_called_once()
+        bot._save_pending_orders.assert_called_once()
 
     def test_partial_ttl_unknown_state_is_persisted(self) -> None:
         bot = _bot_with_pending(

@@ -146,6 +146,8 @@ class TradingBotFillNoticeTests(unittest.TestCase):
         self.assertEqual(bot.pending_orders, [])
         self.assertEqual(bot.risk.positions[0]["qty"], 5)
         self.assertEqual(bot.risk.positions[0]["entry"], 70100.0)
+        trading_bot.TradingBot._reconcile_pending_orders(bot, broker_kr={}, broker_us={})
+        self.assertEqual(len(bot.risk.positions), 1)
         self.assertEqual(bot._funnel["KR"]["filled"], 1)
         bot._entry_timing_filled.assert_called_once()
         bot._v2_record_lifecycle_event.assert_called_once()
