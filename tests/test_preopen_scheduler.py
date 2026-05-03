@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot.session_date import KST
-from preopen.scheduler import due_jobs
+from preopen.scheduler import due_jobs, regular_open_dt
 from preopen.storage import load_preopen_dashboard, load_preopen_scheduler_state
 from tools.preopen_scheduler import run_scheduler_once
 
@@ -54,6 +54,19 @@ class PreopenSchedulerTests(unittest.TestCase):
         outcome_ids = [job.job_id for job in jobs if job.kind == "outcome"]
         self.assertIn("live:2026-05-04:US:outcome:5m", outcome_ids)
         self.assertIn("live:2026-05-04:US:outcome:30m", outcome_ids)
+
+    def test_us_regular_open_dt_tracks_dst_and_non_dst(self) -> None:
+        self.assertEqual(regular_open_dt("US", "2026-05-04").strftime("%Y-%m-%d %H:%M"), "2026-05-04 22:30")
+        self.assertEqual(regular_open_dt("US", "2026-01-05").strftime("%Y-%m-%d %H:%M"), "2026-01-05 23:30")
+
+    def test_us_non_dst_collector_extends_until_2325_kst(self) -> None:
+        now = datetime(2026, 1, 5, 23, 20, tzinfo=KST)
+
+        with patch("preopen.scheduler.is_trading_day", return_value=True):
+            jobs = due_jobs(now_dt=now, markets=["US"], mode="live")
+
+        self.assertTrue(any(job.kind == "collector" for job in jobs))
+        self.assertFalse(any(job.kind == "outcome" for job in jobs))
 
     def test_us_outcome_catchup_after_kst_midnight_keeps_us_session_date(self) -> None:
         now = datetime(2026, 5, 5, 1, 0, tzinfo=KST)
@@ -144,6 +157,25 @@ class PreopenSchedulerTests(unittest.TestCase):
         self.assertIn("scheduler", payload)
         self.assertEqual(payload["scheduler"]["status"], "active")
         self.assertIn("preopen_scheduler.py", payload["scheduler"]["start_command"])
+
+    def test_paper_dashboard_and_jobs_do_not_show_live_commands(self) -> None:
+        now = datetime(2026, 5, 4, 23, 1, tzinfo=KST)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)), patch(
+                "preopen.scheduler.is_trading_day",
+                return_value=True,
+            ):
+                run_scheduler_once(mode="paper", markets=["US"], dry_run=True, now_dt=now, interval_sec=60)
+                payload = load_preopen_dashboard("US", session_date="2026-05-04", mode="paper")
+                jobs = due_jobs(now_dt=now, markets=["US"], mode="paper")
+
+        self.assertIn("--mode paper", payload["scheduler"]["start_command"])
+        self.assertNotIn("--mode live", payload["scheduler"]["start_command"])
+        self.assertTrue(any("--mode paper" in command for command in payload["scheduler_guidance"]["commands"]))
+        self.assertTrue(all("--mode live" not in command for command in payload["scheduler_guidance"]["commands"]))
+        self.assertTrue(any("--mode paper" in action for action in payload["next_actions"] if "preopen_" in action))
+        self.assertTrue(all("--mode paper" in job.display_command for job in jobs if job.kind == "outcome"))
 
 
 if __name__ == "__main__":

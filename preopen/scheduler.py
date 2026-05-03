@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, time as dt_time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from bot.session_date import KST, resolve_session_date_str
 
@@ -27,11 +28,57 @@ def _combine(now_dt: datetime, value: dt_time) -> datetime:
     return datetime.combine(now_dt.date(), value, tzinfo=KST)
 
 
-def _window_contains(now_dt: datetime, start: dt_time, end: dt_time) -> bool:
-    cur = now_dt.time()
-    if start <= end:
-        return start <= cur <= end
-    return cur >= start or cur <= end
+def _session_day(session_date: str):
+    return datetime.fromisoformat(str(session_date)).date()
+
+
+def _ny_session_time_to_kst(session_date: str, value: dt_time) -> datetime:
+    return datetime.combine(_session_day(session_date), value, tzinfo=ZoneInfo("America/New_York")).astimezone(KST)
+
+
+def _to_kst(value) -> datetime | None:
+    try:
+        if hasattr(value, "to_pydatetime"):
+            value = value.to_pydatetime()
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=ZoneInfo("UTC"))
+        return value.astimezone(KST)
+    except Exception:
+        return None
+
+
+def _exchange_session_open_dt(market: str, session_date: str) -> datetime | None:
+    exchange = _EXCHANGE_MAP.get(market_key(market))
+    if not exchange:
+        return None
+    try:
+        import exchange_calendars as ec
+
+        if exchange not in _EC_CACHE:
+            _EC_CACHE[exchange] = ec.get_calendar(exchange)
+        cal = _EC_CACHE[exchange]
+        if hasattr(cal, "session_open"):
+            opened = cal.session_open(str(session_date))
+            return _to_kst(opened)
+        schedule = getattr(cal, "schedule", None)
+        if schedule is not None:
+            row = schedule.loc[str(session_date)]
+            opened = row.get("market_open") if hasattr(row, "get") else row["market_open"]
+            return _to_kst(opened)
+    except Exception:
+        return None
+    return None
+
+
+def regular_open_dt(market: str, session_date: str) -> datetime:
+    mkt = market_key(market)
+    if mkt == "US":
+        calendar_open = _exchange_session_open_dt(mkt, session_date)
+        if calendar_open is not None:
+            return calendar_open
+        ny_tz = ZoneInfo("America/New_York")
+        return datetime.combine(_session_day(session_date), dt_time(9, 30), tzinfo=ny_tz).astimezone(KST)
+    return datetime.combine(_session_day(session_date), dt_time(9, 0), tzinfo=KST)
 
 
 def is_trading_day(market: str, session_date: str) -> bool:
@@ -80,12 +127,28 @@ def collector_interval_min(market: str, override: int | None = None) -> int:
 def collector_window(market: str) -> tuple[dt_time, dt_time]:
     mkt = market_key(market)
     if mkt == "US":
-        return dt_time(17, 0), dt_time(22, 25)
+        session_date = resolve_session_date_str("US", datetime.now(KST))
+        start_dt, end_dt = collector_window_dt("US", session_date)
+        return start_dt.time(), end_dt.time()
     return dt_time(8, 0), dt_time(9, 0)
 
 
-def regular_open_time(market: str) -> dt_time:
-    return dt_time(22, 30) if market_key(market) == "US" else dt_time(9, 0)
+def collector_window_dt(market: str, session_date: str) -> tuple[datetime, datetime]:
+    mkt = market_key(market)
+    if mkt == "US":
+        opened = regular_open_dt(mkt, session_date)
+        return _ny_session_time_to_kst(session_date, dt_time(4, 0)), opened - timedelta(minutes=5)
+    day = _session_day(session_date)
+    return datetime.combine(day, dt_time(8, 0), tzinfo=KST), datetime.combine(day, dt_time(9, 0), tzinfo=KST)
+
+
+def regular_open_time(market: str, session_date: str | None = None) -> dt_time:
+    if market_key(market) == "US":
+        session_date = session_date or resolve_session_date_str("US", datetime.now(KST))
+        return regular_open_dt("US", session_date).time()
+    if session_date:
+        return regular_open_dt(market, session_date).time()
+    return dt_time(9, 0)
 
 
 def due_jobs(
@@ -114,12 +177,9 @@ def due_jobs(
         if not is_trading_day(mkt, session_date):
             continue
 
-        start_t, end_t = collector_window(mkt)
+        start_dt, end_dt = collector_window_dt(mkt, session_date)
         interval = collector_interval_min(mkt, collector_interval_override_min)
-        if _window_contains(now_dt, start_t, end_t):
-            start_dt = _combine(now_dt, start_t)
-            if end_t < start_t and now_dt.time() <= end_t:
-                start_dt -= timedelta(days=1)
+        if start_dt <= now_dt <= end_dt:
             elapsed_min = max(0, int((now_dt - start_dt).total_seconds() // 60))
             bucket = elapsed_min // interval
             due_dt = start_dt + timedelta(minutes=bucket * interval)
@@ -135,9 +195,7 @@ def due_jobs(
                     args=("--market", mkt, "--mode", runtime_mode, "--once"),
                 ))
 
-        open_dt = _combine(now_dt, regular_open_time(mkt))
-        if mkt == "US" and now_dt.time() < dt_time(5, 0):
-            open_dt -= timedelta(days=1)
+        open_dt = regular_open_dt(mkt, session_date)
         for offset in outcome_offsets_min:
             due_dt = open_dt + timedelta(minutes=int(offset))
             late_by = (now_dt - due_dt).total_seconds() / 60.0
@@ -152,7 +210,7 @@ def due_jobs(
                     job_id=job_id,
                     due_at=due_dt.isoformat(timespec="seconds"),
                     script="tools/preopen_outcome_updater.py",
-                    args=("--market", mkt, "--offset-min", str(int(offset)), "--once"),
+                    args=("--market", mkt, "--mode", runtime_mode, "--offset-min", str(int(offset)), "--once"),
                     offset_min=int(offset),
                 ))
 

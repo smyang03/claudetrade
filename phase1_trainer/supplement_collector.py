@@ -69,14 +69,25 @@ def _apply_metric(data: dict, field: str, result: dict) -> None:
 def _yf_close_for_date(symbol: str, target_date: str) -> Optional[float]:
     try:
         import yfinance as yf
-        start_dt = datetime.strptime(target_date, "%Y-%m-%d").date()
-        end_dt = start_dt + timedelta(days=1)
+        target_dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+        start_dt = target_dt - timedelta(days=10)
+        end_dt = target_dt + timedelta(days=1)
         hist = yf.Ticker(symbol).history(start=start_dt.isoformat(), end=end_dt.isoformat())
         if hist.empty:
-            hist = yf.Ticker(symbol).history(period="5d")
-        if hist.empty:
             return None
-        return _positive_float_or_none(hist["Close"].iloc[-1])
+        try:
+            closes = hist["Close"]
+        except Exception:
+            return None
+        selected = None
+        for row_idx, close in zip(hist.index, closes):
+            try:
+                row_date = row_idx.date()
+            except Exception:
+                row_date = datetime.fromisoformat(str(row_idx)[:10]).date()
+            if row_date <= target_dt:
+                selected = close
+        return _positive_float_or_none(selected)
     except Exception:
         return None
 

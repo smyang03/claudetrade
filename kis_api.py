@@ -3237,7 +3237,7 @@ class KISWebSocket:
     def __init__(self, token, tickers, on_tick=None, on_notice=None, market="KR"):
         self.token = token
         self.tickers = tickers
-        self.market = market
+        self.market = _normalize_market(market)
         self.on_tick = on_tick or (lambda d: print(f"[tick]{d}"))
         self.on_notice = on_notice  # 체결통보 콜백: on_notice(event_dict)
         self.ws = None
@@ -3246,6 +3246,9 @@ class KISWebSocket:
         self._notice_key: Optional[str] = None
         self._seen_fills: set = set()  # dedupe: (order_no, filled_qty, filled_time)
         self._hts_id: str = os.getenv("KIS_HTS_ID", "")
+        self.running: bool = False
+        self.started_at: str = ""
+        self.last_error: str = ""
 
     def _get_ws_key(self):
         profile = get_kis_market_profile(self.market)
@@ -3363,14 +3366,18 @@ class KISWebSocket:
         import websocket
 
         self._ws_key = self._get_ws_key()
+        profile = get_kis_market_profile(self.market)
 
         def on_open(ws):
+            self.running = True
+            if not self.started_at:
+                self.started_at = datetime.now().isoformat(timespec="seconds")
             # KR 실시간 시세 구독 (KR 세션만)
             if self.market == "KR":
                 for t in self.tickers:
                     ws.send(self._sub(t))
             # US 실시간 시세 구독 (US 세션 + 실전 서버만, VTS 미지원)
-            if self.market == "US" and not IS_PAPER:
+            if self.market == "US" and not profile.is_paper:
                 subscribed = 0
                 for t in self.tickers:
                     msg = self._sub_us(t)
@@ -3378,13 +3385,12 @@ class KISWebSocket:
                         ws.send(msg)
                         subscribed += 1
                 log.info(f"[KIS WS] US 실시간 시세 구독 {subscribed}/{len(self.tickers)}종목")
-            elif self.market == "US" and IS_PAPER:
+            elif self.market == "US" and profile.is_paper:
                 log.info("[KIS WS] US 실시간 시세: VTS 미지원 — API 폴링 사용")
-            # 체결통보 구독 (KR + US 모두, HTS ID 있을 때)
+            # 체결통보 구독은 연결된 KIS profile의 market만 등록한다.
             if self.on_notice and self._hts_id:
-                ws.send(self._sub_notice("KR"))
-                ws.send(self._sub_notice("US"))
-                log.info(f"[KIS WS] KR+US 체결통보 구독 등록 ({'모의' if get_kis_market_profile(self.market).is_paper else '실전'})")
+                ws.send(self._sub_notice(self.market))
+                log.info(f"[KIS WS] {self.market} 체결통보 구독 등록 ({'모의' if profile.is_paper else '실전'})")
             elif self.on_notice and not self._hts_id:
                 log.warning("[KIS WS] KIS_HTS_ID 미설정 — 체결통보 구독 스킵")
 
@@ -3459,12 +3465,31 @@ class KISWebSocket:
             except Exception:
                 pass
 
-        self.ws = websocket.WebSocketApp(_ws_url(self.market), on_open=on_open, on_message=on_message)
+        def on_error(ws, error):
+            self.last_error = str(error or "")[:240]
+            self.running = False
+
+        def on_close(ws, *args):
+            self.running = False
+
+        self.ws = websocket.WebSocketApp(
+            _ws_url(self.market),
+            on_open=on_open,
+            on_message=on_message,
+            on_error=on_error,
+            on_close=on_close,
+        )
         threading.Thread(target=self.ws.run_forever, daemon=True).start()
+        self.running = True
+        if not self.started_at:
+            self.started_at = datetime.now().isoformat(timespec="seconds")
 
     def stop(self):
-        if self.ws:
-            self.ws.close()
+        try:
+            if self.ws:
+                self.ws.close()
+        finally:
+            self.running = False
 
 
 if __name__ == "__main__":

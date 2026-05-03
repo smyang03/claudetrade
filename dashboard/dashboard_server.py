@@ -82,7 +82,12 @@ app = Flask(__name__)
 
 _BROKER_REALIZED_CACHE: dict[tuple[str, str], dict] = {}
 _BROKER_SNAPSHOT_CACHE: dict[str, dict] = {}
+_BROKER_SNAPSHOT_STATUS: dict[str, dict] = {}
 _BROKER_TRADE_BUNDLE_CACHE: dict[tuple[str, str, str, str, str], dict] = {}
+_BROKER_POSITIONS_CACHE: dict[tuple[str, str], dict] = {}
+_BROKER_POSITIONS_STATUS: dict[tuple[str, str], dict] = {}
+_BROKER_SNAPSHOT_LOCK = threading.Lock()
+_BROKER_POSITIONS_LOCK = threading.Lock()
 _KIS_RUNTIME_LOCK = threading.Lock()
 
 
@@ -113,6 +118,51 @@ _STATE_FILE_ALERTS: dict[str, dict] = {}
 def _normalize_mode(mode: Optional[str]) -> str:
     value = str(mode or "live").strip().lower()
     return value if value in ("paper", "live") else "live"
+
+
+def _cache_age_sec(cached: Optional[dict], now_ts: Optional[float] = None) -> Optional[int]:
+    if not cached:
+        return None
+    try:
+        ts = float(cached.get("ts", 0) or 0)
+    except Exception:
+        return None
+    if ts <= 0:
+        return None
+    return int(max((now_ts if now_ts is not None else _time.time()) - ts, 0))
+
+
+def _broker_cache_meta(
+    *,
+    hit: bool,
+    stale: bool,
+    cached: Optional[dict] = None,
+    now_ts: Optional[float] = None,
+    last_error: str = "",
+    source: str = "",
+) -> dict:
+    return {
+        "hit": bool(hit),
+        "stale": bool(stale),
+        "age_sec": _cache_age_sec(cached, now_ts),
+        "last_error": str(last_error or ""),
+        "source": str(source or ""),
+    }
+
+
+def _with_broker_cache_meta(payload: dict, meta: dict) -> dict:
+    data = copy.deepcopy(payload or {})
+    data["cache"] = copy.deepcopy(meta or {})
+    return data
+
+
+def _broker_snapshot_status(mode: str = "paper") -> dict:
+    return copy.deepcopy(_BROKER_SNAPSHOT_STATUS.get(_normalize_mode(mode), {}))
+
+
+def _broker_positions_status(mode: str = "paper", market: str = "KR") -> dict:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    return copy.deepcopy(_BROKER_POSITIONS_STATUS.get((_normalize_mode(mode), market_key), {}))
 
 
 def _request_mode(default: str = "live") -> str:
@@ -1510,10 +1560,11 @@ def _resolve_period_bounds(period: str, start: str, end: str) -> tuple[date, dat
 
 
 def _load_broker_trade_bundle(market: str, period: str, start: str, end: str, mode: str = "paper") -> dict:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
     d_start, d_end = _resolve_period_bounds(period, start, end)
     meta = {
         "ok": False,
-        "market": market,
+        "market": market_key,
         "query_start": d_start.isoformat(),
         "query_end": d_end.isoformat(),
         "rows": [],
@@ -1522,7 +1573,7 @@ def _load_broker_trade_bundle(market: str, period: str, start: str, end: str, mo
         "error": "",
     }
     runtime_mode = _normalize_mode(mode)
-    cache_key = (runtime_mode, str(market or "").upper(), str(period or ""), str(start or ""), str(end or ""))
+    cache_key = (runtime_mode, market_key, str(period or ""), str(start or ""), str(end or ""))
     now_ts = _time.time()
     try:
         ttl_sec = max(int(os.getenv("DASHBOARD_BROKER_TRADE_CACHE_SEC", "120") or 120), 0)
@@ -1536,9 +1587,9 @@ def _load_broker_trade_bundle(market: str, period: str, start: str, end: str, mo
     end_s = d_end.strftime("%Y%m%d")
     rows: list[dict] = []
     try:
-        with _kis_runtime(mode):
-            token = get_access_token(market=market)
-            if market == "KR":
+        with _kis_runtime(runtime_mode):
+            token = get_access_token(market=market_key)
+            if market_key == "KR":
                 broker_rows = inquire_daily_ccld_kr(
                     token,
                     start_date=start_s,
@@ -1588,7 +1639,7 @@ def _load_broker_trade_bundle(market: str, period: str, start: str, end: str, mo
             "reason": "broker_fill",
             "order_no": str(row.get("order_no", "") or ""),
             "price_source": "order_fill",
-            "currency": "USD" if market == "US" else "KRW",
+            "currency": "USD" if market_key == "US" else "KRW",
             "fill_time": hhmm,
             "source_kind": "broker_fill",
         })
@@ -1767,12 +1818,53 @@ def _load_claude_control(mode: str = "paper") -> dict:
 
 def _load_broker_positions(market: str, mode: str = "paper"):
     """KIS 브로커 잔고에서 현재 보유 포지션을 직접 읽어 대시보드에 표시한다."""
+    runtime_mode = _normalize_mode(mode)
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    cache_key = (runtime_mode, market_key)
+    now_ts = _time.time()
     try:
-        with _kis_runtime(mode):
-            token = get_access_token(market=market)
-            bal = get_balance(token, market=market, force_refresh=True)
+        ttl_sec = max(int(os.getenv("DASHBOARD_BROKER_POSITIONS_CACHE_SEC", "20") or 20), 0)
     except Exception:
-        return None
+        ttl_sec = 20
+
+    cached = _BROKER_POSITIONS_CACHE.get(cache_key)
+    if ttl_sec > 0 and cached and now_ts - float(cached.get("ts", 0) or 0) < ttl_sec:
+        _BROKER_POSITIONS_STATUS[cache_key] = _broker_cache_meta(
+            hit=True,
+            stale=False,
+            cached=cached,
+            now_ts=now_ts,
+            source="cache",
+        )
+        return copy.deepcopy(cached.get("value", []))
+
+    with _BROKER_POSITIONS_LOCK:
+        now_ts = _time.time()
+        cached = _BROKER_POSITIONS_CACHE.get(cache_key)
+        if ttl_sec > 0 and cached and now_ts - float(cached.get("ts", 0) or 0) < ttl_sec:
+            _BROKER_POSITIONS_STATUS[cache_key] = _broker_cache_meta(
+                hit=True,
+                stale=False,
+                cached=cached,
+                now_ts=now_ts,
+                source="cache",
+            )
+            return copy.deepcopy(cached.get("value", []))
+        stale_positions = copy.deepcopy(cached.get("value", [])) if cached else None
+        try:
+            with _kis_runtime(runtime_mode):
+                token = get_access_token(market=market_key)
+                bal = get_balance(token, market=market_key, force_refresh=True)
+        except Exception as exc:
+            _BROKER_POSITIONS_STATUS[cache_key] = _broker_cache_meta(
+                hit=bool(cached),
+                stale=bool(cached),
+                cached=cached,
+                now_ts=_time.time(),
+                last_error=str(exc),
+                source="stale_cache" if cached else "error",
+            )
+            return stale_positions
 
     positions = []
     for stock in bal.get("stocks", []):
@@ -1791,8 +1883,20 @@ def _load_broker_positions(market: str, mode: str = "paper"):
             "strategy": "broker_balance",
             "trailing": False,
             "price_source": "broker_balance",
-            "currency": "USD" if market == "US" else "KRW",
+            "currency": "USD" if market_key == "US" else "KRW",
         })
+    if ttl_sec > 0:
+        cached_payload = {"ts": _time.time(), "value": copy.deepcopy(positions)}
+        _BROKER_POSITIONS_CACHE[cache_key] = cached_payload
+    else:
+        cached_payload = {"ts": _time.time(), "value": copy.deepcopy(positions)}
+    _BROKER_POSITIONS_STATUS[cache_key] = _broker_cache_meta(
+        hit=False,
+        stale=False,
+        cached=cached_payload,
+        now_ts=cached_payload["ts"],
+        source="broker",
+    )
     return positions
 
 
@@ -2022,83 +2126,117 @@ def _broker_snapshot(mode: str = "paper") -> dict:
         ttl_sec = 20
     cached = _BROKER_SNAPSHOT_CACHE.get(runtime_mode)
     if ttl_sec > 0 and cached and now_ts - float(cached.get("ts", 0) or 0) < ttl_sec:
-        return copy.deepcopy(cached.get("value", {}))
+        meta = _broker_cache_meta(hit=True, stale=False, cached=cached, now_ts=now_ts, source="cache")
+        _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
+        return _with_broker_cache_meta(cached.get("value", {}), meta)
 
-    try:
-        with _kis_runtime(mode):
-            kis_profile = get_kis_profile_summary()
-            try:
-                token_kr = get_access_token(market="KR")
-                kr = get_balance(token_kr, market="KR", force_refresh=True)
-            except Exception:
-                kr = {}
-            try:
-                token_us = get_access_token(market="US")
-                us = get_balance(token_us, market="US", force_refresh=True)
-            except Exception:
-                us = {}
-    except Exception:
-        return {}
+    with _BROKER_SNAPSHOT_LOCK:
+        now_ts = _time.time()
+        cached = _BROKER_SNAPSHOT_CACHE.get(runtime_mode)
+        if ttl_sec > 0 and cached and now_ts - float(cached.get("ts", 0) or 0) < ttl_sec:
+            meta = _broker_cache_meta(hit=True, stale=False, cached=cached, now_ts=now_ts, source="cache")
+            _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
+            return _with_broker_cache_meta(cached.get("value", {}), meta)
+        stale_snapshot = copy.deepcopy(cached.get("value", {})) if cached else {}
+        snapshot_errors: list[str] = []
 
-    usd_krw = _get_usd_krw_cached()
+        try:
+            with _kis_runtime(runtime_mode):
+                kis_profile = get_kis_profile_summary()
+                try:
+                    token_kr = get_access_token(market="KR")
+                    kr = get_balance(token_kr, market="KR", force_refresh=True)
+                except Exception as exc:
+                    snapshot_errors.append(f"KR: {exc}")
+                    kr = {}
+                try:
+                    token_us = get_access_token(market="US")
+                    us = get_balance(token_us, market="US", force_refresh=True)
+                except Exception as exc:
+                    snapshot_errors.append(f"US: {exc}")
+                    us = {}
+        except Exception as exc:
+            meta = _broker_cache_meta(
+                hit=bool(cached),
+                stale=bool(stale_snapshot),
+                cached=cached,
+                now_ts=_time.time(),
+                last_error=str(exc),
+                source="stale_cache" if stale_snapshot else "error",
+            )
+            _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
+            return _with_broker_cache_meta(stale_snapshot, meta) if stale_snapshot else {}
 
-    kr_cash = float(kr.get("cash", 0) or 0)
-    kr_orderable = float(kr.get("orderable_cash", kr_cash) or kr_cash)
-    kr_eval = float(kr.get("total_eval", 0) or 0)
-    us_cash_usd = float(us.get("cash", 0) or 0)
-    us_orderable_cash_usd = float(us.get("orderable_cash", us_cash_usd) or us_cash_usd)
-    us_eval_usd = float(us.get("total_eval", 0) or 0)
-    us_cash_krw = us_cash_usd * usd_krw
-    us_orderable_cash_krw = us_orderable_cash_usd * usd_krw
-    us_eval_krw = us_eval_usd * usd_krw
-    source = "broker"
+        usd_krw = _get_usd_krw_cached()
 
-    # KIS US paper는 달러 현금을 0으로 반환하는 경우가 있어 KR 현금이 과대계상될 수 있다.
-    kr_cash_effective = kr_cash
-    if runtime_mode == "paper" and us_cash_usd == 0 and (us.get("stocks") or []):
-        us_cost_krw = sum(
-            float(stock.get("avg_price", 0) or 0) * float(stock.get("qty", 0) or 0) * usd_krw
-            for stock in (us.get("stocks") or [])
+        kr_cash = float(kr.get("cash", 0) or 0)
+        kr_orderable = float(kr.get("orderable_cash", kr_cash) or kr_cash)
+        kr_eval = float(kr.get("total_eval", 0) or 0)
+        us_cash_usd = float(us.get("cash", 0) or 0)
+        us_orderable_cash_usd = float(us.get("orderable_cash", us_cash_usd) or us_cash_usd)
+        us_eval_usd = float(us.get("total_eval", 0) or 0)
+        us_cash_krw = us_cash_usd * usd_krw
+        us_orderable_cash_krw = us_orderable_cash_usd * usd_krw
+        us_eval_krw = us_eval_usd * usd_krw
+        source = "broker"
+
+        # KIS US paper는 달러 현금을 0으로 반환하는 경우가 있어 KR 현금이 과대계상될 수 있다.
+        kr_cash_effective = kr_cash
+        if runtime_mode == "paper" and us_cash_usd == 0 and (us.get("stocks") or []):
+            us_cost_krw = sum(
+                float(stock.get("avg_price", 0) or 0) * float(stock.get("qty", 0) or 0) * usd_krw
+                for stock in (us.get("stocks") or [])
+            )
+            if us_cost_krw > 0:
+                kr_cash_effective = max(kr_cash - us_cost_krw, 0.0)
+                source = "broker+paper_us_cash_estimated"
+
+        cumulative = kr_cash_effective + kr_eval + us_cash_krw + us_eval_krw
+
+        def _unrealized_krw(stocks: list, market: str) -> float:
+            total = 0.0
+            for stock in stocks or []:
+                qty = float(stock.get("qty", 0) or 0)
+                avg_price = float(stock.get("avg_price", 0) or 0)
+                current_price = float(stock.get("eval_price", 0) or 0)
+                pnl_native = (current_price - avg_price) * qty
+                total += pnl_native if market == "KR" else pnl_native * usd_krw
+            return total
+
+        last_error = "; ".join(snapshot_errors)
+        meta = _broker_cache_meta(
+            hit=False,
+            stale=False,
+            cached={"ts": _time.time()},
+            now_ts=_time.time(),
+            last_error=last_error,
+            source="broker_partial" if snapshot_errors else "broker",
         )
-        if us_cost_krw > 0:
-            kr_cash_effective = max(kr_cash - us_cost_krw, 0.0)
-            source = "broker+paper_us_cash_estimated"
-
-    cumulative = kr_cash_effective + kr_eval + us_cash_krw + us_eval_krw
-
-    def _unrealized_krw(stocks: list, market: str) -> float:
-        total = 0.0
-        for stock in stocks or []:
-            qty = float(stock.get("qty", 0) or 0)
-            avg_price = float(stock.get("avg_price", 0) or 0)
-            current_price = float(stock.get("eval_price", 0) or 0)
-            pnl_native = (current_price - avg_price) * qty
-            total += pnl_native if market == "KR" else pnl_native * usd_krw
-        return total
-
-    result = {
-        "source": source,
-        "kis_profile": kis_profile,
-        "usd_krw": usd_krw,
-        "kr_cash": kr_cash,
-        "kr_cash_effective": kr_cash_effective,
-        "kr_orderable_cash": kr_orderable,
-        "kr_eval": kr_eval,
-        "us_cash_usd": us_cash_usd,
-        "us_cash_krw": us_cash_krw,
-        "us_orderable_cash_usd": us_orderable_cash_usd,
-        "us_orderable_cash_krw": us_orderable_cash_krw,
-        "us_eval_usd": us_eval_usd,
-        "us_eval_krw": us_eval_krw,
-        "cumulative": cumulative,
-        "unrealized_krw": {
-            "KR": _unrealized_krw(kr.get("stocks", []), "KR"),
-            "US": _unrealized_krw(us.get("stocks", []), "US"),
-        },
-    }
-    if ttl_sec > 0:
-        _BROKER_SNAPSHOT_CACHE[runtime_mode] = {"ts": now_ts, "value": copy.deepcopy(result)}
-    return result
+        result = {
+            "source": source,
+            "cache": meta,
+            "kis_profile": kis_profile,
+            "usd_krw": usd_krw,
+            "kr_cash": kr_cash,
+            "kr_cash_effective": kr_cash_effective,
+            "kr_orderable_cash": kr_orderable,
+            "kr_eval": kr_eval,
+            "us_cash_usd": us_cash_usd,
+            "us_cash_krw": us_cash_krw,
+            "us_orderable_cash_usd": us_orderable_cash_usd,
+            "us_orderable_cash_krw": us_orderable_cash_krw,
+            "us_eval_usd": us_eval_usd,
+            "us_eval_krw": us_eval_krw,
+            "cumulative": cumulative,
+            "unrealized_krw": {
+                "KR": _unrealized_krw(kr.get("stocks", []), "KR"),
+                "US": _unrealized_krw(us.get("stocks", []), "US"),
+            },
+        }
+        _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
+        if ttl_sec > 0:
+            _BROKER_SNAPSHOT_CACHE[runtime_mode] = {"ts": _time.time(), "value": copy.deepcopy(result)}
+        return result
 
 
 def _market_asset_krw_from_broker_snapshot(broker: dict, market: str) -> float:
@@ -3406,6 +3544,14 @@ def api_summary():
         summary_date = expected_date
     risk = _current_risk_snapshot(market, today_rec)
     broker_status = raw_live.get("broker", {}) if isinstance(raw_live.get("broker", {}), dict) else {}
+    broker_cache = (broker.get("cache", {}) if isinstance(broker, dict) else {}) or _broker_snapshot_status(mode)
+    broker_positions_cache = _broker_positions_status(mode, market)
+    broker_last_error = str(
+        broker_cache.get("last_error")
+        or broker_positions_cache.get("last_error")
+        or broker_status.get("last_error", "")
+        or ""
+    )
     state_alerts = [
         alert for alert in _STATE_FILE_ALERTS.values()
         if f"{mode}_" in str(alert.get("path", "")) or not str(alert.get("path", ""))
@@ -3471,7 +3617,15 @@ def api_summary():
             "state_alerts":   state_alerts,
             "broker_trust":   broker_status.get("trust_level", ""),
             "broker_last_ok_at": broker_status.get("last_ok_at", ""),
-            "broker_last_error": broker_status.get("last_error", ""),
+            "broker_last_error": broker_last_error,
+            "broker_cache_hit": bool(broker_cache.get("hit", False)),
+            "broker_cache_stale": bool(broker_cache.get("stale", False)),
+            "broker_cache_age_sec": broker_cache.get("age_sec"),
+            "broker_cache_source": broker_cache.get("source", ""),
+            "broker_positions_cache_hit": bool(broker_positions_cache.get("hit", False)),
+            "broker_positions_cache_stale": bool(broker_positions_cache.get("stale", False)),
+            "broker_positions_cache_age_sec": broker_positions_cache.get("age_sec"),
+            "broker_positions_cache_source": broker_positions_cache.get("source", ""),
             "session":        _session_status(market),
             "risk_label":     risk.get("risk_label", ""),
             "risk_value":     risk.get("risk_value", ""),
@@ -8113,11 +8267,20 @@ async function loadSummary() {
     const cashBreakdown = formatOrderableBreakdown(t);
     const cashTxt = cashBreakdown ? ` | 주문가능 ${cashBreakdown}` : '';
     const brokerTxt = t.broker_trust ? ` | 브로커 ${t.broker_trust}${t.broker_last_ok_at ? ' ' + String(t.broker_last_ok_at).slice(11, 19) : ''}` : '';
+    const brokerAge = Number(t.broker_cache_age_sec ?? t.broker_positions_cache_age_sec ?? 0);
+    const brokerWarn = [];
+    if (t.broker_cache_stale || t.broker_positions_cache_stale) {
+      brokerWarn.push(`계좌 캐시${Number.isFinite(brokerAge) && brokerAge > 0 ? ' ' + Math.round(brokerAge) + '초' : ''}`);
+    }
+    if (t.broker_last_error) brokerWarn.push('KIS 오류');
+    const brokerWarnTxt = brokerWarn.length
+      ? ` | <span style="color:#f59e0b">${brokerWarn.join(' · ')}</span>`
+      : '';
     const alertTxt = (t.state_alerts || []).length
       ? `<div style="margin-top:6px;color:#ef4444;font-size:12px">상태 파일 경고 ${(t.state_alerts || []).length}건 · 로그 탭 확인</div>`
       : '';
     const descTxt = modeDescription(t.mode) ? `<div style="margin-top:6px;color:var(--muted);font-size:12px">${modeDescription(t.mode)}</div>` : '';
-    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${cashTxt}${sessTxt}${riskText}${brokerTxt}${descTxt}${alertTxt}`;
+    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${cashTxt}${sessTxt}${riskText}${brokerTxt}${brokerWarnTxt}${descTxt}${alertTxt}`;
   }
 
   const wrEl = document.getElementById('win-rate');
@@ -9942,6 +10105,24 @@ function fmtPreopen(v) {
 function tags(v) {
   return Array.isArray(v) ? v.join(', ') : (v || '-');
 }
+function preopenEscapeHtml(v) {
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+function preopenTrustedHtml(v) {
+  return { __trustedHtml: String(v ?? '') };
+}
+function preopenTableCell(v) {
+  if (v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v, '__trustedHtml')) {
+    return v.__trustedHtml;
+  }
+  return preopenEscapeHtml(v);
+}
 function koPreopenOutcome(v) {
   const m = {
     WIN: '승',
@@ -9978,17 +10159,18 @@ function koPreopenSchedulerStatus(v) {
 }
 function tableOrEmpty(rows, headers, mapper) {
   if (!rows || !rows.length) return '<div class="muted">데이터 없음</div>';
-  return '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
-    rows.map(r => '<tr>' + mapper(r).map(c => `<td>${c}</td>`).join('') + '</tr>').join('') +
+  return '<table><thead><tr>' + headers.map(h => `<th>${preopenEscapeHtml(h)}</th>`).join('') + '</tr></thead><tbody>' +
+    rows.map(r => '<tr>' + mapper(r).map(c => `<td>${preopenTableCell(c)}</td>`).join('') + '</tr>').join('') +
     '</tbody></table>';
 }
-function renderPreopenSessions(rows, current) {
+function renderPreopenSessions(rows, current, explicitSession) {
   const select = document.getElementById('preopen-session-select');
   if (!select) return;
-  const options = [`<option value="">현재 세션</option>`].concat((rows || []).map(r => {
+  const currentSelected = explicitSession ? '' : ' selected';
+  const options = [`<option value=""${currentSelected}>현재 세션</option>`].concat((rows || []).map(r => {
     const label = `${r.session_date} · 후보 ${r.candidate_count ?? r.candidates_count ?? 0} · ${r.collector_status || (r.state_exists ? 'state' : 'log')}`;
-    const sel = r.session_date === current ? ' selected' : '';
-    return `<option value="${r.session_date}"${sel}>${label}</option>`;
+    const sel = explicitSession && r.session_date === current ? ' selected' : '';
+    return `<option value="${preopenEscapeHtml(r.session_date)}"${sel}>${preopenEscapeHtml(label)}</option>`;
   }));
   select.innerHTML = options.join('');
 }
@@ -10008,7 +10190,7 @@ function renderPreopenBanner(summary, actions) {
   }
   banner.style.display = 'block';
   const actionHtml = (actions || []).length
-    ? `<div style="margin-top:8px;color:var(--muted)">다음 작업: ${(actions || []).map(a => `<code>${a}</code>`).join(' · ')}</div>`
+    ? `<div style="margin-top:8px;color:var(--muted)">다음 작업: ${(actions || []).map(a => `<code>${preopenEscapeHtml(a)}</code>`).join(' · ')}</div>`
     : '';
   banner.innerHTML = `<div style="font-weight:700">${koPreopenReason(reason)}</div><div class="muted" style="margin-top:4px">장전 shadow 데이터가 아직 완전히 쌓이지 않았습니다. 기존 주문 로직에는 영향이 없습니다.</div>${actionHtml}`;
 }
@@ -10019,7 +10201,7 @@ async function loadPreopen(button) {
     manualButton.classList.add('loading');
     manualButton.setAttribute('aria-busy', 'true');
   }
-  const market = getMarket();
+  const market = MARKET || localStorage.getItem('market') || 'KR';
   const dateInput = document.getElementById('preopen-session-date');
   if (preopenLastMarket && preopenLastMarket !== market && dateInput) dateInput.value = '';
   preopenLastMarket = market;
@@ -10028,8 +10210,7 @@ async function loadPreopen(button) {
   try {
     const d = await apiGet('/api/preopen', query).then(r => r.json()).catch(() => ({}));
     const s = d.summary || {};
-    if (dateInput && !dateInput.value && d.session_date) dateInput.value = d.session_date;
-    renderPreopenSessions(d.recent_sessions || [], d.session_date || '');
+    renderPreopenSessions(d.recent_sessions || [], d.session_date || '', !!sessionDate);
     renderPreopenBanner(s, d.next_actions || []);
     document.getElementById('preopen-status').textContent = koResult(s.collector_status || '-');
     document.getElementById('preopen-count').textContent = s.candidate_count ?? 0;
@@ -10077,11 +10258,11 @@ async function loadPreopen(button) {
     document.getElementById('preopen-actions').innerHTML = tableOrEmpty(
       actionRows,
       ['구분','순서','명령/확인'],
-      r => [r.kind === 'next' ? '다음 작업' : (r.kind === 'auto' ? '자동 실행' : '수동 명령'), r.idx, `<code>${r.command}</code>`]
+      r => [r.kind === 'next' ? '다음 작업' : (r.kind === 'auto' ? '자동 실행' : '수동 명령'), r.idx, preopenTrustedHtml(`<code>${preopenEscapeHtml(r.command)}</code>`)]
     );
     const paths = d.paths || {};
     document.getElementById('preopen-paths').innerHTML =
-      `state: ${paths.state || '-'}<br>candidates: ${paths.candidates || '-'}<br>rank_diff: ${paths.rank_diff || '-'}<br>outcome: ${paths.outcome || '-'}`;
+      `state: ${preopenEscapeHtml(paths.state || '-')}<br>candidates: ${preopenEscapeHtml(paths.candidates || '-')}<br>rank_diff: ${preopenEscapeHtml(paths.rank_diff || '-')}<br>outcome: ${preopenEscapeHtml(paths.outcome || '-')}`;
   } finally {
     if (manualButton) {
       manualButton.disabled = false;

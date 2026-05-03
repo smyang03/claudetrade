@@ -39,11 +39,13 @@ def _classify_outcome(record: dict) -> str:
     return "FLAT"
 
 
-def update_once(market: str, *, offset_min: int) -> dict:
+def update_once(market: str, *, offset_min: int, mode: str = "live") -> dict:
     market = "US" if str(market or "").upper() == "US" else "KR"
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
     session_date = resolve_session_date_str(market)
-    state = load_preopen_state(market, session_date=session_date, max_age_min=24 * 60) or {
+    state = load_preopen_state(market, session_date=session_date, max_age_min=24 * 60, mode=runtime_mode) or {
         "market": market,
+        "mode": runtime_mode,
         "session_date": session_date,
         "candidates": [],
     }
@@ -70,23 +72,24 @@ def update_once(market: str, *, offset_min: int) -> dict:
         record["outcome_status"] = _classify_outcome(record)
         key = f"outcome_{int(offset_min)}m_captured_at"
         candidate[key] = captured_at
-        save_outcome_record(market, session_date, record)
+        save_outcome_record(market, session_date, record, mode=runtime_mode)
         updated += 1
     state["last_outcome_update_at"] = captured_at
     state["last_outcome_offset_min"] = int(offset_min)
-    save_preopen_state(market, state, session_date=session_date)
-    return {"market": market, "session_date": session_date, "updated": updated, "offset_min": int(offset_min)}
+    save_preopen_state(market, state, session_date=session_date, mode=runtime_mode)
+    return {"market": market, "mode": runtime_mode, "session_date": session_date, "updated": updated, "offset_min": int(offset_min)}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Shadow-only preopen post-open outcome updater")
     parser.add_argument("--market", choices=["US", "KR"], required=True)
+    parser.add_argument("--mode", choices=["paper", "live"], default="live")
     parser.add_argument("--offset-min", type=int, required=True)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
-    result = update_once(args.market, offset_min=args.offset_min)
+    result = update_once(args.market, offset_min=args.offset_min, mode=args.mode)
     print(
-        f"[preopen outcome] {result['market']} {result['session_date']} "
+        f"[preopen outcome] mode={result['mode']} {result['market']} {result['session_date']} "
         f"offset={result['offset_min']}m updated={result['updated']}"
     )
     return 0

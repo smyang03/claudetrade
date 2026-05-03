@@ -14,11 +14,13 @@ from preopen.scorer import score_candidates
 from preopen.storage import (
     load_preopen_dashboard,
     load_preopen_state,
+    save_candidate_records,
     save_outcome_record,
     save_preopen_state,
     save_rank_diff_record,
 )
 from tools.preopen_collector import collect_once
+from tools.preopen_outcome_updater import update_once
 import trading_bot
 
 
@@ -149,8 +151,30 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(state["candidate_count"], 1)
         place_order.assert_not_called()
 
+    def test_paper_preopen_state_and_logs_are_separated_from_live(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("tools.preopen_collector.get_runtime_path", side_effect=_runtime_path(root)), patch(
+                "preopen.storage.get_runtime_path",
+                side_effect=_runtime_path(root),
+            ):
+                state = collect_once("US", mode="paper", tickers="AAPL")
+                update_once("US", mode="paper", offset_min=5)
+                session_date = state["session_date"]
+                ymd = session_date.replace("-", "")
+                paper_payload = load_preopen_dashboard("US", session_date=session_date, mode="paper")
+                live_payload = load_preopen_dashboard("US", session_date=session_date, mode="live")
+
+                self.assertTrue((root / "state" / f"preopen_paper_US_{ymd}.json").exists())
+                self.assertFalse((root / "state" / f"preopen_US_{ymd}.json").exists())
+                self.assertTrue((root / "logs" / "preopen" / f"{ymd}_US_candidates_paper.jsonl").exists())
+                self.assertTrue((root / "logs" / "preopen" / f"{ymd}_US_outcome_paper.jsonl").exists())
+                self.assertEqual(paper_payload["summary"]["candidate_count"], 1)
+                self.assertEqual(live_payload["summary"]["collector_status"], "missing")
+
     def test_bot_rank_diff_record_is_defensive_and_preopen_specific(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = True
         bot._current_session_date_str = lambda market: "2026-05-02"
         bot._load_preopen_state = lambda market: {
             "collector_status": "ok",
@@ -184,6 +208,40 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(record["actual_selection_rank"], 2)
         self.assertEqual(record["rank_delta"], 1)
         self.assertTrue(record["actual_trade_ready"])
+        self.assertEqual(save_mock.call_args.kwargs["mode"], "paper")
+
+    def test_bot_loads_preopen_state_from_current_runtime_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "candidates": [{"ticker": "LIVE", "shadow_preopen_rank": 1}],
+                }, session_date="2026-05-02", mode="live")
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "candidates": [{"ticker": "PAPER", "shadow_preopen_rank": 1}],
+                }, session_date="2026-05-02", mode="paper")
+
+                bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+                bot._current_session_date_str = lambda market: "2026-05-02"
+
+                bot.is_paper = True
+                paper_state = trading_bot.TradingBot._load_preopen_state(bot, "US")
+
+                bot.is_paper = False
+                live_state = trading_bot.TradingBot._load_preopen_state(bot, "US")
+
+        self.assertEqual(paper_state["mode"], "paper")
+        self.assertEqual(paper_state["candidates"][0]["ticker"], "PAPER")
+        self.assertEqual(live_state["mode"], "live")
+        self.assertEqual(live_state["candidates"][0]["ticker"], "LIVE")
 
     def test_dashboard_payload_includes_performance_summary_for_later_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -233,6 +291,69 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["empty_reason"], "collector_not_run")
         self.assertIn("preopen_collector.py --market US", payload["next_actions"][0])
         self.assertEqual(payload["scheduler_guidance"]["market"], "US")
+
+    def test_dashboard_payload_uses_current_mode_in_guidance_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                payload = load_preopen_dashboard("US", session_date="2026-05-02", mode="paper")
+
+        self.assertIn("--mode paper", payload["next_actions"][0])
+        self.assertIn("--mode paper", payload["scheduler"]["start_command"])
+        self.assertIn("--mode paper", payload["scheduler_guidance"]["automatic_command"])
+        self.assertIn("--mode paper", payload["scheduler_guidance"]["commands"][0])
+        self.assertNotIn("--mode live", payload["scheduler_guidance"]["automatic_command"])
+
+    def test_dashboard_payload_falls_back_to_candidate_log_when_state_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_at = (datetime.now(KST) - timedelta(days=3)).isoformat(timespec="seconds")
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                state = {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": old_at,
+                    "collector_status": "ok",
+                    "candidates": [{"ticker": "OLD", "shadow_preopen_rank": 99}],
+                }
+                save_preopen_state("US", state, session_date="2026-05-02")
+                save_candidate_records(
+                    "US",
+                    "2026-05-02",
+                    [
+                        {"ticker": "AAPL", "shadow_preopen_rank": 1},
+                        {"ticker": "MSFT", "shadow_preopen_rank": 2},
+                    ],
+                    state,
+                )
+                payload = load_preopen_dashboard("US", session_date="2026-05-02")
+
+        self.assertEqual(payload["summary"]["collector_status"], "log_only")
+        self.assertEqual(payload["summary"]["candidate_source"], "candidate_log")
+        self.assertEqual(payload["summary"]["candidate_count"], 2)
+        self.assertEqual(payload["summary"]["candidate_display_count"], 2)
+        self.assertEqual([row["ticker"] for row in payload["candidates"]], ["AAPL", "MSFT"])
+        self.assertEqual(payload["summary"]["empty_reason"], "waiting_for_claude_selection")
+
+    def test_dashboard_payload_separates_total_and_display_candidate_counts(self) -> None:
+        candidates = [{"ticker": f"T{i}", "shadow_preopen_rank": i} for i in range(1, 4)]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "candidate_count": len(candidates),
+                    "candidates": candidates,
+                }, session_date="2026-05-02")
+                payload = load_preopen_dashboard("US", session_date="2026-05-02", limit=2)
+
+        self.assertEqual(payload["summary"]["candidate_count"], 3)
+        self.assertEqual(payload["summary"]["candidate_total_count"], 3)
+        self.assertEqual(payload["summary"]["candidate_display_count"], 2)
+        self.assertEqual(len(payload["candidates"]), 2)
 
     def test_dashboard_api_returns_shadow_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

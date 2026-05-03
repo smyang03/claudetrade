@@ -31,6 +31,7 @@ if str(ROOT) not in sys.path:
 KST = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
 
 from bot.session_date import resolve_session_date
+from runtime_paths import get_runtime_path
 
 LIVE_CONFIG_KEYS = {
     "ENABLED_MARKETS",
@@ -834,14 +835,14 @@ def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
     checks.append(
         _pid_lock_check(
             "runtime.bot_pid_lock",
-            ROOT / "state" / f"{mode}_trading_bot.pid",
+            get_runtime_path("state", f"{mode}_trading_bot.pid"),
             expected_mode=mode,
         )
     )
     checks.append(
         _pid_lock_check(
             "runtime.dashboard_pid_lock",
-            ROOT / "state" / "dashboard_server.pid",
+            get_runtime_path("state", "dashboard_server.pid"),
             expected_mode="dashboard_server",
         )
     )

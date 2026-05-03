@@ -2,6 +2,8 @@
 trading_bot.py
 Main loop for KR/US sessions. Paper by default, live with --live.
 """
+from __future__ import annotations
+
 import os
 import sys
 import json
@@ -670,7 +672,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "US": deque(maxlen=8),
         }
         self._active_session_date: dict[str, Optional[date]] = {"KR": None, "US": None}
-        self.ws = None
+        self.ws_by_market: dict[str, Optional[KISWebSocket]] = {"KR": None, "US": None}
         self.price_cache = {}
         self.price_cache_raw = {}
         self._ohlcv_cache: dict = {}        # ticker -> DataFrame (일봉 캐시)
@@ -907,6 +909,46 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if market_key == "KR" or not self.token:
                 self.token = token
         return self.tokens.get(market_key, self.token)
+
+    def _market_key_for_ws(self, market: str) -> str:
+        return "US" if str(market or "").strip().upper() == "US" else "KR"
+
+    def _start_ws_for_market(self, market: str, tickers=None) -> KISWebSocket:
+        market_key = self._market_key_for_ws(market)
+        self._stop_ws_for_market(market_key)
+        ws = KISWebSocket(
+            self._token_for_market(market_key),
+            list(tickers or []),
+            on_tick=self._on_tick,
+            on_notice=self._on_fill_notice,
+            market=market_key,
+        )
+        try:
+            ws.start()
+        except Exception:
+            try:
+                ws.stop()
+            finally:
+                self.ws_by_market[market_key] = None
+            raise
+        self.ws_by_market[market_key] = ws
+        return ws
+
+    def _stop_ws_for_market(self, market: str) -> None:
+        market_key = self._market_key_for_ws(market)
+        if not hasattr(self, "ws_by_market"):
+            self.ws_by_market = {"KR": None, "US": None}
+        ws = self.ws_by_market.get(market_key)
+        if not ws:
+            return
+        try:
+            ws.stop()
+        finally:
+            self.ws_by_market[market_key] = None
+
+    def _stop_all_ws(self) -> None:
+        for market_key in ("KR", "US"):
+            self._stop_ws_for_market(market_key)
 
     def _get_balance_with_token_refresh(self, market: str, *, force_refresh_balance: bool = False) -> dict:
         market = str(market or "KR").upper()
@@ -2578,10 +2620,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
             self.today_judgment["selection_stages"] = stages
         return meta
+    def _preopen_runtime_mode(self) -> str:
+        return "paper" if getattr(self, "is_paper", True) else "live"
+
     def _load_preopen_state(self, market: str) -> dict:
         try:
             from preopen.storage import load_preopen_state
-            state = load_preopen_state(market, session_date=self._current_session_date_str(market))
+            state = load_preopen_state(
+                market,
+                session_date=self._current_session_date_str(market),
+                mode=self._preopen_runtime_mode(),
+            )
             if not state:
                 return {}
             return state
@@ -2616,6 +2665,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             trade_ready = {str(t) for t in (selection_meta or {}).get("trade_ready", []) or []}
         reasons = selection_reasons or {}
         session_date = self._current_session_date_str(market)
+        runtime_mode = self._preopen_runtime_mode()
         written = 0
         for candidate in candidates:
             raw_ticker = str(candidate.get("ticker", "") or "").strip()
@@ -2656,7 +2706,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "preopen_captured_at": state.get("captured_at", ""),
             }
             try:
-                save_rank_diff_record(market, session_date, record)
+                save_rank_diff_record(market, session_date, record, mode=runtime_mode)
                 written += 1
             except Exception as exc:
                 log.debug(f"[preopen] rank diff write skipped {market} {raw_ticker}: {exc}")
@@ -8131,13 +8181,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             reason = "shared_cache_reuse" if _from_shared_cache else "same_day_reuse"
             log.info(f"[{reason}] consensus={consensus['mode']}")
         log.info(f"consensus: {consensus['mode']} size={consensus['size']}%")
-        self.ws = KISWebSocket(
-            self._token_for_market(market), selected,
-            on_tick=self._on_tick,
-            on_notice=self._on_fill_notice,
-            market=market,
-        )
-        self.ws.start()
+        self._start_ws_for_market(market, selected)
         self._session_open_at[market] = time.time()
         self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)
         if self._session_startup_guard_sec[market] <= 0:
@@ -12475,8 +12519,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         log.info(f"[Heartbeat {now_str}] {market} | 모드:{mode} | 포지션:{pos_txt}")
         self._maybe_push_dashboard(force=True)  # 1시간마다 강제 전송
     def session_close(self, market: str):
+        market = self._market_key_for_ws(market)
         _log_flow("info", f"[{market}] session_close")
         if self.current_market != market:
+            self._stop_ws_for_market(market)
             return
         today = self._current_session_date_str(market)
         # 장 마감 직전 마지막으로 브로커 잔고/체결을 동기화해 미체결 오판을 줄인다.
@@ -12525,9 +12571,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._clear_pending_orders_for_market(market, "session_close")
         self.session_active = False
         self.current_market = None
-        if self.ws:
-            self.ws.stop()
-            self.ws = None
+        self._stop_ws_for_market(market)
 
         # ── 퍼널 집계 저장 ────────────────────────────────────────────────────
         try:
@@ -13051,9 +13095,12 @@ def main(is_paper: bool = True):
     if us_mid_session and "US" in enabled_markets:
         log.info("[startup] US 세션 진행 중 - session_open 즉시 실행")
         bot.session_open("US", trigger="startup_mid_session")
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+    try:
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+    finally:
+        bot._stop_all_ws()
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true", help="live mode")

@@ -85,8 +85,22 @@ def _load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     return data, None
 
 
+def _json_strict_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _json_strict_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_strict_safe(v) for v in value]
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    return value
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    safe_payload = _json_strict_safe(payload)
+    path.write_text(
+        json.dumps(safe_payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -259,6 +273,10 @@ def _scan_supplement_file(path: Path, market: str, args: argparse.Namespace) -> 
 
 def _verify_supplement_payload(payload: dict[str, Any], market: str) -> list[str]:
     issues: list[str] = []
+    try:
+        json.dumps(payload, ensure_ascii=False, allow_nan=False)
+    except Exception as exc:
+        issues.append(f"json_not_strict:{type(exc).__name__}")
     fields = US_SUPPLEMENT_FIELDS if market == "US" else KR_SUPPLEMENT_FIELDS
     for field_name in fields:
         value = payload.get(field_name)
@@ -298,7 +316,7 @@ def _scan_digest_file(path: Path, args: argparse.Namespace) -> FileReport | None
     if existing and not args.refresh_breadth:
         issues = []
         try:
-            json.dumps(existing, ensure_ascii=False)
+            json.dumps(existing, ensure_ascii=False, allow_nan=False)
         except Exception as exc:
             issues.append(f"breadth_summary_not_serializable:{type(exc).__name__}")
         status = "blocked" if issues else "already_clean"
@@ -326,9 +344,9 @@ def _verify_digest_payload(payload: dict[str, Any]) -> list[str]:
     if not payload.get("breadth_summary"):
         issues.append("breadth_summary_missing")
     try:
-        json.dumps(payload, ensure_ascii=False)
+        json.dumps(payload, ensure_ascii=False, allow_nan=False)
     except Exception as exc:
-        issues.append(f"json_not_serializable:{type(exc).__name__}")
+        issues.append(f"json_not_strict:{type(exc).__name__}")
     return issues
 
 

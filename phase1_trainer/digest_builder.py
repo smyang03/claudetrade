@@ -21,6 +21,11 @@ from datetime import datetime, date, timedelta
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trainer_logger, log_call
 from runtime_paths import get_runtime_path
+try:
+    from bot.session_date import KST, resolve_session_date_str
+except Exception:  # pragma: no cover
+    KST = None
+    resolve_session_date_str = None
 
 try:
     import yfinance as yf
@@ -574,6 +579,16 @@ def _merge_live_context_with_supp(live: dict, supp: dict) -> dict:
             continue
         merged[key] = value
     return merged
+
+
+def _is_current_session_build(market: str, target_date: str) -> bool:
+    try:
+        if resolve_session_date_str is not None:
+            now_dt = datetime.now(KST) if KST is not None else None
+            return str(target_date) == resolve_session_date_str(market, now_dt)
+    except Exception:
+        pass
+    return str(target_date) == datetime.now().strftime("%Y-%m-%d")
 
 
 def _clean_data_quality_flags(flags, context: dict) -> list[str]:
@@ -1303,7 +1318,7 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     prev  = load_prev_result("KR", target_date)
 
     # supplement 없으면 live yfinance fallback
-    if not supp.get("kospi"):
+    if not supp.get("kospi") and _is_current_session_build("KR", target_date):
         live = fetch_live_context_kr()
         supp = _merge_live_context_with_supp(live, supp)  # supp valid values win
 
@@ -1480,7 +1495,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     prev = load_prev_result("US", target_date)
 
     # supplement 없으면 live yfinance fallback
-    if not supp.get("sp500"):
+    if not supp.get("sp500") and _is_current_session_build("US", target_date):
         live = fetch_live_context_us()
         supp = _merge_live_context_with_supp(live, supp)  # supp valid values win
 

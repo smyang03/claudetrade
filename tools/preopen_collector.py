@@ -129,11 +129,12 @@ def _collect_kr_seed_candidates(
 
 def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
     market = _market_key(market)
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
     captured_at = datetime.now(KST).isoformat(timespec="seconds")
     session_date = resolve_session_date_str(market)
     seed_tickers = _seed_tickers(market, tickers)
 
-    token_state = _read_kis_token_state(mode, market)
+    token_state = _read_kis_token_state(runtime_mode, market)
     token_status = token_state.get("status", "token_unavailable")
     token_bad = token_status in {"token_expired", "token_invalid"}
     source_status = "seed_only"
@@ -181,6 +182,7 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
         collector_status = token_status
     state = {
         "market": market,
+        "mode": runtime_mode,
         "session_date": session_date,
         "captured_at": captured_at,
         "collector_status": collector_status,
@@ -201,8 +203,8 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
             "does not affect bot selection or orders",
         ],
     }
-    save_preopen_state(market, state, session_date=session_date)
-    save_candidate_records(market, session_date, candidates, state)
+    save_preopen_state(market, state, session_date=session_date, mode=runtime_mode)
+    save_candidate_records(market, session_date, candidates, state, mode=runtime_mode)
     return state
 
 

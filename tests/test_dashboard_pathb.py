@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import sqlite3
@@ -53,6 +54,167 @@ class DashboardPathBTests(unittest.TestCase):
     def test_dashboard_default_live_but_paper_mode_explicit(self) -> None:
         self.assertEqual(dashboard_server._normalize_mode(None), "live")
         self.assertEqual(dashboard_server._normalize_mode("paper"), "paper")
+
+    def test_preopen_page_keeps_current_session_dynamic_and_escapes_tables(self) -> None:
+        res = app.test_client().get("/preopen")
+
+        self.assertEqual(res.status_code, 200)
+        body = res.get_data(as_text=True)
+        self.assertNotIn("getMarket()", body)
+        self.assertIn("const market = MARKET || localStorage.getItem('market') || 'KR';", body)
+        self.assertNotIn("dateInput.value = d.session_date", body)
+        self.assertIn("renderPreopenSessions(d.recent_sessions || [], d.session_date || '', !!sessionDate);", body)
+        self.assertIn("function preopenEscapeHtml", body)
+        self.assertIn("function preopenTrustedHtml", body)
+        self.assertIn("preopenTableCell(c)", body)
+
+    def test_live_trades_pending_order_currency_does_not_reference_missing_market_key(self) -> None:
+        live = {
+            "session_active": True,
+            "trading_date": "2026-05-04",
+            "updated_at": "2026-05-04T22:40:00+09:00",
+            "pending_orders": [
+                {"ticker": "AAPL", "qty": 1, "raw_price": 100.5, "order_no": "1", "created_at": "2026-05-04T22:35:00+09:00"}
+            ],
+        }
+        with app.test_request_context("/?mode=live"), patch.object(
+            dashboard_server, "_load_live_status", return_value=live
+        ), patch.object(
+            dashboard_server, "_session_trade_date", return_value=date(2026, 5, 4)
+        ):
+            rows = dashboard_server._live_trades("US")
+
+        self.assertEqual(rows[0]["currency"], "USD")
+
+    def test_broker_trade_bundle_normalizes_market_for_currency_and_api(self) -> None:
+        @contextmanager
+        def fake_runtime(_mode: str):
+            yield
+
+        token_calls = []
+
+        def fake_token(*, market: str = "KR") -> str:
+            token_calls.append(market)
+            return f"token-{market}"
+
+        us_rows = [{
+            "ticker": "AAPL",
+            "filled_qty": 2,
+            "fill_price": 188.5,
+            "side": "buy",
+            "order_time": "223501",
+            "order_no": "US-1",
+            "raw": {"ord_dt": "20260504"},
+        }]
+        kr_rows = [{
+            "ticker": "005930",
+            "filled_qty": 3,
+            "fill_price": 70000,
+            "side": "buy",
+            "order_time": "093000",
+            "order_no": "KR-1",
+            "raw": {"ord_dt": "20260504"},
+        }]
+
+        with patch.object(dashboard_server, "_kis_runtime", fake_runtime), patch.object(
+            dashboard_server, "get_access_token", side_effect=fake_token
+        ), patch.object(
+            dashboard_server, "inquire_ccnl_us", return_value=us_rows
+        ) as us_mock, patch.object(
+            dashboard_server, "inquire_daily_ccld_kr", return_value=kr_rows
+        ) as kr_mock, patch.object(
+            dashboard_server, "_ticker_name_map", return_value={}
+        ), patch.dict(
+            dashboard_server.os.environ, {"DASHBOARD_BROKER_TRADE_CACHE_SEC": "0"}
+        ):
+            us = dashboard_server._load_broker_trade_bundle("us", "custom", "2026-05-04", "2026-05-04", mode="live")
+            kr = dashboard_server._load_broker_trade_bundle("KR", "custom", "2026-05-04", "2026-05-04", mode="live")
+
+        self.assertEqual(token_calls, ["US", "KR"])
+        us_mock.assert_called_once()
+        kr_mock.assert_called_once()
+        self.assertTrue(us["ok"])
+        self.assertEqual(us["market"], "US")
+        self.assertEqual(us["rows"][0]["currency"], "USD")
+        self.assertTrue(kr["ok"])
+        self.assertEqual(kr["market"], "KR")
+        self.assertEqual(kr["rows"][0]["currency"], "KRW")
+
+    def test_summary_api_exposes_broker_cache_stale_metadata(self) -> None:
+        broker = {
+            "source": "broker+stale_cache",
+            "cache": {
+                "hit": True,
+                "stale": True,
+                "age_sec": 42,
+                "last_error": "snapshot boom",
+                "source": "stale_cache",
+            },
+            "usd_krw": 1300.0,
+            "kr_cash": 0.0,
+            "kr_cash_effective": 0.0,
+            "kr_eval": 0.0,
+            "us_cash_krw": 1000.0,
+            "us_eval_krw": 0.0,
+            "unrealized_krw": {"US": 0.0},
+        }
+        positions_cache = {
+            "hit": True,
+            "stale": True,
+            "age_sec": 55,
+            "last_error": "positions boom",
+            "source": "stale_cache",
+        }
+
+        with patch.object(
+            dashboard_server, "load_records", return_value=[{"date": "2026-05-04", "actual_result": {"cumulative": 1000}}]
+        ), patch.object(
+            dashboard_server, "load_today", return_value={"date": "2026-05-04", "actual_result": {}, "consensus": {"mode": "NEUTRAL"}}
+        ), patch.object(
+            dashboard_server, "_load_live_status", return_value={"mode": "NEUTRAL", "pending_orders": [], "broker": {}}
+        ), patch.object(
+            dashboard_server, "_is_fresh_live_status", return_value=True
+        ), patch.object(
+            dashboard_server, "_record_metrics", return_value={"pnl_krw": 0, "pnl_pct": 0, "trades": 0, "win": False}
+        ), patch.object(
+            dashboard_server, "_broker_realized_pnl_krw", return_value=0
+        ), patch.object(
+            dashboard_server, "_load_broker_positions", return_value=[]
+        ), patch.object(
+            dashboard_server, "_broker_positions_status", return_value=positions_cache
+        ), patch.object(
+            dashboard_server, "_broker_snapshot", return_value=broker
+        ), patch.object(
+            dashboard_server, "_persist_broker_equity_snapshot"
+        ), patch.object(
+            dashboard_server, "_ticker_name_map", return_value={}
+        ), patch.object(
+            dashboard_server, "_live_equity_payload", return_value={}
+        ), patch.object(
+            dashboard_server, "_today_signal_digest", return_value={}
+        ), patch.object(
+            dashboard_server, "_ml_db_digest", return_value={}
+        ), patch.object(
+            dashboard_server, "_adaptive_param_digest", return_value={}
+        ), patch.object(
+            dashboard_server, "_count_today_entries", return_value=0
+        ), patch.object(
+            dashboard_server, "_session_trade_date", return_value=date(2026, 5, 4)
+        ), patch.object(
+            dashboard_server, "_session_status", return_value={}
+        ), patch.object(
+            dashboard_server, "_current_risk_snapshot", return_value={}
+        ):
+            response = app.test_client().get("/api/summary?market=US&mode=live")
+
+        self.assertEqual(response.status_code, 200)
+        today = response.get_json()["today"]
+        self.assertTrue(today["broker_cache_stale"])
+        self.assertEqual(today["broker_cache_age_sec"], 42)
+        self.assertEqual(today["broker_cache_source"], "stale_cache")
+        self.assertTrue(today["broker_positions_cache_stale"])
+        self.assertEqual(today["broker_positions_cache_age_sec"], 55)
+        self.assertEqual(today["broker_last_error"], "snapshot boom")
 
     def test_v2_ops_market_uses_session_trade_date(self) -> None:
         captured = {}

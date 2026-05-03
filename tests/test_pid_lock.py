@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import trading_bot
-from tools.live_preflight import _pid_lock_check
+from tools.live_preflight import _pid_lock_check, _state_checks
 
 
 def _runtime_path(root: Path):
@@ -79,6 +79,27 @@ class BotPidLockTests(unittest.TestCase):
             self.assertEqual(check.status, "WARN")
             self.assertTrue(check.data["auto_fix"])
             self.assertEqual(check.data["category"], "runtime_pid_lock")
+
+    def test_preflight_state_checks_use_configured_runtime_path(self) -> None:
+        with tempfile.TemporaryDirectory() as runtime_tmp, tempfile.TemporaryDirectory() as repo_tmp:
+            runtime_root = Path(runtime_tmp)
+            repo_root = Path(repo_tmp)
+
+            with patch("tools.live_preflight.ROOT", repo_root), patch(
+                "tools.live_preflight.get_runtime_path",
+                side_effect=_runtime_path(runtime_root),
+            ):
+                checks = _state_checks({"effective": {}}, "live")
+
+        by_name = {check.name: check for check in checks}
+        self.assertEqual(
+            Path(by_name["runtime.bot_pid_lock"].data["path"]),
+            runtime_root / "state" / "live_trading_bot.pid",
+        )
+        self.assertEqual(
+            Path(by_name["runtime.dashboard_pid_lock"].data["path"]),
+            runtime_root / "state" / "dashboard_server.pid",
+        )
 
 
 if __name__ == "__main__":

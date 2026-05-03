@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -37,6 +39,110 @@ def _bot_with_pending(order: dict) -> SimpleNamespace:
 
 
 class KisWebSocketNoticeParserTests(unittest.TestCase):
+    def _notice_subscription_tr_ids(self, market: str) -> list[str]:
+        sent: list[str] = []
+
+        class FakeWebSocketApp:
+            instances = []
+
+            def __init__(self, url, on_open=None, on_message=None, on_error=None, on_close=None):
+                self.url = url
+                self.on_open = on_open
+                self.on_message = on_message
+                self.on_error = on_error
+                self.on_close = on_close
+                self.closed = False
+                FakeWebSocketApp.instances.append(self)
+
+            def send(self, msg):
+                sent.append(msg)
+
+            def run_forever(self):
+                return None
+
+            def close(self):
+                self.closed = True
+                return None
+
+        class FakeThread:
+            def __init__(self, target=None, daemon=None):
+                self.target = target
+                self.daemon = daemon
+
+            def start(self):
+                return None
+
+        fake_websocket = SimpleNamespace(WebSocketApp=FakeWebSocketApp)
+        with (
+            patch.dict(sys.modules, {"websocket": fake_websocket}),
+            patch.object(kis_api.KISWebSocket, "_get_ws_key", return_value="approval"),
+            patch.object(kis_api.threading, "Thread", FakeThread),
+        ):
+            ws = kis_api.KISWebSocket("token", [], on_notice=Mock(), market=market)
+            ws._hts_id = "HTS"
+            ws.start()
+            FakeWebSocketApp.instances[0].on_open(FakeWebSocketApp.instances[0])
+
+        return [json.loads(msg)["body"]["input"]["tr_id"] for msg in sent]
+
+    def test_kr_websocket_subscribes_only_kr_notice(self) -> None:
+        tr_ids = self._notice_subscription_tr_ids("KR")
+
+        self.assertTrue(any(tr_id in {"H0STCNI9", "H0STCNI0"} for tr_id in tr_ids))
+        self.assertFalse(any(tr_id in {"H0GSCNI9", "H0GSCNI0"} for tr_id in tr_ids))
+
+    def test_us_websocket_subscribes_only_us_notice(self) -> None:
+        tr_ids = self._notice_subscription_tr_ids("US")
+
+        self.assertTrue(any(tr_id in {"H0GSCNI9", "H0GSCNI0"} for tr_id in tr_ids))
+        self.assertFalse(any(tr_id in {"H0STCNI9", "H0STCNI0"} for tr_id in tr_ids))
+
+    def test_websocket_status_tracks_start_error_close_and_stop(self) -> None:
+        class FakeWebSocketApp:
+            instances = []
+
+            def __init__(self, url, on_open=None, on_message=None, on_error=None, on_close=None):
+                self.url = url
+                self.on_open = on_open
+                self.on_message = on_message
+                self.on_error = on_error
+                self.on_close = on_close
+                self.closed = False
+                FakeWebSocketApp.instances.append(self)
+
+            def run_forever(self):
+                return None
+
+            def close(self):
+                self.closed = True
+                if self.on_close:
+                    self.on_close(self)
+
+        class FakeThread:
+            def __init__(self, target=None, daemon=None):
+                self.target = target
+                self.daemon = daemon
+
+            def start(self):
+                return None
+
+        fake_websocket = SimpleNamespace(WebSocketApp=FakeWebSocketApp)
+        with (
+            patch.dict(sys.modules, {"websocket": fake_websocket}),
+            patch.object(kis_api.KISWebSocket, "_get_ws_key", return_value="approval"),
+            patch.object(kis_api.threading, "Thread", FakeThread),
+        ):
+            ws = kis_api.KISWebSocket("token", [], market="KR")
+            ws.start()
+            self.assertTrue(ws.running)
+            self.assertTrue(ws.started_at)
+            FakeWebSocketApp.instances[0].on_error(FakeWebSocketApp.instances[0], RuntimeError("boom"))
+            self.assertFalse(ws.running)
+            self.assertIn("boom", ws.last_error)
+            ws.stop()
+            self.assertFalse(ws.running)
+            self.assertTrue(FakeWebSocketApp.instances[0].closed)
+
     def test_parse_kr_fill_notice(self) -> None:
         ws = kis_api.KISWebSocket("token", [], market="KR")
         raw = _payload(

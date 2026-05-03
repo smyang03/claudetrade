@@ -143,6 +143,54 @@ class P0DataQualityBackfillTests(unittest.TestCase):
                 self.assertEqual(summary["counts"]["verify_error"], 1)
                 self.assertIn("usd_krw_invalid", summary["reports"][0]["issues"])
 
+    def test_verify_fails_on_digest_nan_payload(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with _patched_root(root), patch.object(backfill, "_git_status_for_outputs", return_value=""):
+                path = root / "data" / "daily_digest" / "2026-05-01_US.json"
+                _write_json(
+                    path,
+                    {
+                        "date": "2026-05-01",
+                        "market": "US",
+                        "breadth_summary": {"universe_count": 1},
+                        "technicals": {"AAPL": {"change_pct": float("nan")}},
+                    },
+                )
+
+                code = backfill.main(["--verify", "--from", "2026-05-01", "--to", "2026-05-01", "--market", "US"])
+
+                self.assertEqual(code, 1)
+                summaries = list((root / "logs" / "p0_backfill").glob("*.json"))
+                summary = json.loads(summaries[0].read_text(encoding="utf-8"))
+                digest_report = next(report for report in summary["reports"] if report["kind"] == "daily_digest")
+                self.assertEqual(digest_report["status"], "verify_error")
+                self.assertIn("json_not_strict:ValueError", digest_report["issues"])
+
+    def test_write_sanitizes_non_finite_values_to_strict_json(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with _patched_root(root):
+                path = root / "data" / "supplement" / "us" / "2026-05-01.json"
+                _write_json(
+                    path,
+                    {
+                        "date": "2026-05-01",
+                        "vix": 0.0,
+                        "dxy": 0,
+                        "oil_wti": 0,
+                        "raw_vendor_value": float("inf"),
+                    },
+                )
+
+                code = backfill.main(["--write", "--from", "2026-05-01", "--to", "2026-05-01", "--market", "US"])
+
+                self.assertEqual(code, 0)
+                text = path.read_text(encoding="utf-8")
+                self.assertNotIn("Infinity", text)
+                payload = json.loads(text)
+                self.assertIsNone(payload["raw_vendor_value"])
+
 
 if __name__ == "__main__":
     unittest.main()
