@@ -6833,10 +6833,114 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             pos["pending_next_open_sell_attempted_at"] = attempted_at
             pos["pending_next_open_sell_attempt_status"] = "attempting"
 
-    def _record_pre_session_sell_result(self, ticker: str, *, ok: bool, error: str = "") -> None:
+    def _pre_session_sell_price_context(self, ticker: str, pos: dict, market: str) -> dict:
+        raw_price = self._float_or_zero(getattr(self, "price_cache_raw", {}).get(ticker))
+        cached = self._float_or_zero(getattr(self, "price_cache", {}).get(ticker))
+        if cached > 0:
+            return {"price": cached, "source": "price_cache", "raw_price": raw_price}
+        current = self._float_or_zero(pos.get("current_price"))
+        if current > 0:
+            return {"price": current, "source": "position_current_price", "raw_price": raw_price}
+        entry = self._float_or_zero(pos.get("entry"))
+        return {"price": entry, "source": "entry_fallback" if entry > 0 else "missing_price", "raw_price": raw_price}
+
+    def _classify_pre_session_sell_result(
+        self,
+        ticker: str,
+        *,
+        ok: bool,
+        error: str = "",
+        cand: Optional[dict] = None,
+        price_context: Optional[dict] = None,
+    ) -> tuple[str, str]:
+        cand = cand or {}
+        price_context = price_context or {}
+        if ok:
+            return "sent", ""
+        if error:
+            return "exception", str(error)[:240]
+        review_action = str(cand.get("auto_sell_review_action", "") or "").upper()
+        if review_action == "HOLD":
+            detail = str(cand.get("auto_sell_review_detail", "") or "")
+            if bool(cand.get("auto_sell_review_fallback", False)):
+                return "auto_sell_review_fallback_hold", detail[:240]
+            return "auto_sell_review_hold", detail[:240]
+        if self._float_or_zero(cand.get("exit_price")) <= 0:
+            return "invalid_exit_price", "exit_price_missing_or_zero"
+        if str(price_context.get("source", "") or "") == "entry_fallback":
+            return "entry_price_fallback", "current_price_missing_used_entry"
+        fail_meta = (getattr(self, "_sell_fail_meta", {}) or {}).get(ticker, {}) or {}
+        fail_sig = str(fail_meta.get("sig", "") or "")
+        if fail_sig:
+            return "broker_or_order_failure", fail_sig[:240]
+        return "false_return_unknown", ""
+
+    def _log_pre_session_sell_attempt(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        ok: bool,
+        cause: str,
+        detail: str = "",
+        cand: Optional[dict] = None,
+        price_context: Optional[dict] = None,
+    ) -> None:
+        cand = cand or {}
+        price_context = price_context or {}
+        price = self._float_or_zero(price_context.get("price"))
+        source = str(price_context.get("source", "") or "")
+        msg = (
+            f"[pre-session sell attempt] {market} {ticker} ok={bool(ok)} "
+            f"cause={cause} price={price:g} source={source} detail={str(detail or '')[:160]}"
+        )
+        if ok:
+            log.info(msg)
+        else:
+            log.warning(msg)
+        try:
+            self._record_decision_event(
+                market,
+                "pre_session_sell_attempt",
+                ticker,
+                strategy=cand.get("strategy", ""),
+                qty=int(cand.get("qty", 0) or 0),
+                price_native=price,
+                price_krw=float(cand.get("exit_price", 0) or 0),
+                reason="pre_session_sell",
+                reason_family=cause,
+                detail=detail,
+                auto_sell_review_action=cand.get("auto_sell_review_action", ""),
+                auto_sell_review_confidence=float(cand.get("auto_sell_review_confidence", 0) or 0),
+                auto_sell_review_fallback=bool(cand.get("auto_sell_review_fallback", False)),
+            )
+        except Exception:
+            pass
+
+    def _record_pre_session_sell_result(
+        self,
+        ticker: str,
+        *,
+        ok: bool,
+        error: str = "",
+        cause: str = "",
+        detail: str = "",
+        price_source: str = "",
+        attempted_price: float = 0.0,
+    ) -> None:
         for pos in self.risk.positions:
             if pos.get("ticker") != ticker:
                 continue
+            now_iso = datetime.now(KST).isoformat(timespec="seconds")
+            pos["pending_next_open_sell_attempt_logged_at"] = now_iso
+            if cause:
+                pos["pending_next_open_sell_attempt_cause"] = str(cause)[:120]
+            if detail:
+                pos["pending_next_open_sell_attempt_detail"] = str(detail)[:240]
+            if price_source:
+                pos["pending_next_open_sell_price_source"] = str(price_source)[:80]
+            if attempted_price:
+                pos["pending_next_open_sell_attempt_price"] = float(attempted_price)
             if ok:
                 pos["pending_next_open_sell"] = False
                 pos["pending_next_open_sell_attempt_status"] = "sent"
@@ -8718,6 +8822,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if sell_queue:
             if self._has_broker_sync_risk(market):
                 _log_risk("warning", f"[장전 SELL 큐] {market} 브로커 동기화 불신 상태 → 예약 매도 전부 보류")
+                for _sq_pos in sell_queue:
+                    _sq_tk = str(_sq_pos.get("ticker", "") or "")
+                    self._log_pre_session_sell_attempt(
+                        market,
+                        _sq_tk,
+                        ok=False,
+                        cause="broker_sync_risk",
+                        detail="pre_session_sell_queue_cleared_before_attempt",
+                        cand=_sq_pos,
+                        price_context={"price": 0.0, "source": "not_queried_broker_sync_risk"},
+                    )
                 self._pre_session_sell_queue[market] = []
             else:
                 _log_flow("info", f"[장전 SELL 큐] {market} {len(sell_queue)}건 매도 실행")
@@ -8728,17 +8843,52 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     try:
                         self._mark_pre_session_sell_attempting(_sq_tk, _sq_attempted_at)
                         # 생성 시점 current_price는 과거값일 수 있으므로 실행 시점 price_cache를 우선 사용
-                        _sq_cp = (
-                            self.price_cache.get(_sq_tk)
-                            or _sq_pos.get("current_price")
-                            or _sq_pos.get("entry", 0)
-                        )
+                        _sq_price_ctx = self._pre_session_sell_price_context(_sq_tk, _sq_pos, market)
+                        _sq_cp = _sq_price_ctx.get("price", 0)
                         cand = {**_sq_pos, "exit_price": _sq_cp, "reason": "pre_session_sell"}
                         _sq_ok = self._execute_sell(cand, market, reason="pre_session_sell",
                                                     hold_advice=_sq_pos.get("hold_advice"))
-                        self._record_pre_session_sell_result(_sq_tk, ok=bool(_sq_ok))
+                        _sq_cause, _sq_detail = self._classify_pre_session_sell_result(
+                            _sq_tk,
+                            ok=bool(_sq_ok),
+                            cand=cand,
+                            price_context=_sq_price_ctx,
+                        )
+                        self._record_pre_session_sell_result(
+                            _sq_tk,
+                            ok=bool(_sq_ok),
+                            cause=_sq_cause,
+                            detail=_sq_detail,
+                            price_source=str(_sq_price_ctx.get("source", "") or ""),
+                            attempted_price=float(_sq_price_ctx.get("price", 0) or 0),
+                        )
+                        self._log_pre_session_sell_attempt(
+                            market,
+                            _sq_tk,
+                            ok=bool(_sq_ok),
+                            cause=_sq_cause,
+                            detail=_sq_detail,
+                            cand=cand,
+                            price_context=_sq_price_ctx,
+                        )
                     except Exception as _sqe:
-                        self._record_pre_session_sell_result(_sq_tk, ok=False, error=str(_sqe)[:240])
+                        _sq_error = str(_sqe)[:240]
+                        self._record_pre_session_sell_result(
+                            _sq_tk,
+                            ok=False,
+                            error=_sq_error,
+                            cause="exception",
+                            detail=_sq_error,
+                        )
+                        self._log_pre_session_sell_attempt(
+                            market,
+                            _sq_tk,
+                            ok=False,
+                            cause="exception",
+                            detail=_sq_error,
+                            cand=_sq_pos,
+                            price_context={"price": 0.0, "source": "exception_before_price_context"},
+                        )
                         log.error(f"[장전 SELL 실패] {_sq_tk}: {_sqe}")
                 self._pre_session_sell_queue[market] = []
                 self._save_positions()
@@ -12329,6 +12479,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _SKIP_ACTIONS = {
             "sell_failed", "buy_blocked", "buy_skipped",
             "halt", "cooldown", "no_cash",
+            "pre_session_sell_attempt",
         }
         # in-memory 로그는 모든 이벤트 유지 (모니터링용)
         mode = self.today_judgment.get("consensus", {}).get("mode", "")
@@ -12365,6 +12516,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "soft_exit_review_action": kwargs.get("soft_exit_review_action", ""),
             "soft_exit_review_reason": kwargs.get("soft_exit_review_reason", ""),
             "soft_exit_review_confidence": float(kwargs.get("soft_exit_review_confidence", 0) or 0),
+            "auto_sell_review_action": kwargs.get("auto_sell_review_action", ""),
+            "auto_sell_review_confidence": float(kwargs.get("auto_sell_review_confidence", 0) or 0),
+            "auto_sell_review_fallback": bool(kwargs.get("auto_sell_review_fallback", False)),
             "soft_exit_reference_source": kwargs.get("soft_exit_reference_source", ""),
             "soft_exit_reference_target": float(kwargs.get("soft_exit_reference_target", 0) or 0),
             "pathb_reference_target": float(kwargs.get("pathb_reference_target", 0) or 0),

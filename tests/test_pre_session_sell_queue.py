@@ -21,6 +21,9 @@ class PreSessionSellQueueTests(unittest.TestCase):
     def _bot(self) -> TradingBot:
         bot = TradingBot.__new__(TradingBot)
         bot.risk = _Risk()
+        bot.price_cache = {}
+        bot.price_cache_raw = {}
+        bot._sell_fail_meta = {}
         return bot
 
     def test_failed_pre_session_sell_keeps_retry_flag(self) -> None:
@@ -36,13 +39,25 @@ class PreSessionSellQueueTests(unittest.TestCase):
     def test_exception_pre_session_sell_keeps_retry_flag_and_error(self) -> None:
         bot = self._bot()
 
-        bot._record_pre_session_sell_result("QCOM", ok=False, error="network timeout")
+        bot._record_pre_session_sell_result(
+            "QCOM",
+            ok=False,
+            error="network timeout",
+            cause="exception",
+            detail="network timeout",
+            price_source="entry_fallback",
+            attempted_price=100.0,
+        )
 
         pos = bot.risk.positions[0]
         self.assertTrue(pos["pending_next_open_sell"])
         self.assertTrue(pos["pending_next_open_sell_retry_needed"])
         self.assertEqual(pos["pending_next_open_sell_attempt_status"], "failed_exception")
         self.assertEqual(pos["pending_next_open_sell_attempt_error"], "network timeout")
+        self.assertEqual(pos["pending_next_open_sell_attempt_cause"], "exception")
+        self.assertEqual(pos["pending_next_open_sell_attempt_detail"], "network timeout")
+        self.assertEqual(pos["pending_next_open_sell_price_source"], "entry_fallback")
+        self.assertEqual(pos["pending_next_open_sell_attempt_price"], 100.0)
 
     def test_successful_pre_session_sell_clears_retry_flag(self) -> None:
         bot = self._bot()
@@ -54,6 +69,40 @@ class PreSessionSellQueueTests(unittest.TestCase):
         self.assertEqual(pos["pending_next_open_sell_attempt_status"], "sent")
         self.assertNotIn("pending_next_open_sell_retry_needed", pos)
         self.assertNotIn("pending_next_open_sell_attempt_error", pos)
+
+    def test_pre_session_sell_price_context_preserves_existing_priority(self) -> None:
+        bot = self._bot()
+        bot.price_cache["QCOM"] = 101.0
+        bot.price_cache_raw["QCOM"] = 99.0
+        pos = {"ticker": "QCOM", "current_price": 100.0, "entry": 90.0}
+
+        ctx = bot._pre_session_sell_price_context("QCOM", pos, "US")
+
+        self.assertEqual(ctx["price"], 101.0)
+        self.assertEqual(ctx["source"], "price_cache")
+        self.assertEqual(ctx["raw_price"], 99.0)
+
+    def test_pre_session_sell_classifies_review_hold_and_broker_failure(self) -> None:
+        bot = self._bot()
+
+        cause, detail = bot._classify_pre_session_sell_result(
+            "QCOM",
+            ok=False,
+            cand={"exit_price": 100.0, "auto_sell_review_action": "HOLD", "auto_sell_review_detail": "stale"},
+            price_context={"source": "price_cache", "price": 100.0},
+        )
+        self.assertEqual(cause, "auto_sell_review_hold")
+        self.assertEqual(detail, "stale")
+
+        bot._sell_fail_meta["QCOM"] = {"sig": "pre_session_sell|precheck_failed"}
+        cause, detail = bot._classify_pre_session_sell_result(
+            "QCOM",
+            ok=False,
+            cand={"exit_price": 100.0},
+            price_context={"source": "price_cache", "price": 100.0},
+        )
+        self.assertEqual(cause, "broker_or_order_failure")
+        self.assertEqual(detail, "pre_session_sell|precheck_failed")
 
     def test_max_hold_final_flag_still_requires_claude_sell_decision(self) -> None:
         bot = TradingBot.__new__(TradingBot)
