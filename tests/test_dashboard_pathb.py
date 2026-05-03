@@ -15,6 +15,18 @@ app = dashboard_server.app
 
 
 class DashboardPathBTests(unittest.TestCase):
+    def test_today_page_exposes_separate_today_and_lifetime_pnl_cards(self) -> None:
+        res = app.test_client().get("/")
+
+        self.assertEqual(res.status_code, 200)
+        body = res.get_data(as_text=True)
+        self.assertIn('id="today-pnl"', body)
+        self.assertIn('id="today-krw"', body)
+        self.assertIn('id="lifetime-pnl-total"', body)
+        self.assertIn('id="lifetime-pnl-split"', body)
+        self.assertIn('id="lifetime-pnl-basis"', body)
+        self.assertNotIn('id="streak-val"', body)
+
     def test_pathb_page_loads_and_old_pages_redirect(self) -> None:
         client = app.test_client()
 
@@ -165,6 +177,18 @@ class DashboardPathBTests(unittest.TestCase):
             "last_error": "positions boom",
             "source": "stale_cache",
         }
+        lifetime = {
+            "basis": "broker_fills_fifo_excluding_cash_flow",
+            "KR": {"pnl_krw": -1000.0, "known_sell_count": 1, "sell_count": 1, "unknown_cost_basis_count": 0},
+            "US": {"pnl_krw": 2500.0, "known_sell_count": 2, "sell_count": 2, "unknown_cost_basis_count": 0},
+            "kr_pnl_krw": -1000.0,
+            "us_pnl_krw": 2500.0,
+            "total_pnl_krw": 1500.0,
+            "known_sell_count": 3,
+            "sell_count": 3,
+            "unknown_cost_basis_count": 0,
+            "errors": {},
+        }
 
         with patch.object(
             dashboard_server, "load_records", return_value=[{"date": "2026-05-04", "actual_result": {"cumulative": 1000}}]
@@ -199,6 +223,8 @@ class DashboardPathBTests(unittest.TestCase):
         ), patch.object(
             dashboard_server, "_count_today_entries", return_value=0
         ), patch.object(
+            dashboard_server, "_lifetime_realized_pnl_summary", return_value=lifetime
+        ), patch.object(
             dashboard_server, "_session_trade_date", return_value=date(2026, 5, 4)
         ), patch.object(
             dashboard_server, "_session_status", return_value={}
@@ -215,6 +241,35 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertTrue(today["broker_positions_cache_stale"])
         self.assertEqual(today["broker_positions_cache_age_sec"], 55)
         self.assertEqual(today["broker_last_error"], "snapshot boom")
+        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["kr_pnl_krw"], -1000.0)
+        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["us_pnl_krw"], 2500.0)
+        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["total_pnl_krw"], 1500.0)
+
+    def test_lifetime_realized_pnl_summary_splits_markets_and_excludes_unknown_cost_basis(self) -> None:
+        def fake_rows(market, period, start, end, mode="paper"):
+            self.assertEqual(period, "all")
+            if market == "KR":
+                return [
+                    {"side": "buy", "pnl_known": True, "pnl": 0},
+                    {"side": "sell", "pnl_known": True, "pnl": -1200.0},
+                    {"side": "sell", "pnl_known": False, "pnl": 999999.0},
+                ]
+            return [
+                {"side": "sell", "pnl_known": True, "pnl": 3400.0},
+                {"side": "sell", "pnl_known": True, "pnl": 600.0},
+            ]
+
+        with patch.object(dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows):
+            summary = dashboard_server._lifetime_realized_pnl_summary("live")
+
+        self.assertEqual(summary["KR"]["pnl_krw"], -1200.0)
+        self.assertEqual(summary["US"]["pnl_krw"], 4000.0)
+        self.assertEqual(summary["kr_pnl_krw"], -1200.0)
+        self.assertEqual(summary["us_pnl_krw"], 4000.0)
+        self.assertEqual(summary["total_pnl_krw"], 2800.0)
+        self.assertEqual(summary["known_sell_count"], 3)
+        self.assertEqual(summary["sell_count"], 4)
+        self.assertEqual(summary["unknown_cost_basis_count"], 1)
 
     def test_v2_ops_market_uses_session_trade_date(self) -> None:
         captured = {}

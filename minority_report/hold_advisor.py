@@ -55,6 +55,7 @@ HOLD_DECISION_STAGES = {
     "MAX_HOLD",
     "PRE_CLOSE_CARRY",
     "SOFT_EXIT",
+    "AUTO_SELL_REVIEW",
     "MANUAL_REVIEW",
 }
 
@@ -65,6 +66,7 @@ STAGE_DEFAULT_POLICIES = {
     "MAX_HOLD": "SELL unless there is a clear one-review carry exception.",
     "PRE_CLOSE_CARRY": "SELL unless broker-truth is trusted and carry risk is acceptable.",
     "SOFT_EXIT": "SELL unless the soft exit is premature and risk is protected.",
+    "AUTO_SELL_REVIEW": "SELL only when the supplied automatic sell reason remains valid after a fresh risk/reward review.",
     "MANUAL_REVIEW": "HOLD unless the supplied review context supports SELL.",
 }
 

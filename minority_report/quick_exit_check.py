@@ -35,7 +35,7 @@ def _client(timeout_sec: float):
 
 def _fallback(reason: str) -> dict[str, Any]:
     return {
-        "action": "SELL",
+        "action": "HOLD",
         "confidence": 0.0,
         "reason": reason[:500],
         "protective_stop": 0.0,
@@ -61,7 +61,7 @@ def quick_exit_check(
 ) -> dict[str, Any]:
     """Single-call HOLD/SELL check for soft exits.
 
-    Any failure returns SELL so the existing sell path continues.
+    Any failure returns HOLD so soft exits do not become blind sells.
     """
     timeout = float(timeout_sec if timeout_sec is not None else os.getenv("SOFT_EXIT_CLAUDE_TIMEOUT_SEC", "8"))
     tokens = int(max_tokens if max_tokens is not None else os.getenv("SOFT_EXIT_CLAUDE_MAX_TOKENS", "220"))
@@ -143,5 +143,5 @@ JSON schema:
             "fallback": False,
         }
     except Exception as exc:
-        log.warning(f"[quick_exit_check] fallback SELL {ticker_key}: {exc}")
+        log.warning(f"[quick_exit_check] fallback HOLD {ticker_key}: {exc}")
         return _fallback(str(exc))

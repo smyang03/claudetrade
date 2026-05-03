@@ -6588,7 +6588,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         reason = str(cand.get("reason", "") or "")
         if not bool(getattr(self, "soft_exit_arbitration_enabled", True)):
             return False
-        if reason not in {"profit_floor", "trail_stop", "max_hold"}:
+        if reason not in {"profit_floor", "trail_stop"}:
             return False
         if cand.get("pathb_path_run_id"):
             return False
@@ -6634,7 +6634,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "market_mode": market_mode,
         }
         result = self._call_quick_exit_check(payload)
-        action = str(result.get("action", "SELL") or "SELL").upper()
+        action = str(result.get("action", "HOLD") or "HOLD").upper()
+        if bool(result.get("fallback", False)):
+            action = "HOLD"
+        if action not in {"SELL", "HOLD"}:
+            action = "HOLD"
         cand["_soft_exit_arbitration_checked"] = True
         cand["soft_exit_review_action"] = action
         cand["soft_exit_review_reason"] = str(result.get("reason", "") or "")[:500]
@@ -6680,7 +6684,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "stop_loss": 3,
                 "trail_stop": 4,
                 "tp_check": 5,
-                "max_hold": 6,
             }
             deduped: dict[tuple[str, str], dict] = {}
             for cand in candidates:
@@ -6724,13 +6727,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
                 # Soft exits with a valid Claude reference target get one quick arbitration pass.
                 if self._try_soft_exit_arbitration(cand, market):
-                    continue
-                # max_hold without successful quick arbitration falls back to its existing handling.
-                if cand["reason"] == "max_hold":
-                    if cand.get("_soft_exit_arbitration_checked"):
-                        self._execute_sell(cand, market, reason="max_hold")
-                        continue
-                    self._handle_max_hold_claude(cand, market)
                     continue
                 self._execute_sell(cand, market, reason=cand["reason"])
                 if cand["reason"] in ("loss_cap", "stop_loss", "trail_stop"):
@@ -6829,6 +6825,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not sell_list and not hold_list:
             lines.append("보유 포지션 없음")
         block_alert("장 시작 전 포지션 점검", lines[1:], market=market, icon="🌅")
+
+    def _mark_pre_session_sell_attempting(self, ticker: str, attempted_at: str) -> None:
+        for pos in self.risk.positions:
+            if pos.get("ticker") != ticker:
+                continue
+            pos["pending_next_open_sell_attempted_at"] = attempted_at
+            pos["pending_next_open_sell_attempt_status"] = "attempting"
+
+    def _record_pre_session_sell_result(self, ticker: str, *, ok: bool, error: str = "") -> None:
+        for pos in self.risk.positions:
+            if pos.get("ticker") != ticker:
+                continue
+            if ok:
+                pos["pending_next_open_sell"] = False
+                pos["pending_next_open_sell_attempt_status"] = "sent"
+                pos.pop("pending_next_open_sell_retry_needed", None)
+                pos.pop("pending_next_open_sell_attempt_error", None)
+                continue
+            pos["pending_next_open_sell"] = True
+            pos["pending_next_open_sell_retry_needed"] = True
+            pos["pending_next_open_sell_attempt_status"] = "failed_exception" if error else "failed"
+            if error:
+                pos["pending_next_open_sell_attempt_error"] = str(error)[:240]
+
     def _post_session_position_review(self, market: str, positions: list):
         """장 종료 후 이월 포지션 Claude 점검 — 왜 보유 중인지 이유 기록 + 텔레그램 전송."""
         if not positions:
@@ -7022,9 +7042,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._write_live_status(market, force=True)
         block_alert(f"장 중 포지션 점검 · {label}", lines[1:], market=market, icon="🔍")
     def _handle_max_hold_claude(self, cand: dict, market: str):
-        """max_hold 도달 시 Claude에게 SELL/HOLD 물어본 후 결정.
+        """Legacy max_hold review path.
+
+        보유일 제한은 더 이상 매도 트리거로 쓰지 않는다. 혹시 과거 경로에서
+        호출되더라도 Claude SELL 외에는 보유 상태만 갱신한다.
+
         - SELL: 즉시 매도
-        - HOLD/TRAIL: max_hold +1 연장 (1회만, 이후 재도달 시 강제 청산)
+        - HOLD/TRAIL: 계속 보유
+        - Claude 판단 실패: 매도하지 않고 보유 연장
         """
         from telegram_reporter import send as _send
         ticker    = cand["ticker"]
@@ -7034,15 +7059,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         cur       = float(cand.get("exit_price", 0))
         is_us     = market == "US"
         px_fmt    = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f} KRW"
-        action, reason_txt, advice = "SELL", "", None
-        # If already extended, a final max-hold candidate is sold without another review.
+        action, reason_txt, advice = "HOLD", "", None
         already_extended = cand.get("max_hold_extended", False)
         if already_extended and cand.get("max_hold_final", False):
-            log.info(f"[max_hold 강제청산] {ticker} — 2회 연장 후 재도달 → 즉시 청산")
-            self._execute_sell(cand, market, reason="max_hold_final")
-            _send(f"⏰ <b>[보유기한 만료] {ticker}</b>  {pnl:+.2f}%\n"
-                  f"  max_hold {max_hold}일 2회 연장 후 재도달 → 즉시 청산")
-            return
+            log.info(f"[max_hold 재검토] {ticker} — final flag present, Claude 재판단 후 처리")
         entry_ok = float(cand.get("entry", 0) or 0) > 0
         if not entry_ok:
             log.warning(f"[max_hold Claude] {ticker} entry=0 → hold_advisor 건너뜀, HOLD 유지")
@@ -7059,80 +7079,195 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     digest,
                     decision_stage="MAX_HOLD",
                 )
-                action = advice.get("action", "SELL")
+                action = advice.get("action", "HOLD")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
                     if v.get("action") == action and v.get("reason"):
                         reason_txt = v["reason"][:100]
                         break
             except Exception as e:
-                log.warning(f"[max_hold Claude] {ticker} hold_advisor 실패 → 기본 청산: {e}")
-                action = "SELL"
-        action_ko  = "즉시 청산" if action == "SELL" else f"보유기한 {max_hold+1}일로 연장"
+                log.warning(f"[max_hold Claude] {ticker} hold_advisor 실패 → HOLD 유지: {e}")
+                action = "HOLD"
+        action_ko  = "즉시 청산" if action == "SELL" else "계속 보유"
         color_icon = "🔴" if action == "SELL" else "🟡"
         if action == "SELL":
-            self._execute_sell(cand, market, reason="max_hold", hold_advice=advice)
-            msg = (f"⏰ <b>[보유기한 만료 · Claude 청산] {ticker}</b>  {pnl:+.2f}%\n"
-                   f"  {held_days}일 보유, {px_fmt(cur)} 매도\n"
-                   f"  {color_icon} Claude: {action_ko}"
-                   + (f"\n     - {reason_txt}" if reason_txt else ""))
-        else:
-            # max_hold +1 연장, 연장 플래그 세팅
             for p2 in self.risk.positions:
                 if p2.get("ticker") == ticker:
-                    p2["max_hold"] = max_hold + 1
-                    p2["max_hold_extended"] = True
-                    if already_extended:
-                        # 2번째 연장 → 다음 재도달 시 진짜 강제 청산
-                        p2["max_hold_final"] = True
+                    p2["max_hold_final"] = False
+                    p2["max_hold_sell_ignored"] = True
                     if advice:
                         p2["hold_advice"] = advice
                     break
             self._save_positions()
-            msg = (f"⏰ <b>[보유기한 만료 · Claude 연장] {ticker}</b>  {pnl:+.2f}%\n"
-                   f"  {held_days}일 보유 → max_hold {max_hold+1}일로 연장 (1회 한정)\n"
+            msg = (f"⏰ <b>[보유일 검토 · 매도 미실행] {ticker}</b>  {pnl:+.2f}%\n"
+                   f"  {held_days}일 보유, 보유일 제한 비활성 → max_hold 매도 신호 무시\n"
+                   f"  {color_icon} Claude: {action_ko}"
+                   + (f"\n     - {reason_txt}" if reason_txt else ""))
+        else:
+            for p2 in self.risk.positions:
+                if p2.get("ticker") == ticker:
+                    p2["max_hold_final"] = False
+                    if advice:
+                        p2["hold_advice"] = advice
+                    break
+            self._save_positions()
+            msg = (f"⏰ <b>[보유일 검토 · 계속 보유] {ticker}</b>  {pnl:+.2f}%\n"
+                   f"  {held_days}일 보유 → 보유일 제한 없이 유지\n"
                    f"  {color_icon} Claude: {action_ko}"
                    + (f"\n     - {reason_txt}" if reason_txt else ""))
         _send(msg)
         log.info(f"[max_hold Claude] {ticker} held={held_days} -> {action} ({reason_txt[:50]})")
     def _handle_tp_trailing(self, cand: dict, market: str):
-        """TP 도달 시 트레일링 스탑 전환 (분석가 합의 옵션)"""
+        """TP 도달 시 Claude 재판단 후 SELL 또는 트레일링 전환."""
         ticker     = cand["ticker"]
         trail_pct  = self.trailing_stop_pct
         hold_advice = None
-        if self.enable_trailing_analyst:
-            # 분석가 3명에게 HOLD/SELL 물어봄 (entry=0이면 건너뜀)
-            entry_ok = float(cand.get("entry", 0) or 0) > 0
-            if not entry_ok:
-                log.warning(f"[TP trailing] {ticker} entry=0 → hold_advisor 건너뜀, 트레일링 즉시 전환")
-            else:
-                try:
-                    from minority_report.hold_advisor import ask as advisor_ask
-                    _d = self.today_judgment.get("digest_prompt", "")
-                    _ic = self._build_intraday_context(market)
-                    digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
-                    advice = advisor_ask(
-                        self._advisor_pos(cand, market),
-                        market,
-                        digest,
-                        decision_stage="TP_REVIEW",
-                    )
-                    if advice["action"] == "SELL":
-                        log.info(f"[TP→분석가합의:SELL] {ticker} — 즉시 청산")
-                        trailing_alert(market, ticker, "sell", detail="분석가 합의: 즉시 청산")
-                        self._execute_sell(cand, market, reason="tp_analyst_sell",
-                                           hold_advice=advice)
-                        return
-                    trail_pct  = advice["trail_pct"]
-                    hold_advice = advice
-                    log.info(f"[TP→분석가합의:HOLD] {ticker} trail={trail_pct:.2%}")
-                    trailing_alert(market, ticker, "hold", trail_pct=trail_pct)
-                except Exception as e:
-                    log.warning(f"[hold_advisor] 오류 → trail 기본값 적용: {e}")
+        # 목표가 도달도 최종 매도/보유 판단이므로 항상 Claude에게 재확인한다.
+        entry_ok = float(cand.get("entry", 0) or 0) > 0
+        if not entry_ok:
+            log.warning(f"[TP trailing] {ticker} entry=0 → hold_advisor 건너뜀, 트레일링 전환")
         else:
-            log.info(f"[TP→트레일링] {ticker} trail={trail_pct:.2%} (분석가 생략)")
-            trailing_alert(market, ticker, "trail", trail_pct=trail_pct)
+            try:
+                from minority_report.hold_advisor import ask as advisor_ask
+                _d = self.today_judgment.get("digest_prompt", "")
+                _ic = self._build_intraday_context(market)
+                digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
+                advice = advisor_ask(
+                    self._advisor_pos(cand, market),
+                    market,
+                    digest,
+                    decision_stage="TP_REVIEW",
+                )
+                if str(advice.get("action", "HOLD") or "HOLD").upper() == "SELL":
+                    log.info(f"[TP→Claude SELL] {ticker} — 즉시 청산")
+                    trailing_alert(market, ticker, "sell", detail="Claude TP_REVIEW: 즉시 청산")
+                    self._execute_sell(cand, market, reason="tp_analyst_sell", hold_advice=advice)
+                    return
+                trail_pct = float(advice.get("trail_pct", trail_pct) or trail_pct)
+                hold_advice = advice
+                log.info(f"[TP→Claude HOLD] {ticker} trail={trail_pct:.2%}")
+                trailing_alert(market, ticker, "hold", trail_pct=trail_pct)
+            except Exception as e:
+                hold_advice = {
+                    "action": "HOLD",
+                    "confidence": 0.0,
+                    "reason": f"tp_review_failed:{e}",
+                    "fallback": True,
+                    "decision_stage": "TP_REVIEW",
+                }
+                log.warning(f"[TP Claude] {ticker} 오류 → SELL 차단, trail 기본값 적용: {e}")
+                trailing_alert(market, ticker, "hold", trail_pct=trail_pct)
         self.risk.activate_trailing(ticker, trail_pct, hold_advice=hold_advice)
+
+    @staticmethod
+    def _auto_sell_review_required(reason: str) -> bool:
+        return str(reason or "").strip().lower() not in {"manual_sell"}
+
+    def _run_auto_sell_review_gate(
+        self,
+        cand: dict,
+        market: str,
+        reason: str,
+        *,
+        current_native: float = 0.0,
+    ) -> dict:
+        reason_key = str(reason or "").strip()
+        ticker = str(cand.get("ticker", "") or "")
+        if not self._auto_sell_review_required(reason_key):
+            return {"allowed": True, "bypassed": True, "reason": "manual_or_operator_sell"}
+
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        review_pos = dict(cand)
+        review_pos["decision_stage"] = "AUTO_SELL_REVIEW"
+        review_pos["auto_sell_reason"] = reason_key
+        review_pos["auto_sell_reviewed_at"] = now_iso
+        review_pos["current_price"] = float(cand.get("exit_price", 0) or cand.get("current_price", 0) or 0)
+        if str(market or "").upper() == "US" and float(current_native or 0) > 0:
+            review_pos.setdefault("display_current_price", float(current_native or 0))
+        elif float(current_native or 0) > 0:
+            review_pos["display_current_price"] = float(current_native or 0)
+
+        default_policy = (
+            "SELL only if this automatic sell signal is still valid after fresh review. "
+            "Return HOLD when evidence is stale, ambiguous, or the position should be rechecked later."
+        )
+        try:
+            from minority_report.hold_advisor import ask as advisor_ask
+
+            digest = str((self.today_judgment or {}).get("digest_prompt", "") or "")
+            intraday = self._build_intraday_context(market)
+            if intraday:
+                digest = digest + "\n\n[Intraday]\n" + intraday if digest else intraday
+            advice = advisor_ask(
+                self._advisor_pos(review_pos, market),
+                market,
+                digest,
+                decision_stage="AUTO_SELL_REVIEW",
+                default_policy=default_policy,
+            )
+            action = str((advice or {}).get("action", "HOLD") or "HOLD").upper()
+            if action not in {"SELL", "HOLD"}:
+                action = "HOLD"
+            detail = str((advice or {}).get("reason", "") or "")[:500]
+            confidence = float((advice or {}).get("confidence", 0.0) or 0.0)
+            fallback = bool((advice or {}).get("fallback", False))
+        except Exception as exc:
+            advice = {
+                "action": "HOLD",
+                "confidence": 0.0,
+                "reason": f"auto_sell_review_failed:{exc}",
+                "fallback": True,
+                "decision_stage": "AUTO_SELL_REVIEW",
+            }
+            action = "HOLD"
+            detail = str(advice["reason"])[:500]
+            confidence = 0.0
+            fallback = True
+
+        payload = {
+            "auto_sell_reviewed_at": now_iso,
+            "auto_sell_review_reason": reason_key,
+            "auto_sell_review_action": action,
+            "auto_sell_review_detail": detail,
+            "auto_sell_review_confidence": confidence,
+            "auto_sell_review_fallback": fallback,
+        }
+        for pos in list(getattr(self.risk, "positions", []) or []):
+            if pos.get("ticker") != ticker:
+                continue
+            pos.update(payload)
+            if action == "SELL":
+                pos["hold_advice"] = advice
+            break
+        cand.update(payload)
+        cand["auto_sell_review_advice"] = advice
+        try:
+            self._record_decision_event(
+                market,
+                "auto_sell_review",
+                ticker,
+                strategy=cand.get("strategy", ""),
+                qty=int(cand.get("qty", 0) or 0),
+                price_native=float(current_native or 0),
+                price_krw=float(cand.get("exit_price", 0) or 0),
+                reason=reason_key,
+                detail=detail,
+                auto_sell_review_action=action,
+                auto_sell_review_confidence=confidence,
+                auto_sell_review_fallback=fallback,
+            )
+        except Exception:
+            pass
+        if action != "SELL":
+            try:
+                self._save_positions()
+            except Exception:
+                pass
+            log.warning(f"[auto sell review HOLD] {market} {ticker} reason={reason_key} detail={detail}")
+            return {"allowed": False, "advice": advice, **payload}
+        log.info(f"[auto sell review SELL] {market} {ticker} reason={reason_key} confidence={confidence:.2f}")
+        return {"allowed": True, "advice": advice, **payload}
+
     def _execute_sell(self, cand: dict, market: str, reason: str,
                       hold_advice: dict = None):
         """실제 매도 실행 + 텔레그램 알림 + hold_advisor 결과 기록"""
@@ -7140,6 +7275,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if float(cand.get("exit_price", 0) or 0) <= 0 or float(raw_px or 0) <= 0:
             log.error(f"sell skipped [{cand['ticker']}]: invalid exit/raw price exit={cand.get('exit_price')} raw={raw_px}")
             return False
+        review = self._run_auto_sell_review_gate(cand, market, reason, current_native=float(raw_px or 0))
+        if not bool(review.get("allowed", False)):
+            return False
+        if review.get("advice"):
+            hold_advice = review.get("advice")
         order_px = self._compute_order_price("sell", market, float(raw_px))
         try:
             precheck = precheck_order(cand["ticker"], cand["qty"], order_px, "sell", self._token_for_market(market), market=market)
@@ -7246,6 +7386,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "soft_exit_review_fallback",
             "soft_exit_reference_source",
             "soft_exit_reference_target",
+            "auto_sell_reviewed_at",
+            "auto_sell_review_reason",
+            "auto_sell_review_action",
+            "auto_sell_review_detail",
+            "auto_sell_review_confidence",
+            "auto_sell_review_fallback",
             "pathb_reference_target",
             "pathb_reference_stop",
             "pathb_reference_confidence",
@@ -8580,10 +8726,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     _sq_tk = _sq_pos.get("ticker", "")
                     _sq_attempted_at = datetime.now(KST).isoformat(timespec="seconds")
                     try:
-                        for _p2 in self.risk.positions:
-                            if _p2.get("ticker") == _sq_tk:
-                                _p2["pending_next_open_sell_attempted_at"] = _sq_attempted_at
-                                _p2["pending_next_open_sell_attempt_status"] = "attempting"
+                        self._mark_pre_session_sell_attempting(_sq_tk, _sq_attempted_at)
                         # 생성 시점 current_price는 과거값일 수 있으므로 실행 시점 price_cache를 우선 사용
                         _sq_cp = (
                             self.price_cache.get(_sq_tk)
@@ -8593,16 +8736,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         cand = {**_sq_pos, "exit_price": _sq_cp, "reason": "pre_session_sell"}
                         _sq_ok = self._execute_sell(cand, market, reason="pre_session_sell",
                                                     hold_advice=_sq_pos.get("hold_advice"))
-                        for _p2 in self.risk.positions:
-                            if _p2.get("ticker") == _sq_tk:
-                                _p2["pending_next_open_sell"] = False
-                                _p2["pending_next_open_sell_attempt_status"] = "sent" if _sq_ok else "failed"
+                        self._record_pre_session_sell_result(_sq_tk, ok=bool(_sq_ok))
                     except Exception as _sqe:
-                        for _p2 in self.risk.positions:
-                            if _p2.get("ticker") == _sq_tk:
-                                _p2["pending_next_open_sell"] = False
-                                _p2["pending_next_open_sell_attempt_status"] = "failed_exception"
-                                _p2["pending_next_open_sell_attempt_error"] = str(_sqe)[:240]
+                        self._record_pre_session_sell_result(_sq_tk, ok=False, error=str(_sqe)[:240])
                         log.error(f"[장전 SELL 실패] {_sq_tk}: {_sqe}")
                 self._pre_session_sell_queue[market] = []
                 self._save_positions()
@@ -12584,12 +12720,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             p for p in list(self.risk.positions)
             if self._ticker_market(p.get("ticker", "")) == market
         ]
-        day_trades = [p for p in market_positions if p.get("max_hold", 1) <= 1]
-        multi_days = [p for p in market_positions if p.get("max_hold", 1) > 1]
+        carry_positions = []
         from telegram_reporter import send as _tg_send
-        # day_trade도 Claude에게 먼저 물어본 후 다음 세션 행동 결정
+        # 모든 보유 포지션은 보유일 제한 없이 Claude에게 다음 세션 행동만 묻는다.
         claude_review_lines = [f"🔔 <b>[장마감 포지션 검토] {market}</b>", "━━━━━━━━━━━━━━━━"]
-        for pos in day_trades:
+        for pos in market_positions:
             ticker = pos.get("ticker", "")
             price_pos = self._position_with_latest_price_context(pos, market)
             cp     = self._native_position_price(price_pos, market, current=True)
@@ -12597,7 +12732,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             pnl    = (cp / entry - 1) * 100 if entry and cp else 0
             is_us  = market == "US"
             px_fmt = lambda v: f"${v:.2f}" if is_us else f"{v:,.0f} KRW"
-            action = "SELL"  # 기본값: 청산
+            action = "HOLD"
             reason_txt = ""
             advice = None
             try:
@@ -12611,7 +12746,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     digest,
                     decision_stage="PRE_CLOSE_CARRY",
                 )
-                action = advice.get("action", "SELL")
+                action = advice.get("action", "HOLD")
                 votes  = advice.get("votes", {})
                 for v in votes.values():
                     if v.get("action") == action and v.get("reason"):
@@ -12619,8 +12754,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         break
                 log.info(f"[장마감 검토] {ticker} Claude → {action} ({reason_txt[:50]})")
             except Exception as e:
-                log.warning(f"[장마감 검토] {ticker} hold_advisor 실패 → 기본 청산: {e}")
-                action = "SELL"
+                log.warning(f"[장마감 검토] {ticker} hold_advisor 실패 → HOLD 유지: {e}")
+                action = "HOLD"
             action_ko  = "다음 세션 청산 권고" if action == "SELL" else "내일로 이월"
             color_icon = "🔴" if action == "SELL" else "🟡"
             pnl_icon   = "🟢" if pnl >= 0 else "🔴"
@@ -12640,31 +12775,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         break
                 log.info(f"[session close Claude sell] {ticker} {pnl:+.2f}% queued for next session open")
             else:
-                # HOLD/TRAIL → 이월: max_hold 하루 연장
+                # HOLD/TRAIL → 이월. max_hold/hold_days는 매도 트리거로 쓰지 않는다.
                 for p2 in self.risk.positions:
                     if p2.get("ticker") == ticker:
-                        p2["max_hold"] = max(p2.get("max_hold", 1) + 1, 2)
                         if advice:
                             p2["hold_advice"] = advice
                         p2["pending_next_open_sell"] = False
                         p2["pending_next_open_reason"] = ""
                         break
-                multi_days.append(pos)
-                log.info(f"[장마감 Claude 이월] {ticker} {pnl:+.2f}% → max_hold 연장")
+                carry_positions.append(pos)
+                log.info(f"[장마감 Claude 이월] {ticker} {pnl:+.2f}%")
         if len(claude_review_lines) > 2:
             try:
                 _tg_send("\n\n".join(claude_review_lines))
             except Exception:
                 pass
-        if multi_days:
-            log.info(f"[이월] {[p['ticker'] for p in multi_days]} "
+        if carry_positions:
+            log.info(f"[이월] {[p['ticker'] for p in carry_positions]} "
         # ── 장 종료 후 이월 포지션 Claude 점검 → 텔레그램 전송 ──────────────
-                     f"{[p['held_days'] for p in multi_days]})")
+                     f"{[p['held_days'] for p in carry_positions]})")
         # 이월 포지션 파일 저장 (재시작 대비)
         self._save_positions()
         # ── 장 종료 후 이월 포지션 Claude 점검 → 텔레그램 전송 ──────────────
         try:
-            self._post_session_position_review(market, multi_days)
+            self._post_session_position_review(market, carry_positions)
         except Exception as _pse:
             log.warning(f"[장후 포지션 리뷰 오류] {market}: {_pse}")
         session_trades = self._filter_trades_for_market(self.risk.trade_log, market)

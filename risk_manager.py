@@ -528,8 +528,6 @@ class RiskManager:
                         reason = "soft_exit_floor_price"
                     if not reason and floor_triggered and floor_usd > 0 and cp_usd <= floor_usd:
                         reason = "profit_floor"
-                    if not reason and pos["held_days"] >= pos["max_hold"]:
-                        reason = "max_hold"
                 else:
                     reason, effective_stop = self._stop_reason(cp_usd, sl_usd, loss_cap_usd, "stop_loss")
                     exit_meta["effective_stop_price"] = effective_stop
@@ -541,8 +539,6 @@ class RiskManager:
                         reason = "profit_floor"
                     elif cp_usd >= tp_usd and not pos.get("tp_triggered"):
                         reason = "tp_check"
-                    elif pos["held_days"] >= pos["max_hold"]:
-                        reason = "max_hold"
 
                 if reason:
                     candidates.append({**pos, "exit_price": cp, "reason": reason, **exit_meta})
@@ -579,8 +575,6 @@ class RiskManager:
                     reason = "soft_exit_floor_price"
                 if not reason and floor_triggered and floor_krw > 0 and cp <= floor_krw:
                     reason = "profit_floor"
-                if not reason and pos["held_days"] >= pos["max_hold"]:
-                    reason = "max_hold"
             else:
                 reason, effective_stop = self._stop_reason(cp, base_stop, loss_cap_krw, "stop_loss")
                 exit_meta["effective_stop_price"] = effective_stop
@@ -592,8 +586,6 @@ class RiskManager:
                     reason = "profit_floor"
                 elif cp >= pos["tp"] and not pos.get("tp_triggered"):
                     reason = "tp_check"      # TP 도달 → trading_bot에서 처리
-                elif pos["held_days"] >= pos["max_hold"]:
-                    reason = "max_hold"
             if reason:
                 candidates.append({**pos, "exit_price": cp, "reason": reason, **exit_meta})
         return candidates

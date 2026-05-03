@@ -78,6 +78,23 @@ class LossCapProfitFloorTests(unittest.TestCase):
 
         self.assertEqual(candidates, [])
 
+    def test_max_hold_no_longer_creates_exit_candidate(self) -> None:
+        risk = RiskManager(init_cash=1_000_000)
+        risk.reset_daily_state(override_base=1_000_000)
+        risk.positions = [
+            _kr_position(
+                current_price=10_100.0,
+                sl=9_000.0,
+                held_days=30,
+                max_hold=1,
+                peak_pnl_pct=0.0,
+            )
+        ]
+
+        candidates = risk.get_exit_candidates()
+
+        self.assertEqual(candidates, [])
+
     def test_exit_candidate_includes_position_mfe_and_mae(self) -> None:
         risk = RiskManager(init_cash=1_000_000)
         risk.reset_daily_state(override_base=1_000_000)

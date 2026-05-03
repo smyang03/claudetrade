@@ -908,14 +908,8 @@ class PathBRuntime:
         self.reconcile_sell_pending(market, force=False)
         self.reconcile_filled_positions(market, force=False)
         minutes_to_close = self._minutes_to_close(market)
-        for run in self.store.path_runs_for_session(
-            market=market,
-            runtime_mode=self.mode,
-            session_date=self._session_date(market),
-        ):
+        for run in self._active_exit_runs_for_market(market):
             if str(run.get("path_type", "")) != "claude_price":
-                continue
-            if str(run.get("status", "")) not in {"FILLED", "PARTIAL_FILLED"}:
                 continue
             plan = self._plan_from_run(run)
             if plan is None:
@@ -923,6 +917,14 @@ class PathBRuntime:
             pos = self._find_position(market, plan.ticker, path_run_id=plan.path_run_id)
             if not pos:
                 continue
+            if str(run.get("status", "")) == "ORDER_UNKNOWN":
+                recovered_run = self._recover_order_unknown_local_holding(run, plan, pos)
+                if recovered_run is None:
+                    continue
+                run = recovered_run
+            if str(run.get("status", "")) not in {"FILLED", "PARTIAL_FILLED"}:
+                continue
+            self._clear_stale_pathb_closing_lock(pos, market, plan.path_run_id)
             current = self._current_native_price(market, plan.ticker)
             if current <= 0:
                 continue
@@ -1435,16 +1437,122 @@ class PathBRuntime:
         log.warning(f"[PathB LIVE BUY] {market} {plan.ticker} qty={qty} limit={signal.limit_price:g} order={execution_id}")
         return True
 
+    @staticmethod
+    def _pathb_sell_review_required(signal: ExitSignal) -> bool:
+        return str(signal.reason or "").strip().lower() not in {"pathb_kill", "pathb_closeall", "operator_kill"}
+
+    def _run_pathb_sell_review_gate(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> dict[str, Any]:
+        if not self._pathb_sell_review_required(signal):
+            return {"allowed": True, "bypassed": True, "reason": "operator_close"}
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        current_native = float(signal.price or 0)
+        review_pos = dict(pos)
+        review_pos["ticker"] = plan.ticker
+        review_pos["market"] = plan.market
+        review_pos["decision_stage"] = "AUTO_SELL_REVIEW"
+        review_pos["auto_sell_reason"] = str(signal.reason or "")
+        review_pos["auto_sell_close_reason"] = str(signal.close_reason or "")
+        review_pos["pathb_plan"] = plan.to_dict()
+        review_pos["pathb_exit_signal"] = {
+            "reason": signal.reason,
+            "close_reason": signal.close_reason,
+            "price": current_native,
+            "path_run_id": signal.path_run_id,
+        }
+        if plan.market == "US":
+            review_pos.setdefault("display_current_price", current_native)
+            fx = self._usd_krw()
+            if fx > 0:
+                review_pos["current_price"] = current_native * fx
+            if float(review_pos.get("display_avg_price", 0) or 0) <= 0:
+                entry = self._position_entry_native(pos, plan.market)
+                if entry > 0:
+                    review_pos["display_avg_price"] = entry
+        else:
+            review_pos["current_price"] = current_native
+            review_pos["display_current_price"] = current_native
+        default_policy = (
+            "SELL only if this PathB automatic sell signal remains valid after fresh review. "
+            "Return HOLD when evidence is stale, ambiguous, or the position should be rechecked later."
+        )
+        try:
+            from minority_report.hold_advisor import ask as advisor_ask
+
+            digest = self._pre_close_carry_digest(plan.market)
+            builder = getattr(self.bot, "_advisor_pos", None)
+            if callable(builder):
+                try:
+                    review_pos = builder(review_pos, plan.market)
+                except Exception:
+                    pass
+            advice = advisor_ask(
+                review_pos,
+                plan.market,
+                digest,
+                decision_stage="AUTO_SELL_REVIEW",
+                default_policy=default_policy,
+                minutes_to_close=self._minutes_to_close(plan.market),
+            )
+            action = str((advice or {}).get("action", "HOLD") or "HOLD").upper()
+            if action not in {"SELL", "HOLD"}:
+                action = "HOLD"
+            detail = self._hold_advice_reason(advice) or str((advice or {}).get("reason", "") or "")[:500]
+            confidence = float((advice or {}).get("confidence", 0.0) or 0.0)
+            fallback = bool((advice or {}).get("fallback", False))
+        except Exception as exc:
+            advice = {
+                "action": "HOLD",
+                "confidence": 0.0,
+                "reason": f"pathb_auto_sell_review_failed:{exc}",
+                "fallback": True,
+                "decision_stage": "AUTO_SELL_REVIEW",
+            }
+            action = "HOLD"
+            detail = str(advice["reason"])[:500]
+            confidence = 0.0
+            fallback = True
+        payload = {
+            "auto_sell_reviewed_at": now_iso,
+            "auto_sell_review_reason": str(signal.reason or ""),
+            "auto_sell_review_close_reason": str(signal.close_reason or ""),
+            "auto_sell_review_action": action,
+            "auto_sell_review_detail": detail,
+            "auto_sell_review_confidence": confidence,
+            "auto_sell_review_fallback": fallback,
+        }
+        pos.update(payload)
+        try:
+            self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+        except Exception:
+            pass
+        try:
+            self._save_positions_if_possible()
+        except Exception:
+            pass
+        if action != "SELL":
+            log.warning(
+                f"[PathB auto sell review HOLD] {plan.market} {plan.ticker} "
+                f"reason={signal.reason} detail={detail}"
+            )
+            return {"allowed": False, "advice": advice, **payload}
+        log.info(
+            f"[PathB auto sell review SELL] {plan.market} {plan.ticker} "
+            f"reason={signal.reason} confidence={confidence:.2f}"
+        )
+        return {"allowed": True, "advice": advice, **payload}
+
     def _submit_sell(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> bool:
         market = plan.market
         if str(pos.get("pathb_closing", "") or ""):
             return False
-        pos["pathb_closing"] = datetime.now(KST).isoformat(timespec="seconds")
         qty = int(pos.get("qty", 0) or 0)
         order_price = self._compute_sell_order_price(market, signal.price)
         if qty <= 0 or order_price < 0:
-            pos.pop("pathb_closing", None)
             return False
+        review = self._run_pathb_sell_review_gate(plan, pos, signal)
+        if not bool(review.get("allowed", False)):
+            return False
+        pos["pathb_closing"] = datetime.now(KST).isoformat(timespec="seconds")
         audit_signal_id = self._audit_pathb_exit_signal(plan, pos, signal)
 
         try:
@@ -2369,6 +2477,12 @@ class PathBRuntime:
                 {"permanent_order_reject_detail": permanent_detail},
                 next_retry=False,
             )
+            self.store.update_path_run(
+                path_run_id,
+                status="CANCELLED",
+                plan={"cancel_reason": "order_unknown_permanent_reject"},
+                merge_plan=True,
+            )
             return "permanent_order_reject"
         if not force and not self._unknown_recheck_due(run):
             return "skipped"
@@ -2400,6 +2514,11 @@ class PathBRuntime:
                 merge_plan=True,
             )
             return "recovered_closed"
+        local_pathb_pos = self._find_position(market, ticker, path_run_id=path_run_id)
+        if local_pathb_pos and not exit_unknown:
+            recovered_run = self._recover_order_unknown_local_holding(run, plan, local_pathb_pos)
+            if recovered_run is not None:
+                return "recovered_position"
         market_data = self.broker_truth.market_snapshot(market)
         market_data_available = not (
             bool(market_data.get("missing"))
@@ -2504,6 +2623,13 @@ class PathBRuntime:
                 },
                 next_retry=False,
             )
+            if not local_pathb_pos:
+                self.store.update_path_run(
+                    path_run_id,
+                    status="CANCELLED",
+                    plan={"cancel_reason": "order_unknown_path_a_origin_possible"},
+                    merge_plan=True,
+                )
             return "path_a_origin_possible"
 
         market_data = self.broker_truth.market_snapshot(market)
@@ -2669,10 +2795,11 @@ class PathBRuntime:
         retryable: list[dict[str, Any]] = []
         for run in candidates:
             plan = run.get("plan") or {}
+            if self._is_permanent_order_failure(str(plan.get("order_unknown_detail", "") or "")):
+                retryable.append(run)
+                continue
             resolution = str(plan.get("order_unknown_resolution", "") or "")
             if resolution not in self.ORDER_UNKNOWN_OPEN_RETRY_RESOLUTIONS:
-                continue
-            if self._is_permanent_order_failure(str(plan.get("order_unknown_detail", "") or "")):
                 continue
             retryable.append(run)
         sessions: list[str] = []
@@ -3246,6 +3373,171 @@ class PathBRuntime:
             log.debug(f"[PathB price] {market} {key} failed: {exc}")
             return 0.0
 
+    def _active_exit_runs_for_market(self, market: str) -> list[dict[str, Any]]:
+        market_key = str(market or "").upper()
+        runs: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def add(run: dict[str, Any] | None) -> None:
+            if not run:
+                return
+            path_run_id = str(run.get("path_run_id", "") or "")
+            if not path_run_id or path_run_id in seen:
+                return
+            if str(run.get("market", "") or "").upper() != market_key:
+                return
+            if str(run.get("runtime_mode", "") or "") != self.mode:
+                return
+            seen.add(path_run_id)
+            runs.append(run)
+
+        for run in self.store.path_runs_for_session(
+            market=market_key,
+            runtime_mode=self.mode,
+            session_date=self._session_date(market_key),
+        ):
+            add(run)
+
+        for pos in self._local_pathb_positions(market_key):
+            add(self.store.find_path_run(str(pos.get("pathb_path_run_id", "") or "")))
+        return runs
+
+    def _local_pathb_positions(self, market: str) -> list[dict[str, Any]]:
+        market_key = str(market or "").upper()
+        positions: list[dict[str, Any]] = []
+        for pos in list(getattr(getattr(self.bot, "risk", None), "positions", []) or []):
+            path_run_id = str(pos.get("pathb_path_run_id", "") or "")
+            if not path_run_id:
+                continue
+            if self._ticker_market(str(pos.get("ticker", "") or "")) != market_key:
+                continue
+            try:
+                qty = int(float(pos.get("qty", 0) or 0))
+            except Exception:
+                qty = 0
+            if qty <= 0:
+                continue
+            positions.append(pos)
+        return positions
+
+    def _recover_order_unknown_local_holding(
+        self,
+        run: dict[str, Any],
+        plan: PricePlan,
+        pos: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if self._order_unknown_is_exit_side(run):
+            return None
+        try:
+            qty = int(float(pos.get("qty", 0) or 0))
+        except Exception:
+            qty = 0
+        if qty <= 0:
+            return None
+        entry_price = self._position_entry_native(pos, plan.market)
+        if entry_price <= 0:
+            entry_price = float(plan.buy_zone_high or plan.buy_zone_low or 0)
+        execution_id = str(
+            pos.get("pathb_entry_execution_id", "")
+            or pos.get("v2_execution_id", "")
+            or pos.get("order_no", "")
+            or pos.get("buy_order_no", "")
+            or (run.get("plan") or {}).get("entry_execution_id", "")
+            or ""
+        )
+        payload: dict[str, Any] = {
+            "order_unknown_resolution": "local_pathb_holding_recovered",
+            "order_unknown_resolution_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "next_broker_truth_recheck_at": "",
+            "local_position_evidence": True,
+            "local_position_recovered_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "actual_entry_price": float(entry_price or 0),
+            "filled_qty": qty,
+        }
+        if execution_id:
+            payload["entry_execution_id"] = execution_id
+        else:
+            payload["local_recovery_missing_execution_id"] = True
+        self.store.update_path_run(plan.path_run_id, status="FILLED", plan=payload, merge_plan=True)
+        log.warning(
+            f"[PathB ORDER_UNKNOWN local holding recovered] {plan.market} {plan.ticker} "
+            f"qty={qty} entry={float(entry_price or 0):g} run={plan.path_run_id}"
+        )
+        return self.store.find_path_run(plan.path_run_id)
+
+    def _position_entry_native(self, pos: dict[str, Any], market: str) -> float:
+        market_key = str(market or "").upper()
+        if market_key == "US":
+            entry = float(
+                pos.get("display_avg_price", 0)
+                or pos.get("avg_price_native", 0)
+                or pos.get("avg_price_usd", 0)
+                or 0
+            )
+            if entry <= 0:
+                entry = float(pos.get("entry", 0) or pos.get("avg_price", 0) or pos.get("entry_price", 0) or 0)
+                fx = self._usd_krw()
+                if entry > 1000 and fx > 0:
+                    entry = entry / fx
+            return entry
+        return float(
+            pos.get("entry", 0)
+            or pos.get("avg_price", 0)
+            or pos.get("display_avg_price", 0)
+            or pos.get("entry_price", 0)
+            or 0
+        )
+
+    def _clear_stale_pathb_closing_lock(self, pos: dict[str, Any], market: str, path_run_id: str) -> bool:
+        raw = str(pos.get("pathb_closing", "") or "")
+        if not raw:
+            return False
+        try:
+            ttl_sec = float(os.getenv("PATHB_CLOSING_LOCK_TTL_SEC", "900") or 900)
+        except Exception:
+            ttl_sec = 900.0
+        if ttl_sec <= 0:
+            return False
+        try:
+            closing_at = datetime.fromisoformat(raw)
+            if closing_at.tzinfo is None:
+                closing_at = closing_at.replace(tzinfo=KST)
+            age_sec = (datetime.now(KST) - closing_at.astimezone(KST)).total_seconds()
+        except Exception:
+            age_sec = ttl_sec + 1
+        if age_sec < ttl_sec:
+            return False
+        ticker = str(pos.get("ticker", "") or "")
+        if self._find_pending_order(str(market or "").upper(), ticker, path_run_id=path_run_id):
+            return False
+        try:
+            qty = int(float(pos.get("qty", 0) or 0))
+        except Exception:
+            qty = 0
+        if qty <= 0:
+            return False
+
+        archived: dict[str, Any] = {}
+        for field in (
+            "pathb_closing",
+            "pathb_pending_sell_order_no",
+            "pathb_pending_sell_qty",
+            "pathb_pending_close_reason",
+            "pathb_pending_sell_price",
+        ):
+            if field in pos:
+                archived[field] = pos.pop(field)
+        pos["pathb_stale_closing_cleared_at"] = datetime.now(KST).isoformat(timespec="seconds")
+        pos["pathb_stale_closing_clear_reason"] = "still_held_no_pending_order"
+        if archived:
+            pos["pathb_stale_closing_cleared_fields"] = archived
+        self._save_positions_if_possible()
+        log.warning(
+            f"[PathB stale closing cleared] {market} {ticker} age_sec={age_sec:.0f} "
+            f"run={path_run_id}"
+        )
+        return True
+
     def _find_position(self, market: str, ticker: str, *, path_run_id: str = "") -> dict[str, Any] | None:
         key = self._ticker_key(market, ticker)
         for pos in list(getattr(getattr(self.bot, "risk", None), "positions", []) or []):
@@ -3353,7 +3645,7 @@ class PathBRuntime:
         gate = self._pre_close_carry_gate(plan, pos, current)
         if not bool(gate.get("allowed")):
             decision_payload = {
-                "decision": "SELL",
+                "decision": "CARRY",
                 "reason": str(gate.get("reason") or "carry_gate_rejected"),
                 "confidence": 0.0,
                 "advice": {},
@@ -3361,9 +3653,9 @@ class PathBRuntime:
             }
         else:
             decision_payload = self._run_pre_close_carry_review(plan, pos, current, minutes_to_close)
-        decision = str(decision_payload.get("decision", "SELL") or "SELL").upper()
+        decision = str(decision_payload.get("decision", "CARRY") or "CARRY").upper()
         if decision not in {"SELL", "CARRY"}:
-            decision = "SELL"
+            decision = "CARRY"
         payload = {
             "carry_source": "pathb_preclose",
             "carry_reviewed_at": datetime.now(KST).isoformat(timespec="seconds"),
@@ -3460,9 +3752,9 @@ class PathBRuntime:
                 "advice": advice if isinstance(advice, dict) else {},
             }
         except Exception as exc:
-            log.warning(f"[PathB carry review] hold_advisor failed {plan.market} {plan.ticker}: {exc}")
+            log.warning(f"[PathB carry review] hold_advisor failed {plan.market} {plan.ticker}; default CARRY: {exc}")
             return {
-                "decision": "SELL",
+                "decision": "CARRY",
                 "reason": f"hold_advisor_failed:{exc}",
                 "confidence": 0.0,
                 "advice": {},
@@ -3538,7 +3830,7 @@ class PathBRuntime:
             return False
         run = self.store.find_path_run(path_run_id)
         plan_json = (run or {}).get("plan") or {}
-        if str(plan_json.get("carry_decision", "") or "").upper() == "CARRY":
+        if str(plan_json.get("carry_decision", "") or "").upper() != "SELL":
             return False
         return self.sell_manager.pre_close_exit_needed(
             path_run_id,

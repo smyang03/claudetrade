@@ -135,7 +135,7 @@ class SoftExitArbitrationTests(unittest.TestCase):
         self.assertGreaterEqual(pos["soft_exit_floor_price"], 658.19)
         self.assertTrue(pos["soft_exit_review_cooldown_until"])
 
-    def test_quick_exit_sell_fallback_continues_original_sell(self) -> None:
+    def test_quick_exit_fallback_defers_soft_sell(self) -> None:
         bot = _bot_stub()
         pos = _stx_position()
         bot.risk = SimpleNamespace(positions=[pos])
@@ -148,10 +148,10 @@ class SoftExitArbitrationTests(unittest.TestCase):
 
         deferred = bot._try_soft_exit_arbitration(cand, "US")
 
-        self.assertFalse(deferred)
-        self.assertEqual(cand["soft_exit_review_action"], "SELL")
+        self.assertTrue(deferred)
+        self.assertEqual(cand["soft_exit_review_action"], "HOLD")
         self.assertTrue(cand["soft_exit_review_fallback"])
-        self.assertNotIn("soft_exit_review_count", pos)
+        self.assertEqual(pos["soft_exit_review_count"], 1)
 
     def test_pathb_reference_beats_selection_reference_for_arbitration(self) -> None:
         bot = _bot_stub()

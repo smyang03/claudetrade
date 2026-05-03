@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from execution.claude_price_sell_manager import ExitSignal
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
-from runtime.pathb_runtime import PathBControlState, PathBRuntime, _bot_token
+from runtime.pathb_runtime import KST, PathBControlState, PathBRuntime, _bot_token
 
 
 class _Risk:
@@ -191,7 +192,9 @@ class PathBRuntimeTests(unittest.TestCase):
                 "pathb_path_run_id": plan.path_run_id,
             }
 
-            with patch("runtime.pathb_runtime.precheck_order", return_value={"ok": True}) as precheck, patch(
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+                "runtime.pathb_runtime.precheck_order", return_value={"ok": True}
+            ) as precheck, patch(
                 "runtime.pathb_runtime.place_order",
                 return_value={"success": True, "order_no": "us-sell-1"},
             ) as place:
@@ -783,6 +786,139 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertTrue(run["plan"]["cancel_above_after_ack"])
             self.assertTrue(run["plan"]["cancel_open_order_evidence"])
 
+    def test_previous_session_local_pathb_holding_is_included_in_exit_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_old",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-26",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=90,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+            bot.price_cache_raw["005930"] = 121
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            runtime.scan_exits("KR", force=True)
+
+            runtime._submit_sell.assert_called_once()
+            signal = runtime._submit_sell.call_args.args[2]
+            self.assertEqual(signal.close_reason, "CLOSED_CLAUDE_PRICE_TARGET")
+
+    def test_order_unknown_local_pathb_holding_recovers_to_filled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_unknown",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-26",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=90,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_order_unknown(
+                plan.path_run_id,
+                detail="startup_recovery_missing_filled_position",
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+            )
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                    "v2_execution_id": "buy1",
+                }
+            )
+            bot.price_cache_raw["005930"] = 110
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            runtime.scan_exits("KR", force=True)
+
+            run = store.find_path_run(plan.path_run_id)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "local_pathb_holding_recovered")
+            self.assertEqual(run["plan"]["filled_qty"], 2)
+            runtime._submit_sell.assert_not_called()
+
+    def test_stale_pathb_closing_is_cleared_for_still_held_position(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_stale",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=90,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
+            old = (datetime.now(KST) - timedelta(minutes=30)).isoformat(timespec="seconds")
+            pos = {
+                "ticker": "005930",
+                "qty": 2,
+                "entry": 100,
+                "path_type": "claude_price",
+                "pathb_path_run_id": plan.path_run_id,
+                "pathb_closing": old,
+                "pathb_pending_sell_order_no": "old_sell",
+                "pending_next_open_sell": True,
+            }
+            bot.risk.positions.append(pos)
+            bot.price_cache_raw["005930"] = 121
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            runtime.scan_exits("KR", force=True)
+
+            self.assertNotIn("pathb_closing", pos)
+            self.assertNotIn("pathb_pending_sell_order_no", pos)
+            self.assertTrue(pos["pending_next_open_sell"])
+            self.assertTrue(bot.saved_positions)
+            runtime._submit_sell.assert_called_once()
+
     def test_pre_close_carry_review_caches_decision_and_session_close_marks_carried(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()
@@ -879,6 +1015,29 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(advisor_pos["display_avg_price"], 100.0)
             self.assertEqual(decision["decision"], "CARRY")
 
+    def test_pre_close_carry_review_failure_defaults_to_carry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=EventStore(Path(tmp) / "events.db"))
+            plan = make_price_plan(
+                decision_id="dec_fail",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=90,
+                hold_days=1,
+                confidence=0.7,
+            )
+            pos = {"ticker": "005930", "qty": 1, "entry": 100, "current_price": 110}
+
+            with patch("minority_report.hold_advisor.ask", side_effect=RuntimeError("timeout")):
+                decision = runtime._run_pre_close_carry_review(plan, pos, current=110, minutes_to_close=10.5)
+
+            self.assertEqual(decision["decision"], "CARRY")
+            self.assertIn("hold_advisor_failed", decision["reason"])
+
     def test_cached_carry_does_not_block_hard_target_exit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()
@@ -947,7 +1106,7 @@ class PathBRuntimeTests(unittest.TestCase):
             signal = runtime._submit_sell.call_args.args[2]
             self.assertEqual(signal.close_reason, "CLOSED_CLAUDE_PRICE_STOP")
 
-    def test_pre_close_force_exit_defaults_to_sell_without_carry_or_with_cached_sell(self) -> None:
+    def test_pre_close_force_exit_requires_cached_sell_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()
             store = EventStore(Path(tmp) / "events.db")
@@ -967,9 +1126,11 @@ class PathBRuntimeTests(unittest.TestCase):
             runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
             runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
 
-            self.assertTrue(runtime._pre_close_force_exit(plan.path_run_id, 10.0))
+            self.assertFalse(runtime._pre_close_force_exit(plan.path_run_id, 10.0))
             store.update_path_run(plan.path_run_id, plan={"carry_decision": "SELL"}, merge_plan=True)
             self.assertTrue(runtime._pre_close_force_exit(plan.path_run_id, 10.0))
+            store.update_path_run(plan.path_run_id, plan={"carry_decision": "CARRY"}, merge_plan=True)
+            self.assertFalse(runtime._pre_close_force_exit(plan.path_run_id, 10.0))
 
 
 if __name__ == "__main__":

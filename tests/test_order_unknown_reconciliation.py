@@ -108,8 +108,9 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
             run = runtime.store.find_path_run(plan.path_run_id)
             self.assertEqual(summary["path_a_origin_possible"], 1)
-            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["status"], "CANCELLED")
             self.assertEqual(run["plan"]["order_unknown_resolution"], "path_a_origin_possible")
+            self.assertEqual(run["plan"]["cancel_reason"], "order_unknown_path_a_origin_possible")
 
     def test_broker_fill_recovers_pathb_fill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -337,9 +338,10 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             run = runtime.store.find_path_run(plan.path_run_id)
 
             self.assertEqual(summary["permanent_order_reject"], 1)
-            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["status"], "CANCELLED")
             self.assertEqual(run["plan"]["order_unknown_resolution"], "permanent_order_reject")
             self.assertEqual(run["plan"]["next_broker_truth_recheck_at"], "")
+            self.assertEqual(run["plan"]["cancel_reason"], "order_unknown_permanent_reject")
 
     def test_session_open_reconciles_cross_session_and_clears_escalator_pause(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -380,11 +382,12 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             permanent_run = runtime.store.find_path_run(permanent.path_run_id)
             state = escalator.state
 
-            self.assertEqual(summary["checked"], 1)
+            self.assertEqual(summary["checked"], 2)
             self.assertEqual(summary["auto_cleared_no_broker_evidence"], 1)
+            self.assertEqual(summary["permanent_order_reject"], 1)
             self.assertEqual(run["status"], "CANCELLED")
             self.assertEqual(run["plan"]["order_unknown_resolution"], "auto_cleared_no_broker_evidence")
-            self.assertEqual(permanent_run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(permanent_run["status"], "CANCELLED")
             self.assertFalse(escalator.should_block_market("KR"))
             self.assertEqual(state["market_consecutive_unknown"]["KR"], 0)
             self.assertEqual(

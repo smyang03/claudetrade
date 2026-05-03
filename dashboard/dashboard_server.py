@@ -2478,6 +2478,70 @@ def _live_equity_payload(
     }
 
 
+def _realized_pnl_bucket_from_rows(rows: list[dict]) -> dict:
+    pnl_krw = 0.0
+    known_sells = 0
+    unknown_cost_basis = 0
+    sell_rows = 0
+    for row in rows or []:
+        side = str(row.get("side", "") or "").lower()
+        if side != "sell":
+            continue
+        sell_rows += 1
+        if not bool(row.get("pnl_known", True)):
+            unknown_cost_basis += 1
+            continue
+        known_sells += 1
+        pnl_krw += float(row.get("pnl", 0) or 0)
+    return {
+        "pnl_krw": round(pnl_krw, 6),
+        "known_sell_count": known_sells,
+        "sell_count": sell_rows,
+        "unknown_cost_basis_count": unknown_cost_basis,
+    }
+
+
+def _empty_lifetime_realized_pnl_summary() -> dict:
+    return {
+        "basis": "broker_fills_fifo_excluding_cash_flow",
+        "source": "broker_trade_rows_with_pnl",
+        "KR": _realized_pnl_bucket_from_rows([]),
+        "US": _realized_pnl_bucket_from_rows([]),
+        "kr_pnl_krw": 0.0,
+        "us_pnl_krw": 0.0,
+        "total_pnl_krw": 0.0,
+        "known_sell_count": 0,
+        "sell_count": 0,
+        "unknown_cost_basis_count": 0,
+        "errors": {},
+    }
+
+
+def _lifetime_realized_pnl_summary(mode: str = "live") -> dict:
+    """입출금/환전 영향을 제외한 브로커 체결 기준 누적 실현손익."""
+    summary = _empty_lifetime_realized_pnl_summary()
+    runtime_mode = _normalize_mode(mode)
+    errors: dict[str, str] = {}
+    for market in ("KR", "US"):
+        try:
+            rows = _broker_trade_rows_with_pnl(market, "all", "", "", mode=runtime_mode)
+        except Exception as exc:
+            rows = []
+            errors[market] = str(exc)
+        summary[market] = _realized_pnl_bucket_from_rows(rows)
+
+    kr_bucket = summary.get("KR", {}) or {}
+    us_bucket = summary.get("US", {}) or {}
+    summary["kr_pnl_krw"] = round(float(kr_bucket.get("pnl_krw", 0) or 0), 6)
+    summary["us_pnl_krw"] = round(float(us_bucket.get("pnl_krw", 0) or 0), 6)
+    summary["total_pnl_krw"] = round(summary["kr_pnl_krw"] + summary["us_pnl_krw"], 6)
+    summary["known_sell_count"] = int(kr_bucket.get("known_sell_count", 0) or 0) + int(us_bucket.get("known_sell_count", 0) or 0)
+    summary["sell_count"] = int(kr_bucket.get("sell_count", 0) or 0) + int(us_bucket.get("sell_count", 0) or 0)
+    summary["unknown_cost_basis_count"] = int(kr_bucket.get("unknown_cost_basis_count", 0) or 0) + int(us_bucket.get("unknown_cost_basis_count", 0) or 0)
+    summary["errors"] = errors
+    return summary
+
+
 def _broker_realized_pnl_krw(market: str, trade_date: str, mode: str = "paper") -> float:
     """브로커 체결 원장 기준 실현손익을 FIFO로 계산한다."""
     cache_key = (_normalize_mode(mode), market, trade_date)
@@ -3506,6 +3570,18 @@ def api_summary():
     )
     starting_asset_krw = float(live_equity_summary.get("starting_asset_krw", 0.0) or 0.0)
     starting_capital_krw = float(live_equity_summary.get("starting_capital_krw", 0.0) or 0.0)
+    lifetime_realized_pnl = _lifetime_realized_pnl_summary(mode)
+    pnl_summary = {
+        "today": {
+            "selected_market": market,
+            "trading_pnl_krw": round(trading_pnl_krw, 0),
+            "trading_pnl_pct": round(trading_pnl_pct, 4),
+            "realized_pnl_krw": round(float(realized_pnl_krw or 0), 0),
+            "unrealized_pnl_krw": round(float(unrealized_pnl_krw or 0), 0),
+            "basis": "selected_market_realized_plus_unrealized",
+        },
+        "lifetime_realized": lifetime_realized_pnl,
+    }
 
     metrics = [_record_metrics(r, market) for r in records]
     wins      = [m for m in metrics if m.get("win")]
@@ -3576,6 +3652,7 @@ def api_summary():
             "performance_basis": "broker_realized_plus_unrealized" if broker else "engine_fallback",
             "realized_pnl_krw": round(realized_pnl_krw, 0),
             "unrealized_pnl_krw": round(unrealized_pnl_krw, 0),
+            "pnl_summary":    pnl_summary,
             "asset_source":   asset_source,
             "win":            metrics_today.get("win", result.get("win", False)),
             "trades":         metrics_today.get("trades", result.get("trades", 0)),
@@ -6134,6 +6211,29 @@ function formatOrderableBreakdown(today) {
   return parts.join(' | ');
 }
 
+function formatAccountAssetSummary(today, tradingKrw, assetBreakdown, assetSourceLabel) {
+  const flowLabel = today.cash_flow_label || '입출금/환전 추정';
+  return `<div>현재 매매 ${fmt.krw(tradingKrw)}${assetBreakdown ? ` · ${assetBreakdown}` : ''}</div>`
+    + `<div>${flowLabel} ${fmt.krw(today.cumulative_cash_flow_estimate_krw || 0)} · 자산 ${assetSourceLabel}</div>`;
+}
+
+function renderLifetimeRealized(today) {
+  const lifetime = ((today.pnl_summary || {}).lifetime_realized) || {};
+  const kr = Number(lifetime.kr_pnl_krw ?? ((lifetime.KR || {}).pnl_krw) ?? 0);
+  const us = Number(lifetime.us_pnl_krw ?? ((lifetime.US || {}).pnl_krw) ?? 0);
+  const total = Number(lifetime.total_pnl_krw ?? (kr + us));
+  const unknown = Number(lifetime.unknown_cost_basis_count || 0);
+  const totalEl = document.getElementById('lifetime-pnl-total');
+  const splitEl = document.getElementById('lifetime-pnl-split');
+  const basisEl = document.getElementById('lifetime-pnl-basis');
+  if (totalEl) {
+    totalEl.textContent = fmt.krw(total);
+    totalEl.className = 'card-value ' + colorClass(total);
+  }
+  if (splitEl) splitEl.textContent = `KR ${fmt.krw(kr)} · US ${fmt.krw(us)}`;
+  if (basisEl) basisEl.textContent = `입출금 제외 · 매수/매도 실현 기준${unknown > 0 ? ` · 원가불명 ${unknown}건 제외` : ''}`;
+}
+
 const MODE_KO = {
   AGGRESSIVE: '공격매수',
   MODERATE_BULL: '강한상승',
@@ -6396,7 +6496,7 @@ PAGE_TODAY_HTML = """
 <!-- 5 요약 카드 -->
 <div class="grid-5">
   <div class="card cyan">
-    <div class="card-label">매매 손익</div>
+    <div class="card-label">오늘 매매손익</div>
     <div class="card-value" id="today-pnl">--</div>
     <div class="card-sub"  id="today-krw">--</div>
   </div>
@@ -6412,9 +6512,10 @@ PAGE_TODAY_HTML = """
     <div class="card-sub"  id="win-detail">--</div>
   </div>
   <div class="card yellow">
-    <div class="card-label">연속 기록</div>
-    <div class="card-value" id="streak-val">--</div>
-    <div class="card-sub"  id="total-pnl">누적: --</div>
+    <div class="card-label">누적 실현손익</div>
+    <div class="card-value" id="lifetime-pnl-total">--</div>
+    <div class="card-sub"  id="lifetime-pnl-split">KR -- · US --</div>
+    <div class="card-sub"  id="lifetime-pnl-basis" style="margin-top:4px">입출금 제외</div>
   </div>
   <div class="card purple">
     <div class="card-label">AI 크레딧 (오늘)</div>
@@ -7249,16 +7350,14 @@ async function loadSummary() {
   pnlEl.textContent = fmt.pct(tradingPct);
   pnlEl.className = 'card-value ' + colorClass(tradingPct);
   document.getElementById('today-krw').textContent =
-    `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
+    `${MARKET} 확정 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
   document.getElementById('cumulative').textContent = fmt.asset(accountAsset);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
     const assetBreakdown = formatAssetBreakdown(t);
-    const flowLabel = t.cash_flow_label || '입출금/환전 추정';
-    cumulativePnl.innerHTML =
-      `<div>매매누적 ${fmt.krw(t.cumulative_trading_pnl_krw ?? tradingKrw)} · ${flowLabel} ${fmt.krw(t.cumulative_cash_flow_estimate_krw || 0)}</div>`
-      + `<div>현재 매매 ${fmt.krw(tradingKrw)}${assetBreakdown ? ` · ${assetBreakdown}` : ''} · 자산 ${assetSourceLabel}</div>`;
+    cumulativePnl.innerHTML = formatAccountAssetSummary(t, tradingKrw, assetBreakdown, assetSourceLabel);
   }
+  renderLifetimeRealized(t);
   const orderBreakdown = formatOrderableBreakdown(t);
   document.getElementById('today-mode').innerHTML =
     `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.asset(t.mode_order_limit_krw)}` : ''}${orderBreakdown ? ` | 주문가능 ${orderBreakdown}` : ''}${t.execution_contaminated ? ` <span style="color:#f59e0b">| 실행오염 ${((t.execution_issues||[]).slice(0,2)).join(', ')}</span>` : ''}`;
@@ -7269,9 +7368,10 @@ async function loadSummary() {
   document.getElementById('win-detail').textContent = `${p.wins}승 / ${p.losses}패 (${p.days}일)`;
 
   const emoji = p.streak_type === 'win' ? '🟢' : '🔴';
-  document.getElementById('streak-val').innerHTML =
-    `<span style="font-size:20px">${emoji}</span> ${p.streak}연속`;
-  document.getElementById('total-pnl').textContent = `누적: ${fmt.pct(p.total_pnl)}`;
+  const streakVal = document.getElementById('streak-val');
+  if (streakVal) streakVal.innerHTML = `<span style="font-size:20px">${emoji}</span> ${p.streak}연속`;
+  const totalPnl = document.getElementById('total-pnl');
+  if (totalPnl) totalPnl.textContent = `누적: ${fmt.pct(p.total_pnl)}`;
 
   const positions = t.positions || [];
   const posBoard = document.getElementById('position-board');
@@ -8236,7 +8336,7 @@ async function loadSummary() {
     pnlEl.className = 'card-value ' + colorClass(tradingPct);
   }
   const todayKrw = document.getElementById('today-krw');
-  if (todayKrw) todayKrw.textContent = `실현 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
+  if (todayKrw) todayKrw.textContent = `${MARKET} 확정 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
   const cumulative = document.getElementById('cumulative');
   if (cumulative) cumulative.textContent = fmt.asset(accountAsset);
   const cumulativePnl = document.getElementById('cumulative-pnl');
@@ -8252,11 +8352,9 @@ async function loadSummary() {
       'broker+live_fallback': '브로커 기준 · 라이브 보정',
       internal_fallback: '엔진 추정',
     }[rawAssetSource] || (rawAssetSource || '기준 미상'));
-    const flowLabel = t.cash_flow_label || '입출금/환전 추정';
-    cumulativePnl.innerHTML =
-      `<div>매매누적 ${fmt.krw(t.cumulative_trading_pnl_krw ?? tradingKrw)} · ${flowLabel} ${fmt.krw(t.cumulative_cash_flow_estimate_krw || 0)}</div>`
-      + `<div>현재 매매 ${fmt.krw(tradingKrw)}${assetBreakdown ? ` · ${assetBreakdown}` : ''} · 자산 ${assetSourceLabel}</div>`;
+    cumulativePnl.innerHTML = formatAccountAssetSummary(t, tradingKrw, assetBreakdown, assetSourceLabel);
   }
+  renderLifetimeRealized(t);
 
   const sess = t.session || {};
   const riskText = t.risk_value ? ` | ${t.risk_label} ${Number(t.risk_value).toFixed(1)} ${t.risk_status || ''}` : '';

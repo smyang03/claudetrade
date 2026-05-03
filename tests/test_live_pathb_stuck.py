@@ -140,7 +140,9 @@ class LivePathBStuckTests(unittest.TestCase):
             bot.price_cache_raw["005930"] = 54_600
             bot.price_cache["005930"] = 54_600
 
-            with patch("runtime.pathb_runtime.precheck_order", return_value={"ok": True}), patch(
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+                "runtime.pathb_runtime.precheck_order", return_value={"ok": True}
+            ), patch(
                 "runtime.pathb_runtime.place_order",
                 return_value={"success": True, "order_no": "sell1"},
             ):
