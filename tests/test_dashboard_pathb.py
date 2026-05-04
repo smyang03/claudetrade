@@ -27,6 +27,17 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertIn('id="lifetime-pnl-basis"', body)
         self.assertNotIn('id="streak-val"', body)
 
+    def test_today_page_defines_escape_html_before_judgment_rendering(self) -> None:
+        res = app.test_client().get("/")
+
+        self.assertEqual(res.status_code, 200)
+        body = res.get_data(as_text=True)
+        self.assertIn("function escapeHtml", body)
+        self.assertIn("async function loadJudgments", body)
+        self.assertLess(body.index("function escapeHtml"), body.index("async function loadJudgments"))
+        self.assertLess(body.index("function escapeHtml"), body.index("basis.digest_built_at"))
+        self.assertIn("${escapeHtml(basis.warning)}", body)
+
     def test_pathb_page_loads_and_old_pages_redirect(self) -> None:
         client = app.test_client()
 

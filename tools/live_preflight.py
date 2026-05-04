@@ -25,6 +25,11 @@ try:
 except Exception:  # pragma: no cover
     dotenv_values = None  # type: ignore
 
+try:
+    import psutil
+except Exception:  # pragma: no cover
+    psutil = None  # type: ignore
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -49,6 +54,8 @@ LIVE_CONFIG_KEYS = {
     "V2_FRESH_BRAIN_START",
     "PATHB_MODE",
     "PATHB_ENABLED",
+    "PATHB_KR_LIVE_ENABLED",
+    "PATHB_US_LIVE_ENABLED",
     "PATHB_TELEGRAM_CONTROL_ENABLED",
     "PATHB_FIXED_ORDER_KRW",
     "PATHB_MAX_POSITIONS",
@@ -231,6 +238,11 @@ def _session_date_guess(market: str) -> str:
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if psutil is not None:
+        try:
+            return bool(psutil.pid_exists(pid))
+        except Exception:
+            pass
     try:
         if sys.platform.startswith("win"):
             result = subprocess.run(
@@ -394,6 +406,24 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     else:
         checks.append(CheckResult("config.pathb_intraday_only", "PASS", "Path B intraday-only is enabled"))
 
+    pathb_market_gates = {
+        "KR": effective.get("PATHB_KR_LIVE_ENABLED", "true"),
+        "US": effective.get("PATHB_US_LIVE_ENABLED", "true"),
+    }
+    disabled_pathb_markets = [
+        market for market, value in pathb_market_gates.items() if not _truthy(value)
+    ]
+    checks.append(
+        CheckResult(
+            "config.pathb_market_live_gates",
+            "FAIL" if disabled_pathb_markets else "PASS",
+            "Path B market live gates disabled: " + ",".join(disabled_pathb_markets)
+            if disabled_pathb_markets
+            else "Path B market live gates are enabled for KR/US",
+            {"values": pathb_market_gates},
+        )
+    )
+
     enabled_markets = {
         item.strip().upper()
         for item in str(effective.get("ENABLED_MARKETS", "") or "").split(",")
@@ -413,6 +443,8 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
         for key in (
             "PATHB_ENABLED",
             "PATHB_MODE",
+            "PATHB_KR_LIVE_ENABLED",
+            "PATHB_US_LIVE_ENABLED",
             "PATHB_MAX_POSITIONS",
             "PATHB_MAX_DAILY_ENTRIES",
             "PATHB_INTRADAY_ONLY",

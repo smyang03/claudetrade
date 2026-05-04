@@ -9,3 +9,4 @@ schedule
 flask
 filelock
 yfinance
+psutil

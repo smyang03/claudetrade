@@ -64,6 +64,8 @@
     "ACTIVE_LESSONS_ALLOW_LEGACY_BRAIN": "false",
     "PATHB_MODE": "min_size_live",
     "PATHB_ENABLED": "true",
+    "PATHB_KR_LIVE_ENABLED": "true",
+    "PATHB_US_LIVE_ENABLED": "true",
     "PATHB_TELEGRAM_CONTROL_ENABLED": "true",
     "PATHB_FIXED_ORDER_KRW": "100000",
     "PATHB_MAX_POSITIONS": "15",

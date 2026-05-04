@@ -37,6 +37,11 @@ except ImportError:
     class ZoneInfo:
         def __new__(cls, _): return timezone(_td(hours=9))
 
+try:
+    import psutil
+except Exception:  # pragma: no cover
+    psutil = None  # type: ignore
+
 KST = ZoneInfo("Asia/Seoul")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -529,6 +534,11 @@ def _read_pid_file(path: Path) -> dict:
 def _pid_alive(pid: int) -> bool:
     if not pid:
         return False
+    if psutil is not None:
+        try:
+            return bool(psutil.pid_exists(pid))
+        except Exception:
+            pass
     if os.name == "nt":
         try:
             res = subprocess.run(
@@ -6260,6 +6270,16 @@ function apiPost(path, body = {}) {
   });
 }
 
+function escapeHtml(v) {
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const marketBtn = document.getElementById('btn-' + MARKET.toLowerCase());
   if (marketBtn) marketBtn.classList.add('active');
@@ -10516,16 +10536,6 @@ PAGE_LOGS_HTML = """
 <script>
 let LOG_FILTER = 'all';
 let LOG_ROWS = [];
-
-function escapeHtml(v) {
-  return String(v ?? '').replace(/[&<>"']/g, ch => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  }[ch]));
-}
 
 function setLogFilter(filter) {
   LOG_FILTER = filter;

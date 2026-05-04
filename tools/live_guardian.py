@@ -17,6 +17,11 @@ try:
 except Exception:  # pragma: no cover
     ZoneInfo = None  # type: ignore
 
+try:
+    import psutil
+except Exception:  # pragma: no cover
+    psutil = None  # type: ignore
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -76,6 +81,11 @@ def _enabled_markets(preflight: dict[str, Any]) -> list[str]:
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if psutil is not None:
+        try:
+            return bool(psutil.pid_exists(pid))
+        except Exception:
+            pass
     try:
         if sys.platform.startswith("win"):
             result = subprocess.run(

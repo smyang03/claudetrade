@@ -330,7 +330,7 @@ def _write_bot_pid_file(is_paper: bool = True):
             "pid": os.getpid(),
             "mode": _mode,
             "started_at": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
-            "command": [sys.executable, str(Path(__file__).resolve())],
+            "command": [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
         },
         ensure_ascii=False,
         indent=2,
@@ -4906,10 +4906,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         target_usable = self._MIN_SIGNAL_ROWS
         if lookback_days is None:
             lookback_days = 365 if market == "KR" else max(260, target_usable + 120)
-        df = get_daily_ohlcv(ticker, self._token_for_market(market), lookback_days=lookback_days, market=market)
-        usable = self._signal_usable_rows(df)
         source = "primary"
-        if market == "KR" and usable < target_usable:
+        primary_error = None
+        try:
+            df = get_daily_ohlcv(ticker, self._token_for_market(market), lookback_days=lookback_days, market=market)
+            usable = self._signal_usable_rows(df)
+        except Exception as exc:
+            if market != "KR":
+                raise
+            df = None
+            usable = 0
+            primary_error = exc
+            source = "primary_error"
+            log.warning(f"[KR OHLCV primary failed] {ticker}: {exc}")
+        if market == "KR" and (primary_error is not None or usable < target_usable):
             enabled = str(os.getenv("KR_YFINANCE_DAILY_FALLBACK", "true") or "").strip().lower()
             if enabled not in ("0", "false", "no", "off"):
                 try:
@@ -4919,7 +4929,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     fallback_df = None
                 merged = self._merge_ohlcv_frames(df, fallback_df)
                 merged_usable = self._signal_usable_rows(merged)
-                if merged_usable > usable:
+                if merged_usable > usable or (primary_error is not None and not merged.empty):
                     log.info(
                         f"[KR OHLCV yfinance 보강] {ticker} "
                         f"primary={len(df) if df is not None else 0}raw/{usable}usable "
@@ -4927,9 +4937,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                     df = merged
                     usable = merged_usable
-                    source = "primary+yfinance"
+                    source = "yfinance" if primary_error is not None else "primary+yfinance"
                 if usable >= target_usable:
                     return df, usable, source
+            if primary_error is not None and (df is None or getattr(df, "empty", True)):
+                raise primary_error
         if market == "US" and usable < target_usable:
             fallback_lookback = max(int(lookback_days), 365)
             for fallback_name, fetcher in (
@@ -13635,6 +13647,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 }, indent=None, default=str)
         except Exception as e:
             log.warning(f"live_status 저장 실패: {e}")
+
+    def _mark_live_status_inactive(self, market: str) -> None:
+        """Mark a market inactive without rebuilding the full dashboard payload."""
+        market = str(market or "").upper()
+        if not market:
+            return
+        try:
+            path = get_runtime_path("state", f"{self._mode}_live_status_{market}.json")
+            payload = {}
+            if path.exists():
+                try:
+                    existing = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(existing, dict):
+                        payload = existing
+                except Exception:
+                    payload = {}
+            payload.update(
+                {
+                    "market": market,
+                    "updated_at": datetime.now(KST).strftime("%H:%M:%S"),
+                    "trading_date": self._current_session_date_str(market),
+                    "session_active": False,
+                }
+            )
+            _atomic_json_dump(path, payload, indent=None, default=str)
+        except Exception as e:
+            log.warning(f"live_status inactive mark failed [{market}]: {e}")
+
     def _maybe_push_dashboard(self, force: bool = False):
         """상태 변화 있을 때만 텔레그램 대시보드 푸시"""
         if not self.session_active:
@@ -13696,6 +13736,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _log_flow("info", f"[{market}] session_close")
         if self.current_market != market:
             self._stop_ws_for_market(market)
+            self._mark_live_status_inactive(market)
             return
         today = self._current_session_date_str(market)
         # 장 마감 직전 마지막으로 브로커 잔고/체결을 동기화해 미체결 오판을 줄인다.
@@ -13745,6 +13786,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.session_active = False
         self.current_market = None
         self._stop_ws_for_market(market)
+        self._write_live_status(market, force=True)
 
         # ── 퍼널 집계 저장 ────────────────────────────────────────────────────
         try:
