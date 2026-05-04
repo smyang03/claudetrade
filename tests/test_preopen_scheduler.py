@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot.session_date import KST
-from preopen.scheduler import due_jobs, regular_open_dt
+from preopen.scheduler import default_outcome_offsets_min, due_jobs, regular_open_dt
 from preopen.storage import load_preopen_dashboard, load_preopen_scheduler_state
 from tools.preopen_scheduler import run_scheduler_once
 
@@ -58,6 +58,25 @@ class PreopenSchedulerTests(unittest.TestCase):
     def test_us_regular_open_dt_tracks_dst_and_non_dst(self) -> None:
         self.assertEqual(regular_open_dt("US", "2026-05-04").strftime("%Y-%m-%d %H:%M"), "2026-05-04 22:30")
         self.assertEqual(regular_open_dt("US", "2026-01-05").strftime("%Y-%m-%d %H:%M"), "2026-01-05 23:30")
+
+    def test_default_outcome_offsets_extend_to_regular_close(self) -> None:
+        us_offsets = default_outcome_offsets_min("US", "2026-05-04")
+        kr_offsets = default_outcome_offsets_min("KR", "2026-05-04")
+
+        self.assertEqual(us_offsets[:5], (5, 30, 60, 90, 120))
+        self.assertEqual(kr_offsets[:5], (5, 30, 60, 90, 120))
+        self.assertEqual(us_offsets[-1], 390)
+        self.assertEqual(kr_offsets[-1], 390)
+
+    def test_us_outcome_jobs_continue_after_two_hours(self) -> None:
+        now = datetime(2026, 5, 5, 1, 0, tzinfo=KST)
+
+        with patch("preopen.scheduler.is_trading_day", return_value=True):
+            jobs = due_jobs(now_dt=now, markets=["US"], mode="live")
+
+        outcome_ids = [job.job_id for job in jobs if job.kind == "outcome"]
+        self.assertIn("live:2026-05-04:US:outcome:120m", outcome_ids)
+        self.assertIn("live:2026-05-04:US:outcome:150m", outcome_ids)
 
     def test_us_non_dst_collector_extends_until_2325_kst(self) -> None:
         now = datetime(2026, 1, 5, 23, 20, tzinfo=KST)

@@ -70,6 +70,29 @@ def _exchange_session_open_dt(market: str, session_date: str) -> datetime | None
     return None
 
 
+def _exchange_session_close_dt(market: str, session_date: str) -> datetime | None:
+    exchange = _EXCHANGE_MAP.get(market_key(market))
+    if not exchange:
+        return None
+    try:
+        import exchange_calendars as ec
+
+        if exchange not in _EC_CACHE:
+            _EC_CACHE[exchange] = ec.get_calendar(exchange)
+        cal = _EC_CACHE[exchange]
+        if hasattr(cal, "session_close"):
+            closed = cal.session_close(str(session_date))
+            return _to_kst(closed)
+        schedule = getattr(cal, "schedule", None)
+        if schedule is not None:
+            row = schedule.loc[str(session_date)]
+            closed = row.get("market_close") if hasattr(row, "get") else row["market_close"]
+            return _to_kst(closed)
+    except Exception:
+        return None
+    return None
+
+
 def regular_open_dt(market: str, session_date: str) -> datetime:
     mkt = market_key(market)
     if mkt == "US":
@@ -79,6 +102,29 @@ def regular_open_dt(market: str, session_date: str) -> datetime:
         ny_tz = ZoneInfo("America/New_York")
         return datetime.combine(_session_day(session_date), dt_time(9, 30), tzinfo=ny_tz).astimezone(KST)
     return datetime.combine(_session_day(session_date), dt_time(9, 0), tzinfo=KST)
+
+
+def regular_close_dt(market: str, session_date: str) -> datetime:
+    mkt = market_key(market)
+    calendar_close = _exchange_session_close_dt(mkt, session_date)
+    if calendar_close is not None:
+        return calendar_close
+    if mkt == "US":
+        ny_tz = ZoneInfo("America/New_York")
+        return datetime.combine(_session_day(session_date), dt_time(16, 0), tzinfo=ny_tz).astimezone(KST)
+    return datetime.combine(_session_day(session_date), dt_time(15, 30), tzinfo=KST)
+
+
+def default_outcome_offsets_min(market: str, session_date: str) -> tuple[int, ...]:
+    opened = regular_open_dt(market, session_date)
+    closed = regular_close_dt(market, session_date)
+    total_min = int(max(5, (closed - opened).total_seconds() // 60))
+    offsets = [5]
+    offset = 30
+    while offset <= total_min:
+        offsets.append(offset)
+        offset += 30
+    return tuple(dict.fromkeys(offsets))
 
 
 def is_trading_day(market: str, session_date: str) -> bool:
@@ -157,7 +203,7 @@ def due_jobs(
     markets: list[str] | tuple[str, ...] = ("KR", "US"),
     mode: str = "live",
     collector_interval_override_min: int | None = None,
-    outcome_offsets_min: tuple[int, ...] = (5, 30, 60),
+    outcome_offsets_min: tuple[int, ...] | None = None,
     outcome_catchup_min: int = 180,
     force: bool = False,
     completed_job_ids: set[str] | None = None,
@@ -196,7 +242,8 @@ def due_jobs(
                 ))
 
         open_dt = regular_open_dt(mkt, session_date)
-        for offset in outcome_offsets_min:
+        offsets = outcome_offsets_min if outcome_offsets_min is not None else default_outcome_offsets_min(mkt, session_date)
+        for offset in offsets:
             due_dt = open_dt + timedelta(minutes=int(offset))
             late_by = (now_dt - due_dt).total_seconds() / 60.0
             if late_by < 0 or late_by > max(0, int(outcome_catchup_min)):

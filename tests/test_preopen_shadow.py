@@ -151,6 +151,100 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(state["candidate_count"], 1)
         place_order.assert_not_called()
 
+    def test_kr_collector_uses_kis_screen_when_token_is_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            token_path = root / "state" / "live_kis_token.json"
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text(
+                json.dumps({
+                    "access_token": "token",
+                    "expires_at": (datetime.now() + timedelta(hours=2)).isoformat(),
+                }),
+                encoding="utf-8",
+            )
+            with patch("tools.preopen_collector.get_runtime_path", side_effect=_runtime_path(root)), patch(
+                "preopen.storage.get_runtime_path",
+                side_effect=_runtime_path(root),
+            ), patch("kis_api.screen_market_kr", return_value=[
+                {
+                    "ticker": "006910",
+                    "name": "보성파워텍",
+                    "price": 14350,
+                    "change_rate": 18.79,
+                    "volume": 45_051_706,
+                    "vol_ratio": 91.7,
+                    "market_type": "KOSDAQ",
+                    "screen_score": 431.57,
+                }
+            ]):
+                state = collect_once("KR", mode="live")
+
+        self.assertEqual(state["collector_status"], "ok")
+        self.assertEqual(state["provider"], "kis_volume_rank")
+        self.assertEqual(state["data_quality"], "kis_volume_rank")
+        self.assertEqual(state["candidate_count"], 1)
+        candidate = state["candidates"][0]
+        self.assertEqual(candidate["ticker"], "006910")
+        self.assertEqual(candidate["price"], 14350)
+        self.assertEqual(candidate["volume_ratio"], 91.7)
+        self.assertGreater(candidate["prior_day_traded_value"], 0)
+
+    def test_outcome_updater_samples_price_for_dynamic_offsets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            token_path = root / "state" / "live_kis_token.json"
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text(
+                json.dumps({
+                    "access_token": "token",
+                    "expires_at": (datetime.now() + timedelta(hours=2)).isoformat(),
+                }),
+                encoding="utf-8",
+            )
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)), patch(
+                "tools.preopen_collector.get_runtime_path",
+                side_effect=_runtime_path(root),
+            ):
+                save_preopen_state("KR", {
+                    "market": "KR",
+                    "session_date": "2026-05-04",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "provider": "kis_volume_rank",
+                    "data_quality": "kis_volume_rank",
+                    "candidates": [{
+                        "ticker": "006910",
+                        "provider": "kis_volume_rank",
+                        "data_quality": "kis_volume_rank",
+                        "price": 1000,
+                        "shadow_preopen_rank": 1,
+                    }],
+                }, session_date="2026-05-04")
+                with patch("bot.session_date.resolve_session_date_str", return_value="2026-05-04"), patch(
+                    "tools.preopen_outcome_updater.resolve_session_date_str",
+                    return_value="2026-05-04",
+                ), patch("kis_api.get_price", return_value={
+                    "ticker": "006910",
+                    "price": 1100,
+                    "open": 1000,
+                    "high": 1120,
+                    "low": 980,
+                    "volume": 12345,
+                }):
+                    result = update_once("KR", mode="live", offset_min=90)
+                state = load_preopen_state("KR", session_date="2026-05-04", max_age_min=24 * 60)
+                outcome = load_preopen_dashboard("KR", session_date="2026-05-04")["outcome"]
+
+        self.assertEqual(result["sampled"], 1)
+        candidate = state["candidates"][0]
+        self.assertEqual(candidate["regular_open_price"], 1000)
+        self.assertEqual(candidate["last_price"], 1100)
+        self.assertEqual(candidate["post_open_90m_return_pct"], 10.0)
+        self.assertEqual(candidate["max_runup_pct"], 12.0)
+        self.assertEqual(candidate["max_drawdown_pct"], -2.0)
+        self.assertEqual(outcome[-1]["post_open_90m_return_pct"], 10.0)
+
     def test_paper_preopen_state_and_logs_are_separated_from_live(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

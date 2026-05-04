@@ -32,6 +32,29 @@ def _seed_tickers(market: str, explicit: str = "") -> list[str]:
     return ["005930", "000660", "035420", "035720", "005380", "068270"]
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        return float(value)
+    except Exception:
+        return default
+
+
+def _preopen_top_n(market: str) -> int:
+    raw = os.getenv(f"PREOPEN_{market}_TOP_N", os.getenv("PREOPEN_TOP_N", "60" if market == "KR" else "50"))
+    try:
+        return max(1, int(raw))
+    except Exception:
+        return 60 if market == "KR" else 50
+
+
+def _screen_mode(market: str) -> str:
+    return os.getenv(f"PREOPEN_{market}_SCREEN_MODE", os.getenv("PREOPEN_SCREEN_MODE", "NEUTRAL")).strip() or "NEUTRAL"
+
+
 def _token_paths(mode: str, market: str) -> list[Path]:
     market_key = _market_key(market).lower()
     paths = [get_runtime_path("state", f"{mode}_kis_token_{market_key}.json")]
@@ -70,6 +93,7 @@ def _read_kis_token_state(mode: str, market: str) -> dict:
                 "status": "token_present_read_only",
                 "path": str(path),
                 "detail": f"expires_at={expires_raw}, minutes_left={minutes_left:.1f}",
+                "access_token": str(data.get("access_token", "") or ""),
             }
         except Exception as exc:
             return {"status": "token_invalid", "path": str(path), "detail": str(exc)}
@@ -127,18 +151,107 @@ def _collect_kr_seed_candidates(
     return candidates
 
 
+def _collect_kr_screen_candidates(
+    token: str,
+    captured_at: str,
+    session_date: str,
+    *,
+    top_n: int,
+    mode: str,
+) -> list[dict]:
+    from kis_api import screen_market_kr
+
+    rows = screen_market_kr(token, top_n=top_n, mode=mode)
+    candidates = []
+    for idx, row in enumerate(rows or [], start=1):
+        price = _safe_float(row.get("price"))
+        volume = _safe_float(row.get("volume"))
+        change_rate = _safe_float(row.get("change_rate"))
+        vol_ratio = _safe_float(row.get("vol_ratio"), 1.0)
+        traded_value = price * volume if price > 0 and volume > 0 else 0.0
+        candidates.append(normalize_candidate({
+            "ticker": row.get("ticker", ""),
+            "name": row.get("name", row.get("ticker", "")),
+            "source": "kis_screen_market_kr",
+            "provider": "kis_volume_rank",
+            "provider_rank": idx,
+            "screen_score": row.get("screen_score"),
+            "source_status": "kis_screen_market_kr",
+            "data_quality": "kis_volume_rank",
+            "stale": False,
+            "quality_tags": ["kis_volume_rank", str(row.get("market_type", "") or "").lower()],
+            "risk_tags": [],
+            "price": price,
+            "extended_price": price,
+            "change_rate": change_rate,
+            "gap_pct": change_rate,
+            "extended_change_pct": change_rate,
+            "volume": volume,
+            "extended_volume": volume,
+            "volume_ratio": vol_ratio,
+            "prior_day_traded_value": traded_value,
+            "extended_dollar_volume": traded_value,
+            "open_volume_confirmation": volume,
+        }, market="KR", session_date=session_date, captured_at=captured_at))
+    return candidates
+
+
+def _collect_us_screen_candidates(
+    captured_at: str,
+    session_date: str,
+    *,
+    top_n: int,
+    mode: str,
+) -> list[dict]:
+    from kis_api import screen_market_us
+
+    rows = screen_market_us(top_n=top_n, mode=mode)
+    candidates = []
+    for idx, row in enumerate(rows or [], start=1):
+        price = _safe_float(row.get("price"))
+        volume = _safe_float(row.get("volume"))
+        change_rate = _safe_float(row.get("change_rate"))
+        dollar_volume = price * volume if price > 0 and volume > 0 else 0.0
+        candidates.append(normalize_candidate({
+            "ticker": row.get("ticker", ""),
+            "name": row.get("name", row.get("ticker", "")),
+            "source": str(row.get("category") or "us_screen_market"),
+            "provider": "us_screen_market",
+            "provider_rank": idx,
+            "source_status": "us_screen_market",
+            "data_quality": "us_screen_market",
+            "stale": False,
+            "quality_tags": ["us_screen_market", str(row.get("category", "") or "").lower()],
+            "risk_tags": [],
+            "price": price,
+            "extended_price": price,
+            "change_rate": change_rate,
+            "gap_pct": change_rate,
+            "extended_change_pct": change_rate,
+            "volume": volume,
+            "extended_volume": volume,
+            "extended_dollar_volume": dollar_volume,
+            "volume_ratio": row.get("vol_ratio"),
+        }, market="US", session_date=session_date, captured_at=captured_at))
+    return candidates
+
+
 def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
     market = _market_key(market)
     runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
     captured_at = datetime.now(KST).isoformat(timespec="seconds")
     session_date = resolve_session_date_str(market)
     seed_tickers = _seed_tickers(market, tickers)
+    explicit_tickers = bool(str(tickers or "").strip())
+    top_n = _preopen_top_n(market)
+    screen_mode = _screen_mode(market)
 
     token_state = _read_kis_token_state(runtime_mode, market)
     token_status = token_state.get("status", "token_unavailable")
     token_bad = token_status in {"token_expired", "token_invalid"}
     source_status = "seed_only"
     data_quality = "seed_only"
+    provider = "seed_watchlist"
     stale = False
 
     if token_bad:
@@ -152,8 +265,8 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
             source_status = "kis_enrichment_skipped_token_unavailable"
             data_quality = "unavailable"
             stale = True
-        else:
-            source_status = "kis_rank_not_called_by_shadow_collector"
+        elif explicit_tickers:
+            source_status = "explicit_seed_tickers"
             raw_candidates = _collect_kr_seed_candidates(
                 seed_tickers,
                 captured_at,
@@ -162,19 +275,64 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
                 data_quality=data_quality,
                 stale=stale,
             )
-    else:
-        if token_status == "token_unavailable":
-            source_status = "seed_only_no_kis_token"
         else:
-            source_status = "ranking_provider_not_configured"
-        raw_candidates = _collect_us_seed_candidates(
-            seed_tickers,
-            captured_at,
-            session_date,
-            source_status=source_status,
-            data_quality=data_quality,
-            stale=stale,
-        )
+            try:
+                raw_candidates = _collect_kr_screen_candidates(
+                    str(token_state.get("access_token", "") or ""),
+                    captured_at,
+                    session_date,
+                    top_n=top_n,
+                    mode=screen_mode,
+                )
+                source_status = "kis_screen_market_kr"
+                data_quality = "kis_volume_rank" if raw_candidates else "no_screen_candidates"
+                provider = "kis_volume_rank"
+            except Exception as exc:
+                source_status = f"kis_screen_failed:{type(exc).__name__}:{str(exc)[:160]}"
+                raw_candidates = _collect_kr_seed_candidates(
+                    seed_tickers,
+                    captured_at,
+                    session_date,
+                    source_status=source_status,
+                    data_quality="seed_only_after_screen_error",
+                    stale=True,
+                )
+                data_quality = "seed_only_after_screen_error"
+                stale = True
+    else:
+        if explicit_tickers:
+            source_status = "explicit_seed_tickers"
+            raw_candidates = _collect_us_seed_candidates(
+                seed_tickers,
+                captured_at,
+                session_date,
+                source_status=source_status,
+                data_quality=data_quality,
+                stale=stale,
+            )
+        else:
+            try:
+                raw_candidates = _collect_us_screen_candidates(
+                    captured_at,
+                    session_date,
+                    top_n=top_n,
+                    mode=screen_mode,
+                )
+                source_status = "us_screen_market"
+                data_quality = "us_screen_market" if raw_candidates else "no_screen_candidates"
+                provider = "us_screen_market"
+            except Exception as exc:
+                source_status = f"us_screen_failed:{type(exc).__name__}:{str(exc)[:160]}"
+                raw_candidates = _collect_us_seed_candidates(
+                    seed_tickers,
+                    captured_at,
+                    session_date,
+                    source_status=source_status,
+                    data_quality="seed_only_after_screen_error",
+                    stale=True,
+                )
+                data_quality = "seed_only_after_screen_error"
+                stale = True
 
     candidates = score_candidates(market, raw_candidates)
     collector_status = "ok" if candidates else "no_candidates"
@@ -191,9 +349,11 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
         "token_detail": token_state.get("detail", ""),
         "token_path": token_state.get("path", ""),
         "source_status": source_status,
-        "provider": "seed_watchlist",
+        "provider": provider,
         "data_quality": data_quality,
         "stale": stale,
+        "screen_mode": screen_mode,
+        "screen_top_n": top_n,
         "candidate_count": len(candidates),
         "excluded_count": sum(1 for c in candidates if c.get("preopen_grade") == "X"),
         "candidates": candidates,

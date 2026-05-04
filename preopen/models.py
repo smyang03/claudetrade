@@ -40,7 +40,11 @@ class PreopenCandidate:
     quality_tags: list[str] = field(default_factory=list)
     pattern_tags: list[str] = field(default_factory=list)
     preopen_reason: list[str] = field(default_factory=list)
+    provider_rank: int | None = None
+    screen_score: float | None = None
     price: float | None = None
+    volume: float | None = None
+    change_rate: float | None = None
     gap_pct: float | None = None
     volume_ratio: float | None = None
     extended_price: float | None = None
@@ -48,15 +52,21 @@ class PreopenCandidate:
     extended_change_pct: float | None = None
     extended_volume: float | None = None
     extended_dollar_volume: float | None = None
+    prior_day_traded_value: float | None = None
     bid: float | None = None
     ask: float | None = None
     spread_pct: float | None = None
     quote_timestamp: str = ""
     news_or_earnings_flag: bool | None = None
     open_volume_confirmation: float | None = None
+    regular_open_price: float | None = None
+    last_price: float | None = None
+    last_price_at: str = ""
     post_open_5m_return_pct: float | None = None
     post_open_30m_return_pct: float | None = None
     post_open_60m_return_pct: float | None = None
+    post_open_90m_return_pct: float | None = None
+    post_open_120m_return_pct: float | None = None
     post_open_mfe_pct: float | None = None
     post_open_mae_pct: float | None = None
     max_runup_pct: float | None = None

@@ -384,29 +384,35 @@ def _scheduler_guidance(market: str, mode: str = "live") -> dict[str, Any]:
     market_key = _market_key(market)
     runtime_mode = _runtime_mode(mode)
     automatic_command = f"python tools/preopen_scheduler.py --mode {runtime_mode} --markets KR,US --loop"
+    try:
+        from preopen.scheduler import default_outcome_offsets_min
+
+        offsets = list(default_outcome_offsets_min(market_key, resolve_session_date_str(market_key)))
+    except Exception:
+        offsets = [5, 30, 60, 90, 120]
+    outcome_commands = [
+        f"python tools/preopen_outcome_updater.py --market {market_key} --mode {runtime_mode} --offset-min {offset} --once"
+        for offset in offsets
+    ]
     if market_key == "US":
         return {
             "market": "US",
             "collector_windows_kst": ["DST 17:00-22:25", "non-DST 18:00-23:25"],
-            "outcome_offsets_min": [5, 30, 60],
+            "outcome_offsets_min": offsets,
             "automatic_command": automatic_command,
             "commands": [
                 f"python tools/preopen_collector.py --market US --mode {runtime_mode} --once",
-                f"python tools/preopen_outcome_updater.py --market US --mode {runtime_mode} --offset-min 5 --once",
-                f"python tools/preopen_outcome_updater.py --market US --mode {runtime_mode} --offset-min 30 --once",
-                f"python tools/preopen_outcome_updater.py --market US --mode {runtime_mode} --offset-min 60 --once",
+                *outcome_commands,
             ],
         }
     return {
         "market": "KR",
         "collector_windows_kst": ["08:00-09:00"],
-        "outcome_offsets_min": [5, 30, 60],
+        "outcome_offsets_min": offsets,
         "automatic_command": automatic_command,
         "commands": [
             f"python tools/preopen_collector.py --market KR --mode {runtime_mode} --once",
-            f"python tools/preopen_outcome_updater.py --market KR --mode {runtime_mode} --offset-min 5 --once",
-            f"python tools/preopen_outcome_updater.py --market KR --mode {runtime_mode} --offset-min 30 --once",
-            f"python tools/preopen_outcome_updater.py --market KR --mode {runtime_mode} --offset-min 60 --once",
+            *outcome_commands,
         ],
     }
 
