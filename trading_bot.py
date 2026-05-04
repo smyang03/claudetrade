@@ -381,6 +381,10 @@ _US_NO_SIGNAL_SWAP_CYCLES = int(os.getenv("US_NO_SIGNAL_SWAP_CYCLES", "8"))  # U
 _KR_MARKET_OPEN_OFFSET_MIN = int(os.getenv("KR_MARKET_OPEN_OFFSET_MIN", "10"))
 _KR_OPENING_JUDGMENT_REFRESH_MIN = int(os.getenv("KR_OPENING_JUDGMENT_REFRESH_MIN", "3"))
 _US_OPENING_JUDGMENT_REFRESH_MIN = int(os.getenv("US_OPENING_JUDGMENT_REFRESH_MIN", "3"))
+_JUDGMENT_PHASE_PREOPEN = "preopen_watch"
+_JUDGMENT_PHASE_OPENING = "opening_confirm"
+_JUDGMENT_PHASE_INTRADAY = "intraday_live"
+_EXECUTABLE_JUDGMENT_PHASES = {_JUDGMENT_PHASE_OPENING, _JUDGMENT_PHASE_INTRADAY}
 # 마감 직전 신규 진입 차단 — session_open 기준 경과 분  # KR: 8:50 KST + 380min = 15:10 KST
 # US: 22:20 KST + 370min = 04:30 KST = 15:30 ET  (KST = ET + 13h -> 15:30 ET + 13h = 04:30 KST)
 _KR_ENTRY_CUTOFF_FROM_OPEN_MIN = int(os.getenv("KR_ENTRY_CUTOFF_FROM_OPEN_MIN", "380"))
@@ -763,6 +767,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._last_data_insufficient_candidates: dict[str, list] = {"KR": [], "US": []}
         self._data_insufficient_watch_tickers: dict[str, set[str]] = {"KR": set(), "US": set()}
         self._opening_fresh_rejudge_done: set[str] = set()
+        self._opening_fresh_once_done: set[str] = set()
         # 장중 이벤트 기록 (튜닝/긴급재판단) — session_close 시 daily_judgment에 포함
         self._session_events: list = []
         self.decision_event_log: list = []
@@ -2618,6 +2623,48 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if getattr(self, "v2", None) is None:
             return {"blocked": False}
         return self.v2.order_unknown_block_state(market, ticker)
+    def _analyst_new_buy_block_state(self, market: str) -> dict:
+        market_key = str(market or "").upper()
+        consensus = ((getattr(self, "today_judgment", {}) or {}).get("consensus") or {})
+        permission = str(consensus.get("new_buy_permission", "") or "").strip().lower()
+        details = {
+            "market": market_key,
+            "permission": permission,
+            "max_gross_exposure_pct": consensus.get("max_gross_exposure_pct", 0),
+            "source": "analyst_consensus",
+        }
+        if permission == "block":
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": "ANALYST_NEW_BUY_BLOCK",
+                "scope": "market",
+                "details": details,
+            }
+        try:
+            max_gross = float(consensus.get("max_gross_exposure_pct", 0) or 0)
+        except Exception:
+            max_gross = 0.0
+        if max_gross > 0:
+            equity_context = self._market_equity_reference_context(market_key)
+            total_krw = float((equity_context or {}).get("total_krw", 0) or 0)
+            position_krw = float((equity_context or {}).get("position_krw", 0) or 0)
+            gross_pct = position_krw / total_krw * 100.0 if total_krw > 0 else 0.0
+            details.update({
+                "gross_exposure_pct": round(gross_pct, 3),
+                "position_krw": position_krw,
+                "total_krw": total_krw,
+                "equity_source": (equity_context or {}).get("source", ""),
+            })
+            if total_krw > 0 and gross_pct >= max_gross:
+                return {
+                    "allowed": False,
+                    "blocked": True,
+                    "reason": "ANALYST_MAX_GROSS_EXPOSURE_REACHED",
+                    "scope": "market",
+                    "details": details,
+                }
+        return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
     def _new_buy_block_state(self, market: str, ticker: str = "", strategy: str = "") -> dict:
         market_key = str(market or "").upper()
         raw_ticker = str(ticker or "").strip()
@@ -2643,6 +2690,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "reason": "ENTRY_BLACKOUT",
                 "scope": "market",
                 "details": details,
+            }
+        analyst_state = self._analyst_new_buy_block_state(market_key)
+        if bool((analyst_state or {}).get("blocked")):
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": str((analyst_state or {}).get("reason") or "ANALYST_NEW_BUY_BLOCK"),
+                "scope": str((analyst_state or {}).get("scope") or "market"),
+                "details": {**details, **dict((analyst_state or {}).get("details") or {})},
             }
         unknown = getattr(self, "v2_order_unknown", None)
         if unknown is not None:
@@ -2982,6 +3038,46 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
             self.today_judgment["selection_stages"] = stages
         return meta
+
+    def _force_preopen_watch_only(self, market: str, meta: Optional[dict] = None) -> dict:
+        """Demote a preopen candidate preparation result to watch-only runtime state."""
+        market = str(market or "").upper()
+        clean = dict(meta or {})
+        watchlist = list(dict.fromkeys(clean.get("watchlist") or []))
+        clean["watchlist"] = watchlist
+        clean["trade_ready"] = []
+        for key in (
+            "recommended_strategy",
+            "max_position_pct",
+            "allocation_intent",
+            "max_order_cap_pct",
+            "risk_budget_pct",
+            "size_reason",
+            "price_targets",
+        ):
+            clean[key] = {}
+        clean["_forced_watch_only_phase"] = _JUDGMENT_PHASE_PREOPEN
+        if not hasattr(self, "selection_meta"):
+            self.selection_meta = {}
+        if not hasattr(self, "trade_ready_tickers"):
+            self.trade_ready_tickers = {}
+        self.selection_meta[market] = clean
+        self.trade_ready_tickers[market] = []
+        if not hasattr(self, "selection_stages"):
+            self.selection_stages = {}
+        stages = dict((getattr(self, "selection_stages", {}) or {}).get(market, {}) or {})
+        stages["preopen_watch_only"] = {
+            "watchlist": watchlist,
+            "trade_ready": [],
+            "phase": _JUDGMENT_PHASE_PREOPEN,
+        }
+        self.selection_stages[market] = stages
+        if isinstance(getattr(self, "today_judgment", None), dict) and self.today_judgment.get("market") == market:
+            self.today_judgment["selection_meta"] = clean
+            self.today_judgment["trade_ready_tickers"] = []
+            self.today_judgment["selection_stages"] = stages
+        return clean
+
     def _preopen_runtime_mode(self) -> str:
         return "paper" if getattr(self, "is_paper", True) else "live"
 
@@ -4481,6 +4577,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market = str(market or "KR").upper()
         if not self.session_active or self.current_market != market:
             return
+        done = getattr(self, "_opening_fresh_once_done", None)
+        if done is None:
+            done = set()
+            self._opening_fresh_once_done = done
+        run_key = f"{self._current_session_date_str(market)}:{market}"
+        if run_key in done:
+            return
+        done.add(run_key)
         try:
             mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "NEUTRAL") or "NEUTRAL")
             raw_candidates = self._screen_market_candidates(market, mode)
@@ -4649,20 +4753,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         return False
 
     def _build_market_judgment_prompt(self, market: str, digest_prompt: str, digest_payload: Optional[dict] = None) -> tuple[str, dict]:
+        phase = self._current_judgment_phase(market)
         basis = {
             "intraday_context_included": False,
             "live_index_context_ok": False,
             "digest_preopen": self._digest_payload_built_before_open(market, digest_payload),
-            "phase": "preopen_digest",
+            "phase": phase or "unknown",
         }
         market_key = str(market or "").upper()
-        if market_key in {"KR", "US"} and self._market_after_open_refresh_time(market_key) and basis["digest_preopen"]:
+        if market_key in {"KR", "US"} and basis["phase"] != _JUDGMENT_PHASE_PREOPEN and basis["digest_preopen"]:
             override_context = self._build_market_judgment_override_context(market, digest_payload)
             live_ok = self._override_context_has_live_index(market_key, override_context)
             basis.update({
                 "intraday_context_included": True,
                 "live_index_context_ok": live_ok,
-                "phase": "intraday_live" if live_ok else "intraday_live_unconfirmed",
+                "phase": (phase or _JUDGMENT_PHASE_INTRADAY) if live_ok else "intraday_live_unconfirmed",
             })
             return (
                 "[INTRADAY_CONTEXT - CURRENT MARKET OVERRIDE]\n"
@@ -4821,7 +4926,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                lesson_context=lesson_context,
                                                intraday_context=intraday_ctx,
                                                market_change_pct=self._get_market_change_pct(target_market),
-                                               secondary_change_pct=self._get_secondary_change_pct(target_market))
+                                               secondary_change_pct=self._get_secondary_change_pct(target_market),
+                                               execution_phase=self._current_judgment_phase(target_market))
             if not selected:
                 raise RuntimeError("최종 선택 종목이 없습니다.")
             sel_meta = self._apply_selection_meta(target_market, selected, mode=mode)
@@ -8703,6 +8809,157 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     universe_tickers = snapshot.get("tickers", [])
                     log.info(f"[universe] {market} loaded {len(universe_tickers)} tickers")
         # ── 재시작 시 당일 판단 재사용 ───────────────────────────────────────
+        if self._current_judgment_phase(market) == _JUDGMENT_PHASE_PREOPEN:
+            digest = {}
+            digest_prompt = ""
+            candidates: list[dict] = []
+            raw_candidates: list[dict] = []
+            selected: list[str] = []
+            sel_reasons: dict = {}
+            sel_meta: dict = {}
+            try:
+                digest = (
+                    build_kr_digest(today, universe_tickers=universe_tickers)
+                    if market == "KR"
+                    else build_us_digest(today, universe_tickers=universe_tickers)
+                )
+                digest_prompt = digest_to_prompt(digest)
+                candidates = self._screen_market_candidates(market, "NEUTRAL")
+                raw_candidates = list(candidates or [])
+                if market == "KR" and candidates:
+                    self._last_kr_candidates = candidates
+                self._log_screen_candidates(market, candidates, "preopen_watch")
+                candidates = self._prefill_history_sync(candidates, market)
+                candidates = self._filter_candidates_by_history(candidates, market)
+                candidates = self._restrict_candidates_to_universe(candidates, universe_tickers)
+                candidates = self._annotate_selection_execution_features(market, candidates, "PREOPEN_WATCH")
+                lesson_context = self._load_lesson_candidate_summary(market)
+                selected, sel_reasons = select_tickers(
+                    market,
+                    digest_prompt,
+                    "PREOPEN_WATCH",
+                    candidates,
+                    lesson_context=lesson_context,
+                    market_change_pct=self._get_market_change_pct(market, digest),
+                    secondary_change_pct=self._get_secondary_change_pct(market, digest),
+                    execution_phase=_JUDGMENT_PHASE_PREOPEN,
+                )
+                sel_meta = self._apply_selection_meta(market, selected, mode="PREOPEN_WATCH")
+                sel_meta = self._force_preopen_watch_only(market, sel_meta)
+                self._record_preopen_rank_diff(
+                    market,
+                    selected,
+                    sel_meta,
+                    sel_reasons,
+                    phase=_JUDGMENT_PHASE_PREOPEN,
+                )
+                self._record_candidate_quality(
+                    market,
+                    _JUDGMENT_PHASE_PREOPEN,
+                    raw_candidates,
+                    candidates,
+                    selected,
+                    sel_meta,
+                    sel_reasons,
+                )
+                self._update_candidate_health(
+                    market,
+                    _JUDGMENT_PHASE_PREOPEN,
+                    selected,
+                    sel_meta,
+                    candidates,
+                )
+                try:
+                    _tsdb_ids = tsdb.insert_batch(
+                        today,
+                        market,
+                        _JUDGMENT_PHASE_PREOPEN,
+                        selected,
+                        candidates,
+                        sel_reasons,
+                        "PREOPEN_WATCH",
+                        selection_meta=sel_meta,
+                    )
+                    self._tsdb_selection_ids[market] = _tsdb_ids
+                except Exception as _te:
+                    log.warning(f"[tsdb] insert_batch(preopen_watch) failed: {_te}")
+                    self._tsdb_selection_ids[market] = {}
+                excluded = [c.get("ticker", "") for c in candidates if c.get("ticker", "") not in selected]
+                try:
+                    watchlist_alert(
+                        market,
+                        "PREOPEN_WATCH",
+                        selected,
+                        sel_reasons,
+                        excluded,
+                        trigger=_JUDGMENT_PHASE_PREOPEN,
+                    )
+                except Exception as _wae:
+                    log.debug(f"[preopen watch alert skip] {market}: {_wae}")
+            except Exception as exc:
+                log.warning(f"[preopen watch] {market} preparation failed: {exc}", exc_info=True)
+                selected = list(_DEFAULT_KR_TICKERS if market == "KR" else _DEFAULT_US_TICKERS)
+                sel_reasons = {}
+                sel_meta = self._force_preopen_watch_only(market, {"watchlist": selected, "trade_ready": []})
+            self.today_tickers[market] = selected
+            self._entry_timing_mark_candidates(market, selected, _JUDGMENT_PHASE_PREOPEN)
+            self.today_ticker_reasons[market] = sel_reasons or {}
+            self.today_judgment = {
+                "date": today,
+                "market": market,
+                "judgments": {},
+                "consensus": {},
+                "digest_prompt": digest_prompt,
+                "digest_raw": digest,
+                "tickers": selected,
+                "universe_tickers": [
+                    c.get("ticker") for c in candidates if c.get("ticker")
+                ] or list(universe_tickers or []),
+                "selection_meta": sel_meta,
+                "selection_stages": self.selection_stages.get(market, {}),
+                "trade_ready_tickers": [],
+                "preopen_context": {
+                    "phase": _JUDGMENT_PHASE_PREOPEN,
+                    "source": "session_open_preopen",
+                    "trigger": trigger,
+                    "candidates": [c.get("ticker") for c in candidates if c.get("ticker")],
+                    "selected": selected,
+                    "reasons": sel_reasons or {},
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                },
+                "judgment_context_basis": {
+                    "phase": _JUDGMENT_PHASE_PREOPEN,
+                    "source": "session_open_preopen",
+                    "trigger": trigger,
+                    "digest_preopen": True,
+                    "live_index_context_ok": False,
+                    "intraday_context_included": False,
+                    "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
+                },
+            }
+            self._force_preopen_watch_only(market, sel_meta)
+            try:
+                self._funnel[market]["selected"] += len(selected)
+            except Exception:
+                pass
+            self._persist_live_judgment(market)
+            try:
+                self._pre_session_position_review(market)
+            except Exception as _psr_e:
+                log.warning(f"[preopen position review] {market}: {_psr_e}")
+            self._start_ws_for_market(market, selected)
+            self._session_open_at[market] = time.time()
+            self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)
+            for _t in selected:
+                self._intraday_high.pop(_t, None)
+                self._intraday_low.pop(_t, None)
+                self._or_high.pop(_t, None)
+                self._or_low.pop(_t, None)
+                self._or_formed.pop(_t, None)
+            log.info(f"[preopen watch ready] {market}: watch={selected} trade_ready=[]")
+            self._maybe_push_dashboard(force=True)
+            self._leave_market_task(market, "session_open")
+            return
         live_path = _judgment_runtime_path(self._mode, today, market)
         legacy_live_path = JUDGMENT_DIR / f"{today.replace('-', '')}_{market}.json"
         reused = False
@@ -8925,7 +9182,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     lesson_context=_lesson_context,
                                                     intraday_context=_intraday_ctx,
                                                     market_change_pct=self._get_market_change_pct(market, digest),
-                                                    secondary_change_pct=self._get_secondary_change_pct(market, digest))
+                                                    secondary_change_pct=self._get_secondary_change_pct(market, digest),
+                                                    execution_phase=self._current_judgment_phase(market))
             sel_meta = self._apply_selection_meta(market, selected, mode=consensus.get("mode", ""))
             self._record_preopen_rank_diff(
                 market,
@@ -9043,7 +9301,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                lesson_context=_fresh_lesson_context,
                                                                intraday_context=_fresh_intraday_ctx,
                                                                market_change_pct=self._get_market_change_pct(market),
-                                                               secondary_change_pct=self._get_secondary_change_pct(market))
+                                                               secondary_change_pct=self._get_secondary_change_pct(market),
+                                                               execution_phase=self._current_judgment_phase(market))
                 fresh_meta = self._apply_selection_meta(market, fresh_selected, mode=consensus.get("mode", ""))
                 self._record_preopen_rank_diff(
                     market,
@@ -9498,6 +9757,72 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         refresh_at = self._market_regular_open_dt(market) + timedelta(minutes=max(0, minutes))
         return datetime.now(KST) >= refresh_at
 
+    def _current_judgment_phase(self, market: str, now_dt: Optional[datetime] = None) -> str:
+        market = str(market or "").upper()
+        if market not in {"KR", "US"}:
+            return ""
+        now_dt = now_dt or datetime.now(KST)
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=KST)
+        else:
+            now_dt = now_dt.astimezone(KST)
+        try:
+            regular_open = self._market_regular_open_dt(market, now_dt=now_dt)
+        except Exception:
+            return _JUDGMENT_PHASE_INTRADAY
+        if now_dt < regular_open:
+            return _JUDGMENT_PHASE_PREOPEN
+        elapsed_min = (now_dt - regular_open).total_seconds() / 60.0
+        if elapsed_min <= _ENTRY_SCAN_OPENING_MIN:
+            return _JUDGMENT_PHASE_OPENING
+        return _JUDGMENT_PHASE_INTRADAY
+
+    def _is_executable_judgment_phase(self, phase: str) -> bool:
+        return str(phase or "").strip() in _EXECUTABLE_JUDGMENT_PHASES
+
+    def _new_entry_judgment_gate(self, market: str) -> tuple[bool, str]:
+        market = str(market or "").upper()
+        judgment = self.today_judgment if isinstance(getattr(self, "today_judgment", None), dict) else {}
+        judgment_market = str(judgment.get("market") or market).upper()
+        if market not in {"KR", "US"} or judgment_market != market:
+            return False, "missing_market_judgment"
+        consensus = judgment.get("consensus") or {}
+        if not isinstance(consensus, dict) or not str(consensus.get("mode") or "").strip():
+            return False, "missing_consensus"
+        basis = judgment.get("judgment_context_basis") or {}
+        if not isinstance(basis, dict):
+            basis = {}
+        phase = str(basis.get("phase") or "").strip()
+        if not self._is_executable_judgment_phase(phase):
+            return False, f"non_executable_judgment_phase:{phase or 'missing'}"
+        return True, "ok"
+
+    def _maybe_run_opening_fresh_screener(self, market: str) -> None:
+        market = str(market or "").upper()
+        if market not in {"KR", "US"}:
+            return
+        now_dt = datetime.now(KST)
+        try:
+            regular_open = self._market_regular_open_dt(market, now_dt=now_dt)
+        except Exception:
+            return
+        start_at = regular_open + timedelta(minutes=5)
+        end_at = regular_open + timedelta(minutes=max(6, _ENTRY_SCAN_OPENING_MIN))
+        if now_dt < start_at or now_dt > end_at:
+            return
+        done = getattr(self, "_opening_fresh_once_done", None)
+        if done is None:
+            done = set()
+            self._opening_fresh_once_done = done
+        key = f"{self._current_session_date_str(market)}:{market}"
+        if key in done:
+            return
+        try:
+            log.info(f"[opening fresh trigger] {market} dynamic opening fresh screener")
+            self.run_opening_fresh_screener(market)
+        except Exception as exc:
+            log.warning(f"[opening fresh trigger skip] {market}: {exc}")
+
     def _digest_payload_built_before_open(self, market: str, digest_payload: Optional[dict] = None) -> bool:
         market = str(market or "").upper()
         if market not in {"KR", "US"}:
@@ -9534,22 +9859,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market = str(market or "").upper()
         if market not in {"KR", "US"} or not isinstance(saved, dict):
             return False
+        basis = saved.get("judgment_context_basis") or {}
+        if not isinstance(basis, dict):
+            basis = {}
+        phase = str(basis.get("phase") or "").strip()
+        if self._market_after_open_refresh_time(market) and phase in {_JUDGMENT_PHASE_PREOPEN, "preopen_digest"}:
+            return True
         if not self._market_after_open_refresh_time(market):
             return False
         if not self._digest_payload_built_before_open(market, saved.get("digest_raw") or {}):
             return False
-        basis = saved.get("judgment_context_basis") or {}
-        if not isinstance(basis, dict):
-            basis = {}
         return not bool(basis.get("live_index_context_ok"))
 
     def _maybe_refresh_opening_judgment(self, market: str) -> None:
         market = str(market or "").upper()
         if market not in {"KR", "US"} or not self.today_judgment:
             return
-        if not self._digest_payload_built_before_open(market):
-            return
         basis = self.today_judgment.get("judgment_context_basis") or {}
+        if not isinstance(basis, dict):
+            basis = {}
+        phase = str(basis.get("phase") or "").strip()
+        needs_opening_refresh = (
+            phase in {_JUDGMENT_PHASE_PREOPEN, "preopen_digest"}
+            or self._digest_payload_built_before_open(market)
+        )
+        if not needs_opening_refresh:
+            return
         if basis.get("live_index_context_ok"):
             return
         if not self._market_after_open_refresh_time(market):
@@ -9694,6 +10029,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._consume_pending_position_review(market)
         self._consume_pending_sell(market)
         self._maybe_refresh_opening_judgment(market)
+        self._maybe_run_opening_fresh_screener(market)
+        _entry_judgment_ok, _entry_judgment_block = self._new_entry_judgment_gate(market)
         mode = self.today_judgment.get("consensus", {}).get("mode", "CAUTIOUS")
         size_pct = self.today_judgment.get("consensus", {}).get("size", 50)
         tickers = self.today_tickers.get(
@@ -10034,6 +10371,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         if _h > 0 and _l != float("inf") and _h >= _l:
                             self._or_formed[ticker] = True
                 self._process_exit_candidates()
+                if not _entry_judgment_ok:
+                    analysis_log.info(
+                        f"[skip {market}] {ticker} judgment_not_executable",
+                        extra={"extra": {
+                            "event": "entry_skip",
+                            "market": market,
+                            "ticker": ticker,
+                            "reason": "judgment_not_executable",
+                            "detail": _entry_judgment_block,
+                            "price": float(price),
+                            "mode": mode,
+                        }},
+                    )
+                    log.debug(
+                        f"  [{ticker}] executable judgment missing ({_entry_judgment_block}) -> skip new entry"
+                    )
+                    continue
                 if mode == "HALT":
                     analysis_log.info(
                         f"[skip {market}] {ticker} halt_mode",
@@ -12713,7 +13067,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                     lesson_context=_tune_lesson_context,
                                                                     intraday_context=_tune_intraday_ctx,
                                                                     market_change_pct=self._get_market_change_pct(market),
-                                                                    secondary_change_pct=self._get_secondary_change_pct(market))
+                                                                    secondary_change_pct=self._get_secondary_change_pct(market),
+                                                                    execution_phase=self._current_judgment_phase(market))
                         tune_meta = self._apply_selection_meta(market, tune_tickers, mode=new_mode)
                         self.today_tickers[market] = tune_tickers
                         self._entry_timing_mark_candidates(market, tune_tickers, "tuning_rescreen")
@@ -13057,7 +13412,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     lesson_context=_partial_lesson_context,
                                                     intraday_context=_partial_intraday_ctx,
                                                     market_change_pct=self._get_market_change_pct(market),
-                                                    secondary_change_pct=self._get_secondary_change_pct(market))
+                                                    secondary_change_pct=self._get_secondary_change_pct(market),
+                                                    execution_phase=self._current_judgment_phase(market))
         new_meta = get_last_selection_meta() or {}
         candidate_trade_ready = self._selection_replace_candidates(new_meta, new_selected)
         candidate_map = {
@@ -13245,7 +13601,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
                 "digest_preopen": self._digest_payload_built_before_open(market),
                 "live_index_context_ok": bool(live_index_context_ok),
-                "phase": "intraday_live" if live_index_context_ok else "intraday_live_unconfirmed",
+                "phase": self._current_judgment_phase(market) if live_index_context_ok else "intraday_live_unconfirmed",
                 "intraday_context_included": bool(intraday_context),
             }
             self._last_reinvoke_tuning = self.tuning_count
@@ -13303,7 +13659,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                      lesson_context=_reinvoke_lesson_context,
                                                      intraday_context=_reinvoke_intraday_ctx,
                                                      market_change_pct=self._get_market_change_pct(market),
-                                                     secondary_change_pct=self._get_secondary_change_pct(market))
+                                                     secondary_change_pct=self._get_secondary_change_pct(market),
+                                                     execution_phase=self._current_judgment_phase(market))
                         reinvoke_meta = self._apply_selection_meta(
                             market,
                             new_tickers,

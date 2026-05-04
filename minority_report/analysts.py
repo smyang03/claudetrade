@@ -196,6 +196,23 @@ def get_last_selection_meta() -> dict:
     return dict(_LAST_SELECTION_META)
 
 
+def _force_watch_only_selection_meta(meta: dict, phase: str = "preopen_watch") -> dict:
+    clean = dict(meta or {})
+    clean["trade_ready"] = []
+    for key in (
+        "recommended_strategy",
+        "max_position_pct",
+        "allocation_intent",
+        "max_order_cap_pct",
+        "risk_budget_pct",
+        "size_reason",
+        "price_targets",
+    ):
+        clean[key] = {}
+    clean["_forced_watch_only_phase"] = phase
+    return clean
+
+
 def _extract_json(text: str) -> dict:
     """Claude 응답에서 JSON을 추출한다. 잘린 selection 응답은 부분 복구를 시도한다."""
 
@@ -1107,7 +1124,8 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                    intraday_context: str = "",
                    lesson_context: str = "",
                    market_change_pct: Optional[float] = None,
-                   secondary_change_pct: Optional[float] = None) -> list:
+                   secondary_change_pct: Optional[float] = None,
+                   execution_phase: str = "") -> list:
     """Claude가 WATCH와 TRADE_READY를 분리 선택한다."""
     global _LAST_SELECTION_META
     if not candidates:
@@ -1142,6 +1160,11 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             (_now_kr.hour == 8 and _now_kr.minute >= 30)
             or (_now_kr.hour == 9 and _now_kr.minute <= 5)
         )
+    )
+    execution_phase_norm = str(execution_phase or "").strip().lower()
+    preopen_watch = (
+        execution_phase_norm in {"preopen", "preopen_watch", "preopen_digest"}
+        or str(consensus_mode or "").strip().upper() == "PREOPEN_WATCH"
     )
 
     limits = selection_limits(market)
@@ -1213,8 +1236,25 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
     n_cands = len([c for c in prompt_candidates if c.get("ticker")])
     watch_max = min(limits["watch_max"], n_cands)
     trade_max = min(limits["trade_max"], n_cands)
+    if preopen_watch:
+        trade_max = 0
     slot_plan = _selection_slot_plan(consensus_mode, market)
     slot_text = ", ".join(f"{name}:{count}" for name, count in slot_plan)
+    phase_instruction = (
+        f"PREOPEN WATCH ONLY for {market}: prepare a broad watch candidate list before regular-market open. "
+        "This is not an executable buy decision. trade_ready must be []. "
+        "Do not provide recommended_strategy, sizing, or price_targets."
+        if preopen_watch
+        else f"EXECUTABLE OPENING/INTRADAY SELECTION for {market}: split candidates into WATCH and TRADE_READY using current live-market context."
+    )
+    phase_rule_block = (
+        "- PREOPEN WATCH ONLY: trade_ready must be an empty array.\n"
+        "- PREOPEN WATCH ONLY: recommended_strategy, sizing fields, and price_targets must be empty objects.\n"
+        "- PREOPEN WATCH ONLY: use reasons/veto to describe what must be confirmed after the regular open.\n"
+        "- PREOPEN WATCH ONLY overrides any generic trade_ready or price_targets rule below."
+        if preopen_watch
+        else "- Opening/intraday phase: trade_ready may be non-empty only when live execution context supports a new buy."
+    )
 
     intraday_section = f"\n장중 컨텍스트:\n{intraday_context[:400]}\n" if intraday_context else ""
     brain_section = ""
@@ -1268,7 +1308,9 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         if active_lesson_section
         else (f"\n{lesson_context[:500]}\n" if lesson_context else "")
     )
-    prompt = f"""오늘 {market} 세션에서 후보를 WATCH와 TRADE_READY로 분리하세요.
+    prompt = f"""{phase_instruction}
+execution_phase: {execution_phase or 'unspecified'}
+오늘 {market} 세션에서 후보를 WATCH와 TRADE_READY로 분리하세요.
 합의 모드: {consensus_mode}
 후보 종목:
 {cand_text}
@@ -1281,6 +1323,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 {PRICE_PLAN_CONTRACT}
 {HARD_SOFT_RULE_CONTRACT}
 규칙:
+{phase_rule_block}
 - 후보 종목 중에서만 고르세요.
 - watchlist는 선별 목록입니다. 최대 {watch_max}개, 보통 8~18개 수준으로 제한하세요.
 - trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개이며 0개도 허용됩니다.
@@ -1458,6 +1501,8 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                 except Exception as retry_exc:
                     log.warning(f"[ticker-selection] {market} lightweight retry failed: {retry_exc}")
         selection_meta.setdefault("active_lessons", active_lesson_meta)
+        if preopen_watch:
+            selection_meta = _force_watch_only_selection_meta(selection_meta, phase="preopen_watch")
         tickers = selection_meta["watchlist"]
         if not tickers:
             raise ValueError("no valid tickers")

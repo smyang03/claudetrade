@@ -94,6 +94,32 @@ def _dir_label_from_change(value) -> str:
     return "FLAT"
 
 
+def _analyst_new_buy_constraints(judgment_items: list[dict]) -> dict:
+    permissions: list[str] = []
+    caps: list[int] = []
+    for item in judgment_items:
+        permission = str(item.get("new_buy_permission", "") or "").strip().lower()
+        if permission in {"allow", "selective", "block"}:
+            permissions.append(permission)
+        try:
+            cap = int(float(item.get("max_gross_exposure_pct", 0) or 0))
+        except Exception:
+            cap = 0
+        if cap > 0:
+            caps.append(max(0, min(100, cap)))
+    if "block" in permissions:
+        resolved_permission = "block"
+    elif permissions and all(p == "allow" for p in permissions):
+        resolved_permission = "allow"
+    else:
+        resolved_permission = "selective"
+    return {
+        "new_buy_permission": resolved_permission,
+        "new_buy_permission_votes": permissions,
+        "max_gross_exposure_pct": min(caps) if caps else 0,
+    }
+
+
 def apply_unanimous_override(judgments: dict, consensus: dict) -> dict:
     """
     If all three analysts point to the same directional bucket, the final
@@ -343,6 +369,17 @@ def build_consensus(judgments: dict, check_minority: bool = True,
     }
 
     result = apply_unanimous_override(judgments, result)
+    new_buy_constraints = _analyst_new_buy_constraints([bull, bear, neut])
+    result.update(new_buy_constraints)
+    if new_buy_constraints.get("new_buy_permission") == "block":
+        result["size_before_new_buy_block"] = result.get("size", 0)
+        result["size"] = 0
+    elif int(new_buy_constraints.get("max_gross_exposure_pct", 0) or 0) > 0:
+        result["size_before_max_gross_cap"] = result.get("size", 0)
+        result["size"] = min(
+            int(result.get("size", 0) or 0),
+            int(new_buy_constraints.get("max_gross_exposure_pct", 0) or 0),
+        )
 
     log.info(
         f"consensus: {result['mode']} size={result['size']}% "
