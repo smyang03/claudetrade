@@ -759,7 +759,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._last_tg_signal_state: dict = {}
         # 긴급 재판단 쿨다운 (마지막 재호출 튜닝 카운트, 60분=2사이클 간격 유지)
         self._last_reinvoke_tuning: int = -99
-        # 장 시작 전 포지션 리뷰 결과 (session_open에서 채움 → startup guard 후 실행)
+        # 장전 포지션 리뷰 결과. 과거 버전에서 남은 큐가 있더라도 주문으로 바로 실행하지 않고
+        # 장 시작 후 INTRADAY_REVIEW 재확인 대상으로만 전환한다.
         self._pre_session_sell_queue: dict[str, list] = {"KR": [], "US": []}
         # KR 장중 스크리닝 결과 (session_close 시 캐시 저장 → 다음날 장전 사용)
         self._last_kr_candidates: list = []
@@ -4049,7 +4050,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return rows
         allowed_set = set(allowed)
         filtered = [row for row in rows if str(row.get("ticker", "") or "").strip().upper() in allowed_set]
-        return filtered or rows
+        if not filtered:
+            return rows
+        try:
+            min_keep = int(os.getenv("UNIVERSE_FILTER_MIN_KEEP", "12"))
+        except ValueError:
+            min_keep = 12
+        try:
+            min_ratio = float(os.getenv("UNIVERSE_FILTER_MIN_RATIO", "0.50"))
+        except ValueError:
+            min_ratio = 0.50
+        min_keep = max(1, min_keep)
+        min_ratio = max(0.0, min(1.0, min_ratio))
+        keep_ratio = len(filtered) / max(1, len(rows))
+        if len(rows) >= min_keep and (len(filtered) < min_keep or keep_ratio < min_ratio):
+            log.warning(
+                f"[universe filter bypass] candidates={len(rows)} filtered={len(filtered)} "
+                f"min_keep={min_keep} min_ratio={min_ratio:.2f}"
+            )
+            return rows
+        return filtered
     def _partial_replace_score(self, market: str, ticker: str, protected: Optional[set] = None) -> float:
         normalized = str(ticker).upper() if market == "US" else str(ticker)
         if protected and normalized in protected:
@@ -7504,10 +7524,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         finally:
             self._exit_process_lock.release()
     def _pre_session_position_review(self, market: str):
-        """장 시작 전 보유 포지션 Claude 검토.
-        SELL 결정 종목은 _pre_session_sell_queue에 담아두고,
-        startup guard 해제 후 run_cycle에서 즉시 매도한다.
+        """장전 보유 포지션 점검.
+
+        장전/장초 판단은 후보와 재확인 대상을 정리할 뿐 주문을 만들지 않는다.
+        SELL 의견이나 전일 예약은 정규장 이후 INTRADAY_REVIEW에서 다시 확인한다.
         """
+        if not hasattr(self, "_pre_session_sell_queue"):
+            self._pre_session_sell_queue = {"KR": [], "US": []}
+        self._pre_session_sell_queue[market] = []
+        phase = self._current_judgment_phase(market)
+        if phase == _JUDGMENT_PHASE_PREOPEN:
+            pending = [
+                p for p in self.risk.positions
+                if self._ticker_market(p.get("ticker", "")) == market
+                and p.get("pending_next_open_sell")
+            ]
+            for pos in pending:
+                pos["pending_next_open_sell_recheck_status"] = "waiting_open"
+                pos["pending_next_open_sell_recheck_phase"] = phase
+                pos["pending_next_open_sell_recheck_session"] = self._current_session_date_str(market)
+            if pending:
+                log.info(
+                    f"[장전 포지션 점검] {market} pending SELL {len(pending)}건 "
+                    "주문 미실행 - 장초 재검증 대기"
+                )
+                self._save_positions()
+            else:
+                log.info(f"[장전 포지션 점검] {market} 장전 단계 - 매도 판단/주문 생략")
+            return
         if not self._should_run_pre_session_review(market):
             self._pre_session_sell_queue[market] = []
             if self._has_broker_sync_risk(market):
@@ -7525,10 +7569,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         for pos in positions:
             ticker = pos.get("ticker", "")
             if pos.get("pending_next_open_sell"):
-                self._pre_session_sell_queue[market].append(pos)
                 sell_reason = str(pos.get("pending_next_open_reason", "") or "").strip()
                 sell_list.append((ticker, sell_reason))
-                log.info(f"[오전 리뷰] {ticker} 전일 장마감 SELL 예약 유지")
+                pos["pending_next_open_sell_recheck_status"] = "needs_opening_recheck"
+                pos["pending_next_open_sell_recheck_phase"] = phase
+                pos["pending_next_open_sell_recheck_session"] = self._current_session_date_str(market)
+                log.info(f"[오전 리뷰] {ticker} 전일 장마감 SELL 예약 → 장초 재검증 대기")
                 continue
             if float(pos.get("entry", 0) or 0) <= 0:
                 log.warning(f"[오전 리뷰] {ticker} entry=0 - hold_advisor 건너뜀, HOLD 유지")
@@ -7554,14 +7600,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     reason = v["reason"][:80]
                     break
             if action == "SELL":
-                queued = {**pos, "hold_advice": advice, "pending_next_open_sell": False}
-                self._pre_session_sell_queue[market].append(queued)
                 for p2 in self.risk.positions:
                     if p2.get("ticker") == ticker:
-                        p2["pending_next_open_sell"] = False
-                        p2["pending_next_open_reason"] = ""
+                        p2["hold_advice"] = advice
+                        p2["pending_next_open_sell"] = True
+                        p2["pending_next_open_reason"] = reason
+                        p2["pending_next_open_sell_recheck_status"] = "needs_opening_recheck"
+                        p2["pending_next_open_sell_recheck_phase"] = phase
+                        p2["pending_next_open_sell_recheck_session"] = self._current_session_date_str(market)
                 sell_list.append((ticker, reason))
-                log.info(f"[오전 리뷰] {ticker} SELL 예약: {reason}")
+                log.info(f"[오전 리뷰] {ticker} SELL 의견 → 주문 보류, 장초 재검증 대기: {reason}")
             else:
                 trail_pct = advice.get("trail_pct", pos.get("trail_pct", 0.03))
                 for p2 in self.risk.positions:
@@ -7579,12 +7627,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # ── 텔레그램 알림 ───────────────────────────────────────────────────
         lines = [f"🌅 <b>[장 시작 전 포지션 점검] {market}</b>"]
         if sell_list:
-            lines.append("🔴 <b>매도 예정 (장 시작 즉시)</b>")
+            lines.append("🔴 <b>장초 재검증 대기</b>")
             for tk, rsn in sell_list:
                 pos = next((p for p in self.risk.positions if p.get("ticker") == tk), {})
                 name = str(pos.get("name", "") or "").strip() or self._lookup_ticker_name(tk, market)
                 disp = f"{tk}({name})" if name else tk
-                lines.append(f"  • {disp}: {rsn or '분석가 합의'}")
+                lines.append(f"  • {disp}: {rsn or '분석가 의견'}")
         if hold_list:
             lines.append("🟢 <b>홀드 유지</b>")
             for tk, rsn in hold_list:
@@ -7595,6 +7643,89 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not sell_list and not hold_list:
             lines.append("보유 포지션 없음")
         block_alert("장 시작 전 포지션 점검", lines[1:], market=market, icon="🌅")
+
+    def _defer_pre_session_sell_queue_for_opening_recheck(self, market: str, cause: str = "pre_session_queue_disabled") -> int:
+        """Convert any legacy pre-session sell queue into an opening recheck marker."""
+        queue = list((getattr(self, "_pre_session_sell_queue", {}) or {}).get(market, []) or [])
+        if not hasattr(self, "_pre_session_sell_queue"):
+            self._pre_session_sell_queue = {"KR": [], "US": []}
+        self._pre_session_sell_queue[market] = []
+        if not queue:
+            return 0
+        session_date = self._current_session_date_str(market)
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        tickers: list[str] = []
+        for queued in queue:
+            ticker = str((queued or {}).get("ticker", "") or "")
+            if not ticker:
+                continue
+            tickers.append(ticker)
+            for pos in self.risk.positions:
+                if pos.get("ticker") != ticker:
+                    continue
+                pos["pending_next_open_sell"] = True
+                pos["pending_next_open_sell_recheck_status"] = "needs_opening_recheck"
+                pos["pending_next_open_sell_recheck_cause"] = cause
+                pos["pending_next_open_sell_recheck_session"] = session_date
+                pos["pending_next_open_sell_recheck_at"] = now_iso
+                if queued.get("pending_next_open_reason") and not pos.get("pending_next_open_reason"):
+                    pos["pending_next_open_reason"] = queued.get("pending_next_open_reason")
+                if queued.get("hold_advice"):
+                    pos["hold_advice"] = queued.get("hold_advice")
+                break
+        _log_flow(
+            "warning",
+            f"[장전 SELL 큐 차단] {market} {len(tickers)}건 주문 미실행 - 장초 재검증 대기: {tickers}",
+        )
+        try:
+            self._save_positions()
+        except Exception:
+            pass
+        return len(tickers)
+
+    def _maybe_recheck_pending_next_open_sells(self, market: str) -> None:
+        """Reconfirm prior next-open sell reservations with live opening context before any order."""
+        if not self.session_active or self.current_market != market:
+            return
+        phase = self._current_judgment_phase(market)
+        if not self._is_executable_judgment_phase(phase):
+            return
+        if not self._market_after_open_refresh_time(market):
+            return
+        session_date = self._current_session_date_str(market)
+        targets: list[str] = []
+        for pos in list(self.risk.positions):
+            if self._ticker_market(pos.get("ticker", "")) != market:
+                continue
+            if not pos.get("pending_next_open_sell"):
+                continue
+            status = str(pos.get("pending_next_open_sell_recheck_status", "") or "")
+            if (
+                pos.get("pending_next_open_sell_recheck_session") == session_date
+                and status in {"reviewed", "hold_confirmed", "trail_confirmed", "sell_confirmed"}
+            ):
+                continue
+            ticker = str(pos.get("ticker", "") or "")
+            if ticker:
+                targets.append(ticker)
+        if not targets:
+            return
+        _log_flow("info", f"[장초 SELL 재검증] {market} {len(targets)}건: {targets}")
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        for ticker in targets:
+            for pos in self.risk.positions:
+                if pos.get("ticker") != ticker:
+                    continue
+                pos["pending_next_open_sell_recheck_status"] = "reviewing"
+                pos["pending_next_open_sell_recheck_phase"] = phase
+                pos["pending_next_open_sell_recheck_session"] = session_date
+                pos["pending_next_open_sell_recheck_at"] = now_iso
+                break
+            self._intraday_position_review(market, force=True, ticker_filter=ticker)
+        try:
+            self._save_positions()
+        except Exception:
+            pass
 
     def _mark_pre_session_sell_attempting(self, ticker: str, attempted_at: str) -> None:
         for pos in self.risk.positions:
@@ -7881,6 +8012,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         p2["hold_advice"] = advice
             except Exception as e:
                 log.warning(f"[장중 리뷰] {ticker} 오류: {e}")
+            if pos.get("pending_next_open_sell"):
+                recheck_status = (
+                    "sell_confirmed" if action == "SELL"
+                    else "trail_confirmed" if action == "TRAIL"
+                    else "hold_confirmed"
+                )
+                now_iso = datetime.now(KST).isoformat(timespec="seconds")
+                for p2 in self.risk.positions:
+                    if p2.get("ticker") != ticker:
+                        continue
+                    p2["pending_next_open_sell_recheck_status"] = recheck_status
+                    p2["pending_next_open_sell_recheck_at"] = now_iso
+                    p2["pending_next_open_sell_recheck_phase"] = self._current_judgment_phase(market)
+                    p2["pending_next_open_sell_recheck_session"] = self._current_session_date_str(market)
+                    if action != "SELL":
+                        p2["pending_next_open_sell"] = False
+                        p2["pending_next_open_reason"] = ""
+                    break
             action_ko = {"HOLD": "홀드 유지", "TRAIL": "트레일링 유지", "SELL": "즉시 매도"}.get(action, action)
             color_icon = "🔴" if action == "SELL" else ("🟡" if action == "TRAIL" else "🟢")
             block = (
@@ -7905,10 +8054,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     else:
                         try:
                             cand = {**pos, "exit_price": sell_px, "reason": "intraday_review_sell"}
-                            self._execute_sell(cand, market, reason="intraday_review_sell",
-                                               hold_advice=advice)
-                            lines.append(f"  ⚡ 매도 주문 접수 ({px(cur)} × {qty}주)")
-                            log.info(f"[장중 리뷰 SELL] {ticker} {pnl:+.2f}% → 즉시 매도 ({sell_px:,.0f})")
+                            sell_ok = self._execute_sell(
+                                cand,
+                                market,
+                                reason="intraday_review_sell",
+                                hold_advice=advice,
+                            )
+                            if sell_ok:
+                                lines.append(f"  ⚡ 매도 주문 접수 ({px(cur)} × {qty}주)")
+                                log.info(f"[장중 리뷰 SELL] {ticker} {pnl:+.2f}% → 즉시 매도 ({sell_px:,.0f})")
+                            else:
+                                lines.append("  ⚠️ 매도 주문 미접수 — 자동 재검증/주문 조건에서 보류")
+                                log.warning(f"[장중 리뷰 SELL 보류] {ticker} {pnl:+.2f}%")
                         except Exception as se:
                             log.error(f"[장중 리뷰 매도 실패] {ticker}: {se}")
                             lines.append(f"  ❌ 매도 실패: {se}")
@@ -8944,9 +9101,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 pass
             self._persist_live_judgment(market)
             try:
-                self._pre_session_position_review(market)
+                self._pre_session_sell_queue[market] = []
+                pending_count = sum(
+                    1 for p in self.risk.positions
+                    if self._ticker_market(p.get("ticker", "")) == market
+                    and p.get("pending_next_open_sell")
+                )
+                if pending_count:
+                    log.info(
+                        f"[preopen position review] {market} skipped; "
+                        f"pending SELL {pending_count}건은 장초 재검증"
+                    )
             except Exception as _psr_e:
-                log.warning(f"[preopen position review] {market}: {_psr_e}")
+                log.warning(f"[preopen position review skip] {market}: {_psr_e}")
             self._start_ws_for_market(market, selected)
             self._session_open_at[market] = time.time()
             self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)
@@ -9949,87 +10116,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
             self._leave_market_task(market, "run_cycle")
             return
-        # ── 장전 SELL 예약 큐 처리 (startup guard 해제 직후 1회) ─────────────
+        # ── 장전 SELL 예약 큐 처리 ─────────────────────────────────────────
+        # 장전/전일 예약은 주문으로 바로 실행하지 않는다. 남아 있는 큐는
+        # 정규장 이후 INTRADAY_REVIEW 재검증 대상으로만 전환한다.
         sell_queue = self._pre_session_sell_queue.get(market, [])
         if sell_queue:
-            if self._has_broker_sync_risk(market):
-                _log_risk("warning", f"[장전 SELL 큐] {market} 브로커 동기화 불신 상태 → 예약 매도 전부 보류")
-                for _sq_pos in sell_queue:
-                    _sq_tk = str(_sq_pos.get("ticker", "") or "")
-                    self._log_pre_session_sell_attempt(
-                        market,
-                        _sq_tk,
-                        ok=False,
-                        cause="broker_sync_risk",
-                        detail="pre_session_sell_queue_cleared_before_attempt",
-                        cand=_sq_pos,
-                        price_context={"price": 0.0, "source": "not_queried_broker_sync_risk"},
-                    )
-                self._pre_session_sell_queue[market] = []
-            else:
-                _log_flow("info", f"[장전 SELL 큐] {market} {len(sell_queue)}건 매도 실행")
-                        # 생성 시점 current_price는 과거값일 수 있으므로 실행 시점 price_cache를 우선 사용
-                for _sq_pos in sell_queue:
-                    _sq_tk = _sq_pos.get("ticker", "")
-                    _sq_attempted_at = datetime.now(KST).isoformat(timespec="seconds")
-                    try:
-                        self._mark_pre_session_sell_attempting(_sq_tk, _sq_attempted_at)
-                        # 생성 시점 current_price는 과거값일 수 있으므로 실행 시점 price_cache를 우선 사용
-                        _sq_price_ctx = self._pre_session_sell_price_context(_sq_tk, _sq_pos, market)
-                        _sq_cp = _sq_price_ctx.get("price", 0)
-                        cand = {**_sq_pos, "exit_price": _sq_cp, "reason": "pre_session_sell"}
-                        _sq_ok = self._execute_sell(cand, market, reason="pre_session_sell",
-                                                    hold_advice=_sq_pos.get("hold_advice"))
-                        _sq_cause, _sq_detail = self._classify_pre_session_sell_result(
-                            _sq_tk,
-                            ok=bool(_sq_ok),
-                            cand=cand,
-                            price_context=_sq_price_ctx,
-                        )
-                        self._record_pre_session_sell_result(
-                            _sq_tk,
-                            ok=bool(_sq_ok),
-                            cause=_sq_cause,
-                            detail=_sq_detail,
-                            price_source=str(_sq_price_ctx.get("source", "") or ""),
-                            attempted_price=float(_sq_price_ctx.get("price", 0) or 0),
-                        )
-                        self._log_pre_session_sell_attempt(
-                            market,
-                            _sq_tk,
-                            ok=bool(_sq_ok),
-                            cause=_sq_cause,
-                            detail=_sq_detail,
-                            cand=cand,
-                            price_context=_sq_price_ctx,
-                        )
-                    except Exception as _sqe:
-                        _sq_error = str(_sqe)[:240]
-                        self._record_pre_session_sell_result(
-                            _sq_tk,
-                            ok=False,
-                            error=_sq_error,
-                            cause="exception",
-                            detail=_sq_error,
-                        )
-                        self._log_pre_session_sell_attempt(
-                            market,
-                            _sq_tk,
-                            ok=False,
-                            cause="exception",
-                            detail=_sq_error,
-                            cand=_sq_pos,
-                            price_context={"price": 0.0, "source": "exception_before_price_context"},
-                        )
-                        log.error(f"[장전 SELL 실패] {_sq_tk}: {_sqe}")
-                self._pre_session_sell_queue[market] = []
-                self._save_positions()
+            self._defer_pre_session_sell_queue_for_opening_recheck(
+                market,
+                cause="legacy_pre_session_sell_queue_disabled",
+            )
         self._refresh_claude_control()
         self._consume_pending_claude_trigger(market)
         self._consume_pending_position_review(market)
         self._consume_pending_sell(market)
         self._maybe_refresh_opening_judgment(market)
         self._maybe_run_opening_fresh_screener(market)
+        self._maybe_recheck_pending_next_open_sells(market)
         _entry_judgment_ok, _entry_judgment_block = self._new_entry_judgment_gate(market)
         mode = self.today_judgment.get("consensus", {}).get("mode", "CAUTIOUS")
         size_pct = self.today_judgment.get("consensus", {}).get("size", 50)

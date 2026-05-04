@@ -1,6 +1,6 @@
 {
   "meta": {
-    "version": 2772,
+    "version": 2773,
     "created": "2026-03-19",
     "last_updated": "2026-05-04",
     "trained_days_kr": 31,
@@ -5987,6 +5987,46 @@
           "changes": [],
           "consensus_shifted": false,
           "outcome": "correct"
+        },
+        {
+          "date": "2026-05-04",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.68,
+              "key_reason": "Breadth 76% 상승(22/7), GC 16/DC 13, RSI 과매수 10개로 상승 모멘텀 우위. 그러나 S&P500 -0.11% 약세,"
+            },
+            "bear": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.62,
+              "key_reason": "Breadth 강세(76% 상승, GC/DC 16/13)와 VIX 18.0(안정), HYG +0.12%, TNX 4.39% 모두 정상 범위이나,"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "Breadth 76% 상승(22/7), GC 16 vs DC 13, RSI 과매수 10개로 강한 상승 신호. 다만 S&P500 -0.11% 약세"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.68,
+              "key_reason": "Breadth 76% 상승(22/7), GC 16/DC 13으로 상승 우위 유지되며 VIX 18.0·HYG +0.12% 안정, TEAM·VISN"
+            },
+            "bear": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.62,
+              "key_reason": "Breadth 76% 상승(22/7), GC/DC 16/13, VIX 18.0, HYG +0.12% 모두 정상 범위로 상승 모멘텀 우위이나, R"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "Breadth 76% 상승(22/7), GC 16/DC 13으로 상승 우위이나 RSI 과매수 10개(GOOGL 86.9, AMZN 82.9, A"
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": null
         }
       ],
       "execution_patterns": {
