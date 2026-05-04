@@ -4301,6 +4301,100 @@ def api_claude_trigger():
     return jsonify({"ok": True, "queued": True, "market": market, "mode": mode})
 
 
+def _judgment_basis(rec: dict, market: str) -> dict:
+    def _to_float(value):
+        try:
+            if value is None or value == "":
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    digest = rec.get("digest_raw") if isinstance(rec.get("digest_raw"), dict) else {}
+    ctx = digest.get("context") if isinstance(digest.get("context"), dict) else {}
+    market_key = str(market or "").upper()
+    primary_key = "kospi" if market_key == "KR" else "sp500"
+    secondary_key = "kosdaq" if market_key == "KR" else "nasdaq"
+    primary_label = "KOSPI" if market_key == "KR" else "S&P500"
+    secondary_label = "KOSDAQ" if market_key == "KR" else "NASDAQ"
+    primary_ctx = ctx.get(primary_key) if isinstance(ctx.get(primary_key), dict) else {}
+    secondary_ctx = ctx.get(secondary_key) if isinstance(ctx.get(secondary_key), dict) else {}
+    context_basis = rec.get("judgment_context_basis") if isinstance(rec.get("judgment_context_basis"), dict) else {}
+    built_at_raw = digest.get("built_at") or ""
+    flags = digest.get("data_quality_flags") or ctx.get("data_quality_flags") or []
+    if not isinstance(flags, list):
+        flags = [str(flags)]
+
+    basis = {
+        "digest_built_at": built_at_raw,
+        "primary_label": primary_label,
+        "secondary_label": secondary_label,
+        "primary_change_pct": _to_float(primary_ctx.get("change_pct")),
+        "secondary_change_pct": _to_float(secondary_ctx.get("change_pct")),
+        "current_primary_change_pct": None,
+        "current_secondary_change_pct": None,
+        "kospi_change_pct": _to_float(primary_ctx.get("change_pct")) if market_key == "KR" else None,
+        "kosdaq_change_pct": _to_float(secondary_ctx.get("change_pct")) if market_key == "KR" else None,
+        "current_kospi_change_pct": None,
+        "current_kosdaq_change_pct": None,
+        "data_quality_flags": flags,
+        "intraday_context_included": bool(context_basis.get("intraday_context_included")),
+        "warning": "",
+    }
+
+    if market_key in {"KR", "US"} and built_at_raw:
+        try:
+            primary_index = "KOSPI" if market_key == "KR" else "SP500"
+            secondary_index = "KOSDAQ" if market_key == "KR" else "NASDAQ"
+            live_primary = _kis_api_module.get_index_snapshot(market_key, primary_index)
+            live_secondary = _kis_api_module.get_index_snapshot(market_key, secondary_index)
+            basis["current_primary_change_pct"] = _to_float(live_primary.get("change_pct"))
+            basis["current_secondary_change_pct"] = _to_float(live_secondary.get("change_pct"))
+            if market_key == "KR":
+                basis["current_kospi_change_pct"] = basis["current_primary_change_pct"]
+                basis["current_kosdaq_change_pct"] = basis["current_secondary_change_pct"]
+        except Exception:
+            pass
+        built_at = None
+        try:
+            built_at = datetime.fromisoformat(str(built_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            built_at = None
+        if built_at is not None and built_at.tzinfo is not None:
+            built_at = built_at.astimezone(KST).replace(tzinfo=None)
+        stale_preopen = False
+        if built_at is not None:
+            if market_key == "US":
+                raw_session_date = digest.get("session_date") or digest.get("date") or ""
+                if raw_session_date:
+                    session_date = str(raw_session_date)[:10]
+                elif built_at.time() < dt_time(5, 0):
+                    session_date = (built_at.date() - timedelta(days=1)).isoformat()
+                else:
+                    session_date = built_at.date().isoformat()
+                try:
+                    from preopen.scheduler import regular_open_dt
+                    open_dt = regular_open_dt("US", session_date).replace(tzinfo=None)
+                except Exception:
+                    open_dt = datetime.combine(datetime.fromisoformat(session_date).date(), dt_time(22, 30))
+                stale_preopen = built_at < open_dt
+            else:
+                stale_preopen = built_at.time() < dt_time(9, 0)
+        if built_at is not None and stale_preopen:
+            basis_time = built_at.strftime("%H:%M")
+            if basis["intraday_context_included"]:
+                basis["warning"] = (
+                    f"원 digest는 {basis_time} 장전 기준입니다. 이후 재판단에는 장중 컨텍스트가 추가됐지만 "
+                    "표시된 digest 수치는 전일/장전 값일 수 있습니다."
+                )
+            else:
+                basis["warning"] = (
+                    f"이 분석가 판단은 {basis_time} 장전 digest 기준입니다. "
+                    "정규장 개시 후 지수/수급 급변은 아직 반영되지 않았을 수 있습니다."
+                )
+    return basis
+
+
 @app.route("/api/judgments")
 def api_judgments():
     market = request.args.get("market", best_market_with_data())
@@ -4328,6 +4422,7 @@ def api_judgments():
         "consensus":    rec.get("consensus", {}),
         "lesson":       _clean_lesson(postmortem.get("key_lesson", "")),
         "debate_changes": changes,
+        "basis":       _judgment_basis(rec, market),
     })
 
 
@@ -6664,6 +6759,11 @@ async function loadSummary() {
 async function loadJudgments() {
   const d = await apiGet('/api/judgments', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.bull) return;
+  const basis = d.basis || {};
+  const signedPct = v => {
+    const n = Number(v);
+    return Number.isFinite(n) ? `${n >= 0 ? '+' : ''}${n.toFixed(2)}%` : '-';
+  };
 
   function analystCard(info, label, iconClass, stanceClass) {
     const conf = Math.round((info.confidence || 0) * 100);
@@ -6694,7 +6794,21 @@ async function loadJudgments() {
   }
 
   const sec = document.getElementById('analyst-section');
+  const basisBits = [];
+  if (basis.digest_built_at) basisBits.push(`digest ${escapeHtml(String(basis.digest_built_at).replace('T', ' ').slice(0, 16))}`);
+  const primaryLabel = basis.primary_label || 'PRIMARY';
+  const secondaryLabel = basis.secondary_label || 'SECONDARY';
+  if (basis.primary_change_pct !== null && basis.primary_change_pct !== undefined) basisBits.push(`${primaryLabel} ${signedPct(basis.primary_change_pct)}`);
+  if (basis.secondary_change_pct !== null && basis.secondary_change_pct !== undefined) basisBits.push(`${secondaryLabel} ${signedPct(basis.secondary_change_pct)}`);
+  if (basis.current_primary_change_pct !== null && basis.current_primary_change_pct !== undefined) basisBits.push(`live ${primaryLabel} ${signedPct(basis.current_primary_change_pct)}`);
+  if (basis.current_secondary_change_pct !== null && basis.current_secondary_change_pct !== undefined) basisBits.push(`live ${secondaryLabel} ${signedPct(basis.current_secondary_change_pct)}`);
+  const basisHtml = basis.warning ? `
+    <div style="grid-column:1/-1;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);color:#92400e;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.5">
+      <b>판단 기준 확인</b> ${escapeHtml(basis.warning)}
+      ${basisBits.length ? `<div style="margin-top:4px;color:#78350f;font-family:var(--mono)">${basisBits.join(' · ')}</div>` : ''}
+    </div>` : '';
   sec.innerHTML =
+    basisHtml +
     analystCard(d.bull,    '상승 분석가', 'bull', 'stance-bull') +
     analystCard(d.bear,    '하락 분석가', 'bear', 'stance-bear') +
     analystCard(d.neutral, '중립 분석가', 'neut', 'stance-neut');

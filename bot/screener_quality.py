@@ -116,6 +116,14 @@ def write_candidate_quality_log(
                 "market_type": str(candidate.get("market_type") or ""),
                 "category": str(candidate.get("category") or ""),
                 "sector": str(candidate.get("sector") or ""),
+                "source": str(candidate.get("source") or ""),
+                "data_quality": str(candidate.get("data_quality") or ""),
+                "history_status": str(candidate.get("history_status") or ""),
+                "history_usable_rows": int(candidate.get("history_usable_rows") or 0),
+                "history_required_rows": int(candidate.get("history_required_rows") or 0),
+                "screen_quality": str(candidate.get("screen_quality") or ""),
+                "selection_bias": str(candidate.get("selection_bias") or ""),
+                "trade_policy": str(candidate.get("trade_policy") or ""),
             }
         )
 

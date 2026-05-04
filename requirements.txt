@@ -8,3 +8,4 @@ websocket-client
 schedule
 flask
 filelock
+yfinance

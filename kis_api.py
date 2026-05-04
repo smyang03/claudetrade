@@ -77,6 +77,7 @@ KIS_RATE_RPS = float(os.getenv("KIS_RATE_RPS", "12"))
 
 _BALANCE_CACHE = {}
 _PRICE_CACHE = {}
+_INDEX_CACHE = {}
 _OHLCV_CACHE = {}
 _CACHE_LOG_TS = {}
 _KIS_HTTP_LOCK = threading.Lock()
@@ -893,6 +894,73 @@ def _daily_ohlcv_kr(ticker, token, lookback_days=200):
     def _fetch():
         end_dt = datetime.now()
         start_dt = end_dt - timedelta(days=max(lookback_days, 30) * 2)
+
+        def _fetch_range(range_start: datetime, range_end: datetime) -> pd.DataFrame:
+            url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+            headers = _headers(token, "FHKST03010100")
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": ticker,
+                "FID_INPUT_DATE_1": range_start.strftime("%Y%m%d"),
+                "FID_INPUT_DATE_2": range_end.strftime("%Y%m%d"),
+                "FID_PERIOD_DIV_CODE": "D",
+                "FID_ORG_ADJ_PRC": "0",
+            }
+            resp = _kis_get(url, headers=headers, params=params, timeout=15)
+            resp.raise_for_status()
+            rows = resp.json().get("output2", [])
+            if not rows:
+                return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+
+            frame = pd.DataFrame(rows).rename(
+                columns={
+                    "stck_bsop_date": "date",
+                    "stck_oprc": "open",
+                    "stck_hgpr": "high",
+                    "stck_lwpr": "low",
+                    "stck_clpr": "close",
+                    "acml_vol": "volume",
+                }
+            )
+            keep = ["date", "open", "high", "low", "close", "volume"]
+            frame = frame[[c for c in keep if c in frame.columns]].copy()
+            for c in ("open", "high", "low", "close", "volume"):
+                frame[c] = pd.to_numeric(frame[c], errors="coerce")
+            frame["date"] = pd.to_datetime(frame["date"], format="%Y%m%d", errors="coerce")
+            frame = frame.dropna(subset=["date", "open", "high", "low", "close", "volume"])
+            return frame.sort_values("date").reset_index(drop=True)
+
+        if int(lookback_days or 0) <= 120:
+            return _fetch_range(start_dt, end_dt).tail(lookback_days).reset_index(drop=True)
+
+        parts: list[pd.DataFrame] = []
+        chunk_end = end_dt
+        min_needed = int(lookback_days or 200)
+        while chunk_end >= start_dt:
+            chunk_start = max(start_dt, chunk_end - timedelta(days=140))
+            df_chunk = _fetch_range(chunk_start, chunk_end)
+            if df_chunk.empty:
+                break
+            parts.append(df_chunk)
+            merged_count = len(pd.concat(parts, ignore_index=True).drop_duplicates("date"))
+            if merged_count >= min_needed:
+                break
+            next_end = df_chunk["date"].min().to_pydatetime() - timedelta(days=1)
+            if next_end >= chunk_end:
+                break
+            chunk_end = next_end
+            time.sleep(0.05)
+
+        if parts:
+            df = (
+                pd.concat(parts, ignore_index=True)
+                .drop_duplicates("date")
+                .sort_values("date")
+                .tail(lookback_days)
+                .reset_index(drop=True)
+            )
+            return df
+
         url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
         headers = _headers(token, "FHKST03010100")
         params = {
@@ -935,6 +1003,65 @@ def _daily_ohlcv_kr(ticker, token, lookback_days=200):
             log.warning(f"KIS KR 일봉 캐시 사용 [{ticker}]")
             return cached
         raise
+
+
+_KR_YF_SUFFIX_CACHE: dict[str, str] = {}
+
+
+def _daily_ohlcv_kr_yf(ticker: str, lookback_days: int = 365) -> pd.DataFrame:
+    """yfinance KR daily OHLCV fallback.
+
+    Yahoo uses .KS for KOSPI and .KQ for KOSDAQ. KRX codes are unique enough for
+    a cached suffix probe to be safe in live fallback use.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+
+    ticker_key = str(ticker or "").strip()
+    if ticker_key.isdigit():
+        ticker_key = ticker_key.zfill(6)
+    if not ticker_key:
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+
+    cached_suffix = _KR_YF_SUFFIX_CACHE.get(ticker_key)
+    suffixes = [cached_suffix] if cached_suffix else []
+    suffixes += [s for s in (".KS", ".KQ") if s not in suffixes]
+
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(days=max(int(lookback_days or 365), 90) * 2)
+    for suffix in suffixes:
+        symbol = f"{ticker_key}{suffix}"
+        try:
+            df = yf.Ticker(symbol).history(
+                start=start_dt.strftime("%Y-%m-%d"),
+                end=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d"),
+                auto_adjust=True,
+            )
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        df = df.reset_index()
+        df.columns = [str(c).lower() for c in df.columns]
+        date_col = "date" if "date" in df.columns else ("datetime" if "datetime" in df.columns else "")
+        if not date_col:
+            continue
+        df["date"] = pd.to_datetime(df[date_col], errors="coerce").dt.tz_localize(None)
+        keep = ["date", "open", "high", "low", "close", "volume"]
+        if not all(c in df.columns for c in keep):
+            continue
+        df = df[keep].copy()
+        for c in ("open", "high", "low", "close", "volume"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df.dropna(subset=["date", "open", "high", "low", "close"]).sort_values("date")
+        if df.empty:
+            continue
+        _KR_YF_SUFFIX_CACHE[ticker_key] = suffix
+        return df.tail(int(lookback_days or 365)).reset_index(drop=True)
+
+    return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
 
 
 def _daily_ohlcv_us_kis(ticker: str, token: str, lookback_days: int = 200) -> pd.DataFrame:
@@ -1102,11 +1229,167 @@ def get_daily_ohlcv(ticker, token, lookback_days=200, market="KR"):
     return _daily_ohlcv_kr(ticker, token, lookback_days=lookback_days)
 
 
+def _signed_kis_float(value, sign_code="", default=0.0) -> float:
+    try:
+        num = float(str(value or "").replace(",", ""))
+    except Exception:
+        return float(default)
+    sign = str(sign_code or "").strip()
+    if sign in ("4", "5"):
+        return -abs(num)
+    if sign in ("1", "2"):
+        return abs(num)
+    return num
+
+
+def _yf_index_snapshot(index_key: str) -> dict:
+    """US index snapshot via yfinance. Used for S&P500/NASDAQ/VIX intraday context."""
+    import yfinance as yf
+
+    key = str(index_key or "SP500").upper().replace(" ", "").replace("&", "")
+    symbol_map = {
+        "SP500": "^GSPC",
+        "SPX": "^GSPC",
+        "GSPC": "^GSPC",
+        "^GSPC": "^GSPC",
+        "NASDAQ": "^IXIC",
+        "NAS100": "^IXIC",
+        "IXIC": "^IXIC",
+        "^IXIC": "^IXIC",
+        "VIX": "^VIX",
+        "^VIX": "^VIX",
+    }
+    label_map = {
+        "^GSPC": "S&P500",
+        "^IXIC": "NASDAQ",
+        "^VIX": "VIX",
+    }
+    symbol = symbol_map.get(key, key if key.startswith("^") else f"^{key}")
+    cache_key = ("US_INDEX", symbol)
+    cached = _cache_get(_INDEX_CACHE, cache_key)
+    if cached is not None:
+        return cached
+
+    ticker = yf.Ticker(symbol)
+    price = 0.0
+    prev_close = 0.0
+    source = "yfinance"
+
+    try:
+        intraday = ticker.history(period="1d", interval="1m")
+        if intraday is not None and not intraday.empty:
+            closes = intraday["Close"].dropna()
+            if not closes.empty:
+                price = float(closes.iloc[-1])
+                source = "yfinance_intraday"
+    except Exception:
+        pass
+
+    try:
+        fast_info = getattr(ticker, "fast_info", {}) or {}
+        prev_close = float(fast_info.get("previous_close") or fast_info.get("regular_market_previous_close") or 0.0)
+        if not price:
+            price = float(fast_info.get("last_price") or fast_info.get("regular_market_price") or 0.0)
+    except Exception:
+        pass
+
+    if not price or not prev_close:
+        daily = ticker.history(period="5d", interval="1d")
+        if daily is not None and not daily.empty:
+            closes = daily["Close"].dropna()
+            if len(closes) >= 1 and not price:
+                price = float(closes.iloc[-1])
+                source = "yfinance_daily"
+            if len(closes) >= 2 and not prev_close:
+                prev_close = float(closes.iloc[-2])
+
+    change = price - prev_close if price and prev_close else 0.0
+    change_pct = (change / prev_close * 100.0) if prev_close else 0.0
+    snap = {
+        "market": "US",
+        "index": label_map.get(symbol, key),
+        "symbol": symbol,
+        "price": price,
+        "change": change,
+        "change_pct": change_pct,
+        "prev_close": prev_close,
+        "source": source,
+    }
+    return _cache_set(_INDEX_CACHE, cache_key, snap)
+
+
+def get_index_snapshot(market: str = "KR", index: str = "KOSPI", token: str = "") -> dict:
+    """Live index snapshot. KR uses KIS index quote, fallback callers may use get_index_change."""
+    market = str(market or "KR").upper()
+    index_key = str(index or "KOSPI").upper()
+    if market != "KR":
+        return _yf_index_snapshot(index_key)
+
+    code_map = {
+        "KOSPI": "0001",
+        "KS11": "0001",
+        "0001": "0001",
+        "KOSDAQ": "1001",
+        "KQ11": "1001",
+        "1001": "1001",
+        "KOSPI200": "2001",
+        "2001": "2001",
+    }
+    code = code_map.get(index_key, index_key)
+    cache_key = ("KR_INDEX", code)
+    cached = _cache_get(_INDEX_CACHE, cache_key)
+    if cached is not None:
+        return cached
+
+    def _fetch():
+        url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-index-price"
+        resp = _kis_get(
+            url,
+            headers=_headers(token or get_access_token(market="KR"), "FHKUP03500100"),
+            params={"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": code},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if str(body.get("rt_cd", "0")) != "0":
+            raise RuntimeError(f"KIS index quote failed {code}: {body.get('msg1') or body}")
+        o = body.get("output") or {}
+        sign = o.get("prdy_vrss_sign", "")
+        name = o.get("hts_kor_isnm") or ("KOSDAQ" if code == "1001" else "KOSPI")
+        snap = {
+            "market": "KR",
+            "index": name,
+            "code": code,
+            "price": _signed_kis_float(o.get("bstp_nmix_prpr"), ""),
+            "change": _signed_kis_float(o.get("bstp_nmix_prdy_vrss"), sign),
+            "change_pct": _signed_kis_float(o.get("bstp_nmix_prdy_ctrt"), sign),
+            "open": _signed_kis_float(o.get("bstp_nmix_oprc"), ""),
+            "high": _signed_kis_float(o.get("bstp_nmix_hgpr"), ""),
+            "low": _signed_kis_float(o.get("bstp_nmix_lwpr"), ""),
+            "advancers": int(float(o.get("ascn_issu_cnt") or 0)),
+            "decliners": int(float(o.get("down_issu_cnt") or 0)),
+            "unchanged": int(float(o.get("stnr_issu_cnt") or 0)),
+            "volume": int(float(o.get("acml_vol") or 0)),
+            "trade_value": int(float(o.get("acml_tr_pbmn") or 0)),
+            "source": "kis_index_price",
+        }
+        return snap
+
+    return _cache_set(_INDEX_CACHE, cache_key, _retry_kis(f"KR index quote [{code}]", _fetch))
+
+
 def get_index_change(market: str) -> float:
-    """당일 지수 등락율 (%) — yfinance 사용 (^KS11=KOSPI, ^GSPC=S&P500)"""
+    """당일 지수 등락율 (%). KR은 KIS 지수 현재가를 우선 사용하고 yfinance는 폴백."""
+    market_key = str(market or "").upper()
+    if market_key in {"KR", "US"}:
+        try:
+            index = "KOSPI" if market_key == "KR" else "SP500"
+            return float(get_index_snapshot(market_key, index).get("change_pct", 0.0) or 0.0)
+        except Exception as exc:
+            log.debug(f"{market_key} index quote fallback to yfinance: {exc}")
     try:
         import yfinance as yf
-        symbol = "^KS11" if market == "KR" else "^GSPC"
+        symbol = "^KS11" if market_key == "KR" else "^GSPC"
         df = yf.Ticker(symbol).history(period="2d")
         if len(df) < 2:
             return 0.0
@@ -2761,9 +3044,15 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
 
             filtered = _apply_product_filter(result, "intraday")
             final = _cap_kr_screen_candidates(filtered, top_n)
-            if len(final) >= 10:
+            final_kosdaq_count = sum(1 for c in final if c.get("market_type") == "KOSDAQ")
+            if len(final) >= 10 and final_kosdaq_count > 0:
                 # 충분한 tradable 결과면 캐시 저장 (다음 날 장전 A로 사용)
                 save_kr_screen_cache(final)
+            elif len(final) >= 10:
+                _logger.warning(
+                    "[KR 스크리너 캐시] 저장 건너뜀: KOSDAQ coverage=0 "
+                    f"(candidates={len(final)}, kospi_raw={len(kospi_result)}, kosdaq_raw={len(kosdaq_result)})"
+                )
             _save_kr_screen_audit(
                 "intraday",
                 mode,

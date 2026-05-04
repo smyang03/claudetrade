@@ -1,8 +1,8 @@
 {
   "meta": {
-    "version": 2642,
+    "version": 2658,
     "created": "2026-03-19",
-    "last_updated": "2026-05-02",
+    "last_updated": "2026-05-04",
     "trained_days_kr": 30,
     "trained_days_us": 32,
     "description": "Claude 마이너리티 리포트 판단 메모리",
@@ -119,9 +119,9 @@
       },
       "strategy_performance": {
         "momentum": {
-          "count": 61,
-          "win_rate": 0.18,
-          "avg_pnl": -2.6626
+          "count": 62,
+          "win_rate": 0.177,
+          "avg_pnl": -2.6486
         },
         "mean_reversion": {
           "count": 0,
@@ -689,23 +689,23 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "30min_tune": {
-          "count": 53,
+          "count": 55,
           "correct": 6,
-          "rate": 0.113,
-          "insight": "개장 대비 -0.25% 소폭 하락이나 30분 기울기 N/A·경고 없음·거래량 normal로 아침 CAUTIOUS 판단 유지 조건 충족, 포지션 최대 손실 -1.1%(046890)로 SL 여유 있어 파라미터 조정 불필요",
-          "last_seen": "2026-04-30",
+          "rate": 0.109,
+          "insight": "Below-average precision (11% over 55 trials); use with caution. Note: low rate may partly reflect prior volume data quality issues (corrected). (Context: 지수 +3.29%(개장 대비) + breadth advance_ratio 94%(33/35), vol_spike 34/35로 아침 MODERAT)",
+          "last_seen": "2026-05-04",
           "adjusted": 6,
-          "adjusted_rate": 0.113,
+          "adjusted_rate": 0.109,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
-          "count": 42,
+          "count": 44,
           "correct": 9,
-          "rate": 0.214,
-          "insight": "개장 대비 -0.92% 하락 + 최근 30분 기울기 -0.67%p 하락세로 아침 CAUTIOUS 판단과 동일 방향 약세 확인, 보유 포지션(017510) +0.3% 소폭 수익으로 위기 없으나 시장 약세 지속에 따라 momentum wait +5분 및 entry cutoff +0.02 소폭 강화로 신규 진입 문턱 높임",
-          "last_seen": "2026-04-30",
+          "rate": 0.205,
+          "insight": "지수 +3.65%(개장대비) + 30분 기울기 +0.36%p 상승 유지 + breadth advance_ratio +41%p(31/2 압도적) + vol_spike 32/33으로 모멘텀 전면 확산 — 아침 MODERATE_BULL thesis 완전 유효, momentum wait 최대 단축(-15m)·cutoff 완화(-0.04) 유지로 진입 기회 포착 극대화.",
+          "last_seen": "2026-05-04",
           "adjusted": 9,
-          "adjusted_rate": 0.214,
+          "adjusted_rate": 0.205,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "120min_tune": {
@@ -829,13 +829,13 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "90min_tune": {
-          "count": 36,
+          "count": 37,
           "correct": 7,
-          "rate": 0.194,
-          "insight": "개장 대비 -1.26% 하락 + 최근 30분 기울기 -0.34%p 낙하 지속으로 아침 CAUTIOUS Bear 근거(RSI 과매수+MACD 축소)가 현실화 중이며, 보유 momentum 포지션(017510) -0.5% 손실 중이므로 신규 진입 문턱 강화 및 ATR cap 소폭 축소로 추가 손실 노출 제한",
-          "last_seen": "2026-04-30",
+          "rate": 0.189,
+          "insight": "지수 +3.93%(개장대비) + 30분 기울기 +0.29%p 상승 지속, breadth advance_ratio +41%p(30/32 상승), vol_spike 31개로 모멘텀 전반 확산 강화 — 아침 MODERATE_BULL thesis 완전 유효, 경고 없음, 현 runtime 조정값 유지",
+          "last_seen": "2026-05-04",
           "adjusted": 7,
-          "adjusted_rate": 0.194,
+          "adjusted_rate": 0.189,
           "metric_semantics": "adjusted_not_accuracy"
         }
       },
@@ -2024,6 +2024,46 @@
           ],
           "consensus_shifted": false,
           "outcome": "wrong"
+        },
+        {
+          "date": "2026-05-04",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 1d +2.77% / 5d +4.72% 강한 상승, breadth 52% 상승률 + GC/DC 30/10 + 거래량 급증/폭증 35개(8"
+            },
+            "bear": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.68,
+              "key_reason": "코스피 1d +2.77% / 5d +4.72% 강한 상승 추세, 52% 상승률(21/40), GC 30개 vs DC 10개 우위. VKOSPI "
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "Breadth 상승 52% (21/40) + GC 30개 vs DC 10개로 3:1 비율이나, 모든 대형주(삼성·현대차·NAVER·카카오) MA"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.7,
+              "key_reason": "코스피 1d +2.77%/5d +4.72% 강한 상승 + breadth GC 30/DC 10(3:1), 상승 52%, 거래량 급증/폭증 87.5"
+            },
+            "bear": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.65,
+              "key_reason": "코스피 1d +2.77%/5d +4.72% + breadth GC30/DC10 + 거래량 급증·폭증 35개(87.5%)로 모멘텀 광범위 확산, "
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "Breadth 52%(21/40) + GC/DC 3:1(30/10)로 방향성 우위 확인되나, RSI 과매수 20개 vs 과매도 2개 극단 불균형"
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": null
         }
       ],
       "execution_patterns": {
@@ -6361,20 +6401,12 @@
     }
   },
   "hold_advisor_performance": {
-    "total": 97,
+    "total": 98,
     "hold_count": 18,
     "hold_success": 2,
-    "sell_count": 79,
+    "sell_count": 80,
     "hold_avg_extra_pnl": -11.603,
     "recent": [
-      {
-        "date": "2026-04-28",
-        "market": "KR",
-        "ticker": "001440",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -2.0077
-      },
       {
         "date": "2026-04-28",
         "market": "KR",
@@ -6526,6 +6558,14 @@
         "decision": "SELL",
         "success": true,
         "extra_pnl_pct": 2.6768
+      },
+      {
+        "date": "2026-05-04",
+        "market": "KR",
+        "ticker": "199820",
+        "decision": "SELL",
+        "success": false,
+        "extra_pnl_pct": -1.7951
       }
     ]
   },

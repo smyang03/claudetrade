@@ -91,7 +91,9 @@ from kis_api import (
     save_kr_screen_cache,
     is_trading_halted,
     get_kis_market_profile,
+    _KR_SCREEN_CACHE_PATH,
     _US_SCREEN_CACHE_PATH,
+    _daily_ohlcv_kr_yf,
     _daily_ohlcv_us_alpha,
     _daily_ohlcv_us_yf,
     KISTokenExpiredError,
@@ -377,6 +379,8 @@ _KR_NO_SIGNAL_SWAP_MIN = int(os.getenv("KR_NO_SIGNAL_SWAP_MIN", "60"))   # KR: �
 _US_NO_SIGNAL_SWAP_CYCLES = int(os.getenv("US_NO_SIGNAL_SWAP_CYCLES", "8"))  # US: 무신호 8사이클 시 교체
 # KR: session_open(8:50)과 실제 장 시작(9:00) 사이 오프셋 (분)
 _KR_MARKET_OPEN_OFFSET_MIN = int(os.getenv("KR_MARKET_OPEN_OFFSET_MIN", "10"))
+_KR_OPENING_JUDGMENT_REFRESH_MIN = int(os.getenv("KR_OPENING_JUDGMENT_REFRESH_MIN", "3"))
+_US_OPENING_JUDGMENT_REFRESH_MIN = int(os.getenv("US_OPENING_JUDGMENT_REFRESH_MIN", "3"))
 # 마감 직전 신규 진입 차단 — session_open 기준 경과 분  # KR: 8:50 KST + 380min = 15:10 KST
 # US: 22:20 KST + 370min = 04:30 KST = 15:30 ET  (KST = ET + 13h -> 15:30 ET + 13h = 04:30 KST)
 _KR_ENTRY_CUTOFF_FROM_OPEN_MIN = int(os.getenv("KR_ENTRY_CUTOFF_FROM_OPEN_MIN", "380"))
@@ -755,6 +759,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._pre_session_sell_queue: dict[str, list] = {"KR": [], "US": []}
         # KR 장중 스크리닝 결과 (session_close 시 캐시 저장 → 다음날 장전 사용)
         self._last_kr_candidates: list = []
+        self._last_screen_candidates: dict[str, list] = {"KR": [], "US": []}
+        self._last_data_insufficient_candidates: dict[str, list] = {"KR": [], "US": []}
+        self._data_insufficient_watch_tickers: dict[str, set[str]] = {"KR": set(), "US": set()}
+        self._opening_fresh_rejudge_done: set[str] = set()
         # 장중 이벤트 기록 (튜닝/긴급재판단) — session_close 시 daily_judgment에 포함
         self._session_events: list = []
         self.decision_event_log: list = []
@@ -2004,9 +2012,335 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         return max(3, int(value))
     def _screen_market_candidates(self, market: str, mode: str) -> list[dict]:
         top_n = self._screen_top_n_for_market(market)
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not ((getattr(self, "_last_screen_candidates", {}) or {}).get(market_key) or []):
+            baseline = self._load_persisted_screen_baseline(market_key)
+            if baseline:
+                self._last_screen_candidates[market_key] = baseline
         if market == "KR":
-            return screen_market_kr(self._token_for_market("KR"), top_n=top_n, mode=mode)
-        return screen_market_us(top_n=top_n, mode=mode)
+            raw_candidates = screen_market_kr(self._token_for_market("KR"), top_n=top_n, mode=mode)
+        else:
+            raw_candidates = screen_market_us(top_n=top_n, mode=mode)
+        return self._screen_quality_guard(market, raw_candidates, phase="screen_market_candidates")
+    def _candidate_identity_key(self, market: str, candidate: dict) -> str:
+        ticker = str((candidate or {}).get("ticker", "") or "").strip()
+        return self._selection_ticker_key(market, ticker) if ticker else ""
+    def _screen_count_by_field(self, candidates: list, field_names: tuple[str, ...]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for candidate in candidates or []:
+            label = ""
+            for field in field_names:
+                label = str((candidate or {}).get(field, "") or "").strip().upper()
+                if label:
+                    break
+            if not label:
+                label = "UNKNOWN"
+            counts[label] = counts.get(label, 0) + 1
+        return counts
+    def _merge_screen_candidates(self, market: str, primary: list, preserved: list) -> list[dict]:
+        merged: list[dict] = []
+        seen: set[str] = set()
+        for candidate in list(primary or []) + list(preserved or []):
+            key = self._candidate_identity_key(market, candidate)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(dict(candidate or {}))
+        return merged
+    def _load_persisted_screen_baseline(self, market: str) -> list[dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        path = _US_SCREEN_CACHE_PATH if market_key == "US" else _KR_SCREEN_CACHE_PATH
+        try:
+            if not path.exists():
+                return []
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            today = datetime.now(KST).strftime("%Y-%m-%d")
+            yesterday = (datetime.now(KST) - timedelta(days=1)).strftime("%Y-%m-%d")
+            if isinstance(payload, dict):
+                cached_date = str(payload.get("date", "") or "")
+                if cached_date and cached_date not in {today, yesterday}:
+                    return []
+                candidates = payload.get("candidates") or []
+            elif isinstance(payload, list):
+                candidates = payload
+            else:
+                return []
+            baseline = [
+                dict(candidate or {})
+                for candidate in candidates
+                if isinstance(candidate, dict) and str(candidate.get("ticker", "") or "").strip()
+            ]
+            if baseline:
+                log.info(f"[screen_quality baseline] {market_key} loaded persisted={len(baseline)}")
+            return baseline
+        except Exception as exc:
+            log.debug(f"[screen_quality baseline] {market_key} load failed: {exc}")
+            return []
+    def _preservable_screen_keys(self, market: str) -> set[str]:
+        keys: set[str] = set()
+        sources = [
+            self.today_tickers.get(market, []),
+            (self.today_judgment or {}).get("universe_tickers", []),
+            (self.selection_meta.get(market, {}) or {}).get("watchlist", []),
+            (self.selection_meta.get(market, {}) or {}).get("trade_ready", []),
+        ]
+        for source in sources:
+            for ticker in source or []:
+                key = self._selection_ticker_key(market, ticker)
+                if key:
+                    keys.add(key)
+        return keys
+    def _screen_quality_guard(self, market: str, candidates: list, phase: str = "") -> list[dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        fresh = [dict(candidate or {}) for candidate in (candidates or []) if isinstance(candidate, dict)]
+        previous = list((getattr(self, "_last_screen_candidates", {}) or {}).get(market_key) or [])
+        if not previous:
+            previous = self._load_persisted_screen_baseline(market_key)
+        reasons: list[str] = []
+        min_prev = int(os.getenv("SCREEN_DEGRADED_MIN_PREV", "10"))
+        collapse_ratio = float(os.getenv("SCREEN_DEGRADED_MIN_RATIO", "0.50"))
+        if not fresh:
+            reasons.append("empty_response")
+        if previous and len(previous) >= min_prev:
+            min_expected = max(3, int(len(previous) * collapse_ratio))
+            if len(fresh) < min_expected:
+                reasons.append(f"count_collapse:{len(fresh)}/{len(previous)}")
+            if market_key == "KR":
+                prev_board = self._screen_count_by_field(previous, ("market_type", "category", "exchange"))
+                fresh_board = self._screen_count_by_field(fresh, ("market_type", "category", "exchange"))
+                prev_kosdaq = prev_board.get("KOSDAQ", 0)
+                fresh_kosdaq = fresh_board.get("KOSDAQ", 0)
+                if prev_kosdaq > 0 and fresh_kosdaq == 0:
+                    reasons.append(f"kosdaq_zero:{prev_kosdaq}->0")
+            else:
+                prev_source = self._screen_count_by_field(previous, ("source", "exchange", "market_type"))
+                fresh_source = self._screen_count_by_field(fresh, ("source", "exchange", "market_type"))
+                for source, prev_count in prev_source.items():
+                    if source == "UNKNOWN" or prev_count < 3:
+                        continue
+                    current_count = fresh_source.get(source, 0)
+                    if current_count == 0 or current_count < max(1, int(prev_count * collapse_ratio)):
+                        reasons.append(f"source_collapse:{source}:{current_count}/{prev_count}")
+                        break
+        if reasons and previous:
+            preserve_keys = self._preservable_screen_keys(market_key)
+            preserved: list[dict] = []
+            for candidate in previous:
+                key = self._candidate_identity_key(market_key, candidate)
+                if preserve_keys and key not in preserve_keys:
+                    continue
+                marked = dict(candidate or {})
+                marked["screen_quality"] = "DEGRADED_PRESERVED"
+                marked["screen_quality_phase"] = phase
+                marked["screen_quality_reason"] = ",".join(reasons)
+                preserved.append(marked)
+            if not preserved:
+                preserved = []
+                for candidate in previous:
+                    marked = dict(candidate or {})
+                    marked["screen_quality"] = "DEGRADED_PRESERVED"
+                    marked["screen_quality_phase"] = phase
+                    marked["screen_quality_reason"] = ",".join(reasons)
+                    preserved.append(marked)
+            merged = self._merge_screen_candidates(market_key, fresh, preserved)
+            log.warning(
+                f"[screen_quality degraded] {market_key} phase={phase} "
+                f"fresh={len(fresh)} previous={len(previous)} merged={len(merged)} "
+                f"reasons={reasons}"
+            )
+            return merged
+        if fresh:
+            self._last_screen_candidates[market_key] = [dict(candidate or {}) for candidate in fresh]
+            if market_key == "KR":
+                self._last_kr_candidates = list(fresh)
+        return fresh
+    def _partial_data_min_usable(self) -> int:
+        try:
+            value = int(os.getenv("PARTIAL_DATA_TRADE_READY_MIN_USABLE", "50"))
+        except ValueError:
+            value = 50
+        return max(1, min(self._MIN_SIGNAL_ROWS - 1, value))
+    def _partial_data_size_cap_pct(self) -> int:
+        try:
+            value = int(float(os.getenv("PARTIAL_DATA_MAX_SIZE_PCT", "35")))
+        except ValueError:
+            value = 35
+        return max(1, min(100, value))
+    def _partial_data_strategy_allowlist(self) -> set[str]:
+        raw = os.getenv(
+            "PARTIAL_DATA_TRADE_READY_STRATEGIES",
+            "momentum,gap_pullback,opening_range_pullback",
+        )
+        return {
+            normalized
+            for item in str(raw or "").split(",")
+            for normalized in [_normalize_strategy_name(item.strip())]
+            if normalized
+        }
+    def _partial_data_candidate_meta(self, market: str, ticker: str) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        if not key:
+            return {}
+        for candidate in (getattr(self, "_last_data_insufficient_candidates", {}) or {}).get(market_key, []) or []:
+            if self._candidate_identity_key(market_key, candidate) == key:
+                return dict(candidate or {})
+        meta_map = self.selection_meta.get(market_key, {}) if hasattr(self, "selection_meta") else {}
+        partial_map = (meta_map or {}).get("_partial_data_trade_ready") or {}
+        if isinstance(partial_map, dict):
+            raw = partial_map.get(key)
+            if not raw and market_key == "US":
+                for raw_key, raw_value in partial_map.items():
+                    if str(raw_key).upper() == key:
+                        raw = raw_value
+                        break
+            if isinstance(raw, dict) and raw:
+                return dict(raw)
+        return {}
+    def _meta_strategy_for_ticker(self, market: str, meta: dict, ticker: str) -> str:
+        recommended_map = (meta or {}).get("recommended_strategy") or {}
+        if not isinstance(recommended_map, dict):
+            return ""
+        raw_strategy = recommended_map.get(ticker, "")
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not raw_strategy:
+            lookup = self._selection_ticker_key(market_key, ticker)
+            for raw_key, raw_value in recommended_map.items():
+                if self._selection_ticker_key(market_key, raw_key) == lookup:
+                    raw_strategy = raw_value
+                    break
+        return _normalize_strategy_name(raw_strategy)
+    def _partial_data_trade_ready_decision(self, market: str, ticker: str, meta: dict) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        candidate_meta = self._partial_data_candidate_meta(market_key, ticker)
+        if not candidate_meta:
+            return {"partial": False, "allowed": True, "key": key}
+        try:
+            usable_rows = int(candidate_meta.get("history_usable_rows") or 0)
+        except (TypeError, ValueError):
+            usable_rows = 0
+        min_usable = self._partial_data_min_usable()
+        strategy_name = self._meta_strategy_for_ticker(market_key, meta, ticker)
+        price_targets = (meta or {}).get("price_targets") or {}
+        decision = {
+            "partial": True,
+            "allowed": False,
+            "key": key,
+            "history_usable_rows": usable_rows,
+            "history_required_rows": int(candidate_meta.get("history_required_rows") or self._MIN_SIGNAL_ROWS),
+            "min_usable_rows": min_usable,
+            "strategy": strategy_name,
+            "size_cap_pct": self._partial_data_size_cap_pct(),
+            "data_quality": str(candidate_meta.get("data_quality") or "WATCH_DATA_INSUFFICIENT"),
+        }
+        if not _env_bool("PARTIAL_DATA_TRADE_READY_ENABLED", True):
+            decision["reason"] = "data_insufficient_watch_only"
+            return decision
+        if usable_rows < min_usable:
+            decision["reason"] = f"partial_data_usable_below_min:{usable_rows}/{min_usable}"
+            return decision
+        allowed_strategies = self._partial_data_strategy_allowlist()
+        if strategy_name not in allowed_strategies:
+            decision["reason"] = f"partial_data_strategy_blocked:{strategy_name or 'unassigned'}"
+            return decision
+        if not self._selection_price_target_for_ticker(market_key, price_targets, ticker):
+            decision["reason"] = "partial_data_no_price_target"
+            return decision
+        decision["allowed"] = True
+        decision["reason"] = "partial_data_allowed"
+        return decision
+    def _partial_data_execution_decision(self, market: str, ticker: str, strategy_name: str = "") -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        meta = self.selection_meta.get(market_key, {}) or {}
+        decision = self._partial_data_trade_ready_decision(market_key, ticker, meta)
+        if not decision.get("partial"):
+            risk_tags = self._risk_tags_for_ticker(market_key, ticker) if hasattr(self, "selection_meta") else []
+            if any("data_insufficient" in str(tag) for tag in risk_tags):
+                return {
+                    "partial": True,
+                    "allowed": False,
+                    "key": self._selection_ticker_key(market_key, ticker),
+                    "reason": "partial_data_missing_metadata",
+                    "strategy": _normalize_strategy_name(strategy_name),
+                    "size_cap_pct": self._partial_data_size_cap_pct(),
+                }
+            return {"partial": False, "allowed": True}
+        if not decision.get("allowed"):
+            return decision
+        actual_strategy = _normalize_strategy_name(strategy_name)
+        allowed_strategies = self._partial_data_strategy_allowlist()
+        if actual_strategy and actual_strategy not in allowed_strategies:
+            blocked = dict(decision)
+            blocked["allowed"] = False
+            blocked["execution_strategy"] = actual_strategy
+            blocked["reason"] = f"partial_data_execution_strategy_blocked:{actual_strategy}"
+            return blocked
+        decision["execution_strategy"] = actual_strategy
+        return decision
+    def _record_partial_data_entry_block(
+        self,
+        market: str,
+        ticker: str,
+        strategy: str,
+        reason: str,
+        *,
+        price_native: float = 0.0,
+        price_krw: float = 0.0,
+        qty: int = 0,
+        selected_reason: str = "",
+        signal_row: Optional[dict] = None,
+        score: Optional[float] = None,
+        tsdb_id=None,
+        signal_at: str = "",
+        decision: Optional[dict] = None,
+    ) -> None:
+        self._bump_runtime_reason(market, ticker, reason)
+        detail = f"partial data trade_ready guard: {reason}"
+        self._record_decision_event(
+            market,
+            "buy_blocked",
+            ticker,
+            strategy=strategy,
+            qty=int(qty or 0),
+            price_native=float(price_native or 0.0),
+            price_krw=float(price_krw or 0.0),
+            reason=reason,
+            reason_family="partial_data",
+            detail=detail,
+            selected_reason=selected_reason,
+        )
+        if _ML_DB_ENABLED and signal_row is not None:
+            try:
+                _ml_write_eval(
+                    ticker,
+                    float(price_native or 0.0),
+                    signal_row,
+                    "BLOCKED",
+                    block_reason_=reason,
+                    strategy_used_=strategy,
+                    fired_strategy_=strategy,
+                    diag_json_={"stage": "partial_data_guard", **(decision or {})},
+                )
+            except Exception:
+                pass
+        if tsdb_id is not None:
+            try:
+                tsdb.update_signal(tsdb_id, strategy, float(score or 0.0), signal_at or datetime.now(KST).isoformat(), reason)
+            except Exception:
+                pass
+        analysis_log.info(
+            f"[skip {market}] {ticker} {reason}",
+            extra={"extra": {
+                "event": "entry_skip",
+                "market": market,
+                "ticker": ticker,
+                "reason": reason,
+                "strategy": strategy,
+                "partial_data": dict(decision or {}),
+            }},
+        )
+        log.info(f"  [{ticker}] partial_data guard block: {reason}")
     def _trade_ready_slot_config(self, mode: str, market: str = "") -> dict[str, int]:
         family = _mode_family(mode)
         config = dict(_TRADE_READY_SLOT_LIMITS.get(family, _TRADE_READY_SLOT_LIMITS["BALANCED"]))
@@ -2039,6 +2373,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         normalized_meta["_raw_trade_ready"] = list(raw_ready)
         ready_candidates = [ticker for ticker in raw_ready if ticker in watchlist]
         runtime_filtered: dict[str, str] = {}
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        data_insufficient_keys = set((getattr(self, "_data_insufficient_watch_tickers", {}) or {}).get(market_key, set()) or set())
+        partial_allowed: dict[str, dict] = {}
+        partial_blocked: dict[str, dict] = {}
+        if data_insufficient_keys:
+            filtered_ready: list[str] = []
+            for ticker in ready_candidates:
+                key = self._selection_ticker_key(market_key, ticker)
+                if key in data_insufficient_keys:
+                    partial_decision = self._partial_data_trade_ready_decision(market_key, ticker, normalized_meta)
+                    if not partial_decision.get("allowed"):
+                        reason = str(partial_decision.get("reason") or "data_insufficient_watch_only")
+                        runtime_filtered[ticker] = reason
+                        if key:
+                            partial_blocked[key] = dict(partial_decision)
+                        continue
+                    if key:
+                        partial_allowed[key] = dict(partial_decision)
+                filtered_ready.append(ticker)
+            ready_candidates = filtered_ready
         if not getattr(self, "enable_continuation_live", False):
             recommended_map = normalized_meta.get("recommended_strategy") or {}
             filtered_ready: list[str] = []
@@ -2085,6 +2439,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             final_ready.append(ticker)
             slot_counts[slot_name] = slot_counts.get(slot_name, 0) + 1
         normalized_meta["trade_ready"] = final_ready
+        final_ready_keys = {self._selection_ticker_key(market_key, ticker) for ticker in final_ready}
+        partial_allowed = {
+            key: value
+            for key, value in partial_allowed.items()
+            if key in final_ready_keys
+        }
+        normalized_meta["_partial_data_trade_ready"] = partial_allowed
+        normalized_meta["_partial_data_trade_ready_blocked"] = partial_blocked
         normalized_meta["_runtime_filtered_trade_ready"] = runtime_filtered
         if self.today_judgment.get("market") == market:
             normalized_meta["slot_plan"] = {
@@ -2542,7 +2904,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 )
         except Exception as exc:
             log.warning(f"[candidate_health] update failed {market_key} {phase}: {exc}")
-    def _apply_selection_meta(self, market: str, selected: list[str]) -> dict:
+    def _apply_selection_meta(self, market: str, selected: list[str], mode: str = "") -> dict:
         """Persist Claude WATCH/TRADE_READY split while keeping legacy tickers intact."""
         raw_meta = dict(get_last_selection_meta() or {})
         meta = dict(raw_meta)
@@ -2560,7 +2922,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "risk_budget_pct": {},
                 "size_reason": {},
             }
-        mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
+        mode = str(mode or (self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
         meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
         allow_missing_price_targets = meta.get("_trade_ready_without_price_targets_allowed") or []
         meta = self._enforce_trade_ready_price_targets(
@@ -4038,12 +4400,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         return bool(self.entry_priority_cutoff_enabled and float(score or 0.0) < cutoff)
     def _get_market_change_pct(self, market: str, digest: dict = None) -> Optional[float]:
         """digest_raw에서 주 지수 등락률 추출 — KR=KOSPI, US=S&P500. 데이터 없으면 None."""
+        if market in {"KR", "US"}:
+            try:
+                from kis_api import get_index_snapshot
+                index = "KOSPI" if market == "KR" else "SP500"
+                return float(get_index_snapshot(market, index).get("change_pct", 0.0))
+            except Exception:
+                pass
         ctx = (digest or self.today_judgment.get("digest_raw") or {}).get("context") or {}
         key = "kospi" if market == "KR" else "sp500"
         v = (ctx.get(key) or {}).get("change_pct")
         return float(v) if v is not None else None
     def _get_secondary_change_pct(self, market: str, digest: dict = None) -> Optional[float]:
         """보조 지수 등락률 — KR=KOSDAQ, US=NASDAQ. 데이터 없으면 None."""
+        if market in {"KR", "US"}:
+            try:
+                from kis_api import get_index_snapshot
+                index = "KOSDAQ" if market == "KR" else "NASDAQ"
+                return float(get_index_snapshot(market, index).get("change_pct", 0.0))
+            except Exception:
+                pass
         ctx = (digest or self.today_judgment.get("digest_raw") or {}).get("context") or {}
         key = "kosdaq" if market == "KR" else "nasdaq"
         v = (ctx.get(key) or {}).get("change_pct")
@@ -4132,7 +4508,38 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self.today_ticker_reasons.get(market, {}),
             )
             if bool(metrics.get("judge_triggered")):
-                self.manual_rescreen(market)
+                rejudged = False
+                rejudge_busy = False
+                rejudge_key = f"{self._current_session_date_str(market)}:{market}:opening_fresh_quality"
+                if _env_bool("OPENING_FRESH_REJUDGE_ENABLED", True) and self._market_after_open_refresh_time(market):
+                    current_owner = self._market_task_owner.get(market)
+                    if current_owner:
+                        rejudge_busy = True
+                        log.info(
+                            f"[opening_fresh_quality] {market} reinvoke skipped busy={current_owner}"
+                        )
+                    elif rejudge_key in getattr(self, "_opening_fresh_rejudge_done", set()):
+                        log.info(f"[opening_fresh_quality] {market} reinvoke suppressed key={rejudge_key}")
+                    else:
+                        self._opening_fresh_rejudge_done.add(rejudge_key)
+                        old_mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "NEUTRAL") or "NEUTRAL")
+                        try:
+                            log.warning(
+                                f"[opening_fresh_quality] {market} reinvoke trigger "
+                                f"reason={metrics.get('trigger_reason')}"
+                            )
+                            self._reinvoke_analysts(market, "opening_fresh_quality")
+                            rejudged = True
+                        except Exception as rejudge_exc:
+                            log.warning(f"[opening_fresh_quality] {market} reinvoke failed: {rejudge_exc}")
+                        new_mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "NEUTRAL") or "NEUTRAL")
+                        if rejudged and new_mode == old_mode:
+                            try:
+                                self.manual_rescreen(market)
+                            except Exception as rescreen_exc:
+                                log.warning(f"[opening_fresh_quality] {market} same-mode rescreen failed: {rescreen_exc}")
+                if not rejudged and not rejudge_busy:
+                    self.manual_rescreen(market)
         except Exception as exc:
             log.warning(f"[opening_fresh_quality] {market} failed: {exc}")
     def _build_current_breadth_summary(self, market: str, mode: str) -> dict:
@@ -4155,6 +4562,119 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.debug("[tune breadth] %s current breadth unavailable: %s", market, exc)
             return {}
+    def _build_market_judgment_override_context(self, market: str, digest_payload: Optional[dict] = None) -> str:
+        """Strong current-market context for analyst reinvoke prompts."""
+        market = str(market or "").upper()
+        now_str = datetime.now(KST).strftime("%H:%M")
+        payload = digest_payload if isinstance(digest_payload, dict) else ((self.today_judgment or {}).get("digest_raw") or {})
+        digest_ctx = (payload.get("context") if isinstance(payload, dict) else {}) or {}
+        lines = [
+            f"CURRENT_MARKET_CONTEXT {now_str} KST",
+            "Use this section first for current intraday market direction.",
+        ]
+        if market == "KR":
+            try:
+                from kis_api import get_index_snapshot
+                kospi = get_index_snapshot("KR", "KOSPI")
+                kosdaq = get_index_snapshot("KR", "KOSDAQ")
+                lines.append(
+                    f"KIS live index: KOSPI {float(kospi.get('change_pct', 0.0)):+.2f}% "
+                    f"(price {float(kospi.get('price', 0.0)):,.2f}), "
+                    f"KOSDAQ {float(kosdaq.get('change_pct', 0.0)):+.2f}% "
+                    f"(price {float(kosdaq.get('price', 0.0)):,.2f})."
+                )
+                lines.append(
+                    f"KOSPI breadth now: advancers {kospi.get('advancers', 0)} / "
+                    f"decliners {kospi.get('decliners', 0)}; "
+                    f"KOSDAQ breadth now: advancers {kosdaq.get('advancers', 0)} / "
+                    f"decliners {kosdaq.get('decliners', 0)}."
+                )
+            except Exception as exc:
+                lines.append(f"KIS live index unavailable: {exc}")
+                lines.append(
+                    "If KIS live index is unavailable and the digest is stale, do not downgrade market mode "
+                    "from the stale digest direction alone. Use NEUTRAL/unknown unless fresh intraday breadth is decisive."
+                )
+            if self._digest_payload_built_before_open(market, payload):
+                morning_kospi = ((digest_ctx.get("kospi") or {}).get("change_pct"))
+                morning_kosdaq = ((digest_ctx.get("kosdaq") or {}).get("change_pct"))
+                lines.append(
+                    "STALE_PREOPEN_DIGEST_WARNING: the following digest was built before 09:00 KST. "
+                    f"Do not cite digest KOSPI {morning_kospi}% or KOSDAQ {morning_kosdaq}% "
+                    "as current intraday market direction when it conflicts with KIS live index."
+                )
+        elif market == "US":
+            try:
+                from kis_api import get_index_snapshot
+                sp500 = get_index_snapshot("US", "SP500")
+                nasdaq = get_index_snapshot("US", "NASDAQ")
+                vix = get_index_snapshot("US", "VIX")
+                lines.append(
+                    f"US live index: S&P500 {float(sp500.get('change_pct', 0.0) or 0.0):+.2f}% "
+                    f"(price {float(sp500.get('price', 0.0) or 0.0):,.2f}, source={sp500.get('source')}); "
+                    f"NASDAQ {float(nasdaq.get('change_pct', 0.0) or 0.0):+.2f}% "
+                    f"(price {float(nasdaq.get('price', 0.0) or 0.0):,.2f}, source={nasdaq.get('source')}); "
+                    f"VIX {float(vix.get('price', 0.0) or 0.0):.2f} "
+                    f"({float(vix.get('change_pct', 0.0) or 0.0):+.2f}%, source={vix.get('source')})."
+                )
+            except Exception as exc:
+                lines.append(f"US live index unavailable: {exc}")
+                lines.append(
+                    "If US live index is unavailable and the digest is stale, do not downgrade market mode "
+                    "from the stale digest direction alone. Use NEUTRAL/unknown unless fresh intraday breadth is decisive."
+                )
+            if self._digest_payload_built_before_open(market, payload):
+                morning_sp500 = ((digest_ctx.get("sp500") or {}).get("change_pct"))
+                morning_nasdaq = ((digest_ctx.get("nasdaq") or {}).get("change_pct"))
+                morning_vix = digest_ctx.get("vix")
+                try:
+                    open_dt = self._market_regular_open_dt(market)
+                    open_label = open_dt.strftime("%H:%M")
+                except Exception:
+                    open_label = "regular open"
+                lines.append(
+                    f"STALE_PREOPEN_DIGEST_WARNING: the following digest was built before {open_label} KST. "
+                    f"Do not cite digest S&P500 {morning_sp500}% or NASDAQ {morning_nasdaq}% "
+                    f"or VIX {morning_vix} as current intraday market direction when it conflicts with US live index."
+                )
+        return "\n".join(lines)
+
+    def _override_context_has_live_index(self, market: str, override_context: str) -> bool:
+        market = str(market or "").upper()
+        text = str(override_context or "")
+        if market == "KR":
+            return "KIS live index:" in text and "KIS live index unavailable" not in text
+        if market == "US":
+            return "US live index:" in text and "US live index unavailable" not in text
+        return False
+
+    def _build_market_judgment_prompt(self, market: str, digest_prompt: str, digest_payload: Optional[dict] = None) -> tuple[str, dict]:
+        basis = {
+            "intraday_context_included": False,
+            "live_index_context_ok": False,
+            "digest_preopen": self._digest_payload_built_before_open(market, digest_payload),
+            "phase": "preopen_digest",
+        }
+        market_key = str(market or "").upper()
+        if market_key in {"KR", "US"} and self._market_after_open_refresh_time(market_key) and basis["digest_preopen"]:
+            override_context = self._build_market_judgment_override_context(market, digest_payload)
+            live_ok = self._override_context_has_live_index(market_key, override_context)
+            basis.update({
+                "intraday_context_included": True,
+                "live_index_context_ok": live_ok,
+                "phase": "intraday_live" if live_ok else "intraday_live_unconfirmed",
+            })
+            return (
+                "[INTRADAY_CONTEXT - CURRENT MARKET OVERRIDE]\n"
+                "For current market direction, prioritize this section over the pre-open/daily digest "
+                "when the numbers conflict.\n"
+                f"{override_context}\n\n"
+                "[PREOPEN_OR_DAILY_DIGEST - SECONDARY]\n"
+                f"{digest_prompt}",
+                basis,
+            )
+        return digest_prompt, basis
+
     def _build_intraday_context(self, market: str) -> str:
         """장중 재스크리닝용 실시간 시장 컨텍스트 문자열 생성."""
         try:
@@ -4170,7 +4690,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 kospi_chg = get_index_change("KR")
                 lines.append(f"현재시각 {now_str} KST | 코스피 현재 {kospi_chg:+.2f}%")
                 # 장중 보유 포지션 현황
-                positions = list(self.positions.get(market, {}).values())
+                positions = [
+                    p for p in list(getattr(getattr(self, "risk", None), "positions", []) or [])
+                    if str(p.get("market", market)).upper() == market
+                ]
                 if positions:
                     pos_strs = [
                         f"{p.get('ticker')} {p.get('unrealized_pnl_pct', 0):+.1f}%"
@@ -4193,7 +4716,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             else:
                 sp_chg = get_index_change("US")
                 lines.append(f"현재시각 {now_str} ET | S&P500 현재 {sp_chg:+.2f}%")
-                positions = list(self.positions.get(market, {}).values())
+                positions = [
+                    p for p in list(getattr(getattr(self, "risk", None), "positions", []) or [])
+                    if str(p.get("market", market)).upper() == market
+                ]
                 if positions:
                     pos_strs = [
                         f"{p.get('ticker')} {p.get('unrealized_pnl_pct', 0):+.1f}%"
@@ -4202,8 +4728,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     lines.append(f"현재 보유: {' | '.join(pos_strs)}")
             return "\n".join(lines)
         except Exception as e:
-            log.debug(f"[intraday_context 생성 실패] {e}")
-            return ""
+            log.warning(f"[intraday_context fallback] {market}: {e}")
+            try:
+                return self._build_market_judgment_override_context(market)
+            except Exception:
+                return f"CURRENT_MARKET_CONTEXT unavailable; intraday context failed: {e}"
     def _advisor_pos(self, pos: dict, market: str) -> dict:
         """hold_advisor 호출용 pos 복사본 — mode/entry_time 등 컨텍스트 필드 주입."""
         mode = ""
@@ -4295,7 +4824,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                secondary_change_pct=self._get_secondary_change_pct(target_market))
             if not selected:
                 raise RuntimeError("최종 선택 종목이 없습니다.")
-            sel_meta = self._apply_selection_meta(target_market, selected)
+            sel_meta = self._apply_selection_meta(target_market, selected, mode=mode)
             self._record_candidate_quality(
                 target_market,
                 "manual_rescreen",
@@ -4380,6 +4909,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         df = get_daily_ohlcv(ticker, self._token_for_market(market), lookback_days=lookback_days, market=market)
         usable = self._signal_usable_rows(df)
         source = "primary"
+        if market == "KR" and usable < target_usable:
+            enabled = str(os.getenv("KR_YFINANCE_DAILY_FALLBACK", "true") or "").strip().lower()
+            if enabled not in ("0", "false", "no", "off"):
+                try:
+                    fallback_lookback = max(int(lookback_days or 0), 365)
+                    fallback_df = _daily_ohlcv_kr_yf(ticker, lookback_days=fallback_lookback)
+                except Exception:
+                    fallback_df = None
+                merged = self._merge_ohlcv_frames(df, fallback_df)
+                merged_usable = self._signal_usable_rows(merged)
+                if merged_usable > usable:
+                    log.info(
+                        f"[KR OHLCV yfinance 보강] {ticker} "
+                        f"primary={len(df) if df is not None else 0}raw/{usable}usable "
+                        f"merged={len(merged)}raw/{merged_usable}usable"
+                    )
+                    df = merged
+                    usable = merged_usable
+                    source = "primary+yfinance"
+                if usable >= target_usable:
+                    return df, usable, source
         if market == "US" and usable < target_usable:
             fallback_lookback = max(int(lookback_days), 365)
             for fallback_name, fetcher in (
@@ -4431,6 +4981,108 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         - 가격 데이터 자체가 없는 종목도 제외
         """
         candidates, product_removed = filter_tradable_candidates(candidates, market)
+        filtered_v2: list[dict] = []
+        removed_v2 = [
+            (c.get("ticker", ""), c.get("blocked_reason", "product_blocked"))
+            for c in product_removed
+        ]
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            watch_min_usable = int(os.getenv("DATA_INSUFFICIENT_WATCH_MIN_USABLE", "40"))
+        except ValueError:
+            watch_min_usable = 40
+        watch_min_usable = max(1, min(self._MIN_SIGNAL_ROWS - 1, watch_min_usable))
+        insufficient_watch: list[dict] = []
+        insufficient_shadow: list[dict] = []
+        insufficient_watch_keys: set[str] = set()
+        for candidate in candidates:
+            ticker = candidate.get("ticker", "")
+            if not ticker:
+                continue
+            try:
+                candles = self._get_ohlcv_cached(ticker, market)
+                if candles.empty:
+                    removed_v2.append((ticker, "no_candles"))
+                    shadow_candidate = dict(candidate or {})
+                    shadow_candidate["data_quality"] = "HISTORY_UNAVAILABLE"
+                    shadow_candidate["history_status"] = "NO_CANDLES"
+                    shadow_candidate["history_usable_rows"] = 0
+                    shadow_candidate["history_required_rows"] = self._MIN_SIGNAL_ROWS
+                    shadow_candidate["selection_bias"] = "shadow_only"
+                    insufficient_shadow.append(shadow_candidate)
+                    self._hist_fill_enqueue(ticker, market)
+                    continue
+                sig_df = calc_all(candles)
+                usable_rows = len(sig_df)
+                if usable_rows < self._MIN_SIGNAL_ROWS:
+                    self._hist_fill_enqueue(ticker, market)
+                    if usable_rows >= watch_min_usable:
+                        watch_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
+                        watch_candidate["data_quality"] = "WATCH_DATA_INSUFFICIENT"
+                        watch_candidate["history_status"] = "DATA_INSUFFICIENT"
+                        watch_candidate["history_usable_rows"] = usable_rows
+                        watch_candidate["history_required_rows"] = self._MIN_SIGNAL_ROWS
+                        watch_candidate["selection_bias"] = "watch_only"
+                        watch_candidate["trade_policy"] = "watch_only_history_insufficient"
+                        raw_tags = watch_candidate.get("risk_tags") or []
+                        if isinstance(raw_tags, dict):
+                            tag_list = [str(k) for k, value in raw_tags.items() if value]
+                        elif isinstance(raw_tags, (list, tuple, set)):
+                            tag_list = [str(tag) for tag in raw_tags if tag]
+                        else:
+                            tag_list = [str(raw_tags)] if str(raw_tags).strip() else []
+                        if "data_insufficient" not in tag_list:
+                            tag_list.append("data_insufficient")
+                        watch_candidate["risk_tags"] = tag_list
+                        filtered_v2.append(watch_candidate)
+                        insufficient_watch.append(watch_candidate)
+                        key = self._selection_ticker_key(market_key, ticker)
+                        if key:
+                            insufficient_watch_keys.add(key)
+                        continue
+                    shadow_candidate = dict(candidate or {})
+                    shadow_candidate["data_quality"] = "DATA_INSUFFICIENT_SHADOW"
+                    shadow_candidate["history_status"] = "DATA_INSUFFICIENT"
+                    shadow_candidate["history_usable_rows"] = usable_rows
+                    shadow_candidate["history_required_rows"] = self._MIN_SIGNAL_ROWS
+                    shadow_candidate["selection_bias"] = "shadow_only"
+                    insufficient_shadow.append(shadow_candidate)
+                    removed_v2.append((ticker, f"data_insufficient({usable_rows}usable)"))
+                    continue
+                filtered_v2.append(self._enrich_candidate_with_history(candidate, candles, sig_df))
+            except Exception as exc:
+                removed_v2.append((ticker, f"error:{exc}"))
+                continue
+        self._last_data_insufficient_candidates[market_key] = list(insufficient_watch) + list(insufficient_shadow)
+        self._data_insufficient_watch_tickers[market_key] = set(insufficient_watch_keys)
+        if insufficient_watch:
+            sample = ", ".join(
+                f"{c.get('ticker')}({c.get('history_usable_rows')}/{c.get('history_required_rows')})"
+                for c in insufficient_watch[:12]
+            )
+            log.info(
+                f"[data_insufficient watch] {market_key} retained {len(insufficient_watch)} "
+                f"watch_only min={watch_min_usable}: {sample}"
+            )
+        if insufficient_shadow:
+            sample = ", ".join(
+                f"{c.get('ticker')}({c.get('history_usable_rows')}/{c.get('history_required_rows')})"
+                for c in insufficient_shadow[:12]
+            )
+            log.info(
+                f"[data_insufficient shadow] {market_key} recorded {len(insufficient_shadow)} "
+                f"below_watch_min={watch_min_usable}: {sample}"
+            )
+        if removed_v2:
+            log.info(
+                f"[history filter] {market_key} removed {len(removed_v2)}: "
+                + ", ".join(f"{t}({r})" for t, r in removed_v2)
+            )
+        log.info(
+            f"[history filter] {market_key} candidates {len(candidates)} -> "
+            f"valid_or_watch {len(filtered_v2)} (removed {len(removed_v2)})"
+        )
+        return filtered_v2
         filtered = []
         removed = [
             (c.get("ticker", ""), c.get("blocked_reason", "product_blocked"))
@@ -8066,6 +8718,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         # debate 필드 복원 (파인튜닝 데이터 연속성 유지)
                         "round1_judgments": saved.get("round1_judgments", {}),
                         "debate_changes": saved.get("debate_changes", []),
+                        "judgment_context_basis": saved.get("judgment_context_basis", {}),
                     }
                     self.today_tickers[market] = saved.get("tickers", [])
                     self._entry_timing_mark_candidates(market, self.today_tickers.get(market, []), "session_reuse_saved")
@@ -8116,6 +8769,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "claude_runtime_overrides": saved.get("claude_runtime_overrides", {}),
                         "round1_judgments": saved.get("round1_judgments", {}),
                         "debate_changes": saved.get("debate_changes", []),
+                        "judgment_context_basis": saved.get("judgment_context_basis", {}),
                     }
                     self.today_tickers[market] = saved.get("tickers", [])
                     self._entry_timing_mark_candidates(market, self.today_tickers.get(market, []), "session_reuse_legacy")
@@ -8149,9 +8803,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # ── 공유 판단 캐시 확인 (paper/live Claude 중복 호출 방지) ─────────────
         # 같은 장/같은 일자에 한쪽 프로세스가 이미 판단을 생성했으면 get_three_judgments 재호출 없이 결과를 재사용한다.
         # 스크리너 + select_tickers 는 포트폴리오 맥락이 달라 각자 실행한다.
+        if reused and self._saved_judgment_requires_intraday_refresh(self.today_judgment, market):
+            log.warning(
+                f"[judgment reuse skip] {market} saved judgment is based on pre-open digest; "
+                "fresh intraday market judgment required"
+            )
+            self.today_judgment = {}
+            self.today_tickers[market] = []
+            self.selection_meta[market] = {}
+            self.trade_ready_tickers[market] = []
+            judgments = {}
+            consensus = {}
+            digest_prompt = ""
+            reused = False
         _from_shared_cache = False
         if not reused:
             _shared = shared_judgment_cache.load(market, today)
+            if _shared and self._saved_judgment_requires_intraday_refresh(_shared, market):
+                log.warning(
+                    f"[shared judgment skip] {market} shared cache is based on pre-open digest; "
+                    "fresh intraday market judgment required"
+                )
+                _shared = None
             if _shared:
                 judgments = _shared["judgments"]
                 consensus = self._apply_consensus_guards(
@@ -8173,12 +8846,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
             # select_tickers / watchlist_alert 는 현재 런타임에서 다시 만든 최신 digest를 사용한다.
             digest_prompt = digest_to_prompt(digest)
+            judgment_prompt, judgment_basis = self._build_market_judgment_prompt(market, digest_prompt, digest)
             if not _from_shared_cache:
                 # ── Claude 판단 신규 생성 ──────────────────────────────────
                 brain_summary, correction = self._brain_context_for_judge(market)
                 lesson_context = self._load_lesson_candidate_summary(market)
                 judgments = get_three_judgments(
-                    digest_prompt, brain_summary, correction,
+                    judgment_prompt, brain_summary, correction,
                     market=market,
                     lesson_context=lesson_context,
                     portfolio_info=self._build_portfolio_info(),
@@ -8240,7 +8914,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     intraday_context=_intraday_ctx,
                                                     market_change_pct=self._get_market_change_pct(market, digest),
                                                     secondary_change_pct=self._get_secondary_change_pct(market, digest))
-            sel_meta = self._apply_selection_meta(market, selected)
+            sel_meta = self._apply_selection_meta(market, selected, mode=consensus.get("mode", ""))
             self._record_preopen_rank_diff(
                 market,
                 selected,
@@ -8313,6 +8987,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "selection_meta": sel_meta,
                 "selection_stages": self.selection_stages.get(market, {}),
                 "trade_ready_tickers": sel_meta.get("trade_ready", []),
+                "judgment_context_basis": {
+                    **judgment_basis,
+                    "source": "session_open",
+                    "trigger": trigger,
+                    "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
+                },
             # ── 신규 생성 판단을 공유 캐시에 저장 ───────────────────────────
                 "round1_judgments": debate_meta.get("r1", {}),
                 "debate_changes":   debate_meta.get("changes", []),
@@ -8352,7 +9032,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                intraday_context=_fresh_intraday_ctx,
                                                                market_change_pct=self._get_market_change_pct(market),
                                                                secondary_change_pct=self._get_secondary_change_pct(market))
-                fresh_meta = self._apply_selection_meta(market, fresh_selected)
+                fresh_meta = self._apply_selection_meta(market, fresh_selected, mode=consensus.get("mode", ""))
                 self._record_preopen_rank_diff(
                     market,
                     fresh_selected,
@@ -8773,6 +9453,111 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._ohlcv_cache[ticker] = df
         self._ohlcv_cache_time[ticker] = now
         return df
+    def _market_regular_open_dt(self, market: str, session_date: Optional[str] = None, now_dt: Optional[datetime] = None) -> datetime:
+        market = str(market or "").upper()
+        now_dt = now_dt or datetime.now(KST)
+        if session_date:
+            session_day = date.fromisoformat(str(session_date)[:10])
+        else:
+            try:
+                session_day = date.fromisoformat(self._current_session_date_str(market))
+            except Exception:
+                if market == "US" and now_dt.time() < dt_time(5, 0):
+                    session_day = now_dt.date() - timedelta(days=1)
+                else:
+                    session_day = now_dt.date()
+        if market == "US":
+            try:
+                from preopen.scheduler import regular_open_dt
+                return regular_open_dt("US", session_day.isoformat())
+            except Exception:
+                return datetime.combine(session_day, dt_time(22, 30), tzinfo=KST)
+        return datetime.combine(session_day, dt_time(9, 0), tzinfo=KST)
+
+    def _market_after_open_refresh_time(self, market: str) -> bool:
+        market = str(market or "").upper()
+        if market not in {"KR", "US"}:
+            return False
+        minutes = (
+            _US_OPENING_JUDGMENT_REFRESH_MIN
+            if market == "US"
+            else _KR_OPENING_JUDGMENT_REFRESH_MIN
+        )
+        refresh_at = self._market_regular_open_dt(market) + timedelta(minutes=max(0, minutes))
+        return datetime.now(KST) >= refresh_at
+
+    def _digest_payload_built_before_open(self, market: str, digest_payload: Optional[dict] = None) -> bool:
+        market = str(market or "").upper()
+        if market not in {"KR", "US"}:
+            return False
+        payload = digest_payload
+        if payload is None:
+            payload = (self.today_judgment or {}).get("digest_raw") or {}
+        if not isinstance(payload, dict):
+            return False
+        built_at_raw = payload.get("built_at") or ""
+        if not built_at_raw:
+            return False
+        try:
+            built_at = datetime.fromisoformat(str(built_at_raw).replace("Z", "+00:00"))
+            if built_at.tzinfo is None:
+                built_at = built_at.replace(tzinfo=KST)
+            else:
+                built_at = built_at.astimezone(KST)
+            raw_session_date = payload.get("session_date") or payload.get("date") or ""
+            if raw_session_date:
+                session_date = str(raw_session_date)[:10]
+            elif market == "US" and built_at.time() < dt_time(5, 0):
+                session_date = (built_at.date() - timedelta(days=1)).isoformat()
+            else:
+                session_date = built_at.date().isoformat()
+            return built_at < self._market_regular_open_dt(market, session_date=session_date, now_dt=built_at)
+        except Exception:
+            return False
+
+    def _kr_after_open_refresh_time(self) -> bool:
+        return self._market_after_open_refresh_time("KR")
+
+    def _saved_judgment_requires_intraday_refresh(self, saved: dict, market: str) -> bool:
+        market = str(market or "").upper()
+        if market not in {"KR", "US"} or not isinstance(saved, dict):
+            return False
+        if not self._market_after_open_refresh_time(market):
+            return False
+        if not self._digest_payload_built_before_open(market, saved.get("digest_raw") or {}):
+            return False
+        basis = saved.get("judgment_context_basis") or {}
+        if not isinstance(basis, dict):
+            basis = {}
+        return not bool(basis.get("live_index_context_ok"))
+
+    def _maybe_refresh_opening_judgment(self, market: str) -> None:
+        market = str(market or "").upper()
+        if market not in {"KR", "US"} or not self.today_judgment:
+            return
+        if not self._digest_payload_built_before_open(market):
+            return
+        basis = self.today_judgment.get("judgment_context_basis") or {}
+        if basis.get("live_index_context_ok"):
+            return
+        if not self._market_after_open_refresh_time(market):
+            return
+        attempted = getattr(self, "_opening_judgment_refresh_attempted", None)
+        if attempted is None:
+            attempted = set()
+            self._opening_judgment_refresh_attempted = attempted
+        key = f"{self._current_session_date_str(market)}:{market}"
+        if key in attempted:
+            return
+        attempted.add(key)
+        try:
+            log.warning(
+                f"[opening judgment refresh] {market} pre-open digest -> intraday analyst judgment"
+            )
+            self._reinvoke_analysts(market, "market_open_refresh")
+        except Exception as exc:
+            log.warning(f"[opening judgment refresh skip] {market}: {exc}")
+
     def run_cycle(self, market: str):
         if not self._enter_market_task(market, "run_cycle"):
             return
@@ -8896,6 +9681,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._consume_pending_claude_trigger(market)
         self._consume_pending_position_review(market)
         self._consume_pending_sell(market)
+        self._maybe_refresh_opening_judgment(market)
         mode = self.today_judgment.get("consensus", {}).get("mode", "CAUTIOUS")
         size_pct = self.today_judgment.get("consensus", {}).get("size", 50)
         tickers = self.today_tickers.get(
@@ -10472,6 +11258,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                     effective_size = max(1, min(100, _selection_size_cap))
                 # ── 신호 수집 → 사이클 완료 후 score 정렬 후 주문 실행 ────────
+                _partial_signal_decision = self._partial_data_execution_decision(market, ticker, strategy_name)
+                if _partial_signal_decision.get("partial"):
+                    if not _partial_signal_decision.get("allowed"):
+                        self._record_partial_data_entry_block(
+                            market,
+                            ticker,
+                            strategy_name,
+                            str(_partial_signal_decision.get("reason") or "partial_data_blocked"),
+                            price_native=float(price),
+                            price_krw=float(risk_price),
+                            qty=0,
+                            selected_reason=(self.today_ticker_reasons.get(market, {}) or {}).get(ticker, ""),
+                            signal_row=sig_df.iloc[i].to_dict(),
+                            score=float(_ep_score),
+                            tsdb_id=(self._tsdb_selection_ids.get(market) or {}).get(ticker),
+                            signal_at=datetime.now(KST).isoformat(timespec="seconds"),
+                            decision=_partial_signal_decision,
+                        )
+                        continue
+                    _partial_cap = int(_partial_signal_decision.get("size_cap_pct") or self._partial_data_size_cap_pct())
+                    if effective_size > _partial_cap:
+                        _partial_signal_decision["size_cap_applied"] = True
+                        _partial_signal_decision["effective_size_before_cap"] = int(effective_size)
+                        _partial_signal_decision["effective_size_after_cap"] = int(_partial_cap)
+                        log.info(
+                            f"  [{ticker}] partial_data size cap: "
+                            f"{effective_size}% -> {_partial_cap}% "
+                            f"(usable={_partial_signal_decision.get('history_usable_rows')}/"
+                            f"{_partial_signal_decision.get('history_required_rows')})"
+                        )
+                        effective_size = max(1, min(100, _partial_cap))
+                    else:
+                        _partial_signal_decision["size_cap_applied"] = False
+                        _partial_signal_decision["effective_size_before_cap"] = int(effective_size)
+                        _partial_signal_decision["effective_size_after_cap"] = int(effective_size)
                 _entry_timing_snapshot = self._entry_timing_signal_fired(
                     market,
                     ticker,
@@ -10515,6 +11336,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "elapsed_min":      float(_ep_elapsed),
                     "tsdb_id":         (self._tsdb_selection_ids.get(market) or {}).get(ticker),
                     "entry_timing":    _entry_timing_snapshot,
+                    "partial_data":    dict(_partial_signal_decision or {}),
         # ── 수집된 신호 정렬 후 주문 실행 ───────────────────────────────────
                 })
             except Exception as e:
@@ -10604,6 +11426,37 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         arbiter_shadow=getattr(_v2_arb, "shadow", {}) if _v2_arb is not None else {},
                         reentry_shadow=getattr(_v2_reentry, "shadow", {}) if _v2_reentry is not None else {},
                     )
+                    _partial_order_decision = self._partial_data_execution_decision(market, _s_tk, _s_strat)
+                    if _partial_order_decision.get("partial") and not _partial_order_decision.get("allowed"):
+                        _partial_reason = str(_partial_order_decision.get("reason") or "partial_data_blocked")
+                        self._record_partial_data_entry_block(
+                            market,
+                            _s_tk,
+                            _s_strat,
+                            _partial_reason,
+                            price_native=float(_s_px),
+                            price_krw=float(_s_rpx),
+                            qty=int(qty),
+                            selected_reason=_s_sr,
+                            signal_row=_s_row,
+                            score=float(_s_ep),
+                            tsdb_id=_tsdb_id,
+                            signal_at=_sig_at,
+                            decision=_partial_order_decision,
+                        )
+                        self._audit_mark_signal_decision(
+                            market,
+                            _s_tk,
+                            signal_id=_audit_signal_id,
+                            decision="BLOCKED",
+                            block_reason=_partial_reason,
+                            signal_price=float(_s_px),
+                            risk_price_krw=float(_s_rpx),
+                            strategy=_s_strat,
+                            score=float(_s_ep),
+                            payload={"stage": "partial_data_guard", **_partial_order_decision},
+                        )
+                        continue
                     if bool((_v2_unknown_state or {}).get("blocked")):
                         _reason = str((_v2_unknown_state or {}).get("reason") or "ORDER_UNKNOWN_UNRESOLVED")
                         _details = {
@@ -11086,6 +11939,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "market_available_budget_krw": float(avail),
                         "final_order_budget_krw": float(order_budget),
                         "final_qty": int(qty),
+                        "partial_data": dict(_partial_order_decision or _sig.get("partial_data") or {}),
                     }
                     analysis_log.info(
                         f"[signal {market}] {_s_tk} {_s_strat} qty={qty}",
@@ -11848,7 +12702,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                     intraday_context=_tune_intraday_ctx,
                                                                     market_change_pct=self._get_market_change_pct(market),
                                                                     secondary_change_pct=self._get_secondary_change_pct(market))
-                        tune_meta = self._apply_selection_meta(market, tune_tickers)
+                        tune_meta = self._apply_selection_meta(market, tune_tickers, mode=new_mode)
                         self.today_tickers[market] = tune_tickers
                         self._entry_timing_mark_candidates(market, tune_tickers, "tuning_rescreen")
                         self.today_ticker_reasons[market] = tune_reasons or {}
@@ -12322,6 +13176,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.claude_control["last_error"] = ""
             self._save_claude_control()
             digest_prompt = self.today_judgment.get("digest_prompt", "")
+            digest_payload = (self.today_judgment or {}).get("digest_raw") or {}
+            override_context = self._build_market_judgment_override_context(market, digest_payload)
+            live_index_context_ok = self._override_context_has_live_index(market, override_context)
+            base_intraday_context = self._build_intraday_context(market)
+            intraday_context = "\n".join(
+                part for part in (override_context, base_intraday_context) if part
+            )
+            if intraday_context:
+                digest_prompt = (
+                    "[INTRADAY_CONTEXT - CURRENT MARKET OVERRIDE]\n"
+                    "For current market direction, prioritize this section over the pre-open/daily digest "
+                    "when the numbers conflict.\n"
+                    f"{intraday_context}\n\n"
+                    "[PREOPEN_OR_DAILY_DIGEST - SECONDARY]\n"
+                    f"{digest_prompt}"
+                )
             brain_summary, correction = self._brain_context_for_judge(market)
             portfolio_info = self._build_portfolio_info()
             lesson_context = self._load_lesson_candidate_summary(market)
@@ -12357,6 +13227,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.today_judgment["consensus"] = new_consensus
             self.today_judgment["round1_judgments"] = debate_meta.get("r1", {})
             self.today_judgment["debate_changes"] = debate_meta.get("changes", [])
+            self.today_judgment["judgment_context_basis"] = {
+                "source": "analyst_reinvoke",
+                "trigger": trigger,
+                "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "digest_preopen": self._digest_payload_built_before_open(market),
+                "live_index_context_ok": bool(live_index_context_ok),
+                "phase": "intraday_live" if live_index_context_ok else "intraday_live_unconfirmed",
+                "intraday_context_included": bool(intraday_context),
+            }
             self._last_reinvoke_tuning = self.tuning_count
             self._last_reinvoke_result_mode = new_consensus.get("mode", "")
             judgment_log.info(
@@ -12413,7 +13292,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                      intraday_context=_reinvoke_intraday_ctx,
                                                      market_change_pct=self._get_market_change_pct(market),
                                                      secondary_change_pct=self._get_secondary_change_pct(market))
-                        reinvoke_meta = self._apply_selection_meta(market, new_tickers)
+                        reinvoke_meta = self._apply_selection_meta(
+                            market,
+                            new_tickers,
+                            mode=new_consensus.get("mode", ""),
+                        )
                         self.today_tickers[market] = new_tickers
                         self._entry_timing_mark_candidates(market, new_tickers, "analyst_reinvoke")
                         self.today_ticker_reasons[market] = new_ticker_reasons or {}
