@@ -11045,33 +11045,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         f"vol={float(_d.get('vol_ratio') or 0.0):.2f} "
                         f"elapsed={float(_d.get('elapsed_min') or 0.0):.0f}m"
                     )
-                    if _p.get("disabled"):
-                        return f"OR눌림: 전략 비활성({market} {mode})"
-                    _elapsed = float(_p.get("session_elapsed_min", 999) or 999)
-                    _or_minutes = float(_p.get("or_minutes", 10) or 10)
-                    _entry_window = float(_p.get("entry_window_min", 60) or 60)
-                    _or_formed = bool(_p.get("or_formed", False))
-                    _or_high = float(_p.get("or_high", 0.0) or 0.0)
-                    _or_low = float(_p.get("or_low", 0.0) or 0.0)
-                    if not _or_formed:
-                        if _elapsed <= _or_minutes:
-                            return f"OR눌림: OR 형성중({int(_elapsed)}분/{int(_or_minutes)}분)"
-                        return "OR pullback: OR not formed"
-                    if _elapsed > (_or_minutes + _entry_window):
-                        return f"OR눌림: 진입창 종료({int(_elapsed)}분)"
-                    _or_range_pct = ((_or_high - _or_low) / _or_low) if _or_low > 0 else 0.0
-                    _or_min = float(_p.get("or_min_range_pct", 0.003) or 0.003)
-                    _or_max = float(_p.get("or_max_range_pct", 0.030) or 0.030)
-                    _row = _df.iloc[_i]
-                    _close = float(_row.get("close", 0) or 0)
-                    _vol_avg = float(_row.get("vol_avg20", 0) or 0)
-                    _vol_ratio = float(_row.get("volume", 0) or 0) / _vol_avg if _vol_avg else 0.0
-                    _vol_mult = float(_p.get("vol_mult", 1.3) or 1.3)
-                    _pb_min = float(_p.get("pullback_min_pct", 0.002) or 0.002)
-                    _pb_max = float(_p.get("pullback_max_pct", 0.010) or 0.010)
-                    _upper = _or_high * (1.0 - _pb_min)
-                    _lower = _or_high * (1.0 - _pb_max)
-                    return f"OR pullback: range={_or_range_pct*100:.2f}% price={_close:.2f} vol={_vol_ratio:.2f}"
                 def _gap_detail(_df, _i, _p):
                     if _p.get("disabled"):
                         return f"갭눌림: 전략 비활성({market} {mode})"
@@ -11246,7 +11219,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         return 0
                 if market == "KR":
                     orp_p = _ap("opening_range_pullback")
-                    _intraday_log_row_id = _log_or_probe(orp_p)
+                    _orp_probe_diag = orp_diag(sig_df, i, orp_p)
+                    _intraday_log_row_id = _log_or_probe(
+                        orp_p,
+                        "" if _orp_probe_diag.get("fired") else str(_orp_probe_diag.get("reason") or ""),
+                    )
                     gap_p = _ap("gap_pullback")
                     mom_p = _ap("momentum")
                     mr_p = _ap("mean_reversion")
@@ -11335,7 +11312,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         ])
                 else:
                     _us_orp_p = _ap("opening_range_pullback")
-                    _intraday_log_row_id = _log_or_probe(_us_orp_p)
+                    _us_orp_probe_diag = orp_diag(sig_df, i, _us_orp_p)
+                    _intraday_log_row_id = _log_or_probe(
+                        _us_orp_p,
+                        "" if _us_orp_probe_diag.get("fired") else str(_us_orp_probe_diag.get("reason") or ""),
+                    )
                     # US: 분석가 투표 전략 우선, volatility_breakout 폴백
                     _strat_dispatch = {
                         "opening_range_pullback": (orp_sig, _us_orp_p),
@@ -11903,7 +11884,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                     continue
                 elif _sl_cnt_now == 2:
-                    size_mult = round(size_mult * 0.6, 2)
+                    log.warning(
+                        f"  [{ticker}] stop cluster count={_sl_cnt_now} -> new entry blocked"
+                    )
+                    continue
                 # ── 3. 장 후반 진입 기준 강화 ───────────────────────────────
                 elif _sl_cnt_now == 1:
                     _first_stop_mult = float(os.getenv("STOP_CLUSTER_FIRST_STOP_SIZE_MULT", "0.5"))
