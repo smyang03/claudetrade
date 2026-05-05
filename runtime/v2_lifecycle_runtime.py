@@ -33,6 +33,7 @@ def v2_close_reason(reason: str) -> str:
         "trail_stop": "CLOSED_TRAILING_STOP",
         "max_hold": "CLOSED_TIME_STOP",
         "max_hold_final": "CLOSED_TIME_STOP",
+        "recovery_micro_time_stop": "CLOSED_TIME_STOP",
         "tp_analyst_sell": "CLOSED_CLAUDE_SELL",
         "tuner_reverse": "CLOSED_CLAUDE_SELL",
         "manual": "CLOSED_USER_MANUAL",
@@ -354,12 +355,16 @@ class V2LifecycleRuntime:
             return None
         broker_state = getattr(self.bot, "_broker_state", {}).get(market, {}) if hasattr(self.bot, "_broker_state") else {}
         try:
-            daily_pnl_pct = float(self.bot._market_daily_return_pct(market))
+            equity_daily_pnl_pct = float(self.bot._market_daily_return_pct(market))
         except Exception:
             try:
-                daily_pnl_pct = float(self.bot._daily_pnl_pct(market))
+                equity_daily_pnl_pct = float(self.bot._daily_pnl_pct(market))
             except Exception:
-                daily_pnl_pct = 0.0
+                equity_daily_pnl_pct = 0.0
+        try:
+            realized_daily_pnl_pct = float(self.bot._market_realized_daily_return_pct(market))
+        except Exception:
+            realized_daily_pnl_pct = equity_daily_pnl_pct
         ctx = SafetyContext(
             market=market,
             runtime_mode=self.bot._mode,
@@ -373,7 +378,10 @@ class V2LifecycleRuntime:
             pending_orders=list(getattr(self.bot, "pending_orders", []) or []),
             daily_entry_count=self.daily_entry_count(market),
             max_daily_entries=self.max_daily_entries(),
-            daily_pnl_pct=daily_pnl_pct,
+            daily_pnl_pct=realized_daily_pnl_pct,
+            daily_pnl_basis="realized",
+            realized_daily_pnl_pct=realized_daily_pnl_pct,
+            equity_daily_pnl_pct=equity_daily_pnl_pct,
             broker_trust_level=str(broker_state.get("trust_level", "unknown") or "unknown"),
             market_open=bool(
                 getattr(self.bot, "session_active", False) and getattr(self.bot, "current_market", None) == market

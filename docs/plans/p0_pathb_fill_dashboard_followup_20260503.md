@@ -1,5 +1,17 @@
 # P0 PathB Fill Dashboard Follow-up
 
+## Current Status - 2026-05-05
+
+Keep this plan active. The code-level items in this plan are present, but the current focused QA command is not clean:
+
+- `python -m pytest tests/test_pathb_runtime.py tests/test_kis_ws_fill_notice.py tests/test_dashboard_kis_profile.py tests/test_live_order_reconciliation.py tests/test_live_preflight_credentials.py tests/test_p0_data_quality.py tests/test_p0_data_quality_backfill.py -q`
+- Result: `71 passed, 2 failed, 2 warnings`.
+- Failing cases:
+  - `tests/test_pathb_runtime.py::PathBRuntimeTests::test_register_from_selection_meta_blocks_when_active_order_unknown_exists`
+  - `tests/test_pathb_runtime.py::PathBRuntimeTests::test_submit_buy_same_day_reentry_guard_blocks_before_order`
+
+Do not delete this plan until PathB runtime regression QA is green again.
+
 ## Purpose
 
 Close the remaining code-level gaps after KIS market profile isolation and fill idempotency hardening.

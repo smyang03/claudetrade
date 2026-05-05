@@ -60,6 +60,17 @@ class _Bot:
         self.blocked_entries.append((ticker, minutes, reason))
 
 
+class _PnlBot:
+    def _market_realized_daily_return_pct(self, market: str) -> float:
+        return -0.25
+
+    def _market_daily_return_pct(self, market: str) -> float:
+        return -3.5
+
+    def _daily_pnl_pct(self, market: str) -> float:
+        return -4.0
+
+
 class _MarketTokenBot(_Bot):
     def __init__(self) -> None:
         super().__init__()
@@ -108,6 +119,13 @@ class PathBRuntimeTests(unittest.TestCase):
 
         self.assertEqual(token, "token-US-0")
         self.assertIn(("US", False), bot.token_calls)
+
+    def test_daily_pnl_uses_realized_return_and_keeps_equity_metric_separate(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.bot = _PnlBot()
+
+        self.assertEqual(runtime._daily_pnl_pct("US"), -0.25)
+        self.assertEqual(runtime._equity_daily_pnl_pct("US"), -3.5)
 
     def test_balance_snapshot_uses_market_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -250,7 +268,7 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["status"], "WAITING")
             self.assertEqual(run["path_type"], "claude_price")
 
-    def test_register_from_selection_meta_blocks_when_active_order_unknown_exists(self) -> None:
+    def test_register_from_selection_meta_keeps_plan_when_active_order_unknown_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")
             bot = _Bot()
@@ -298,7 +316,7 @@ class PathBRuntimeTests(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(created, [])
+            self.assertEqual(len(created), 1)
             self.assertEqual(
                 len(
                     store.path_runs_for_session(
@@ -308,7 +326,7 @@ class PathBRuntimeTests(unittest.TestCase):
                         path_type="claude_price",
                     )
                 ),
-                1,
+                2,
             )
 
     def test_kr_live_disabled_keeps_claude_price_paper_only(self) -> None:
@@ -647,7 +665,7 @@ class PathBRuntimeTests(unittest.TestCase):
             precheck.assert_not_called()
             place.assert_not_called()
             self.assertEqual(run["status"], "CANCELLED")
-            self.assertEqual(run["plan"]["cancel_reason"], "SAME_DAY_REENTRY_COOLDOWN")
+            self.assertEqual(run["plan"]["cancel_reason"], "SAME_DAY_REENTRY_AFTER_STOP")
 
     def test_consistency_health_reports_missing_pathb_lifecycle_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -104,11 +104,11 @@ def selection_limits(market: str) -> dict[str, int]:
     if market == "US":
         return {
             "watch_max": int(os.getenv("US_WATCHLIST_MAX", "30")),
-            "trade_max": int(os.getenv("US_TRADE_READY_MAX", "12")),
+            "trade_max": int(os.getenv("US_TRADE_READY_MAX", "15")),
         }
     return {
-        "watch_max": int(os.getenv("KR_WATCHLIST_MAX", "20")),
-        "trade_max": int(os.getenv("KR_TRADE_READY_MAX", "10")),
+        "watch_max": int(os.getenv("KR_WATCHLIST_MAX", "30")),
+        "trade_max": int(os.getenv("KR_TRADE_READY_MAX", "15")),
     }
 
 

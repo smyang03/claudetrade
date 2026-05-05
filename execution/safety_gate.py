@@ -30,6 +30,9 @@ class SafetyContext:
     daily_entry_count: int = 0
     max_daily_entries: int | None = None
     daily_pnl_pct: float = 0.0
+    daily_pnl_basis: str = "realized"
+    realized_daily_pnl_pct: float | None = None
+    equity_daily_pnl_pct: float | None = None
     broker_trust_level: str = "unknown"
     market_open: bool = True
     last_market_data_at: str | None = None
@@ -51,7 +54,13 @@ class SafetyGate:
             "qty": int(ctx.qty or 0),
             "order_cost_krw": float(ctx.order_cost_krw or 0.0),
             "cash_krw": float(ctx.cash_krw or 0.0),
+            "daily_pnl_pct": float(ctx.daily_pnl_pct or 0.0),
+            "daily_pnl_basis": str(ctx.daily_pnl_basis or "realized"),
         }
+        if ctx.realized_daily_pnl_pct is not None:
+            details["realized_daily_pnl_pct"] = float(ctx.realized_daily_pnl_pct)
+        if ctx.equity_daily_pnl_pct is not None:
+            details["equity_daily_pnl_pct"] = float(ctx.equity_daily_pnl_pct)
 
         if ctx.order_unknown_blocked:
             return _blocked("ORDER_UNKNOWN_UNRESOLVED", "unresolved ORDER_UNKNOWN blocks new entry", details)

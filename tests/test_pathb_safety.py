@@ -4,7 +4,7 @@ import unittest
 
 from config.v2 import V2Config
 from decision.claude_price_plan import make_price_plan
-from execution.safety_gate import PathBSafetyGate, SafetyContext
+from execution.safety_gate import PathBSafetyGate, SafetyContext, SafetyGate
 
 
 def _ctx() -> SafetyContext:
@@ -60,6 +60,43 @@ class PathBSafetyTests(unittest.TestCase):
         )
         bad_ctx = SafetyContext(**{**_ctx().__dict__, "cash_krw": 10})
         self.assertEqual(PathBSafetyGate().evaluate(bad_ctx, plan=_plan()).reason_code, "INSUFFICIENT_CASH")
+
+    def test_daily_loss_limit_uses_realized_pnl_basis(self) -> None:
+        gate = SafetyGate(V2Config(daily_loss_limit_pct=-2.0))
+        ctx = SafetyContext(
+            **{
+                **_ctx().__dict__,
+                "daily_pnl_pct": 0.0,
+                "daily_pnl_basis": "realized",
+                "realized_daily_pnl_pct": 0.0,
+                "equity_daily_pnl_pct": -3.0,
+            }
+        )
+
+        decision = gate.evaluate(ctx)
+
+        self.assertTrue(decision.passed, decision)
+        self.assertEqual(decision.details["daily_pnl_basis"], "realized")
+        self.assertEqual(decision.details["realized_daily_pnl_pct"], 0.0)
+        self.assertEqual(decision.details["equity_daily_pnl_pct"], -3.0)
+
+    def test_daily_loss_limit_blocks_realized_loss(self) -> None:
+        gate = SafetyGate(V2Config(daily_loss_limit_pct=-2.0))
+        ctx = SafetyContext(
+            **{
+                **_ctx().__dict__,
+                "daily_pnl_pct": -2.1,
+                "daily_pnl_basis": "realized",
+                "realized_daily_pnl_pct": -2.1,
+                "equity_daily_pnl_pct": 0.5,
+            }
+        )
+
+        decision = gate.evaluate(ctx)
+
+        self.assertFalse(decision.passed)
+        self.assertEqual(decision.reason_code, "DAILY_LOSS_LIMIT")
+        self.assertEqual(decision.details["daily_pnl_basis"], "realized")
 
     def test_passes_when_all_conditions_ok(self) -> None:
         decision = PathBSafetyGate().evaluate(_ctx(), plan=_plan())

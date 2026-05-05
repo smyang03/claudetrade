@@ -107,18 +107,14 @@ class TradingBot(
 
 ### 🔴 P0 — 실거래 전 필수 (모듈화 아님, 정확성 버그)
 
-> 이 두 작업은 모듈화보다 먼저 완료해야 한다.
-> 회계/계정 경계 버그가 남은 상태에서 파일만 쪼개면 버그가 더 찾기 어려워진다.
+> 이 작업은 모듈화보다 먼저 완료해야 한다.
+> 회계/시장 경계 버그가 남은 상태에서 파일만 쪼개면 버그가 더 찾기 어려워진다.
 
 - [ ] **RiskManager KR/US 분리**
   - `self.risk` 단일 풀 → `risk_kr` / `risk_us` 분리
   - `_rm(market)` 헬퍼 추가
   - `_sync_runtime_with_broker`, `run_cycle`, `session_open`, `session_close` 전체 분기
   - 완료 전까지 `_sync_runtime_with_broker` 임시 패치 유지
-
-- [ ] **kis_api.py US 자격증명 분리**
-  - `KIS_ACCOUNT_NO_US`, `KIS_APP_KEY_US`, `KIS_APP_SECRET_US`, `KIS_IS_PAPER_US`
-  - .env에는 있으나 코드 미연결 상태
 
 ---
 

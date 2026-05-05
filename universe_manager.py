@@ -103,6 +103,13 @@ def _candidate_liquidity_bucket(turnover: float) -> str:
     return "low"
 
 
+def _is_hard_preopen_pin(candidate: dict) -> bool:
+    tier = str((candidate or {}).get("preopen_pin_tier", "") or "").strip().upper()
+    if tier:
+        return tier == "HARD"
+    return bool((candidate or {}).get("preopen_pinned"))
+
+
 def _diverse_dynamic_items(
     cleaned: list[dict],
     market: str,
@@ -179,6 +186,8 @@ def build_universe_from_candidates(
     config: UniverseConfig | None = None,
     source: str = "runtime_screen",
     core_tickers: list[str] | None = None,
+    pinned_candidates: list[dict] | None = None,
+    pinned_tickers: list[str] | None = None,
 ) -> dict:
     """
     candidates 점수 정렬 후 top_n 선택.
@@ -186,6 +195,20 @@ def build_universe_from_candidates(
     """
     cfg = config or UniverseConfig()
     core = [t.upper() for t in (core_tickers or [])]
+    pinned_rows = [
+        dict(c or {})
+        for c in (pinned_candidates or [])
+        if isinstance(c, dict) and _is_hard_preopen_pin(c)
+    ]
+    pinned_order: list[str] = []
+    for row in pinned_rows:
+        ticker = str(row.get("ticker", "")).strip().upper()
+        if ticker and ticker not in pinned_order:
+            pinned_order.append(ticker)
+    for ticker in pinned_tickers or []:
+        normalized = str(ticker or "").strip().upper()
+        if normalized and normalized not in pinned_order:
+            pinned_order.append(normalized)
 
     # KR 장전(08:30~09:05 KST) vol_ratio 가중치 거의 제거 — KIS vol_tnrt가 전일 기준이라 신뢰 불가
     from datetime import datetime as _dt
@@ -200,8 +223,52 @@ def build_universe_from_candidates(
     )
     vol_weight = 0.5 if _kr_premarket else 4.0
 
+    merged_rows: dict[str, dict] = {}
+    for c in candidates or []:
+        if not isinstance(c, dict):
+            continue
+        ticker = str(c.get("ticker", "")).strip().upper()
+        if ticker and ticker not in merged_rows:
+            merged_rows[ticker] = dict(c)
+    pin_meta_keys = {
+        "preopen_pinned",
+        "preopen_pin_reason",
+        "preopen_pin_tier",
+        "preopen_pin_require_confirmation",
+        "preopen_pin_rejected_reason",
+        "preopen_pin_turnover",
+        "preopen_anchor_price",
+        "preopen_captured_at",
+        "preopen_score",
+        "preopen_grade",
+        "preopen_reason",
+        "preopen_state_age_min",
+        "shadow_preopen_rank",
+        "source_overlap_count",
+    }
+    for row in pinned_rows:
+        ticker = str(row.get("ticker", "")).strip().upper()
+        if not ticker:
+            continue
+        if ticker in merged_rows:
+            merged_rows[ticker].update({k: v for k, v in row.items() if k in pin_meta_keys})
+        else:
+            merged_rows[ticker] = dict(row)
+    for ticker in pinned_order:
+        if ticker not in merged_rows:
+            merged_rows[ticker] = {
+                "ticker": ticker,
+                "name": ticker,
+                "price": 0.0,
+                "change_rate": 0.0,
+                "volume": 0.0,
+                "vol_ratio": 1.0,
+                "preopen_pinned": True,
+                "preopen_pin_reason": "ticker_only",
+            }
+
     cleaned = []
-    for c in candidates:
+    for c in merged_rows.values():
         ticker = str(c.get("ticker", "")).strip().upper()
         if not ticker:
             continue
@@ -224,6 +291,9 @@ def build_universe_from_candidates(
             "from_high_pct": _safe_float(c.get("from_high_pct", 0.0)),
             "above_ma60": c.get("above_ma60"),
         }
+        for key in pin_meta_keys:
+            if key in c:
+                item[key] = c.get(key)
         turnover = price * volume
         item["liquidity_bucket"] = (
             str(c.get("liquidity_bucket", "") or "").strip().lower()
@@ -252,15 +322,40 @@ def build_universe_from_candidates(
                                 "from_high_pct": 0.0, "above_ma60": None,
                                 "liquidity_bucket": "low", "from_high_bucket": "at_high"})
 
-    dynamic_slots = max(0, cfg.top_n - len(core_items))
+    core_selected = {c["ticker"] for c in core_items}
+    pin_lookup = {
+        c["ticker"]: c
+        for c in cleaned
+        if c["ticker"] in set(pinned_order)
+        and c["ticker"] not in core_selected
+        and _is_hard_preopen_pin(c)
+    }
+    pin_capacity = max(0, cfg.top_n - len(core_items))
+    pin_items = [pin_lookup[t] for t in pinned_order if t in pin_lookup][:pin_capacity]
+    pin_selected = {c["ticker"] for c in pin_items}
+
+    dynamic_slots = max(0, cfg.top_n - len(core_items) - len(pin_items))
     dynamic_items = _diverse_dynamic_items(
         cleaned,
         market,
         dynamic_slots,
         cfg,
-        {c["ticker"] for c in core_items},
+        core_selected | pin_selected,
     )
-    selected = core_items + dynamic_items
+    selected = core_items + pin_items + dynamic_items
+    selected_tickers = {c["ticker"] for c in selected}
+    baseline_dynamic_items = _diverse_dynamic_items(
+        cleaned,
+        market,
+        max(0, cfg.top_n - len(core_items)),
+        cfg,
+        core_selected | pin_selected,
+    )
+    pin_displaced_tickers = [
+        c["ticker"]
+        for c in baseline_dynamic_items
+        if c["ticker"] not in selected_tickers
+    ][: len(pin_items)]
 
     snapshot = {
         "date": target_date,
@@ -272,6 +367,10 @@ def build_universe_from_candidates(
             "min_dollar_volume": cfg.min_dollar_volume,
         },
         "core_tickers": core,
+        "pinned_tickers": [c["ticker"] for c in pin_items],
+        "pin_count": len(pin_items),
+        "pin_displaced_tickers": pin_displaced_tickers,
+        "pin_displaced_count": len(pin_displaced_tickers),
         "tickers": [c["ticker"] for c in selected],
         "candidates": selected,
         "count": len(selected),

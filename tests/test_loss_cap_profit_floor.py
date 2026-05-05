@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 import unittest
 
@@ -148,7 +149,63 @@ class LossCapProfitFloorTests(unittest.TestCase):
         self.assertEqual(v2_close_reason("loss_cap"), "CLOSED_LOSS_CAP")
         self.assertEqual(v2_close_reason("profit_floor"), "CLOSED_PROFIT_FLOOR")
         self.assertEqual(v2_close_reason("soft_exit_floor_price"), "CLOSED_SOFT_EXIT_FLOOR")
+        self.assertEqual(v2_close_reason("recovery_micro_time_stop"), "CLOSED_TIME_STOP")
         self.assertEqual(v2_close_reason("CLOSED_LOSS_CAP"), "CLOSED_LOSS_CAP")
+
+    def test_recovery_micro_time_stop_has_explicit_exit_candidate(self) -> None:
+        risk = RiskManager(init_cash=1_000_000)
+        risk.reset_daily_state(override_base=1_000_000)
+        risk.positions = [
+            _kr_position(
+                current_price=10_010.0,
+                sl=9_800.0,
+                strategy="RECOVERY_MICRO",
+                recovery_micro=True,
+                recovery_micro_reason="first_stop_recovery_micro",
+                recovery_micro_no_carry=True,
+                entry_time=(datetime.now(risk_module.KST) - timedelta(minutes=31)).isoformat(timespec="seconds"),
+                recovery_micro_hard_loss_pct=1.5,
+                recovery_micro_profit_guard_trigger_pct=1.0,
+                recovery_micro_profit_guard_floor_pct=0.2,
+                recovery_micro_trail_trigger_pct=1.5,
+                recovery_micro_trail_pct=0.9,
+                recovery_micro_time_stop_minutes=30,
+                recovery_micro_time_stop_min_pnl_pct=0.3,
+                recovery_micro_force_time_stop_minutes=45,
+                recovery_micro_force_time_stop_min_pnl_pct=0.5,
+            )
+        ]
+
+        candidates = risk.get_exit_candidates()
+
+        self.assertEqual(candidates[0]["reason"], "recovery_micro_time_stop")
+        self.assertEqual(candidates[0]["recovery_micro_exit_trigger"], "recovery_micro_time_stop")
+        self.assertTrue(candidates[0]["recovery_micro_no_carry"])
+
+    def test_recovery_micro_profit_guard_uses_profit_floor_reason(self) -> None:
+        risk = RiskManager(init_cash=1_000_000)
+        risk.reset_daily_state(override_base=1_000_000)
+        risk.positions = [
+            _kr_position(
+                current_price=10_015.0,
+                sl=9_800.0,
+                strategy="RECOVERY_MICRO",
+                recovery_micro=True,
+                recovery_micro_reason="first_stop_recovery_micro",
+                peak_pnl_pct=1.2,
+                entry_time=datetime.now(risk_module.KST).isoformat(timespec="seconds"),
+                recovery_micro_hard_loss_pct=1.5,
+                recovery_micro_profit_guard_trigger_pct=1.0,
+                recovery_micro_profit_guard_floor_pct=0.2,
+                recovery_micro_trail_trigger_pct=1.5,
+                recovery_micro_trail_pct=0.9,
+            )
+        ]
+
+        candidates = risk.get_exit_candidates()
+
+        self.assertEqual(candidates[0]["reason"], "profit_floor")
+        self.assertEqual(candidates[0]["recovery_micro_exit_trigger"], "recovery_micro_profit_guard")
 
 
 if __name__ == "__main__":

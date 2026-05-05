@@ -209,7 +209,7 @@ class PathAContractTests(unittest.TestCase):
             self.assertEqual(events[-1]["event_type"], "FILLED")
             self.assertEqual(store.find_path_run("path_b_1")["status"], "WAITING")
 
-    def test_path_a_safety_uses_market_daily_return_for_loss_limit(self) -> None:
+    def test_path_a_safety_uses_realized_daily_return_for_loss_limit(self) -> None:
         class _Risk:
             cash = 1_000_000
             positions = []
@@ -233,6 +233,9 @@ class PathAContractTests(unittest.TestCase):
             def _market_daily_return_pct(self, market: str) -> float:
                 return -2.5
 
+            def _market_realized_daily_return_pct(self, market: str) -> float:
+                return 0.0
+
             def _daily_pnl_pct(self, market: str) -> float:
                 return 0.0
 
@@ -247,14 +250,16 @@ class PathAContractTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(decision)
-        self.assertFalse(decision.passed)
-        self.assertEqual(decision.reason_code, "DAILY_LOSS_LIMIT")
+        self.assertTrue(decision.passed)
+        self.assertEqual(decision.details["daily_pnl_basis"], "realized")
+        self.assertEqual(decision.details["realized_daily_pnl_pct"], 0.0)
+        self.assertEqual(decision.details["equity_daily_pnl_pct"], -2.5)
 
 
-    def test_path_a_and_path_b_share_same_daily_loss_source(self) -> None:
+    def test_path_a_and_path_b_share_same_realized_daily_loss_source(self) -> None:
         """Path A와 Path B가 같은 _market_daily_return_pct 값을 daily_pnl_pct로 사용하는지 통합 검증.
         한쪽이 DAILY_LOSS_LIMIT로 막히면 다른 쪽도 같은 기준으로 막혀야 한다."""
-        LOSS_RETURN = -2.5  # daily_loss_limit_pct 기본값(-2.0)보다 낮음
+        LOSS_RETURN = -2.5
 
         class _Risk:
             cash = 1_000_000
@@ -276,10 +281,13 @@ class PathAContractTests(unittest.TestCase):
                 return "KR"
 
             def _market_daily_return_pct(self, market: str) -> float:
+                return 0.0
+
+            def _market_realized_daily_return_pct(self, market: str) -> float:
                 return LOSS_RETURN
 
             def _daily_pnl_pct(self, market: str) -> float:
-                return 0.0  # 실현손익 기준으로는 손실 없음 — 이 값만 보면 통과됨
+                return 0.0
 
         # Path A: V2LifecycleRuntime.safety_decision()
         path_a_runtime = V2LifecycleRuntime(_Bot(), is_paper=False)
@@ -306,16 +314,19 @@ class PathAContractTests(unittest.TestCase):
                 market_open=True,
                 broker_trust_level="trusted",
                 daily_pnl_pct=LOSS_RETURN,
+                daily_pnl_basis="realized",
+                realized_daily_pnl_pct=LOSS_RETURN,
+                equity_daily_pnl_pct=0.0,
             )
         )
 
         self.assertIsNotNone(path_a_decision)
-        self.assertFalse(path_a_decision.passed, "Path A must block on equity-based daily loss limit")
+        self.assertFalse(path_a_decision.passed, "Path A must block on realized daily loss limit")
         self.assertEqual(path_a_decision.reason_code, "DAILY_LOSS_LIMIT")
-        self.assertFalse(path_b_decision.passed, "Path B must block on same equity-based daily loss limit")
+        self.assertFalse(path_b_decision.passed, "Path B must block on same realized daily loss limit")
         self.assertEqual(path_b_decision.reason_code, "DAILY_LOSS_LIMIT")
 
-    def test_20260428_path_a_not_bypassing_daily_loss_when_path_b_blocked(self) -> None:
+    def test_20260428_path_a_does_not_block_on_equity_only_loss(self) -> None:
         """20260428 사고 재현 회귀 테스트: 001440/047040 케이스.
         Path B가 시장 equity return 기준으로 DAILY_LOSS_LIMIT에 막혔는데
         Path A는 실현손익이 0%라서 통과하는 문제. 이제 Path A도 막혀야 한다."""
@@ -343,6 +354,9 @@ class PathAContractTests(unittest.TestCase):
                 # 시장 equity 기준 손실 — Path B는 이 값으로 차단
                 return -2.5
 
+            def _market_realized_daily_return_pct(self, market: str) -> float:
+                return 0.0
+
             def _daily_pnl_pct(self, market: str) -> float:
                 # 실현손익 기준 0% — 구버전 Path A는 이 값을 보고 통과시켰음
                 return 0.0
@@ -359,12 +373,10 @@ class PathAContractTests(unittest.TestCase):
                 min_order_krw=10_000,
             )
             self.assertIsNotNone(decision, f"{ticker}: safety_decision should not be None")
-            self.assertFalse(decision.passed, f"{ticker}: Path A must block when equity return is below limit")
-            self.assertEqual(
-                decision.reason_code,
-                "DAILY_LOSS_LIMIT",
-                f"{ticker}: block reason must be DAILY_LOSS_LIMIT, not {decision.reason_code}",
-            )
+            self.assertTrue(decision.passed, f"{ticker}: equity-only loss must not block new-entry safety")
+            self.assertEqual(decision.details["daily_pnl_basis"], "realized")
+            self.assertEqual(decision.details["realized_daily_pnl_pct"], 0.0)
+            self.assertEqual(decision.details["equity_daily_pnl_pct"], -2.5)
 
 
 if __name__ == "__main__":

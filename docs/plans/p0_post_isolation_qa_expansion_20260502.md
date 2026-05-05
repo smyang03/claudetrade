@@ -1,5 +1,16 @@
 # P0 Post-Isolation QA Expansion
 
+## Current Status - 2026-05-05
+
+Keep this QA expansion active. A 2026-05-05 focused regression run hit two `tests/test_pathb_runtime.py` failures while the surrounding KIS fill/dashboard/preflight checks passed.
+
+Current blocker:
+
+- Active `ORDER_UNKNOWN` should block new PathB plan registration, but the test observed a new plan being created.
+- Same-day re-entry guard still blocks before order submission, but the stored cancel reason changed from the expected `SAME_DAY_REENTRY_COOLDOWN` to `SAME_DAY_REENTRY_AFTER_STOP`.
+
+This must be resolved or the expected contract must be deliberately updated before the plan is considered complete.
+
 ## Purpose
 
 After KIS market profile isolation and WS/REST fill idempotency changes, expand regression coverage around the execution paths most likely to break in live operation.

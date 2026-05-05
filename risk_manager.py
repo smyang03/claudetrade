@@ -423,6 +423,59 @@ class RiskManager:
             return False
         return peak >= float(PROFIT_FLOOR_TRIGGER_PCT or 0) and current <= float(PROFIT_FLOOR_EXIT_PCT or 0)
 
+    def _position_age_minutes(self, pos: dict) -> float | None:
+        raw = str(pos.get("entry_time") or pos.get("created_at") or pos.get("fill_time") or "").strip()
+        if not raw:
+            return None
+        try:
+            entered = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if entered.tzinfo is None:
+            entered = entered.replace(tzinfo=KST)
+        return max(0.0, (datetime.now(KST) - entered.astimezone(KST)).total_seconds() / 60.0)
+
+    def _recovery_micro_exit_signal(self, pos: dict) -> tuple[str | None, str]:
+        if not (bool(pos.get("recovery_micro")) or str(pos.get("strategy", "") or "").upper() == "RECOVERY_MICRO"):
+            return None, ""
+        current = self.current_pnl_pct(pos)
+        if current is None:
+            return None, ""
+        force_exit_at = str(pos.get("recovery_micro_force_exit_at") or "").strip()
+        if force_exit_at:
+            try:
+                force_dt = datetime.fromisoformat(force_exit_at.replace("Z", "+00:00"))
+                if force_dt.tzinfo is None:
+                    force_dt = force_dt.replace(tzinfo=KST)
+                if datetime.now(KST) >= force_dt.astimezone(KST):
+                    return "pre_close", "recovery_micro_pre_close"
+            except Exception:
+                pass
+        hard_loss = abs(float(pos.get("recovery_micro_hard_loss_pct") or 0.0))
+        if hard_loss > 0 and current <= -hard_loss:
+            return "loss_cap", "recovery_micro_hard_loss"
+        peak = float(pos.get("peak_pnl_pct") or 0.0)
+        guard_trigger = float(pos.get("recovery_micro_profit_guard_trigger_pct") or 0.0)
+        guard_floor = float(pos.get("recovery_micro_profit_guard_floor_pct") or 0.0)
+        if guard_trigger > 0 and peak >= guard_trigger and current <= guard_floor:
+            return "profit_floor", "recovery_micro_profit_guard"
+        trail_trigger = float(pos.get("recovery_micro_trail_trigger_pct") or 0.0)
+        trail_pct = float(pos.get("recovery_micro_trail_pct") or 0.0)
+        if trail_trigger > 0 and trail_pct > 0 and peak >= trail_trigger and current <= (peak - trail_pct):
+            return "trail_stop", "recovery_micro_trail"
+        age_min = self._position_age_minutes(pos)
+        if age_min is None:
+            return None, ""
+        force_minutes = int(pos.get("recovery_micro_force_time_stop_minutes") or 0)
+        force_min_pnl = float(pos.get("recovery_micro_force_time_stop_min_pnl_pct") or 0.0)
+        if force_minutes > 0 and age_min >= force_minutes and current < force_min_pnl:
+            return "recovery_micro_time_stop", "recovery_micro_force_time_stop"
+        time_minutes = int(pos.get("recovery_micro_time_stop_minutes") or 0)
+        time_min_pnl = float(pos.get("recovery_micro_time_stop_min_pnl_pct") or 0.0)
+        if time_minutes > 0 and age_min >= time_minutes and current < time_min_pnl:
+            return "recovery_micro_time_stop", "recovery_micro_time_stop"
+        return None, ""
+
     @staticmethod
     def _exit_meta(
         *,
@@ -514,7 +567,13 @@ class RiskManager:
                 exit_meta["soft_exit_floor_price"] = soft_floor_usd
                 exit_meta["soft_exit_floor_triggered"] = bool(soft_floor_usd > 0 and cp_usd <= soft_floor_usd)
 
-                if protected:
+                recovery_reason, recovery_trigger = self._recovery_micro_exit_signal(pos)
+                if recovery_reason:
+                    reason = recovery_reason
+                    exit_meta["recovery_micro_exit_trigger"] = recovery_trigger
+                    if reason == "loss_cap":
+                        exit_meta["effective_stop_price"] = cp_usd
+                elif protected:
                     reason, effective_stop = self._stop_reason(cp_usd, sl_usd, loss_cap_usd, "stop_loss")
                     exit_meta["effective_stop_price"] = effective_stop
                     if not reason and soft_floor_usd > 0 and cp_usd <= soft_floor_usd:
@@ -561,7 +620,13 @@ class RiskManager:
             )
             exit_meta["soft_exit_floor_price"] = soft_floor_krw
             exit_meta["soft_exit_floor_triggered"] = bool(soft_floor_krw > 0 and cp <= soft_floor_krw)
-            if protected:
+            recovery_reason, recovery_trigger = self._recovery_micro_exit_signal(pos)
+            if recovery_reason:
+                reason = recovery_reason
+                exit_meta["recovery_micro_exit_trigger"] = recovery_trigger
+                if reason == "loss_cap":
+                    exit_meta["effective_stop_price"] = cp
+            elif protected:
                 reason, effective_stop = self._stop_reason(cp, base_stop, loss_cap_krw, "stop_loss")
                 exit_meta["effective_stop_price"] = effective_stop
                 if not reason and soft_floor_krw > 0 and cp <= soft_floor_krw:
@@ -649,6 +714,10 @@ class RiskManager:
                 "source_strategy": pos.get("source_strategy", ""),
                 "micro_probe": bool(pos.get("micro_probe")),
                 "micro_probe_reason": pos.get("micro_probe_reason", ""),
+                "recovery_micro": bool(pos.get("recovery_micro")),
+                "recovery_micro_reason": pos.get("recovery_micro_reason", ""),
+                "recovery_micro_source_strategy": pos.get("recovery_micro_source_strategy", pos.get("source_strategy", "")),
+                "recovery_micro_no_carry": bool(pos.get("recovery_micro_no_carry", False)),
                 "original_order_cost_krw": float(pos.get("original_order_cost_krw", 0) or 0),
                 "adjusted_order_cost_krw": float(pos.get("adjusted_order_cost_krw", 0) or 0),
                 "oversize_ratio": float(pos.get("oversize_ratio", 0) or 0),
@@ -681,6 +750,19 @@ class RiskManager:
                     "peak_pnl_pct",
                     "position_mfe_pct",
                     "position_mae_pct",
+                    "recovery_micro_exit_trigger",
+                    "recovery_micro_no_carry",
+                    "recovery_micro_force_exit_at",
+                    "recovery_micro_hard_loss_pct",
+                    "recovery_micro_profit_guard_trigger_pct",
+                    "recovery_micro_profit_guard_floor_pct",
+                    "recovery_micro_trail_trigger_pct",
+                    "recovery_micro_trail_pct",
+                    "recovery_micro_time_stop_minutes",
+                    "recovery_micro_time_stop_min_pnl_pct",
+                    "recovery_micro_force_time_stop_minutes",
+                    "recovery_micro_force_time_stop_min_pnl_pct",
+                    "recovery_micro_preclose_minutes",
                     "exit_owner",
                 )
                 if key in cand

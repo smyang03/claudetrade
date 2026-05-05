@@ -78,6 +78,70 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(dashboard_server._normalize_mode(None), "live")
         self.assertEqual(dashboard_server._normalize_mode("paper"), "paper")
 
+    def test_monitor_display_price_prefers_realtime_quote_over_old_trade(self) -> None:
+        item = {
+            "last_price": 108.29,
+            "current_price": 0,
+            "avg_price": 0,
+            "held_qty": 0,
+            "last_ts": "00:01",
+        }
+
+        dashboard_server._apply_monitor_display_price(
+            item,
+            "US",
+            recent_trade={"date": "2026-04-27", "display_price": 83.84},
+            quote={
+                "price": 109.01,
+                "ts": "2026-05-06T00:02:00+09:00",
+                "source": "realtime_quote",
+            },
+        )
+
+        self.assertEqual(item["display_price"], 109.01)
+        self.assertEqual(item["current_price"], 109.01)
+        self.assertEqual(item["last_price"], 109.01)
+        self.assertEqual(item["price_source"], "realtime_quote")
+
+    def test_monitor_display_price_uses_today_event_before_old_trade(self) -> None:
+        item = {
+            "last_price": 108.29,
+            "current_price": 0,
+            "avg_price": 0,
+            "held_qty": 0,
+            "last_ts": "00:01",
+        }
+
+        with patch.object(dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)):
+            dashboard_server._apply_monitor_display_price(
+                item,
+                "US",
+                recent_trade={"date": "2026-04-27", "display_price": 83.84},
+                quote=None,
+            )
+
+        self.assertEqual(item["display_price"], 108.29)
+        self.assertEqual(item["price_source"], "session_event_price")
+
+    def test_realtime_quote_cache_uses_separate_cached_at_timestamp(self) -> None:
+        key = ("live", "US", "INTC")
+        dashboard_server._DASHBOARD_QUOTE_CACHE.clear()
+        dashboard_server._DASHBOARD_QUOTE_CACHE[key] = {
+            "cached_at": dashboard_server._time.time(),
+            "ts": "2026-05-06T00:02:00+09:00",
+            "ticker": "INTC",
+            "price": 108.29,
+            "source": "realtime_quote",
+        }
+        try:
+            with patch.object(dashboard_server, "get_price", side_effect=AssertionError("cache should be used")):
+                quotes = dashboard_server._dashboard_realtime_quotes("US", ["INTC"], "live")
+        finally:
+            dashboard_server._DASHBOARD_QUOTE_CACHE.clear()
+
+        self.assertEqual(quotes["INTC"]["price"], 108.29)
+        self.assertEqual(quotes["INTC"]["ts"], "2026-05-06T00:02:00+09:00")
+
     def test_preopen_page_keeps_current_session_dynamic_and_escapes_tables(self) -> None:
         res = app.test_client().get("/preopen")
 
@@ -282,6 +346,206 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(summary["sell_count"], 4)
         self.assertEqual(summary["unknown_cost_basis_count"], 1)
 
+    def test_lifetime_realized_pnl_summary_adds_active_session_realized_adjustment(self) -> None:
+        def fake_rows(market, period, start, end, mode="paper"):
+            self.assertEqual(period, "all")
+            if market == "US":
+                return [
+                    {"date": "2026-04-27", "side": "sell", "pnl_known": True, "pnl": -1000.0},
+                ]
+            return []
+
+        def fake_live(market, mode="paper"):
+            if market == "US":
+                return {
+                    "market": "US",
+                    "session_active": True,
+                    "trading_date": "2026-05-05",
+                    "daily_pnl": -250.0,
+                }
+            return {"market": market, "session_active": False}
+
+        with patch.object(dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows), patch.object(
+            dashboard_server, "_load_live_status", side_effect=fake_live
+        ), patch.object(
+            dashboard_server, "_is_fresh_live_status", side_effect=lambda live, today: bool(live.get("session_active"))
+        ), patch.object(
+            dashboard_server, "load_today", side_effect=lambda market: {"date": "2026-05-05", "market": market}
+        ), patch.object(
+            dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)
+        ), patch.object(
+            dashboard_server, "_deduped_local_session_realized_pnl", return_value=None
+        ):
+            summary = dashboard_server._lifetime_realized_pnl_summary("live")
+
+        self.assertEqual(summary["US"]["pnl_krw"], -1250.0)
+        self.assertEqual(summary["US"]["current_session_adjustment_krw"], -250.0)
+        self.assertEqual(summary["us_pnl_krw"], -1250.0)
+        self.assertEqual(summary["total_pnl_krw"], -1250.0)
+
+    def test_current_session_realized_pnl_prefers_broker_confirmed_fills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            now = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+            (state_dir / "live_broker_truth_snapshot.json").write_text(
+                json.dumps(
+                    {
+                        "markets": {
+                            "US": {
+                                "missing": False,
+                                "stale": False,
+                                "last_success_at": now,
+                                "ttl_sec": 3600,
+                                "error": "",
+                                "today_fills": [
+                                    {
+                                        "ticker": "CRCL",
+                                        "side": "sell",
+                                        "order_no": "0030651849",
+                                        "filled_qty": 1,
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "live_decisions.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "closed",
+                                "session_date": "2026-05-05",
+                                "market": "US",
+                                "ticker": "EAT",
+                                "qty": 1,
+                                "order_no": "0030650645",
+                                "pnl_krw": -12372.0,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "closed",
+                                "session_date": "2026-05-05",
+                                "market": "US",
+                                "ticker": "CRCL",
+                                "qty": 1,
+                                "order_no": "0030651849",
+                                "pnl_krw": 12414.0,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "closed",
+                                "session_date": "2026-05-05",
+                                "market": "US",
+                                "ticker": "EAT",
+                                "qty": 1,
+                                "order_no": "0030699267",
+                                "pnl_krw": -14724.0,
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            def fake_runtime_path(*parts, make_parents=True):
+                path = root.joinpath(*parts)
+                if make_parents:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                return path
+
+            with patch.object(dashboard_server, "get_runtime_path", side_effect=fake_runtime_path), patch.object(
+                dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)
+            ):
+                status = dashboard_server._current_session_realized_pnl_status(
+                    "US",
+                    "live",
+                    live={"session_active": True, "trading_date": "2026-05-05", "daily_pnl": -14682.0},
+                )
+
+        self.assertTrue(status["available"])
+        self.assertEqual(status["pnl_krw"], 12414.0)
+        self.assertEqual(status["broker_sell_count"], 1)
+        self.assertEqual(status["matched_local_count"], 1)
+        self.assertEqual(status["source"], "broker_truth_confirmed_local_pnl")
+
+    def test_current_session_realized_pnl_dedupes_same_ticker_local_closes_when_broker_fills_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            (state_dir / "live_decisions.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "closed",
+                                "timestamp": "2026-05-05T22:30:20+09:00",
+                                "session_date": "2026-05-05",
+                                "market": "US",
+                                "ticker": "EAT",
+                                "qty": 1,
+                                "order_no": "0030650645",
+                                "pnl_krw": -12372.0,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "closed",
+                                "timestamp": "2026-05-05T22:30:55+09:00",
+                                "session_date": "2026-05-05",
+                                "market": "US",
+                                "ticker": "CRCL",
+                                "qty": 1,
+                                "order_no": "0030651849",
+                                "pnl_krw": 12414.0,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "closed",
+                                "timestamp": "2026-05-05T22:58:47+09:00",
+                                "session_date": "2026-05-05",
+                                "market": "US",
+                                "ticker": "EAT",
+                                "qty": 1,
+                                "order_no": "0030699267",
+                                "pnl_krw": -14724.0,
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            def fake_runtime_path(*parts, make_parents=True):
+                path = root.joinpath(*parts)
+                if make_parents:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                return path
+
+            with patch.object(dashboard_server, "get_runtime_path", side_effect=fake_runtime_path), patch.object(
+                dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)
+            ):
+                status = dashboard_server._current_session_realized_pnl_status(
+                    "US",
+                    "live",
+                    live={"session_active": True, "trading_date": "2026-05-05", "daily_pnl": -14682.0},
+                )
+
+        self.assertTrue(status["available"])
+        self.assertEqual(status["pnl_krw"], -2310.0)
+        self.assertEqual(status["duplicate_tickers"], ["EAT"])
+        self.assertEqual(status["local_closed_count"], 3)
+        self.assertEqual(status["deduped_closed_count"], 2)
+        self.assertEqual(status["source"], "local_decisions_duplicate_sell_deduped")
+
     def test_v2_ops_market_uses_session_trade_date(self) -> None:
         captured = {}
 
@@ -388,6 +652,53 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(data["pnl"], [0.0, 1.5])
         self.assertEqual(data["basis"], "broker_asset_reconstructed")
         self.assertEqual(data["reconciliation_basis"], "broker_asset_trading_pnl_cashflow")
+
+    def test_history_equity_live_adds_active_session_realized_adjustment(self) -> None:
+        snapshots = [
+            {
+                "market": "US",
+                "date": "2026-05-05",
+                "asset_krw": 1_000_000,
+                "unrealized_krw": 4_000,
+            }
+        ]
+
+        live = {
+            "market": "US",
+            "session_active": True,
+            "trading_date": "2026-05-05",
+            "daily_pnl": -14_000,
+        }
+
+        with patch.object(
+            dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)
+        ), patch.object(
+            dashboard_server, "_broker_snapshot", return_value={}
+        ), patch.object(
+            dashboard_server, "_persist_broker_equity_snapshot"
+        ), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", return_value=[]
+        ), patch.object(
+            dashboard_server, "_load_broker_equity_snapshots", return_value=snapshots
+        ), patch.object(
+            dashboard_server, "_load_live_status", return_value=live
+        ), patch.object(
+            dashboard_server, "_is_fresh_live_status", return_value=True
+        ), patch.object(
+            dashboard_server, "load_today", return_value={"date": "2026-05-05", "market": "US"}
+        ), patch.object(
+            dashboard_server, "_deduped_local_session_realized_pnl", return_value=None
+        ):
+            res = app.test_client().get(
+                "/api/history/equity?market=US&mode=live&period=custom&start=2026-05-05&end=2026-05-05"
+            )
+
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data["realized_pnl_krw"], [-14_000.0])
+        self.assertEqual(data["unrealized_today_delta_krw"], [4_000.0])
+        self.assertEqual(data["trading_pnl_krw"], [-10_000.0])
+        self.assertEqual(data["pnl"], [-0.9901])
 
     def test_chart_equity_live_uses_broker_payload_not_historical_records(self) -> None:
         snapshots = [

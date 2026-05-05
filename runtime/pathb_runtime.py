@@ -1296,6 +1296,8 @@ class PathBRuntime:
         min_order_krw = self._pathb_min_order_krw(market)
         qty = self._pathb_qty(market, risk_price_krw, cash_krw=cash_krw)
         order_cost = float(qty) * float(risk_price_krw)
+        realized_daily_pnl_pct = self._daily_pnl_pct(market)
+        equity_daily_pnl_pct = self._equity_daily_pnl_pct(market)
         ctx = SafetyContext(
             market=market,
             runtime_mode=self.mode,
@@ -1309,7 +1311,10 @@ class PathBRuntime:
             pending_orders=list(getattr(self.bot, "pending_orders", []) or []),
             daily_entry_count=self._base_daily_entry_count(market),
             max_daily_entries=self._base_max_daily_entries(),
-            daily_pnl_pct=self._daily_pnl_pct(market),
+            daily_pnl_pct=realized_daily_pnl_pct,
+            daily_pnl_basis="realized",
+            realized_daily_pnl_pct=realized_daily_pnl_pct,
+            equity_daily_pnl_pct=equity_daily_pnl_pct,
             broker_trust_level=self._broker_trust_level(market),
             market_open=bool(getattr(self.bot, "session_active", False)),
             last_market_data_at=datetime.now(KST).isoformat(),
@@ -2273,7 +2278,16 @@ class PathBRuntime:
                 key = plan.ticker.upper() if market == "US" else plan.ticker
                 note_stop = getattr(self.bot, "_note_stop_loss_event", None)
                 if callable(note_stop):
-                    note_stop(market, key, close_reason)
+                    note_stop(
+                        market,
+                        key,
+                        close_reason,
+                        event_id=str(plan.path_run_id or ""),
+                        qty=int((ex or pos or {}).get("qty", 0) or 0),
+                        pnl_krw=float((ex or {}).get("pnl_krw", (ex or {}).get("pnl", 0)) or 0),
+                        pnl_pct=float((ex or {}).get("pnl_pct", 0) or 0),
+                        occurred_at=datetime.now(KST).isoformat(timespec="seconds"),
+                    )
                 else:
                     self.bot._v2_same_day_stop_tickers.setdefault(market, set()).add(key)
                     self.bot._daily_sl_count[market] = int(self.bot._daily_sl_count.get(market, 0) or 0) + 1
@@ -3970,9 +3984,18 @@ class PathBRuntime:
 
     def _daily_pnl_pct(self, market: str) -> float:
         try:
-            return float(self.bot._market_daily_return_pct(market))
+            return float(self.bot._market_realized_daily_return_pct(market))
         except Exception:
             return 0.0
+
+    def _equity_daily_pnl_pct(self, market: str) -> float:
+        try:
+            return float(self.bot._market_daily_return_pct(market))
+        except Exception:
+            try:
+                return float(self.bot._daily_pnl_pct(market))
+            except Exception:
+                return 0.0
 
     def _session_date(self, market: str) -> str:
         try:

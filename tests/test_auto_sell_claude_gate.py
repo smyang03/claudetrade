@@ -181,6 +181,31 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         advisor.assert_not_called()
         precheck.assert_called_once()
 
+    def test_plan_a_live_sell_waits_for_broker_fill_confirmation(self) -> None:
+        bot = _plan_a_bot()
+        bot.is_paper = False
+        bot.usd_krw_rate = 1000
+        bot._write_live_status = Mock()  # type: ignore[method-assign]
+        cand = {**bot.risk.positions[0], "exit_price": 95.0, "reason": "stop_loss"}
+
+        with patch.dict("os.environ", {"LIVE_SELL_CONFIRM_ATTEMPTS": "1", "LIVE_SELL_CONFIRM_DELAY_SEC": "0"}), patch(
+            "minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}
+        ), patch(
+            "trading_bot.precheck_order", return_value={"ok": True}
+        ), patch(
+            "trading_bot.place_order", return_value={"success": True, "order_no": "sell1"}
+        ), patch.object(
+            TradingBot, "_lookup_order_fill", return_value=None
+        ):
+            ok = bot._execute_sell(cand, "US", reason="stop_loss")
+
+        self.assertTrue(ok)
+        self.assertEqual(len(bot.risk.positions), 1)
+        self.assertTrue(bot.risk.positions[0]["sell_confirmation_pending"])
+        self.assertEqual(bot.risk.positions[0]["pending_sell_order_no"], "sell1")
+        actions = [call.args[1] for call in bot._record_decision_event.call_args_list]
+        self.assertNotIn("sell_filled", actions)
+
     def test_pathb_target_hold_blocks_submit_sell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan, pos = _pathb_runtime(tmp)

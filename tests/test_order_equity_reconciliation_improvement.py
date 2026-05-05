@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -326,6 +327,118 @@ class NewBuyGateTests(unittest.TestCase):
         self.assertFalse(state["allowed"])
         self.assertEqual(state["reason"], "ORDER_UNKNOWN_UNRESOLVED")
         self.assertEqual(state["scope"], "market")
+
+    def test_second_stop_cluster_blocks_new_buy_by_default(self) -> None:
+        bot = self._bot()
+        bot._daily_sl_count = {"KR": 2}
+        bot._daily_sl_last_at = {"KR": datetime(2026, 4, 29, 9, 30, tzinfo=market_utils.KST)}
+        bot._v2_same_day_stop_tickers = {"KR": set()}
+
+        with self._with_now(10, 0), patch.object(trading_bot, "datetime", _FrozenDateTime), patch.dict(
+            os.environ,
+            {
+                "STOP_CLUSTER_FIRST_FREEZE_MINUTES": "30",
+                "STOP_CLUSTER_HARD_BLOCK_COUNT": "2",
+                "STOP_CLUSTER_DISASTER_BLOCK_COUNT": "3",
+            },
+        ), patch.dict(market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "momentum")
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "STOP_CLUSTER_MARKET_BLOCK")
+        self.assertEqual(state["scope"], "market")
+
+
+class StopClusterDedupeTests(unittest.TestCase):
+    def test_duplicate_stop_event_does_not_increment_count(self) -> None:
+        bot = object.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot._daily_sl_count = {"US": 0}
+        bot._daily_sl_last_at = {"US": None}
+        bot._daily_sl_event_keys = set()
+        bot._v2_same_day_stop_tickers = {"US": set()}
+        bot._current_session_date_str = lambda market: "2026-05-05"
+
+        first = trading_bot.TradingBot._note_stop_loss_event(
+            bot,
+            "US",
+            "EAT",
+            "stop_loss",
+            order_no="ord-1",
+            qty=1,
+            pnl_krw=-5000,
+            pnl_pct=-1.2,
+        )
+        duplicate = trading_bot.TradingBot._note_stop_loss_event(
+            bot,
+            "US",
+            "EAT",
+            "stop_loss",
+            order_no="ord-1",
+            qty=1,
+            pnl_krw=-5000,
+            pnl_pct=-1.2,
+        )
+        second = trading_bot.TradingBot._note_stop_loss_event(
+            bot,
+            "US",
+            "CYTK",
+            "stop_loss",
+            order_no="ord-2",
+            qty=1,
+            pnl_krw=-3000,
+            pnl_pct=-0.8,
+        )
+
+        self.assertEqual(first, 1)
+        self.assertEqual(duplicate, 1)
+        self.assertEqual(second, 2)
+        self.assertEqual(bot._daily_sl_count["US"], 2)
+
+
+class RecoveryMicroTests(unittest.TestCase):
+    def test_recovery_micro_caps_size_after_first_stop(self) -> None:
+        bot = object.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot.enable_recovery_micro = True
+        bot.recovery_micro_paper_only = False
+        bot.recovery_micro_allowed_markets = {"US"}
+        bot.recovery_micro_allowed_modes = {"MODERATE_BULL"}
+        bot.recovery_micro_min_entry_priority = 0.70
+        bot.recovery_micro_max_order_krw_us = 180_000
+        bot.recovery_micro_max_order_krw_kr = 150_000
+        bot.recovery_micro_max_daily_trades = 1
+        bot.recovery_micro_max_open_positions = 1
+        bot.risk = SimpleNamespace(positions=[])
+        bot.pending_orders = []
+        bot.decision_event_log = []
+        bot._v2_same_day_stop_tickers = {"US": set()}
+        bot._ticker_market = lambda ticker: "US"
+        bot._market_close_anchor_dt = lambda market: datetime(2026, 5, 6, 5, 0, tzinfo=market_utils.KST)
+
+        result = trading_bot.TradingBot._recovery_micro_adjustment(
+            bot,
+            market="US",
+            ticker="CYTK",
+            mode="MODERATE_BULL",
+            source_strategy="momentum",
+            entry_priority_score=0.72,
+            qty=10,
+            risk_price_krw=140_000,
+            original_order_cost_krw=1_400_000,
+            available_budget_krw=500_000,
+            cash_krw=500_000,
+            daily_stop_count=1,
+            realized_daily_pnl_pct=-0.5,
+        )
+
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["adjusted_qty"], 1)
+        self.assertEqual(result["adjusted_order_cost_krw"], 140_000)
+        self.assertEqual(result["source_strategy"], "momentum")
+        self.assertTrue(result["recovery_micro_no_carry"])
+        self.assertEqual(result["recovery_micro_hard_loss_pct"], 1.2)
+        self.assertTrue(result["recovery_micro_force_exit_at"])
 
 
 if __name__ == "__main__":

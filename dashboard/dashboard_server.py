@@ -94,6 +94,8 @@ _BROKER_POSITIONS_STATUS: dict[tuple[str, str], dict] = {}
 _BROKER_SNAPSHOT_LOCK = threading.Lock()
 _BROKER_POSITIONS_LOCK = threading.Lock()
 _KIS_RUNTIME_LOCK = threading.Lock()
+_DASHBOARD_QUOTE_CACHE: dict[tuple[str, str, str], dict] = {}
+_DASHBOARD_QUOTE_LOCK = threading.Lock()
 
 
 @app.after_request
@@ -2358,6 +2360,7 @@ def _live_equity_payload(
 
     current_asset = _market_asset_krw_from_broker_snapshot(broker or {}, market) if broker else 0.0
     current_unrealized = float(((broker or {}).get("unrealized_krw", {}) or {}).get(market, 0) or 0)
+    d_start, d_end = _resolve_period_bounds(period, start, end)
 
     broker_rows = _broker_trade_rows_with_pnl(market, period, start, end, mode=mode)
     realized_by_date: dict[str, float] = {}
@@ -2369,6 +2372,20 @@ def _live_equity_payload(
         if not trade_date:
             continue
         realized_by_date[trade_date] = realized_by_date.get(trade_date, 0.0) + float(row.get("pnl", 0) or 0)
+    try:
+        live = _load_live_status(market, mode=mode) or {}
+        session_day = _session_trade_date(market)
+        if d_start <= session_day <= d_end:
+            session_label = session_day.isoformat()
+            status = _current_session_realized_pnl_status(market, mode, live=live)
+            if bool(status.get("available", False)):
+                live_realized = float(status.get("pnl_krw", 0) or 0)
+                rows_realized = _known_sell_pnl_for_date(broker_rows, session_label)
+                adjustment = live_realized - rows_realized
+                if abs(adjustment) >= 0.5:
+                    realized_by_date[session_label] = realized_by_date.get(session_label, 0.0) + adjustment
+    except Exception:
+        pass
 
     snapshot_rows = _load_broker_equity_snapshots(market, period, start, end, mode=mode)
     snapshot_asset_map: dict[str, float] = {}
@@ -2425,6 +2442,7 @@ def _live_equity_payload(
         unrealized.append(last_unrealized)
 
     realized_series: list[float] = []
+    unrealized_delta_series: list[float] = []
     trading_pnl_series: list[float] = []
     cumulative_trading_pnl: list[float] = []
     cash_flow_series: list[float] = []
@@ -2450,6 +2468,7 @@ def _live_equity_payload(
         cumulative_flow += cash_flow
         pnl_pct = (trading_pnl / base_equity * 100.0) if base_equity > 0 else 0.0
         realized_series.append(round(realized, 6))
+        unrealized_delta_series.append(round(unrealized_delta, 6))
         trading_pnl_series.append(round(trading_pnl, 6))
         cumulative_trading_pnl.append(round(cumulative_trade, 6))
         cash_flow_series.append(round(cash_flow, 6))
@@ -2469,6 +2488,7 @@ def _live_equity_payload(
         "modes": ["" for _ in labels],
         "realized_pnl_krw": realized_series,
         "unrealized_krw": [round(v, 6) for v in unrealized],
+        "unrealized_today_delta_krw": unrealized_delta_series,
         "trading_pnl_krw": trading_pnl_series,
         "daily_trading_pnl_krw": trading_pnl_series,
         "cumulative_trading_pnl_krw": cumulative_trading_pnl,
@@ -2511,6 +2531,225 @@ def _realized_pnl_bucket_from_rows(rows: list[dict]) -> dict:
     }
 
 
+def _known_sell_pnl_for_date(rows: list[dict], trade_date: str) -> float:
+    total = 0.0
+    date_key = str(trade_date or "")[:10]
+    if not date_key:
+        return 0.0
+    for row in rows or []:
+        if str(row.get("side", "") or "").lower() != "sell":
+            continue
+        if str(row.get("date", "") or "")[:10] != date_key:
+            continue
+        if not bool(row.get("pnl_known", True)):
+            continue
+        total += float(row.get("pnl", 0) or 0)
+    return float(total)
+
+
+def _parse_iso_dt(value: str) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _fresh_broker_truth_market(market: str, mode: str) -> dict:
+    runtime_mode = _normalize_mode(mode)
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    path = get_runtime_path("state", f"{runtime_mode}_broker_truth_snapshot.json")
+    if not path.exists() and runtime_mode == "live":
+        path = get_runtime_path("state", "broker_truth_snapshot.json")
+    if not path.exists():
+        return {}
+    try:
+        snap = json.loads(path.read_text(encoding="utf-8", errors="replace") or "{}")
+    except Exception:
+        return {}
+    data = (snap.get("markets") or {}).get(market_key) or {}
+    if not isinstance(data, dict) or data.get("missing"):
+        return {}
+    last = _parse_iso_dt(str(data.get("last_success_at", "") or ""))
+    if last is None:
+        return {}
+    try:
+        ttl_sec = max(1, int(data.get("ttl_sec", 60) or 60))
+    except Exception:
+        ttl_sec = 60
+    now = datetime.now(last.tzinfo) if last.tzinfo is not None else datetime.now(KST)
+    age = max(0.0, (now - last).total_seconds())
+    if age > ttl_sec:
+        return {}
+    if data.get("stale") or data.get("error"):
+        return {}
+    return data
+
+
+def _broker_confirmed_local_realized_pnl(market: str, mode: str, session_date: str) -> Optional[dict]:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    broker = _fresh_broker_truth_market(market_key, mode)
+    if not broker:
+        return None
+    sell_fills = [
+        f for f in (broker.get("today_fills") or [])
+        if str(f.get("side", "") or "").lower() == "sell"
+        and int(f.get("filled_qty", f.get("qty", 0)) or 0) > 0
+    ]
+    order_nos = {str(f.get("order_no", "") or "").strip() for f in sell_fills if str(f.get("order_no", "") or "").strip()}
+    loose_remaining: Counter[tuple[str, int]] = Counter()
+    for fill in sell_fills:
+        ticker = str(fill.get("ticker", "") or "").strip().upper()
+        qty = int(fill.get("filled_qty", fill.get("qty", 0)) or 0)
+        if ticker and qty > 0:
+            loose_remaining[(ticker, qty)] += 1
+
+    pnl = 0.0
+    matched = 0
+    decisions_path = _decisions_path(mode)
+    if decisions_path.exists():
+        try:
+            for line in decisions_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("type") != "closed" or str(rec.get("market", "") or "").upper() != market_key:
+                    continue
+                rec_session = str(rec.get("session_date") or str(rec.get("timestamp", "") or "")[:10] or "")
+                if rec_session != session_date:
+                    continue
+                order_no = str(rec.get("order_no", "") or "").strip()
+                ticker = str(rec.get("ticker", "") or "").strip().upper()
+                qty = int(rec.get("qty", 0) or 0)
+                use = bool(order_no and order_no in order_nos)
+                loose_key = (ticker, qty)
+                if not use and loose_remaining.get(loose_key, 0) > 0:
+                    loose_remaining[loose_key] -= 1
+                    use = True
+                if not use:
+                    continue
+                pnl += float(rec.get("pnl_krw", 0) or 0)
+                matched += 1
+        except Exception:
+            pass
+    return {
+        "available": True,
+        "pnl_krw": float(pnl),
+        "source": "broker_truth_confirmed_local_pnl",
+        "broker_sell_count": len(sell_fills),
+        "matched_local_count": matched,
+        "confirmed_order_nos": sorted(order_nos),
+    }
+
+
+def _deduped_local_session_realized_pnl(market: str, mode: str, session_date: str) -> Optional[dict]:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    decisions_path = _decisions_path(mode)
+    if not decisions_path.exists():
+        return None
+    records: list[dict] = []
+    try:
+        for line in decisions_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if rec.get("type") != "closed" or str(rec.get("market", "") or "").upper() != market_key:
+                continue
+            rec_session = str(rec.get("session_date") or str(rec.get("timestamp", "") or "")[:10] or "")
+            if rec_session != session_date:
+                continue
+            ticker = str(rec.get("ticker", "") or "").strip().upper()
+            if not ticker:
+                continue
+            records.append(rec)
+    except Exception:
+        return None
+    if not records:
+        return None
+    by_ticker: dict[str, list[dict]] = {}
+    for rec in records:
+        by_ticker.setdefault(str(rec.get("ticker", "") or "").strip().upper(), []).append(rec)
+    duplicate_tickers = sorted(ticker for ticker, items in by_ticker.items() if len(items) > 1)
+    if not duplicate_tickers:
+        return None
+
+    kept: list[dict] = []
+    for ticker, items in by_ticker.items():
+        if len(items) == 1:
+            kept.extend(items)
+            continue
+        kept.append(sorted(items, key=lambda r: str(r.get("timestamp", "") or ""))[-1])
+    pnl = sum(float(rec.get("pnl_krw", 0) or 0) for rec in kept)
+    return {
+        "available": True,
+        "pnl_krw": float(pnl),
+        "source": "local_decisions_duplicate_sell_deduped",
+        "local_closed_count": len(records),
+        "deduped_closed_count": len(kept),
+        "duplicate_tickers": duplicate_tickers,
+    }
+
+
+def _current_session_realized_pnl_status(market: str, mode: str, live: Optional[dict] = None) -> dict:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    session_date = _session_trade_date(market_key).isoformat()
+    broker_confirmed = _broker_confirmed_local_realized_pnl(market_key, mode, session_date)
+    if broker_confirmed is not None:
+        return broker_confirmed
+    deduped = _deduped_local_session_realized_pnl(market_key, mode, session_date)
+    if deduped is not None:
+        return deduped
+
+    live_status = live if live is not None else (_load_live_status(market_key, mode=mode) or {})
+    if not _is_fresh_live_status(live_status, load_today(market_key)):
+        return {"available": False, "pnl_krw": 0.0, "source": ""}
+    live_date = str(live_status.get("trading_date", "") or "")[:10]
+    if live_date and live_date != session_date:
+        return {"available": False, "pnl_krw": 0.0, "source": ""}
+    return {
+        "available": True,
+        "pnl_krw": float(live_status.get("daily_pnl", 0) or 0),
+        "source": "live_status_daily_pnl",
+    }
+
+
+def _apply_current_session_realized_adjustment(
+    bucket: dict, rows: list[dict], market: str, mode: str
+) -> None:
+    """Include live-session realized PnL while broker history rows lag intraday."""
+    try:
+        session_date = _session_trade_date(market).isoformat()
+        status = _current_session_realized_pnl_status(market, mode)
+        if not bool(status.get("available", False)):
+            return
+        live_realized = float(status.get("pnl_krw", 0) or 0)
+        if abs(live_realized) < 1e-9:
+            return
+        rows_realized = _known_sell_pnl_for_date(rows, session_date)
+        adjustment = live_realized - rows_realized
+        if abs(adjustment) < 0.5:
+            return
+        bucket["pnl_krw"] = round(float(bucket.get("pnl_krw", 0) or 0) + adjustment, 6)
+        bucket["current_session_adjustment_krw"] = round(adjustment, 6)
+        bucket["current_session_realized_pnl_krw"] = round(live_realized, 6)
+        bucket["current_session_rows_pnl_krw"] = round(rows_realized, 6)
+        bucket["current_session_date"] = session_date
+        bucket["current_session_source"] = str(status.get("source", "") or "live_status_daily_pnl")
+        if status.get("broker_sell_count") is not None:
+            bucket["current_session_broker_sell_count"] = int(status.get("broker_sell_count", 0) or 0)
+            bucket["current_session_matched_local_count"] = int(status.get("matched_local_count", 0) or 0)
+        if status.get("duplicate_tickers"):
+            bucket["current_session_duplicate_tickers"] = list(status.get("duplicate_tickers") or [])
+            bucket["current_session_local_closed_count"] = int(status.get("local_closed_count", 0) or 0)
+            bucket["current_session_deduped_closed_count"] = int(status.get("deduped_closed_count", 0) or 0)
+    except Exception:
+        return
+
+
 def _empty_lifetime_realized_pnl_summary() -> dict:
     return {
         "basis": "broker_fills_fifo_excluding_cash_flow",
@@ -2539,6 +2778,7 @@ def _lifetime_realized_pnl_summary(mode: str = "live") -> dict:
             rows = []
             errors[market] = str(exc)
         summary[market] = _realized_pnl_bucket_from_rows(rows)
+        _apply_current_session_realized_adjustment(summary[market], rows, market, runtime_mode)
 
     kr_bucket = summary.get("KR", {}) or {}
     us_bucket = summary.get("US", {}) or {}
@@ -3476,7 +3716,11 @@ def api_summary():
     broker_realized_pnl_krw = _broker_realized_pnl_krw(market, broker_trade_date, mode=mode)
     realized_pnl_krw = broker_realized_pnl_krw
     if abs(float(realized_pnl_krw or 0)) < 1e-9:
-        realized_pnl_krw = live.get("daily_pnl", metrics_today.get("pnl_krw", result.get("pnl_krw", 0)))
+        realized_status = _current_session_realized_pnl_status(market, mode, live=live)
+        if bool(realized_status.get("available", False)):
+            realized_pnl_krw = float(realized_status.get("pnl_krw", 0) or 0)
+        else:
+            realized_pnl_krw = live.get("daily_pnl", metrics_today.get("pnl_krw", result.get("pnl_krw", 0)))
     unrealized_pnl_krw = 0.0
     pnl_krw  = realized_pnl_krw
     pnl_pct  = live.get("daily_pnl_pct", result.get("pnl_pct", 0))
@@ -3567,6 +3811,19 @@ def api_summary():
     market_asset_krw = float(us_asset if market == "US" else kr_asset)
     trading_pnl_krw = float(pnl_krw or 0.0)
     trading_pnl_pct = float(pnl_pct or 0.0)
+    unrealized_today_delta_krw = float(unrealized_pnl_krw or 0.0)
+    if live_equity_summary:
+        unrealized_today_delta_krw = _latest_series_value(
+            live_equity_summary,
+            "unrealized_today_delta_krw",
+            unrealized_today_delta_krw,
+        )
+        trading_pnl_krw = _latest_series_value(
+            live_equity_summary,
+            "trading_pnl_krw",
+            float(realized_pnl_krw or 0.0) + unrealized_today_delta_krw,
+        )
+        trading_pnl_pct = _latest_series_value(live_equity_summary, "pnl", trading_pnl_pct)
     cumulative_trading_pnl_krw = _latest_series_value(
         live_equity_summary,
         "cumulative_trading_pnl_krw",
@@ -3588,7 +3845,9 @@ def api_summary():
             "trading_pnl_pct": round(trading_pnl_pct, 4),
             "realized_pnl_krw": round(float(realized_pnl_krw or 0), 0),
             "unrealized_pnl_krw": round(float(unrealized_pnl_krw or 0), 0),
-            "basis": "selected_market_realized_plus_unrealized",
+            "unrealized_today_delta_krw": round(float(unrealized_today_delta_krw or 0), 0),
+            "holding_unrealized_pnl_krw": round(float(unrealized_pnl_krw or 0), 0),
+            "basis": "selected_market_realized_plus_unrealized_delta",
         },
         "lifetime_realized": lifetime_realized_pnl,
     }
@@ -3659,9 +3918,11 @@ def api_summary():
             "starting_capital_krw": round(starting_capital_krw, 0),
             "cash_flow_label": "입출금/환전 추정",
             "account_asset_source": "kis_broker_account" if broker else asset_source,
-            "performance_basis": "broker_realized_plus_unrealized" if broker else "engine_fallback",
+            "performance_basis": "broker_realized_plus_unrealized_delta" if broker else "engine_fallback",
             "realized_pnl_krw": round(realized_pnl_krw, 0),
             "unrealized_pnl_krw": round(unrealized_pnl_krw, 0),
+            "unrealized_today_delta_krw": round(unrealized_today_delta_krw, 0),
+            "holding_unrealized_pnl_krw": round(unrealized_pnl_krw, 0),
             "pnl_summary":    pnl_summary,
             "asset_source":   asset_source,
             "win":            metrics_today.get("win", result.get("win", False)),
@@ -5290,6 +5551,178 @@ def _is_live_market(market: str) -> bool:
         return now >= _t(22, 30) or now < _t(5, 5)
 
 
+def _dashboard_quote_cache_sec() -> int:
+    try:
+        return max(int(os.getenv("DASHBOARD_QUOTE_CACHE_SEC", "15") or 15), 0)
+    except Exception:
+        return 15
+
+
+def _num_or_zero(value) -> float:
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def _dashboard_realtime_quotes(market: str, tickers: list[str], mode: str) -> dict[str, dict]:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    runtime_mode = _normalize_mode(mode)
+    unique = []
+    seen = set()
+    for raw in tickers or []:
+        ticker = str(raw or "").strip().upper()
+        if ticker and ticker not in seen:
+            seen.add(ticker)
+            unique.append(ticker)
+    if not unique:
+        return {}
+
+    ttl_sec = _dashboard_quote_cache_sec()
+    now_ts = _time.time()
+    result: dict[str, dict] = {}
+    to_fetch: list[str] = []
+    with _DASHBOARD_QUOTE_LOCK:
+        for ticker in unique:
+            key = (runtime_mode, market_key, ticker)
+            cached = _DASHBOARD_QUOTE_CACHE.get(key)
+            if cached:
+                try:
+                    cached_at = float(cached.get("cached_at", 0) or 0)
+                except Exception:
+                    cached_at = 0.0
+                age = max(0.0, now_ts - cached_at)
+                cached_price = _num_or_zero(cached.get("price"))
+                if ttl_sec > 0 and age < ttl_sec and cached_price > 0:
+                    quote = copy.deepcopy(cached)
+                    quote["age_sec"] = int(age)
+                    quote.setdefault("source", "quote_cache")
+                    result[ticker] = quote
+                    continue
+                if ttl_sec > 0 and age < min(ttl_sec, 5) and cached.get("error"):
+                    continue
+            to_fetch.append(ticker)
+
+    if not to_fetch or not _is_live_market(market_key):
+        return result
+
+    try:
+        with _kis_runtime(runtime_mode):
+            token = get_access_token(market=market_key)
+            for ticker in to_fetch:
+                key = (runtime_mode, market_key, ticker)
+                try:
+                    px_data = get_price(ticker, token, market=market_key)
+                    price = _num_or_zero(px_data.get("current_price") or px_data.get("price"))
+                    if price <= 0:
+                        raise ValueError(f"invalid quote price {price}")
+                    quote = {
+                        "ticker": ticker,
+                        "price": round(price, 6),
+                        "ts": datetime.now(KST).isoformat(timespec="seconds"),
+                        "source": "realtime_quote",
+                        "change": _num_or_zero(px_data.get("change")),
+                        "change_rate": _num_or_zero(px_data.get("change_rate")),
+                        "volume": int(_num_or_zero(px_data.get("volume"))),
+                    }
+                    with _DASHBOARD_QUOTE_LOCK:
+                        _DASHBOARD_QUOTE_CACHE[key] = {"cached_at": _time.time(), **quote}
+                    result[ticker] = copy.deepcopy(quote)
+                except Exception as exc:
+                    with _DASHBOARD_QUOTE_LOCK:
+                        cached = copy.deepcopy(_DASHBOARD_QUOTE_CACHE.get(key, {}))
+                        if _num_or_zero(cached.get("price")) > 0:
+                            cached["stale"] = True
+                            cached["last_error"] = str(exc)
+                            result.setdefault(ticker, cached)
+                        else:
+                            _DASHBOARD_QUOTE_CACHE[key] = {
+                                "cached_at": _time.time(),
+                                "ts": datetime.now(KST).isoformat(timespec="seconds"),
+                                "ticker": ticker,
+                                "price": 0.0,
+                                "source": "quote_error",
+                                "error": str(exc),
+                            }
+    except Exception:
+        return result
+    return result
+
+
+def _current_session_trade_price(recent_trade: dict, market: str) -> float:
+    price = _num_or_zero((recent_trade or {}).get("display_price", (recent_trade or {}).get("price", 0)))
+    if price <= 0:
+        return 0.0
+    session_label = _session_trade_date(market).isoformat()
+    acceptable_dates = {session_label}
+    if str(market or "").upper() == "US" and _is_live_market("US"):
+        acceptable_dates.add(datetime.now(KST).date().isoformat())
+    trade_session = str((recent_trade or {}).get("session_date") or "")[:10]
+    trade_date = str((recent_trade or {}).get("date") or (recent_trade or {}).get("matched_date") or "")[:10]
+    if trade_session in acceptable_dates or trade_date in acceptable_dates:
+        return price
+    return 0.0
+
+
+def _apply_monitor_display_price(
+    item: dict,
+    market: str,
+    *,
+    recent_trade: Optional[dict] = None,
+    quote: Optional[dict] = None,
+) -> None:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    quote_price = _num_or_zero((quote or {}).get("price"))
+    current_price = _num_or_zero(item.get("current_price"))
+    avg_price = _num_or_zero(item.get("avg_price"))
+    last_price = _num_or_zero(item.get("last_price"))
+    if market_key == "US" and last_price >= 500:
+        last_price = 0.0
+        item["last_price"] = 0.0
+    held_qty = int(item.get("held_qty", 0) or 0)
+
+    display_price = 0.0
+    source = ""
+    source_ko = ""
+    price_ts = ""
+
+    if quote_price > 0:
+        display_price = quote_price
+        source = "realtime_quote_stale" if (quote or {}).get("stale") else "realtime_quote"
+        source_ko = "실시간가(캐시)" if (quote or {}).get("stale") else "실시간가"
+        price_ts = _format_hhmm(str((quote or {}).get("ts", "") or ""))
+        item["current_price"] = display_price
+        item["last_price"] = display_price
+    elif current_price > 0:
+        display_price = current_price
+        source = "position_current_price"
+        source_ko = "보유평가가"
+    elif last_price > 0:
+        display_price = last_price
+        source = "session_event_price"
+        source_ko = "오늘 이벤트가"
+    elif held_qty > 0 and avg_price > 0:
+        display_price = avg_price
+        source = "position_avg_price"
+        source_ko = "평균단가"
+    else:
+        trade_price = _current_session_trade_price(recent_trade or {}, market_key)
+        if trade_price > 0:
+            display_price = trade_price
+            source = "current_session_trade"
+            source_ko = "당일 체결가"
+
+    item["display_price"] = round(display_price, 6) if display_price > 0 else 0.0
+    item["price_source"] = source
+    item["price_source_ko"] = source_ko
+    if price_ts:
+        item["price_ts"] = price_ts
+    elif not item.get("price_ts"):
+        item["price_ts"] = item.get("last_ts", "")
+    if market_key == "US" and item["display_price"] > 0 and _num_or_zero(item.get("last_price")) <= 0:
+        item["last_price"] = item["display_price"]
+
+
 @app.route("/api/refresh_prices", methods=["POST"])
 def api_refresh_prices():
     """포지션 현재가 갱신: 장 중이면 KIS API 실시간, 장 외이면 저장 데이터 반환"""
@@ -5780,6 +6213,7 @@ def api_tickers_today():
 
     watch_hist = _today_watchlist_history(market)
     tickers = watch_hist.get("current") or tickers
+    realtime_quotes = _dashboard_realtime_quotes(market, tickers, mode)
 
     result = []
     for t in tickers:
@@ -5819,19 +6253,12 @@ def api_tickers_today():
         recent_trade = recent_trade_map.get(ticker, {})
         if item["held_qty"] <= 0:
             item["held_qty"] = int(live_pos.get("qty", 0) or 0)
-        if item["current_price"] > 0:
-            item["display_price"] = item["current_price"]
-        elif item["avg_price"] > 0:
-            item["display_price"] = item["avg_price"]
-        elif float(recent_trade.get("display_price", recent_trade.get("price", 0)) or 0) > 0:
-            item["display_price"] = float(recent_trade.get("display_price", recent_trade.get("price", 0)) or 0)
-        else:
-            item["display_price"] = item.get("last_price", 0)
-        last_price = float(item.get("last_price", 0) or 0)
-        if market == "US" and item["display_price"] > 0 and (last_price <= 0 or last_price >= 500):
-            item["last_price"] = item["display_price"]
-        elif market == "US" and last_price >= 500:
-            item["last_price"] = 0.0
+        _apply_monitor_display_price(
+            item,
+            market,
+            recent_trade=recent_trade,
+            quote=realtime_quotes.get(ticker),
+        )
         if item.get("pending_count", 0) > 0 and item.get("last_event") in ("waiting", "", None):
             item["last_event"] = "pending_order"
             item["last_ts"] = _format_hhmm(next((o.get("created_at", "") for o in live_pending if str(o.get("ticker", "")).strip().upper() == ticker), ""))
@@ -5866,6 +6293,8 @@ def api_tickers_today():
         "universe_count": len(universe) or len(candidates_list),
         "candidates":     candidates_list,
         "not_selected":   not_selected,
+        "realtime_quote_count": sum(1 for item in result if item.get("price_source", "").startswith("realtime_quote")),
+        "quote_cache_sec": _dashboard_quote_cache_sec(),
     })
 
 
@@ -7130,8 +7559,10 @@ async function loadMonitorTickers() {
     modeEl.innerHTML = `<span class="mode-badge mode-${d.mode}">${koMode(d.mode)}</span>`;
   }
   const total = d.universe_count || 0;
+  const realtimeCount = Number(d.realtime_quote_count || 0);
+  const quoteMeta = realtimeCount > 0 ? ` · 실시간가 ${realtimeCount}/${tickers.length}` : '';
   document.getElementById('ticker-ts').textContent =
-    `후보 ${total}개 중 ${tickers.length}개 선택 · 갱신: ${new Date().toLocaleTimeString()}`;
+    `후보 ${total}개 중 ${tickers.length}개 선택${quoteMeta} · 갱신: ${new Date().toLocaleTimeString()}`;
 
   const EVENT_MAP = {
     'entry_signal':  { icon: '🟢', label: '진입신호', color: '#10b981' },
@@ -7481,10 +7912,14 @@ async function loadSummary() {
   const tradingPct = Number(t.trading_pnl_pct ?? t.pnl_pct ?? 0);
   const tradingKrw = Number(t.trading_pnl_krw ?? t.pnl_krw ?? 0);
   const accountAsset = Number(t.account_asset_krw ?? t.cumulative ?? 0);
+  const realizedKrw = Number(t.realized_pnl_krw || 0);
+  const evalDeltaKrw = Number(t.unrealized_today_delta_krw ?? t.unrealized_pnl_krw ?? 0);
+  const holdingEvalKrw = Number(t.holding_unrealized_pnl_krw ?? t.unrealized_pnl_krw ?? 0);
   pnlEl.textContent = fmt.pct(tradingPct);
   pnlEl.className = 'card-value ' + colorClass(tradingPct);
-  document.getElementById('today-krw').textContent =
-    `${MARKET} 확정 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
+  const todayKrw = document.getElementById('today-krw');
+  todayKrw.textContent = `${MARKET} 확정 ${fmt.krw(realizedKrw)} · 평가변동 ${fmt.krw(evalDeltaKrw)}`;
+  todayKrw.title = `보유평가 누적 ${fmt.krw(holdingEvalKrw)}`;
   document.getElementById('cumulative').textContent = fmt.asset(accountAsset);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
@@ -8465,12 +8900,18 @@ async function loadSummary() {
   const tradingPct = Number(t.trading_pnl_pct ?? t.pnl_pct ?? 0);
   const tradingKrw = Number(t.trading_pnl_krw ?? t.pnl_krw ?? 0);
   const accountAsset = Number(t.account_asset_krw ?? t.cumulative ?? 0);
+  const realizedKrw = Number(t.realized_pnl_krw || 0);
+  const evalDeltaKrw = Number(t.unrealized_today_delta_krw ?? t.unrealized_pnl_krw ?? 0);
+  const holdingEvalKrw = Number(t.holding_unrealized_pnl_krw ?? t.unrealized_pnl_krw ?? 0);
   if (pnlEl) {
     pnlEl.textContent = fmt.pct(tradingPct);
     pnlEl.className = 'card-value ' + colorClass(tradingPct);
   }
   const todayKrw = document.getElementById('today-krw');
-  if (todayKrw) todayKrw.textContent = `${MARKET} 확정 ${fmt.krw(t.realized_pnl_krw || 0)} · 평가 ${fmt.krw(t.unrealized_pnl_krw || 0)}`;
+  if (todayKrw) {
+    todayKrw.textContent = `${MARKET} 확정 ${fmt.krw(realizedKrw)} · 평가변동 ${fmt.krw(evalDeltaKrw)}`;
+    todayKrw.title = `보유평가 누적 ${fmt.krw(holdingEvalKrw)}`;
+  }
   const cumulative = document.getElementById('cumulative');
   if (cumulative) cumulative.textContent = fmt.asset(accountAsset);
   const cumulativePnl = document.getElementById('cumulative-pnl');

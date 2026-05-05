@@ -134,6 +134,256 @@ def load_preopen_state(
     return state
 
 
+_PREOPEN_PIN_SAFE_FIELDS = {
+    "ticker",
+    "name",
+    "market",
+    "session_date",
+    "source",
+    "provider",
+    "detected_at",
+    "captured_at",
+    "first_detected_at",
+    "last_detected_at",
+    "preopen_score",
+    "shadow_preopen_rank",
+    "preopen_grade",
+    "source_overlap_count",
+    "data_quality",
+    "stale",
+    "risk_tags",
+    "quality_tags",
+    "pattern_tags",
+    "preopen_reason",
+    "provider_rank",
+    "screen_score",
+    "price",
+    "volume",
+    "change_rate",
+    "gap_pct",
+    "volume_ratio",
+    "extended_price",
+    "regular_prev_close",
+    "extended_change_pct",
+    "extended_volume",
+    "extended_dollar_volume",
+    "prior_day_traded_value",
+    "bid",
+    "ask",
+    "spread_pct",
+    "quote_timestamp",
+    "news_or_earnings_flag",
+    "open_volume_confirmation",
+    "display_enrichment_source",
+    "anchor_price",
+    "anchor_price_source",
+    "anchor_price_at",
+    "market_type",
+    "category",
+    "sector",
+    "from_high_pct",
+    "above_ma60",
+    "liquidity_bucket",
+    "from_high_bucket",
+}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _market_env_float(market: str, suffix: str, default: float) -> float:
+    market_key = _market_key(market)
+    market_name = f"{market_key}_{suffix}"
+    if os.getenv(market_name) is not None:
+        return _env_float(market_name, default)
+    return _env_float(suffix, default)
+
+
+def _market_env_bool(market: str, suffix: str, default: bool = False) -> bool:
+    market_key = _market_key(market)
+    market_name = f"{market_key}_{suffix}"
+    if os.getenv(market_name) is not None:
+        return _env_bool(market_name, default)
+    return _env_bool(suffix, default)
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else None
+    except Exception:
+        return None
+
+
+def _preopen_pin_turnover(row: dict[str, Any]) -> float:
+    for key in ("extended_dollar_volume", "dollar_volume", "turnover", "prior_day_traded_value"):
+        value = _positive_number(row.get(key))
+        if value is not None:
+            return float(value)
+    price = (
+        _positive_number(row.get("price"))
+        or _positive_number(row.get("extended_price"))
+        or _positive_number(row.get("anchor_price"))
+        or 0.0
+    )
+    volume = _positive_number(row.get("volume")) or _positive_number(row.get("extended_volume")) or 0.0
+    return float(price) * float(volume)
+
+
+def _preopen_pin_seed_only(row: dict[str, Any], state: dict[str, Any]) -> bool:
+    values = [
+        row.get("provider"),
+        row.get("data_quality"),
+        row.get("source"),
+        state.get("provider"),
+        state.get("data_quality"),
+        state.get("source_status"),
+    ]
+    for value in values:
+        text = str(value or "").strip().lower()
+        if text in {"seed_only", "seed_watchlist"} or "seed_only" in text:
+            return True
+    for value in list(row.get("quality_tags") or []) + list(state.get("quality_tags") or []):
+        text = str(value or "").strip().lower()
+        if text in {"seed_only", "seed_watchlist"} or "seed_only" in text:
+            return True
+    return False
+
+
+def load_preopen_pin_candidates(
+    market: str,
+    *,
+    session_date: str | None = None,
+    mode: str = "live",
+    max_age_min: int | None = None,
+    min_score: float | None = None,
+    max_rank: int | None = None,
+    max_count: int | None = None,
+    include_soft: bool = False,
+    soft_max_rank: int | None = None,
+    min_dollar_volume: float | None = None,
+) -> list[dict[str, Any]]:
+    market_key = _market_key(market)
+    max_age = max_age_min if max_age_min is not None else _env_int("PREOPEN_PIN_STATE_MAX_AGE_MIN", 120)
+    score_threshold = min_score if min_score is not None else _env_float("PREOPEN_PIN_MIN_SCORE", 0.50)
+    rank_threshold = max_rank if max_rank is not None else _env_int("PREOPEN_PIN_MAX_RANK", 3)
+    soft_rank_threshold = soft_max_rank if soft_max_rank is not None else _env_int("PREOPEN_PIN_SOFT_MAX_RANK", 5)
+    limit = max_count if max_count is not None else _env_int("PREOPEN_PIN_MAX_COUNT", 5)
+    soft_limit = _env_int("PREOPEN_PIN_SOFT_MAX_COUNT", 5)
+    default_min_turnover = 50_000_000.0 if market_key == "US" else 1_000_000_000.0
+    min_turnover = (
+        float(min_dollar_volume)
+        if min_dollar_volume is not None
+        else _market_env_float(market_key, "PREOPEN_PIN_MIN_DOLLAR_VOLUME", default_min_turnover)
+    )
+    allow_seed_only = _market_env_bool(market_key, "PREOPEN_PIN_ALLOW_SEED_ONLY", False)
+    if limit <= 0:
+        return []
+    state = load_preopen_state(
+        market_key,
+        session_date=session_date,
+        max_age_min=max_age,
+        mode=mode,
+    )
+    candidates = list((state or {}).get("candidates") or [])
+    if not candidates:
+        return []
+
+    captured_at = str((state or {}).get("captured_at", "") or "")
+    hard_selected: list[tuple[int, float, str, dict[str, Any]]] = []
+    soft_selected: list[tuple[int, float, str, dict[str, Any]]] = []
+    for raw in candidates:
+        if not isinstance(raw, dict):
+            continue
+        ticker = _candidate_key(market_key, raw.get("ticker"))
+        if not ticker:
+            continue
+        score = _number_or_none(raw.get("preopen_score"))
+        rank = _positive_int(raw.get("shadow_preopen_rank"))
+        score_ok = score is not None and score >= float(score_threshold)
+        rank_ok = rank is not None and rank <= int(rank_threshold)
+        soft_rank_ok = rank is not None and rank <= int(soft_rank_threshold)
+        if not soft_rank_ok:
+            continue
+        turnover = _preopen_pin_turnover(raw)
+        turnover_ok = min_turnover <= 0 or turnover >= float(min_turnover)
+        seed_only = _preopen_pin_seed_only(raw, state or {})
+        seed_ok = allow_seed_only or not seed_only
+        hard_ok = bool(rank_ok and score_ok and turnover_ok and seed_ok)
+        row = {
+            key: value
+            for key, value in raw.items()
+            if key in _PREOPEN_PIN_SAFE_FIELDS
+        }
+        row["ticker"] = ticker
+        row.setdefault("market", market_key)
+        row.setdefault("session_date", str((state or {}).get("session_date") or session_date or ""))
+        row["preopen_pinned"] = hard_ok
+        row["preopen_pin_tier"] = "HARD" if hard_ok else "SOFT"
+        row["preopen_pin_require_confirmation"] = bool(hard_ok)
+        reasons: list[str] = []
+        if rank_ok:
+            reasons.append(f"rank<={int(rank_threshold)}")
+        elif soft_rank_ok:
+            reasons.append(f"soft_rank<={int(soft_rank_threshold)}")
+        if score_ok:
+            reasons.append(f"score>={float(score_threshold):.2f}")
+        if turnover_ok:
+            reasons.append(f"turnover>={float(min_turnover):.0f}")
+        if seed_ok:
+            reasons.append("not_seed_only")
+        row["preopen_pin_reason"] = ",".join(reasons) or "preopen_pin"
+        row["preopen_anchor_price"] = (
+            _positive_number(raw.get("anchor_price"))
+            or _positive_number(raw.get("price"))
+            or _positive_number(raw.get("extended_price"))
+        )
+        row["preopen_captured_at"] = str(raw.get("captured_at") or captured_at)
+        row["preopen_state_age_min"] = (state or {}).get("state_age_min")
+        row["preopen_pin_turnover"] = round(float(turnover), 2)
+        rejected: list[str] = []
+        if not rank_ok:
+            rejected.append(f"rank>{int(rank_threshold)}")
+        if not score_ok:
+            rejected.append(f"score<{float(score_threshold):.2f}")
+        if not turnover_ok:
+            rejected.append(f"turnover<{float(min_turnover):.0f}")
+        if not seed_ok:
+            rejected.append("seed_only")
+        if rejected:
+            row["preopen_pin_rejected_reason"] = ",".join(rejected)
+        sortable = (rank or 1_000_000, -(float(score or 0.0)), ticker, row)
+        if hard_ok:
+            hard_selected.append(sortable)
+        elif include_soft:
+            soft_selected.append(sortable)
+
+    hard_selected.sort(key=lambda item: (item[0], item[1], item[2]))
+    soft_selected.sort(key=lambda item: (item[0], item[1], item[2]))
+    rows = [row for _, _, _, row in hard_selected[:limit]]
+    if include_soft and soft_limit > 0:
+        rows.extend(row for _, _, _, row in soft_selected[:soft_limit])
+    return rows
+
+
 def save_rank_diff_record(market: str, session_date: str, record: dict[str, Any], *, mode: str = "live") -> None:
     runtime_mode = _runtime_mode(mode)
     payload = dict(record or {})

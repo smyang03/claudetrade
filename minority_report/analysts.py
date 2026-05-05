@@ -457,12 +457,47 @@ def _candidate_earnings_hint(candidate: dict) -> str:
     return " ".join(parts)
 
 
+def _candidate_preopen_pin_hint(candidate: dict) -> str:
+    tier = str(candidate.get("preopen_pin_tier", "") or "").strip().upper()
+    pinned = bool(candidate.get("preopen_pinned")) or tier == "HARD"
+    if not pinned and not tier:
+        return ""
+    parts = [f"preopen_pin={tier or 'HARD'}"]
+    rank = candidate.get("shadow_preopen_rank")
+    if rank is not None:
+        parts.append(f"rank={rank}")
+    score = candidate.get("preopen_score")
+    try:
+        if score is not None:
+            parts.append(f"score={float(score):.2f}")
+    except Exception:
+        pass
+    anchor = candidate.get("preopen_anchor_price") or candidate.get("anchor_price")
+    try:
+        if anchor is not None and float(anchor) > 0:
+            parts.append(f"anchor={float(anchor):.4g}")
+    except Exception:
+        pass
+    turnover = candidate.get("preopen_pin_turnover")
+    try:
+        if turnover is not None and float(turnover) > 0:
+            parts.append(f"pin_turn={float(turnover)/1e6:.1f}M")
+    except Exception:
+        pass
+    if bool(candidate.get("preopen_pin_require_confirmation")):
+        parts.append("confirm=required_before_trade_ready")
+    reason = str(candidate.get("preopen_pin_reason", "") or "").strip()
+    if reason:
+        parts.append(f"pin_reason={reason}")
+    return " ".join(parts)
+
+
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
     if market == "US":
-        hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "24"))
+        hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "30"))
         watch_margin = 4
     else:
-        hard_cap = int(os.getenv("KR_SELECTION_PROMPT_CAP", "28"))
+        hard_cap = int(os.getenv("KR_SELECTION_PROMPT_CAP", "30"))
         watch_margin = 8
     target = max(trade_max + 8, min(watch_max + watch_margin, hard_cap))
     return max(trade_max, min(target, hard_cap))
@@ -494,6 +529,21 @@ def _curate_selection_candidates(candidates: list[dict], market: str, prompt_cap
     _annotate_candidate_prompt_features(candidates or [])
     chosen: list[dict] = []
     deferred: list[dict] = []
+    hard_pin_candidates = [
+        candidate
+        for candidate in candidates or []
+        if str((candidate or {}).get("preopen_pin_tier", "") or "").strip().upper() == "HARD"
+        or bool((candidate or {}).get("preopen_pinned"))
+    ]
+    hard_pin_seen: set[str] = set()
+    for candidate in hard_pin_candidates:
+        ticker = str((candidate or {}).get("ticker", "") or "").strip().upper()
+        if not ticker or ticker in hard_pin_seen:
+            continue
+        hard_pin_seen.add(ticker)
+        chosen.append(candidate)
+        if len(chosen) >= prompt_cap:
+            return chosen[:prompt_cap]
     category_counts: dict[str, int] = {}
     sector_counts: dict[str, int] = {}
     overextended_count = 0
@@ -501,6 +551,9 @@ def _curate_selection_candidates(candidates: list[dict], market: str, prompt_cap
     kosdaq_count = 0
 
     for candidate in candidates or []:
+        ticker = str((candidate or {}).get("ticker", "") or "").strip().upper()
+        if ticker and ticker in hard_pin_seen:
+            continue
         category = str(candidate.get("category", "") or "").strip().lower()
         sector = str(candidate.get("sector", "") or "").strip().lower()
         liquidity_bucket = str(candidate.get("liquidity_bucket", "") or "").strip().lower()
@@ -1222,6 +1275,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"sector={sector}" if sector else "",
             f"liq={liquidity_bucket}",
             _candidate_earnings_hint(candidate),
+            _candidate_preopen_pin_hint(candidate),
             (
                 f"from_high={_safe_float(from_high_pct, 0.0):+.1f}%({from_high_bucket})"
                 if from_high_pct is not None else
@@ -1329,6 +1383,8 @@ execution_phase: {execution_phase or 'unspecified'}
 - trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개이며 0개도 허용됩니다.
 - trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}
 - 저유동성, 구조화 상품, 과열, 손절폭 과대 후보는 trade_ready에서 제외하세요.
+- preopen_pin=HARD 후보는 장전 우수 후보라 평가 기회를 보장한 것이며 자동 매수 후보가 아닙니다.
+- preopen_pin=HARD confirm=required_before_trade_ready 후보는 anchor 대비 현재가 안정, OR/전략 신호, 개장 후 품질 확인 전에는 trade_ready로 올리지 마세요.
 - Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.
 - Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.
 - Use recent selection feedback to calibrate trade_ready aggressiveness.

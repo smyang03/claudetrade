@@ -396,6 +396,7 @@ _LIVE_STATUS_MIN_INTERVAL = float(os.getenv("LIVE_STATUS_MIN_INTERVAL_SEC", "10"
 _MIN_EFFECTIVE_ORDER_KRW = float(os.getenv("MIN_EFFECTIVE_ORDER_KRW", "30000"))
 _MIN_EFFECTIVE_ORDER_USD = float(os.getenv("MIN_EFFECTIVE_ORDER_USD", "30"))
 _MICRO_PROBE_STRATEGY = "MICRO_PROBE"
+_RECOVERY_MICRO_STRATEGY = "RECOVERY_MICRO"
 _VIX_SIZE_TIERS = [
     (30.0, float(os.getenv("VIX_MULT_30", "0.55"))),   # VIX 30+ -> 55%
     (25.0, float(os.getenv("VIX_MULT_25", "0.70"))),   # VIX 25+ -> 70%
@@ -535,6 +536,16 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
+def _market_dynamic_universe_top_n_env(market: str) -> int:
+    market_key = str(market or "").upper()
+    default = _DYNAMIC_UNIVERSE_TOP_N_DEFAULTS.get(market_key, 20)
+    raw = os.getenv(f"{market_key}_DYNAMIC_UNIVERSE_TOP_N")
+    if raw is None:
+        raw = os.getenv("DYNAMIC_UNIVERSE_TOP_N", str(default))
+    try:
+        return int(raw)
+    except Exception:
+        return default
 def _v2_fresh_brain_policy_enabled() -> bool:
     policy = str(os.getenv("V2_BRAIN_POLICY", "") or "").strip().lower()
     if policy in {"fresh", "fresh_v2", "fresh_v2_reference_v1"}:
@@ -732,6 +743,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.micro_probe_max_order_krw = float(os.getenv("MICRO_PROBE_MAX_ORDER_KRW", "50000"))
         self.micro_probe_max_daily_trades = int(os.getenv("MICRO_PROBE_MAX_DAILY_TRADES", "2"))
         self.micro_probe_max_open_positions = int(os.getenv("MICRO_PROBE_MAX_OPEN_POSITIONS", "2"))
+        self.enable_recovery_micro = _env_bool("RECOVERY_MICRO_ENABLED", True)
+        self.recovery_micro_paper_only = _env_bool("RECOVERY_MICRO_PAPER_ONLY", False)
+        self.recovery_micro_allowed_markets = {
+            item.strip().upper()
+            for item in os.getenv("RECOVERY_MICRO_MARKETS", "KR,US").split(",")
+            if item.strip()
+        }
+        self.recovery_micro_allowed_modes = {
+            item.strip().upper()
+            for item in os.getenv(
+                "RECOVERY_MICRO_MODES",
+                "AGGRESSIVE,MODERATE_BULL,RISK_ON,MILD_BULL,BALANCED,NEUTRAL",
+            ).split(",")
+            if item.strip()
+        }
+        self.recovery_micro_min_entry_priority = float(os.getenv("RECOVERY_MICRO_MIN_ENTRY_PRIORITY", "0.70"))
+        self.recovery_micro_max_order_krw_kr = float(os.getenv("RECOVERY_MICRO_MAX_ORDER_KRW_KR", "150000"))
+        self.recovery_micro_max_order_krw_us = float(os.getenv("RECOVERY_MICRO_MAX_ORDER_KRW_US", "180000"))
+        self.recovery_micro_max_daily_trades = int(os.getenv("RECOVERY_MICRO_MAX_DAILY_TRADES", "1"))
+        self.recovery_micro_max_open_positions = int(os.getenv("RECOVERY_MICRO_MAX_OPEN_POSITIONS", "1"))
         self._last_session_date_diag = {"KR": None, "US": None}
         self.gap_pullback_atr_position_sizing = _env_bool("GAP_PULLBACK_ATR_POSITION_SIZING", False)
         self.soft_exit_arbitration_enabled = _env_bool("SOFT_EXIT_ARBITRATION_ENABLED", True)
@@ -747,8 +778,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "US": int(os.getenv("US_SCREEN_TOP_N", str(_RAW_SCREEN_TOP_N_DEFAULTS["US"]))),
         }
         self.dynamic_universe_top_n_by_market = {
-            "KR": int(os.getenv("KR_DYNAMIC_UNIVERSE_TOP_N", str(_DYNAMIC_UNIVERSE_TOP_N_DEFAULTS["KR"]))),
-            "US": int(os.getenv("US_DYNAMIC_UNIVERSE_TOP_N", str(_DYNAMIC_UNIVERSE_TOP_N_DEFAULTS["US"]))),
+            "KR": _market_dynamic_universe_top_n_env("KR"),
+            "US": _market_dynamic_universe_top_n_env("US"),
         }
         # 트레일링 스탑
         self.enable_trailing_stop     = _env_bool("TRAILING_STOP_ENABLED", True)
@@ -778,9 +809,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 진입 차단: {ticker: unblock_epoch_sec} — 손절 쿨다운 + 중복 매수 방지
         self._entry_blocked: dict[str, float] = {}
         self.claude_control: dict = {}
-        # 당일 손절 카운터 {market: count} — 연속 손절 시 size_mult 자동 축소
+        # Stop cluster counter: first stop cools down and shrinks size; second stop blocks new entries.
         self._daily_sl_count: dict[str, int] = {"KR": 0, "US": 0}
         self._daily_sl_last_at: dict[str, Optional[datetime]] = {"KR": None, "US": None}
+        self._daily_sl_event_keys: set[str] = set()
         # 이번 세션에서 매도 완료된 티커 — broker sync 재주입 방지
         self._session_closed_tickers: dict[str, set] = {"KR": set(), "US": set()}
         # WS tick 기반 장중 고가/저가 누적 — 당일봉 주입 시 단일가봉 탈출에 사용
@@ -2054,6 +2086,130 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             seen.add(key)
             merged.append(dict(candidate or {}))
         return merged
+    def _preopen_pin_window_min(self, market: str) -> int:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        market_default = 45 if market_key == "US" else 60
+        raw = os.getenv(
+            f"{market_key}_PREOPEN_PIN_WINDOW_MIN",
+            os.getenv("PREOPEN_PIN_WINDOW_MIN", str(market_default)),
+        )
+        try:
+            return max(0, int(raw))
+        except Exception:
+            return market_default
+    def _preopen_pin_active(self, market: str) -> bool:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not _env_bool("PREOPEN_PIN_ENABLED", True):
+            return False
+        try:
+            if self._current_judgment_phase(market_key) == _JUDGMENT_PHASE_PREOPEN:
+                return False
+        except Exception:
+            pass
+        try:
+            elapsed = float(self._market_elapsed_min(market_key) or 0.0)
+        except Exception:
+            return False
+        return 0.0 <= elapsed <= float(self._preopen_pin_window_min(market_key))
+    @staticmethod
+    def _is_hard_preopen_pin(candidate: dict) -> bool:
+        tier = str((candidate or {}).get("preopen_pin_tier", "") or "").strip().upper()
+        if tier:
+            return tier == "HARD"
+        return bool((candidate or {}).get("preopen_pinned"))
+    def _load_preopen_pin_candidates(self, market: str, phase: str = "") -> list[dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not self._preopen_pin_active(market_key):
+            return []
+        try:
+            from preopen.storage import load_preopen_pin_candidates
+            pins = load_preopen_pin_candidates(
+                market_key,
+                session_date=self._current_session_date_str(market_key),
+                mode=self._preopen_runtime_mode(),
+                include_soft=True,
+            )
+        except Exception as exc:
+            log.debug(f"[preopen pin] {market_key} load skipped phase={phase}: {exc}")
+            return []
+        hard_pins = [dict(pin or {}) for pin in pins if self._is_hard_preopen_pin(pin)]
+        soft_pins = [dict(pin or {}) for pin in pins if not self._is_hard_preopen_pin(pin)]
+        if hard_pins or soft_pins:
+            log.info(
+                f"[preopen pin] {market_key} phase={phase or '-'} "
+                f"window={self._preopen_pin_window_min(market_key)}m "
+                f"hard={len(hard_pins)} soft={len(soft_pins)} "
+                f"hard_tickers={[p.get('ticker') for p in hard_pins]} "
+                f"soft_tickers={[p.get('ticker') for p in soft_pins]}"
+            )
+        return hard_pins
+    def _merge_preopen_pin_candidates(
+        self,
+        market: str,
+        candidates: list,
+        phase: str = "",
+        pin_candidates: Optional[list[dict]] = None,
+    ) -> list[dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        raw_pins = list(pin_candidates) if pin_candidates is not None else self._load_preopen_pin_candidates(market_key, phase)
+        pins = [dict(pin or {}) for pin in raw_pins if self._is_hard_preopen_pin(pin)]
+        if not pins:
+            return [dict(c or {}) for c in (candidates or []) if isinstance(c, dict)]
+        merged = [dict(c or {}) for c in (candidates or []) if isinstance(c, dict)]
+        index: dict[str, int] = {}
+        for idx, candidate in enumerate(merged):
+            key = self._candidate_identity_key(market_key, candidate)
+            if key and key not in index:
+                index[key] = idx
+        appended: list[str] = []
+        refreshed: list[str] = []
+        for pin in pins:
+            if not isinstance(pin, dict):
+                continue
+            key = self._candidate_identity_key(market_key, pin)
+            if not key:
+                continue
+            ticker = str(pin.get("ticker", "") or "").strip()
+            meta = {
+                k: v
+                for k, v in pin.items()
+                if k.startswith("preopen_")
+                or k in {"shadow_preopen_rank", "preopen_score", "preopen_grade", "source_overlap_count"}
+            }
+            meta["preopen_pinned"] = True
+            if key in index:
+                merged[index[key]].update(meta)
+                refreshed.append(ticker)
+            else:
+                merged.append(dict(pin))
+                index[key] = len(merged) - 1
+                appended.append(ticker)
+        if appended or refreshed:
+            log.info(
+                f"[preopen pin merge] {market_key} phase={phase or '-'} "
+                f"appended={appended} refreshed={refreshed}"
+            )
+        return merged
+    def _extend_universe_with_preopen_pins(
+        self,
+        market: str,
+        allowed_tickers: Optional[list],
+        pin_candidates: Optional[list[dict]] = None,
+    ) -> list:
+        base = list(allowed_tickers or [])
+        if not base:
+            return []
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        raw_pins = list(pin_candidates) if pin_candidates is not None else self._load_preopen_pin_candidates(market_key, "universe_filter")
+        pins = [dict(pin or {}) for pin in raw_pins if self._is_hard_preopen_pin(pin)]
+        seen = {self._selection_ticker_key(market_key, t) for t in base}
+        for pin in pins or []:
+            ticker = str((pin or {}).get("ticker", "") or "").strip()
+            key = self._selection_ticker_key(market_key, ticker)
+            if ticker and key not in seen:
+                base.append(ticker)
+                seen.add(key)
+        return base
     def _load_persisted_screen_baseline(self, market: str) -> list[dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         path = _US_SCREEN_CACHE_PATH if market_key == "US" else _KR_SCREEN_CACHE_PATH
@@ -2667,13 +2823,82 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "details": details,
                 }
         return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
-    def _note_stop_loss_event(self, market: str, ticker: str, reason: str = "") -> int:
+    def _stop_loss_event_key(
+        self,
+        market: str,
+        ticker: str,
+        reason: str = "",
+        *,
+        event_id: str = "",
+        order_no: str = "",
+        qty: int | None = None,
+        pnl_krw: float | None = None,
+        pnl_pct: float | None = None,
+        occurred_at: str | None = None,
+    ) -> str:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = str(ticker or "").strip()
+        if market_key == "US":
+            ticker_key = ticker_key.upper()
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = datetime.now(KST).date().isoformat()
+        reason_key = str(reason or "stop").strip().upper()
+        stable_id = str(order_no or event_id or "").strip()
+        if stable_id:
+            return "|".join((session_date, market_key, ticker_key, reason_key, stable_id))
+        qty_key = "" if qty is None else str(int(qty or 0))
+        try:
+            pnl_krw_key = "" if pnl_krw is None else str(int(round(float(pnl_krw or 0.0))))
+        except (TypeError, ValueError):
+            pnl_krw_key = ""
+        ts_key = str(occurred_at or datetime.now(KST).isoformat(timespec="minutes")).replace(" ", "T")[:16]
+        if qty_key or pnl_krw_key:
+            return "|".join((session_date, market_key, ticker_key, reason_key, qty_key, ts_key, pnl_krw_key))
+        return "|".join((session_date, market_key, ticker_key, reason_key, ts_key))
+
+    def _note_stop_loss_event(
+        self,
+        market: str,
+        ticker: str,
+        reason: str = "",
+        *,
+        event_id: str = "",
+        order_no: str = "",
+        qty: int | None = None,
+        pnl_krw: float | None = None,
+        pnl_pct: float | None = None,
+        occurred_at: str | None = None,
+    ) -> int:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         ticker_key = str(ticker or "").strip()
         if market_key == "US":
             ticker_key = ticker_key.upper()
         if ticker_key:
             self._v2_same_day_stop_tickers.setdefault(market_key, set()).add(ticker_key)
+        event_key = self._stop_loss_event_key(
+            market_key,
+            ticker_key,
+            reason,
+            event_id=event_id,
+            order_no=order_no,
+            qty=qty,
+            pnl_krw=pnl_krw,
+            pnl_pct=pnl_pct,
+            occurred_at=occurred_at,
+        )
+        seen = getattr(self, "_daily_sl_event_keys", None)
+        if seen is None:
+            self._daily_sl_event_keys = set()
+            seen = self._daily_sl_event_keys
+        count = int(self._daily_sl_count.get(market_key, 0) or 0)
+        if event_key in seen:
+            log.info(
+                f"[stop cluster dedupe] {market_key} count={count} ticker={ticker_key} reason={reason or 'stop'}"
+            )
+            return count
+        seen.add(event_key)
         self._daily_sl_count[market_key] = int(self._daily_sl_count.get(market_key, 0) or 0) + 1
         self._daily_sl_last_at[market_key] = datetime.now(KST)
         count = int(self._daily_sl_count.get(market_key, 0) or 0)
@@ -3888,6 +4113,148 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "oversize_ratio": oversize_ratio,
             "entry_priority_score": float(entry_priority_score or 0.0),
         }
+    def _is_recovery_micro_record(self, item: dict) -> bool:
+        return bool(item.get("recovery_micro")) or str(item.get("strategy", "") or "").upper() == _RECOVERY_MICRO_STRATEGY
+
+    def _recovery_micro_session_count(self, market: str) -> int:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        count = 0
+        for event in getattr(self, "decision_event_log", []) or []:
+            if event.get("market") != market_key:
+                continue
+            if event.get("action") in ("buy_order", "buy_signal") and self._is_recovery_micro_record(event):
+                count += 1
+        return count
+
+    def _recovery_micro_open_count(self, market: str) -> int:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        count = 0
+        for pos in getattr(getattr(self, "risk", None), "positions", []) or []:
+            ticker = str(pos.get("ticker", "") or "").strip()
+            if ticker and self._ticker_market(ticker) == market_key and self._is_recovery_micro_record(pos):
+                count += 1
+        for order in getattr(self, "pending_orders", []) or []:
+            if str(order.get("market", "") or "").upper() == market_key and self._is_recovery_micro_record(order):
+                count += 1
+        return count
+
+    def _recovery_micro_exit_policy(self, market: str) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        hard_loss_default = "1.2" if market_key == "US" else "1.5"
+        hard_loss_pct = float(
+            os.getenv(
+                f"RECOVERY_MICRO_HARD_LOSS_PCT_{market_key}",
+                os.getenv("RECOVERY_MICRO_HARD_LOSS_PCT", hard_loss_default),
+            )
+        )
+        return {
+            "recovery_micro_no_carry": True,
+            "recovery_micro_hard_loss_pct": max(0.1, hard_loss_pct),
+            "recovery_micro_profit_guard_trigger_pct": float(os.getenv("RECOVERY_MICRO_PROFIT_GUARD_TRIGGER_PCT", "1.0")),
+            "recovery_micro_profit_guard_floor_pct": float(os.getenv("RECOVERY_MICRO_PROFIT_GUARD_FLOOR_PCT", "0.2")),
+            "recovery_micro_trail_trigger_pct": float(os.getenv("RECOVERY_MICRO_TRAIL_TRIGGER_PCT", "1.5")),
+            "recovery_micro_trail_pct": float(os.getenv("RECOVERY_MICRO_TRAIL_PCT", "0.9")),
+            "recovery_micro_time_stop_minutes": int(os.getenv("RECOVERY_MICRO_TIME_STOP_MINUTES", "30")),
+            "recovery_micro_time_stop_min_pnl_pct": float(os.getenv("RECOVERY_MICRO_TIME_STOP_MIN_PNL_PCT", "0.3")),
+            "recovery_micro_force_time_stop_minutes": int(os.getenv("RECOVERY_MICRO_FORCE_TIME_STOP_MINUTES", "45")),
+            "recovery_micro_force_time_stop_min_pnl_pct": float(os.getenv("RECOVERY_MICRO_FORCE_TIME_STOP_MIN_PNL_PCT", "0.5")),
+            "recovery_micro_preclose_minutes": int(os.getenv("RECOVERY_MICRO_PRECLOSE_MINUTES", "10")),
+        }
+
+    def _recovery_micro_force_exit_at(self, market: str, preclose_minutes: int) -> str:
+        try:
+            close_dt = self._market_close_anchor_dt(str(market or "").upper())
+            return (close_dt - timedelta(minutes=max(1, int(preclose_minutes or 10)))).isoformat(timespec="seconds")
+        except Exception:
+            return ""
+
+    def _recovery_micro_adjustment(
+        self,
+        *,
+        market: str,
+        ticker: str,
+        mode: str,
+        source_strategy: str,
+        entry_priority_score: float,
+        qty: int,
+        risk_price_krw: float,
+        original_order_cost_krw: float,
+        available_budget_krw: float,
+        cash_krw: float,
+        daily_stop_count: int,
+        realized_daily_pnl_pct: float,
+    ) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        if not getattr(self, "enable_recovery_micro", False):
+            return {"allowed": False, "reason": "disabled"}
+        if getattr(self, "recovery_micro_paper_only", False) and not getattr(self, "is_paper", True):
+            return {"allowed": False, "reason": "live_disabled"}
+        if market_key not in getattr(self, "recovery_micro_allowed_markets", {"KR", "US"}):
+            return {"allowed": False, "reason": "market_not_allowed"}
+        allowed_modes = getattr(self, "recovery_micro_allowed_modes", set())
+        if allowed_modes and str(mode or "").upper() not in allowed_modes:
+            return {"allowed": False, "reason": "mode_not_allowed"}
+        if int(daily_stop_count or 0) != 1:
+            return {"allowed": False, "reason": "requires_exactly_one_stop"}
+        ticker_key = str(ticker or "").strip().upper() if market_key == "US" else str(ticker or "").strip()
+        stopped = set((getattr(self, "_v2_same_day_stop_tickers", {}) or {}).get(market_key, set()) or set())
+        if ticker_key and ticker_key in stopped:
+            return {"allowed": False, "reason": "same_ticker_stopped"}
+        min_score = float(getattr(self, "recovery_micro_min_entry_priority", 0.70) or 0.0)
+        if float(entry_priority_score or 0.0) < min_score:
+            return {"allowed": False, "reason": "entry_priority_too_low"}
+        daily_limit = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "-2.0"))
+        if float(realized_daily_pnl_pct or 0.0) <= daily_limit:
+            return {"allowed": False, "reason": "realized_daily_loss_limit"}
+        if self._recovery_micro_session_count(market_key) >= int(getattr(self, "recovery_micro_max_daily_trades", 0) or 0):
+            return {"allowed": False, "reason": "daily_limit"}
+        if self._recovery_micro_open_count(market_key) >= int(getattr(self, "recovery_micro_max_open_positions", 0) or 0):
+            return {"allowed": False, "reason": "open_limit"}
+        price = float(risk_price_krw or 0.0)
+        original_qty = int(qty or 0)
+        if price <= 0 or original_qty <= 0:
+            return {"allowed": False, "reason": "invalid_order_basis"}
+        max_order = (
+            float(getattr(self, "recovery_micro_max_order_krw_us", 180000.0) or 0.0)
+            if market_key == "US"
+            else float(getattr(self, "recovery_micro_max_order_krw_kr", 150000.0) or 0.0)
+        )
+        cap_values = [
+            cap for cap in (
+                max_order,
+                float(available_budget_krw or 0.0),
+                float(cash_krw or 0.0),
+            )
+            if cap > 0
+        ]
+        if not cap_values:
+            return {"allowed": False, "reason": "no_positive_spend_cap"}
+        spend_cap = min(cap_values)
+        adjusted_qty = min(original_qty, int(spend_cap // price))
+        if adjusted_qty <= 0:
+            return {"allowed": False, "reason": "cap_too_small_for_one_share"}
+        adjusted_cost = adjusted_qty * price
+        policy = self._recovery_micro_exit_policy(market_key)
+        force_exit_at = self._recovery_micro_force_exit_at(
+            market_key,
+            int(policy.get("recovery_micro_preclose_minutes", 10) or 10),
+        )
+        return {
+            "allowed": True,
+            "reason": "first_stop_recovery_micro",
+            "source_strategy": source_strategy,
+            "original_qty": original_qty,
+            "adjusted_qty": adjusted_qty,
+            "original_order_cost_krw": float(original_order_cost_krw or 0.0),
+            "adjusted_order_cost_krw": adjusted_cost,
+            "max_order_krw": max_order,
+            "entry_priority_score": float(entry_priority_score or 0.0),
+            "daily_stop_count": int(daily_stop_count or 0),
+            "realized_daily_pnl_pct": float(realized_daily_pnl_pct or 0.0),
+            "recovery_micro_force_exit_at": force_exit_at,
+            **policy,
+        }
+
     def _submit_micro_probe_buy_order(
         self,
         *,
@@ -4708,6 +5075,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             raw_candidates = self._screen_market_candidates(market, mode)
             if market == "KR" and raw_candidates:
                 self._last_kr_candidates = raw_candidates
+            opening_pin_candidates = self._load_preopen_pin_candidates(market, "opening_fresh_observe")
+            raw_candidates = self._merge_preopen_pin_candidates(
+                market,
+                raw_candidates,
+                "opening_fresh_observe",
+                pin_candidates=opening_pin_candidates,
+            )
             metrics = self._opening_fresh_quality_metrics(market, raw_candidates)
             log.info(
                 f"[opening_fresh_quality] {market} "
@@ -4718,7 +5092,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"judge_triggered={str(metrics.get('judge_triggered')).lower()} "
                 f"reason={metrics.get('trigger_reason')}"
             )
-            prompt_set = set((self.today_judgment or {}).get("universe_tickers") or self.today_tickers.get(market, []) or [])
+            prompt_set = set(self._extend_universe_with_preopen_pins(
+                market,
+                (self.today_judgment or {}).get("universe_tickers") or self.today_tickers.get(market, []) or [],
+                opening_pin_candidates,
+            ))
             prompt_candidates = [c for c in raw_candidates or [] if str(c.get("ticker", "") or "") in prompt_set]
             self._record_candidate_quality(
                 market,
@@ -5027,8 +5405,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self._last_kr_candidates = candidates
             else:
                 candidates = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
-            if not candidates:
+            manual_pin_candidates = self._load_preopen_pin_candidates(target_market, "manual_rescreen")
+            if not candidates and not manual_pin_candidates:
                 raise RuntimeError("재스크리닝 후보가 없습니다.")
+            candidates = self._merge_preopen_pin_candidates(
+                target_market,
+                candidates or [],
+                "manual_rescreen",
+                pin_candidates=manual_pin_candidates,
+            )
             raw_candidates = list(candidates or [])
             self._log_screen_candidates(target_market, candidates, "manual_rescreen")
             candidates = self._prefill_history_sync(candidates, target_market)
@@ -6032,6 +6417,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "order_no": template.get("order_no", ""),
             "fill_time": template.get("fill_time", ""),
             "strategy": template.get("strategy", "broker_sync"),
+            "source_strategy": template.get("source_strategy", ""),
+            "micro_probe": bool(template.get("micro_probe")),
+            "micro_probe_reason": template.get("micro_probe_reason", ""),
+            "recovery_micro": bool(template.get("recovery_micro")),
+            "recovery_micro_reason": template.get("recovery_micro_reason", ""),
+            "recovery_micro_source_strategy": template.get("recovery_micro_source_strategy", template.get("source_strategy", "")),
+            "recovery_micro_no_carry": bool(template.get("recovery_micro_no_carry", False)),
+            "recovery_micro_force_exit_at": template.get("recovery_micro_force_exit_at", ""),
+            "recovery_micro_hard_loss_pct": float(template.get("recovery_micro_hard_loss_pct", 0) or 0),
+            "recovery_micro_profit_guard_trigger_pct": float(template.get("recovery_micro_profit_guard_trigger_pct", 0) or 0),
+            "recovery_micro_profit_guard_floor_pct": float(template.get("recovery_micro_profit_guard_floor_pct", 0) or 0),
+            "recovery_micro_trail_trigger_pct": float(template.get("recovery_micro_trail_trigger_pct", 0) or 0),
+            "recovery_micro_trail_pct": float(template.get("recovery_micro_trail_pct", 0) or 0),
+            "recovery_micro_time_stop_minutes": int(template.get("recovery_micro_time_stop_minutes", 0) or 0),
+            "recovery_micro_time_stop_min_pnl_pct": float(template.get("recovery_micro_time_stop_min_pnl_pct", 0) or 0),
+            "recovery_micro_force_time_stop_minutes": int(template.get("recovery_micro_force_time_stop_minutes", 0) or 0),
+            "recovery_micro_force_time_stop_min_pnl_pct": float(template.get("recovery_micro_force_time_stop_min_pnl_pct", 0) or 0),
+            "recovery_micro_preclose_minutes": int(template.get("recovery_micro_preclose_minutes", 0) or 0),
             "tp": avg_price * (1 + tp_pct),
             "sl": avg_price * (1 - sl_pct),
             "max_hold": int(template.get("max_hold", 1)),
@@ -6042,6 +6445,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "entry_session_date",
                 template.get("session_date", self._current_session_date_str(market)),
             ),
+            "entry_time": template.get("entry_time", template.get("created_at", "")),
             "trailing": bool(template.get("trailing", False)),
             "trail_sl": float(template.get("trail_sl", 0.0)),
             "trail_sl_usd": float(template.get("trail_sl_usd", 0.0)),
@@ -6934,6 +7338,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "source_strategy": order.get("source_strategy", ""),
             "micro_probe": bool(order.get("micro_probe")),
             "micro_probe_reason": order.get("micro_probe_reason", ""),
+            "recovery_micro": bool(order.get("recovery_micro")),
+            "recovery_micro_reason": order.get("recovery_micro_reason", ""),
+            "recovery_micro_source_strategy": order.get("recovery_micro_source_strategy", order.get("source_strategy", "")),
+            "recovery_micro_no_carry": bool(order.get("recovery_micro_no_carry", False)),
+            "recovery_micro_force_exit_at": order.get("recovery_micro_force_exit_at", ""),
+            "recovery_micro_hard_loss_pct": float(order.get("recovery_micro_hard_loss_pct", 0) or 0),
+            "recovery_micro_profit_guard_trigger_pct": float(order.get("recovery_micro_profit_guard_trigger_pct", 0) or 0),
+            "recovery_micro_profit_guard_floor_pct": float(order.get("recovery_micro_profit_guard_floor_pct", 0) or 0),
+            "recovery_micro_trail_trigger_pct": float(order.get("recovery_micro_trail_trigger_pct", 0) or 0),
+            "recovery_micro_trail_pct": float(order.get("recovery_micro_trail_pct", 0) or 0),
+            "recovery_micro_time_stop_minutes": int(order.get("recovery_micro_time_stop_minutes", 0) or 0),
+            "recovery_micro_time_stop_min_pnl_pct": float(order.get("recovery_micro_time_stop_min_pnl_pct", 0) or 0),
+            "recovery_micro_force_time_stop_minutes": int(order.get("recovery_micro_force_time_stop_minutes", 0) or 0),
+            "recovery_micro_force_time_stop_min_pnl_pct": float(order.get("recovery_micro_force_time_stop_min_pnl_pct", 0) or 0),
+            "recovery_micro_preclose_minutes": int(order.get("recovery_micro_preclose_minutes", 0) or 0),
             "original_order_cost_krw": float(order.get("original_order_cost_krw", 0) or 0),
             "adjusted_order_cost_krw": float(order.get("adjusted_order_cost_krw", 0) or 0),
             "oversize_ratio": float(order.get("oversize_ratio", 0) or 0),
@@ -6946,6 +7365,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "entry_date": self._current_session_date_str(market),
             "session_date": order.get("session_date", self._current_session_date_str(market)),
             "entry_session_date": order.get("session_date", self._current_session_date_str(market)),
+            "entry_time": order.get("entry_time", order.get("created_at", "")),
             "trailing": False,
             "trail_sl": 0.0,
             "trail_sl_usd": 0.0,     # US 트레일링 SL (USD 기준)
@@ -7259,6 +7679,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "pathb_path_run_id": order.get("pathb_path_run_id", ""),
                     "micro_probe": bool(order.get("micro_probe")),
                     "micro_probe_reason": order.get("micro_probe_reason", ""),
+                    "recovery_micro": bool(order.get("recovery_micro")),
+                    "recovery_micro_reason": order.get("recovery_micro_reason", ""),
+                    "recovery_micro_source_strategy": order.get("recovery_micro_source_strategy", order.get("source_strategy", "")),
                     "original_order_cost_krw": float(order.get("original_order_cost_krw", 0) or 0),
                     "adjusted_order_cost_krw": float(order.get("adjusted_order_cost_krw", 0) or 0),
                     "oversize_ratio": float(order.get("oversize_ratio", 0) or 0),
@@ -7662,7 +8085,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "profit_floor": 2,
                 "stop_loss": 3,
                 "trail_stop": 4,
-                "tp_check": 5,
+                "recovery_micro_time_stop": 5,
+                "pre_close": 6,
+                "tp_check": 7,
             }
             deduped: dict[tuple[str, str], dict] = {}
             for cand in candidates:
@@ -8488,12 +8913,292 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         log.info(f"[auto sell review SELL] {market} {ticker} reason={reason_key} confidence={confidence:.2f}")
         return {"allowed": True, "advice": advice, **payload}
 
+    def _sell_fill_confirmation_required(self, market: str) -> bool:
+        if self.is_paper:
+            return False
+        raw = str(os.getenv("LIVE_SELL_REQUIRE_FILL_CONFIRMATION", "1") or "1").strip().lower()
+        return raw not in ("0", "false", "no", "off")
+
+    def _lookup_order_fill(self, market: str, order_no: str, ticker: str, created_at: str = "") -> Optional[dict]:
+        market_key = str(market or "KR").upper()
+        order_key = str(order_no or "").strip()
+        if not order_key:
+            return None
+        if market_key == "KR":
+            fill = get_order_fill_kr(
+                self._token_for_market("KR"),
+                order_no=order_key,
+                ticker=ticker,
+                trade_date=datetime.now(KST).strftime("%Y%m%d"),
+            )
+        else:
+            fill = get_order_fill_us(
+                self._token_for_market("US"),
+                order_no=order_key,
+                ticker=ticker,
+                created_at=created_at,
+            )
+        fill_order_no = str((fill or {}).get("order_no", "") or "").strip()
+        if fill and fill_order_no and fill_order_no != order_key:
+            try:
+                same_order = int(fill_order_no) == int(order_key)
+            except Exception:
+                same_order = False
+            if not same_order:
+                return None
+        return fill
+
+    def _confirm_sell_order_fill(
+        self,
+        market: str,
+        ticker: str,
+        order_no: str,
+        qty: int,
+        created_at: str = "",
+    ) -> Optional[dict]:
+        if not self._sell_fill_confirmation_required(market):
+            return {
+                "filled_qty": int(qty or 0),
+                "fill_price": 0.0,
+                "order_time": "",
+                "confirmation_source": "paper_or_disabled",
+            }
+        try:
+            attempts = max(1, int(os.getenv("LIVE_SELL_CONFIRM_ATTEMPTS", "3") or 3))
+        except Exception:
+            attempts = 3
+        try:
+            delay_sec = max(0.0, float(os.getenv("LIVE_SELL_CONFIRM_DELAY_SEC", "1.0") or 1.0))
+        except Exception:
+            delay_sec = 1.0
+        want_qty = max(1, int(qty or 0))
+        last_fill = None
+        for attempt in range(attempts):
+            try:
+                fill = self._lookup_order_fill(market, order_no, ticker, created_at=created_at)
+            except Exception as exc:
+                log.warning(f"[sell fill confirm failed] {market} {ticker} order_no={order_no}: {exc}")
+                fill = None
+            if fill:
+                last_fill = fill
+                filled_qty = int(fill.get("filled_qty", 0) or 0)
+                if filled_qty >= want_qty:
+                    fill["confirmation_source"] = "broker_fill_query"
+                    return fill
+            if attempt < attempts - 1 and delay_sec > 0:
+                time.sleep(delay_sec)
+        if last_fill:
+            log.warning(
+                f"[sell fill unconfirmed] {market} {ticker} order_no={order_no} "
+                f"filled_qty={int(last_fill.get('filled_qty', 0) or 0)} expected={want_qty}"
+            )
+        return None
+
+    def _mark_sell_confirmation_pending(self, cand: dict, market: str, reason: str, result: dict, order_px: float) -> None:
+        ticker = str(cand.get("ticker", "") or "").strip()
+        order_no = str((result or {}).get("order_no", "") or "").strip()
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        market_key = str(market or "").upper()
+        key = ticker.upper() if market_key == "US" else ticker
+        for pos in self.risk.positions:
+            pos_key = str(pos.get("ticker", "") or "").strip()
+            pos_key = pos_key.upper() if market_key == "US" else pos_key
+            if pos_key != key:
+                continue
+            pos["sell_confirmation_pending"] = True
+            pos["pending_sell_order_no"] = order_no
+            pos["pending_sell_qty"] = int(cand.get("qty", pos.get("qty", 0)) or 0)
+            pos["pending_sell_reason"] = reason
+            pos["pending_sell_price"] = float(order_px or 0)
+            pos["pending_sell_created_at"] = now_iso
+            pos["pending_sell_status"] = "order_accepted_fill_unconfirmed"
+            break
+        try:
+            self._save_positions()
+            writer = getattr(self, "_write_live_status", None)
+            if callable(writer):
+                writer(market_key, force=True)
+        except Exception as exc:
+            log.warning(f"[sell pending save failed] {market_key} {ticker}: {exc}")
+
+    def _has_pending_sell_confirmation(self, ticker: str, market: str) -> bool:
+        market_key = str(market or "").upper()
+        key = str(ticker or "").strip()
+        key = key.upper() if market_key == "US" else key
+        for pos in self.risk.positions:
+            pos_key = str(pos.get("ticker", "") or "").strip()
+            pos_key = pos_key.upper() if market_key == "US" else pos_key
+            if pos_key == key and pos.get("sell_confirmation_pending"):
+                return True
+        return False
+
+    def _parse_decision_timestamp(self, value: object) -> Optional[datetime]:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=KST)
+        return parsed.astimezone(KST)
+
+    def _closed_decision_is_stop_like(self, rec: dict) -> bool:
+        reason = str(
+            rec.get("exit_reason")
+            or rec.get("reason")
+            or rec.get("close_reason")
+            or ""
+        ).strip().lower()
+        try:
+            pnl_pct = float(rec.get("pnl_pct") or rec.get("return_pct") or 0.0)
+        except (TypeError, ValueError):
+            pnl_pct = 0.0
+        if reason in {"loss_cap", "stop_loss", "hard_stop", "daily_loss_stop"}:
+            return True
+        return reason == "trail_stop" and pnl_pct <= 0.0
+
+    def _restore_intraday_execution_state_from_decisions(self, market: str) -> dict:
+        market_key = str(market or "").upper()
+        today = self._current_session_date_str(market_key)
+        summary = {
+            "market": market_key,
+            "session_date": today,
+            "closed_tickers": [],
+            "legacy_closed_count": 0,
+            "skipped_no_broker_evidence_count": 0,
+            "skipped_no_broker_evidence_tickers": [],
+            "restored_stop_count": 0,
+            "daily_stop_count": int((getattr(self, "_daily_sl_count", {}) or {}).get(market_key, 0) or 0),
+            "stopped_tickers": [],
+        }
+        if not DECISIONS_FILE.exists():
+            return summary
+
+        if getattr(self, "_daily_sl_event_keys", None) is None:
+            self._daily_sl_event_keys = set()
+        if getattr(self, "_daily_sl_count", None) is None:
+            self._daily_sl_count = {"KR": 0, "US": 0}
+        if getattr(self, "_daily_sl_last_at", None) is None:
+            self._daily_sl_last_at = {"KR": None, "US": None}
+        if getattr(self, "_session_closed_tickers", None) is None:
+            self._session_closed_tickers = {"KR": set(), "US": set()}
+        if getattr(self, "_v2_same_day_stop_tickers", None) is None:
+            self._v2_same_day_stop_tickers = {"KR": set(), "US": set()}
+
+        restored_closed: set[str] = set()
+        restored_stops: set[str] = set()
+        restored_stop_count = 0
+        last_stop_at: Optional[datetime] = None
+
+        try:
+            lines = DECISIONS_FILE.read_text(encoding="utf-8").splitlines()
+        except Exception as exc:
+            log.debug(f"[{market_key}] intraday execution restore failed: {exc}")
+            return summary
+
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("type") != "closed" or str(rec.get("market", "") or "").upper() != market_key:
+                continue
+            rec_session_date = str(rec.get("session_date") or str(rec.get("timestamp", "") or "")[:10] or "")
+            if rec_session_date != today:
+                continue
+
+            ticker = str(rec.get("ticker") or rec.get("symbol") or "").strip()
+            if not ticker:
+                continue
+            ticker = ticker.upper() if market_key == "US" else ticker
+
+            order_no = str(rec.get("order_no") or rec.get("order_id") or "").strip()
+            broker_confirmed = bool(rec.get("broker_fill_confirmed", False))
+            has_broker_evidence = broker_confirmed or bool(order_no)
+            if not has_broker_evidence:
+                summary["skipped_no_broker_evidence_count"] += 1
+                if ticker not in summary["skipped_no_broker_evidence_tickers"]:
+                    summary["skipped_no_broker_evidence_tickers"].append(ticker)
+                continue
+
+            restored_closed.add(ticker)
+            if "broker_fill_confirmed" not in rec and order_no:
+                summary["legacy_closed_count"] += 1
+
+            if not self._closed_decision_is_stop_like(rec):
+                continue
+
+            occurred_at_raw = (
+                rec.get("closed_at")
+                or rec.get("timestamp")
+                or rec.get("time")
+                or rec.get("updated_at")
+            )
+            stop_key = self._stop_loss_event_key(
+                market_key,
+                ticker,
+                rec.get("exit_reason") or rec.get("reason") or rec.get("close_reason") or "stop_loss",
+                event_id=rec.get("event_id") or rec.get("path_run_id"),
+                order_no=order_no,
+                qty=rec.get("qty") or rec.get("quantity") or rec.get("filled_qty"),
+                pnl_krw=rec.get("pnl_krw") or rec.get("realized_pnl") or rec.get("profit_loss"),
+                pnl_pct=rec.get("pnl_pct") or rec.get("return_pct"),
+                occurred_at=occurred_at_raw,
+            )
+            if stop_key in self._daily_sl_event_keys:
+                continue
+
+            self._daily_sl_event_keys.add(stop_key)
+            restored_stop_count += 1
+            restored_stops.add(ticker)
+            parsed_at = self._parse_decision_timestamp(occurred_at_raw)
+            if parsed_at and (last_stop_at is None or parsed_at > last_stop_at):
+                last_stop_at = parsed_at
+
+        if restored_closed:
+            self._session_closed_tickers.setdefault(market_key, set()).update(restored_closed)
+        if restored_stop_count:
+            self._daily_sl_count[market_key] = int(self._daily_sl_count.get(market_key, 0) or 0) + restored_stop_count
+            if last_stop_at is not None:
+                previous = self._daily_sl_last_at.get(market_key)
+                if previous is None or last_stop_at > previous:
+                    self._daily_sl_last_at[market_key] = last_stop_at
+            self._v2_same_day_stop_tickers.setdefault(market_key, set()).update(restored_stops)
+
+        summary["closed_tickers"] = sorted(restored_closed)
+        summary["restored_stop_count"] = restored_stop_count
+        summary["daily_stop_count"] = int(self._daily_sl_count.get(market_key, 0) or 0)
+        summary["stopped_tickers"] = sorted(restored_stops)
+        if restored_closed or restored_stop_count:
+            log.info(
+                f"[{market_key}] intraday execution state restored: "
+                f"closed={summary['closed_tickers']} stops={restored_stop_count} "
+                f"daily_stop_count={summary['daily_stop_count']} legacy_closed={summary['legacy_closed_count']}"
+            )
+        if summary["skipped_no_broker_evidence_count"]:
+            log.warning(
+                f"[{market_key}] intraday execution restore skipped closed records without broker evidence: "
+                f"count={summary['skipped_no_broker_evidence_count']} "
+                f"tickers={summary['skipped_no_broker_evidence_tickers']}"
+            )
+        return summary
+
+    def _restore_session_closed_tickers_from_decisions(self, market: str) -> None:
+        self._restore_intraday_execution_state_from_decisions(market)
+
     def _execute_sell(self, cand: dict, market: str, reason: str,
                       hold_advice: dict = None):
         """실제 매도 실행 + 텔레그램 알림 + hold_advisor 결과 기록"""
         raw_px   = self.price_cache_raw.get(cand["ticker"], cand["exit_price"])
         if float(cand.get("exit_price", 0) or 0) <= 0 or float(raw_px or 0) <= 0:
             log.error(f"sell skipped [{cand['ticker']}]: invalid exit/raw price exit={cand.get('exit_price')} raw={raw_px}")
+            return False
+        if self._has_pending_sell_confirmation(cand["ticker"], market):
+            log.warning(f"sell skipped [{cand['ticker']}]: previous sell order is pending broker fill confirmation")
             return False
         review = self._run_auto_sell_review_gate(cand, market, reason, current_native=float(raw_px or 0))
         if not bool(review.get("allowed", False)):
@@ -8582,6 +9287,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         self._save_positions()
                         self._write_live_status(market, force=True)
             return False
+        order_no = str(result.get("order_no", "") or "")
+        fill = self._confirm_sell_order_fill(
+            market,
+            cand["ticker"],
+            order_no,
+            int(cand.get("qty", 0) or 0),
+            created_at=datetime.now(KST).isoformat(timespec="seconds"),
+        )
+        if self._sell_fill_confirmation_required(market) and not fill:
+            self._mark_sell_confirmation_pending(cand, market, reason, result, order_px)
+            log.warning(
+                f"[LIVE SELL PENDING] {cand['ticker']} order_no={order_no} accepted but broker fill is unconfirmed; "
+                "position kept open until broker truth confirms"
+            )
+            return True
+        fill_confirmed = bool(fill and fill.get("confirmation_source") == "broker_fill_query")
+        fill_px_native = float((fill or {}).get("fill_price", 0) or 0)
+        if fill_px_native > 0:
+            raw_px = fill_px_native
+            self.price_cache_raw[cand["ticker"]] = fill_px_native
+            cand["exit_price"] = self._price_to_krw(fill_px_native, market)
+            self.price_cache[cand["ticker"]] = cand["exit_price"]
         log.info(f"[{'PAPER' if self.is_paper else 'LIVE'} SELL] {cand['ticker']} {cand['qty']}@{order_px:,} | 주문번호={result.get('order_no','')}")
         self._sell_fail_meta.pop(cand["ticker"], None)
         self._sell_fail_at.pop(cand["ticker"], None)
@@ -8622,6 +9349,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "peak_pnl_pct",
             "position_mfe_pct",
             "position_mae_pct",
+            "recovery_micro_exit_trigger",
+            "recovery_micro_no_carry",
+            "recovery_micro_force_exit_at",
+            "recovery_micro_hard_loss_pct",
+            "recovery_micro_profit_guard_trigger_pct",
+            "recovery_micro_profit_guard_floor_pct",
+            "recovery_micro_trail_trigger_pct",
+            "recovery_micro_trail_pct",
+            "recovery_micro_time_stop_minutes",
+            "recovery_micro_time_stop_min_pnl_pct",
+            "recovery_micro_force_time_stop_minutes",
+            "recovery_micro_force_time_stop_min_pnl_pct",
+            "recovery_micro_preclose_minutes",
             "exit_owner",
         )
         exit_meta = {key: cand[key] for key in audit_keys if key in cand}
@@ -8637,22 +9377,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 ex.get("ticker", cand.get("ticker", "")),
                 order_no=str(result.get("order_no", "") or ""),
                 proceeds_krw=proceeds_krw,
-        # 당일 손절 카운터 — 연속 손절 시 이후 진입 size_mult 자동 축소
             )
         except Exception as exc:
             log.debug(f"[sell proceeds ledger] record failed {market} {cand.get('ticker')}: {exc}")
-        # 당일 손절 카운터 — 연속 손절 시 이후 진입 size_mult 자동 축소
+        # Stop cluster: first stop cools down and shrinks size; second stop blocks new entries.
         _stop_pnl_pct = float(ex.get("pnl_pct", 0) or 0)
         if reason in ("loss_cap", "stop_loss") or (reason == "trail_stop" and _stop_pnl_pct <= 0):
             _sl_mkt = market
             _stop_key = ex["ticker"].upper() if market == "US" else ex["ticker"]
-            self._note_stop_loss_event(_sl_mkt, _stop_key, reason)
+            self._note_stop_loss_event(
+                _sl_mkt,
+                _stop_key,
+                reason,
+                event_id=str(ex.get("closed_event_id") or ex.get("event_id") or ""),
+                order_no=str(ex.get("order_no") or result.get("order_no") or ""),
+                qty=int(ex.get("qty", 0) or 0),
+                pnl_krw=float(ex.get("pnl_krw", ex.get("pnl", 0)) or 0),
+                pnl_pct=float(ex.get("pnl_pct", 0) or 0),
+                occurred_at=str(ex.get("timestamp") or ex.get("closed_at") or ""),
+            )
             _sl_cnt = self._daily_sl_count[_sl_mkt]
             if _sl_cnt >= 2:
                 log.warning(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 신규 진입 차단")
             else:
                 _fst_mult = float(os.getenv("STOP_CLUSTER_FIRST_STOP_SIZE_MULT", "0.5"))
-                log.info(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 이후 size × {_fst_mult}")
+                log.info(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 이후 size x {_fst_mult}")
         # ML DB: 거래 결과 기록
         if _ML_DB_ENABLED and ex.get("decision_id"):
             try:
@@ -8703,7 +9452,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             source_strategy=ex.get("source_strategy", ""),
             micro_probe=bool(ex.get("micro_probe")),
             micro_probe_reason=ex.get("micro_probe_reason", ""),
+            recovery_micro=bool(ex.get("recovery_micro")),
+            recovery_micro_reason=ex.get("recovery_micro_reason", ""),
+            recovery_micro_source_strategy=ex.get("recovery_micro_source_strategy", ex.get("source_strategy", "")),
             actual_fill_price=event_price_native,
+            broker_fill_confirmed=bool(fill_confirmed or self.is_paper),
+            broker_filled_qty=int((fill or {}).get("filled_qty", ex.get("qty", 0)) or 0),
+            broker_fill_source=str((fill or {}).get("confirmation_source", "paper") or ""),
             **exit_meta,
         )
         self._v2_record_lifecycle_event(
@@ -8750,10 +9505,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 )
         except Exception as e:
             log.warning(f"strategy brain update failed: {e}")
-        # ── hold_advisor 결과 기록 ─────────────────────────────────────────────
+        try:
             self._save_positions()
-        except Exception:
-            pass
+            self._write_live_status(market, force=True)
+        except Exception as e:
+            log.warning(f"post-sell position/status save failed: {e}")
         # ── hold_advisor 결과 기록 ─────────────────────────────────────────────
         if advice_used:
             self._record_hold_advisor_outcome(ex, market, advice_used)
@@ -8995,8 +9751,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.decision_event_log = []
         self._daily_sl_count[market] = 0
         self._daily_sl_last_at[market] = None
+        self._daily_sl_event_keys = {
+            key
+            for key in getattr(self, "_daily_sl_event_keys", set())
+            if f"|{market}|" not in str(key)
+        }
         self._session_closed_tickers[market] = set()
         self._v2_same_day_stop_tickers[market] = set()
+        self._restore_intraday_execution_state_from_decisions(market)
         self._normalize_pending_orders()
         self._save_pending_orders()
         self._reset_us_order_cache()
@@ -9132,7 +9894,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self._last_kr_candidates = pre_candidates
             else:
                 pre_candidates = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
-            if pre_candidates:
+            preopen_pin_candidates = self._load_preopen_pin_candidates(market, "universe_build")
+            if pre_candidates or preopen_pin_candidates:
+                pre_candidates = self._merge_preopen_pin_candidates(
+                    market,
+                    pre_candidates or [],
+                    "universe_build",
+                    pin_candidates=preopen_pin_candidates,
+                )
                 snapshot = build_universe_from_candidates(
                     market=market,
                     target_date=today,
@@ -9140,13 +9909,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     config=UniverseConfig(top_n=self._dynamic_universe_top_n_for_market(market)),
                     source="runtime_screen",
                     core_tickers=get_core_tickers(market),
+                    pinned_candidates=preopen_pin_candidates,
                 )
                 save_universe_snapshot(snapshot)
                 self.today_universe[market] = snapshot
                 universe_tickers = snapshot.get("tickers", [])
                 log.info(
                     f"[유니버스] {market} 후보 {len(pre_candidates)} -> "
-                    f"{len(universe_tickers)} tickers"
+                    f"{len(universe_tickers)} tickers "
+                    f"pin={snapshot.get('pinned_tickers', [])} "
+                    f"displaced={snapshot.get('pin_displaced_tickers', [])}"
                 )
             else:
                 snapshot = load_universe_snapshot(market, today)
@@ -9640,15 +10412,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self._last_kr_candidates = fresh_candidates
             else:
                 fresh_candidates = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
-            if fresh_candidates:
+            fresh_pin_candidates = self._load_preopen_pin_candidates(market, "session_reuse_rescreen")
+            if fresh_candidates or fresh_pin_candidates:
+                fresh_candidates = self._merge_preopen_pin_candidates(
+                    market,
+                    fresh_candidates or [],
+                    "session_reuse_rescreen",
+                    pin_candidates=fresh_pin_candidates,
+                )
                 fresh_raw_candidates = list(fresh_candidates or [])
                 self._log_screen_candidates(market, fresh_candidates, "session_reuse_rescreen")
                 fresh_candidates = self._prefill_history_sync(fresh_candidates, market)
                 fresh_candidates = self._filter_candidates_by_history(fresh_candidates, market)
-                fresh_candidates = self._restrict_candidates_to_universe(
-                    fresh_candidates,
+                fresh_allowed_universe = self._extend_universe_with_preopen_pins(
+                    market,
                     (self.today_universe.get(market) or {}).get("tickers")
                     or self.today_judgment.get("universe_tickers", []),
+                    fresh_pin_candidates,
+                )
+                fresh_candidates = self._restrict_candidates_to_universe(
+                    fresh_candidates,
+                    fresh_allowed_universe,
                 )
                 fresh_candidates = self._annotate_selection_execution_features(market, fresh_candidates, consensus.get("mode", "NEUTRAL"))
                 _fresh_intraday_ctx = self._build_intraday_context(market)
@@ -11875,11 +12659,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     log.info(
                         f"  [{ticker}] score={_ep_score:.3f} -> size_mult x {_ep_size_mult} = {size_mult:.2f}"
                     )
-                # ── 2. 당일 손절 카운터 → size_mult 자동 축소 ───────────────
+                # Stop cluster: first stop shrinks size; second stop blocks new entries.
                 _sl_cnt_now = self._daily_sl_count.get(market, 0)
                 if _sl_cnt_now >= 3:
                     log.warning(
-                        f"  [{ticker}] 당일 손절 {_sl_cnt_now}회 - 신규 진입 차단"
+                        f"  [{ticker}] stop cluster count={_sl_cnt_now} -> new entry blocked"
                     )
                     continue
                 elif _sl_cnt_now == 2:
@@ -12019,6 +12803,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _s_strat= _sig["strategy_name"]
                 _s_source_strat = _s_strat
                 _micro_probe_meta = {}
+                _recovery_micro_meta = {}
                 _s_tp   = _sig["tp_pct"]
                 _s_sl   = _sig["sl_pct"]
                 _s_atr  = _sig["atr_pct"]
@@ -12604,6 +13389,50 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "final_qty": int(qty),
                         "partial_data": dict(_partial_order_decision or _sig.get("partial_data") or {}),
                     }
+                    _recovery = self._recovery_micro_adjustment(
+                        market=market,
+                        ticker=_s_tk,
+                        mode=mode,
+                        source_strategy=_s_strat,
+                        entry_priority_score=float(_s_ep),
+                        qty=int(qty),
+                        risk_price_krw=float(_s_rpx),
+                        original_order_cost_krw=float(order_cost),
+                        available_budget_krw=float(avail),
+                        cash_krw=float(self.risk.cash),
+                        daily_stop_count=int(self._daily_sl_count.get(market, 0) or 0),
+                        realized_daily_pnl_pct=float(self._market_realized_daily_return_pct(market)),
+                    )
+                    if _recovery.get("allowed"):
+                        _s_source_strat = _s_strat
+                        _s_strat = _RECOVERY_MICRO_STRATEGY
+                        qty = int(_recovery.get("adjusted_qty", qty) or qty)
+                        order_cost = float(_recovery.get("adjusted_order_cost_krw", order_cost) or order_cost)
+                        _hard_loss_decimal = float(_recovery.get("recovery_micro_hard_loss_pct", 0) or 0) / 100.0
+                        if _hard_loss_decimal > 0:
+                            _s_sl = min(float(_s_sl), _hard_loss_decimal)
+                        _recovery_micro_meta = {
+                            **_recovery,
+                            "recovery_micro": True,
+                            "recovery_micro_reason": str(_recovery.get("reason") or "first_stop_recovery_micro"),
+                            "recovery_micro_source_strategy": _s_source_strat,
+                        }
+                        _sizing_contract.update({
+                            "strategy": _RECOVERY_MICRO_STRATEGY,
+                            "source_strategy": _s_source_strat,
+                            "recovery_micro": True,
+                            "recovery_micro_reason": _recovery_micro_meta["recovery_micro_reason"],
+                            "recovery_micro_original_qty": int(_recovery.get("original_qty", 0) or 0),
+                            "recovery_micro_original_order_cost_krw": float(_recovery.get("original_order_cost_krw", 0) or 0),
+                            "recovery_micro_max_order_krw": float(_recovery.get("max_order_krw", 0) or 0),
+                            "final_order_budget_krw": float(order_cost),
+                            "final_qty": int(qty),
+                        })
+                        log.info(
+                            f"  [{_s_tk}] RECOVERY_MICRO 전환 "
+                            f"{_recovery.get('original_order_cost_krw', 0):,.0f}원 -> {order_cost:,.0f}원 "
+                            f"score={float(_s_ep):.3f}"
+                        )
                     analysis_log.info(
                         f"[signal {market}] {_s_tk} {_s_strat} qty={qty}",
                         extra={"extra": {
@@ -12776,6 +13605,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         detail=(f"선택이유: {_s_sr}" if _s_sr
                                 else f"mode={mode} tp={_s_tp:.2%} sl={_s_sl:.2%}"),
                         order_no=result.get("order_no", ""), selected_reason=_s_sr,
+                        source_strategy=_s_source_strat if _recovery_micro_meta else "",
+                        recovery_micro=bool(_recovery_micro_meta),
+                        recovery_micro_reason=_recovery_micro_meta.get("recovery_micro_reason", ""),
+                        recovery_micro_source_strategy=_recovery_micro_meta.get("recovery_micro_source_strategy", ""),
+                        **{
+                            k: v
+                            for k, v in _recovery_micro_meta.items()
+                            if k.startswith("recovery_micro_") and k not in {
+                                "recovery_micro_reason",
+                                "recovery_micro_source_strategy",
+                            }
+                        },
                     )
                     _ml_decision_id = -1
                     if _ML_DB_ENABLED:
@@ -12816,6 +13657,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "price_native": float(_s_px),
                             "price_krw": float(_s_rpx),
                             "strategy": _s_strat,
+                            **{k: v for k, v in _recovery_micro_meta.items() if k != "allowed"},
                             **_v2_late_payload,
                         },
                     )
@@ -12832,6 +13674,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "order_no": result.get("order_no", ""),
                             "qty": int(qty),
                             "v2_execution_id": _v2_execution_id,
+                            **{k: v for k, v in _recovery_micro_meta.items() if k != "allowed"},
                             **_v2_late_payload,
                         },
                     )
@@ -12863,6 +13706,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "v2_decision_id": _v2_decision_id,
                         "v2_execution_id": _v2_execution_id,
                         "entry_timing":   _entry_timing_order_snapshot,
+                        **{k: v for k, v in _recovery_micro_meta.items() if k != "allowed"},
                         **_entry_reference_meta,
                     })
                     self._block_entry(_s_tk, _BUY_COOLDOWN_MIN, "buy_placed")
@@ -13078,8 +13922,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         log.error(f"[Tier2] {_t2_ticker} 오류: {_t2_e}")
         # ── KR Tier 2 섹터 플레이 ───────────────────────────────────────────
                 pass
-            except Exception as _t2_loop_e:
-                log.error(f"[Tier2 섹터플레이] 루프 오류: {_t2_loop_e}")
+            except StopIteration:
+                pass
+            except Exception:
+                log.exception("[Tier2 sector_play] loop error")
         # ── KR Tier 2 섹터 플레이 ───────────────────────────────────────────
         if market == "KR" and mode not in ("HALT", "DEFENSIVE", "CAUTIOUS_BEAR"):
             try:
@@ -13248,8 +14094,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         log.error(f"[KR Tier2] {_t2_ticker} 오류: {_t2_e}")
         # ── Tier 2 섹터 플레이 ──────────────────────────────────────────────
                 pass
-            except Exception as _t2_loop_e:
-                log.error(f"[KR Tier2 섹터플레이] 루프 오류: {_t2_loop_e}")
+            except StopIteration:
+                pass
+            except Exception:
+                log.exception("[KR Tier2 sector_play] loop error")
         # ── Tier 2 섹터 플레이 ──────────────────────────────────────────────
         log.info(
             f"[{market} 사이클 완료] 포지션:{len(self.risk.positions)}개 | "
@@ -13348,13 +14196,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         tune_cands = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     else:
                         tune_cands = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
-                    if tune_cands:
+                    tune_pin_candidates = self._load_preopen_pin_candidates(market, "tuning_rescreen")
+                    if tune_cands or tune_pin_candidates:
+                        tune_cands = self._merge_preopen_pin_candidates(
+                            market,
+                            tune_cands or [],
+                            "tuning_rescreen",
+                            pin_candidates=tune_pin_candidates,
+                        )
                         self._log_screen_candidates(market, tune_cands, "tuning_rescreen")
                         tune_cands = self._filter_candidates_by_history(tune_cands, market)
-                        tune_cands = self._restrict_candidates_to_universe(
-                            tune_cands,
+                        tune_allowed_universe = self._extend_universe_with_preopen_pins(
+                            market,
                             (self.today_universe.get(market) or {}).get("tickers")
                             or self.today_judgment.get("universe_tickers", []),
+                            tune_pin_candidates,
+                        )
+                        tune_cands = self._restrict_candidates_to_universe(
+                            tune_cands,
+                            tune_allowed_universe,
                         )
                         tune_cands = self._annotate_selection_execution_features(market, tune_cands, new_mode)
                         digest_p = self.today_judgment.get("digest_prompt", "")
@@ -14043,6 +14903,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "source_strategy": kwargs.get("source_strategy", ""),
             "micro_probe": bool(kwargs.get("micro_probe", False)),
             "micro_probe_reason": kwargs.get("micro_probe_reason", ""),
+            "recovery_micro": bool(kwargs.get("recovery_micro", False)),
+            "recovery_micro_reason": kwargs.get("recovery_micro_reason", ""),
+            "recovery_micro_source_strategy": kwargs.get("recovery_micro_source_strategy", kwargs.get("source_strategy", "")),
+            "recovery_micro_no_carry": bool(kwargs.get("recovery_micro_no_carry", False)),
+            "recovery_micro_force_exit_at": kwargs.get("recovery_micro_force_exit_at", ""),
+            "recovery_micro_hard_loss_pct": float(kwargs.get("recovery_micro_hard_loss_pct", 0) or 0),
+            "recovery_micro_profit_guard_trigger_pct": float(kwargs.get("recovery_micro_profit_guard_trigger_pct", 0) or 0),
+            "recovery_micro_profit_guard_floor_pct": float(kwargs.get("recovery_micro_profit_guard_floor_pct", 0) or 0),
+            "recovery_micro_trail_trigger_pct": float(kwargs.get("recovery_micro_trail_trigger_pct", 0) or 0),
+            "recovery_micro_trail_pct": float(kwargs.get("recovery_micro_trail_pct", 0) or 0),
+            "recovery_micro_time_stop_minutes": int(kwargs.get("recovery_micro_time_stop_minutes", 0) or 0),
+            "recovery_micro_time_stop_min_pnl_pct": float(kwargs.get("recovery_micro_time_stop_min_pnl_pct", 0) or 0),
+            "recovery_micro_force_time_stop_minutes": int(kwargs.get("recovery_micro_force_time_stop_minutes", 0) or 0),
+            "recovery_micro_force_time_stop_min_pnl_pct": float(kwargs.get("recovery_micro_force_time_stop_min_pnl_pct", 0) or 0),
+            "recovery_micro_preclose_minutes": int(kwargs.get("recovery_micro_preclose_minutes", 0) or 0),
+            "recovery_micro_exit_trigger": kwargs.get("recovery_micro_exit_trigger", ""),
             "qty": int(kwargs.get("qty", 0) or 0),
             "price_native": float(kwargs.get("price_native", 0) or 0),
             "price_krw": float(kwargs.get("price_krw", 0) or 0),
@@ -14076,6 +14952,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "position_mfe_pct": float(kwargs.get("position_mfe_pct", kwargs.get("peak_pnl_pct", 0)) or 0),
             "position_mae_pct": float(kwargs.get("position_mae_pct", 0) or 0),
             "actual_fill_price": float(kwargs.get("actual_fill_price", 0) or 0),
+            "broker_fill_confirmed": bool(kwargs.get("broker_fill_confirmed", False)),
+            "broker_filled_qty": int(kwargs.get("broker_filled_qty", 0) or 0),
+            "broker_fill_source": kwargs.get("broker_fill_source", ""),
             "price_per_share_krw": float(kwargs.get("price_per_share_krw", 0) or 0),
             "affordable_1_share_bool": bool(kwargs.get("affordable_1_share_bool", False)),
             "shortfall_krw": float(kwargs.get("shortfall_krw", 0) or 0),
@@ -14108,6 +14987,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "source_strategy": event.get("source_strategy", ""),
                 "micro_probe": event.get("micro_probe", False),
                 "micro_probe_reason": event.get("micro_probe_reason", ""),
+                "recovery_micro": event.get("recovery_micro", False),
+                "recovery_micro_reason": event.get("recovery_micro_reason", ""),
+                "recovery_micro_source_strategy": event.get("recovery_micro_source_strategy", ""),
+                "recovery_micro_no_carry": event.get("recovery_micro_no_carry", False),
             }
             # entry: 진입 컨텍스트
             if action in ("buy_order", "buy_signal"):
@@ -14115,6 +14998,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "entry_price": event["price_krw"] or event["price_native"],
                     "qty":         event["qty"],
                     "selected_reason": event["selected_reason"],
+                    "recovery_micro_force_exit_at": event.get("recovery_micro_force_exit_at", ""),
+                    "recovery_micro_hard_loss_pct": event.get("recovery_micro_hard_loss_pct", 0),
                 })
             # closed: 종료 요약
             elif action in ("sell_filled", "sell_executed"):
@@ -14147,6 +15032,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "position_mfe_pct": event.get("position_mfe_pct", 0),
                     "position_mae_pct": event.get("position_mae_pct", 0),
                     "actual_fill_price": event.get("actual_fill_price", 0),
+                    "broker_fill_confirmed": event.get("broker_fill_confirmed", False),
+                    "broker_filled_qty": event.get("broker_filled_qty", 0),
+                    "broker_fill_source": event.get("broker_fill_source", ""),
+                    "recovery_micro_exit_trigger": event.get("recovery_micro_exit_trigger", ""),
                 })
             # hold_outcome: 판단 결과
             elif action == "HOLD_REVIEW":
@@ -14217,6 +15106,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "pathb_plan":      pos.get("pathb_plan", {}),
                     "micro_probe":     bool(pos.get("micro_probe")),
                     "micro_probe_reason": pos.get("micro_probe_reason", ""),
+                    "recovery_micro": bool(pos.get("recovery_micro")),
+                    "recovery_micro_reason": pos.get("recovery_micro_reason", ""),
                     "oversize_ratio":  round(float(pos.get("oversize_ratio", 0) or 0), 4),
                     "trailing":        pos.get("trailing", False),
                     "trail_sl":        round(float(pos.get("trail_sl", 0) or 0), 2),
@@ -14246,6 +15137,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "pathb_path_run_id": order.get("pathb_path_run_id", ""),
                     "micro_probe": bool(order.get("micro_probe")),
                     "micro_probe_reason": order.get("micro_probe_reason", ""),
+                    "recovery_micro": bool(order.get("recovery_micro")),
+                    "recovery_micro_reason": order.get("recovery_micro_reason", ""),
                     "oversize_ratio": round(float(order.get("oversize_ratio", 0) or 0), 4),
                     "created_at": order.get("created_at", ""),
                 }
