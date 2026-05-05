@@ -238,11 +238,15 @@ class PreopenShadowTests(unittest.TestCase):
 
         self.assertEqual(result["sampled"], 1)
         candidate = state["candidates"][0]
+        self.assertEqual(candidate["anchor_price"], 1000)
+        self.assertEqual(candidate["anchor_price_source"], "price")
         self.assertEqual(candidate["regular_open_price"], 1000)
         self.assertEqual(candidate["last_price"], 1100)
         self.assertEqual(candidate["post_open_90m_return_pct"], 10.0)
         self.assertEqual(candidate["max_runup_pct"], 12.0)
         self.assertEqual(candidate["max_drawdown_pct"], -2.0)
+        self.assertEqual(candidate["outcome_samples"][0]["offset_min"], 90)
+        self.assertEqual(candidate["outcome_samples"][0]["return_basis"], "anchor_price")
         self.assertEqual(outcome[-1]["post_open_90m_return_pct"], 10.0)
 
     def test_paper_preopen_state_and_logs_are_separated_from_live(self) -> None:
@@ -374,6 +378,149 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertTrue(payload["recent_sessions"])
         self.assertIn("scheduler_guidance", payload)
         self.assertIn("candidates", payload["paths"])
+
+    def test_dashboard_payload_groups_outcome_timeline_by_candidate_and_offsets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "provider": "screen_cache",
+                    "data_quality": "screen_cache_display",
+                    "candidates": [{
+                        "ticker": "CELC",
+                        "name": "Celcuity Inc.",
+                        "shadow_preopen_rank": 1,
+                        "price": 100.0,
+                        "anchor_price": 100.0,
+                    }],
+                }, session_date="2026-05-02")
+                save_outcome_record("US", "2026-05-02", {
+                    "ticker": "CELC",
+                    "name": "Celcuity Inc.",
+                    "offset_min": 150,
+                    "anchor_price": 100.0,
+                    "price": 112.0,
+                    "post_open_return_pct": 12.0,
+                    "post_open_150m_return_pct": 12.0,
+                    "outcome_status": "WIN",
+                })
+                payload = load_preopen_dashboard("US", session_date="2026-05-02")
+
+        self.assertIn(150, payload["outcome_offsets_min"])
+        row = payload["outcome_timeline"][0]
+        self.assertEqual(row["display_ticker"], "Celcuity Inc. (CELC)")
+        self.assertEqual(row["anchor_price"], 100.0)
+        self.assertEqual(row["returns_by_offset"]["150"], 12.0)
+        self.assertIn("결과: 저장 1건", payload["summary"]["operator_status"])
+
+    def test_dashboard_enriches_seed_candidates_from_screen_cache_for_display(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "provider": "seed_watchlist",
+                    "data_quality": "seed_only",
+                    "candidates": [{
+                        "ticker": "AAPL",
+                        "name": "AAPL",
+                        "shadow_preopen_rank": 1,
+                        "price": None,
+                        "extended_change_pct": None,
+                        "extended_dollar_volume": None,
+                    }],
+                }, session_date="2026-05-02")
+                cache_path = root / "state" / "us_screen_cache.json"
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps({
+                    "date": "2026-05-02",
+                    "candidates": [{
+                        "ticker": "AAPL",
+                        "name": "Apple Inc.",
+                        "price": 190.5,
+                        "change_rate": 4.2,
+                        "volume": 2_000_000,
+                        "vol_ratio": 1.4,
+                    }],
+                }), encoding="utf-8")
+
+                payload = load_preopen_dashboard("US", session_date="2026-05-02")
+
+        candidate = payload["candidates"][0]
+        self.assertEqual(candidate["price"], 190.5)
+        self.assertEqual(candidate["extended_change_pct"], 4.2)
+        self.assertEqual(candidate["extended_dollar_volume"], 381_000_000.0)
+        self.assertEqual(candidate["display_enrichment_source"], "screen_cache")
+        self.assertEqual(payload["summary"]["candidate_source"], "screen_cache_fallback")
+        self.assertEqual(payload["summary"]["screen_cache_fallback_count"], 1)
+        self.assertEqual(payload["summary"]["provider"], "screen_cache")
+        self.assertEqual(payload["summary"]["data_quality"], "screen_cache_display")
+
+    def test_outcome_updater_uses_screen_cache_fallback_when_state_is_seed_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)), patch(
+                "tools.preopen_collector.get_runtime_path",
+                side_effect=_runtime_path(root),
+            ):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "provider": "seed_watchlist",
+                    "data_quality": "seed_only",
+                    "candidates": [{
+                        "ticker": "AAPL",
+                        "provider": "seed_watchlist",
+                        "data_quality": "seed_only",
+                        "price": None,
+                        "extended_change_pct": None,
+                        "extended_dollar_volume": None,
+                    }],
+                }, session_date="2026-05-02")
+                cache_path = root / "state" / "us_screen_cache.json"
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps({
+                    "date": "2026-05-02",
+                    "candidates": [{
+                        "ticker": "AAPL",
+                        "name": "Apple Inc.",
+                        "price": 190.5,
+                        "change_rate": 4.2,
+                        "volume": 2_000_000,
+                    }],
+                }), encoding="utf-8")
+                with patch("tools.preopen_outcome_updater.resolve_session_date_str", return_value="2026-05-02"), patch(
+                    "kis_api.get_price",
+                    return_value={
+                        "ticker": "AAPL",
+                        "price": 199.5,
+                        "open": 190.0,
+                        "high": 201.0,
+                        "low": 188.0,
+                        "volume": 3_000_000,
+                    },
+                ):
+                    result = update_once("US", mode="live", offset_min=30)
+                state = load_preopen_state("US", session_date="2026-05-02", max_age_min=24 * 60)
+                outcome = load_preopen_dashboard("US", session_date="2026-05-02")["outcome"]
+
+        self.assertEqual(result["sampled"], 1)
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(state["provider"], "screen_cache")
+        self.assertEqual(state["outcome_source_candidates"], "screen_cache_fallback")
+        self.assertEqual(state["candidates"][0]["anchor_price"], 190.5)
+        self.assertEqual(state["candidates"][0]["post_open_30m_return_pct"], 4.7244)
+        self.assertEqual(state["candidates"][0]["outcome_samples"][0]["return_basis"], "anchor_price")
+        self.assertEqual(outcome[-1]["post_open_30m_return_pct"], 4.7244)
 
     def test_dashboard_payload_explains_missing_collector(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

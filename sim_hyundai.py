@@ -184,13 +184,13 @@ SCENARIOS = [
         "context": {"vix": 18.0, "vkospi": 17.0, "usd_krw": 1380, "sectors": {}},
     },
     {
-        "name": "현재장세(CAUTIOUS_BEAR / VKOSPI=22, USD/KRW=1518) - 패치前",
+        "name": "현재장세(CAUTIOUS_BEAR / VKOSPI=22, USD/KRW=1518) - 패치전",
         "mode": "CAUTIOUS_BEAR",
         "context": {"vix": 29.9, "vkospi": 22.0, "usd_krw": 1518, "sectors": {}},
         "no_cross_asset": True,
     },
     {
-        "name": "현재장세(CAUTIOUS_BEAR / VKOSPI=22, USD/KRW=1518) - 패치後",
+        "name": "현재장세(CAUTIOUS_BEAR / VKOSPI=22, USD/KRW=1518) - 패치후",
         "mode": "CAUTIOUS_BEAR",
         "context": {"vix": 29.9, "vkospi": 22.0, "usd_krw": 1518, "sectors": {}},
     },
@@ -431,7 +431,7 @@ def main():
         pnl       = f"{sum(t.pnl_pct for t in trades if t.pnl_pct):+.2f}%" if trades else "  -"
         print(f"  {sc['name']:<44} {total_sig:>4}  {len(trades):>4}  {wr:>6}  {pnl:>8}")
 
-    print(f"\n  ※ 패치 전후: 시나리오 3(패치前) vs 4(패치後) 비교")
+    print(f"\n  ※ 패치 전후: 시나리오 3(패치전) vs 4(패치후) 비교")
     print()
 
 

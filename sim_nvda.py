@@ -147,7 +147,7 @@ SCENARIOS = [
         "market": "US",
     },
     {
-        "name": "현재장세(CAUTIOUS_BEAR / VIX=29.9) - 패치前",
+        "name": "현재장세(CAUTIOUS_BEAR / VIX=29.9) - 패치전",
         "mode": "CAUTIOUS_BEAR",
         "context": {"vix": 29.9, "usd_krw": 1518, "vkospi": 22.0,
                     "sectors": {"XLK": -1.5}},
@@ -155,7 +155,7 @@ SCENARIOS = [
         "no_cross_asset": True,   # cross_asset 미적용 비교용
     },
     {
-        "name": "현재장세(CAUTIOUS_BEAR / VIX=29.9) - 패치後",
+        "name": "현재장세(CAUTIOUS_BEAR / VIX=29.9) - 패치후",
         "mode": "CAUTIOUS_BEAR",
         "context": {"vix": 29.9, "usd_krw": 1518, "vkospi": 22.0,
                     "sectors": {"XLK": -1.5}},

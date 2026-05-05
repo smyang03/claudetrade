@@ -258,6 +258,184 @@ def _line_count(path: Path) -> int:
         return 0
 
 
+def _screen_cache_path(market: str) -> Path:
+    market_key = _market_key(market)
+    filename = "us_screen_cache.json" if market_key == "US" else "kr_screen_cache.json"
+    return get_runtime_path("state", filename)
+
+
+def _candidate_key(market: str, ticker: Any) -> str:
+    raw = str(ticker or "").strip()
+    return raw.upper() if _market_key(market) == "US" else raw
+
+
+def _positive_number(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        parsed = float(value)
+        return parsed if parsed > 0 else None
+    except Exception:
+        return None
+
+
+def _number_or_none(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _load_screen_cache_map(market: str) -> dict[str, dict[str, Any]]:
+    path = _screen_cache_path(market)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    rows = payload.get("candidates") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return {}
+    market_key = _market_key(market)
+    cache: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = _candidate_key(market_key, row.get("ticker"))
+        if key:
+            cache[key] = dict(row)
+    return cache
+
+
+def _screen_cache_candidates_for_display(
+    market: str,
+    session_date: str,
+    *,
+    captured_at: str = "",
+) -> list[dict[str, Any]]:
+    cache = _load_screen_cache_map(market)
+    if not cache:
+        return []
+    market_key = _market_key(market)
+    captured = captured_at or datetime.now(KST).isoformat(timespec="seconds")
+    rows: list[dict[str, Any]] = []
+    for idx, cached in enumerate(cache.values(), start=1):
+        price = _positive_number(cached.get("price"))
+        volume = _positive_number(cached.get("volume"))
+        change = _number_or_none(cached.get("change_rate"))
+        dollar_volume = _positive_number(cached.get("dollar_volume"))
+        if dollar_volume is None and price is not None and volume is not None:
+            dollar_volume = price * volume
+        row = {
+            "ticker": cached.get("ticker", ""),
+            "name": cached.get("name", cached.get("ticker", "")),
+            "source": str(cached.get("category") or "screen_cache"),
+            "provider": "screen_cache",
+            "provider_rank": idx,
+            "source_status": "screen_cache_display_fallback",
+            "data_quality": "screen_cache_display",
+            "stale": False,
+            "quality_tags": ["screen_cache_display", str(cached.get("category", "") or "").lower()],
+            "risk_tags": [],
+            "price": price,
+            "extended_price": price,
+            "change_rate": change,
+            "gap_pct": change,
+            "extended_change_pct": change,
+            "volume": volume,
+            "extended_volume": volume,
+            "extended_dollar_volume": dollar_volume,
+            "volume_ratio": cached.get("vol_ratio"),
+            "display_enrichment_source": "screen_cache",
+            "anchor_price": price,
+            "anchor_price_source": "screen_cache_price",
+            "anchor_price_at": captured,
+        }
+        if market_key == "KR":
+            row["prior_day_traded_value"] = dollar_volume
+            row["open_volume_confirmation"] = volume
+        rows.append(row)
+    try:
+        from preopen.models import normalize_candidate
+        from preopen.scorer import score_candidates
+
+        normalized = [
+            normalize_candidate(row, market=market_key, session_date=session_date, captured_at=captured)
+            for row in rows
+        ]
+        return score_candidates(market_key, normalized)
+    except Exception:
+        return rows
+
+
+def _needs_display_enrichment(candidate: dict[str, Any]) -> bool:
+    if _positive_number(candidate.get("price")) is None:
+        return True
+    if _number_or_none(candidate.get("extended_change_pct")) is None and _number_or_none(candidate.get("gap_pct")) is None:
+        return True
+    return _positive_number(candidate.get("extended_dollar_volume")) is None
+
+
+def _all_candidates_lack_display_values(candidates: list[dict[str, Any]]) -> bool:
+    if not candidates:
+        return False
+    return all(_needs_display_enrichment(dict(candidate or {})) for candidate in candidates)
+
+
+def _enrich_candidates_from_screen_cache(market: str, candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    cache = _load_screen_cache_map(market)
+    if not cache:
+        return candidates, 0
+    enriched: list[dict[str, Any]] = []
+    count = 0
+    for candidate in candidates:
+        row = dict(candidate or {})
+        if not _needs_display_enrichment(row):
+            enriched.append(row)
+            continue
+        cached = cache.get(_candidate_key(market, row.get("ticker")))
+        if not cached:
+            enriched.append(row)
+            continue
+        price = _positive_number(cached.get("price"))
+        volume = _positive_number(cached.get("volume"))
+        change = _number_or_none(cached.get("change_rate"))
+        dollar_volume = _positive_number(cached.get("dollar_volume"))
+        if dollar_volume is None and price is not None and volume is not None:
+            dollar_volume = price * volume
+        if row.get("name") in ("", None, row.get("ticker")) and cached.get("name"):
+            row["name"] = cached.get("name")
+        if row.get("price") is None and price is not None:
+            row["price"] = price
+        if row.get("extended_price") is None and price is not None:
+            row["extended_price"] = price
+        if row.get("change_rate") is None and change is not None:
+            row["change_rate"] = change
+        if row.get("gap_pct") is None and change is not None:
+            row["gap_pct"] = change
+        if row.get("extended_change_pct") is None and change is not None:
+            row["extended_change_pct"] = change
+        if row.get("volume") is None and volume is not None:
+            row["volume"] = volume
+        if row.get("extended_volume") is None and volume is not None:
+            row["extended_volume"] = volume
+        if row.get("extended_dollar_volume") is None and dollar_volume is not None:
+            row["extended_dollar_volume"] = dollar_volume
+        if row.get("volume_ratio") is None and cached.get("vol_ratio") is not None:
+            row["volume_ratio"] = cached.get("vol_ratio")
+        quality_tags = list(row.get("quality_tags") or [])
+        if "screen_cache_display_enriched" not in quality_tags:
+            quality_tags.append("screen_cache_display_enriched")
+        row["quality_tags"] = quality_tags
+        row["display_enrichment_source"] = "screen_cache"
+        count += 1
+        enriched.append(row)
+    return enriched, count
+
+
 def _state_dir() -> Path:
     return get_runtime_path("state", "_preopen_scan.tmp").parent
 
@@ -315,6 +493,252 @@ def _avg(values: list[float]) -> float | None:
     return round(sum(clean) / len(clean), 4)
 
 
+def _int_or_none(value: Any) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(float(value))
+    except Exception:
+        return None
+
+
+def _dynamic_return_offsets(row: dict[str, Any]) -> list[int]:
+    offsets: list[int] = []
+    prefix = "post_open_"
+    suffix = "m_return_pct"
+    for key in row.keys():
+        if not isinstance(key, str) or not key.startswith(prefix) or not key.endswith(suffix):
+            continue
+        raw = key[len(prefix):-len(suffix)]
+        if raw.isdigit():
+            offsets.append(int(raw))
+    return offsets
+
+
+def _scheduled_outcome_offsets(market: str, session_date: str) -> list[int]:
+    try:
+        from preopen.scheduler import default_outcome_offsets_min
+
+        return list(default_outcome_offsets_min(_market_key(market), session_date))
+    except Exception:
+        return [5, 30, 60, 90, 120]
+
+
+def _outcome_offsets_for_display(
+    market: str,
+    session_date: str,
+    candidates: list[dict[str, Any]],
+    outcome: list[dict[str, Any]],
+) -> list[int]:
+    offsets = set(_scheduled_outcome_offsets(market, session_date))
+    for row in list(candidates or []) + list(outcome or []):
+        if not isinstance(row, dict):
+            continue
+        offset = _int_or_none(row.get("offset_min"))
+        if offset is not None and offset > 0:
+            offsets.add(offset)
+        offsets.update(_dynamic_return_offsets(row))
+        samples = row.get("outcome_samples")
+        if isinstance(samples, list):
+            for sample in samples:
+                if isinstance(sample, dict):
+                    sample_offset = _int_or_none(sample.get("offset_min"))
+                    if sample_offset is not None and sample_offset > 0:
+                        offsets.add(sample_offset)
+    return sorted(offsets)
+
+
+def _candidate_anchor(candidate: dict[str, Any]) -> tuple[float | None, str, str]:
+    for key in ("anchor_price", "initial_candidate_price", "price", "extended_price", "regular_open_price"):
+        value = _positive_number(candidate.get(key))
+        if value is not None:
+            return value, str(candidate.get("anchor_price_source") or key), str(
+                candidate.get("anchor_price_at")
+                or candidate.get("first_detected_at")
+                or candidate.get("captured_at")
+                or ""
+            )
+    return None, "", ""
+
+
+def _return_pct_from_base(current: Any, base: Any) -> float | None:
+    current_f = _number_or_none(current)
+    base_f = _positive_number(base)
+    if current_f is None or base_f is None:
+        return None
+    return round(((current_f - base_f) / base_f) * 100.0, 4)
+
+
+def _display_ticker(candidate: dict[str, Any]) -> str:
+    ticker = str(candidate.get("ticker") or "").strip()
+    name = str(candidate.get("name") or "").strip()
+    if ticker and name and name.upper() != ticker.upper():
+        return f"{name} ({ticker})"
+    return ticker or name or "-"
+
+
+def _sample_from_row(row: dict[str, Any], offset: int | None = None, anchor_price: Any = None) -> dict[str, Any] | None:
+    row_offset = _int_or_none(row.get("offset_min"))
+    sample_offset = int(offset if offset is not None else row_offset or 0)
+    if sample_offset <= 0:
+        return None
+    dynamic_key = f"post_open_{sample_offset}m_return_pct"
+    return_pct = _number_or_none(row.get(dynamic_key))
+    if return_pct is None and row_offset == sample_offset:
+        return_pct = _number_or_none(row.get("post_open_return_pct"))
+    price = _positive_number(row.get(f"outcome_{sample_offset}m_price"))
+    if price is None and row_offset == sample_offset:
+        price = _positive_number(row.get("price"))
+    return_basis = str(row.get("return_basis") or "")
+    anchor_return = _return_pct_from_base(price, anchor_price)
+    if anchor_return is not None and return_basis != "anchor_price":
+        return_pct = anchor_return
+        return_basis = "anchor_price_recomputed"
+    high_value = row.get("high")
+    low_value = row.get("low")
+    high_return = _return_pct_from_base(high_value, anchor_price) if return_basis == "anchor_price_recomputed" else None
+    low_return = _return_pct_from_base(low_value, anchor_price) if return_basis == "anchor_price_recomputed" else None
+    sample = {
+        "offset_min": sample_offset,
+        "captured_at": row.get(f"outcome_{sample_offset}m_captured_at") or row.get("captured_at") or row.get("ts") or "",
+        "price": price,
+        "return_pct": return_pct,
+        "status": row.get("outcome_status", ""),
+        "high_return_pct": high_return if high_return is not None else _number_or_none(row.get("open_to_high_pct") or row.get("high_return_pct")),
+        "low_return_pct": low_return if low_return is not None else _number_or_none(row.get("max_drawdown_pct") or row.get("low_return_pct")),
+        "price_source": row.get("price_source", ""),
+        "return_basis": return_basis,
+    }
+    if return_pct is None and price is None and not sample["status"]:
+        return None
+    return sample
+
+
+def _merge_timeline_sample(samples_by_offset: dict[int, dict[str, Any]], sample: dict[str, Any] | None) -> None:
+    if not sample:
+        return
+    offset = _int_or_none(sample.get("offset_min"))
+    if offset is None or offset <= 0:
+        return
+    existing = samples_by_offset.get(offset)
+    if existing and existing.get("return_pct") is not None and sample.get("return_pct") is None:
+        return
+    samples_by_offset[offset] = dict(sample)
+
+
+def _build_outcome_timeline(
+    market: str,
+    candidates: list[dict[str, Any]],
+    outcome: list[dict[str, Any]],
+    offsets: list[int],
+) -> list[dict[str, Any]]:
+    rows_by_key: dict[str, dict[str, Any]] = {}
+    for idx, candidate in enumerate(candidates or [], start=1):
+        if not isinstance(candidate, dict):
+            continue
+        ticker = candidate.get("ticker", "")
+        key = _candidate_key(market, ticker)
+        if not key:
+            continue
+        anchor, anchor_source, anchor_at = _candidate_anchor(candidate)
+        rows_by_key[key] = {
+            "ticker": str(ticker or ""),
+            "name": str(candidate.get("name") or ""),
+            "display_ticker": _display_ticker(candidate),
+            "shadow_preopen_rank": candidate.get("shadow_preopen_rank") or idx,
+            "preopen_score": candidate.get("preopen_score"),
+            "preopen_grade": candidate.get("preopen_grade", ""),
+            "anchor_price": anchor,
+            "anchor_price_source": anchor_source,
+            "anchor_price_at": anchor_at,
+            "regular_open_price": candidate.get("regular_open_price"),
+            "last_price": candidate.get("last_price"),
+            "last_price_at": candidate.get("last_price_at", ""),
+            "samples_by_offset": {},
+        }
+        samples = candidate.get("outcome_samples")
+        if isinstance(samples, list):
+            for sample in samples:
+                if isinstance(sample, dict):
+                    _merge_timeline_sample(rows_by_key[key]["samples_by_offset"], sample)
+        for dynamic_offset in _dynamic_return_offsets(candidate):
+            _merge_timeline_sample(rows_by_key[key]["samples_by_offset"], _sample_from_row(candidate, dynamic_offset, anchor))
+
+    for outcome_row in outcome or []:
+        if not isinstance(outcome_row, dict):
+            continue
+        key = _candidate_key(market, outcome_row.get("ticker"))
+        if not key:
+            continue
+        row = rows_by_key.setdefault(key, {
+            "ticker": str(outcome_row.get("ticker") or ""),
+            "name": str(outcome_row.get("name") or ""),
+            "display_ticker": _display_ticker(outcome_row),
+            "shadow_preopen_rank": None,
+            "preopen_score": None,
+            "preopen_grade": "",
+            "anchor_price": _positive_number(outcome_row.get("anchor_price")),
+            "anchor_price_source": str(outcome_row.get("anchor_price_source") or ""),
+            "anchor_price_at": str(outcome_row.get("anchor_price_at") or ""),
+            "regular_open_price": outcome_row.get("regular_open_price"),
+            "last_price": outcome_row.get("price"),
+            "last_price_at": outcome_row.get("captured_at", ""),
+            "samples_by_offset": {},
+        })
+        if not row.get("name") and outcome_row.get("name"):
+            row["name"] = str(outcome_row.get("name") or "")
+            row["display_ticker"] = _display_ticker(row)
+        if row.get("anchor_price") is None and _positive_number(outcome_row.get("anchor_price")) is not None:
+            row["anchor_price"] = _positive_number(outcome_row.get("anchor_price"))
+            row["anchor_price_source"] = str(outcome_row.get("anchor_price_source") or "")
+            row["anchor_price_at"] = str(outcome_row.get("anchor_price_at") or "")
+        if outcome_row.get("price") is not None:
+            row["last_price"] = outcome_row.get("price")
+            row["last_price_at"] = outcome_row.get("captured_at", "")
+        samples = outcome_row.get("outcome_samples")
+        if isinstance(samples, list):
+            for sample in samples:
+                if isinstance(sample, dict):
+                    _merge_timeline_sample(row["samples_by_offset"], sample)
+        row_offset = _int_or_none(outcome_row.get("offset_min"))
+        if row_offset is not None:
+            _merge_timeline_sample(row["samples_by_offset"], _sample_from_row(outcome_row, row_offset, row.get("anchor_price")))
+        for dynamic_offset in _dynamic_return_offsets(outcome_row):
+            _merge_timeline_sample(row["samples_by_offset"], _sample_from_row(outcome_row, dynamic_offset, row.get("anchor_price")))
+
+    timeline: list[dict[str, Any]] = []
+    for row in rows_by_key.values():
+        sample_map = row.get("samples_by_offset") or {}
+        returns_by_offset: dict[str, float | None] = {}
+        prices_by_offset: dict[str, float | None] = {}
+        statuses_by_offset: dict[str, str] = {}
+        sample_list: list[dict[str, Any]] = []
+        for offset in offsets:
+            sample = sample_map.get(int(offset), {})
+            returns_by_offset[str(offset)] = sample.get("return_pct") if sample else None
+            prices_by_offset[str(offset)] = sample.get("price") if sample else None
+            statuses_by_offset[str(offset)] = str(sample.get("status") or "") if sample else ""
+            if sample:
+                sample_list.append(sample)
+        sampled_returns = [float(sample.get("return_pct")) for sample in sample_list if sample.get("return_pct") is not None]
+        row["returns_by_offset"] = returns_by_offset
+        row["prices_by_offset"] = prices_by_offset
+        row["statuses_by_offset"] = statuses_by_offset
+        row["samples"] = sample_list
+        row["sampled_count"] = len(sampled_returns)
+        row["missing_count"] = max(0, len(offsets) - len(sampled_returns))
+        row["latest_return_pct"] = sampled_returns[-1] if sampled_returns else None
+        row["best_return_pct"] = max(sampled_returns) if sampled_returns else None
+        row["worst_return_pct"] = min(sampled_returns) if sampled_returns else None
+        row.pop("samples_by_offset", None)
+        timeline.append(row)
+    timeline.sort(key=lambda row: (
+        int(row.get("shadow_preopen_rank") or 999999),
+        str(row.get("ticker") or ""),
+    ))
+    return timeline
+
+
 def _performance_summary(rank_diff: list[dict[str, Any]], outcome: list[dict[str, Any]]) -> dict[str, Any]:
     top3 = []
     for row in rank_diff:
@@ -325,12 +749,21 @@ def _performance_summary(rank_diff: list[dict[str, Any]], outcome: list[dict[str
             continue
     outcome_30m = []
     outcome_60m = []
+    by_offset: dict[int, list[float]] = {}
     for row in outcome:
         try:
             if row.get("post_open_30m_return_pct") is not None:
                 outcome_30m.append(float(row.get("post_open_30m_return_pct")))
             if row.get("post_open_60m_return_pct") is not None:
                 outcome_60m.append(float(row.get("post_open_60m_return_pct")))
+            offset = _int_or_none(row.get("offset_min"))
+            value = _number_or_none(row.get("post_open_return_pct"))
+            if offset is not None and value is not None:
+                by_offset.setdefault(offset, []).append(value)
+            for dynamic_offset in _dynamic_return_offsets(row):
+                dynamic_value = _number_or_none(row.get(f"post_open_{dynamic_offset}m_return_pct"))
+                if dynamic_value is not None:
+                    by_offset.setdefault(dynamic_offset, []).append(dynamic_value)
         except Exception:
             continue
     return {
@@ -340,6 +773,7 @@ def _performance_summary(rank_diff: list[dict[str, Any]], outcome: list[dict[str
         "top3_trade_ready": sum(1 for row in top3 if row.get("actual_trade_ready")),
         "avg_30m_return_pct": _avg(outcome_30m),
         "avg_60m_return_pct": _avg(outcome_60m),
+        "avg_return_by_offset": {str(offset): _avg(values) for offset, values in sorted(by_offset.items())},
         "review_status": "collect_5_to_10_sessions_before_enabling_behavior",
     }
 
@@ -380,16 +814,62 @@ def _next_actions(market: str, empty_reason: str, mode: str = "live") -> list[st
     return []
 
 
-def _scheduler_guidance(market: str, mode: str = "live") -> dict[str, Any]:
+def _outcome_storage_counts(outcome: list[dict[str, Any]]) -> dict[str, int]:
+    sampled = 0
+    missing = 0
+    errors = 0
+    for row in outcome or []:
+        status = str(row.get("outcome_status") or "")
+        value = _number_or_none(row.get("post_open_return_pct"))
+        if value is not None:
+            sampled += 1
+        elif status == "price_provider_error":
+            errors += 1
+        else:
+            missing += 1
+    return {"sampled": sampled, "missing": missing, "errors": errors, "total": len(outcome or [])}
+
+
+def _operator_status(
+    *,
+    session_date: str,
+    candidate_source: str,
+    state: dict[str, Any],
+    outcome: list[dict[str, Any]],
+    offsets: list[int],
+    display_enriched_count: int,
+    screen_cache_fallback_count: int,
+) -> str:
+    if candidate_source == "screen_cache_fallback" or state.get("outcome_source_candidates") == "screen_cache_fallback":
+        candidate_label = "후보: 화면 캐시 복구"
+    elif candidate_source == "candidate_log":
+        candidate_label = "후보: 후보 로그"
+    elif str(state.get("provider") or "") == "seed_watchlist":
+        candidate_label = "후보: 기본 관심목록"
+    elif state:
+        candidate_label = "후보: 장전 수집"
+    else:
+        candidate_label = "후보: 없음"
+
+    if display_enriched_count:
+        candidate_label += f" + 값 보강 {display_enriched_count}건"
+    if screen_cache_fallback_count:
+        candidate_label += f" {screen_cache_fallback_count}건"
+
+    counts = _outcome_storage_counts(outcome)
+    result_label = f"결과: 저장 {counts['sampled']}건"
+    if counts["missing"]:
+        result_label += f", 미수집 {counts['missing']}건"
+    if counts["errors"]:
+        result_label += f", 오류 {counts['errors']}건"
+    return f"세션 {session_date} · {candidate_label} · {result_label} · 표시 시간 {len(offsets)}개"
+
+
+def _scheduler_guidance(market: str, mode: str = "live", session_date: str | None = None) -> dict[str, Any]:
     market_key = _market_key(market)
     runtime_mode = _runtime_mode(mode)
     automatic_command = f"python tools/preopen_scheduler.py --mode {runtime_mode} --markets KR,US --loop"
-    try:
-        from preopen.scheduler import default_outcome_offsets_min
-
-        offsets = list(default_outcome_offsets_min(market_key, resolve_session_date_str(market_key)))
-    except Exception:
-        offsets = [5, 30, 60, 90, 120]
+    offsets = _scheduled_outcome_offsets(market_key, session_date or resolve_session_date_str(market_key))
     outcome_commands = [
         f"python tools/preopen_outcome_updater.py --market {market_key} --mode {runtime_mode} --offset-min {offset} --once"
         for offset in offsets
@@ -430,7 +910,8 @@ def load_preopen_dashboard(
     state = load_preopen_state(market_key, session_date=session_date, max_age_min=24 * 60, mode=runtime_mode) or {}
     candidate_log = read_jsonl_tail(log_path("candidates", market_key, session_date, mode=runtime_mode), limit)
     rank_diff = read_jsonl_tail(log_path("rank_diff", market_key, session_date, mode=runtime_mode), limit)
-    outcome = read_jsonl_tail(log_path("outcome", market_key, session_date, mode=runtime_mode), limit)
+    outcome_limit = max(1000, int(limit) * 30)
+    outcome = read_jsonl_tail(log_path("outcome", market_key, session_date, mode=runtime_mode), outcome_limit)
     state_candidates = list(state.get("candidates") or []) if isinstance(state, dict) else []
     candidate_source = "state" if state_candidates else ""
     all_candidates = state_candidates
@@ -449,6 +930,23 @@ def load_preopen_dashboard(
             }
         else:
             state.setdefault("source_status", "candidate_log")
+    screen_cache_fallback_count = 0
+    if (
+        all_candidates
+        and isinstance(state, dict)
+        and str(state.get("data_quality", "") or "").lower().startswith("seed_only")
+        and _all_candidates_lack_display_values(all_candidates)
+    ):
+        fallback_candidates = _screen_cache_candidates_for_display(
+            market_key,
+            session_date,
+            captured_at=str(state.get("captured_at", "") or ""),
+        )
+        if fallback_candidates:
+            all_candidates = fallback_candidates
+            candidate_source = "screen_cache_fallback"
+            screen_cache_fallback_count = len(fallback_candidates)
+    all_candidates, display_enriched_count = _enrich_candidates_from_screen_cache(market_key, all_candidates)
     candidates = all_candidates[:limit]
     candidate_log_count = _line_count(log_path("candidates", market_key, session_date, mode=runtime_mode))
     candidate_total_count = max(
@@ -457,6 +955,32 @@ def load_preopen_dashboard(
         candidate_log_count,
     )
     empty_reason = _empty_reason(state, candidates, rank_diff, outcome)
+    display_provider = state.get("provider", "") if state else ""
+    display_source_status = state.get("source_status", "") if state else ""
+    display_data_quality = state.get("data_quality", "") if state else ""
+    if candidate_source == "screen_cache_fallback":
+        display_provider = "screen_cache"
+        display_source_status = "screen_cache_display_fallback"
+        display_data_quality = "screen_cache_display"
+    outcome_offsets = _outcome_offsets_for_display(market_key, session_date, all_candidates, outcome)
+    outcome_timeline = _build_outcome_timeline(market_key, candidates, outcome, outcome_offsets)
+    scheduler_guidance = _scheduler_guidance(market_key, mode=runtime_mode, session_date=session_date)
+    operator_status = _operator_status(
+        session_date=session_date,
+        candidate_source=candidate_source or "none",
+        state=state,
+        outcome=outcome,
+        offsets=outcome_offsets,
+        display_enriched_count=display_enriched_count,
+        screen_cache_fallback_count=screen_cache_fallback_count,
+    )
+    raw_status = (
+        f"provider={display_provider or '-'} token={state.get('token_status', '') if state else '-'} "
+        f"source={display_source_status or '-'} data={display_data_quality or '-'} "
+        f"raw_provider={state.get('provider', '') if state else '-'} "
+        f"raw_source={state.get('source_status', '') if state else '-'} "
+        f"raw_data={state.get('data_quality', '') if state else '-'}"
+    )
     return {
         "market": market_key,
         "session_date": session_date,
@@ -471,23 +995,33 @@ def load_preopen_dashboard(
             "candidate_display_count": len(candidates),
             "candidate_log_count": candidate_log_count,
             "candidate_source": candidate_source or "none",
+            "display_enriched_count": display_enriched_count,
+            "display_enrichment_source": "screen_cache" if display_enriched_count else "",
+            "screen_cache_fallback_count": screen_cache_fallback_count,
             "rank_diff_count": len(rank_diff),
             "outcome_count": len(outcome),
             "token_status": state.get("token_status", "") if state else "",
-            "source_status": state.get("source_status", "") if state else "",
-            "provider": state.get("provider", "") if state else "",
-            "data_quality": state.get("data_quality", "") if state else "",
+            "source_status": display_source_status,
+            "provider": display_provider,
+            "data_quality": display_data_quality,
+            "raw_source_status": state.get("source_status", "") if state else "",
+            "raw_provider": state.get("provider", "") if state else "",
+            "raw_data_quality": state.get("data_quality", "") if state else "",
+            "operator_status": operator_status,
+            "raw_status": raw_status,
             "empty_reason": empty_reason,
             "has_data": bool(candidates or rank_diff or outcome),
         },
         "candidates": candidates,
         "rank_diff": rank_diff,
         "outcome": outcome,
+        "outcome_offsets_min": outcome_offsets,
+        "outcome_timeline": outcome_timeline,
         "performance_summary": _performance_summary(rank_diff, outcome),
         "scheduler": load_preopen_scheduler_dashboard(mode=runtime_mode, limit=20),
         "recent_sessions": list_preopen_sessions(market_key, limit=20, mode=runtime_mode),
         "next_actions": _next_actions(market_key, empty_reason, mode=runtime_mode),
-        "scheduler_guidance": _scheduler_guidance(market_key, mode=runtime_mode),
+        "scheduler_guidance": scheduler_guidance,
         "paths": {
             "state": str(state_path(market_key, session_date, mode=runtime_mode)),
             "candidates": str(log_path("candidates", market_key, session_date, mode=runtime_mode)),

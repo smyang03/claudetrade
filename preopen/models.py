@@ -59,9 +59,16 @@ class PreopenCandidate:
     quote_timestamp: str = ""
     news_or_earnings_flag: bool | None = None
     open_volume_confirmation: float | None = None
+    display_enrichment_source: str = ""
+    anchor_price: float | None = None
+    anchor_price_source: str = ""
+    anchor_price_at: str = ""
     regular_open_price: float | None = None
     last_price: float | None = None
     last_price_at: str = ""
+    last_outcome_offset_min: int | None = None
+    last_outcome_price: float | None = None
+    outcome_samples: list[dict[str, Any]] = field(default_factory=list)
     post_open_5m_return_pct: float | None = None
     post_open_30m_return_pct: float | None = None
     post_open_60m_return_pct: float | None = None
@@ -107,6 +114,12 @@ def normalize_candidate(raw: dict[str, Any], *, market: str, session_date: str, 
         candidate["gap_pct"] = candidate.get("extended_change_pct")
     if candidate.get("extended_change_pct") is None and candidate.get("gap_pct") is not None:
         candidate["extended_change_pct"] = candidate.get("gap_pct")
+    if candidate.get("anchor_price") is None:
+        candidate["anchor_price"] = candidate.get("price") or candidate.get("extended_price")
+    if candidate.get("anchor_price") is not None and not candidate.get("anchor_price_source"):
+        candidate["anchor_price_source"] = "candidate_price"
+    if candidate.get("anchor_price") is not None and not candidate.get("anchor_price_at"):
+        candidate["anchor_price_at"] = candidate.get("first_detected_at") or candidate.get("captured_at") or captured_at
     candidate["ticker"] = ticker
     candidate["market"] = market
     candidate["session_date"] = session_date

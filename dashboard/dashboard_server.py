@@ -10271,6 +10271,22 @@ PAGE_PREOPEN_HTML = """
 .preopen-refresh-btn.loading .preopen-refresh-icon {
   animation: preopen-spin 0.8s linear infinite;
 }
+.preopen-source-line {
+  margin-top: 8px;
+  line-height: 1.55;
+}
+.preopen-pos {
+  color: #22c55e;
+  font-weight: 700;
+}
+.preopen-neg {
+  color: #f87171;
+  font-weight: 700;
+}
+.preopen-flat {
+  color: #cbd5e1;
+  font-weight: 600;
+}
 @keyframes preopen-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -10307,7 +10323,7 @@ PAGE_PREOPEN_HTML = """
       <div class="card"><div class="card-sub">최근 작업</div><div class="metric" id="preopen-scheduler-job">-</div></div>
     </div>
     <div id="preopen-empty-banner" class="card" style="margin-top:12px;padding:12px;display:none"></div>
-    <div class="muted" id="preopen-source-status" style="margin-top:8px">-</div>
+    <div class="muted preopen-source-line" id="preopen-source-status">-</div>
   </section>
   <section class="section">
     <div class="section-head"><h2>상위 장전 후보</h2></div>
@@ -10333,6 +10349,30 @@ function fmtPreopen(v) {
   if (v === null || v === undefined || v === '') return '-';
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2);
   return String(v);
+}
+function fmtPreopenPrice(v) {
+  if (v === null || v === undefined || v === '') return '-';
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  return n >= 1000 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : n.toFixed(2);
+}
+function preopenDisplayTicker(r) {
+  const ticker = String((r && r.ticker) || '').trim();
+  const name = String((r && r.name) || '').trim();
+  if (r && r.display_ticker) return r.display_ticker;
+  if (ticker && name && name.toUpperCase() !== ticker.toUpperCase()) return `${name} (${ticker})`;
+  return ticker || name || '-';
+}
+function preopenReturnCell(v, status) {
+  if (v === null || v === undefined || v === '') {
+    const label = status === 'pending_price_provider' ? '미수집' : '-';
+    return preopenTrustedHtml(`<span class="muted">${preopenEscapeHtml(label)}</span>`);
+  }
+  const n = Number(v);
+  if (!Number.isFinite(n)) return v;
+  const cls = n > 0 ? 'preopen-pos' : (n < 0 ? 'preopen-neg' : 'preopen-flat');
+  const sign = n > 0 ? '+' : '';
+  return preopenTrustedHtml(`<span class="${cls}">${sign}${fmtPreopen(n)}%</span>`);
 }
 function tags(v) {
   return Array.isArray(v) ? v.join(', ') : (v || '-');
@@ -10362,7 +10402,8 @@ function koPreopenOutcome(v) {
     FLAT: '보합',
     PENDING: '대기',
     NO_DATA: '데이터 없음',
-    pending_price_provider: '가격 대기',
+    pending_price_provider: '가격 미수집',
+    price_provider_error: '가격 오류',
   };
   return m[v] || v || '';
 }
@@ -10460,13 +10501,14 @@ async function loadPreopen(button) {
       scheduler.last_tick_at ? `${fmtPreopen(scheduler.heartbeat_age_sec)}초 전` : '-';
     document.getElementById('preopen-scheduler-job').textContent =
       lastJob.event ? `${lastJob.market || '-'} ${lastJob.kind || '-'} ${koResult(lastJob.event || '')}` : '-';
-    document.getElementById('preopen-source-status').textContent =
-      `session=${d.session_date || '-'} · provider=${s.provider || '-'} · token=${s.token_status || '-'} · source=${s.source_status || '-'} · data=${s.data_quality || '-'} · reason=${koPreopenReason(s.empty_reason)} · review=${ps.review_status || '-'}`;
+    const sourceEl = document.getElementById('preopen-source-status');
+    sourceEl.textContent = s.operator_status || `세션 ${d.session_date || '-'} · ${koPreopenReason(s.empty_reason)}`;
+    sourceEl.title = s.raw_status || '';
     document.getElementById('preopen-candidates').innerHTML = tableOrEmpty(
       d.candidates || [],
-      ['순위','종목','점수','등급','provider','data','stale','변동%','거래대금','스프레드','태그'],
-      r => [fmtPreopen(r.shadow_preopen_rank), r.ticker || '', fmtPreopen(r.preopen_score), r.preopen_grade || '',
-            r.provider || r.source || '-', r.data_quality || '-', r.stale ? '예' : '-',
+      ['순위','종목','선점가','점수','등급','변동%','거래대금','스프레드','태그'],
+      r => [fmtPreopen(r.shadow_preopen_rank), preopenDisplayTicker(r), fmtPreopenPrice(r.anchor_price ?? r.price ?? r.extended_price),
+            fmtPreopen(r.preopen_score), r.preopen_grade || '',
             fmtPreopen(r.extended_change_pct ?? r.gap_pct), fmtPreopen(r.extended_dollar_volume), fmtPreopen(r.spread_pct), tags(r.risk_tags)]
     );
     document.getElementById('preopen-rank-diff').innerHTML = tableOrEmpty(
@@ -10476,12 +10518,16 @@ async function loadPreopen(button) {
             r.actual_selected ? '예' : '-', r.actual_trade_ready ? '예' : '-', r.actual_ordered ? '예' : '-', r.actual_rejection_reason || '']
     );
     document.getElementById('preopen-outcome').innerHTML = tableOrEmpty(
-      d.outcome || [],
-      ['종목','경과','상태','5분','30분','60분','최대상승','최대하락','고가','종가'],
-      r => [r.ticker || '', fmtPreopen(r.offset_min), koPreopenOutcome(r.outcome_status || ''), fmtPreopen(r.post_open_5m_return_pct),
-            fmtPreopen(r.post_open_30m_return_pct), fmtPreopen(r.post_open_60m_return_pct),
-            fmtPreopen(r.max_runup_pct ?? r.post_open_mfe_pct), fmtPreopen(r.max_drawdown_pct ?? r.post_open_mae_pct),
-            fmtPreopen(r.open_to_high_pct), fmtPreopen(r.open_to_close_pct)]
+      d.outcome_timeline || [],
+      ['순위','종목','선점가','현재가','최근','최고','최저'].concat((d.outcome_offsets_min || []).map(o => `${o}분`)),
+      r => [
+            fmtPreopen(r.shadow_preopen_rank), preopenDisplayTicker(r), fmtPreopenPrice(r.anchor_price),
+            fmtPreopenPrice(r.last_price), preopenReturnCell(r.latest_return_pct), preopenReturnCell(r.best_return_pct),
+            preopenReturnCell(r.worst_return_pct)
+          ].concat((d.outcome_offsets_min || []).map(o => {
+            const key = String(o);
+            return preopenReturnCell((r.returns_by_offset || {})[key], (r.statuses_by_offset || {})[key]);
+          }))
     );
     const guidance = d.scheduler_guidance || {};
     const actionRows = (d.next_actions || []).map((a, i) => ({kind:'next', idx:i + 1, command:a}))

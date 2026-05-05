@@ -1,8 +1,8 @@
 """sim_realdata.py - 실제 DB 데이터로 전략 비교 백테스트
 
 비교 대상:
-  A) 패치前  : cross-asset 미적용, 기존 params 그대로
-  B) 패치後  : 현재 패치 (bear adj 차단 + cap 1.65 + DEFENSIVE 분리)
+  A) 패치전  : cross-asset 미적용, 기존 params 그대로
+  B) 패치후  : 현재 패치 (bear adj 차단 + cap 1.65 + DEFENSIVE 분리)
   C) 개선안1 : B + mean_reversion ma60 임계 0.95->0.90
   D) 개선안2 : B + mean_reversion rsi_thr +2 완화
 
@@ -45,7 +45,7 @@ SIM_MODE = "CAUTIOUS_BEAR"
 SIM_CONF = 0.65
 
 def make_params_A(sname):
-    """패치前: cross-asset 미적용"""
+    """패치전: cross-asset 미적용"""
     if sname == "gap_pullback":
         return gap_pullback.params(SIM_MODE, SIM_CONF)
     elif sname == "momentum":
@@ -56,7 +56,7 @@ def make_params_A(sname):
         return volatility_breakout.params(SIM_MODE, conf=SIM_CONF)
 
 def make_params_B(sname, ctx, market, ticker):
-    """패치後: 현재 cross-asset 적용"""
+    """패치후: 현재 cross-asset 적용"""
     return apply_cross_asset_adjust(make_params_A(sname), ctx, market, ticker, SIM_MODE)
 
 def make_params_C(sname, ctx, market, ticker):
@@ -188,8 +188,8 @@ def sim_ticker(df, ticker, market, scenario_name, param_fn, chain):
 
 # ── 전체 유니버스 시뮬 ──────────────────────────────────────────────────────────
 SCENARIOS = {
-    "A_패치前":  lambda s, ctx, m, t: make_params_A(s),
-    "B_패치後":  make_params_B,
+    "A_패치전":  lambda s, ctx, m, t: make_params_A(s),
+    "B_패치후":  make_params_B,
     "C_mr완화(ma60x0.90)": make_params_C,
     "D_mr완화(rsi+2)":     make_params_D,
 }
@@ -251,8 +251,8 @@ def print_market(market, agg, ticker_rows, tickers):
         print(f"  {sc_name:<28} {total_sig:>6} {n:>5} {wr:>5}% {tp:>+8.2f}% {ap:>+7.3f}%")
 
     # 전략별 신호 분포 (B 기준)
-    print(f"\n  [전략별 신호 분포 - 패치後 B 기준]")
-    b_sig = agg["B_패치後"]["sig"]
+    print(f"\n  [전략별 신호 분포 - 패치후 B 기준]")
+    b_sig = agg["B_패치후"]["sig"]
     total = sum(b_sig.values()) or 1
     for s in chain:
         cnt = b_sig[s]
@@ -306,29 +306,29 @@ def print_market(market, agg, ticker_rows, tickers):
     print(f"    ma60 완화 시 추가 신호: +{gain}건")
 
     # 종목별 상세 (신호 많은 상위 10개)
-    top10 = sorted(valid, key=lambda r: r.get("B_패치後", {}).get("sig", 0), reverse=True)[:10]
-    print(f"\n  [신호 상위 10개 종목 - 패치後 B 기준]")
+    top10 = sorted(valid, key=lambda r: r.get("B_패치후", {}).get("sig", 0), reverse=True)[:10]
+    print(f"\n  [신호 상위 10개 종목 - 패치후 B 기준]")
     print(f"  {'티커':<10} {'행수':>5}  A신호  B신호  B거래  B승률  B손익")
     print(f"  {'-'*55}")
     for r in top10:
-        a = r.get("A_패치前", {})
-        b = r.get("B_패치後", {})
+        a = r.get("A_패치전", {})
+        b = r.get("B_패치후", {})
         print(f"  {r['ticker']:<10} {r['rows']:>5}  "
               f"{a.get('sig',0):>5}  {b.get('sig',0):>5}  "
               f"{b.get('trades',0):>5}  {b.get('wr',0):>4}%  "
               f"{b.get('pnl',0):>+6.2f}%")
 
     # exit reason 분포
-    b_trades = agg["B_패치後"]["trades"]
+    b_trades = agg["B_패치후"]["trades"]
     if b_trades:
         from collections import Counter
         reasons = Counter(t["reason"] for t in b_trades)
-        print(f"\n  [청산 사유 분포 - 패치後]")
+        print(f"\n  [청산 사유 분포 - 패치후]")
         for r, c in sorted(reasons.items(), key=lambda x: -x[1]):
             print(f"    {r:<12} {c:>4}건 ({c/len(b_trades)*100:.1f}%)")
 
     # 전략별 평균 보유일
-    print(f"\n  [전략별 평균 보유일 - 패치後]")
+    print(f"\n  [전략별 평균 보유일 - 패치후]")
     strat_holds = {}
     for t in b_trades:
         strat_holds.setdefault(t["strat"], []).append(t["hold"])
