@@ -8648,12 +8648,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             _stop_key = ex["ticker"].upper() if market == "US" else ex["ticker"]
             self._note_stop_loss_event(_sl_mkt, _stop_key, reason)
             _sl_cnt = self._daily_sl_count[_sl_mkt]
-            if _sl_cnt >= 3:
-                log.warning(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 신규 진입 중단")
-            elif _sl_cnt >= 2:
-                log.warning(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 이후 size × 0.6")
+            if _sl_cnt >= 2:
+                log.warning(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 신규 진입 차단")
             else:
-                log.info(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 이후 size × 0.8")
+                _fst_mult = float(os.getenv("STOP_CLUSTER_FIRST_STOP_SIZE_MULT", "0.5"))
+                log.info(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 이후 size × {_fst_mult}")
         # ML DB: 거래 결과 기록
         if _ML_DB_ENABLED and ex.get("decision_id"):
             try:
