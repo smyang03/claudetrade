@@ -23,6 +23,9 @@ SAFETY_REASON_CODES: tuple[str, ...] = (
     "PATHB_ORDER_IN_PROGRESS",
     "PATHB_SELL_IN_PROGRESS",
     "SAME_DAY_REENTRY_COOLDOWN",
+    "STOP_CLUSTER_FIRST_STOP_COOLDOWN",
+    "STOP_CLUSTER_MARKET_BLOCK",
+    "STOP_CLUSTER_DISASTER_BLOCK",
     "PATH_DUPLICATE_HOLDING",
     "CLAUDE_PRICE_INVALID",
     "PATHB_DISABLED",
@@ -118,6 +121,8 @@ class V2Config:
     pathb_emergency_disable: bool = False
     kr_reentry_cooldown_minutes: int = 120
     us_reentry_cooldown_minutes: int = 90
+    kr_profit_reentry_cooldown_minutes: int = 60
+    us_profit_reentry_cooldown_minutes: int = 45
     prompt_version: str = "v2"
 
     @classmethod
@@ -202,6 +207,12 @@ class V2Config:
             ),
             us_reentry_cooldown_minutes=_int_env(
                 "US_REENTRY_COOLDOWN_MINUTES", cls.us_reentry_cooldown_minutes
+            ),
+            kr_profit_reentry_cooldown_minutes=_int_env(
+                "KR_PROFIT_REENTRY_COOLDOWN_MINUTES", cls.kr_profit_reentry_cooldown_minutes
+            ),
+            us_profit_reentry_cooldown_minutes=_int_env(
+                "US_PROFIT_REENTRY_COOLDOWN_MINUTES", cls.us_profit_reentry_cooldown_minutes
             ),
             prompt_version=os.getenv("PROMPT_VERSION", cls.prompt_version),
         )

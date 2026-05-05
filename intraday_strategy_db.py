@@ -157,15 +157,25 @@ def update_trade(row_id: int) -> None:
         )
 
 
-def update_outcome(row_id: int, pnl_pct: float, note: str = "") -> None:
+def update_outcome(row_id: int, pnl_pct: float, note: str = "", blocked_reason=None) -> None:
     if not row_id:
         return
     with _conn() as conn:
-        conn.execute(
-            """
-            UPDATE intraday_strategy_log
-            SET stage='outcome', pnl_pct=?, note=?
-            WHERE id=?
-            """,
-            (pnl_pct, note or None, row_id),
-        )
+        if blocked_reason:
+            conn.execute(
+                """
+                UPDATE intraday_strategy_log
+                SET stage='outcome', pnl_pct=?, note=?, blocked_reason=?
+                WHERE id=?
+                """,
+                (pnl_pct, note or None, blocked_reason, row_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE intraday_strategy_log
+                SET stage='outcome', pnl_pct=?, note=?
+                WHERE id=?
+                """,
+                (pnl_pct, note or None, row_id),
+            )

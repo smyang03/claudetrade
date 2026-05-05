@@ -137,7 +137,7 @@ from strategy.momentum import signal as mom_sig, params as mom_params, diagnosti
 from strategy.mean_reversion import signal as mr_sig, params as mr_params
 from strategy.gap_pullback import signal as gap_sig, params as gap_params
 from strategy.volatility_breakout import signal as vb_sig, params as vb_params
-from strategy.opening_range_pullback import signal as orp_sig
+from strategy.opening_range_pullback import signal as orp_sig, diagnostics as orp_diag
 from strategy.continuation import signal as cont_sig, params as cont_params, diagnostics as cont_diag
 from strategy.cross_asset import apply_cross_asset_adjust, get_vix_regime
 from strategy.adaptive_params import adaptive_params as _adaptive_params
@@ -780,6 +780,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.claude_control: dict = {}
         # 당일 손절 카운터 {market: count} — 연속 손절 시 size_mult 자동 축소
         self._daily_sl_count: dict[str, int] = {"KR": 0, "US": 0}
+        self._daily_sl_last_at: dict[str, Optional[datetime]] = {"KR": None, "US": None}
         # 이번 세션에서 매도 완료된 티커 — broker sync 재주입 방지
         self._session_closed_tickers: dict[str, set] = {"KR": set(), "US": set()}
         # WS tick 기반 장중 고가/저가 누적 — 당일봉 주입 시 단일가봉 탈출에 사용
@@ -2666,6 +2667,86 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "details": details,
                 }
         return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
+    def _note_stop_loss_event(self, market: str, ticker: str, reason: str = "") -> int:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = str(ticker or "").strip()
+        if market_key == "US":
+            ticker_key = ticker_key.upper()
+        if ticker_key:
+            self._v2_same_day_stop_tickers.setdefault(market_key, set()).add(ticker_key)
+        self._daily_sl_count[market_key] = int(self._daily_sl_count.get(market_key, 0) or 0) + 1
+        self._daily_sl_last_at[market_key] = datetime.now(KST)
+        count = int(self._daily_sl_count.get(market_key, 0) or 0)
+        log.warning(
+            f"[stop cluster] {market_key} count={count} ticker={ticker_key} reason={reason or 'stop'}"
+        )
+        return count
+
+    def _daily_stop_cluster_state(self, market: str, ticker: str = "") -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = str(ticker or "").strip()
+        if market_key == "US":
+            ticker_key = ticker_key.upper()
+        sl_count = getattr(self, "_daily_sl_count", {}) or {}
+        sl_last_at = getattr(self, "_daily_sl_last_at", {}) or {}
+        same_day_stops = getattr(self, "_v2_same_day_stop_tickers", {}) or {}
+        count = int(sl_count.get(market_key, 0) or 0)
+        last_at = sl_last_at.get(market_key)
+        stopped = set(same_day_stops.get(market_key, set()) or set())
+        freeze_min = max(0, int(os.getenv("STOP_CLUSTER_FIRST_FREEZE_MINUTES", "30")))
+        hard_count = max(1, int(os.getenv("STOP_CLUSTER_HARD_BLOCK_COUNT", "2")))
+        disaster_count = max(hard_count, int(os.getenv("STOP_CLUSTER_DISASTER_BLOCK_COUNT", "3")))
+        elapsed_min = None
+        if last_at is not None:
+            try:
+                elapsed_min = max(0.0, (datetime.now(KST) - last_at).total_seconds() / 60.0)
+            except Exception:
+                elapsed_min = None
+        details = {
+            "market": market_key,
+            "ticker": ticker_key,
+            "daily_stop_count": count,
+            "stopped_tickers": sorted(stopped),
+            "last_stop_at": last_at.isoformat() if last_at is not None else "",
+            "minutes_since_last_stop": round(elapsed_min, 2) if elapsed_min is not None else None,
+            "first_stop_freeze_minutes": freeze_min,
+            "hard_block_count": hard_count,
+            "disaster_block_count": disaster_count,
+        }
+        if ticker_key and ticker_key in stopped:
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": "SAME_DAY_REENTRY_AFTER_STOP",
+                "scope": "ticker",
+                "details": details,
+            }
+        if count >= disaster_count:
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": "STOP_CLUSTER_DISASTER_BLOCK",
+                "scope": "market",
+                "details": details,
+            }
+        if count >= hard_count:
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": "STOP_CLUSTER_MARKET_BLOCK",
+                "scope": "market",
+                "details": details,
+            }
+        if count == 1 and freeze_min > 0 and (elapsed_min is None or elapsed_min < freeze_min):
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": "STOP_CLUSTER_FIRST_STOP_COOLDOWN",
+                "scope": "market",
+                "details": details,
+            }
+        return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
+
     def _new_buy_block_state(self, market: str, ticker: str = "", strategy: str = "") -> dict:
         market_key = str(market or "").upper()
         raw_ticker = str(ticker or "").strip()
@@ -2691,6 +2772,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "reason": "ENTRY_BLACKOUT",
                 "scope": "market",
                 "details": details,
+            }
+        stop_cluster = self._daily_stop_cluster_state(market_key, ticker_key)
+        if bool((stop_cluster or {}).get("blocked")):
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": str((stop_cluster or {}).get("reason") or "STOP_CLUSTER_MARKET_BLOCK"),
+                "scope": str((stop_cluster or {}).get("scope") or "market"),
+                "details": {**details, **dict((stop_cluster or {}).get("details") or {})},
             }
         analyst_state = self._analyst_new_buy_block_state(market_key)
         if bool((analyst_state or {}).get("blocked")):
@@ -3577,9 +3667,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             reasons.append(f"risk_tags={','.join(risk_tags)}")
         return (min(caps), reasons) if caps else (None, reasons)
     def _prioritize_strategy_order(self, market: str, ticker: str, base_order: list[str]) -> list[str]:
-        order = list(base_order or [])
+        mode_value = str((self.today_judgment.get("consensus", {}) or {}).get("mode", "NEUTRAL") or "NEUTRAL")
+        allowed = set(self._selection_active_strategies(market, mode_value))
+        dispatchable = {"opening_range_pullback", "gap_pullback", "momentum", "mean_reversion", "volatility_breakout"}
+        order = [s for s in list(base_order or []) if s in allowed and s in dispatchable]
         recommended = self._recommended_strategy_for_ticker(market, ticker)
-        if not recommended:
+        if not recommended or recommended not in allowed or recommended not in dispatchable:
             return order
         return [recommended] + [strategy for strategy in order if strategy != recommended]
     def _is_trade_ready_ticker(self, market: str, ticker: str) -> bool:
@@ -4308,24 +4401,29 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _selection_active_strategies(self, market: str, mode: str = "") -> list[str]:
         market_key = "US" if str(market).upper() == "US" else "KR"
         mode_value = str(mode or (self.today_judgment.get("consensus", {}) or {}).get("mode", "NEUTRAL")).upper()
-        risk_on = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL"}
-        balanced = {"CAUTIOUS", "NEUTRAL"}
-        risk_off = {"MILD_BEAR", "CAUTIOUS_BEAR", "DEFENSIVE", "HALT"}
-        if mode_value in risk_off:
-            return ["mean_reversion"]
-        if market_key == "KR":
-            if mode_value in risk_on:
-                active = ["opening_range_pullback", "gap_pullback", "momentum", "mean_reversion", "continuation"]
-                return [s for s in active if s != "continuation" or self.enable_continuation_live]
-            if mode_value in balanced:
-                return ["opening_range_pullback", "gap_pullback", "mean_reversion", "momentum"]
-            return ["opening_range_pullback", "gap_pullback", "mean_reversion"]
-        if mode_value in risk_on:
-            active = ["opening_range_pullback", "gap_pullback", "mean_reversion", "momentum", "continuation"]
-            return [s for s in active if s != "continuation" or self.enable_continuation_live]
-        if mode_value in balanced:
-            return ["opening_range_pullback", "gap_pullback", "mean_reversion", "momentum"]
-        return ["mean_reversion"]
+        common_risk_on = ["opening_range_pullback", "gap_pullback", "momentum", "mean_reversion", "continuation"]
+        common_balanced = ["opening_range_pullback", "gap_pullback", "mean_reversion", "momentum"]
+        policies = {
+            "AGGRESSIVE": common_risk_on,
+            "MODERATE_BULL": common_risk_on,
+            "MILD_BULL": common_risk_on,
+            "CAUTIOUS": ["opening_range_pullback", "gap_pullback", "mean_reversion"],
+            "NEUTRAL": common_balanced,
+            "MILD_BEAR": ["mean_reversion"],
+            "CAUTIOUS_BEAR": ["mean_reversion"],
+            "DEFENSIVE": ["mean_reversion"],
+            "HALT": ["mean_reversion"],
+        }
+        active = list(policies.get(mode_value, common_balanced))
+        if (
+            market_key == "US"
+            and mode_value == "MODERATE_BULL"
+            and not _env_bool("US_MODERATE_BULL_MEAN_REVERSION_ENABLED", False)
+        ):
+            active = [s for s in active if s != "mean_reversion"]
+        if not self.enable_continuation_live:
+            active = [s for s in active if s != "continuation"]
+        return active
     def _selection_session_phase(self, market: str) -> dict:
         market_key = "US" if str(market).upper() == "US" else "KR"
         elapsed = float(self._market_elapsed_min(market_key))
@@ -5500,22 +5598,113 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if ticker in self._entry_blocked:
             del self._entry_blocked[ticker]
         return False
-    def _has_same_day_trade(self, ticker: str, market: str) -> bool:
-        """당일 동일 종목 체결 이력이 있으면 재진입 금지."""
+    def _parse_trade_event_time(self, evt: dict) -> Optional[datetime]:
+        raw = str(evt.get("closed_at") or evt.get("exit_time") or evt.get("created_at") or evt.get("time") or "")
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=KST)
+            return parsed.astimezone(KST)
+        except Exception:
+            return None
+
+    def _same_day_reentry_state(self, ticker: str, market: str) -> dict:
         today_iso = self._current_session_date_str(market)
         normalized = ticker.upper() if market == "US" else ticker
+        last_buy = None
+        last_sell = None
         for evt in reversed(self.risk.all_trade_log):
             evt_ticker = evt.get("ticker", "")
             evt_market = evt.get("market") or self._ticker_market(evt_ticker)
             evt_norm = evt_ticker.upper() if evt_market == "US" else evt_ticker
             evt_session_date = str(evt.get("session_date") or evt.get("date") or "")
-            if evt_session_date != today_iso:
+            if evt_session_date != today_iso or evt_market != market or evt_norm != normalized:
                 continue
-            if evt_market != market:
-                continue
-            if evt_norm == normalized and evt.get("side") in ("buy", "sell"):
-                return True
-        return False
+            side = str(evt.get("side", "") or "").lower()
+            if side == "sell" and last_sell is None:
+                last_sell = evt
+            elif side == "buy" and last_buy is None:
+                last_buy = evt
+            if last_buy is not None and last_sell is not None:
+                break
+        if last_sell is None and last_buy is None:
+            return {"allowed": True, "reason": "", "details": {"market": market, "ticker": normalized}}
+        if last_sell is None:
+            return {
+                "allowed": False,
+                "reason": "same_day_reentry_blocked",
+                "details": {"market": market, "ticker": normalized, "last_side": "buy"},
+            }
+        close_reason = str(last_sell.get("reason", "") or "")
+        close_key = close_reason.upper()
+        try:
+            pnl_pct = float(last_sell.get("pnl_pct", 0) or 0)
+        except Exception:
+            pnl_pct = 0.0
+        stop_reasons = {"LOSS_CAP", "STOP_LOSS", "HARD_STOP", "CLOSED_LOSS_CAP", "CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_STOP"}
+        if close_key in stop_reasons or pnl_pct < 0:
+            return {
+                "allowed": False,
+                "reason": "SAME_DAY_REENTRY_AFTER_STOP",
+                "details": {
+                    "market": market,
+                    "ticker": normalized,
+                    "close_reason": close_reason,
+                    "pnl_pct": pnl_pct,
+                    "policy": "session_block_after_stop",
+                },
+            }
+        closed_at = self._parse_trade_event_time(last_sell)
+        cooldown = int(os.getenv(
+            "KR_PROFIT_REENTRY_COOLDOWN_MINUTES" if market == "KR" else "US_PROFIT_REENTRY_COOLDOWN_MINUTES",
+            "60" if market == "KR" else "45",
+        ))
+        if closed_at is None:
+            return {
+                "allowed": False,
+                "reason": "SAME_DAY_REENTRY_COOLDOWN",
+                "details": {
+                    "market": market,
+                    "ticker": normalized,
+                    "close_reason": close_reason,
+                    "pnl_pct": pnl_pct,
+                    "policy": "missing_close_time",
+                },
+            }
+        age_min = max(0.0, (datetime.now(KST) - closed_at).total_seconds() / 60.0)
+        if age_min < cooldown:
+            return {
+                "allowed": False,
+                "reason": "SAME_DAY_REENTRY_COOLDOWN",
+                "details": {
+                    "market": market,
+                    "ticker": normalized,
+                    "close_reason": close_reason,
+                    "pnl_pct": pnl_pct,
+                    "age_minutes": round(age_min, 2),
+                    "cooldown_minutes": cooldown,
+                    "policy": "profit_exit_cooldown",
+                },
+            }
+        return {
+            "allowed": True,
+            "reason": "",
+            "details": {
+                "market": market,
+                "ticker": normalized,
+                "close_reason": close_reason,
+                "pnl_pct": pnl_pct,
+                "age_minutes": round(age_min, 2),
+                "cooldown_minutes": cooldown,
+                "policy": "profit_exit_reentry_allowed",
+            },
+        }
+
+    def _has_same_day_trade(self, ticker: str, market: str) -> bool:
+        state = self._same_day_reentry_state(ticker, market)
+        return not bool(state.get("allowed", True))
     def _summarize_none_reason(self, detail: str) -> str:
         text = str(detail or "").strip()
         if not text:
@@ -8453,11 +8642,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.debug(f"[sell proceeds ledger] record failed {market} {cand.get('ticker')}: {exc}")
         # 당일 손절 카운터 — 연속 손절 시 이후 진입 size_mult 자동 축소
-        if reason in ("loss_cap", "stop_loss", "trail_stop"):
+        _stop_pnl_pct = float(ex.get("pnl_pct", 0) or 0)
+        if reason in ("loss_cap", "stop_loss") or (reason == "trail_stop" and _stop_pnl_pct <= 0):
             _sl_mkt = market
             _stop_key = ex["ticker"].upper() if market == "US" else ex["ticker"]
-            self._v2_same_day_stop_tickers.setdefault(market, set()).add(_stop_key)
-            self._daily_sl_count[_sl_mkt] = self._daily_sl_count.get(_sl_mkt, 0) + 1
+            self._note_stop_loss_event(_sl_mkt, _stop_key, reason)
             _sl_cnt = self._daily_sl_count[_sl_mkt]
             if _sl_cnt >= 3:
                 log.warning(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 신규 진입 중단")
@@ -8806,6 +8995,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._order_error_count = {}
         self.decision_event_log = []
         self._daily_sl_count[market] = 0
+        self._daily_sl_last_at[market] = None
         self._session_closed_tickers[market] = set()
         self._v2_same_day_stop_tickers[market] = set()
         self._normalize_pending_orders()
@@ -10560,31 +10750,35 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if self._is_entry_blocked(ticker):
                     log.debug(f"  [{ticker}] 진입 차단 중(쿨다운)")
                     continue
-                if self._has_same_day_trade(ticker, market):
-                    self._bump_runtime_reason(market, ticker, "same_day_reentry_blocked")
+                _same_day_state = self._same_day_reentry_state(ticker, market)
+                if not bool(_same_day_state.get("allowed", True)):
+                    _same_day_reason = str(_same_day_state.get("reason") or "same_day_reentry_blocked")
+                    _same_day_details = dict(_same_day_state.get("details") or {})
+                    self._bump_runtime_reason(market, ticker, _same_day_reason)
                     analysis_log.info(
-                        f"[skip {market}] {ticker} same_day_reentry_blocked",
+                        f"[skip {market}] {ticker} {_same_day_reason}",
                         extra={"extra": {
                             "event": "entry_skip",
                             "market": market,
                             "ticker": ticker,
-                            "reason": "same_day_reentry_blocked",
+                            "reason": _same_day_reason,
                             "price": price,
                             "risk_price_krw": risk_price,
                             "mode": mode,
+                            **_same_day_details,
                         }},
                     )
                     self._notify_signal_state_change(
                         "entry_skip", market, ticker,
                         price=float(price),
-                        reason="same_day_reentry_blocked",
+                        reason=_same_day_reason,
                         mode=mode,
                     )
                     if _ML_DB_ENABLED:
                         _ml_write_eval(
                             ticker, price, {}, "SKIPPED",
-                            block_reason_="same_day_reentry_blocked",
-                            diag_json_={"reason": "same_day_reentry_blocked"},
+                            block_reason_=_same_day_reason,
+                            diag_json_={"reason": _same_day_reason, **_same_day_details},
                         )
                     log.debug(f"  [{ticker}] 당일 동일 종목 체결 이력 있음 → 재진입 스킵")
                     continue
@@ -10843,6 +11037,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         f"order={_selected_order}"
                     )
                 def _orp_detail(_df, _i, _p):
+                    _d = orp_diag(_df, _i, _p)
+                    return (
+                        f"OR pullback: reason={_d.get('reason')} "
+                        f"range={float(_d.get('or_range_pct') or 0.0)*100:.2f}% "
+                        f"pullback={float(_d.get('pullback_depth_pct') or 0.0)*100:.2f}% "
+                        f"vol={float(_d.get('vol_ratio') or 0.0):.2f} "
+                        f"elapsed={float(_d.get('elapsed_min') or 0.0):.0f}m"
+                    )
                     if _p.get("disabled"):
                         return f"OR눌림: 전략 비활성({market} {mode})"
                     _elapsed = float(_p.get("session_elapsed_min", 999) or 999)
@@ -10961,6 +11163,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     # 1. OR 형성중 → 아직 OR 미완성 (시간 게이트, 가장 명확한 원인)
                     if "OR active" in detail:
                         reasons.append("or_forming")
+                    _orp_reason = _re.search(r"reason=(orp_[a-z_]+)", detail)
+                    if _orp_reason:
+                        reasons.append(_orp_reason.group(1))
                     # 2. Momentum wait-window gate.
                     if "momentum_wait_window" in detail:
                         reasons.append("momentum_wait")
@@ -11407,7 +11612,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         detail=none_detail,
                     )
                     if _intraday_log_row_id:
-                        isdb.update_outcome(_intraday_log_row_id, 0.0, note=none_detail[:500])
+                        isdb.update_outcome(
+                            _intraday_log_row_id,
+                            0.0,
+                            note=none_detail[:500],
+                            blocked_reason=_rej_reason,
+                        )
                     log.debug(f"  [{ticker}] no signal {price:,}")
                     # ML DB: NO_SIGNAL 기록 (전략별 near-miss 포함)
                     if _ML_DB_ENABLED:
@@ -11696,8 +11906,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     size_mult = round(size_mult * 0.6, 2)
                 # ── 3. 장 후반 진입 기준 강화 ───────────────────────────────
                 elif _sl_cnt_now == 1:
+                    _first_stop_mult = float(os.getenv("STOP_CLUSTER_FIRST_STOP_SIZE_MULT", "0.5"))
+                    size_mult = round(size_mult * max(0.1, min(1.0, _first_stop_mult)), 2)
                 # 인버스 ETF 제외 — 장 후반 하락 지속 시 진입 기회가 더 좋을 수 있음
-                    log.info(f"  [{ticker}] 당일 손절 1회 → size_mult × 0.8 = {size_mult:.2f}")
+                    log.info(f"  [{ticker}] stop cluster count=1 size_mult={size_mult:.2f}")
                 # ── 3. 장 후반 진입 기준 강화 ───────────────────────────────
                 # KR 14:00 이후 / US 03:00 이후: score < 0.6이면 진입 보류
                 # 인버스 ETF 제외 — 장 후반 하락 지속 시 진입 기회가 더 좋을 수 있음

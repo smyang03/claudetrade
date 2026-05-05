@@ -164,6 +164,17 @@ class PathExecutionArbiter:
 class SameDayReentryGuard:
     """Blocks same-session live re-entry after a real CLOSED event."""
 
+    STRICT_CLOSE_REASONS = frozenset(
+        {
+            "CLOSED_LOSS_CAP",
+            "CLOSED_HARD_STOP",
+            "CLOSED_CLAUDE_PRICE_STOP",
+            "LOSS_CAP",
+            "STOP_LOSS",
+            "HARD_STOP",
+        }
+    )
+
     def __init__(self, store: EventStore | None = None, config: V2Config = DEFAULT_V2_CONFIG):
         self.store = store or EventStore()
         self.config = config
@@ -191,20 +202,36 @@ class SameDayReentryGuard:
         reason = str(last_closed.get("reason_code") or "")
         payload = last_closed.get("payload") or {}
         close_reason = str(payload.get("close_reason") or reason)
+        pnl_pct = self._payload_pnl_pct(payload)
 
         current = _ensure_aware(now or datetime.now(timezone.utc))
         closed_at = _parse_dt(str(last_closed.get("occurred_at") or last_closed.get("created_at") or ""))
         age_min = None
         if closed_at is not None:
             age_min = max(0.0, (current - closed_at.astimezone(current.tzinfo)).total_seconds() / 60.0)
-        cooldown = self._cooldown_minutes(market_key)
+        cooldown = self._cooldown_minutes(market_key, close_reason, pnl_pct)
         shadow = {
             "same_day_reentry": True,
+            "same_day_reentry_closed_event_id": last_closed.get("event_id"),
+            "same_day_reentry_closed_decision_id": last_closed.get("decision_id"),
+            "same_day_reentry_closed_execution_id": last_closed.get("execution_id"),
+            "same_day_reentry_closed_position_id": last_closed.get("position_id"),
             "same_day_reentry_close_reason": close_reason,
+            "same_day_reentry_pnl_pct": pnl_pct,
             "same_day_reentry_closed_at": str(last_closed.get("occurred_at") or ""),
             "same_day_reentry_age_minutes": round(age_min, 2) if age_min is not None else None,
             "same_day_reentry_cooldown_minutes": cooldown,
         }
+        if self._is_strict_stop_close(close_reason, pnl_pct):
+            shadow["same_day_reentry_policy"] = "session_block_after_stop"
+            return ArbiterDecision(
+                False,
+                "SAME_DAY_REENTRY_AFTER_STOP",
+                "same-day re-entry is blocked after a stop/loss close",
+                {"market": market_key, "ticker": ticker_key, **shadow},
+                shadow,
+            )
+        shadow["same_day_reentry_policy"] = "profit_exit_cooldown"
         if age_min is None or age_min < cooldown:
             return ArbiterDecision(
                 False,
@@ -215,11 +242,30 @@ class SameDayReentryGuard:
             )
         return ArbiterDecision(True, details={"market": market_key, "ticker": ticker_key}, shadow=shadow)
 
-    def _cooldown_minutes(self, market: str) -> int:
+    def _payload_pnl_pct(self, payload: dict[str, Any]) -> float | None:
+        try:
+            if "pnl_pct" not in payload:
+                return None
+            return float(payload.get("pnl_pct"))
+        except Exception:
+            return None
+
+    def _is_strict_stop_close(self, close_reason: str, pnl_pct: float | None = None) -> bool:
+        if pnl_pct is not None and pnl_pct < 0:
+            return True
+        return str(close_reason or "").upper() in self.STRICT_CLOSE_REASONS
+
+    def _cooldown_minutes(self, market: str, close_reason: str = "", pnl_pct: float | None = None) -> int:
+        if self._is_strict_stop_close(close_reason, pnl_pct):
+            return (
+                int(self.config.us_reentry_cooldown_minutes)
+                if market == "US"
+                else int(self.config.kr_reentry_cooldown_minutes)
+            )
         return (
-            int(self.config.us_reentry_cooldown_minutes)
+            int(self.config.us_profit_reentry_cooldown_minutes)
             if market == "US"
-            else int(self.config.kr_reentry_cooldown_minutes)
+            else int(self.config.kr_profit_reentry_cooldown_minutes)
         )
 
     def _last_closed_event(

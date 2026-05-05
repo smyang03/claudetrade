@@ -754,22 +754,26 @@ class PathBRuntime:
                         decision_id = str(self.bot._v2_decision_id_for_ticker(market, key) or "")
                     except Exception:
                         decision_id = ""
-                self._record_blocked(
-                    market,
-                    key,
-                    decision_id,
-                    reason,
-                    {
-                        **(entry_gate.get("details") or {}),
-                        "stage": "pathb_plan_registration",
-                        "scope": entry_gate.get("scope", ""),
-                    },
-                )
+                try:
+                    self.bot._v2_record_lifecycle_event(
+                        "CLAUDE_PRICE_PLAN_GATE_WARNING",
+                        market,
+                        key,
+                        decision_id=decision_id,
+                        reason_code=reason,
+                        payload={
+                            **(entry_gate.get("details") or {}),
+                            "stage": "pathb_plan_registration",
+                            "scope": entry_gate.get("scope", ""),
+                            "path_type": "claude_price",
+                        },
+                    )
+                except Exception as exc:
+                    log.warning(f"[PathB plan gate warning record failed] {market} {key} {reason}: {exc}")
             log.warning(
-                f"[PathB plan registration blocked] {market} {reason} "
+                f"[PathB plan registration execution-gate warning] {market} {reason} "
                 f"scope={entry_gate.get('scope', '')} trade_ready={trade_ready}"
             )
-            return []
         for ticker in trade_ready:
             key = self._ticker_key(market, ticker)
             if self._active_path_for_ticker(market, key):
@@ -2267,8 +2271,12 @@ class PathBRuntime:
         if close_reason in {"CLOSED_LOSS_CAP", "CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_STOP"}:
             try:
                 key = plan.ticker.upper() if market == "US" else plan.ticker
-                self.bot._v2_same_day_stop_tickers.setdefault(market, set()).add(key)
-                self.bot._daily_sl_count[market] = int(self.bot._daily_sl_count.get(market, 0) or 0) + 1
+                note_stop = getattr(self.bot, "_note_stop_loss_event", None)
+                if callable(note_stop):
+                    note_stop(market, key, close_reason)
+                else:
+                    self.bot._v2_same_day_stop_tickers.setdefault(market, set()).add(key)
+                    self.bot._daily_sl_count[market] = int(self.bot._daily_sl_count.get(market, 0) or 0) + 1
             except Exception:
                 pass
         pnl_pct = 0.0

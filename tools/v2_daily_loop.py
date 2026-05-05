@@ -17,6 +17,7 @@ from lifecycle.models import LifecycleEvent
 from research.v2_policy_optimizer import OptimizerConfig, build_policy_optimization_report
 from research.v2_simulation_report import build_simulation_report
 from review.daily_review import DailyReviewWriter
+from tools.v2_forward_measurer import measure_forward_pending
 
 
 START_CONFIG_PATH = ROOT / "config" / "v2_start_config.json"
@@ -56,6 +57,13 @@ def run_daily_loop(
         markets=markets,
         dry_run=dry_run,
     )
+    forward_measured = measure_forward_pending(
+        event_store,
+        session_date=session,
+        runtime_mode=runtime_mode,
+        markets=markets,
+        dry_run=dry_run,
+    )
     reviews: dict[str, Any] = {}
     for mkt in markets:
         writer = DailyReviewWriter(event_store)
@@ -85,10 +93,11 @@ def run_daily_loop(
         "start_config": cfg,
         "config_diff_vs_previous_loop": config_diff,
         "forward_pending": forward,
+        "forward_measured": forward_measured,
         "daily_reviews": reviews,
         "simulation_report": simulation_paths,
         "policy_optimization_report": optimizer_paths,
-        "checks": build_checks(cfg, forward),
+        "checks": build_checks(cfg, forward, forward_measured),
     }
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     json_path = out_dir / f"v2_daily_loop_{stamp}.json"
@@ -119,7 +128,7 @@ def reserve_forward_pending(
         decision_id = str(decision.get("decision_id") or "")
         events = store.events_for_decision(decision_id)
         event_types = {str(event.get("event_type") or "") for event in events}
-        if "FORWARD_MEASURED" in event_types:
+        if _forward_measurement_complete(events):
             skipped.append({"decision_id": decision_id, "reason": "already_measured"})
             continue
         if "FORWARD_PENDING_DATA" in event_types:
@@ -169,7 +178,11 @@ def diff_start_config(previous: dict[str, Any] | None, current: dict[str, Any]) 
     return {"status": "CHANGED" if changed else "UNCHANGED", "changed": changed}
 
 
-def build_checks(config: dict[str, Any], forward: dict[str, Any]) -> list[dict[str, Any]]:
+def build_checks(
+    config: dict[str, Any],
+    forward: dict[str, Any],
+    forward_measured: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     enabled = [str(item).upper() for item in config.get("enabled_markets", [])]
     disabled = [str(item).upper() for item in config.get("disabled_markets", [])]
     env_overrides = config.get("env_overrides") if isinstance(config.get("env_overrides"), dict) else {}
@@ -194,6 +207,7 @@ def build_checks(config: dict[str, Any], forward: dict[str, Any]) -> list[dict[s
         {"name": "fresh_brain", "ok": str(config.get("brain_policy") or "") == "fresh_v2_reference_v1"},
         {"name": "same_close_research_only", "ok": str(config.get("same_close_policy") or "") == "research_only_disallowed_for_live"},
         {"name": "forward_queue_checked", "ok": "decision_count" in forward},
+        {"name": "forward_measurement_checked", "ok": forward_measured is not None and "measured_count" in forward_measured},
     ]
 
 
@@ -239,6 +253,39 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     return data
 
 
+def _forward_measurement_complete(events: list[dict[str, Any]]) -> bool:
+    due: set[int] = set()
+    measured: set[int] = set()
+    for event in events:
+        if str(event.get("event_type") or "") != "FORWARD_PENDING_DATA":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        due.update(_parse_horizon_values(payload.get("due_horizons") or []))
+    for event in events:
+        if str(event.get("event_type") or "") != "FORWARD_MEASURED":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if not due:
+            due.update(_parse_horizon_values(payload.get("due_horizons") or []))
+        measured.update(_parse_horizon_values(payload.get("all_measured_horizons") or payload.get("measured_horizons") or []))
+    if not due:
+        due = {1, 3, 5}
+    return bool(measured) and due.issubset(measured)
+
+
+def _parse_horizon_values(values: Any) -> set[int]:
+    parsed: set[int] = set()
+    if isinstance(values, (str, int)):
+        values = [values]
+    for item in values or []:
+        text = str(item).strip().lower().removesuffix("d")
+        try:
+            parsed.add(int(text))
+        except ValueError:
+            continue
+    return parsed
+
+
 def _markets_from_args(market: str, config: dict[str, Any]) -> list[str]:
     market_value = str(market or "KR").upper()
     if market_value == "ALL":
@@ -272,6 +319,7 @@ def _to_markdown(payload: dict[str, Any]) -> str:
     for item in payload.get("checks", []):
         lines.append(f"- {'PASS' if item.get('ok') else 'FAIL'} {item.get('name')}")
     forward = payload.get("forward_pending") or {}
+    forward_measured = payload.get("forward_measured") or {}
     lines.extend(
         [
             "",
@@ -280,6 +328,13 @@ def _to_markdown(payload: dict[str, Any]) -> str:
             f"- decisions: {forward.get('decision_count', 0)}",
             f"- reserved: {forward.get('reserved_count', 0)}",
             f"- skipped: {forward.get('skipped_count', 0)}",
+            "",
+            "## Forward Measured",
+            "",
+            f"- decisions: {forward_measured.get('decision_count', 0)}",
+            f"- measured: {forward_measured.get('measured_count', 0)}",
+            f"- pending data: {forward_measured.get('pending_data_count', 0)}",
+            f"- missing CSV: {forward_measured.get('missing_csv_count', 0)}",
             "",
             "## Reports",
             "",

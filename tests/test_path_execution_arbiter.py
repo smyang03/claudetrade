@@ -135,7 +135,7 @@ class PathExecutionArbiterTests(unittest.TestCase):
         now = datetime(2026, 4, 27, 4, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             store = self._store(tmp)
-            store.append(
+            closed_event_id = store.append(
                 LifecycleEvent(
                     event_type="CLOSED",
                     market="KR",
@@ -161,6 +161,8 @@ class PathExecutionArbiterTests(unittest.TestCase):
 
             self.assertFalse(decision.allowed)
             self.assertEqual(decision.reason_code, "SAME_DAY_REENTRY_COOLDOWN")
+            self.assertEqual(decision.shadow["same_day_reentry_closed_event_id"], closed_event_id)
+            self.assertEqual(decision.shadow["same_day_reentry_closed_decision_id"], "dec1")
 
     def test_same_day_reentry_allows_after_cooldown_and_ignores_broker_sync(self) -> None:
         now = datetime(2026, 4, 27, 4, 0, tzinfo=timezone.utc)

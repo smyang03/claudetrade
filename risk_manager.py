@@ -654,6 +654,7 @@ class RiskManager:
                 "oversize_ratio": float(pos.get("oversize_ratio", 0) or 0),
                 "date": date.today().isoformat(),
                 "session_date": session_date,
+                "closed_at": datetime.now(KST).isoformat(timespec="seconds"),
                 "reason": reason,
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,

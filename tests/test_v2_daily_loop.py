@@ -6,7 +6,7 @@ import unittest
 
 from decision.registry import DecisionRegistry
 from lifecycle.event_store import EventStore
-from tools.v2_daily_loop import build_checks, diff_start_config, reserve_forward_pending
+from tools.v2_daily_loop import _forward_measurement_complete, build_checks, diff_start_config, reserve_forward_pending
 
 
 class V2DailyLoopTests(unittest.TestCase):
@@ -90,7 +90,17 @@ class V2DailyLoopTests(unittest.TestCase):
         }
         self.assertEqual(diff_start_config(None, current)["status"], "NO_PREVIOUS_CONFIG")
         self.assertEqual(diff_start_config(current, current)["status"], "UNCHANGED")
-        self.assertTrue(all(item["ok"] for item in build_checks(current, {"decision_count": 0})))
+        self.assertTrue(
+            all(item["ok"] for item in build_checks(current, {"decision_count": 0}, {"measured_count": 0}))
+        )
+
+    def test_forward_measurement_complete_uses_pending_due_horizons(self) -> None:
+        events = [
+            {"event_type": "FORWARD_PENDING_DATA", "payload": {"due_horizons": ["1d"]}},
+            {"event_type": "FORWARD_MEASURED", "payload": {"measured_horizons": ["1d"]}},
+        ]
+
+        self.assertTrue(_forward_measurement_complete(events))
 
 
 if __name__ == "__main__":

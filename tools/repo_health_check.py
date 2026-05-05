@@ -79,7 +79,7 @@ def _iter_execution_lessons(obj: Any, path: str = "$"):
 def check_execution_lessons(data: Any | None) -> CheckResult:
     if data is None:
         return CheckResult("brain.execution_lessons_mojibake", "FAIL", "brain.json was not parsed")
-    markers = ("\ufffd", "泥", "?섏씡", "?ㅽ뙣", "?좏슚", "?⑦꽩")
+    markers = ("\ufffd", "\uf9e3", "?\uc10f\uc521", "?\u317d\ub663", "?\uc88f\uc29a", "?\u2466\uaf69")
     hits: list[str] = []
     lesson_count = 0
     for path, lesson in _iter_execution_lessons(data):
@@ -213,7 +213,7 @@ def check_strategy_aliases(tree: ast.Module | None) -> CheckResult:
         "관망": "",
     }
     missing = [key for key, value in required.items() if strategy_map.get(key) != value]
-    bad_markers = ("紐⑤찘", "?됯퇏", "媛??", "愿留", "?곗냽")
+    bad_markers = ("\uf9cf\u2464\ucc18", "?\ub42f\ud1cf", "\u5a9b??", "\u613f\uf9cd", "?\uacd7\ub0fd")
     bad_keys = [str(key) for key in strategy_map if any(marker in str(key) for marker in bad_markers)]
     if missing or bad_keys:
         detail_parts: list[str] = []

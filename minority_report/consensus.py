@@ -39,7 +39,7 @@ def _score_to_mode(score: float) -> tuple:
     if   score >=  0.85: return "AGGRESSIVE",    _e("SIZE_AGGRESSIVE",    100)
     elif score >=  0.55: return "MODERATE_BULL", _e("SIZE_MODERATE_BULL",  80)
     elif score >=  0.28: return "MILD_BULL",      _e("SIZE_MILD_BULL",      50)
-    elif score >=  0.08: return "CAUTIOUS",       _e("SIZE_CAUTIOUS",       60)
+    elif score >=  0.08: return "CAUTIOUS",       _e("SIZE_CAUTIOUS",       40)
     elif score >= -0.20: return "NEUTRAL",         _e("SIZE_NEUTRAL",        50)
     elif score >= -0.55: return "MILD_BEAR",       _e("SIZE_MILD_BEAR",      30)
     elif score >= -0.80: return "CAUTIOUS_BEAR",   _e("SIZE_CAUTIOUS_BEAR",  20)
@@ -50,7 +50,7 @@ def _score_to_mode(score: float) -> tuple:
 CONSENSUS_MAP = {
     ("bull","bull","bull"):           {"mode":"AGGRESSIVE",    "size":_e("SIZE_AGGRESSIVE",   100),"tp_mult":1.2},
     ("bull","bull","neutral"):        {"mode":"MODERATE_BULL", "size":_e("SIZE_MODERATE_BULL", 80), "tp_mult":1.1},
-    ("bear","bull","bull"):           {"mode":"CAUTIOUS",      "size":_e("SIZE_CAUTIOUS",      60), "tp_mult":1.0},
+    ("bear","bull","bull"):           {"mode":"CAUTIOUS",      "size":_e("SIZE_CAUTIOUS",      40), "tp_mult":1.0},
     ("bull","neutral","neutral"):     {"mode":"MILD_BULL",     "size":_e("SIZE_MILD_BULL",     50), "tp_mult":1.0},
     ("bear","bull","neutral"):        {"mode":"NEUTRAL",       "size":_e("SIZE_NEUTRAL",       50), "tp_mult":1.0},
     ("neutral","neutral","neutral"):  {"mode":"NEUTRAL",       "size":_e("SIZE_NEUTRAL",       50), "tp_mult":1.0},

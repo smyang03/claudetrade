@@ -11,7 +11,7 @@ class BrainQualityHelperTests(unittest.TestCase):
         cleaned = brain._clean_prompt_text_list([
             "정상 교훈",
             "오류로 자동 판정",
-            "?섏씡 泥?궛 ?좏슚 ?⑦꽩: profit_floor",
+            "?\uc10f\uc521 \uf9e3?\uad9b ?\uc88f\uc29a ?\u2466\uaf69: profit_floor",
             "정상 교훈",
         ])
 

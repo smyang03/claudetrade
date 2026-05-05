@@ -2138,7 +2138,7 @@ class DashboardBrainLoadTests(unittest.TestCase):
     def test_load_brain_accepts_utf8_bom(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             brain_path = Path(tmpdir) / "brain.json"
-            brain_path.write_bytes(b"\xef\xbb\xbf" + json.dumps({"ok": True}).encode("utf-8"))
+            brain_path.write_bytes(bytes.fromhex("efbbbf") + json.dumps({"ok": True}).encode("utf-8"))
 
             with patch.object(dashboard_server_module, "BRAIN_PATH", brain_path):
                 brain = dashboard_server_module.load_brain()
