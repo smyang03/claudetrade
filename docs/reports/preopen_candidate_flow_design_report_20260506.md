@@ -188,6 +188,23 @@ Claude와 system이 공유할 action enum:
 - 오늘 같은 장에서는 "사도 됨"과 "좋지만 지금 비쌈"과 "작게만 먼저"가 구분되어야 한다.
 - `PULLBACK_WAIT`를 단순 `WAIT`로 처리하면 PathB에 전달되지 않고 좋은 후보가 사라진다.
 
+> **[검토 — 섹션 5]**
+>
+> **Claude action과 system final_action을 구분해야 한다.**
+>
+> 현재 표에 있는 6개 action은 Claude가 출력하는 값이다. 그런데 `GateEvaluation.final_action`에는 `HARD_BLOCK`이 포함된다. `HARD_BLOCK`은 Claude가 낼 수 없는 system 결과이므로 이 두 enum을 같은 표에 두면 혼동된다.
+>
+> ```text
+> Claude action enum (입력):  WATCH / PROBE_READY / BUY_READY / ADD_READY / PULLBACK_WAIT / AVOID
+> System final_action (출력): HARD_BLOCK / WATCH / PROBE_READY / BUY_READY / PULLBACK_WAIT / AVOID / SIZE_CAP / WAIT
+> ```
+>
+> D5 구현 시 Claude action → system final_action 변환 규칙이 명시되어야 한다.
+>
+> **action 만료 규칙이 없다.**
+>
+> 장전에 `BUY_READY`로 분류된 종목이 30분 후에도 같은 상태를 유지하면 불리한 가격에 진입할 수 있다. `CandidateAction.expires_at`을 정의했으나 누가 어떤 기준으로 설정하는지, 만료 후 어느 action으로 전환하는지 이 섹션에서 명시해야 한다.
+
 ---
 
 ## D1. Data model / schema 계약
@@ -339,6 +356,14 @@ Claude와 system이 공유할 action enum:
 문제 발생 시 candidate_actions를 무시하고 기존 경로로 복귀한다.
 ```
 
+> **[검토 — D1]**
+>
+> **CandidateRecord.features와 PostOpenFeatureSnapshot의 관계가 미정의다.**
+>
+> `CandidateRecord.features = {}`로 비어 있는데, D3의 `PostOpenFeatureSnapshot`이 별도 schema다. feature를 record에 inline할지, snapshot 파일을 참조할지 결정해야 한다. inline이면 `CandidateRecord.features`에 snapshot 필드가 복사되고, 참조면 `CandidateRecord.feature_snapshot_ref`가 필요하다. 결정하지 않으면 D3 구현 시 어느 쪽으로 만들지 모호해진다.
+>
+> **bot/candidate_policy.py는 이미 존재한다.** 수정 파일 목록에 포함 확인. 단 현재 `normalize_selection_result()` 내부가 `candidate_actions` 필드를 다루는지 먼저 확인 후 확장 범위를 정해야 한다.
+
 ---
 
 ## D2. Unified Candidate Pool
@@ -478,6 +503,16 @@ ENABLE_UNIFIED_CANDIDATE_POOL=false
 pool snapshot은 shadow log로 유지 가능하다.
 ```
 
+> **[검토 — D2]**
+>
+> **intraday_momentum과 late_mover source 생성 코드가 없다.**
+>
+> `source_tags`에 `intraday_momentum`, `late_mover`가 포함되어 있으나, 코드베이스에 이 태그를 생성하는 로직이 존재하지 않는다. D2 구현 시 이 두 pool의 생성 로직을 새로 만들어야 한다는 점을 명시해야 한다. 없는 채로 pool에 포함하면 `opening_fresh`만으로 prompt_pool이 채워지게 된다.
+>
+> **prompt_score 합산 방식이 미명시다.**
+>
+> source bonus + feature bonus - risk penalty 방식은 설명됐으나, 합산 상한(cap)이 없으면 `held + preopen_hard_pin + controlled_strength`만으로 score=75가 되어 다른 source가 실질적으로 순위에 못 들 수 있다. 합산 상한 또는 정규화 방식을 정해야 한다.
+
 ---
 
 ## D3. Post-open Feature Snapshot
@@ -590,6 +625,26 @@ ENABLE_POST_OPEN_FEATURES=false
 feature는 로그만 남긴다.
 ```
 
+> **[검토 — D3]**
+>
+> **VWAP 계산 로직이 현재 코드베이스에 없다.**
+>
+> `PostOpenFeatureSnapshot.vwap`, `vwap_distance_pct`를 계산하려면 분봉 체결 데이터 누적이 필요하다. `trading_bot.py`에 VWAP 계산 함수가 존재하지 않는다. `runtime/post_open_features.py`에서 VWAP을 직접 계산할지, 브로커 API에서 받을지, 별도 틱 데이터 누적 구조를 만들지 결정해야 한다. KR은 KIS 호가 API, US는 별도 data source가 필요하다.
+>
+> **momentum_state에 정량 기준이 없다.**
+>
+> `overextended`, `controlled_strength`, `fade` 등의 정의가 정성적 설명만 있다. 구현 시 개발자마다 다른 임계값을 쓸 수 있다. 최소한 아래 기준이 필요하다.
+>
+> ```text
+> overextended: ret_5m > X% AND vwap_distance > Y%  (KR/US 분리)
+> fade:         ret_5m > 0 AND ret_10m < ret_5m * 0.5
+> controlled_strength: ret_5m > 0 AND volume_ratio_open > Z AND not overextended
+> ```
+>
+> **opening_snapshot 3~6분 시점은 KR에서 노이즈가 크다.**
+>
+> KR 개장 직후(09:00~09:06)는 체결 집중 구간으로 가격 변동성이 매우 높다. 이 시점 snapshot을 즉시 진입 decision에 쓰면 노이즈가 크다. `opening_snapshot`은 집계 목적으로만 쓰고, 실제 진입 decision에는 `confirmation_snapshot`(15~30분)부터 사용하는 정책을 명시해야 한다. 단, probe는 이 예외를 둘 수 있다.
+
 ---
 
 ## D4. Claude Candidate Actions Schema
@@ -699,6 +754,16 @@ ENABLE_CANDIDATE_ACTIONS=false
 candidate_actions 무시
 기존 watchlist/trade_ready만 사용
 ```
+
+> **[검토 — D4]**
+>
+> **PULLBACK_WAIT + price_targets 누락 시 처리 경로를 구체화해야 한다.**
+>
+> validation 규칙에 "PULLBACK_WAIT인데 price_targets 누락 → PathB 등록 금지, WATCH로 강등 또는 reason 기록"라고 나와 있다. `WATCH`로 강등하면 당일 좋은 종목을 완전히 날리는 것이고, reason만 기록하면 실행이 없다. 운영상 WATCH 강등 쪽이 맞지만, 이 경우 `watchlist`에는 남기고 `execution_pool`에서만 제외한다는 규칙을 명시해야 한다.
+>
+> **레거시 응답에서 PROBE_READY fallback이 없다.**
+>
+> `candidate_actions 없을 때 trade_ready 기반 BUY_READY 생성`이라고 명시됐는데, PROBE_READY fallback이 없다. 레거시 응답에서는 모든 trade_ready가 BUY_READY로 올라간다. 이것이 의도된 설계라면 명시하고, 아니라면 fallback 규칙에 `confidence_fallback = BUY_READY if strong else PROBE_READY` 를 추가해야 한다.
 
 ---
 
@@ -812,6 +877,29 @@ ENABLE_GATE_MATRIX=false
 shadow log는 계속 남길 수 있다.
 ```
 
+> **[검토 — D5]**
+>
+> **gate 계층에 실제 코드에 있는 조건이 3개 빠졌다.**
+>
+> 현재 `trading_bot.py`에서 진입을 막는 조건 중 아래 3개가 D5의 gate 계층 목록에 없다.
+>
+> ```text
+> entry_blackout:       timing gate에 추가 필요
+>                       (코드: trading_bot.py:3001 _in_entry_blackout)
+>
+> same_day_reentry:     timing gate에 추가 필요
+>                       (코드: trading_bot.py:3167 _v2_same_day_reentry_decision)
+>
+> STOP_CLUSTER_MARKET_BLOCK: hard_safety로 올려야 함
+>                       (코드: trading_bot.py:2969, 당일 신규 진입 전체 차단 정책)
+> ```
+>
+> 특히 `STOP_CLUSTER_MARKET_BLOCK`은 "클러스터 손절 2회 = 당일 신규 진입 차단"이므로 soft_safety가 아니라 hard_safety다. soft_safety에 두면 SIZE_CAP으로 우회될 수 있다.
+>
+> **STOP_CLUSTER_DISASTER_BLOCK도 hard_safety 목록에 명시해야 한다.**
+>
+> 현재 hard_safety에 `daily halt`는 있는데 `STOP_CLUSTER_DISASTER_BLOCK`이 없다. 코드 기준으로는 이것도 hard block이다.
+
 ---
 
 ## D6. PlanA/PathB Action Routing
@@ -881,6 +969,23 @@ if PathB filled:
 ENABLE_ACTION_ROUTING=false
 기존 trade_ready 기반 경로 사용
 ```
+
+> **[검토 — D6]**
+>
+> **PathB plan cancel vs suspend가 미결정이다.**
+>
+> 중복 방지 규칙에 "PlanA BUY_READY → PathB plan cancel 또는 suspend"로 나와 있다. cancel과 suspend는 동작이 다르다.
+>
+> ```text
+> cancel: PathB plan 삭제. PlanA 진입 실패 시 PathB 재등록 불가.
+> suspend: PathB plan 일시 정지. PlanA 진입 실패 시 자동 재활성화 가능.
+> ```
+>
+> PlanA probe가 손절로 끝났을 때 PathB pullback plan이 자동 재활성화되어야 하는지 정책이 없다. 이 경우 운영자가 수동으로 재등록해야 하는지도 명시 필요하다.
+>
+> **같은 종목이 PlanA probe + PathB 대기 상태일 때 포지션 합산 한도가 없다.**
+>
+> `if PlanA probe filled → PathB same ticker plan cancel`은 명시됐다. 그러나 probe 진입 전 PathB도 동시에 조건을 충족하면 중복 진입이 발생할 수 있다. 체결 순서에 따라 두 건이 동시에 주문될 가능성을 막는 atomic check가 필요하다.
 
 ---
 
@@ -989,6 +1094,16 @@ recovery_micro stop:
 PROBE_READY를 WATCH로 강등 가능
 PathB cap guard는 rollback하지 않는 것을 권장한다.
 ```
+
+> **[검토 — D7]**
+>
+> **sizing priority와 D5 soft_safety의 market_condition_size_cap이 이중 적용될 수 있다.**
+>
+> D5에서 soft_safety가 `VIX/risk_off → SIZE_CAP`을 출력하고, D7 sizing priority 3번도 `market condition size cap`을 적용한다. 두 계층에서 독립적으로 cap을 계산하면 같은 종목에 두 번 cap이 걸릴 수 있다. GateEvaluation의 `soft_safety.size_cap_pct`를 D7 sizing의 3번 입력으로 재사용하는 방식으로 단일화해야 한다.
+>
+> **PROBE_STOP_WEIGHT=0.35의 근거가 없다.**
+>
+> probe는 full buy의 30% 수준이므로 stop_weight도 0.3 정도가 직관적이다. 0.35로 정한 근거가 없으면 나중에 임의로 바뀔 수 있다. 근거(probe_size_ratio * 1.1 안전 마진, 또는 실측 데이터 등)를 명시해야 한다. 현재는 probe가 실제 운영 전이므로 0.30~0.35 범위에서 보수적으로 시작하고 조정하는 것을 권장.
 
 ---
 
@@ -1117,6 +1232,29 @@ HOLD_ADVISOR_V4=false
 exit priority hard rule은 유지 권장
 ```
 
+> **[검토 — D8]**
+>
+> **exit priority 4번과 5번 순서를 재검토해야 한다.**
+>
+> 현재:
+> ```text
+> 4. recovery_micro forced exit
+> 5. profit_floor
+> ```
+>
+> 문제: `recovery_micro`는 손실 제한 목적 강제 청산이다. 수익 구간에 있는 포지션이 4번에서 먼저 청산되면 5번 `profit_floor`가 의미 없어진다. 아래 순서가 더 맞다.
+>
+> ```text
+> 4. profit_floor              (수익이 있으면 먼저 보호)
+> 5. recovery_micro forced exit (손실 제한은 수익 보호 다음)
+> ```
+>
+> 단, `recovery_micro`가 활성화된 포지션에서 `profit_floor` 기준을 올려두면 두 조건 충돌 없이 동작할 수 있다. 이 경우 `recovery_micro` 포지션에 대해서는 `profit_floor_raise_to` 값을 높게 설정하는 규칙이 필요하다.
+>
+> **hold_advisor v4 output의 trail_pct=0.03이 KR/US 구분 없이 예시됐다.**
+>
+> 이 값이 trailing 엔진에 어떻게 전달되는지 연결 경로가 없다. `trail_pct`가 현재 trailing stop 로직의 어느 config를 덮어쓰는지 명시해야 한다.
+
 ---
 
 ## D9. Observability
@@ -1179,6 +1317,16 @@ orders planA_probe=1 planA_buy=0 pathB_wait=4 filled=1
 로그 기능은 rollback 부담이 낮다.
 성능 문제가 있으면 snapshot 주기를 늘린다.
 ```
+
+> **[검토 — D9]**
+>
+> **logs/funnel/ 경로가 현재 존재하지 않는다.**
+>
+> 로그 이벤트 저장 경로로 `logs/funnel`을 사용하는데, 현재 코드베이스에 이 디렉토리가 없다. D9 구현 시 경로 생성과 함께 기존 로그 경로(`logs/flow/`, `logs/daily_judgment/` 등)와의 관계를 명시해야 한다. `logs/flow/`가 gate/funnel 로그를 이미 일부 담당하는지 확인 필요.
+>
+> **dashboard 업데이트는 후속으로만 명시했는데 순서가 불명확하다.**
+>
+> `dashboard/dashboard_server.py`가 수정 대상에 있으나 "요약 표시 후속"으로만 명시됐다. D9의 목표(장중 funnel 상태 한눈에 보기)를 달성하려면 dashboard 업데이트가 어느 단계(R0~R6)에서 진행되는지 D12와 연결해야 한다.
 
 ---
 
@@ -1275,6 +1423,29 @@ false_avoid
 운영 코드와 분리된 tools이므로 rollback 부담 낮음.
 replay 결과는 자동 brain 반영 금지.
 ```
+
+> **[검토 — D10]**
+>
+> **replay 입력 파일 경로 확인 결과.**
+>
+> ```text
+> state/candidate_health_KR_YYYYMMDD.json  → 존재함 ✓
+> state/live_decisions.jsonl               → 존재함 ✓
+> logs/funnel/*.json                       → 존재하지 않음 ✗ (D9 구현 선행 필요)
+> state/preopen_KR/US_YYYYMMDD.json        → 존재함 ✓
+> logs/analysis/live_analysis_YYYYMMDD.jsonl → 경로 확인 필요
+> ```
+>
+> replay는 D9(Observability) 구현 이후에야 완전한 입력을 받을 수 있다. D9 전에는 `logs/funnel` 없이 동작하는 baseline replay만 가능하다는 점을 명시해야 한다.
+>
+> **false_probe와 false_avoid의 정의가 없다.**
+>
+> 결과 지표에 `false_probe`, `false_avoid`가 있는데 정의가 없다. 제안:
+> ```text
+> false_probe:  PROBE_READY로 진입했으나 30m 수익률 < -1% (손절 또는 악화)
+> false_avoid:  AVOID로 회피했으나 30m 수익률 > +2% (놓친 기회)
+> ```
+> 이 정의 없이 지표를 구현하면 사람마다 다르게 계산된다.
 
 ---
 
@@ -1404,6 +1575,24 @@ PathB 대기/체결 품질 낮음:
 hold advisor가 계속 HOLD 과다:
   ENABLE_HOLD_ADVISOR_V4=false
 ```
+
+> **[검토 — D12]**
+>
+> **R4에서 BUY_READY 종목의 처리 정책이 불명확하다.**
+>
+> R4는 "PROBE_READY만 소액 live 허용, BUY_READY는 기존 경로 유지"라고 명시됐다. 그런데 "기존 경로 유지"가 구체적으로 무엇인지 불명확하다.
+>
+> ```text
+> 옵션 A: BUY_READY는 candidate_actions 무시하고 legacy trade_ready 경로로 처리
+> 옵션 B: BUY_READY는 PROBE_READY로 강등해서 probe 사이즈로 처리
+> 옵션 C: BUY_READY는 R4에서 실행 보류, WATCH로 강등
+> ```
+>
+> 옵션 A가 가장 현실적이지만, 이 경우 `PROBE_READY`와 `BUY_READY`가 다른 경로를 타므로 gate_evaluation 로그가 두 action을 섞어 기록하게 된다. R4 운영 중 혼동을 막으려면 옵션을 고정해야 한다.
+>
+> **즉시 rollback 기준에 "funnel 로그 폭증으로 cycle 지연"이 있는데 기준값이 없다.**
+>
+> "cycle 지연"의 기준이 없으면 rollback 판단이 주관적이 된다. 예: `cycle_time > 5s 연속 3회` 또는 `log_write_time > 1s` 같은 측정 가능한 기준을 추가해야 한다.
 
 ---
 
@@ -1541,3 +1730,26 @@ Claude는 HOLD 예외를 검증한다.
 기능을 많이 넣는 것보다 계약을 먼저 고정하는 것이 중요하다.
 이번 개발은 후보 연결 + 작은 진입 + 빠른 수익 보호 + 관측성 + future-blind replay를 하나의 흐름으로 닫는 작업이다.
 ```
+
+> **[검토 — 섹션 8]**
+>
+> **각 단계의 완료 기준이 없다.**
+>
+> 10단계가 나열됐으나 각 단계를 완료했다고 판단하는 기준이 없다. 예:
+>
+> ```text
+> 1. D1 완료 기준: test_candidate_schema.py 통과
+> 3. D9 완료 기준: 0거래일 funnel summary에 차단 원인이 로그로 설명됨
+> 7. D7 완료 기준: PathB cap 초과 주문 QA 0건, probe qty < full buy qty 확인
+> 10. D11 완료 기준: QA checklist 7개 단위 + 10개 통합 테스트 전체 통과
+> ```
+>
+> 완료 기준 없이 진행하면 단계 사이에서 "어디까지 됐는지"를 매번 다시 파악해야 한다.
+>
+> **D3(Post-open feature)이 개발 순서 2번(D2) 다음인데 순서에서 빠졌다.**
+>
+> 섹션 8 순서에 D3이 없다. D2(pool) → D3(feature) → D4(actions) 순서가 맞는데, D3을 건너뛰면 D4 prompt에 feature 정보 없이 구현된다. D9 로그를 early로 붙인 다음 D3 feature snapshot을 shadow로 붙이는 단계가 필요하다.
+>
+> **2번 단계(D2 shadow)와 VWAP 구현 선행 관계가 없다.**
+>
+> D3 구현에 VWAP이 필요한데, VWAP 계산 로직이 현재 없다. D3 앞에 VWAP data source 결정 및 구현을 별도 단계로 두거나, 1차 D3에서는 VWAP 없이 ret/volume/spread만으로 먼저 동작시키는 방향을 명시해야 한다.
