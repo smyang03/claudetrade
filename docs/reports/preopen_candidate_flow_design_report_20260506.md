@@ -248,17 +248,73 @@ Claude와 system이 공유할 action enum:
   "intraday_score": 0.0,
   "prompt_score": 0.0,
   "price": 0.0,
+  "change_rate": 0.0,
   "turnover": 0.0,
+  "vol_ratio": 0.0,
+  "screen_score": null,
+  "screen_bucket": "day_gainers|day_losers|most_actives|kr_momentum|kr_volume|preopen_base|unknown",
   "liquidity_bucket": "high|mid|low|unknown",
   "sector": "",
   "market_type": "KOSPI|KOSDAQ|NASDAQ|NYSE|AMEX|ETF|unknown",
   "preopen_pin": "HARD|SOFT|NONE",
   "data_quality": "good|mixed|poor|unknown",
+  "enter_reason_tags": [],
+  "quality_tags": [],
+  "risk_tags": [],
+  "catalyst_hint": "none|earn_pre|earn_post|news_flag|sector_move|unknown",
+  "external_catalyst_needed": false,
   "features": {},
   "stale": false,
   "stale_reason": ""
 }
 ```
+
+#### 후보 유입 이유 2계층
+
+후보가 pool에 들어온 이유는 두 계층으로 나눠 관리한다.
+
+**Layer 1 — 후보 품질 근거 (로컬 로그 기반, 즉시 확인 가능)**
+
+```text
+screen_bucket:
+  US: day_gainers / day_losers / most_actives
+      → us_screen_cache.json의 category 필드 직접 사용
+  KR: kr_momentum / kr_volume / preopen_base
+      → kr_screen_cache.json의 screen_score, vol_ratio 기반 분류
+
+enter_reason_tags:
+  US: ["most_actives", "vol_spike", "premarket_strength", "dollar_volume_quality"]
+  KR: ["high_vol_ratio", "high_screen_score", "kosdaq_momentum", "falling_with_interest"]
+
+quality_tags (positive):
+  ["high_rs", "controlled_strength", "volume_confirmed", "or_above", "vwap_above"]
+
+risk_tags (negative):
+  ["high_atr", "rs_negative", "deep_pullback", "low_liquidity", "tclose_soon"]
+  → selection_meta.risk_tags에서 연결, day_losers 종목에는 자동으로 "falling" 태그 추가
+```
+
+`day_losers` 종목(ADEA, OSIS, SHOP 등)이 pool에 들어오는 것은 정상이다.
+"급락 관심 후보"는 매수 후보가 아니라 단기 반등 또는 short-side 감시 목적으로 분류한다.
+`screen_bucket=day_losers`이면 Claude prompt에서 "매수 후보가 아닌 관심 후보"로 명시적으로 표기한다.
+
+**Layer 2 — 외부 촉매 이유 (뉴스/공시/실적, 별도 레이어)**
+
+```text
+catalyst_hint:
+  earn_pre:    실적 발표 전 (기존 reasons 텍스트에서 earn= 파싱)
+  earn_post:   실적 발표 후
+  news_flag:   뉴스 관련 힌트 있음
+  sector_move: 섹터/테마 이슈
+  none:        알려진 촉매 없음
+
+external_catalyst_needed:
+  true이면 운영자가 뉴스/공시 조회 필요 표시
+  1차 구현에서는 reasons 텍스트 키워드 파싱으로 채움
+  뉴스 API 연결은 2차 이후
+```
+
+이 레이어는 1차 구현에서 완전 자동화하지 않는다. `reasons` 텍스트에서 `earn=`, `공시`, `뉴스` 키워드를 파싱해 `catalyst_hint`를 채우고, 나머지는 `none`으로 둔다.
 
 ### CandidateAction
 
@@ -347,6 +403,10 @@ Claude와 system이 공유할 action enum:
 | action enum | 허용 값 외 action은 `WATCH` |
 | duplicate ticker | 같은 market/ticker는 record 1개 |
 | known_at | decision_time 이후 feature 사용 금지 |
+| screen_bucket | US: us_screen_cache.json category 직접 복사. 없으면 `unknown` |
+| day_losers | screen_bucket=day_losers이면 enter_reason_tags에 "falling" 포함 |
+| quality_tags | selection_meta 없으면 빈 리스트, 선정 후 병합 |
+| catalyst_hint | reasons 텍스트에서 earn_pre/post 키워드 파싱, 없으면 none |
 
 ### Rollback
 
@@ -427,12 +487,34 @@ key = market + normalized_ticker
 이미 full_pool에 있으면:
   source_tags 병합
   source_ranks[source] 저장
-  최신 price/turnover는 asof가 더 최신인 값 사용
+  최신 price/turnover/change_rate/vol_ratio는 asof가 더 최신인 값 사용
   preopen_pin은 HARD > SOFT > NONE
   stale=false source 우선
+  screen_bucket은 첫 등록 값 유지 (us_screen_cache.json category 직접 복사)
+  quality_tags/risk_tags는 selection_meta 결과가 나오면 병합
+  catalyst_hint는 reasons 텍스트 파싱 후 갱신
 
 새 후보면:
   CandidateRecord 생성
+  screen_bucket: us_screen_cache의 category 또는 kr 분류 규칙 적용
+    KR screen_score >= 200 and change_rate > 0: kr_momentum
+    KR change_rate <= 0 and vol_ratio >= 20:    kr_volume
+    KR else:                                    preopen_base
+```
+
+### day_losers 처리 정책
+
+```text
+US day_losers 버킷 종목은 full_pool에 포함하되 아래 처리를 적용한다.
+
+  screen_bucket=day_losers → enter_reason_tags에 "falling" 자동 추가
+  prompt_score에 day_losers penalty: -25 (기본)
+  Claude prompt에 "(급락 관심 후보, 매수 우선순위 낮음)" 명시
+  AVOID가 기본 선호. 반등 근거가 충분한 경우에만 WATCH 허용.
+
+KR 하락 종목도 동일 원칙:
+  change_rate < 0 이면 risk_tags에 "falling" 추가
+  screen_score가 낮으면 prompt_pool 우선순위 하락
 ```
 
 ### prompt_score 1차 규칙
@@ -602,10 +684,22 @@ US:
 ### prompt line 예시
 
 ```text
-001440 source=preopen,opening_fresh liq=high
+001440 source=preopen,opening_fresh bucket=kr_momentum liq=high
+chg=+8.2% vol_ratio=45x screen_score=312 quality=high_rs,vol_confirmed risk=at_high
 post_open: ret5=+2.8 ret10=+4.1 state=controlled_strength
 or=above vwap=+0.7% vol_open=3.2x spread=0.12%
-exec_hint=probe_ok risk=not_overextended
+catalyst=none exec_hint=probe_ok
+
+ADEA source=base bucket=day_losers liq=high
+chg=-17.3% quality=vol_spike risk=rs_negative,falling
+post_open: ret5=-12.1 ret10=-15.3 state=fade
+(급락 관심 후보, 매수 우선순위 낮음)
+catalyst=none exec_hint=avoid_default
+
+IREN source=base bucket=day_gainers liq=high
+chg=+8.1% quality=high_rs risk=earn_pre,high_atr
+post_open: ret5=+5.1 ret10=+6.8 state=controlled_strength
+catalyst=earn_pre exec_hint=probe_caution external_catalyst_needed=true
 ```
 
 ### QA
@@ -1284,6 +1378,7 @@ exit priority hard rule은 유지 권장
 
 ```text
 candidate_pool_snapshot
+candidate_quality_report        ← 신규
 candidate_action_decision
 gate_evaluation
 planA_entry_decision
@@ -1300,6 +1395,78 @@ future_blind_replay_result
 full=59 prompt=24 actions probe=3 buy=1 pullback=5 avoid=4
 gate hard_block=0 soft_cap=2 wait=8 qty_zero=1
 orders planA_probe=1 planA_buy=0 pathB_wait=4 filled=1
+```
+
+### 후보 품질 리포트 (candidate_quality_report)
+
+장 시작 시점에 한 번 생성한다. 매수/매도 판단과 무관하게 오늘 후보 pool의 품질을 기록한다.
+
+#### 출력 형식
+
+```text
+[candidate quality report KR 2026-05-06]
+ticker  방향   bucket          vol_ratio  quality_tags              risk_tags                  선정     catalyst
+007610  +16%   kr_momentum     107x       high_rs,vol_confirmed     at_high                    watch    none
+203650  +30%   kr_momentum     91x        high_rs,vol_confirmed     high_atr,at_high           watch    none
+332570  -5%    kr_volume       34x        vol_spike                 rs_negative,deep_pullback  veto     none
+035890  -20%   kr_volume       6x         -                         rs_negative,low_vol_ratio  veto     none
+INTC    +13%   most_actives    -          high_rs,premarket_str     high_atr,or_missing        watch    none
+ADEA    -17%   day_losers      -          vol_spike                 rs_negative,falling        excluded none
+IREN    +8%    day_gainers     -          high_rs                   earn_pre,high_atr          watch    earn_pre
+```
+
+#### 로그 schema
+
+```json
+{
+  "event": "candidate_quality_report",
+  "market": "KR",
+  "session_date": "2026-05-06",
+  "generated_at": "2026-05-06T09:03:00+09:00",
+  "candidates": [
+    {
+      "ticker": "007610",
+      "name": "선도전기",
+      "change_rate": 16.03,
+      "screen_bucket": "kr_momentum",
+      "vol_ratio": 107.27,
+      "screen_score": 487,
+      "quality_tags": ["high_rs", "volume_confirmed"],
+      "risk_tags": ["at_high"],
+      "selection_result": "watch",
+      "catalyst_hint": "none",
+      "external_catalyst_needed": false
+    }
+  ],
+  "summary": {
+    "total": 59,
+    "gainers": 47,
+    "losers": 12,
+    "day_losers_bucket": 0,
+    "watchlist": 5,
+    "trade_ready": 2,
+    "veto": 15,
+    "external_catalyst_needed_count": 3
+  }
+}
+```
+
+#### 운영 활용
+
+```text
+gainers vs losers 비율:
+  losers가 많으면 오늘 스크린 품질 낮음 → Claude prompt에 명시
+
+day_losers bucket 종목:
+  매수 후보가 아닌 "급락 관심 후보"로 Claude에 표기
+  AVOID 편향이 기본
+
+external_catalyst_needed_count > 0:
+  운영자에게 알림 → 뉴스/공시 확인 후 해당 종목 재판단 가능
+
+veto 종목 이유:
+  deep_pullback / high_atr / low_liquidity 분포 확인
+  같은 이유가 반복되면 스크린 파라미터 재검토 신호
 ```
 
 ### QA
