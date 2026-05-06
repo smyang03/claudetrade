@@ -86,7 +86,7 @@ class _Control:
 
 
 def _runtime(bot: _Bot, store: EventStore) -> PathBRuntime:
-    config = V2Config(kr_min_order_krw=100_000, us_min_order_krw=100_000)
+    config = V2Config(pathb_fixed_order_krw=120_000, kr_min_order_krw=100_000, us_min_order_krw=100_000)
     runtime = PathBRuntime(bot, is_paper=False, store=store, config=config)
     runtime.control_store = _Control()
     return runtime

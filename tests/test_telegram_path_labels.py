@@ -37,6 +37,22 @@ class TelegramPathLabelTests(unittest.TestCase):
         self.assertNotIn("<b>[-]</b>", text)
         self.assertIn("$6.8500", text)
 
+    def test_decision_event_alert_includes_affordability_detail(self) -> None:
+        event = {
+            "action": "buy_skipped",
+            "market": "KR",
+            "ticker": "003670",
+            "price_krw": 287_000,
+            "reason": "qty_zero",
+            "detail": "unaffordable_high_price: price_krw=287,000 budget_krw=110,000 shortfall_krw=177,000",
+        }
+        with patch("telegram_reporter.send", return_value=True):
+            text = decision_event_alert(event)
+
+        self.assertIn("unaffordable_high_price", text)
+        self.assertIn("budget_krw=110,000", text)
+        self.assertIn("shortfall_krw=177,000", text)
+
     def test_us_trade_alert_preserves_decimal_price(self) -> None:
         with patch("telegram_reporter.send", return_value=True):
             text = trade_alert("sell", "BE", 2, 6.85, "claude_price", 0, 0, reason="target", market="US")

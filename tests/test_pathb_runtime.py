@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from config.v2 import V2Config
 from decision.claude_price_plan import make_price_plan
 from execution.claude_price_adapter import EntrySignal
 from execution.claude_price_sell_manager import ExitSignal
@@ -142,7 +143,12 @@ class PathBRuntimeTests(unittest.TestCase):
             bot = _MarketTokenBot()
             bot.current_market = "US"
             store = EventStore(Path(tmp) / "events.db")
-            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime = PathBRuntime(
+                bot,
+                is_paper=False,
+                store=store,
+                config=V2Config(pathb_fixed_order_krw=500_000, us_min_order_krw=100_000),
+            )
             runtime.control_store = _Control()
             plan = make_price_plan(
                 decision_id="dec_us_buy",

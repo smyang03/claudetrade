@@ -55,6 +55,21 @@ class AffordabilityDiagTests(unittest.TestCase):
         self.assertEqual(diag["shortfall_krw"], 30_000)
         self.assertEqual(diag["affordability_reason"], "cash_too_low")
 
+    def test_affordability_detail_includes_operator_context(self) -> None:
+        detail = self.bot._affordability_detail(
+            {
+                "affordability_reason": "unaffordable_high_price",
+                "price_per_share_krw": 287_000,
+                "order_budget_krw": 110_000,
+                "shortfall_krw": 177_000,
+            }
+        )
+
+        self.assertIn("unaffordable_high_price", detail)
+        self.assertIn("price_krw=287,000", detail)
+        self.assertIn("budget_krw=110,000", detail)
+        self.assertIn("shortfall_krw=177,000", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -99,6 +99,7 @@ from kis_api import (
     KISTokenExpiredError,
 )
 from indicators import calc_all
+from execution.order_failure import broker_reject_reason, is_permanent_order_failure
 from risk_manager import RiskManager, HARD_RULES
 from telegram_reporter import (
     send,
@@ -4013,6 +4014,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "cash_krw": float(cash) if cash is not None else 0.0,
             "min_effective_order_krw": minimum,
         }
+
+    @staticmethod
+    def _affordability_detail(diag: dict, *, fallback_reason: str = "affordability") -> str:
+        reason = str(diag.get("affordability_reason") or fallback_reason or "affordability")
+        price = float(diag.get("price_per_share_krw", 0) or 0)
+        budget = float(diag.get("order_budget_krw", 0) or 0)
+        shortfall = float(diag.get("shortfall_krw", 0) or 0)
+        return (
+            f"{reason}: "
+            f"price_krw={price:,.0f} "
+            f"budget_krw={budget:,.0f} "
+            f"shortfall_krw={shortfall:,.0f}"
+        )
     def _is_micro_probe_record(self, item: dict) -> bool:
         return bool(item.get("micro_probe")) or str(item.get("strategy", "") or "").upper() == _MICRO_PROBE_STRATEGY
     def _micro_probe_session_count(self, market: str) -> int:
@@ -4388,6 +4402,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False
         if not result.get("success"):
             detail = result.get("msg", "")
+            reject_reason = broker_reject_reason(detail)
             self._record_decision_event(
                 market,
                 "buy_failed",
@@ -4396,13 +4411,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 qty=qty,
                 price_native=order_px,
                 price_krw=risk_price_krw,
-                reason="order_rejected",
+                reason=reject_reason,
+                reason_family="broker_reject",
                 detail=detail,
                 order_no=result.get("order_no", ""),
                 selected_reason=selected_reason,
             )
             try:
-                tsdb.update_signal(tsdb_id, _MICRO_PROBE_STRATEGY, entry_priority_score, signal_at, "order_rejected")
+                tsdb.update_signal(tsdb_id, _MICRO_PROBE_STRATEGY, entry_priority_score, signal_at, reject_reason)
             except Exception:
                 pass
             log.error(f"micro_probe order failed [{ticker}]: {detail}")
@@ -13519,11 +13535,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     try:
                         result = place_order(_s_tk, qty, order_px, "buy", self._token_for_market(market), market=market)
                     except Exception as e:
+                        _exc_detail = str(e)
+                        _exc_reason = broker_reject_reason(_exc_detail, default="order_exception")
                         self._record_decision_event(
                             market, "buy_failed", _s_tk, strategy=_s_strat, qty=qty,
                             price_native=order_px, price_krw=_s_rpx,
-                            reason="order_exception", detail=str(e), selected_reason=_s_sr,
+                            reason=_exc_reason,
+                            reason_family="broker_reject" if _exc_reason == "permanent_order_reject" else "",
+                            detail=_exc_detail, selected_reason=_s_sr,
                         )
+                        if is_permanent_order_failure(_exc_detail):
+                            if _ML_DB_ENABLED:
+                                _ml_write_eval(_s_tk, _s_px, _s_row, "BLOCKED",
+                                               block_reason_=_exc_reason,
+                                               strategy_used_=_s_strat, fired_strategy_=_s_strat,
+                                               diag_json_={"detail": _exc_detail, "stage": "place_order"})
+                            tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, _exc_reason)
+                            log.warning(f"[broker permanent reject {market}] {_s_tk}: {_exc_detail}")
+                            continue
                         # 연속 오류 카운터 증가 → 3회 이상이면 당일 차단
                         _err_cnt = self._order_error_count.get(_s_tk, 0) + 1
                         self._order_error_count[_s_tk] = _err_cnt
@@ -13550,13 +13579,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, "order_exception")
                         raise
                     if not result["success"]:
+                        _reason = result.get("msg", "") or "order_rejected"
+                        _reject_reason = broker_reject_reason(_reason)
                         self._record_decision_event(
                             market, "buy_failed", _s_tk, strategy=_s_strat, qty=qty,
                             price_native=order_px, price_krw=_s_rpx,
-                            reason="order_rejected", detail=result.get("msg", ""),
+                            reason=_reject_reason, reason_family="broker_reject",
+                            detail=_reason,
                             selected_reason=_s_sr,
                         )
-                        log.error(f"order failed [{_s_tk}]: {result['msg']}")
+                        log.error(f"order failed [{_s_tk}]: {_reason}")
                         _reason = result.get("msg", "") or "주문거절"
                         # Broker-declared untradable symbols should not be retried.
                         if "매매불가" in _reason or "주문처리가 안되었습니다" in _reason:
@@ -13574,10 +13606,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             )
                         if _ML_DB_ENABLED:
                             _ml_write_eval(_s_tk, _s_px, _s_row, "BLOCKED",
-                                           block_reason_="order_rejected",
+                                           block_reason_=_reject_reason,
                                            strategy_used_=_s_strat, fired_strategy_=_s_strat,
-                                           diag_json_={"detail": result.get("msg", ""), "stage": "place_order"})
-                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, "order_rejected")
+                                           diag_json_={"detail": _reason, "stage": "place_order"})
+                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, _reject_reason)
                         continue
                     if market == "US":
                         self._mark_us_order_supported(_s_tk)
@@ -13818,7 +13850,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 price_krw=float(_t2_risk_price),
                                 reason="qty_zero",
                                 reason_family="affordability",
-                                detail="tier2 risk engine returned zero quantity",
+                                detail=self._affordability_detail(_t2_affordability),
                                 selected_reason=f"sector_etf={_play['etf']}",
                                 **_t2_affordability,
                             )
@@ -13875,6 +13907,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             _t2_ticker, _t2_qty, _t2_order_px, "buy", self._token_for_market("US"), market="US"
                         )
                         if not _t2_result["success"]:
+                            _t2_reject_detail = str(_t2_result.get("msg", "") or "order_rejected")
+                            _t2_reject_reason = broker_reject_reason(_t2_reject_detail)
+                            self._record_decision_event(
+                                "US", "buy_failed", _t2_ticker,
+                                strategy="sector_play",
+                                qty=int(_t2_qty),
+                                price_native=float(_t2_price),
+                                price_krw=float(_t2_risk_price),
+                                reason=_t2_reject_reason,
+                                reason_family="broker_reject",
+                                detail=_t2_reject_detail,
+                                order_no=_t2_result.get("order_no", ""),
+                                selected_reason=f"sector_etf={_play['etf']}",
+                                **_t2_affordability,
+                            )
                             log.error(f"  [Tier2] {_t2_ticker} 주문실패: {_t2_result.get('msg')}")
                             continue
                         log.info(
@@ -14014,7 +14061,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 price_krw=float(_t2_risk_price),
                                 reason="qty_zero",
                                 reason_family="affordability",
-                                detail="tier2 risk engine returned zero quantity",
+                                detail=self._affordability_detail(_t2_affordability),
                                 selected_reason=f"kr_sector_etf={_play['etf']}",
                                 **_t2_affordability,
                             )
@@ -14048,6 +14095,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             self._token_for_market("KR"), market="KR",
                         )
                         if not _t2_result["success"]:
+                            _t2_reject_detail = str(_t2_result.get("msg", "") or "order_rejected")
+                            _t2_reject_reason = broker_reject_reason(_t2_reject_detail)
+                            self._record_decision_event(
+                                "KR", "buy_failed", _t2_ticker,
+                                strategy="kr_sector_play",
+                                qty=int(_t2_qty),
+                                price_native=float(_t2_risk_price),
+                                price_krw=float(_t2_risk_price),
+                                reason=_t2_reject_reason,
+                                reason_family="broker_reject",
+                                detail=_t2_reject_detail,
+                                order_no=_t2_result.get("order_no", ""),
+                                selected_reason=f"kr_sector_etf={_play['etf']}",
+                                **_t2_affordability,
+                            )
                             log.error(f"  [KR Tier2] {_t2_ticker} 주문실패: {_t2_result.get('msg')}")
                             continue
                         log.info(

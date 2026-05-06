@@ -9,6 +9,7 @@ from decision.claude_price_plan import make_price_plan
 from execution.claude_price_adapter import ClaudePriceAdapter
 from execution.safety_gate import PathBSafetyGate, SafetyContext
 from lifecycle.event_store import EventStore
+from runtime.pathb_runtime import PathBRuntime
 
 
 class LiveOrderSafetyTests(unittest.TestCase):
@@ -43,6 +44,21 @@ class LiveOrderSafetyTests(unittest.TestCase):
 
         self.assertFalse(decision.passed)
         self.assertEqual(decision.reason_code, "INVALID_PRICE")
+
+    def test_pathb_qty_does_not_exceed_fixed_budget_for_high_price(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.config = V2Config(pathb_fixed_order_krw=100_000, kr_min_order_krw=100_000)
+
+        qty = runtime._pathb_qty("KR", 287_000, cash_krw=2_700_000)
+
+        self.assertEqual(qty, 0)
+
+    def test_pathb_qty_allows_min_order_only_within_fixed_budget(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.config = V2Config(pathb_fixed_order_krw=100_000, kr_min_order_krw=100_000)
+
+        self.assertEqual(runtime._pathb_qty("KR", 50_000, cash_krw=2_700_000), 2)
+        self.assertEqual(runtime._pathb_qty("KR", 60_000, cash_krw=2_700_000), 0)
 
     def test_duplicate_pathb_plan_is_visible_as_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

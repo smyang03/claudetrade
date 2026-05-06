@@ -13,6 +13,7 @@ from config.v2 import DEFAULT_V2_CONFIG, V2Config
 from decision.claude_price_plan import PricePlan, parse_plan_from_claude
 from execution.claude_price_adapter import ClaudePriceAdapter, EntrySignal
 from execution.claude_price_sell_manager import ClaudePriceSellManager, ExitSignal
+from execution.order_failure import is_permanent_order_failure
 from execution.path_arbiter import SameDayReentryGuard
 from execution.safety_gate import PathBSafetyGate, SafetyContext
 from kis_api import cancel_order, get_balance, get_price, place_order, precheck_order
@@ -3024,17 +3025,7 @@ class PathBRuntime:
 
     @staticmethod
     def _is_permanent_order_failure(detail: str) -> bool:
-        text = str(detail or "").lower()
-        permanent_markers = (
-            "해당종목정보가 없습니다",
-            "exchange mapping",
-            "exchange code",
-            "unsupported symbol",
-            "symbol not found",
-            "unknown exchange",
-            "ovrs_excg_cd",
-        )
-        return any(marker.lower() in text for marker in permanent_markers)
+        return is_permanent_order_failure(detail)
 
     def _path_a_lifecycle_evidence(
         self,
@@ -4039,8 +4030,11 @@ class PathBRuntime:
         qty = int(budget // price) if budget > 0 else 0
         if min_order > 0 and qty * price < min_order:
             min_qty = int(math.ceil(min_order / price))
-            if min_qty * price <= float(cash_krw or 0):
+            min_cost = min_qty * price
+            if min_cost <= budget and min_cost <= float(cash_krw or 0):
                 qty = min_qty
+            else:
+                qty = 0
         return max(0, qty)
 
     def _usd_krw(self) -> float:

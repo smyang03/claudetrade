@@ -343,6 +343,23 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             self.assertEqual(run["plan"]["next_broker_truth_recheck_at"], "")
             self.assertEqual(run["plan"]["cancel_reason"], "order_unknown_permanent_reject")
 
+    def test_buying_power_reject_is_permanent_order_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={"order_unknown_detail": "주문가능금액을 초과 했습니다"},
+                merge_plan=True,
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["permanent_order_reject"], 1)
+            self.assertEqual(run["status"], "CANCELLED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "permanent_order_reject")
+            self.assertEqual(run["plan"]["cancel_reason"], "order_unknown_permanent_reject")
+
     def test_session_open_reconciles_cross_session_and_clears_escalator_pause(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
