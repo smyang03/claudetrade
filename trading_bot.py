@@ -385,7 +385,12 @@ _US_OPENING_JUDGMENT_REFRESH_MIN = int(os.getenv("US_OPENING_JUDGMENT_REFRESH_MI
 _JUDGMENT_PHASE_PREOPEN = "preopen_watch"
 _JUDGMENT_PHASE_OPENING = "opening_confirm"
 _JUDGMENT_PHASE_INTRADAY = "intraday_live"
+_JUDGMENT_PHASE_UNCONFIRMED = "intraday_live_unconfirmed"
 _EXECUTABLE_JUDGMENT_PHASES = {_JUDGMENT_PHASE_OPENING, _JUDGMENT_PHASE_INTRADAY}
+# KIS 지수 캐시 TTL(초) — API 일시 실패 시 이전 성공 값 재사용
+_KIS_INDEX_CACHE_TTL_SEC = int(os.getenv("KIS_INDEX_CACHE_TTL_SEC", "600"))
+# unconfirmed phase 진입 허용 시 사이즈 상한 (%)
+_UNCONFIRMED_ENTRY_SIZE_CAP_PCT = int(os.getenv("UNCONFIRMED_ENTRY_SIZE_CAP_PCT", "70"))
 # 마감 직전 신규 진입 차단 — session_open 기준 경과 분  # KR: 8:50 KST + 380min = 15:10 KST
 # US: 22:20 KST + 370min = 04:30 KST = 15:30 ET  (KST = ET + 13h -> 15:30 ET + 13h = 04:30 KST)
 _KR_ENTRY_CUTOFF_FROM_OPEN_MIN = int(os.getenv("KR_ENTRY_CUTOFF_FROM_OPEN_MIN", "380"))
@@ -823,6 +828,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._or_high: dict[str, float] = {}
         self._or_low: dict[str, float] = {}
         self._or_formed: dict[str, bool] = {}
+        # KIS 지수 스냅샷 캐시 — API 일시 실패 시 TTL 내 이전 성공 값 재사용
+        self._kis_index_cache: dict[str, dict] = {}
         # 매도 실패 쿨다운 — ticker → 실패 시각, 90초간 재시도 억제
         self._sell_fail_at:  dict[str, float] = {}
         self._sell_fail_meta: dict[str, dict] = {}
@@ -5189,10 +5196,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "Use this section first for current intraday market direction.",
         ]
         if market == "KR":
+            _now_ts = datetime.now(KST)
             try:
                 from kis_api import get_index_snapshot
                 kospi = get_index_snapshot("KR", "KOSPI")
                 kosdaq = get_index_snapshot("KR", "KOSDAQ")
+                self._kis_index_cache["KR"] = {"kospi": kospi, "kosdaq": kosdaq, "ts": _now_ts}
                 lines.append(
                     f"KIS live index: KOSPI {float(kospi.get('change_pct', 0.0)):+.2f}% "
                     f"(price {float(kospi.get('price', 0.0)):,.2f}), "
@@ -5206,11 +5215,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     f"decliners {kosdaq.get('decliners', 0)}."
                 )
             except Exception as exc:
-                lines.append(f"KIS live index unavailable: {exc}")
-                lines.append(
-                    "If KIS live index is unavailable and the digest is stale, do not downgrade market mode "
-                    "from the stale digest direction alone. Use NEUTRAL/unknown unless fresh intraday breadth is decisive."
+                _cached = self._kis_index_cache.get("KR")
+                _cache_age = (
+                    (_now_ts - _cached["ts"]).total_seconds()
+                    if _cached and isinstance(_cached.get("ts"), datetime)
+                    else None
                 )
+                if _cached and _cache_age is not None and _cache_age < _KIS_INDEX_CACHE_TTL_SEC:
+                    _kospi_c = _cached["kospi"]
+                    _kosdaq_c = _cached["kosdaq"]
+                    _age_min = int(_cache_age // 60)
+                    lines.append(
+                        f"KIS live index: KOSPI {float(_kospi_c.get('change_pct', 0.0)):+.2f}% "
+                        f"(price {float(_kospi_c.get('price', 0.0)):,.2f}), "
+                        f"KOSDAQ {float(_kosdaq_c.get('change_pct', 0.0)):+.2f}% "
+                        f"(price {float(_kosdaq_c.get('price', 0.0)):,.2f}) [cached {_age_min}m ago]."
+                    )
+                    lines.append(
+                        f"KOSPI breadth now: advancers {_kospi_c.get('advancers', 0)} / "
+                        f"decliners {_kospi_c.get('decliners', 0)}; "
+                        f"KOSDAQ breadth now: advancers {_kosdaq_c.get('advancers', 0)} / "
+                        f"decliners {_kosdaq_c.get('decliners', 0)} [cached]."
+                    )
+                else:
+                    lines.append(f"KIS live index unavailable: {exc}")
+                    lines.append(
+                        "If KIS live index is unavailable and the digest is stale, do not downgrade market mode "
+                        "from the stale digest direction alone. Use NEUTRAL/unknown unless fresh intraday breadth is decisive."
+                    )
             if self._digest_payload_built_before_open(market, payload):
                 morning_kospi = ((digest_ctx.get("kospi") or {}).get("change_pct"))
                 morning_kosdaq = ((digest_ctx.get("kosdaq") or {}).get("change_pct"))
@@ -5220,11 +5252,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "as current intraday market direction when it conflicts with KIS live index."
                 )
         elif market == "US":
+            _now_ts = datetime.now(KST)
             try:
                 from kis_api import get_index_snapshot
                 sp500 = get_index_snapshot("US", "SP500")
                 nasdaq = get_index_snapshot("US", "NASDAQ")
                 vix = get_index_snapshot("US", "VIX")
+                self._kis_index_cache["US"] = {"sp500": sp500, "nasdaq": nasdaq, "vix": vix, "ts": _now_ts}
                 lines.append(
                     f"US live index: S&P500 {float(sp500.get('change_pct', 0.0) or 0.0):+.2f}% "
                     f"(price {float(sp500.get('price', 0.0) or 0.0):,.2f}, source={sp500.get('source')}); "
@@ -5234,11 +5268,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     f"({float(vix.get('change_pct', 0.0) or 0.0):+.2f}%, source={vix.get('source')})."
                 )
             except Exception as exc:
-                lines.append(f"US live index unavailable: {exc}")
-                lines.append(
-                    "If US live index is unavailable and the digest is stale, do not downgrade market mode "
-                    "from the stale digest direction alone. Use NEUTRAL/unknown unless fresh intraday breadth is decisive."
+                _cached = self._kis_index_cache.get("US")
+                _cache_age = (
+                    (_now_ts - _cached["ts"]).total_seconds()
+                    if _cached and isinstance(_cached.get("ts"), datetime)
+                    else None
                 )
+                if _cached and _cache_age is not None and _cache_age < _KIS_INDEX_CACHE_TTL_SEC:
+                    _sp500_c = _cached["sp500"]
+                    _nasdaq_c = _cached["nasdaq"]
+                    _vix_c = _cached["vix"]
+                    _age_min = int(_cache_age // 60)
+                    lines.append(
+                        f"US live index: S&P500 {float(_sp500_c.get('change_pct', 0.0) or 0.0):+.2f}% "
+                        f"(price {float(_sp500_c.get('price', 0.0) or 0.0):,.2f}, source={_sp500_c.get('source')}); "
+                        f"NASDAQ {float(_nasdaq_c.get('change_pct', 0.0) or 0.0):+.2f}% "
+                        f"(price {float(_nasdaq_c.get('price', 0.0) or 0.0):,.2f}, source={_nasdaq_c.get('source')}); "
+                        f"VIX {float(_vix_c.get('price', 0.0) or 0.0):.2f} "
+                        f"({float(_vix_c.get('change_pct', 0.0) or 0.0):+.2f}%, source={_vix_c.get('source')}) [cached {_age_min}m ago]."
+                    )
+                else:
+                    lines.append(f"US live index unavailable: {exc}")
+                    lines.append(
+                        "If US live index is unavailable and the digest is stale, do not downgrade market mode "
+                        "from the stale digest direction alone. Use NEUTRAL/unknown unless fresh intraday breadth is decisive."
+                    )
             if self._digest_payload_built_before_open(market, payload):
                 morning_sp500 = ((digest_ctx.get("sp500") or {}).get("change_pct"))
                 morning_nasdaq = ((digest_ctx.get("nasdaq") or {}).get("change_pct"))
@@ -10934,7 +10988,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         return _JUDGMENT_PHASE_INTRADAY
 
     def _is_executable_judgment_phase(self, phase: str) -> bool:
-        return str(phase or "").strip() in _EXECUTABLE_JUDGMENT_PHASES
+        p = str(phase or "").strip()
+        if p in _EXECUTABLE_JUDGMENT_PHASES:
+            return True
+        if p == _JUDGMENT_PHASE_UNCONFIRMED:
+            return _env_bool("UNCONFIRMED_PHASE_ENTRY_ALLOW", True)
+        return False
 
     def _new_entry_judgment_gate(self, market: str) -> tuple[bool, str]:
         market = str(market or "").upper()
@@ -10951,6 +11010,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         phase = str(basis.get("phase") or "").strip()
         if not self._is_executable_judgment_phase(phase):
             return False, f"non_executable_judgment_phase:{phase or 'missing'}"
+        if phase == _JUDGMENT_PHASE_UNCONFIRMED:
+            return True, "ok_unconfirmed"
         return True, "ok"
 
     def _maybe_run_opening_fresh_screener(self, market: str) -> None:
@@ -11127,6 +11188,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         tickers = self.today_tickers.get(
             market, _DEFAULT_KR_TICKERS if market == "KR" else _DEFAULT_US_TICKERS
         )
+        # preopen 후보 메타 (skip 로그 보강용 — 사이클당 1회 로드)
+        _preopen_meta_by_ticker: dict[str, dict] = {}
+        try:
+            from preopen.storage import load_preopen_state
+            _po_state = load_preopen_state(market, max_age_min=480)
+            for _po_c in (_po_state.get("candidates") or []):
+                _t = str(_po_c.get("ticker") or "")
+                if _t:
+                    _preopen_meta_by_ticker[_t] = _po_c
+        except Exception:
+            pass
         self._sync_runtime_with_broker()
         # Common ML DB context reused inside the ticker loop.
         _ml_judgments = self.today_judgment.get("judgments", {})
@@ -11463,6 +11535,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             self._or_formed[ticker] = True
                 self._process_exit_candidates()
                 if not _entry_judgment_ok:
+                    _po_meta = _preopen_meta_by_ticker.get(ticker, {})
                     analysis_log.info(
                         f"[skip {market}] {ticker} judgment_not_executable",
                         extra={"extra": {
@@ -11473,6 +11546,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "detail": _entry_judgment_block,
                             "price": float(price),
                             "mode": mode,
+                            "preopen_rank": _po_meta.get("shadow_preopen_rank"),
+                            "preopen_grade": _po_meta.get("preopen_grade"),
+                            "preopen_5m": _po_meta.get("post_open_5m_return_pct"),
+                            "preopen_30m": _po_meta.get("post_open_30m_return_pct"),
+                            "was_trade_ready": ticker in self._trade_ready_set(market),
                         }},
                     )
                     log.debug(
@@ -12720,6 +12798,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         f"({', '.join(_selection_size_reasons)})"
                     )
                     effective_size = max(1, min(100, _selection_size_cap))
+                if _entry_judgment_block == "ok_unconfirmed" and effective_size > _UNCONFIRMED_ENTRY_SIZE_CAP_PCT:
+                    log.info(
+                        f"  [{ticker}] unconfirmed_phase size cap: "
+                        f"{effective_size}% -> {_UNCONFIRMED_ENTRY_SIZE_CAP_PCT}%"
+                    )
+                    effective_size = _UNCONFIRMED_ENTRY_SIZE_CAP_PCT
                 # ── 신호 수집 → 사이클 완료 후 score 정렬 후 주문 실행 ────────
                 _partial_signal_decision = self._partial_data_execution_decision(market, ticker, strategy_name)
                 if _partial_signal_decision.get("partial"):
