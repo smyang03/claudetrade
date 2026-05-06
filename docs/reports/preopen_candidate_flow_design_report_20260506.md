@@ -1,1618 +1,1272 @@
 # Trading System Candidate Execution Development Specification - 2026-05-06
 
-대상: `claudetrade` 장전 후보, 기본 후보, 장중 후보, Claude 판단, PlanA/PathB 진입, 매도/보유 재판단, replay QA
+대상: `claudetrade`의 장전 후보, 기본 후보, 장중 후보, Claude 판단, PlanA/PathB 진입, 매도/보유 재판단, replay QA, live 설정 운영 구조.
 
-목적: 기존 분석 리포트를 개발 명세서 형태로 재정렬한다. 각 개발 항목은 `무엇을 구현할지`뿐 아니라, 기존 분석에서 나온 코멘트와 판단 근거를 `왜 하는가`로 함께 기록한다.
+목적: 기존 분석 리포트를 개발 명세서로 재정리한다. 이 문서는 "무엇을 고칠지"보다 "왜 고치며, 어디에 연결하고, 무엇으로 검증할지"를 기준으로 작성한다.
 
 ---
 
-## 1. 결론
+## 0. 최종 판단
 
-현재 시스템은 후보를 못 찾는 시스템이 아니다. 후보를 찾고도 아래 중간 계층이 약하다.
+현재 시스템은 후보를 못 찾는 시스템이 아니다. 후보는 장전/장중에서 충분히 발견되고 있었지만, 다음 중간 계층이 약해서 실제 수익으로 연결되지 않았다.
 
 ```text
 후보군 구성
--> 실시간 상태화
--> Claude 상태 판단
--> PlanA/PathB 실행 분기
--> 수량/예산 검증
--> 수익 보호/매도 재판단
--> replay 검증
+-> 개장 후 상태 관측
+-> Claude 상태 분류
+-> system gate 평가
+-> PlanA/PathB routing
+-> sizing/budget 검증
+-> exit lifecycle
+-> future-blind replay
 ```
 
-따라서 이번 개발의 핵심은 새 시스템을 갈아엎는 것이 아니라 기존 구조를 명시적인 계약으로 정리하는 것이다.
+따라서 이번 개선은 단타성 패치가 아니라 전체 실행 구조의 연결 계층을 정리하는 작업이다. 기존 철학인 "Claude가 후보를 고르고 PlanA/PathB가 실행하며, 보유 중 Claude가 재판단한다"는 유지한다.
+
+핵심 변경 방향:
 
 ```text
-장전 후보와 기본 후보는 넓게 본다.
-Claude에게는 정리된 prompt_pool만 보낸다.
-Claude는 미래 예측자가 아니라 상태 분류자로 쓴다.
-매수는 probe/buy/wait/add/avoid로 나눈다.
-매도는 system guard가 먼저 수익을 보호하고, Claude는 예외를 검증한다.
-모든 판단은 known_at 기준 replay로 검증한다.
-```
-
-최종 개발 순서:
-
-```text
-schema -> pool -> log -> Claude action -> gate -> routing -> sizing -> exit -> replay
+1. 후보는 full_pool에 넓게 보존한다.
+2. Claude에는 prompt_pool만 정리해서 보낸다.
+3. Claude는 미래 예측자가 아니라 현재 상태 분류자로 사용한다.
+4. system gate는 hard safety와 soft quality/timing을 분리한다.
+5. PlanA/PathB는 action별로 라우팅하고 같은 종목 중복 진입을 막는다.
+6. 매도는 system guard가 먼저 수익을 보호하고 Claude는 예외와 thesis를 검증한다.
+7. 모든 판단은 known_at 기준으로 replay 가능해야 한다.
+8. 대규모 패치는 feature flag, shadow, funnel log, rollback 단위로 운영한다.
+9. `.env.live`와 `config`는 파일 하나로 합치지 않고 EffectiveRuntimeConfig로 통합한다.
 ```
 
 ---
 
-## 2. 기존 분석 코멘트 요약
+## 1. 기존 문제와 이번 결정
 
-### 2.1 지켜야 할 기존 구조
-
-기존 구조의 기본 철학은 맞다.
-
-```text
-장전 후보 수집
--> 개장 후 확인
--> Claude 후보 선정
--> PlanA/PathB 실행
--> 보유 중 Claude 재판단
-```
-
-기존 코멘트:
-
-- 장전 후보를 바로 매수하지 않고 개장 후 확인하는 방향은 맞다.
-- Claude가 후보를 고르고, 실제 주문은 PlanA/PathB/리스크 엔진이 검증하는 역할 분리는 맞다.
-- Claude 재판단으로 매도를 다시 보는 구조도 장점이다.
-- 문제는 후보, 상태, 실행, 수익 보호 사이의 연결이 약하다는 점이다.
-
-### 2.2 핵심 문제
-
-기존 분석에서 반복 확인된 문제:
-
-| 문제 | 기존 코멘트 | 개발 관점 |
+| 문제 | 실제 증상 | 이번 결정 |
 |---|---|---|
-| `intraday_live_unconfirmed` 차단 | 좋은 장에서도 `judgment_not_executable`로 0거래 가능 | phase/gate 상태를 명확히 기록하고 조건부 허용 또는 격상 필요 |
-| 후보 funnel 단절 | 장전 후보 59개가 full execution funnel에 연결되지 않음 | full_pool/prompt_pool/execution_pool 분리 필요 |
-| SOFT/HARD pin 불명확 | SOFT pin이 로드되지만 조용히 버려질 수 있음 | source_tags와 merge 규칙 필요 |
-| 여러 rescreen builder | 경로별 후보 구성이 달라 추적이 어려움 | Unified Candidate Pool 필요 |
-| 조건이 많고 출력이 `skip`으로 뭉침 | 첫 번째 blocker만 보이고 나머지 gate 상태가 사라짐 | Gate Evaluation Matrix 필요 |
-| Claude 상태가 거침 | `watchlist/trade_ready`만으로는 probe/wait/avoid 표현 불가 | `candidate_actions` 필요 |
-| 수량/예산 경계 | min_order override가 cap을 뚫을 수 있음 | sizing/budget contract 필요 |
-| 매도 판단이 target에 끌림 | 높은 목표가가 수익 보호를 늦출 수 있음 | MFE/giveback/floor 중심 prompt 필요 |
-| replay 착시 | 5m/30m 사후 필터는 look-ahead bias 위험 | known_at future-blind replay 필요 |
-
-### 2.3 오늘 KR / 어제 US 분석에서 얻은 교훈
-
-기존 시뮬레이션 해석:
-
-- 장전 후보 전체를 다 사는 구조는 답이 아니다.
-- 상태가 확인된 일부 후보는 의미 있는 알파가 있었다.
-- 다만 5m/30m 결과를 사후에 보고 필터링하면 실제 성과보다 과대평가된다.
-- 실제 시스템은 개장 5분에는 5분 정보만 알고, 30분 정보는 30분 후에야 안다.
-- 따라서 "30분 결과가 좋았던 종목을 샀다면"이 아니라 "그 시점에 알 수 있던 정보로 probe/add/exit를 어떻게 했을지"를 replay해야 한다.
-
-기존 코멘트:
-
-```text
-P1까지 개선해도 사후 백테스트 숫자가 그대로 나오지는 않는다.
-P1은 이론 상한이 아니라 live decision quality를 높이는 입력 개선이다.
-```
-
-개발 결론:
-
-```text
-known_at feature
-candidate action
-probe-first entry
-profit protection
-future-blind replay
-```
-
-이 5개를 한 묶음으로 구현해야 한다.
+| `intraday_live_unconfirmed` 차단 | 좋은 장에서도 `judgment_not_executable`으로 0거래 가능 | phase/gate를 명시화하고 재판단 성공 시 실행 가능한 상태로 승격 |
+| 장전 후보 단절 | 장전 후보가 있어도 execution funnel로 연결되지 않음 | Unified Candidate Pool로 full/prompt/execution pool 분리 |
+| 후보군 품질 판단 부족 | 오른 종목과 빠진 종목이 같은 등급에 섞임 | 개장 후 snapshot과 momentum_state를 Claude 입력에 연결 |
+| 조건 과다/중복 | 첫 blocker만 보이고 나머지 gate 상태가 사라짐 | Gate Evaluation Matrix로 전체 gate 결과를 기록 |
+| Claude 출력이 거침 | `watchlist/trade_ready`만으로 probe/wait/avoid 표현 불가 | `candidate_actions` schema 도입 |
+| PlanA/PathB 충돌 가능 | 같은 종목이 두 경로에서 동시에 주문될 수 있음 | same-ticker action lock과 routing 우선순위 추가 |
+| sizing cap 중복 | ATR/VIX/risk_off/selection cap이 중복 적용 가능 | Gate soft cap을 sizing의 단일 입력으로 사용 |
+| 수익 보호 약함 | Claude HOLD가 수익 보호를 늦출 수 있음 | hard stop/profit floor/trailing은 Claude보다 우선 |
+| replay 착시 | 5m/30m 결과를 사후에 보고 필터링하면 과대평가 | known_at 기반 future-blind replay만 인정 |
+| 설정 출처 분산 | `.env.live`, `v2_start_config.json`, `config/v2.py`, 직접 `os.getenv`가 혼재 | 단일 EffectiveRuntimeConfig와 startup config snapshot 도입 |
 
 ---
 
-## 3. 개발 범위
+## 2. 전체 개발 범위
 
-### 3.1 포함
+개발 단위는 다음 순서로 진행한다.
 
 ```text
 D1. Data model / schema 계약
 D2. Unified Candidate Pool
-D3. Post-open feature snapshot
-D4. Claude candidate_actions schema
+D3. Post-open Feature Snapshot
+D4. Claude Candidate Actions Schema
 D5. Gate Evaluation Matrix
-D6. PlanA/PathB action routing
-D7. Sizing/budget contract
-D8. Exit lifecycle / hold advisor
-D9. Observability
-D10. Future-blind replay
-D11. QA checklist
-D12. Rollout / rollback
+D6. PlanA/PathB Action Routing
+D7. Sizing / Budget Contract
+D8. Exit Lifecycle / Hold Advisor
+D9. Observability / Funnel Snapshot
+D10. Future-Blind Replay
+D11. QA Checklist
+D12. Rollout / Rollback
+D13. Env/Config Unification
+D14. Large Patch Operations
 ```
 
-### 3.2 제외 또는 2차 이후
+구현 순서는 schema를 먼저 고정하고, pool과 관측 로그를 만든 뒤, Claude action과 실행 경로를 붙인다. replay는 모든 단계의 검증 기준이므로 마지막에 도구만 만드는 것이 아니라 각 단계의 산출물이 replay 입력으로 남도록 설계한다.
 
-1차 live 범위에서 제외할 항목:
+---
+
+## 3. 공통 계약
+
+### 3.1 Claude action과 system final_action 분리
+
+Claude가 출력하는 값과 system이 최종 판단하는 값은 다르다. 같은 enum으로 섞으면 `HARD_BLOCK` 같은 system 상태를 Claude가 낼 수 있는 것처럼 보이므로 분리한다.
+
+Claude action:
 
 ```text
-ADD_READY 실제 추가매수
-partial sell 실주문
-alternative_opportunity_score 자동 계산
-VWAP 고도화가 필요한 정밀 체결 모델
-brain.json 자동 정책 변경
+WATCH
+PROBE_READY
+BUY_READY
+ADD_READY
+PULLBACK_WAIT
+AVOID
 ```
 
-기존 코멘트:
+System final_action:
 
-- `ADD_READY`는 평균단가, profit floor, trailing 재계산이 필요해 1차 live에서 위험하다.
-- partial sell은 브로커 API는 가능하더라도 현재 `_execute_sell()`이 전체 청산 중심이므로 별도 lifecycle 설계가 필요하다.
-- VWAP/alternative score는 candidate pool과 feature snapshot이 안정된 뒤에 붙여야 한다.
+```text
+BLOCKED
+WATCH
+PROBE_READY
+BUY_READY
+ADD_READY
+PULLBACK_WAIT
+HARD_BLOCK
+EXPIRED
+```
+
+변환 규칙:
+
+```text
+ClaudeAction + GateEvaluation + PositionState + RouteLock
+-> SystemFinalAction
+```
+
+예시:
+
+| Claude action | gate 결과 | position 상태 | system final_action |
+|---|---|---|---|
+| `BUY_READY` | hard safety 통과 | 미보유 | `BUY_READY` |
+| `BUY_READY` | `BROKER_UNTRUSTED` | 무관 | `HARD_BLOCK` |
+| `PROBE_READY` | soft cap 30% | 미보유 | `PROBE_READY` with size cap |
+| `ADD_READY` | 미보유 | 포지션 없음 | `WATCH` |
+| `PULLBACK_WAIT` | price_targets 없음 | 무관 | `WATCH` with reason `missing_pullback_target` |
+| action 만료 | 무관 | 무관 | `EXPIRED` |
+
+### 3.2 Action expiration
+
+장전 또는 장초에 나온 action을 장중 후반까지 그대로 쓰면 불리한 가격에서 진입할 수 있다. 모든 `CandidateAction`은 만료 규칙을 갖는다.
+
+기본 만료:
+
+| action | 기본 TTL | 만료 후 |
+|---|---:|---|
+| `PROBE_READY` | 5분 | `WATCH` |
+| `BUY_READY` | 3분 | `WATCH` |
+| `ADD_READY` | 3분 | `WATCH` |
+| `PULLBACK_WAIT` | 30분 또는 price target 무효 시 | `WATCH` |
+| `AVOID` | 30분 | 재평가 가능 |
+| `WATCH` | 다음 Claude 호출까지 | 유지 |
+
+운영 규칙:
+
+- TTL은 market별 config로 둔다.
+- `expires_at`은 Claude가 직접 임의로 정하지 않는다. runtime이 action 생성 시 부여한다.
+- Claude가 `valid_until`을 제공하면 runtime TTL 상한을 넘을 수 없다.
+- 만료된 action은 주문 후보에서 제외하고 funnel log에 `action_expired`로 기록한다.
+
+만료 후 재평가 정책:
+
+- action이 만료되어도 `CandidateRecord`는 full_pool에 유지한다.
+- 만료되는 것은 action이지 후보 자체가 아니다.
+- 다음 Claude 호출에서 prompt_score와 최신 feature가 기준을 만족하면 다시 재평가 대상이 될 수 있다.
+- 같은 종목의 반복 probe를 막기 위해 `same_day_probe_attempts`, `last_probe_exit_reason`, `last_action_expired_at`을 gate 입력에 넣는다.
+- `PULLBACK_WAIT` 만료 후 재진입하려면 새 feature snapshot 또는 새 Claude action이 필요하다.
+
+### 3.3 Decision owner
+
+같은 종목에 여러 판단이 들어올 수 있으므로 owner를 명시한다.
+
+| owner | 책임 |
+|---|---|
+| `preopen_collector` | 장전 후보 수집 |
+| `intraday_scanner` | 장중 후보 발굴 |
+| `claude_selection` | 후보 action 분류 |
+| `gate_runtime` | 실행 가능 여부 |
+| `plana_runtime` | 즉시/확인 진입 |
+| `pathb_runtime` | 눌림/지정가/재진입 |
+| `exit_lifecycle` | 손절/수익보호/매도 |
+| `hold_advisor` | 보유 thesis 재판단 |
+
+충돌 우선순위:
+
+```text
+hard safety > existing position state > active order lock > exit lifecycle > gate result > Claude action
+```
+
+### 3.4 Feature flags
+
+대규모 패치 운영을 위해 모든 주요 변경은 flag로 분리한다.
+
+```text
+ENABLE_UNIFIED_CANDIDATE_POOL=false
+ENABLE_POST_OPEN_FEATURES=false
+ENABLE_CLAUDE_CANDIDATE_ACTIONS=false
+ENABLE_GATE_EVALUATION_MATRIX=false
+ENABLE_ACTION_ROUTING=false
+ENABLE_EXIT_LIFECYCLE_V2=false
+ENABLE_FUTURE_BLIND_REPLAY=false
+ENABLE_PARTIAL_SELL=false
+PARTIAL_SELL_SHADOW_ONLY=true
+```
+
+flag는 `.env.live`에서 emergency kill switch로 덮을 수 있어야 한다. 정식 기본값은 config에서 관리한다.
 
 ---
 
 ## 4. 기존 코드 접점
 
-| 영역 | 현재 코드 |
-|---|---|
-| 시장 판단 | `minority_report/analysts.py::get_three_judgments()` |
-| 후보 선정 | `minority_report/analysts.py::select_tickers()` |
-| selection 적용 | `trading_bot.py::_apply_selection_meta()` |
-| trade_ready normalize | `trading_bot.py::_normalize_selection_meta_runtime()` |
-| entry trade_ready 확인 | `trading_bot.py::_is_trade_ready_ticker()` |
-| 장전 후보 처리 | `trading_bot.py` preopen/session_open 경로 |
-| rescreen | `trading_bot.py::manual_rescreen()`, `_partial_reselect()`, `_reinvoke_analysts()` |
-| PlanA 실행 | `trading_bot.py::run_cycle()` 신규 진입 루프 |
-| PathB 등록 | `runtime/pathb_runtime.py::register_from_selection_meta()` |
-| PathB 수량 | `runtime/pathb_runtime.py::_pathb_qty()` |
-| 매도 후보 | `risk_manager.py::get_exit_candidates()` |
-| soft exit | `trading_bot.py::_try_soft_exit_arbitration()` |
-| hold advisor | `minority_report/hold_advisor.py::ask()` |
-| quick exit | `minority_report/quick_exit_check.py::quick_exit_check()` |
-| tuning | `minority_report/tuner.py::tune()` |
-| param review | `strategy/param_tuner.py::claude_review()` |
+이번 변경은 새 모듈을 추가하더라도 기존 runtime과 명확히 연결되어야 한다. 단순히 새 pool을 만들면 `today_tickers`, `today_judgment["universe_tickers"]`, `selection_meta`, `trade_ready_tickers`에 이은 네 번째 종목 목록이 생길 수 있다. 따라서 아래 접점별로 읽기/쓰기 책임을 고정한다.
 
----
-
-## 5. 공통 action 계약
-
-Claude와 system이 공유할 action enum:
-
-| action | 의미 | 실행 |
+| 영역 | 현재 코드 접점 | 변경 원칙 |
 |---|---|---|
-| `WATCH` | 관찰 | 주문 없음 |
-| `PROBE_READY` | 작게 먼저 진입 가능 | PlanA probe |
-| `BUY_READY` | 정상 진입 가능 | PlanA buy |
-| `ADD_READY` | 보유 종목 추가 가능 | 1차는 shadow only |
-| `PULLBACK_WAIT` | 지금 추격 금지, 눌림 대기 | PathB plan |
-| `AVOID` | 당일 회피 | 주문 없음, 사유 기록 |
-
-기존 코멘트 반영:
-
-- 기존 `trade_ready`는 너무 거칠다.
-- 오늘 같은 장에서는 "사도 됨"과 "좋지만 지금 비쌈"과 "작게만 먼저"가 구분되어야 한다.
-- `PULLBACK_WAIT`를 단순 `WAIT`로 처리하면 PathB에 전달되지 않고 좋은 후보가 사라진다.
-
-> **[검토 — 섹션 5]**
->
-> **Claude action과 system final_action을 구분해야 한다.**
->
-> 현재 표에 있는 6개 action은 Claude가 출력하는 값이다. 그런데 `GateEvaluation.final_action`에는 `HARD_BLOCK`이 포함된다. `HARD_BLOCK`은 Claude가 낼 수 없는 system 결과이므로 이 두 enum을 같은 표에 두면 혼동된다.
->
-> ```text
-> Claude action enum (입력):  WATCH / PROBE_READY / BUY_READY / ADD_READY / PULLBACK_WAIT / AVOID
-> System final_action (출력): HARD_BLOCK / WATCH / PROBE_READY / BUY_READY / PULLBACK_WAIT / AVOID / SIZE_CAP / WAIT
-> ```
->
-> D5 구현 시 Claude action → system final_action 변환 규칙이 명시되어야 한다.
->
-> **action 만료 규칙이 없다.**
->
-> 장전에 `BUY_READY`로 분류된 종목이 30분 후에도 같은 상태를 유지하면 불리한 가격에 진입할 수 있다. `CandidateAction.expires_at`을 정의했으나 누가 어떤 기준으로 설정하는지, 만료 후 어느 action으로 전환하는지 이 섹션에서 명시해야 한다.
+| env 로드 | `trading_bot.py` 상단 `load_dotenv`, `_apply_v2_start_config_env()` | D13 `EffectiveRuntimeConfig`로 단계적 흡수 |
+| v2 config | `config/v2.py::V2Config.from_env()` | 기존 호환 유지, 신규 config와 비교 테스트 |
+| live preflight | `tools/live_preflight.py` | env/config 충돌, snapshot, dangerous flag 검사 추가 |
+| 후보 선정 | `minority_report/analysts.py::select_tickers()` | legacy `trade_ready`와 신규 `candidate_actions` 동시 지원 |
+| 판단 수집 | `minority_report/analysts.py::get_three_judgments()` | market regime 판단은 유지 |
+| selection 적용 | `trading_bot.py::_apply_selection_meta()` | `CandidateAction`과 prompt trace 보존 |
+| trade_ready 판별 | `trading_bot.py::_is_trade_ready_ticker()` | legacy only가 아니라 system final_action 참조로 확장 |
+| 장전 후보 | `tools/preopen_collector.py`, `trading_bot.py` preopen 경로 | D2 full_pool source `preopen`으로 병합 |
+| 장중 rescreen | `trading_bot.py::manual_rescreen()`, `_partial_reselect()`, `_reinvoke_analysts()` | 서로 다른 builder 대신 Unified Candidate Pool 사용 |
+| PlanA 진입 | `trading_bot.py::run_cycle()` 신규 진입 루프 | D6 routing 결과만 주문 후보로 사용 |
+| PathB 등록 | `runtime/pathb_runtime.py::register_from_selection_meta()` | `PULLBACK_WAIT` + target 있는 경우만 등록 |
+| PathB 수량 | `runtime/pathb_runtime.py::_pathb_qty()` | D7 budget contract 준수 |
+| risk profile | `runtime/risk_profile.py` | D5 soft cap과 D7 sizing 입력 정합성 유지 |
+| lifecycle | `runtime/v2_lifecycle_runtime.py` | same-day/reentry/order arbiter와 D6 lock 연결 |
+| 매도 후보 | `risk_manager.py::get_exit_candidates()` | D8 exit priority와 충돌하지 않게 정렬 |
+| soft exit | `trading_bot.py::_try_soft_exit_arbitration()` | Claude HOLD override 금지 |
+| hold advisor | `minority_report/hold_advisor.py::ask()` | MFE/giveback/floor 중심 입력 |
+| quick exit | `minority_report/quick_exit_check.py::quick_exit_check()` | hard guard보다 낮은 우선순위 |
+| replay/측정 | `tools/v2_forward_measurer.py`, 신규 replay tool | known_at 검증 필수 |
 
 ---
 
-## D1. Data model / schema 계약
+## D1. Data Model / Schema 계약
 
-### 왜 하는가
+### 목적
 
-기존 코멘트:
-
-- `today_tickers`, `today_judgment["universe_tickers"]`, `selection_meta`, `trade_ready_tickers`가 서로 다른 의미로 종목 목록을 관리한다.
-- 신규 pool 모듈을 그냥 추가하면 4번째 종목 목록이 생긴다.
-- 먼저 공통 schema를 정의해야 구현 중 재설계가 줄어든다.
-
-### 목표
-
-후보, Claude action, post-open feature, gate 평가, 포지션 lifecycle, Claude 호출 trace를 명시적인 schema로 고정한다.
+후보, Claude action, post-open feature, gate 평가, routing, 포지션 lifecycle, Claude 호출 trace를 명시적인 schema로 고정한다. schema가 먼저 고정되어야 feature, prompt, replay가 같은 데이터를 바라본다.
 
 ### 신규/수정 파일
 
-| 파일 | 작업 |
+| 파일 | 목적 |
 |---|---|
-| `runtime/candidate_pool_runtime.py` | `CandidateRecord`, pool builder |
-| `runtime/post_open_features.py` | `PostOpenFeatureSnapshot` |
-| `runtime/gate_evaluation.py` | `GateEvaluation` |
-| `minority_report/analysts.py` | `candidate_actions` parse 계약 |
-| `trading_bot.py` | `selection_meta`에 신규 schema 보존 |
-| `tests/test_candidate_schema.py` | schema normalize 테스트 |
+| `runtime/candidate_pool_runtime.py` | `CandidateRecord`, pool merge/build |
+| `runtime/post_open_features.py` | 개장 후 feature snapshot |
+| `runtime/gate_evaluation.py` | gate matrix와 final_action |
+| `runtime/action_routing.py` | PlanA/PathB routing |
+| `runtime/exit_lifecycle.py` | 포지션 exit 상태 |
+| `tests/test_candidate_pool_runtime.py` | pool merge/priority |
+| `tests/test_post_open_features.py` | feature/known_at |
+| `tests/test_gate_evaluation.py` | gate 우선순위 |
+| `tests/test_action_routing.py` | PlanA/PathB 충돌 방어 |
+| `tests/test_exit_lifecycle.py` | exit 우선순위 |
 
 ### CandidateRecord
 
-```json
-{
-  "market": "KR",
-  "ticker": "001440",
-  "name": "대한전선",
-  "session_date": "2026-05-06",
-  "asof": "2026-05-06T09:05:00+09:00",
-  "source_tags": ["preopen", "opening_fresh"],
-  "source_ranks": {"preopen": 16, "opening_fresh": 4},
-  "base_score": 0.0,
-  "preopen_score": 0.0,
-  "intraday_score": 0.0,
-  "prompt_score": 0.0,
-  "price": 0.0,
-  "change_rate": 0.0,
-  "turnover": 0.0,
-  "vol_ratio": 0.0,
-  "screen_score": null,
-  "screen_bucket": "day_gainers|day_losers|most_actives|kr_momentum|kr_volume|preopen_base|unknown",
-  "liquidity_bucket": "high|mid|low|unknown",
-  "sector": "",
-  "market_type": "KOSPI|KOSDAQ|NASDAQ|NYSE|AMEX|ETF|unknown",
-  "preopen_pin": "HARD|SOFT|NONE",
-  "data_quality": "good|mixed|poor|unknown",
-  "enter_reason_tags": [],
-  "quality_tags": [],
-  "risk_tags": [],
-  "catalyst_hint": "none|earn_pre|earn_post|news_flag|sector_move|unknown",
-  "external_catalyst_needed": false,
-  "features": {},
-  "stale": false,
-  "stale_reason": ""
-}
+```python
+@dataclass
+class CandidateRecord:
+    ticker: str
+    market: str
+    name: str | None
+    sources: list[str]
+    source_ranks: dict[str, int]
+    source_scores: dict[str, float]
+    first_seen_at: str
+    last_seen_at: str
+    preopen_anchor_at: str | None
+    preopen_price: float | None
+    current_price: float | None
+    grade: str | None
+    prompt_score: float
+    prompt_score_components: dict[str, float]
+    feature_snapshot_ref: str | None
+    latest_features: dict[str, Any]
+    policy_tags: list[str]
+    screen_bucket: str | None
+    status: str
 ```
 
-#### 후보 유입 이유 2계층
+`latest_features`와 `feature_snapshot_ref`의 관계:
 
-후보가 pool에 들어온 이유는 두 계층으로 나눠 관리한다.
+- `PostOpenFeatureSnapshot`은 별도 로그/상태 파일에 append한다.
+- `CandidateRecord.latest_features`에는 최신 snapshot의 요약 필드만 inline 복사한다.
+- `feature_snapshot_ref`는 원본 snapshot id를 가리킨다.
+- replay는 원본 snapshot을 기준으로 하고, prompt 생성은 `latest_features`를 사용한다.
 
-**Layer 1 — 후보 품질 근거 (로컬 로그 기반, 즉시 확인 가능)**
-
-```text
-screen_bucket:
-  US: day_gainers / day_losers / most_actives
-      → us_screen_cache.json의 category 필드 직접 사용
-  KR: kr_momentum / kr_volume / preopen_base
-      → kr_screen_cache.json의 screen_score, vol_ratio 기반 분류
-
-enter_reason_tags:
-  US: ["most_actives", "vol_spike", "premarket_strength", "dollar_volume_quality"]
-  KR: ["high_vol_ratio", "high_screen_score", "kosdaq_momentum", "falling_with_interest"]
-
-quality_tags (positive):
-  ["high_rs", "controlled_strength", "volume_confirmed", "or_above", "vwap_above"]
-
-risk_tags (negative):
-  ["high_atr", "rs_negative", "deep_pullback", "low_liquidity", "tclose_soon"]
-  → selection_meta.risk_tags에서 연결, day_losers 종목에는 자동으로 "falling" 태그 추가
-```
-
-`day_losers` 종목(ADEA, OSIS, SHOP 등)이 pool에 들어오는 것은 정상이다.
-"급락 관심 후보"는 매수 후보가 아니라 단기 반등 또는 short-side 감시 목적으로 분류한다.
-`screen_bucket=day_losers`이면 Claude prompt에서 "매수 후보가 아닌 관심 후보"로 명시적으로 표기한다.
-
-**Layer 2 — 외부 촉매 이유 (뉴스/공시/실적, 별도 레이어)**
-
-```text
-catalyst_hint:
-  earn_pre:    실적 발표 전 (기존 reasons 텍스트에서 earn= 파싱)
-  earn_post:   실적 발표 후
-  news_flag:   뉴스 관련 힌트 있음
-  sector_move: 섹터/테마 이슈
-  none:        알려진 촉매 없음
-
-external_catalyst_needed:
-  true이면 운영자가 뉴스/공시 조회 필요 표시
-  1차 구현에서는 reasons 텍스트 키워드 파싱으로 채움
-  뉴스 API 연결은 2차 이후
-```
-
-이 레이어는 1차 구현에서 완전 자동화하지 않는다. `reasons` 텍스트에서 `earn=`, `공시`, `뉴스` 키워드를 파싱해 `catalyst_hint`를 채우고, 나머지는 `none`으로 둔다.
-
-### CandidateAction
-
-```json
-{
-  "ticker": "001440",
-  "action": "WATCH|PROBE_READY|BUY_READY|ADD_READY|PULLBACK_WAIT|AVOID",
-  "confidence": 0.0,
-  "entry_style": "none|early_probe|normal_buy|pullback|add",
-  "recommended_strategy": "momentum|gap_pullback|mean_reversion|opening_range_pullback|observe",
-  "size_intent": "none|probe|small|normal|aggressive",
-  "why_now": "",
-  "invalidation_condition": "",
-  "add_condition": "",
-  "avoid_condition": "",
-  "path": "PlanA|PathB|Both|None",
-  "expires_at": "",
-  "price_targets": {
-    "reference_price": 0.0,
-    "buy_zone_low": 0.0,
-    "buy_zone_high": 0.0,
-    "sell_target": 0.0,
-    "stop_loss": 0.0,
-    "reward_risk": 0.0,
-    "confidence": 0.0,
-    "invalid_if": ""
-  }
-}
-```
+이렇게 해야 prompt 생성은 빠르고, replay는 원본 이력으로 검증 가능하다.
 
 ### PostOpenFeatureSnapshot
 
-```json
-{
-  "market": "KR",
-  "ticker": "001440",
-  "asof": "2026-05-06T09:05:00+09:00",
-  "known_at": "2026-05-06T09:05:00+09:00",
-  "anchor_time": "2026-05-06T09:00:00+09:00",
-  "anchor_price": 0.0,
-  "current_price": 0.0,
-  "ret_3m_pct": null,
-  "ret_5m_pct": null,
-  "ret_10m_pct": null,
-  "ret_30m_pct": null,
-  "open_range_high": 0.0,
-  "open_range_low": 0.0,
-  "or_formed": false,
-  "vwap": null,
-  "vwap_distance_pct": null,
-  "volume_ratio_open": null,
-  "spread_pct": null,
-  "momentum_state": "unknown|early_strength|controlled_strength|overextended|fade|pullback_setup|late_mover",
-  "data_quality": "good|mixed|poor|unknown"
-}
+```python
+@dataclass
+class PostOpenFeatureSnapshot:
+    snapshot_id: str
+    ticker: str
+    market: str
+    known_at: str
+    anchor_at: str
+    anchor_price: float
+    current_price: float
+    ret_3m_pct: float | None
+    ret_5m_pct: float | None
+    ret_10m_pct: float | None
+    ret_30m_pct: float | None
+    from_open_high_pct: float | None
+    pullback_from_high_pct: float | None
+    opening_range_break: bool | None
+    volume_ratio_open: float | None
+    spread_bps: float | None
+    vwap_distance_pct: float | None
+    momentum_state: str
+    data_quality: str
 ```
+
+`vwap_distance_pct`는 1차 구현에서 optional이다. KR WebSocket 누적 VWAP이 아직 명확하지 않으므로 1차는 수익률, 고점 대비 눌림, OR, 거래량, 스프레드로 동작한다. VWAP은 D3 확장 항목으로 둔다.
+
+### CandidateAction
+
+```python
+@dataclass
+class CandidateAction:
+    ticker: str
+    market: str
+    action: Literal["WATCH", "PROBE_READY", "BUY_READY", "ADD_READY", "PULLBACK_WAIT", "AVOID"]
+    confidence: float
+    size_intent: Literal["micro", "probe", "normal", "reduced", "none"]
+    reason: str
+    invalidation_condition: str
+    price_targets: dict[str, float]
+    created_at: str
+    expires_at: str
+    source_prompt_id: str
+    schema_version: str
+```
+
+`PULLBACK_WAIT`는 `price_targets.entry_below` 또는 `price_targets.entry_zone_low/high`가 없으면 execution 후보가 아니다. 이 경우 watchlist에만 유지하고 `missing_pullback_target`을 남긴다.
 
 ### GateEvaluation
 
-```json
-{
-  "market": "KR",
-  "ticker": "001440",
-  "asof": "2026-05-06T09:05:20+09:00",
-  "selection_action": "PROBE_READY",
-  "hard_safety": {"status": "OK|BLOCK", "reasons": []},
-  "soft_safety": {"status": "OK|SIZE_CAP|PROBE_ONLY", "reasons": [], "size_cap_pct": 100},
-  "timing": {"status": "OK|WAIT|PULLBACK_WAIT", "reasons": []},
-  "affordability": {
-    "status": "OK|QTY_ZERO|PRICE_TOO_HIGH",
-    "budget_krw": 0,
-    "price_krw": 0,
-    "shortfall_krw": 0
-  },
-  "final_action": "HARD_BLOCK|WATCH|PROBE_READY|BUY_READY|PULLBACK_WAIT|AVOID|SIZE_CAP|WAIT",
-  "final_size_pct": 0,
-  "final_reason": ""
-}
+```python
+@dataclass
+class GateEvaluation:
+    ticker: str
+    market: str
+    known_at: str
+    claude_action: str
+    final_action: str
+    hard_safety: dict[str, Any]
+    soft_safety: dict[str, Any]
+    timing: dict[str, Any]
+    sizing: dict[str, Any]
+    affordability: dict[str, Any]
+    route_lock: dict[str, Any]
+    blocker: str | None
+    warnings: list[str]
 ```
+
+중요: `blocker`는 첫 번째 대표 사유만 기록하고, 전체 gate 결과는 dict에 모두 남긴다. 운영 중에는 "왜 주문이 0건인가"를 첫 blocker만 보고 판단하면 안 된다.
 
 ### QA
 
-| 검증 | 기준 |
-|---|---|
-| schema normalize | 누락 필드는 default로 복구 |
-| action enum | 허용 값 외 action은 `WATCH` |
-| duplicate ticker | 같은 market/ticker는 record 1개 |
-| known_at | decision_time 이후 feature 사용 금지 |
-| screen_bucket | US: us_screen_cache.json category 직접 복사. 없으면 `unknown` |
-| day_losers | screen_bucket=day_losers이면 enter_reason_tags에 "falling" 포함 |
-| quality_tags | selection_meta 없으면 빈 리스트, 선정 후 병합 |
-| catalyst_hint | reasons 텍스트에서 earn_pre/post 키워드 파싱, 없으면 none |
-
-### Rollback
-
-```text
-신규 schema는 selection_meta 내부 보조 필드로만 저장한다.
-기존 watchlist/trade_ready는 유지한다.
-문제 발생 시 candidate_actions를 무시하고 기존 경로로 복귀한다.
-```
-
-> **[검토 — D1]**
->
-> **CandidateRecord.features와 PostOpenFeatureSnapshot의 관계가 미정의다.**
->
-> `CandidateRecord.features = {}`로 비어 있는데, D3의 `PostOpenFeatureSnapshot`이 별도 schema다. feature를 record에 inline할지, snapshot 파일을 참조할지 결정해야 한다. inline이면 `CandidateRecord.features`에 snapshot 필드가 복사되고, 참조면 `CandidateRecord.feature_snapshot_ref`가 필요하다. 결정하지 않으면 D3 구현 시 어느 쪽으로 만들지 모호해진다.
->
-> **bot/candidate_policy.py는 이미 존재한다.** 수정 파일 목록에 포함 확인. 단 현재 `normalize_selection_result()` 내부가 `candidate_actions` 필드를 다루는지 먼저 확인 후 확장 범위를 정해야 한다.
+- schema round-trip 테스트.
+- old `trade_ready` list만 있는 legacy Claude 응답 fallback 테스트.
+- `CandidateRecord.latest_features`와 snapshot ref 불일치 테스트.
+- schema_version 증가 시 migration/backward compatibility 테스트.
 
 ---
 
 ## D2. Unified Candidate Pool
 
-### 왜 하는가
+### 목적
 
-기존 코멘트:
-
-- 장전 후보 59개가 있었다는 숫자는 보이지만 실제 Claude prompt에 어떤 후보가 들어갔는지 추적이 어렵다.
-- SOFT pin은 로드되지만 return에서 조용히 빠질 수 있었다.
-- 여러 rescreen 경로가 서로 다른 builder를 쓰면 같은 티커가 경로마다 포함/제외될 수 있다.
-- full_pool과 prompt_pool은 다른 개념인데 기존 코드에서는 섞여 있다.
-
-### 목표
-
-장전 후보, 기본 후보, 장중 후보, 보유/재진입 후보를 full_pool에 유지하고, Claude에는 prompt_score로 정리된 prompt_pool만 전달한다.
-
-### 신규/수정 파일
-
-| 파일 | 작업 |
-|---|---|
-| `runtime/candidate_pool_runtime.py` | pool 생성/병합/ranking |
-| `trading_bot.py` | 후보 생성 경로에서 pool builder 호출 |
-| `minority_report/analysts.py` | prompt line에 source_tags/prompt_score 포함 |
-| `preopen/storage.py` | actual_selected/trade_ready/order 추적 |
-| `tests/test_candidate_pool_runtime.py` | merge/ranking/cap 테스트 |
+장전 후보, 기본 후보, 장중 후보, 보유/재진입 후보를 full_pool에 보존하고, Claude에는 prompt_score로 정리된 prompt_pool만 전달한다. 실행은 Claude action과 system gate를 통과한 execution_pool에서만 발생한다.
 
 ### Pool 계층
 
 ```text
-full_pool:
-  시스템이 계속 감시하는 전체 후보
+full_pool
+  모든 후보 보존. 중복 ticker는 source_tags 병합.
 
-prompt_pool:
-  Claude에게 보낼 상위 후보
+prompt_pool
+  Claude에게 보낼 후보. cap이 있어도 왜 포함/제외됐는지 기록.
 
-execution_pool:
-  Claude action + system gate를 통과한 실행 후보
+execution_pool
+  Claude action + gate를 통과한 주문 가능 후보.
 ```
 
 ### source_tags
 
 ```text
-base
 preopen
-preopen_hard_pin
-preopen_soft_pin
+base_universe
 opening_fresh
 intraday_momentum
 late_mover
 held
 reentry
-pathb_waiting
+manual_pin
+soft_pin
+hard_pin
+pead
+day_losers
 ```
 
-### 병합 규칙
+검토 보완: 현재 코드에 `intraday_momentum`, `late_mover` source generator가 명확히 없으면 1차 구현에서는 tag만 예약하지 말고 다음 중 하나를 선택한다.
+
+- 실제 generator를 구현한다.
+- 구현 전까지 해당 tag는 `deferred_sources`에 기록하고 prompt_score에 반영하지 않는다.
+
+### merge 규칙
+
+같은 `(market, ticker)`는 하나의 `CandidateRecord`로 병합한다.
 
 ```text
-key = market + normalized_ticker
-
-이미 full_pool에 있으면:
-  source_tags 병합
-  source_ranks[source] 저장
-  최신 price/turnover/change_rate/vol_ratio는 asof가 더 최신인 값 사용
-  preopen_pin은 HARD > SOFT > NONE
-  stale=false source 우선
-  screen_bucket은 첫 등록 값 유지 (us_screen_cache.json category 직접 복사)
-  quality_tags/risk_tags는 selection_meta 결과가 나오면 병합
-  catalyst_hint는 reasons 텍스트 파싱 후 갱신
-
-새 후보면:
-  CandidateRecord 생성
-  screen_bucket: us_screen_cache의 category 또는 kr 분류 규칙 적용
-    KR screen_score >= 200 and change_rate > 0: kr_momentum
-    KR change_rate <= 0 and vol_ratio >= 20:    kr_volume
-    KR else:                                    preopen_base
+sources = union(all_sources)
+source_ranks[source] = rank
+source_scores[source] = score
+first_seen_at = min(first_seen_at)
+last_seen_at = max(last_seen_at)
+grade = 가장 높은 신뢰 source의 grade
+policy_tags = union(policy_tags)
 ```
 
-### day_losers 처리 정책
+예시:
 
 ```text
-US day_losers 버킷 종목은 full_pool에 포함하되 아래 처리를 적용한다.
-
-  screen_bucket=day_losers → enter_reason_tags에 "falling" 자동 추가
-  prompt_score에 day_losers penalty: -25 (기본)
-  Claude prompt에 "(급락 관심 후보, 매수 우선순위 낮음)" 명시
-  AVOID가 기본 선호. 반등 근거가 충분한 경우에만 WATCH 허용.
-
-KR 하락 종목도 동일 원칙:
-  change_rate < 0 이면 risk_tags에 "falling" 추가
-  screen_score가 낮으면 prompt_pool 우선순위 하락
+076610이 preopen에도 있고 opening_fresh에도 있으면
+sources=["preopen", "opening_fresh"]
 ```
 
-### prompt_score 1차 규칙
+중복 후보를 별도 후보로 만들면 prompt cap과 position limit을 잘못 소모한다.
+
+### prompt_score
+
+`prompt_score`는 0~100으로 정규화한다. 상한이 없으면 여러 source가 붙은 종목이 과도하게 높은 점수를 받아 prompt_pool을 왜곡한다.
+
+기본 계산:
 
 ```text
-source bonus:
-  held +30
-  preopen_hard_pin +25
-  opening_fresh +22
-  preopen +18
-  intraday_momentum +18
-  pathb_waiting +15
-  base +8
-
-feature bonus:
-  controlled_strength +20
-  early_strength +12
-  pullback_setup +10
-  high liquidity +8
-  sector strength +5
-
-risk penalty:
-  overextended -15
-  fade -20
-  low liquidity -12
-  poor data -20
-  spread high -10
+base = 0
+preopen confirmed bonus = +30
+opening_fresh bonus = +25
+intraday_momentum bonus = +20
+held/reentry bonus = +15
+hard_pin bonus = +20
+soft_pin bonus = +8
+bad_data penalty = -30
+day_losers buy penalty = -25
+overextended penalty = -15
+score = clamp(base + bonuses - penalties, 0, 100)
 ```
 
-주의:
+시장별 cap:
 
 ```text
-prompt_score는 주문 판단이 아니다.
-Claude에게 보낼 순서만 정한다.
+KR_PROMPT_POOL_CAP=30
+US_PROMPT_POOL_CAP=30
 ```
 
-### prompt_pool cap
+prompt_pool 선택 기준:
 
-권장 1차값:
+1. hard safety 제외.
+2. 이미 보유/active order 종목은 별도 owner 규칙으로 유지.
+3. `BUY_READY/PROBE_READY` 가능성이 높은 source를 우선.
+4. 같은 sector/source 쏠림을 제한.
+5. 제외 후보도 `excluded_from_prompt` 로그에 reason 기록.
 
-```text
-KR prompt_pool: 24~30개
-US prompt_pool: 20~28개
+### full_pool과 prompt_pool 분리 이유
 
-held/reentry: 최대 5
-preopen confirmed: 최대 10
-opening/intraday: 최대 8
-pathb_waiting: 최대 5
-base: 최대 4
-```
-
-slot은 하드 quota가 아니다. 좋은 후보가 없는데 억지로 채우지 않는다.
+장전 후보 60개를 모두 Claude에게 매번 보내는 것은 비용과 latency를 증가시킨다. 그러나 full_pool에서 버리면 좋은 종목이 장중 확인 후 execution으로 올라올 기회를 잃는다. 따라서 full_pool은 넓게, prompt_pool은 좁게 유지한다.
 
 ### QA
 
-| 검증 | 기준 |
-|---|---|
-| preopen 59개 | full_pool에 유지 |
-| prompt cap | cap 초과 시 prompt_score 순서로 제외 |
-| duplicate merge | 같은 ticker가 prompt에 2번 나오지 않음 |
-| source trace | 후보 포함/제외 이유가 source_tags로 설명 가능 |
-
-### Rollback
-
-```text
-ENABLE_UNIFIED_CANDIDATE_POOL=false
-기존 candidates list를 select_tickers에 그대로 전달한다.
-pool snapshot은 shadow log로 유지 가능하다.
-```
-
-> **[검토 — D2]**
->
-> **intraday_momentum과 late_mover source 생성 코드가 없다.**
->
-> `source_tags`에 `intraday_momentum`, `late_mover`가 포함되어 있으나, 코드베이스에 이 태그를 생성하는 로직이 존재하지 않는다. D2 구현 시 이 두 pool의 생성 로직을 새로 만들어야 한다는 점을 명시해야 한다. 없는 채로 pool에 포함하면 `opening_fresh`만으로 prompt_pool이 채워지게 된다.
->
-> **prompt_score 합산 방식이 미명시다.**
->
-> source bonus + feature bonus - risk penalty 방식은 설명됐으나, 합산 상한(cap)이 없으면 `held + preopen_hard_pin + controlled_strength`만으로 score=75가 되어 다른 source가 실질적으로 순위에 못 들 수 있다. 합산 상한 또는 정규화 방식을 정해야 한다.
+- 장전 60개 + 기본 후보 + 장중 후보 병합 시 중복 ticker 1개로 유지.
+- soft_pin이 조용히 사라지지 않고 full_pool에 유지.
+- prompt cap으로 제외된 종목의 reason 기록.
+- prompt_score가 0~100을 넘지 않음.
+- source generator가 없는 tag는 prompt_score에 반영하지 않음.
 
 ---
 
-## D3. Post-open Feature Snapshot
+## D3. Post-Open Feature Snapshot
 
-### 왜 하는가
+### 목적
 
-기존 코멘트:
+후보군 품질은 장전 rank만으로 충분하지 않다. 오늘/어제 분석에서도 오른 종목과 빠진 종목이 같은 장전 후보군에 섞였다. 따라서 개장 후 실제 상태를 known_at과 함께 기록하고 Claude에게 제공한다.
 
-- 장전 후보는 정답 목록이 아니라 감시 universe다.
-- 개장 후 상태 확인이 장전 rank보다 중요했다.
-- 다만 5m/30m를 사후 필터로 쓰면 look-ahead bias가 생긴다.
-- 특정 시간값보다 `decision_time에 실제로 알 수 있는 정보`가 중요하다.
+### 핵심 원칙
 
-### 목표
+미래를 모른다고 가정한다. 09:05 판단에는 09:05까지 알 수 있는 값만 사용한다. 09:30 판단에는 09:30까지 알 수 있는 값만 사용한다.
 
-개장 후 후보별 현재 상태를 계산하고 `known_at`과 함께 저장한다. Claude와 gate는 이 snapshot만 보고 판단한다.
-
-### 신규/수정 파일
-
-| 파일 | 작업 |
-|---|---|
-| `runtime/post_open_features.py` | feature 계산 |
-| `trading_bot.py` | `_intraday_high/_intraday_low/_or_high/_or_low`와 연결 |
-| `minority_report/analysts.py` | prompt line에 feature 요약 |
-| `tools/replay_future_blind_candidate_flow.py` | replay에서 동일 feature 사용 |
-| `tests/test_post_open_features.py` | 시점별 feature 테스트 |
-
-### snapshot 시점
+### 계산 타이밍
 
 ```text
-opening_snapshot:
-  개장 후 3~6분
-
-confirmation_snapshot:
-  개장 후 15~30분
-
-intraday_snapshot:
-  장중 rescreen 또는 30~60분 단위
-
-hold_snapshot:
-  보유/매도 재판단 직전
+T+3m: opening probe 후보 분류
+T+5m: 초기 강세/과열/꺾임 1차 분류
+T+10m: 지속성 확인
+T+30m: sustained/fade 확인
+이후: Claude 재판단 직전 snapshot 생성
 ```
 
-### momentum_state 1차 규칙
+3분 값은 데이터 수신 안정성 이슈가 있으므로 `PROBE_READY`까지만 허용한다. 3분 snapshot만으로 `BUY_READY` 승격은 금지한다.
+
+### momentum_state
+
+1차는 규칙 기반으로 생성하고 Claude에게 설명 필드로 전달한다. Claude에게 enum 자체를 만들게 하지 않는다.
 
 ```text
-early_strength:
-  초기 수익률 양수
-  거래량 확인
-  spread 과도하지 않음
-
-controlled_strength:
-  초기 강세 유지
-  VWAP/OR 위
-  과열 기준 미만
-
-overextended:
-  초기 급등
-  VWAP 괴리 큼
-  spread 확대 또는 추격 위험
-
-fade:
-  초기 상승 후 약화
-  OR low/VWAP 이탈
-
-pullback_setup:
-  강한 종목이 VWAP/OR 근처로 정상 눌림
-
-late_mover:
-  장 초반 약했으나 장중 거래대금/수익률 급상승
+early_strength
+sustained
+fade
+overextended
+pullback_watch
+late_mover
+weak
+unknown
 ```
 
-### 시장별 분리
+시장별 기본 threshold는 config에서 분리한다.
+
+예시:
 
 ```text
-KR:
-  변동성이 높다.
-  ret 기준은 US보다 넓게 둔다.
-  가격제한폭/호가단위/고가 1주 문제를 반영한다.
-
-US:
-  gap/news/sector 영향이 크다.
-  spread와 뉴스 리스크를 더 강하게 본다.
-  ret threshold는 KR보다 낮게 둔다.
+KR_EARLY_STRENGTH_5M_PCT=1.5
+KR_SUSTAINED_30M_PCT=2.0
+KR_OVEREXTENDED_5M_PCT=6.0
+US_EARLY_STRENGTH_5M_PCT=0.8
+US_SUSTAINED_30M_PCT=1.2
+US_OVEREXTENDED_5M_PCT=3.0
 ```
 
-### prompt line 예시
+수치는 고정 답이 아니라 시작값이다. replay 결과로 조정한다.
 
-```text
-001440 source=preopen,opening_fresh bucket=kr_momentum liq=high
-chg=+8.2% vol_ratio=45x screen_score=312 quality=high_rs,vol_confirmed risk=at_high
-post_open: ret5=+2.8 ret10=+4.1 state=controlled_strength
-or=above vwap=+0.7% vol_open=3.2x spread=0.12%
-catalyst=none exec_hint=probe_ok
+### VWAP 처리
 
-ADEA source=base bucket=day_losers liq=high
-chg=-17.3% quality=vol_spike risk=rs_negative,falling
-post_open: ret5=-12.1 ret10=-15.3 state=fade
-(급락 관심 후보, 매수 우선순위 낮음)
-catalyst=none exec_hint=avoid_default
+현재 코드에는 intraday high/low 추적은 있으나 VWAP 누적 상태가 명확하지 않다. 따라서 D3 1차 완료 기준에는 VWAP을 필수로 넣지 않는다.
 
-IREN source=base bucket=day_gainers liq=high
-chg=+8.1% quality=high_rs risk=earn_pre,high_atr
-post_open: ret5=+5.1 ret10=+6.8 state=controlled_strength
-catalyst=earn_pre exec_hint=probe_caution external_catalyst_needed=true
-```
+1차 필수:
+
+- `ret_3m_pct`
+- `ret_5m_pct`
+- `ret_10m_pct`
+- `ret_30m_pct`
+- `from_open_high_pct`
+- `pullback_from_high_pct`
+- `opening_range_break`
+- `volume_ratio_open`
+- `spread_bps`
+- `data_quality`
+
+2차 확장:
+
+- tick 누적 VWAP
+- VWAP distance
+- sector-relative strength
 
 ### QA
 
-| 검증 | 기준 |
-|---|---|
-| known_at | 미래 feature 사용 금지 |
-| missing data | null 허용, data_quality 하향 |
-| KR/US 분리 | threshold config 분리 |
-| replay/live 일관성 | 같은 시점이면 같은 snapshot |
-
-### Rollback
-
-```text
-ENABLE_POST_OPEN_FEATURES=false
-기존 candidate prompt 유지
-feature는 로그만 남긴다.
-```
-
-> **[검토 — D3]**
->
-> **VWAP 계산 로직이 현재 코드베이스에 없다.**
->
-> `PostOpenFeatureSnapshot.vwap`, `vwap_distance_pct`를 계산하려면 분봉 체결 데이터 누적이 필요하다. `trading_bot.py`에 VWAP 계산 함수가 존재하지 않는다. `runtime/post_open_features.py`에서 VWAP을 직접 계산할지, 브로커 API에서 받을지, 별도 틱 데이터 누적 구조를 만들지 결정해야 한다. KR은 KIS 호가 API, US는 별도 data source가 필요하다.
->
-> **momentum_state에 정량 기준이 없다.**
->
-> `overextended`, `controlled_strength`, `fade` 등의 정의가 정성적 설명만 있다. 구현 시 개발자마다 다른 임계값을 쓸 수 있다. 최소한 아래 기준이 필요하다.
->
-> ```text
-> overextended: ret_5m > X% AND vwap_distance > Y%  (KR/US 분리)
-> fade:         ret_5m > 0 AND ret_10m < ret_5m * 0.5
-> controlled_strength: ret_5m > 0 AND volume_ratio_open > Z AND not overextended
-> ```
->
-> **opening_snapshot 3~6분 시점은 KR에서 노이즈가 크다.**
->
-> KR 개장 직후(09:00~09:06)는 체결 집중 구간으로 가격 변동성이 매우 높다. 이 시점 snapshot을 즉시 진입 decision에 쓰면 노이즈가 크다. `opening_snapshot`은 집계 목적으로만 쓰고, 실제 진입 decision에는 `confirmation_snapshot`(15~30분)부터 사용하는 정책을 명시해야 한다. 단, probe는 이 예외를 둘 수 있다.
+- 09:05 replay에서 09:30 feature가 보이면 테스트 실패.
+- data_quality가 `partial`이면 sizing cap이 적용됨.
+- 3분 snapshot만 있는 후보는 `BUY_READY`가 아니라 `PROBE_READY`까지만 가능.
+- KR/US threshold가 같은 상수로 묶이지 않음.
 
 ---
 
 ## D4. Claude Candidate Actions Schema
 
-### 왜 하는가
+### 목적
 
-기존 코멘트:
+Claude를 더 많이 쓰는 것이 아니라 더 좁고 선명한 역할로 쓴다. Claude는 "오를 종목을 맞혀라"가 아니라 "현재 상태에서 probe/buy/wait/avoid 중 무엇인가"를 판단한다.
 
-- `watchlist/trade_ready`만으로는 "작게 먼저", "정상 매수", "눌림 대기", "회피"를 표현할 수 없다.
-- Claude에게 미래를 맞히라고 하면 안 된다. 현재 상태를 분류하게 해야 한다.
-- PathB 품질은 selection prompt의 `price_targets` 품질에 직접 의존한다.
+### 입력
 
-### 목표
-
-기존 `watchlist/trade_ready` 호환성을 유지하면서 `candidate_actions`를 추가한다.
-
-### 수정 파일
-
-| 파일 | 작업 |
-|---|---|
-| `minority_report/analysts.py` | selection prompt v4, parser 확장 |
-| `bot/candidate_policy.py` | normalize_selection_result 확장 |
-| `trading_bot.py` | `_apply_selection_meta()`, `_normalize_selection_meta_runtime()` 확장 |
-| `runtime/pathb_runtime.py` | `PULLBACK_WAIT` price plan 등록 |
-| `tests/test_candidate_actions_schema.py` | parse/fallback 테스트 |
-
-### prompt schema
+Claude prompt에는 다음을 제공한다.
 
 ```json
 {
-  "watchlist": ["001440", "018880"],
-  "trade_ready": ["001440"],
-  "candidate_actions": {
-    "001440": {
-      "action": "PROBE_READY",
-      "confidence": 0.68,
-      "entry_style": "early_probe",
-      "size_intent": "probe",
-      "path": "PlanA",
-      "why_now": "controlled opening strength",
-      "invalidation_condition": "loses opening range low",
-      "add_condition": "holds VWAP and volume remains strong",
-      "avoid_condition": "5m spike fades below anchor"
-    },
-    "018880": {
-      "action": "PULLBACK_WAIT",
-      "confidence": 0.62,
-      "entry_style": "pullback",
-      "size_intent": "small",
-      "path": "PathB",
-      "why_now": "strong but extended",
-      "invalidation_condition": "breaks VWAP with weak volume",
-      "price_targets": {
-        "reference_price": 0,
-        "buy_zone_low": 0,
-        "buy_zone_high": 0,
-        "sell_target": 0,
-        "stop_loss": 0,
-        "invalid_if": "opening strength fully fades"
-      }
-    }
+  "market": "KR",
+  "known_at": "2026-05-06T09:05:00+09:00",
+  "market_mode": "mild_bull",
+  "candidate_pool_summary": {
+    "full_pool_count": 59,
+    "prompt_pool_count": 30,
+    "excluded_count": 29
   },
-  "reasons": {},
-  "veto": {}
+  "candidates": [
+    {
+      "ticker": "001440",
+      "name": "대한전선",
+      "sources": ["preopen", "opening_fresh"],
+      "preopen_rank": 16,
+      "prompt_score": 84,
+      "latest_features": {
+        "ret_5m_pct": 2.8,
+        "ret_30m_pct": null,
+        "momentum_state": "early_strength",
+        "data_quality": "good"
+      },
+      "position_state": "flat",
+      "existing_order": false
+    }
+  ]
 }
 ```
 
-### 호환 규칙
+### 출력
 
-```text
-candidate_actions가 있으면:
-  trade_ready는 legacy 호환 필드로 유지
-  PROBE_READY/BUY_READY는 runtime trade_ready 후보로 반영 가능
-  PULLBACK_WAIT는 trade_ready에 없어도 PathB 등록 가능
-
-candidate_actions가 없으면:
-  기존 trade_ready 기반으로 BUY_READY에 준하는 legacy action 생성
-
-JSON parse 실패:
-  기존 partial recovery 사용
-  candidate_actions는 빈 dict
-  trade_ready/watchlist fallback 유지
+```json
+{
+  "candidate_actions": [
+    {
+      "ticker": "001440",
+      "action": "PROBE_READY",
+      "confidence": 0.72,
+      "size_intent": "probe",
+      "reason": "preopen candidate with early strength and acceptable pullback risk",
+      "invalidation_condition": "falls below opening range or ret_5m turns negative",
+      "price_targets": {
+        "entry_below": 2870,
+        "stop_below": 2750
+      }
+    }
+  ],
+  "market_commentary": "opening momentum broad but several names are already extended",
+  "risk_notes": ["avoid chasing overextended 5m spikes without pullback"]
+}
 ```
 
-### validation
+### legacy fallback
+
+기존 `trade_ready: [...]` 응답만 오면 graceful degradation한다.
 
 ```text
-허용 action 외 값 -> WATCH
-confidence 누락 -> 0.5
-PULLBACK_WAIT인데 price_targets 누락 -> PathB 등록 금지, WATCH로 강등 또는 reason 기록
-PROBE_READY가 watchlist에 없음 -> watchlist에 추가
+trade_ready ticker -> ClaudeAction BUY_READY
+watchlist ticker -> ClaudeAction WATCH
+missing action -> WATCH
 ```
+
+단, legacy fallback으로 생성된 `BUY_READY`는 `legacy_schema=true` warning을 붙이고 size cap을 적용한다. 신규 schema 파싱 실패가 반복되면 feature flag로 기존 path로 rollback한다.
+
+### 호출 빈도
+
+Claude 호출은 무제한 증가시키지 않는다.
+
+| 상황 | 호출 |
+|---|---|
+| 개장 전 후보 확정 | 1회 |
+| 개장 후 T+3~5m | 1회 |
+| T+10~15m | 필요 시 1회 |
+| T+30m | 필요 시 1회 |
+| 보유 종목 exit 재판단 | 이벤트 기반 |
+| 급격한 market mode 변경 | rate limit 내 1회 |
+
+품질 향상은 호출 횟수가 아니라 입력 feature와 action schema로 만든다.
+
+### 호출 예산과 latency 기준
+
+초기 운영 목표:
+
+```text
+KR+US 합산 Claude calls/day 목표: 30~60
+KR+US 합산 hard cap: 80 calls/day
+candidate_actions market별 기본 호출: 3~4회/day
+hold_advisor: 이벤트 기반, position별 cooldown 적용
+```
+
+candidate_actions 호출은 prompt_pool 전체를 한 번에 structured JSON으로 분류한다. 종목별 개별 호출을 금지한다.
+
+기본 latency 예산:
+
+```text
+pool build p95 <= 500ms
+post-open feature p95 <= 800ms
+Claude candidate_actions p95 <= 20s
+gate/routing/sizing p95 <= 500ms
+cycle total excluding Claude p95 <= 2s
+cycle total including Claude p95 <= 25s
+```
+
+baseline은 구현 전 현재 live cycle log에서 p50/p95를 먼저 측정한다. D12 rollback의 "기존 대비 2배" 기준은 이 baseline을 기준으로 한다.
 
 ### QA
 
-| 검증 | 기준 |
-|---|---|
-| legacy 응답 | 기존 trade_ready만 있어도 동작 |
-| 신규 응답 | candidate_actions 저장 |
-| PULLBACK_WAIT | PathB로 전달 |
-| malformed JSON | 기존 fallback으로 안전 복구 |
-
-### Rollback
-
-```text
-ENABLE_CANDIDATE_ACTIONS=false
-candidate_actions 무시
-기존 watchlist/trade_ready만 사용
-```
-
-> **[검토 — D4]**
->
-> **PULLBACK_WAIT + price_targets 누락 시 처리 경로를 구체화해야 한다.**
->
-> validation 규칙에 "PULLBACK_WAIT인데 price_targets 누락 → PathB 등록 금지, WATCH로 강등 또는 reason 기록"라고 나와 있다. `WATCH`로 강등하면 당일 좋은 종목을 완전히 날리는 것이고, reason만 기록하면 실행이 없다. 운영상 WATCH 강등 쪽이 맞지만, 이 경우 `watchlist`에는 남기고 `execution_pool`에서만 제외한다는 규칙을 명시해야 한다.
->
-> **레거시 응답에서 PROBE_READY fallback이 없다.**
->
-> `candidate_actions 없을 때 trade_ready 기반 BUY_READY 생성`이라고 명시됐는데, PROBE_READY fallback이 없다. 레거시 응답에서는 모든 trade_ready가 BUY_READY로 올라간다. 이것이 의도된 설계라면 명시하고, 아니라면 fallback 규칙에 `confidence_fallback = BUY_READY if strong else PROBE_READY` 를 추가해야 한다.
+- JSON 파싱 실패 시 기존 리스트 fallback.
+- `PULLBACK_WAIT` + price target 없음은 execution 제외.
+- action TTL 부여 확인.
+- prompt에 future feature가 섞이지 않음.
+- Claude가 `HARD_BLOCK`을 출력해도 무시하고 invalid action으로 기록.
 
 ---
 
 ## D5. Gate Evaluation Matrix
 
-### 왜 하는가
+### 목적
 
-기존 코멘트:
+진입 조건이 많은 것은 문제 자체가 아니다. 문제는 hard safety, quality, timing, sizing이 섞여 첫 번째 blocker만 남는 것이다. Gate Matrix는 모든 조건을 평가하고 계층별로 기록한다.
 
-- 조건은 많지만 진짜 문제는 조건 수가 아니라 모든 결과가 `skip/block`으로 뭉치는 것이다.
-- 레이어 1에서 막히면 레이어 2~7이 실제로 통과했을지 알 수 없다.
-- 오늘처럼 `judgment_not_executable`만 800건 이상 찍히면 근본 원인 진단이 장 끝나고서야 가능하다.
+### gate 분류
 
-### 목표
-
-각 후보의 gate 상태를 계층별로 기록하고, 최종 action을 명확히 계산한다.
-
-### 수정 파일
-
-| 파일 | 작업 |
-|---|---|
-| `runtime/gate_evaluation.py` | gate result builder |
-| `trading_bot.py` | run_cycle entry gate마다 평가값 축적 |
-| `runtime/pathb_runtime.py` | PathB gate도 같은 schema 사용 |
-| `logs/funnel` | gate snapshot 저장 |
-| `tests/test_gate_evaluation.py` | hard/soft/timing/affordability 테스트 |
-
-### gate 계층
+Hard safety:
 
 ```text
-hard_safety:
-  MARKET_CLOSED
-  BROKER_UNTRUSTED
-  daily halt
-  critical ORDER_UNKNOWN
-
-soft_safety:
-  judgment_unconfirmed
-  stop_cluster_first_cooldown
-  ATR high
-  partial_data
-  VIX/risk_off
-
-timing:
-  OR not formed
-  momentum_wait
-  no_signal
-  overextended
-
-selection:
-  WATCH
-  PROBE_READY
-  BUY_READY
-  PULLBACK_WAIT
-  AVOID
-
-affordability:
-  qty_zero
-  price_too_high
-  cash_shortfall
-  min_order_conflict
+MARKET_CLOSED
+BROKER_UNTRUSTED
+ORDER_UNKNOWN_UNRESOLVED
+DAILY_LOSS_LIMIT
+STOP_CLUSTER_MARKET_BLOCK
+STOP_CLUSTER_DISASTER_BLOCK
+HALT
+POSITION_LIMIT
+ACTIVE_ORDER_LOCK
 ```
 
-### final action mapping
+Soft safety:
 
-| 조건 | final_action |
-|---|---|
-| hard_safety BLOCK | `HARD_BLOCK` |
-| selection AVOID | `AVOID` |
-| selection WATCH | `WATCH` |
-| timing PULLBACK_WAIT | `PULLBACK_WAIT` |
-| soft_safety PROBE_ONLY | `PROBE_READY` with cap |
-| soft_safety SIZE_CAP | original action with cap |
-| affordability QTY_ZERO | `SIZE_CAP` 또는 `WATCH`, 사유 기록 |
-| all OK + PROBE_READY | `PROBE_READY` |
-| all OK + BUY_READY | `BUY_READY` |
+```text
+intraday_live_unconfirmed
+partial_data
+ATR_HIGH
+VIX_HIGH
+risk_off
+STOP_CLUSTER_FIRST_STOP_COOLDOWN
+```
 
-### 로그 예시
+Timing:
+
+```text
+opening_range_not_formed
+momentum_wait
+entry_blackout
+late_session
+same_day_reentry
+pullback_target_not_hit
+```
+
+Sizing/affordability:
+
+```text
+qty_zero
+min_order_not_met
+budget_cap
+cash_shortfall
+high_price_one_share
+```
+
+### 정책 결정
+
+- `STOP_CLUSTER_MARKET_BLOCK`은 hard safety다. 우회 금지.
+- `STOP_CLUSTER_FIRST_STOP_COOLDOWN`은 soft safety다. probe 손절과 full 손절의 가중치를 분리한다.
+- `entry_blackout`은 범위에 따라 다르다. 장 마감/시장 폐쇄성 blackout은 hard, opening wait 성격은 timing wait로 처리한다.
+- `intraday_live_unconfirmed`는 무조건 hard block이 아니다. fresh Claude action과 post-open feature가 있으면 size cap을 걸고 제한적으로 허용할 수 있다.
+- `intraday_live_unconfirmed` 허용 시 size cap은 D5에서만 계산한다. 기본값은 `UNCONFIRMED_ENTRY_SIZE_CAP_PCT=70`이며 `GateEvaluation.soft_safety.size_cap_pct=70`으로 전달한다.
+- 기존 P0 코드에서 별도로 70%를 곱하는 경로가 남아 있으면 D7에서 이중 cap이 발생하므로, 신규 구조에서는 해당 로직을 GateEvaluation 생성 위치로 이동한다.
+- VIX는 US 직접 risk signal이다. KR에는 기본적으로 직접 적용하지 않고, `KR_GLOBAL_RISK_CAP_ENABLED=true`일 때만 global risk cap으로 약하게 반영한다.
+
+초기 config:
+
+```text
+UNCONFIRMED_ENTRY_SIZE_CAP_PCT=70
+US_VIX_RISK_CAP_ENABLED=true
+KR_GLOBAL_RISK_CAP_ENABLED=false
+KR_GLOBAL_RISK_CAP_PCT=80
+```
+
+### 출력
 
 ```json
 {
-  "event": "gate_evaluation",
-  "market": "KR",
   "ticker": "001440",
-  "selection_action": "PROBE_READY",
-  "hard_safety": "OK",
-  "soft_safety": "SIZE_CAP",
-  "soft_reasons": ["unconfirmed_cap_70"],
-  "timing": "OK",
-  "affordability": "OK",
+  "claude_action": "PROBE_READY",
   "final_action": "PROBE_READY",
-  "final_size_pct": 35,
-  "final_reason": "probe allowed with unconfirmed cap"
+  "blocker": null,
+  "hard_safety": {"passed": true},
+  "soft_safety": {
+    "passed": true,
+    "size_cap_pct": 50,
+    "warnings": ["unconfirmed_phase_size_cap"]
+  },
+  "timing": {"passed": true},
+  "sizing": {"max_budget_krw": 50000},
+  "affordability": {"qty": 17}
 }
 ```
 
 ### QA
 
-| 검증 | 기준 |
-|---|---|
-| judgment_not_executable | 단일 skip 대신 layer별 상태 기록 |
-| hard block | 주문 함수까지 도달하지 않음 |
-| soft cap | 수량이 줄고 주문 가능 |
-| PULLBACK_WAIT | 직접 주문 없이 PathB 위임 |
-
-### Rollback
-
-```text
-ENABLE_GATE_MATRIX=false
-기존 skip logging 유지
-shadow log는 계속 남길 수 있다.
-```
-
-> **[검토 — D5]**
->
-> **gate 계층에 실제 코드에 있는 조건이 3개 빠졌다.**
->
-> 현재 `trading_bot.py`에서 진입을 막는 조건 중 아래 3개가 D5의 gate 계층 목록에 없다.
->
-> ```text
-> entry_blackout:       timing gate에 추가 필요
->                       (코드: trading_bot.py:3001 _in_entry_blackout)
->
-> same_day_reentry:     timing gate에 추가 필요
->                       (코드: trading_bot.py:3167 _v2_same_day_reentry_decision)
->
-> STOP_CLUSTER_MARKET_BLOCK: hard_safety로 올려야 함
->                       (코드: trading_bot.py:2969, 당일 신규 진입 전체 차단 정책)
-> ```
->
-> 특히 `STOP_CLUSTER_MARKET_BLOCK`은 "클러스터 손절 2회 = 당일 신규 진입 차단"이므로 soft_safety가 아니라 hard_safety다. soft_safety에 두면 SIZE_CAP으로 우회될 수 있다.
->
-> **STOP_CLUSTER_DISASTER_BLOCK도 hard_safety 목록에 명시해야 한다.**
->
-> 현재 hard_safety에 `daily halt`는 있는데 `STOP_CLUSTER_DISASTER_BLOCK`이 없다. 코드 기준으로는 이것도 hard block이다.
+- hard safety는 Claude action과 무관하게 차단.
+- soft safety는 final_action을 유지하되 size cap/warning 제공.
+- 전체 gate vector가 funnel log에 남음.
+- 첫 blocker만으로 나머지 gate 결과가 사라지지 않음.
 
 ---
 
-## D6. PlanA/PathB Action Routing
+## D6. PlanA / PathB Action Routing
 
-### 왜 하는가
+### 목적
 
-기존 코멘트:
+Claude action을 PlanA와 PathB 실행 경로로 명확히 라우팅하고, 같은 종목의 중복 진입과 충돌을 막는다.
 
-- PlanA든 PlanB든 공통으로 order reject/permanent 분류와 budget guard가 필요하다.
-- 같은 종목이 PlanA와 PathB 양쪽에 걸릴 수 있으므로 shared position gate가 필요하다.
-- `PULLBACK_WAIT`는 직접 매수가 아니라 PathB 위임이어야 한다.
+### routing
 
-### 목표
-
-Claude action을 PlanA와 PathB 실행 경로로 명확히 라우팅하고, 중복 진입을 막는다.
-
-### 수정 파일
-
-| 파일 | 작업 |
+| System final_action | Route |
 |---|---|
-| `trading_bot.py` | action intent 기반 PlanA 진입 |
-| `runtime/pathb_runtime.py` | PULLBACK_WAIT 등록 |
-| `risk_manager.py` | position/pyramid 제한 확인 |
-| `runtime/v2_lifecycle_runtime.py` | decision_id와 action 연결 |
-| `tests/test_plan_action_routing.py` | routing/중복 방지 테스트 |
+| `PROBE_READY` | PlanA probe |
+| `BUY_READY` | PlanA normal/reduced buy |
+| `ADD_READY` | existing position add 검토 |
+| `PULLBACK_WAIT` | PathB plan 등록 |
+| `WATCH` | watch 유지 |
+| `EXPIRED` | action 폐기 |
+| `HARD_BLOCK` | 주문 금지 |
 
-### routing table
+### PlanA/PathB 충돌 정책
 
-| action | PlanA | PathB | 주문 |
-|---|---|---|---|
-| `WATCH` | no | no | 없음 |
-| `AVOID` | no | no | 없음 |
-| `PROBE_READY` | yes | no | probe buy 가능 |
-| `BUY_READY` | yes | optional no | normal buy 가능 |
-| `PULLBACK_WAIT` | no | yes | 조건부 대기 |
-| `ADD_READY` | shadow in 1차 | no | 1차 구현에서는 주문 보류 |
-
-### 중복 방지 규칙
+같은 `(market, ticker)`에 대해 atomic route lock을 둔다.
 
 ```text
-if live_position exists:
-  PROBE_READY/BUY_READY 신규 주문 금지
-  ADD_READY만 검토
-
-if pathb_waiting exists:
-  PlanA BUY_READY가 나오면 PathB plan cancel 또는 suspend
-
-if PlanA probe filled:
-  PathB same ticker plan cancel
-
-if PathB filled:
-  PlanA same ticker 신규 진입 금지
+PlanA order pending -> PathB suspend
+PlanA fill -> PathB cancel
+PlanA reject/no fill -> PathB resume if action still valid
+PlanA stop loss -> PathB 자동 resume 금지, Claude/gate 재평가 필요
+PathB active order -> PlanA buy 금지
+ADD_READY -> 보유 포지션이 있을 때만 검토
 ```
+
+`BUY_READY`와 기존 PathB waiting plan이 동시에 있으면 즉시 추격 매수와 눌림 대기 중 하나를 선택해야 한다. 기본 정책은 다음과 같다.
+
+```text
+BUY_READY confidence >= high threshold and not overextended -> PlanA 우선, PathB cancel
+overextended 또는 pullback risk 높음 -> PathB 유지, PlanA watch
+```
+
+초기 threshold:
+
+```text
+PLANB_CANCEL_CONFIDENCE_MIN=0.75
+PLANB_CANCEL_REQUIRE_NOT_OVEREXTENDED=true
+PLANB_CANCEL_REQUIRE_GOOD_DATA=true
+```
+
+confidence가 0.75 미만이면 `BUY_READY`라도 기존 PathB waiting plan을 자동 취소하지 않는다. 이 경우 system final_action은 market 상태에 따라 `PROBE_READY` 또는 `WATCH`로 낮출 수 있다.
+
+### ADD_READY 검증
+
+`ADD_READY`는 Claude가 낼 수 있지만 최종 검증은 system이 broker truth 기준으로 수행한다.
+
+```text
+broker position exists and local position exists -> ADD_READY 검토
+broker position missing or local position missing -> WATCH/add_without_position
+active sell pending -> WATCH/add_blocked_by_exit_order
+ADD_READY flag off -> WATCH/add_shadow_only
+```
+
+Claude prompt에는 position_state를 제공하되, Claude 입력을 broker truth로 신뢰하지 않는다.
+
+### EXPIRED 처리
+
+`EXPIRED`는 route가 아니다. action이 만료되면 실행 후보에서 제외하고 full_pool에는 유지한다. 다음 Claude 호출에서 최신 feature와 cooldown이 허용하면 다시 action을 받을 수 있다.
+
+### PathB price target 요구
+
+`PULLBACK_WAIT`가 PathB로 가려면 다음 중 하나가 필요하다.
+
+- `entry_below`
+- `entry_zone_low` + `entry_zone_high`
+- runtime이 계산한 OR/VWAP/pullback target
+
+없으면 PathB plan을 만들지 않고 `WATCH` 처리한다.
 
 ### QA
 
-| 검증 | 기준 |
-|---|---|
-| PROBE_READY | PlanA probe 후보 생성 |
-| PULLBACK_WAIT | PlanA 주문 없음, PathB plan 생성 |
-| same ticker conflict | 중복 주문 없음 |
-| ADD_READY | 1차에서는 로그만 남고 주문 없음 |
-
-### Rollback
-
-```text
-ENABLE_ACTION_ROUTING=false
-기존 trade_ready 기반 경로 사용
-```
-
-> **[검토 — D6]**
->
-> **PathB plan cancel vs suspend가 미결정이다.**
->
-> 중복 방지 규칙에 "PlanA BUY_READY → PathB plan cancel 또는 suspend"로 나와 있다. cancel과 suspend는 동작이 다르다.
->
-> ```text
-> cancel: PathB plan 삭제. PlanA 진입 실패 시 PathB 재등록 불가.
-> suspend: PathB plan 일시 정지. PlanA 진입 실패 시 자동 재활성화 가능.
-> ```
->
-> PlanA probe가 손절로 끝났을 때 PathB pullback plan이 자동 재활성화되어야 하는지 정책이 없다. 이 경우 운영자가 수동으로 재등록해야 하는지도 명시 필요하다.
->
-> **같은 종목이 PlanA probe + PathB 대기 상태일 때 포지션 합산 한도가 없다.**
->
-> `if PlanA probe filled → PathB same ticker plan cancel`은 명시됐다. 그러나 probe 진입 전 PathB도 동시에 조건을 충족하면 중복 진입이 발생할 수 있다. 체결 순서에 따라 두 건이 동시에 주문될 가능성을 막는 atomic check가 필요하다.
+- 같은 종목에 PlanA/PathB 주문이 동시에 나가지 않음.
+- pending order가 있으면 다른 route가 suspend.
+- PlanA reject 후 action TTL이 살아 있을 때만 PathB resume.
+- 손절 후 PathB 자동 재진입 없음.
 
 ---
 
 ## D7. Sizing / Budget Contract
 
-### 왜 하는가
+### 목적
 
-기존 코멘트:
-
-- PathB `_pathb_qty()`의 min_order override가 fixed order cap을 우회할 수 있었다.
-- "주문가능금액 초과", "매수가능금액 부족", "증거금 부족"은 PlanA/PathB 공통 permanent/reject 분류가 필요하다.
-- 고가 1주를 허용할지 여부는 config로 분리해야 한다.
-- probe 손절을 full position 손절과 동일하게 stop cluster에 반영하면 시스템이 다시 과보수화된다.
-
-### 목표
-
-PlanA, PathB, probe, add, min_order, fixed_order_cap, 고가 1주 케이스의 우선순위를 고정한다.
-
-### 수정 파일
-
-| 파일 | 작업 |
-|---|---|
-| `trading_bot.py` | PlanA qty/size 계산부 |
-| `runtime/pathb_runtime.py` | `_pathb_qty()` cap 재검증 |
-| `risk_manager.py` | probe/add sizing helper |
-| `config/v2.py` 또는 env 문서 | 신규 config |
-| `tests/test_sizing_budget_contract.py` | qty/cap 테스트 |
+고가주 1주 문제, probe size, PathB cap, min_order override를 하나의 계약으로 정리한다.
 
 ### sizing 우선순위
 
 ```text
-1. broker cash / buying power
-2. hard max order cap
-3. market condition size cap
-4. Claude max_order_cap_pct 또는 size_intent
-5. action type cap
-6. min_order
-7. integer share quantity
+1. hard max order cap
+2. Claude size_intent
+3. GateEvaluation.soft_safety.size_cap_pct
+4. market/strategy profile cap
+5. probe/add/full multiplier
+6. affordability/min order
+7. final broker precheck
 ```
 
-중요:
+중요: VIX/risk_off/ATR cap은 D5에서 `soft_safety.size_cap_pct`로 계산하고 D7에서는 그 값을 사용한다. 중복 계산하지 않는다.
+
+### 기본 size_intent
+
+| size_intent | 의미 |
+|---|---|
+| `micro` | 아주 작은 확인 진입 |
+| `probe` | 작게 먼저 잡는 진입 |
+| `normal` | 일반 진입 |
+| `reduced` | 리스크 축소 진입 |
+| `none` | 주문 없음 |
+
+초기 multiplier:
 
 ```text
-min_order가 fixed_order_cap을 뚫으면 안 된다.
-단, 사용자가 고가 1주 허용 정책을 켠 경우만 예외 가능하다.
+MICRO_SIZE_RATIO=0.10
+PROBE_SIZE_RATIO=0.30
+REDUCED_SIZE_RATIO=0.50
+NORMAL_SIZE_RATIO=1.00
+ADD_SIZE_RATIO=0.30
 ```
 
-### 권장 config
+이 값은 확정 성능값이 아니라 초기 운영값이다. D10 replay에서 market별로 calibration한다.
+
+cap 적용 규칙:
 
 ```text
-PROBE_SIZE_RATIO_KR=0.30
-PROBE_SIZE_RATIO_US=0.25
-PROBE_MAX_ORDER_KRW=150000
-PROBE_STOP_WEIGHT=0.35
-
-BUY_READY_SIZE_RATIO=1.00
-ADD_READY_ENABLED=false
-ADD_READY_SHADOW_ONLY=true
-
-ALLOW_ONE_SHARE_OVER_CAP_KR=false
-ALLOW_ONE_SHARE_OVER_CAP_US=false
-ONE_SHARE_OVER_CAP_MAX_MULT=1.2
-
-PATHB_RESPECT_FIXED_ORDER_CAP=true
-PATHB_MIN_ORDER_OVERRIDE_RESPECT_CAP=true
+raw_budget
+-> size_intent multiplier
+-> GateEvaluation.soft_safety.size_cap_pct
+-> market/strategy cap
+-> hard budget cap
 ```
 
-### qty_zero 처리
+`UNCONFIRMED_ENTRY_SIZE_CAP_PCT=70`은 D5에서 `GateEvaluation.soft_safety.size_cap_pct`로 들어온다. D7에서는 이 값을 다시 계산하지 않는다.
+
+### 고가 1주 정책
+
+고가 1주 허용 여부는 market별 config로 분리한다.
 
 ```text
-price > available_budget:
-  if allow_one_share_over_cap and cash >= price and price <= cap * max_mult:
-    qty=1
-    reason=one_share_over_cap_allowed
-  else:
-    qty=0
-    final_action=WATCH or SIZE_CAP
-    reason=price_too_high
+KR_ALLOW_ONE_SHARE_OVER_BUDGET=false
+US_ALLOW_ONE_SHARE_OVER_BUDGET=true
+KR_ONE_SHARE_MAX_ACCOUNT_PCT=5.0
+US_ONE_SHARE_MAX_ACCOUNT_PCT=7.0
 ```
 
-### probe 손절 카운터
+허용하지 않으면 `qty_zero`가 아니라 `high_price_one_share_blocked`로 기록한다. 운영자가 "돈이 없어서 0주"와 "정책상 1주를 막음"을 구별해야 한다.
+
+### min_order override
+
+min_order를 맞추기 위해 예산 상한을 뚫으면 안 된다.
 
 ```text
-full buy stop:
-  stop_cluster_weight = 1.0
+qty_by_budget = floor(max_budget / price)
+qty_by_min_order = ceil(min_order / price)
+candidate_qty = max(qty_by_budget, qty_by_min_order)
 
-probe stop:
-  stop_cluster_weight = PROBE_STOP_WEIGHT
-
-recovery_micro stop:
-  별도 weight 또는 market block 제외
+if candidate_qty * price > hard_budget_cap:
+    block or downgrade
 ```
+
+PathB에서 이미 발견된 예산 우회 문제는 이 계약으로 재발 방지한다.
+
+### probe stop weighting
+
+probe 손절은 full 손절과 같은 STOP_CLUSTER 가중치로 집계하지 않는다.
+
+```text
+stop_weight = min(1.0, order_notional / normal_order_notional)
+probe_stop_weight_default = 0.25
+daily_sl_weighted += stop_weight
+```
+
+운영 로그에는 raw stop count와 weighted stop count를 모두 남긴다.
 
 ### QA
 
-| 검증 | 기준 |
-|---|---|
-| PathB min_order | cap 초과 주문 없음 |
-| 고가주 | 정책 off면 qty_zero |
-| probe | full budget보다 작은 주문 |
-| stop cluster | probe 손절이 full 1건으로 집계되지 않음 |
-
-### Rollback
-
-```text
-PROBE_READY를 WATCH로 강등 가능
-PathB cap guard는 rollback하지 않는 것을 권장한다.
-```
-
-> **[검토 — D7]**
->
-> **sizing priority와 D5 soft_safety의 market_condition_size_cap이 이중 적용될 수 있다.**
->
-> D5에서 soft_safety가 `VIX/risk_off → SIZE_CAP`을 출력하고, D7 sizing priority 3번도 `market condition size cap`을 적용한다. 두 계층에서 독립적으로 cap을 계산하면 같은 종목에 두 번 cap이 걸릴 수 있다. GateEvaluation의 `soft_safety.size_cap_pct`를 D7 sizing의 3번 입력으로 재사용하는 방식으로 단일화해야 한다.
->
-> **PROBE_STOP_WEIGHT=0.35의 근거가 없다.**
->
-> probe는 full buy의 30% 수준이므로 stop_weight도 0.3 정도가 직관적이다. 0.35로 정한 근거가 없으면 나중에 임의로 바뀔 수 있다. 근거(probe_size_ratio * 1.1 안전 마진, 또는 실측 데이터 등)를 명시해야 한다. 현재는 probe가 실제 운영 전이므로 0.30~0.35 범위에서 보수적으로 시작하고 조정하는 것을 권장.
+- min_order override가 hard cap을 넘지 않음.
+- high price 1주 차단 사유가 `qty_zero`와 분리됨.
+- D5 size cap이 D7에서 한 번만 적용됨.
+- probe stop이 STOP_CLUSTER에 1.0으로 집계되지 않음.
 
 ---
 
 ## D8. Exit Lifecycle / Hold Advisor
 
-### 왜 하는가
+### 목적
 
-기존 코멘트:
+작게 먼저 잡고 Claude가 재판단하게 하려면 매도/보유 정보의 품질이 중요하다. 다만 Claude HOLD가 손절, 수익 보호, trailing을 막으면 안 된다.
 
-- 매도 금액을 너무 높게 잡으면 수익 보호가 늦어진다.
-- 작은 수익을 먼저 지켜도 Claude가 재판단하므로 강한 종목은 더 가져갈 수 있다.
-- Claude HOLD가 hard stop, profit floor, trailing을 무효화하면 안 된다.
-- 보유 판단 prompt는 목표가보다 MFE/giveback/floor/thesis_status 중심이어야 한다.
-
-### 목표
-
-수익 보호는 system이 먼저 수행하고, Claude는 HOLD 예외 또는 thesis 무효를 검증한다.
-
-### 수정 파일
-
-| 파일 | 작업 |
-|---|---|
-| `risk_manager.py` | exit candidate reason priority 명시 |
-| `trading_bot.py` | `_process_exit_candidates()`, `_try_soft_exit_arbitration()` 개선 |
-| `minority_report/hold_advisor.py` | prompt v4, output 확장 |
-| `minority_report/quick_exit_check.py` | giveback/floor 정보 추가 |
-| `runtime/pathb_runtime.py` | PathB pre-close/auto sell review 동일 원칙 |
-| `tests/test_exit_lifecycle.py` | priority/Claude override 테스트 |
-
-### exit priority
+### exit 우선순위
 
 ```text
 1. broker/position integrity
-2. hard loss cap
-3. strategy invalidation stop
-4. recovery_micro forced exit
-5. profit_floor
-6. giveback_from_mfe
-7. trailing stop
-8. quick_exit_check
-9. hold_advisor
-10. session close / carry review
+2. hard stop
+3. recovery_micro hard loss
+4. profit floor
+5. trailing stop
+6. time/no-carry recovery_micro
+7. soft exit advisor
+8. Claude hold/sell thesis check
+9. session close
 ```
+
+검토 반영: recovery_micro를 한 덩어리로 두면 profit_floor보다 먼저 수익 포지션을 닫을 수 있다. 따라서 `hard_loss` 성격은 profit_floor보다 앞, `time/no-carry` 성격은 profit_floor/trailing 뒤로 분리한다.
 
 ### Claude override 금지
 
+Claude HOLD가 무효화할 수 없는 것:
+
 ```text
-Claude HOLD cannot override:
-  hard loss cap
-  broker integrity issue
-  daily halt
-  position mismatch
-
-Claude HOLD can defer:
-  soft profit_floor
-  soft trailing exit
-  TP immediate sell
-
-단, defer 시 protective_stop/profit_floor를 반드시 올린다.
+hard stop
+broker position mismatch
+profit floor breach
+trailing stop breach
+session close hard rule
 ```
 
-### hold_advisor v4 input
+Claude가 유예할 수 있는 것:
+
+```text
+soft thesis exit
+weak momentum exit
+minor giveback warning
+```
+
+### Hold Advisor prompt 입력
 
 ```json
 {
-  "decision_stage": "TP_REVIEW|AUTO_SELL_REVIEW|PRE_CLOSE_CARRY|INTRADAY_REVIEW",
   "ticker": "001440",
-  "market": "KR",
-  "entry_price": 0,
-  "current_price": 0,
-  "pnl_pct": 0.0,
-  "mfe_pct": 0.0,
-  "mae_pct": 0.0,
-  "giveback_from_mfe_pct": 0.0,
-  "profit_floor_price": 0,
-  "profit_floor_triggered": false,
-  "trail_price": 0,
-  "thesis_target": 0,
-  "intraday_target": 0,
-  "thesis_status": "intact|weakening|invalid|unknown",
-  "last_3m_return_pct": null,
-  "last_5m_return_pct": null,
-  "last_10m_return_pct": null,
-  "volume_since_entry": null,
-  "vwap_distance_pct": null,
-  "market_condition": "",
-  "sector_condition": "",
-  "alternative_opportunity_pressure": "low|medium|high|unknown",
-  "minutes_to_close": null
-}
-```
-
-### hold_advisor v4 output
-
-```json
-{
-  "action": "HOLD|SELL|HOLD_WITH_TIGHT_TRAIL|RAISE_PROFIT_FLOOR",
-  "confidence": 0.0,
-  "sell_urgency": "now|next_open|wait",
-  "trail_pct": 0.03,
-  "protective_stop": 0.0,
-  "profit_floor_raise_to": 0.0,
-  "next_review_min": 15,
-  "thesis_status": "intact|weakening|invalid|unknown",
-  "invalid_if": "",
-  "reason": ""
-}
-```
-
-1차 구현에서는 `HOLD_WITH_TIGHT_TRAIL`과 `RAISE_PROFIT_FLOOR`를 내부적으로 `HOLD`로 호환 매핑하되, floor/trail 값만 반영한다.
-
-### QA
-
-| 검증 | 기준 |
-|---|---|
-| hard stop | Claude 호출 없이 매도 |
-| profit_floor soft review | quick_exit_check 후 HOLD 가능 |
-| HOLD defer | protective floor 설정 |
-| target 과신 방지 | high target이어도 giveback 크면 SELL 가능 |
-
-### Rollback
-
-```text
-HOLD_ADVISOR_V4=false
-기존 hold_advisor_v3 prompt 사용
-exit priority hard rule은 유지 권장
-```
-
-> **[검토 — D8]**
->
-> **exit priority 4번과 5번 순서를 재검토해야 한다.**
->
-> 현재:
-> ```text
-> 4. recovery_micro forced exit
-> 5. profit_floor
-> ```
->
-> 문제: `recovery_micro`는 손실 제한 목적 강제 청산이다. 수익 구간에 있는 포지션이 4번에서 먼저 청산되면 5번 `profit_floor`가 의미 없어진다. 아래 순서가 더 맞다.
->
-> ```text
-> 4. profit_floor              (수익이 있으면 먼저 보호)
-> 5. recovery_micro forced exit (손실 제한은 수익 보호 다음)
-> ```
->
-> 단, `recovery_micro`가 활성화된 포지션에서 `profit_floor` 기준을 올려두면 두 조건 충돌 없이 동작할 수 있다. 이 경우 `recovery_micro` 포지션에 대해서는 `profit_floor_raise_to` 값을 높게 설정하는 규칙이 필요하다.
->
-> **hold_advisor v4 output의 trail_pct=0.03이 KR/US 구분 없이 예시됐다.**
->
-> 이 값이 trailing 엔진에 어떻게 전달되는지 연결 경로가 없다. `trail_pct`가 현재 trailing stop 로직의 어느 config를 덮어쓰는지 명시해야 한다.
-
----
-
-## D9. Observability
-
-### 왜 하는가
-
-기존 코멘트:
-
-- 오늘 분석이 복잡했던 이유는 장중에 "왜 주문이 없었는가"를 볼 수 없었기 때문이다.
-- funnel이 실시간으로 보이면 운영자가 장중에 문제를 인지하고 수동 개입할 수 있다.
-
-### 목표
-
-장중에 후보 수, prompt 수, Claude action, gate 상태, PlanA/PathB 결과, exit 판단을 한눈에 볼 수 있게 한다.
-
-### 수정 파일
-
-| 파일 | 작업 |
-|---|---|
-| `trading_bot.py` | funnel/gate/action 로그 emit |
-| `runtime/candidate_pool_runtime.py` | pool snapshot 저장 |
-| `runtime/pathb_runtime.py` | PathB decision trace |
-| `dashboard/dashboard_server.py` | 요약 표시 후속 |
-| `tools/*` | 로그 요약 CLI 후속 |
-
-### 로그 이벤트
-
-```text
-candidate_pool_snapshot
-candidate_quality_report        ← 신규
-candidate_action_decision
-gate_evaluation
-planA_entry_decision
-pathB_plan_decision
-exit_decision_trace
-claude_call_budget
-future_blind_replay_result
-```
-
-### 장중 요약 예시
-
-```text
-[candidate funnel KR]
-full=59 prompt=24 actions probe=3 buy=1 pullback=5 avoid=4
-gate hard_block=0 soft_cap=2 wait=8 qty_zero=1
-orders planA_probe=1 planA_buy=0 pathB_wait=4 filled=1
-```
-
-### 후보 품질 리포트 (candidate_quality_report)
-
-장 시작 시점에 한 번 생성한다. 매수/매도 판단과 무관하게 오늘 후보 pool의 품질을 기록한다.
-
-#### 출력 형식
-
-```text
-[candidate quality report KR 2026-05-06]
-ticker  방향   bucket          vol_ratio  quality_tags              risk_tags                  선정     catalyst
-007610  +16%   kr_momentum     107x       high_rs,vol_confirmed     at_high                    watch    none
-203650  +30%   kr_momentum     91x        high_rs,vol_confirmed     high_atr,at_high           watch    none
-332570  -5%    kr_volume       34x        vol_spike                 rs_negative,deep_pullback  veto     none
-035890  -20%   kr_volume       6x         -                         rs_negative,low_vol_ratio  veto     none
-INTC    +13%   most_actives    -          high_rs,premarket_str     high_atr,or_missing        watch    none
-ADEA    -17%   day_losers      -          vol_spike                 rs_negative,falling        excluded none
-IREN    +8%    day_gainers     -          high_rs                   earn_pre,high_atr          watch    earn_pre
-```
-
-#### 로그 schema
-
-```json
-{
-  "event": "candidate_quality_report",
-  "market": "KR",
-  "session_date": "2026-05-06",
-  "generated_at": "2026-05-06T09:03:00+09:00",
-  "candidates": [
-    {
-      "ticker": "007610",
-      "name": "선도전기",
-      "change_rate": 16.03,
-      "screen_bucket": "kr_momentum",
-      "vol_ratio": 107.27,
-      "screen_score": 487,
-      "quality_tags": ["high_rs", "volume_confirmed"],
-      "risk_tags": ["at_high"],
-      "selection_result": "watch",
-      "catalyst_hint": "none",
-      "external_catalyst_needed": false
-    }
-  ],
-  "summary": {
-    "total": 59,
-    "gainers": 47,
-    "losers": 12,
-    "day_losers_bucket": 0,
-    "watchlist": 5,
-    "trade_ready": 2,
-    "veto": 15,
-    "external_catalyst_needed_count": 3
+  "entry_price": 2860,
+  "current_price": 3020,
+  "pnl_pct": 5.6,
+  "mfe_pct": 7.2,
+  "giveback_from_mfe_pct": 1.6,
+  "profit_floor_pct": 3.0,
+  "trailing_stop_pct": 2.0,
+  "momentum_state": "sustained",
+  "alternative_opportunity_summary": {
+    "stronger_candidates": 2,
+    "best_prompt_score": 88
   }
 }
 ```
 
-#### 운영 활용
+`alternative_opportunity_summary`는 D2 pool이 안정된 뒤 활성화한다. 그 전에는 null로 두고 prompt에서 사용하지 않는다.
+
+활성화 단계:
 
 ```text
-gainers vs losers 비율:
-  losers가 많으면 오늘 스크린 품질 낮음 → Claude prompt에 명시
-
-day_losers bucket 종목:
-  매수 후보가 아닌 "급락 관심 후보"로 Claude에 표기
-  AVOID 편향이 기본
-
-external_catalyst_needed_count > 0:
-  운영자에게 알림 → 뉴스/공시 확인 후 해당 종목 재판단 가능
-
-veto 종목 이유:
-  deep_pullback / high_atr / low_liquidity 분포 확인
-  같은 이유가 반복되면 스크린 파라미터 재검토 신호
+R0~R5: alternative_opportunity_summary=null
+R6 이후: candidate_pool과 prompt_score가 안정되면 shadow로 제공
+R8 이후: exit prompt에서 참고 가능
 ```
+
+### Hold Advisor 호출 조건
+
+Hold Advisor는 매 cycle 호출하지 않는다. position별 이벤트 기반으로 호출하고 cooldown을 둔다.
+
+호출 조건:
+
+```text
+giveback_from_mfe_pct >= 1.0
+pnl_pct가 profit_floor 근처 또는 profit_floor breach 직전
+momentum_state 변화
+soft exit advisor가 SELL/REDUCE 후보로 분류
+session close 전 보유 지속 여부 확인
+큰 수익 포지션에서 thesis_status 재확인 필요
+```
+
+throttle:
+
+```text
+HOLD_ADVISOR_POSITION_COOLDOWN_MIN=15
+HOLD_ADVISOR_MAX_CALLS_PER_POSITION_DAY=4
+HOLD_ADVISOR_MAX_CALLS_PER_MARKET_DAY=20
+```
+
+hard stop, broker mismatch, profit_floor breach, trailing stop breach는 Hold Advisor 호출 없이 system이 먼저 처리한다.
+
+### 부분 매도
+
+`PARTIAL_SELL`은 이번 대규모 패치의 live 범위에서 제외한다. schema와 shadow log만 남기고 `ENABLE_PARTIAL_SELL=false`, `PARTIAL_SELL_SHADOW_ONLY=true`를 유지한다.
+
+deferred 이유:
+
+- 현재 `_execute_sell()`이 전체 청산 중심일 가능성이 높다.
+- 부분 수량, 평균단가, 잔여 profit_floor/trailing 재계산이 필요하다.
+- live rollout R0~R9에는 포함하지 않는다.
+- 별도 후속 명세에서 R10 `PARTIAL_SELL limited live`를 정의한다.
 
 ### QA
 
-| 검증 | 기준 |
-|---|---|
-| 0거래일 | 이유가 funnel summary로 설명됨 |
-| prompt cap | 어떤 후보가 잘렸는지 확인 가능 |
-| PathB wait | 대기/취소/체결 trace 확인 가능 |
-| exit | Claude HOLD/SELL과 system guard 차이 확인 가능 |
+- hard stop은 Claude 호출 없이 청산.
+- profit floor breach는 Claude HOLD로 막히지 않음.
+- trailing config override 경로가 명시적으로 테스트됨.
+- partial sell flag off에서는 부분 매도 action이 실행되지 않음.
 
-### Rollback
+---
+
+## D9. Observability / Funnel Snapshot
+
+### 목적
+
+운영 중 "왜 오늘 0건인가"를 장 끝나고 분석하면 늦다. 후보 수, prompt 수, Claude action, gate, route, sizing, exit 상태를 장중에 확인할 수 있어야 한다.
+
+### 로그 경로
 
 ```text
-로그 기능은 rollback 부담이 낮다.
-성능 문제가 있으면 snapshot 주기를 늘린다.
+logs/funnel/candidate_funnel_YYYYMMDD.jsonl
+logs/funnel/gate_evaluation_YYYYMMDD.jsonl
+logs/funnel/action_routing_YYYYMMDD.jsonl
+logs/funnel/exit_lifecycle_YYYYMMDD.jsonl
 ```
 
-> **[검토 — D9]**
->
-> **logs/funnel/ 경로가 현재 존재하지 않는다.**
->
-> 로그 이벤트 저장 경로로 `logs/funnel`을 사용하는데, 현재 코드베이스에 이 디렉토리가 없다. D9 구현 시 경로 생성과 함께 기존 로그 경로(`logs/flow/`, `logs/daily_judgment/` 등)와의 관계를 명시해야 한다. `logs/flow/`가 gate/funnel 로그를 이미 일부 담당하는지 확인 필요.
->
-> **dashboard 업데이트는 후속으로만 명시했는데 순서가 불명확하다.**
->
-> `dashboard/dashboard_server.py`가 수정 대상에 있으나 "요약 표시 후속"으로만 명시됐다. D9의 목표(장중 funnel 상태 한눈에 보기)를 달성하려면 dashboard 업데이트가 어느 단계(R0~R6)에서 진행되는지 D12와 연결해야 한다.
+현재 코드에 `logs/funnel` 생성 경로가 있어도 명세상 소유권을 D9로 고정한다. 경로가 없으면 runtime이 생성한다.
+
+### cycle summary
+
+매 cycle 또는 상태 변화 시 다음을 기록한다.
+
+```json
+{
+  "known_at": "2026-05-06T09:05:00+09:00",
+  "market": "KR",
+  "full_pool_count": 59,
+  "prompt_pool_count": 30,
+  "execution_pool_count": 3,
+  "claude_actions": {
+    "PROBE_READY": 2,
+    "BUY_READY": 1,
+    "PULLBACK_WAIT": 4,
+    "AVOID": 5,
+    "WATCH": 18
+  },
+  "blocked": {
+    "hard_safety": 0,
+    "soft_safety": 2,
+    "timing": 5,
+    "sizing": 1
+  },
+  "orders_submitted": 1
+}
+```
+
+### candidate_quality_report
+
+후보군 품질은 매수/매도와 분리해서 별도 이벤트로 기록한다. cycle summary에는 aggregate만 넣고, 상세 품질 리포트는 별도 event로 남긴다.
+
+```json
+{
+  "event_type": "candidate_quality_report",
+  "known_at": "2026-05-06T09:05:00+09:00",
+  "market": "KR",
+  "full_pool_count": 59,
+  "gainers_ratio": 0.42,
+  "bucket_distribution": {
+    "preopen": 59,
+    "opening_fresh": 8,
+    "day_losers": 3
+  },
+  "external_catalyst_needed_count": 12,
+  "quality_warnings": ["preopen_grade_not_discriminative"]
+}
+```
+
+이 이벤트는 "후보군 자체가 좋았는가"를 판단하기 위한 것이며, 주문 실행 실패 분석과 분리한다.
+
+쓰기 정책:
+
+- 종목 상태 변화 시 append.
+- cycle summary는 `FUNNEL_SUMMARY_THROTTLE_SEC=60` 기준으로 throttle.
+- 같은 사유 반복은 집계 필드로 압축.
+
+### 운영 알림
+
+다음은 live 중 경고 대상이다.
+
+```text
+full_pool > 0 and prompt_pool == 0
+prompt_pool > 0 and all actions WATCH/AVOID
+BUY_READY/PROBE_READY > 0 and execution_pool == 0
+execution_pool > 0 and orders_submitted == 0
+same blocker dominates > 80%
+legacy fallback count > threshold
+config conflict detected
+```
+
+전달 매체:
+
+```text
+WARNING 이상: live logger + Telegram
+INFO summary: live logger
+CRITICAL: Telegram 즉시 전송 + rollback recommendation 기록
+```
+
+Telegram helper 위치는 구현 전 코드에서 확인한다. helper를 찾지 못하면 D9는 logger-only로 끝내지 말고 alert adapter를 신규로 만든다.
+
+### QA
+
+- 장중 0거래일 때 어디서 막혔는지 한 줄 summary로 확인 가능.
+- 첫 blocker뿐 아니라 전체 gate 분포 확인 가능.
+- dashboard는 후속이어도 jsonl만으로 운영 진단 가능.
 
 ---
 
 ## D10. Future-Blind Replay
 
-### 왜 하는가
+### 목적
 
-기존 코멘트:
+사후에 5m/30m 결과를 보고 고르면 당연히 좋아 보인다. replay는 "그 시각에 알 수 있었던 정보만" 사용해야 한다.
 
-- 5m/30m 필터 성과는 이미 저장된 결과를 보고 뒤에서 고른 것이므로 이론 상한에 가깝다.
-- P1이 완성되어도 사후 백테스트 숫자가 그대로 나오지는 않는다.
-- 개선 성과는 그 시점에 알 수 있던 정보만으로 검증해야 한다.
-
-### 목표
-
-사후 결과를 보고 만든 착시 필터를 제거하고, 당시 알 수 있던 정보만으로 개선 정책을 검증한다.
-
-### 신규 파일
-
-| 파일 | 작업 |
-|---|---|
-| `tools/replay_future_blind_candidate_flow.py` | replay CLI |
-| `tests/test_future_blind_replay.py` | known_at 차단 테스트 |
-| `docs/reports/*replay*.md` | replay 결과 리포트 |
-
-### replay 입력
+### 입력
 
 ```text
-state/preopen_KR_YYYYMMDD.json
-state/preopen_US_YYYYMMDD.json
-state/candidate_health_KR_YYYYMMDD.json
-state/candidate_health_US_YYYYMMDD.json
-state/live_decisions.jsonl
-logs/analysis/live_analysis_YYYYMMDD.jsonl
-logs/funnel/*.json
+preopen candidate snapshots
+post-open feature snapshots with known_at
+Claude prompt/response trace
+gate_evaluation jsonl
+action_routing jsonl
+orders/fills
+price candles/ticks
+baseline actual logs
 ```
+
+D9 이전 과거 로그는 funnel jsonl이 없을 수 있다. 이 경우 baseline replay는 가능한 로그만 사용하고 `missing_funnel_log=true`를 표시한다.
 
 ### replay 시나리오
 
 ```text
-baseline_actual:
-  실제 로그 기준 진입/청산
-
-baseline_preopen_all:
-  장전 후보 전체 동일금액 진입
-
-policy_probe_v1:
-  known_at 기준 PROBE_READY만 probe 진입
-
-policy_pullback_v1:
-  overextended는 PathB wait
-
-policy_exit_v1:
-  profit_floor/giveback 보호 적용
+baseline_actual
+pool_only
+pool_plus_features
+pool_plus_features_plus_actions
+full_execution_model
 ```
 
-### no-lookahead assertion
+### false metrics
+
+시장별 threshold를 config로 둔다.
 
 ```text
-for each decision:
-  assert feature.known_at <= decision_time
-  assert outcome_30m is unavailable before anchor+30m
-  assert close/360m return is never used for entry decision
+false_probe:
+  PROBE_READY 진입 후 max favorable excursion이 threshold 미만이고 stop/time exit
+
+false_avoid:
+  AVOID/WATCH 처리 후 known future window에서 threshold 이상 상승
 ```
 
-### 결과 지표
+예시:
 
 ```text
-entries
-win_rate
-avg_pnl_pct
-total_pnl_krw
-max_drawdown_pct
-MFE_avg
-MAE_avg
-giveback_avg
-missed_runup
-false_probe
-false_avoid
+KR_FALSE_AVOID_RETURN_PCT=3.0
+US_FALSE_AVOID_RETURN_PCT=1.5
+KR_FALSE_PROBE_MFE_PCT=0.5
+US_FALSE_PROBE_MFE_PCT=0.3
 ```
+
+이 threshold는 확정 성능 기준이 아니라 초기값이다. replay 결과가 5거래일 이상 쌓이면 ATR, market volatility, 실제 stop 분포를 기준으로 calibration한다.
+
+### 원칙
+
+- replay 결과로 `brain.json`이나 live policy를 자동 변경하지 않는다.
+- replay는 lesson candidate만 만들고 사람이 승인한다.
+- lesson candidate 생성 주체는 replay tool이다. Claude는 lesson 후보의 설명을 보강할 수 있지만 저장 여부와 live policy 반영 여부를 결정하지 않는다.
+- 기존 `lesson_candidates` 저장 포맷은 구현 전 확인하고, 포맷이 맞지 않으면 adapter를 둔다.
+- look-ahead feature 사용 시 테스트 실패.
 
 ### QA
 
-| 검증 | 기준 |
-|---|---|
-| future leak | known_at 위반 시 실패 |
-| actual baseline | 실제 decisions와 진입 수/손익 대조 |
-| KR/US 분리 | 시장별 threshold로 replay |
-| policy 비교 | baseline 대비 개선/악화 출력 |
-
-### Rollback
-
-```text
-운영 코드와 분리된 tools이므로 rollback 부담 낮음.
-replay 결과는 자동 brain 반영 금지.
-```
-
-> **[검토 — D10]**
->
-> **replay 입력 파일 경로 확인 결과.**
->
-> ```text
-> state/candidate_health_KR_YYYYMMDD.json  → 존재함 ✓
-> state/live_decisions.jsonl               → 존재함 ✓
-> logs/funnel/*.json                       → 존재하지 않음 ✗ (D9 구현 선행 필요)
-> state/preopen_KR/US_YYYYMMDD.json        → 존재함 ✓
-> logs/analysis/live_analysis_YYYYMMDD.jsonl → 경로 확인 필요
-> ```
->
-> replay는 D9(Observability) 구현 이후에야 완전한 입력을 받을 수 있다. D9 전에는 `logs/funnel` 없이 동작하는 baseline replay만 가능하다는 점을 명시해야 한다.
->
-> **false_probe와 false_avoid의 정의가 없다.**
->
-> 결과 지표에 `false_probe`, `false_avoid`가 있는데 정의가 없다. 제안:
-> ```text
-> false_probe:  PROBE_READY로 진입했으나 30m 수익률 < -1% (손절 또는 악화)
-> false_avoid:  AVOID로 회피했으나 30m 수익률 > +2% (놓친 기회)
-> ```
-> 이 정의 없이 지표를 구현하면 사람마다 다르게 계산된다.
+- 09:05 replay에서 09:30 snapshot 사용 금지.
+- baseline_actual과 replay 결과 차이를 출력.
+- 주문 latency/slippage/position limit 반영.
+- buy-and-hold 수익률과 실제 exit lifecycle 수익률을 분리.
 
 ---
 
@@ -1620,303 +1274,585 @@ replay 결과는 자동 brain 반영 금지.
 
 ### 단위 테스트
 
-| 테스트 | 기준 |
-|---|---|
-| candidate merge | source_tags 병합 |
-| prompt ranking | cap과 score 순서 일관 |
-| candidate_actions parse | 신규/기존 schema 모두 동작 |
-| gate evaluation | hard/soft/timing/affordability 분리 |
-| sizing | probe/buy/pathb cap 보존 |
-| exit priority | hard stop이 Claude보다 우선 |
-| known_at replay | 미래 feature 차단 |
+```text
+candidate merge
+prompt cap exclusion reason
+post-open known_at
+Claude schema parse/fallback
+action TTL expiration
+gate hard/soft/timing/sizing
+PlanA/PathB route lock
+sizing cap/min_order/high_price
+probe stop weighting
+exit priority
+future-blind replay
+effective config precedence
+```
+
+테스트 파일 소유권:
+
+```text
+tests/test_candidate_pool_runtime.py
+tests/test_post_open_features.py
+tests/test_claude_candidate_actions.py
+tests/test_gate_evaluation.py
+tests/test_action_routing.py
+tests/test_sizing_contract.py
+tests/test_exit_lifecycle.py
+tests/test_future_blind_replay.py
+tests/test_effective_runtime_config.py
+```
+
+대규모 기존 테스트 파일 하나에 계속 추가하지 않는다. 신규 구조별 테스트 파일을 분리하고, 핵심 회귀 테스트 명령에 위 파일들을 추가한다.
 
 ### 통합 테스트
 
 ```text
-1. preopen 후보 60개 로드
-2. full_pool 유지 확인
-3. prompt_pool cap 적용 확인
-4. Claude candidate_actions mock 응답 주입
-5. PROBE_READY -> PlanA probe 후보 생성
-6. PULLBACK_WAIT -> PathB plan 생성
-7. BUY_READY 고가주 qty_zero 사유 확인
-8. profit_floor exit에서 quick_exit_check HOLD 시 floor 상승 확인
-9. hard stop은 Claude 없이 청산 확인
-10. funnel summary가 모든 단계 수를 표시하는지 확인
+장전 60개 -> full_pool 60개 유지
+prompt cap 30 -> excluded reason 기록
+Claude mock PROBE/BUY/WAIT/AVOID -> gate -> route
+PathB target 없는 PULLBACK_WAIT -> watch
+PlanA pending 중 PathB suspend
+hard stop 발생 시 Claude 없이 매도
+config conflict 발생 시 preflight fail
 ```
 
-### 성공 기준
+### 운영 리허설
 
 ```text
-judgment_not_executable 단일 사유 반복 감소
-WATCH missed_runup 감소
-PROBE_READY -> filled 전환율 상승
-filled -> positive MFE 비율 상승
-profit_floor 후 giveback 감소
-PathB cap 초과 주문 0건
-PlanA/PathB 중복 진입 0건
+paper KR 1일
+paper US 1일
+shadow candidate_actions 1일
+execution flag off 상태에서 funnel log 검증
+소액/probe only canary
+rollback flag 확인
+```
+
+운영 리허설 pass/fail:
+
+```text
+candidate_actions parse_failure_rate < 5%
+funnel log write error = 0
+gate_evaluation missing trace_id = 0
+same ticker duplicate live order = 0
+hard safety bypass = 0
+config conflict unresolved = 0
+cycle p95 latency <= baseline * 2
 ```
 
 ---
 
 ## D12. Rollout / Rollback
 
-### 왜 하는가
-
-기존 코멘트:
-
-- 한 번에 pool, feature, prompt, probe, PathB, 매도까지 live로 켜면 디버깅이 불가능하다.
-- 설계를 오늘 다 작성하더라도 live 적용은 단계별 flag가 필요하다.
-
-### rollout 단계
+### 단계
 
 ```text
-R0. schema/log shadow
-  candidate_pool, candidate_actions, gate_evaluation을 저장만 함
-  실제 주문 경로는 기존 유지
-
-R1. Claude candidate_actions shadow
-  Claude에게 신규 schema 요청
-  결과는 저장만 하고 trade_ready 실행은 기존 유지
-
-R2. PROBE_READY dry-run
-  실제 주문 없이 PlanA probe intent 생성
-  sizing/gate/affordability 검증
-
-R3. PULLBACK_WAIT PathB dry-run
-  PathB plan 등록만 하고 live order 비활성
-
-R4. small live
-  PROBE_READY만 소액 live 허용
-  BUY_READY는 기존 경로 유지
-  ADD_READY 비활성
-
-R5. PathB live
-  PULLBACK_WAIT 조건부 진입 허용
-  cap guard 필수
-
-R6. exit prompt v4 live
-  quick_exit/hold_advisor v4 적용
-  hard exit override 금지 확인
+R0. Schema/log only
+R1. Unified pool shadow
+R2. Post-open feature shadow
+R3. Claude candidate_actions shadow
+R4. Gate matrix shadow
+R5. PROBE_READY live canary
+R6. BUY_READY limited live
+R7. Exit lifecycle v2 shadow
+R8. Exit lifecycle v2 live
+R9. Future-blind replay batch
 ```
 
-### feature flags
+R4에서 `BUY_READY`를 실제 매수로 바꾸지 않는다. R4는 shadow 비교 단계다. 실제 주문은 R5 probe canary부터 시작한다.
+
+`PARTIAL_SELL`은 R0~R9에 포함하지 않는다. R9 이후 별도 후속 명세에서 R10 `PARTIAL_SELL limited live`를 검토한다.
+
+### rollout 진입 기준
+
+R7에서 R8로 넘어가는 기준:
 
 ```text
-ENABLE_UNIFIED_CANDIDATE_POOL=false
-ENABLE_POST_OPEN_FEATURES=false
-ENABLE_CANDIDATE_ACTIONS=false
-ENABLE_GATE_MATRIX=false
+exit lifecycle shadow 3 trading sessions 이상
+hard stop override miss = 0
+profit_floor breach 감지 성공률 = 100%
+trailing breach 감지 성공률 = 100%
+high severity exit decision mismatch = 0
+hold_advisor call budget 초과 = 0
+```
+
+R5에서 R6로 넘어가는 기준:
+
+```text
+PROBE_READY live canary 1 trading session 이상
+same ticker duplicate order = 0
+probe stop weighted count가 raw count보다 낮게 집계됨
+BUY_READY shadow와 legacy trade_ready 차이 분석 완료
+```
+
+### Step / Rollout 매핑
+
+| 구현 Step | rollout 단계 |
+|---|---|
+| Step 1 Schema / Config skeleton | R0 |
+| Step 2 Observability foundation | R0 |
+| Step 3 Unified Candidate Pool shadow | R1 |
+| Step 4 Post-open Feature Snapshot shadow | R2 |
+| Step 5 Claude action schema shadow | R3 |
+| Step 6 Gate Matrix shadow | R4 |
+| Step 7 Routing canary | R5 |
+| Step 8 Sizing contract | R5~R6 |
+| Step 9 Exit lifecycle v2 | R7~R8 |
+| Step 10 Future-blind replay | R9 |
+| Step 11 Live rollout | R5 이후 단계별 |
+
+### rollback 기준
+
+즉시 rollback:
+
+```text
+hard safety bypass 발견
+같은 ticker 중복 주문
+config conflict with live mode
+order unknown unresolved 증가
+funnel log write failure가 반복되어 상태 추적 불가
+```
+
+cycle lag 기준:
+
+```text
+candidate cycle p95 latency > baseline_p95 * 2
+candidate cycle excluding Claude p95 > 2s for 3 cycles
+candidate cycle including Claude p95 > 25s for 3 cycles
+Claude action parse failure > 20% for 3 cycles
+execution_pool > 0 but route errors > 30% for 3 cycles
+```
+
+rollback 방법:
+
+```text
 ENABLE_ACTION_ROUTING=false
-ENABLE_PROBE_ENTRY=false
-ENABLE_PULLBACK_WAIT_PATHB=false
-ENABLE_HOLD_ADVISOR_V4=false
-ENABLE_FUTURE_BLIND_REPLAY=false
-ADD_READY_ENABLED=false
-ADD_READY_SHADOW_ONLY=true
+ENABLE_CLAUDE_CANDIDATE_ACTIONS=false
+ENABLE_UNIFIED_CANDIDATE_POOL=false
+ENABLE_EXIT_LIFECYCLE_V2=false
 ```
 
-### 즉시 rollback 기준
-
-```text
-중복 주문 발생
-PathB cap 초과 주문 발생
-hard stop이 Claude HOLD로 막힘
-candidate_actions parse 실패로 watchlist 전체 손실
-funnel/gate 로그 폭증으로 cycle 지연
-broker reject 반복
-```
-
-### 부분 rollback
-
-```text
-candidate_actions 품질 낮음:
-  ENABLE_CANDIDATE_ACTIONS=false
-
-probe 손실 과다:
-  ENABLE_PROBE_ENTRY=false
-
-PathB 대기/체결 품질 낮음:
-  ENABLE_PULLBACK_WAIT_PATHB=false
-
-hold advisor가 계속 HOLD 과다:
-  ENABLE_HOLD_ADVISOR_V4=false
-```
-
-> **[검토 — D12]**
->
-> **R4에서 BUY_READY 종목의 처리 정책이 불명확하다.**
->
-> R4는 "PROBE_READY만 소액 live 허용, BUY_READY는 기존 경로 유지"라고 명시됐다. 그런데 "기존 경로 유지"가 구체적으로 무엇인지 불명확하다.
->
-> ```text
-> 옵션 A: BUY_READY는 candidate_actions 무시하고 legacy trade_ready 경로로 처리
-> 옵션 B: BUY_READY는 PROBE_READY로 강등해서 probe 사이즈로 처리
-> 옵션 C: BUY_READY는 R4에서 실행 보류, WATCH로 강등
-> ```
->
-> 옵션 A가 가장 현실적이지만, 이 경우 `PROBE_READY`와 `BUY_READY`가 다른 경로를 타므로 gate_evaluation 로그가 두 action을 섞어 기록하게 된다. R4 운영 중 혼동을 막으려면 옵션을 고정해야 한다.
->
-> **즉시 rollback 기준에 "funnel 로그 폭증으로 cycle 지연"이 있는데 기준값이 없다.**
->
-> "cycle 지연"의 기준이 없으면 rollback 판단이 주관적이 된다. 예: `cycle_time > 5s 연속 3회` 또는 `log_write_time > 1s` 같은 측정 가능한 기준을 추가해야 한다.
+flag off 시 기존 `watchlist/trade_ready` 루프가 동작해야 한다.
 
 ---
 
-## 6. Claude 사용 방식 명세
+## D13. Env / Config 통합 명세
 
-### 왜 하는가
+### 현재 상태
 
-기존 코멘트:
+현재 live 설정은 여러 출처에 흩어져 있다.
 
-- Claude를 더 많이 쓰는 것이 답이 아니라 더 좋은 입력과 더 좁은 역할로 쓰는 것이 답이다.
-- 시장 regime과 중요한 보유/매도 판단에는 3인 구조가 가치 있다.
-- 장 초반 후보 상태 분류는 속도가 중요하므로 단일 structured call이 맞다.
+```text
+.env.live / .env.paper / .env
+config/v2_start_config.json
+config/v2.py::V2Config.from_env()
+trading_bot.py 직접 os.getenv
+runtime/* 직접 os.getenv
+tools/live_preflight.py 별도 검사
+```
 
-### 역할 분리
+`trading_bot.py`는 `--live` 여부로 `.env.live` 또는 `.env.paper`를 로드하고, 그 뒤 `_apply_v2_start_config_env()`가 `config/v2_start_config.json`을 env로 다시 적용한다. 이후 `config/v2.py`와 여러 runtime이 직접 env를 읽는다.
 
-| 계층 | Claude 역할 | 방식 |
+문제:
+
+- 같은 설정이 env와 json에 동시에 있으면 우선순위가 헷갈린다.
+- live 중 어떤 값이 실제로 적용됐는지 한눈에 보기 어렵다.
+- feature flag와 전략 파라미터가 secrets와 섞인다.
+- 대규모 패치에서 잘못된 env 하나가 전체 동작을 바꿀 수 있다.
+
+### 결정
+
+`.env.live`와 `config`를 물리적으로 하나의 파일로 합치지 않는다. 대신 단일 `EffectiveRuntimeConfig` 로더로 통합한다.
+
+이유:
+
+- `.env.live`에는 API key, 계좌, 토큰 같은 secret이 들어갈 수 있다.
+- 전략/운영 파라미터는 versioning과 diff가 쉬운 config 파일에 있어야 한다.
+- secrets를 config json/yaml에 넣으면 git/로그 유출 위험이 커진다.
+
+### 책임 분리
+
+`.env.live`에 남길 것:
+
+```text
+KIS/브로커 credentials
+ANTHROPIC/API credentials
+TELEGRAM credentials
+계좌 식별값
+RUN_MODE/live-paper selector
+emergency kill switch flags
+```
+
+deployment selector로 둘 것:
+
+```text
+V2_START_CONFIG_PATH
+CONFIG_PROFILE
+LIVE_CONFIG_PATH
+```
+
+`V2_START_CONFIG_PATH`는 secret이 아니다. `.env.live`에 있을 수는 있지만 redaction 대상이 아니며, effective config snapshot에 어떤 config 파일이 로드됐는지 반드시 표시한다.
+
+config로 옮길 것:
+
+```text
+candidate pool cap
+post-open thresholds
+Claude action TTL
+market별 sizing cap
+PlanA/PathB routing policy
+exit lifecycle thresholds
+replay thresholds
+observability throttle
+```
+
+코드 default로만 둘 것:
+
+```text
+상수적 안전 default
+schema version fallback
+파일 경로 기본값
+```
+
+### precedence
+
+우선순위는 명시적으로 고정한다.
+
+```text
+1. CLI explicit override
+2. emergency env override from .env.live
+3. config/live.json 또는 config/v2_start_config.json
+4. .env.live non-secret operational fallback
+5. code default
+```
+
+단, secret은 config 파일에서 읽지 않는다.
+
+### 신규 로더
+
+권장 파일:
+
+```text
+config/runtime_config.py
+```
+
+역할:
+
+```python
+class EffectiveRuntimeConfig:
+    secrets: SecretConfig
+    candidate_pool: CandidatePoolConfig
+    post_open: PostOpenConfig
+    claude_actions: ClaudeActionConfig
+    gates: GateConfig
+    routing: RoutingConfig
+    sizing: SizingConfig
+    exit: ExitConfig
+    replay: ReplayConfig
+    observability: ObservabilityConfig
+    source_report: dict[str, Any]
+```
+
+startup에서 한 번 로드하고, 주요 runtime에는 config object를 주입한다. 기존 직접 `os.getenv`는 한 번에 다 제거하지 않고, 이번 패치가 만지는 모듈부터 단계적으로 제거한다.
+
+Step 1 완료 기준은 "초안 생성"이 아니라 다음 최소 기능까지 포함한다.
+
+```python
+cfg.get("KEY", default=None)
+cfg.get_bool("KEY", default=False)
+cfg.get_int("KEY", default=0)
+cfg.get_float("KEY", default=0.0)
+cfg.source_of("KEY")
+cfg.source_report()
+```
+
+이 shim은 기존 `os.getenv`와 호환되는 migration layer다. 이후 각 Step에서 수정하는 모듈은 해당 모듈의 신규 key에 대해 직접 `os.getenv`를 남기지 않는다.
+
+migration 정책:
+
+```text
+Step 1: runtime_config shim + source_report
+Step 2~3: observability/candidate pool 신규 key는 cfg 사용
+Step 4~6: Claude action/gate/routing 신규 key는 cfg 사용
+Step 7~9: sizing/exit/replay 신규 key는 cfg 사용
+legacy key: 기존 경로 유지하되 source_report에 direct_env_legacy로 표시
+```
+
+### startup config snapshot
+
+live 시작 시 다음을 로그로 남긴다.
+
+```text
+logs/config/effective_config_YYYYMMDD_HHMMSS.redacted.json
+```
+
+포함:
+
+- config source path
+- env file path
+- effective value
+- value source
+- secret redaction
+- config hash
+- 이전 실행 대비 diff
+
+금지:
+
+- API key/token/account secret 평문 기록.
+
+### preflight 강화
+
+`tools/live_preflight.py`에 추가한다.
+
+```text
+env/config 동일 key 충돌 검사
+live mode에서 paper-only key 감지
+secret 누락 검사
+dangerous flag 조합 검사
+threshold range 검사
+config schema_version 검사
+effective config snapshot 생성 가능 여부 검사
+```
+
+충돌 정책:
+
+- secret 충돌: hard fail.
+- live/paper mode 충돌: hard fail.
+- strategy threshold 충돌: warning 또는 hard fail을 config로 선택.
+- emergency env override는 source_report에 반드시 표시.
+
+### QA
+
+- `.env.live` + config 충돌 시 preflight fail.
+- emergency flag가 config보다 우선.
+- redacted snapshot에 secret이 없음.
+- 기존 `V2Config.from_env()` 값과 EffectiveRuntimeConfig 값 비교 테스트.
+- feature flag off 시 기존 경로 동작.
+
+---
+
+## D14. Large Patch Operations
+
+### 목적
+
+이번 변경은 후보, Claude, gate, 주문, 매도, config를 건드리는 대규모 패치다. 미스가 나지 않는 것보다 미스가 난 위치를 즉시 확인할 수 있게 만드는 것이 중요하다.
+
+### 운영상 가장 위험한 미스
+
+| 미스 | 영향 | 감지 방법 |
 |---|---|---|
-| 시장 regime | risk-on/off, 신규매수 허용도 | 3인 R1/R2 유지 |
-| 후보 선정 | prompt_pool에서 action enum 분류 | 단일 Sonnet JSON |
-| 진입 타이밍 | post-open feature 기반 상태 분류 | 단일 Sonnet JSON + system gate |
-| 수량/주문 | 사용하지 않음 | risk engine / broker guard |
-| PathB 계획 | buy zone, invalid_if | selection price_targets |
-| soft exit | 자동 매도 신호 확인 | quick_exit 1건 |
-| 중요 보유/매도 | TP, pre-close, 큰 수익 반납 | 3인 hold_advisor |
-| 사후분석 | 원인 요약/교정 후보 | 장마감 1회 |
+| 후보가 full_pool에서 누락 | 좋은 종목이 아예 평가되지 않음 | source별 input count vs full_pool count |
+| prompt cap에서 조용히 제외 | Claude가 좋은 후보를 못 봄 | excluded_from_prompt reason |
+| Claude schema 파싱 실패 | action이 전부 WATCH fallback | parse_failure rate |
+| hard safety 우회 | 손실/중복주문 위험 | gate hard_safety audit |
+| PlanA/PathB 중복 주문 | 포지션 과다 | route lock event |
+| sizing cap 이중 적용 | 너무 작게 사거나 0주 | cap trace |
+| min_order가 cap 우회 | 예상보다 큰 주문 | budget trace |
+| exit priority 오류 | 손절/수익보호 실패 | exit decision trace |
+| config 충돌 | 운영 의도와 다른 동작 | effective config snapshot |
+| replay look-ahead | 성과 과대평가 | known_at validator |
 
-### 권장 호출 예산
+### trace id
 
-시장 1개 기준:
-
-```text
-보통 날:
-  약 11~14건
-
-진입 2~3개 있는 날:
-  약 15~26건
-
-급변장:
-  약 21~31건
-```
-
-KR+US 동시 운영:
+각 후보에는 cycle 내 trace id를 붙인다.
 
 ```text
-30~60건 수준을 현실적 상한으로 본다.
-100건 초과일은 과호출 진단 대상으로 본다.
+candidate_trace_id = {date}|{market}|{ticker}|{first_seen_compact}|{cycle_id}
 ```
+
+예시:
+
+```text
+20260506|KR|001440|20260506T090500|cycle_0007
+```
+
+구분자 `:`는 사용하지 않는다. ISO8601 timestamp에는 `:`가 포함되므로 `split(":")` 기반 분석 도구가 깨질 수 있다.
+
+이 id가 다음 로그를 관통해야 한다.
+
+```text
+candidate_pool
+post_open_snapshot
+Claude prompt/response
+gate_evaluation
+action_routing
+sizing_decision
+order_submit
+fill
+exit_lifecycle
+replay
+```
+
+### patch safety checklist
+
+구현 전:
+
+- schema_version 결정.
+- feature flag default off.
+- config key와 env key 충돌 목록 작성.
+- 기존 dirty 파일과 unrelated 변경 확인.
+
+구현 중:
+
+- 모듈별 테스트 추가 후 구현.
+- live 주문 경로는 마지막에 연결.
+- action/routing은 shadow 로그로 먼저 확인.
+
+구현 후:
+
+- unit + integration + preflight 실행.
+- paper replay 실행.
+- funnel summary 수동 검토.
+- rollback flag 동작 확인.
+
+### 운영 KPI
+
+새 구조의 성공 여부는 수익률 하나로만 보지 않는다.
+
+```text
+full_pool retention rate
+prompt_pool inclusion reason coverage
+Claude action parse success rate
+BUY/PROBE -> execution conversion rate
+blocked by hard/soft/timing/sizing distribution
+qty_zero vs high_price_one_share_blocked split
+probe stop weighted count
+profit giveback reduction
+future-blind replay vs actual gap
+```
+
+KPI 계산 정의:
+
+```text
+profit_giveback_pct = MFE_pct - realized_exit_pnl_pct
+profit_giveback_reduction = median(old_profit_giveback_pct) - median(new_profit_giveback_pct)
+measurement_set = realized positions with MFE_pct >= 1.0
+```
+
+정의할 수 없는 KPI는 사용하지 않는다. 모든 KPI는 jsonl 로그에서 재계산 가능해야 한다.
 
 ---
 
-## 7. 후보군 구성과 매수/매도 동작 명세
+## 15. 구현 순서와 완료 기준
 
-### 후보군 구성
+### Step 1. Schema / Config skeleton
 
-```text
-1. Base Pool
-2. Preopen Pool
-3. Opening Confirmation Pool
-4. Intraday Momentum / Late Mover Pool
-5. Held / Reentry Pool
-```
+완료 기준:
 
-기존 코멘트:
+- D1 dataclass 또는 typed dict 생성.
+- `EffectiveRuntimeConfig` shim 생성: `get/get_bool/get_int/get_float/source_of/source_report`.
+- direct `os.getenv` 신규 사용 금지 기준 문서화.
+- 기존 live cycle p50/p95 latency baseline 측정.
+- schema round-trip 테스트 통과.
+- feature flag default off.
 
-- Base Pool은 fallback이지 메인 알파가 아니다.
-- Preopen Pool은 정답 목록이 아니라 감시 universe다.
-- Opening Confirmation Pool이 PlanA의 핵심 입력이다.
-- Late mover는 preopen confirmation만으로 잡기 어렵기 때문에 별도 pool이 필요하다.
-- Held/Reentry는 add/reentry 판단을 위해 별도 상태가 필요하다.
+### Step 2. Observability foundation
 
-### 매수 동작
+완료 기준:
 
-```text
-PROBE_READY:
-  작게 먼저 진입
-  빠른 thesis check
-  profit_floor 빠르게 활성화
+- `logs/funnel` jsonl writer 생성.
+- candidate/gate/route/exit trace id 형식 고정.
+- feature flag off 상태에서도 cycle summary 기록 가능.
+- 0거래 cycle에서 대표 차단 원인과 전체 gate 분포가 보임.
 
-BUY_READY:
-  정상 진입
-  고확신 + 실행 가능성 + 과열 아님 필요
+### Step 3. Unified Candidate Pool shadow
 
-PULLBACK_WAIT:
-  지금 추격 금지
-  PathB buy_zone 대기
+완료 기준:
 
-ADD_READY:
-  1차는 shadow only
-```
+- 장전/기본/장중 후보가 full_pool에 병합.
+- source_tags 병합.
+- prompt_pool cap과 제외 reason 기록.
+- 기존 실행 경로에는 영향 없음.
 
-기존 코멘트:
+### Step 4. Post-open Feature Snapshot shadow
 
-- "작게 먼저 들어가고, 맞으면 늘리고, 틀리면 작게 끝낸다"가 현재 시스템에 맞다.
-- 장 초반 좋은 후보는 완전 확인 후에는 늦다.
-- 그렇다고 무조건 선진입하면 fade 종목에 물린다.
-- 따라서 초기 참여는 probe가 맞다.
+완료 기준:
 
-### 매도 동작
+- known_at snapshot 생성.
+- 3m/5m/10m/30m feature 저장.
+- KR/US threshold config 분리.
+- look-ahead validator 테스트 통과.
 
-```text
-수익 보호는 system이 먼저 한다.
-Claude는 HOLD 예외를 검증한다.
-목표가보다 giveback과 thesis_status가 중요하다.
-작은 수익을 먼저 지키고, 강한 종목만 다시 열어준다.
-```
+### Step 5. Claude action schema shadow
 
-기존 코멘트:
+완료 기준:
 
-- 매도 목표가가 높으면 수익 보호가 늦어진다.
-- profit_floor/trailing을 먼저 세우고, 강하면 Claude 재판단으로 더 가져간다.
-- Claude HOLD가 수익 보호를 막으면 안 된다.
+- 신규 prompt/response schema 적용.
+- legacy fallback 작동.
+- action TTL 부여.
+- 실제 주문은 기존 경로 유지.
+
+### Step 6. Gate Matrix shadow
+
+완료 기준:
+
+- hard/soft/timing/sizing 전체 gate vector 기록.
+- 기존 skip reason과 gate blocker 비교.
+- `judgment_not_executable` 같은 단일 사유에 묻히지 않음.
+
+### Step 7. Routing canary
+
+완료 기준:
+
+- `PROBE_READY`만 제한 live/paper 주문 허용.
+- PlanA/PathB lock 검증.
+- PathB target 없는 wait는 주문 없음.
+- rollback flag 확인.
+
+### Step 8. Sizing contract
+
+완료 기준:
+
+- min_order override cap 재검증.
+- high price 1주 정책 분리.
+- cap trace 로그.
+- probe stop weight 적용.
+
+### Step 9. Exit lifecycle v2
+
+완료 기준:
+
+- hard stop/profit floor/trailing 우선순위 테스트.
+- Claude HOLD override 금지 확인.
+- partial sell은 flag off.
+
+### Step 10. Future-blind replay
+
+완료 기준:
+
+- baseline_actual 비교.
+- look-ahead 방지 테스트.
+- false_probe/false_avoid 산출.
+- replay 결과가 live policy를 자동 변경하지 않음.
+
+### Step 11. Live rollout
+
+완료 기준:
+
+- KR paper 1일.
+- US paper 1일.
+- 소액/probe only canary.
+- 운영 funnel summary가 장중 판단 가능 수준.
 
 ---
 
-## 8. 오늘 개발 적용 순서
+## 16. 내 의견
 
-오늘 전체를 작성하고 이후 구현한다면 순서는 다음으로 고정한다.
+기존 방향을 갈아엎을 필요는 없다. 사용자가 처음 설계한 "Claude 후보 선정 -> PlanA/PathB 매수 -> 보유 중 Claude 재판단" 구조는 맞다. 오늘처럼 후보가 좋았는데 수익으로 연결되지 않은 이유는 철학이 틀려서가 아니라 연결 계층이 약해서다.
 
-```text
-1. D1 schema를 먼저 만든다.
-2. D2 pool은 shadow로 붙인다.
-3. D9 관측성 로그를 early로 넣는다.
-4. D4 candidate_actions를 parser까지 구현하되 실행은 shadow.
-5. D5 gate matrix를 붙여 skip 원인을 계층화한다.
-6. D6 routing은 PROBE_READY/PULLBACK_WAIT만 먼저 live 후보로 연결한다.
-7. D7 sizing guard를 먼저 통과시킨 후 live를 켠다.
-8. D8 exit은 hard priority부터 고정하고 prompt v4를 붙인다.
-9. D10 replay로 오늘 KR/어제 US를 known_at 기준 재검증한다.
-10. D11 QA 통과 후 R4 small live까지 진행한다.
-```
+다만 지금 상태에서 단순히 조건을 완화하거나 Claude 호출을 늘리면 안 된다. 그렇게 하면 좋은 날에는 수익이 날 수 있지만 나쁜 날에는 왜 손실이 났는지 추적하기 어렵다.
 
-최종 의견:
+내가 보는 정답은 다음이다.
 
 ```text
-기능을 많이 넣는 것보다 계약을 먼저 고정하는 것이 중요하다.
-이번 개발은 후보 연결 + 작은 진입 + 빠른 수익 보호 + 관측성 + future-blind replay를 하나의 흐름으로 닫는 작업이다.
+후보는 넓게 보존한다.
+Claude 입력은 좁고 품질 좋게 만든다.
+진입은 probe/buy/wait로 쪼갠다.
+hard safety는 절대 우회하지 않는다.
+soft/timing 조건은 기록하고 조절 가능하게 만든다.
+매도는 system guard가 먼저 수익을 지킨다.
+모든 개선은 known_at replay로 검증한다.
+설정은 EffectiveRuntimeConfig로 운영 가능하게 만든다.
 ```
 
-> **[검토 — 섹션 8]**
->
-> **각 단계의 완료 기준이 없다.**
->
-> 10단계가 나열됐으나 각 단계를 완료했다고 판단하는 기준이 없다. 예:
->
-> ```text
-> 1. D1 완료 기준: test_candidate_schema.py 통과
-> 3. D9 완료 기준: 0거래일 funnel summary에 차단 원인이 로그로 설명됨
-> 7. D7 완료 기준: PathB cap 초과 주문 QA 0건, probe qty < full buy qty 확인
-> 10. D11 완료 기준: QA checklist 7개 단위 + 10개 통합 테스트 전체 통과
-> ```
->
-> 완료 기준 없이 진행하면 단계 사이에서 "어디까지 됐는지"를 매번 다시 파악해야 한다.
->
-> **D3(Post-open feature)이 개발 순서 2번(D2) 다음인데 순서에서 빠졌다.**
->
-> 섹션 8 순서에 D3이 없다. D2(pool) → D3(feature) → D4(actions) 순서가 맞는데, D3을 건너뛰면 D4 prompt에 feature 정보 없이 구현된다. D9 로그를 early로 붙인 다음 D3 feature snapshot을 shadow로 붙이는 단계가 필요하다.
->
-> **2번 단계(D2 shadow)와 VWAP 구현 선행 관계가 없다.**
->
-> D3 구현에 VWAP이 필요한데, VWAP 계산 로직이 현재 없다. D3 앞에 VWAP data source 결정 및 구현을 별도 단계로 두거나, 1차 D3에서는 VWAP 없이 ret/volume/spread만으로 먼저 동작시키는 방향을 명시해야 한다.
+이 방향이면 욕심으로 무리하게 매매하는 구조가 아니라, 이미 찾고 있던 기회를 더 적절한 시점과 크기로 연결하는 구조가 된다.
