@@ -764,10 +764,21 @@ def daily_summary(
     cumulative: float,
     judgments: dict,
     postmortem: dict,
+    realized_excluding_eval_pnl_krw: Optional[float] = None,
+    unrealized_today_delta_krw: Optional[float] = None,
 ) -> str:
     icon = "🇰🇷" if market == "KR" else "🇺🇸"
     credit_line = _credit_line()
     lesson = _clean_postmortem_lesson(postmortem.get("key_lesson", ""))
+    confirmed_pnl_krw = int(round(
+        float(realized_excluding_eval_pnl_krw)
+        if realized_excluding_eval_pnl_krw is not None
+        else float(pnl_krw or 0)
+    ))
+    eval_delta = int(round(float(unrealized_today_delta_krw or 0)))
+    pnl_line = f"오늘: {fmt_pct(pnl_pct)}  확정 {confirmed_pnl_krw:+,}원"
+    if eval_delta:
+        pnl_line += f" · 평가변동 {eval_delta:+,}원"
     lesson_block = (
         f"오늘의 교훈:\n"
         f"  {lesson}\n\n"
@@ -776,7 +787,7 @@ def daily_summary(
         f"━━━━━━━━━━━\n"
         f"{icon} <b>[{MODE_LABEL}][일일 결산] {date} {market}</b>\n"
         f"━━━━━━━━━━━\n"
-        f"오늘: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원\n"
+        f"{pnl_line}\n"
         f"거래: {trades}건  승률: {win_rate*100:.1f}%\n"
         f"누적: {cumulative:,.0f}원\n\n"
         f"판단 결과\n"
@@ -881,6 +892,8 @@ def dashboard_push(
     risk_value: float = 0.0,
     risk_label: str = "",
     mode_order_limit_krw: float = 0.0,
+    realized_excluding_eval_pnl_krw: Optional[float] = None,
+    unrealized_today_delta_krw: Optional[float] = None,
 ) -> str:
     now = datetime.now(KST).strftime("%H:%M")
     icon = "🇰🇷" if market == "KR" else "🇺🇸"
@@ -893,12 +906,21 @@ def dashboard_push(
         label = risk_label or ("VKOSPI" if market == "KR" else "VIX")
         risk_text = f" | {label} {risk_value:.1f} ({_risk_status_label(risk_value)})"
     tickers_txt = ", ".join(_display_ticker(t, market) for t in tickers) if tickers else "-"
+    confirmed_pnl_krw = int(round(
+        float(realized_excluding_eval_pnl_krw)
+        if realized_excluding_eval_pnl_krw is not None
+        else float(pnl_krw or 0)
+    ))
+    eval_delta = int(round(float(unrealized_today_delta_krw or 0)))
+    pnl_line = f"손익: {fmt_pct(pnl_pct)}  확정 {confirmed_pnl_krw:+,}원"
+    if eval_delta:
+        pnl_line += f" · 평가변동 {eval_delta:+,}원"
     text = (
         f"{icon} <b>[대시보드 요약 {now}] {market}</b>\n"
         f"모드: <b>{_ko_mode(mode)}</b>{risk_text}"
         + (f" | 최대매수 {int(mode_order_limit_krw):,}원" if mode_order_limit_krw and mode_order_limit_krw > 0 else "")
         + "\n"
-        f"손익: {fmt_pct(pnl_pct)}  {pnl_krw:+,}원\n"
+        f"{pnl_line}\n"
         f"현금: {cash:,.0f}원 | 주문한도: {max_order_krw:,.0f}원 | "
         f"주식평가: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원 | "
         f"수수료누적: {total_fee:,.0f}원\n\n"

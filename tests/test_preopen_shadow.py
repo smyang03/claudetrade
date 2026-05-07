@@ -596,6 +596,55 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["candidate_display_count"], 2)
         self.assertEqual(len(payload["candidates"]), 2)
 
+    def test_outcome_timeline_uses_initial_pool_not_display_slice(self) -> None:
+        candidates = [{"ticker": f"T{i}", "shadow_preopen_rank": i} for i in range(1, 4)]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "candidate_count": len(candidates),
+                    "candidates": candidates,
+                }, session_date="2026-05-02")
+                save_outcome_record("US", "2026-05-02", {
+                    "ticker": "T3",
+                    "offset_min": 30,
+                    "anchor_price": 10.0,
+                    "price": 11.0,
+                    "post_open_return_pct": 10.0,
+                    "post_open_30m_return_pct": 10.0,
+                })
+                payload = load_preopen_dashboard("US", session_date="2026-05-02", limit=2)
+
+        self.assertEqual([row["ticker"] for row in payload["candidates"]], ["T1", "T2"])
+        self.assertIn("T3", [row["ticker"] for row in payload["outcome_timeline"]])
+        self.assertEqual(payload["summary"]["outcome_display_limit"], 60)
+
+    def test_dashboard_payload_reports_requested_outcome_coverage_gap(self) -> None:
+        candidates = [{"ticker": f"T{i}", "shadow_preopen_rank": i} for i in range(1, 31)]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "candidate_count": len(candidates),
+                    "candidates": candidates,
+                }, session_date="2026-05-02")
+                payload = load_preopen_dashboard("US", session_date="2026-05-02", limit=60)
+
+        self.assertEqual(payload["summary"]["candidate_display_count"], 30)
+        self.assertEqual(payload["summary"]["requested_display_limit"], 60)
+        self.assertEqual(payload["summary"]["outcome_display_count"], 30)
+        self.assertEqual(payload["summary"]["outcome_missing_display_count"], 30)
+        self.assertIn("원본 후보 30개만 수집됨", payload["summary"]["outcome_shortage_reason"])
+        self.assertEqual(payload["outcome_timeline"][0]["statuses_by_offset"]["30"], "NO_DATA")
+
     def test_dashboard_api_returns_shadow_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

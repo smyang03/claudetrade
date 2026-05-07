@@ -138,6 +138,50 @@ class AnalystPromptContractTests(unittest.TestCase):
         self.assertIn("HYG", captured["prompt"])
         self.assertIn("개별 종목은 시장 판단의 보조 예시", captured["prompt"])
 
+    def test_debate_refreshes_sizing_when_stance_changes(self) -> None:
+        captured: dict[str, str] = {}
+
+        def fake_create(**kwargs):
+            captured["prompt"] = kwargs["messages"][0]["content"]
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        text=(
+                            '{"stance":"CAUTIOUS_BEAR","confidence":0.3,'
+                            '"key_reason":"breadth turned negative",'
+                            '"changed":true,"change_reason":"risk broadened"}'
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+            )
+
+        with (
+            patch.object(analysts.client.messages, "create", side_effect=fake_create),
+            patch.object(analysts, "credit_record"),
+            patch.object(analysts, "save_raw_call"),
+        ):
+            result = analysts.call_analyst_debate(
+                "bull",
+                {
+                    "stance": "AGGRESSIVE",
+                    "confidence": 0.8,
+                    "key_reason": "strong morning",
+                    "suggested_size_pct": 90,
+                    "new_buy_permission": "allow",
+                    "max_gross_exposure_pct": 100,
+                },
+                {"bear": {"stance": "CAUTIOUS_BEAR", "confidence": 0.8, "key_reason": "weak breadth"}},
+                "breadth now weak",
+                market="US",
+            )
+
+        self.assertIn("suggested_size_pct", captured["prompt"])
+        self.assertEqual(result["stance"], "CAUTIOUS_BEAR")
+        self.assertEqual(result["suggested_size_pct"], 10.0)
+        self.assertEqual(result["new_buy_permission"], "block")
+        self.assertEqual(result["max_gross_exposure_pct"], 15.0)
+
 
 class TunePromptContractTests(unittest.TestCase):
     def test_tune_prompt_contains_breadth_delta_and_maintain_streak(self) -> None:
@@ -214,6 +258,23 @@ class TunePromptContractTests(unittest.TestCase):
         self.assertIn("breadth 변화", captured["prompt"])
         self.assertIn("연속 MAINTAIN 횟수: 3", captured["prompt"])
         self.assertIn("advance_ratio -30%p", captured["prompt"])
+        self.assertIn("momentum_wait_adjust_min: -10 ~ 10", captured["prompt"])
+        self.assertIn("entry_priority_cutoff_adjust: -0.05 ~ 0.05", captured["prompt"])
+
+    def test_tune_bounds_match_policy(self) -> None:
+        result = tuner._coerce_runtime_adjustments(
+            {
+                "momentum_wait_adjust_min": 15,
+                "entry_priority_cutoff_adjust": 0.08,
+                "kr_momentum_atr_cap_adjust": 0.03,
+                "kr_momentum_atr_cap_high_adjust": -0.02,
+            }
+        )
+
+        self.assertEqual(result["momentum_wait_adjust_min"], 10)
+        self.assertEqual(result["entry_priority_cutoff_adjust"], 0.05)
+        self.assertEqual(result["kr_momentum_atr_cap_adjust"], 0.02)
+        self.assertEqual(result["kr_momentum_atr_cap_high_adjust"], -0.01)
 
 
 if __name__ == "__main__":

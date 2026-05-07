@@ -28,6 +28,37 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
 
 
 class IntradayExecutionRestoreTests(unittest.TestCase):
+    def test_same_day_reentry_state_uses_closed_decision_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            decisions_path = Path(tmp) / "decisions.jsonl"
+            _write_jsonl(
+                decisions_path,
+                [
+                    {
+                        "type": "closed",
+                        "market": "US",
+                        "ticker": "AMD",
+                        "session_date": "2026-05-06",
+                        "timestamp": "2026-05-06T23:20:21+09:00",
+                        "exit_reason": "loss_cap",
+                        "order_no": "0031223921",
+                        "qty": 1,
+                        "pnl_pct": -1.46,
+                        "broker_fill_confirmed": True,
+                    }
+                ],
+            )
+            bot = _bot("2026-05-06")
+            bot.risk = type("Risk", (), {"all_trade_log": []})()
+
+            with patch("trading_bot.DECISIONS_FILE", decisions_path):
+                state = bot._same_day_reentry_state("AMD", "US")
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "SAME_DAY_REENTRY_AFTER_STOP")
+        self.assertEqual(state["details"]["close_reason"], "loss_cap")
+        self.assertAlmostEqual(state["details"]["pnl_pct"], -1.46)
+
     def test_restore_us_closed_tickers_and_dedupes_order_stop_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             decisions_path = Path(tmp) / "decisions.jsonl"

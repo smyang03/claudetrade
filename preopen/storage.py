@@ -967,7 +967,7 @@ def _build_outcome_timeline(
             sample = sample_map.get(int(offset), {})
             returns_by_offset[str(offset)] = sample.get("return_pct") if sample else None
             prices_by_offset[str(offset)] = sample.get("price") if sample else None
-            statuses_by_offset[str(offset)] = str(sample.get("status") or "") if sample else ""
+            statuses_by_offset[str(offset)] = str(sample.get("status") or "") if sample else "NO_DATA"
             if sample:
                 sample_list.append(sample)
         sampled_returns = [float(sample.get("return_pct")) for sample in sample_list if sample.get("return_pct") is not None]
@@ -1080,6 +1080,20 @@ def _outcome_storage_counts(outcome: list[dict[str, Any]]) -> dict[str, int]:
     return {"sampled": sampled, "missing": missing, "errors": errors, "total": len(outcome or [])}
 
 
+def _coverage_shortage_reason(
+    *,
+    requested_limit: int,
+    raw_candidate_count: int,
+    displayed_count: int,
+) -> str:
+    missing = max(0, int(requested_limit or 0) - int(displayed_count or 0))
+    if missing <= 0:
+        return ""
+    if raw_candidate_count <= 0:
+        return f"요청 {requested_limit}개 중 원본 후보가 없어 결과 데이터 없음"
+    return f"요청 {requested_limit}개 중 원본 후보 {raw_candidate_count}개만 수집됨; {missing}개 결과 데이터 없음"
+
+
 def _operator_status(
     *,
     session_date: str,
@@ -1089,6 +1103,10 @@ def _operator_status(
     offsets: list[int],
     display_enriched_count: int,
     screen_cache_fallback_count: int,
+    requested_limit: int,
+    raw_candidate_count: int,
+    candidate_display_count: int,
+    outcome_display_count: int,
 ) -> str:
     if candidate_source == "screen_cache_fallback" or state.get("outcome_source_candidates") == "screen_cache_fallback":
         candidate_label = "후보: 화면 캐시 복구"
@@ -1112,7 +1130,10 @@ def _operator_status(
         result_label += f", 미수집 {counts['missing']}건"
     if counts["errors"]:
         result_label += f", 오류 {counts['errors']}건"
-    return f"세션 {session_date} · {candidate_label} · {result_label} · 표시 시간 {len(offsets)}개"
+    coverage = f"표시 후보 {candidate_display_count}/{requested_limit}개 · 결과 행 {outcome_display_count}/{requested_limit}개"
+    if raw_candidate_count < requested_limit:
+        coverage += f" · 원본 {raw_candidate_count}개"
+    return f"세션 {session_date} · {candidate_label} · {coverage} · {result_label} · 표시 시간 {len(offsets)}개"
 
 
 def _scheduler_guidance(market: str, mode: str = "live", session_date: str | None = None) -> dict[str, Any]:
@@ -1151,16 +1172,17 @@ def load_preopen_dashboard(
     market: str,
     *,
     session_date: str | None = None,
-    limit: int = 50,
+    limit: int = 60,
     mode: str = "live",
 ) -> dict[str, Any]:
     market_key = _market_key(market)
     runtime_mode = _runtime_mode(mode)
     session_date = session_date or resolve_session_date_str(market_key)
+    requested_limit = max(1, int(limit or 60))
     state = load_preopen_state(market_key, session_date=session_date, max_age_min=24 * 60, mode=runtime_mode) or {}
-    candidate_log = read_jsonl_tail(log_path("candidates", market_key, session_date, mode=runtime_mode), limit)
-    rank_diff = read_jsonl_tail(log_path("rank_diff", market_key, session_date, mode=runtime_mode), limit)
-    outcome_limit = max(1000, int(limit) * 30)
+    candidate_log = read_jsonl_tail(log_path("candidates", market_key, session_date, mode=runtime_mode), requested_limit)
+    rank_diff = read_jsonl_tail(log_path("rank_diff", market_key, session_date, mode=runtime_mode), requested_limit)
+    outcome_limit = max(1000, requested_limit * 30)
     outcome = read_jsonl_tail(log_path("outcome", market_key, session_date, mode=runtime_mode), outcome_limit)
     state_candidates = list(state.get("candidates") or []) if isinstance(state, dict) else []
     candidate_source = "state" if state_candidates else ""
@@ -1197,12 +1219,12 @@ def load_preopen_dashboard(
             candidate_source = "screen_cache_fallback"
             screen_cache_fallback_count = len(fallback_candidates)
     all_candidates, display_enriched_count = _enrich_candidates_from_screen_cache(market_key, all_candidates)
-    candidates = all_candidates[:limit]
+    raw_candidate_count = len(all_candidates)
+    candidates = all_candidates[:requested_limit]
     candidate_log_count = _line_count(log_path("candidates", market_key, session_date, mode=runtime_mode))
     candidate_total_count = max(
         int(state.get("candidate_count", 0) or 0) if isinstance(state, dict) else 0,
-        len(all_candidates),
-        candidate_log_count,
+        raw_candidate_count,
     )
     empty_reason = _empty_reason(state, candidates, rank_diff, outcome)
     display_provider = state.get("provider", "") if state else ""
@@ -1213,7 +1235,14 @@ def load_preopen_dashboard(
         display_source_status = "screen_cache_display_fallback"
         display_data_quality = "screen_cache_display"
     outcome_offsets = _outcome_offsets_for_display(market_key, session_date, all_candidates, outcome)
-    outcome_timeline = _build_outcome_timeline(market_key, candidates, outcome, outcome_offsets)
+    outcome_display_limit = max(requested_limit, _env_int("PREOPEN_OUTCOME_DISPLAY_LIMIT", 60))
+    outcome_candidates = all_candidates[:outcome_display_limit]
+    outcome_timeline = _build_outcome_timeline(market_key, outcome_candidates, outcome, outcome_offsets)
+    outcome_shortage_reason = _coverage_shortage_reason(
+        requested_limit=outcome_display_limit,
+        raw_candidate_count=raw_candidate_count,
+        displayed_count=len(outcome_timeline),
+    )
     scheduler_guidance = _scheduler_guidance(market_key, mode=runtime_mode, session_date=session_date)
     operator_status = _operator_status(
         session_date=session_date,
@@ -1223,6 +1252,10 @@ def load_preopen_dashboard(
         offsets=outcome_offsets,
         display_enriched_count=display_enriched_count,
         screen_cache_fallback_count=screen_cache_fallback_count,
+        requested_limit=outcome_display_limit,
+        raw_candidate_count=raw_candidate_count,
+        candidate_display_count=len(candidates),
+        outcome_display_count=len(outcome_timeline),
     )
     raw_status = (
         f"provider={display_provider or '-'} token={state.get('token_status', '') if state else '-'} "
@@ -1243,6 +1276,12 @@ def load_preopen_dashboard(
             "candidate_count": candidate_total_count,
             "candidate_total_count": candidate_total_count,
             "candidate_display_count": len(candidates),
+            "raw_candidate_count": raw_candidate_count,
+            "requested_display_limit": requested_limit,
+            "outcome_display_count": len(outcome_timeline),
+            "outcome_display_limit": outcome_display_limit,
+            "outcome_missing_display_count": max(0, outcome_display_limit - len(outcome_timeline)),
+            "outcome_shortage_reason": outcome_shortage_reason,
             "candidate_log_count": candidate_log_count,
             "candidate_source": candidate_source or "none",
             "display_enriched_count": display_enriched_count,

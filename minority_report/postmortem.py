@@ -56,19 +56,34 @@ def _extract_json(text: str) -> dict:
     raise ValueError(f"JSON 추출 실패: {text[:200]}")
 
 
-def _format_trade_log(trade_log: list) -> str:
+def _market_system_label(market: str) -> str:
+    return "미국 주식 자동매매 시스템" if str(market or "").upper() == "US" else "한국 주식 자동매매 시스템"
+
+
+def _format_prompt_pnl(row: dict) -> str:
+    if row.get("pnl_usd") is not None:
+        try:
+            return f"${float(row.get('pnl_usd') or 0):+,.2f}"
+        except Exception:
+            pass
+    try:
+        return f"{float(row.get('pnl', 0) or 0):+,.0f} KRW"
+    except Exception:
+        return "0 KRW"
+
+
+def _format_trade_log(trade_log: list, market: str = "") -> str:
     """체결 내역을 Claude 프롬프트용 텍스트로 변환한다."""
     if not trade_log:
         return "  (체결 없음)"
     lines = []
     for t in trade_log:
         side  = "매수" if t.get("side") == "buy" else "매도"
-        pnl   = t.get("pnl", 0)
-        pnl_s = f" PnL {pnl:+,}" if pnl else ""
+        pnl_s = f" PnL {_format_prompt_pnl(t)}" if t.get("pnl", 0) or t.get("pnl_usd") is not None else ""
         lines.append(
             f"  [{side}] {t.get('ticker','-')} {t.get('qty',0)}주"
             f"@{t.get('price', t.get('entry', 0)):,} "
-            f"전략:{t.get('strategy','-')}{pnl_s}"
+            f"시장:{str(market or t.get('market','-')).upper()} 전략:{t.get('strategy','-')}{pnl_s}"
         )
     return "\n".join(lines)
 
@@ -212,7 +227,8 @@ def run(market: str, date: str, today_judgment: dict,
 
     brain_summary = BrainDB.generate_prompt_summary(market)  # 실패해도 무시하지 않음
     selection_feedback = _recent_selection_feedback_section(market)
-    trade_section = _format_trade_log(trade_log)
+    market_label = _market_system_label(market)
+    trade_section = _format_trade_log(trade_log, market)
     decision_section = _format_decision_event_log(decision_event_log)
 
     sells  = [t for t in trade_log if t.get("side") == "sell" and "pnl" in t]
@@ -221,7 +237,7 @@ def run(market: str, date: str, today_judgment: dict,
 
     # 거래가 없는 날에는 판단 평가와 보정 지침만 작성한다.
     if not sells:
-        prompt = f"""당신은 한국 주식 자동매매 시스템의 장마감 사후분석 AI입니다.
+        prompt = f"""당신은 {market_label}의 장마감 사후분석 AI입니다.
 오늘은 체결된 매도 거래가 없습니다. 판단 적중 여부와 내일 보정 지침만 작성하세요.
 
 [오늘 판단 요약]
@@ -274,15 +290,15 @@ def run(market: str, date: str, today_judgment: dict,
         best = max(sells, key=lambda t: t.get("pnl_pct", t.get("pnl", 0)), default=None)
         worst = min(sells, key=lambda t: t.get("pnl_pct", t.get("pnl", 0)), default=None)
         best_s = (
-            f"{best['ticker']} {best.get('pnl_pct', 0):+.2f}% ({best['pnl']:+,}원) ({best.get('strategy','-')})"
+            f"{best['ticker']} {best.get('pnl_pct', 0):+.2f}% ({_format_prompt_pnl(best)}) ({best.get('strategy','-')})"
             if best else "없음"
         )
         worst_s = (
-            f"{worst['ticker']} {worst.get('pnl_pct', 0):+.2f}% ({worst['pnl']:+,}원) ({worst.get('strategy','-')})"
+            f"{worst['ticker']} {worst.get('pnl_pct', 0):+.2f}% ({_format_prompt_pnl(worst)}) ({worst.get('strategy','-')})"
             if worst else "없음"
         )
 
-        prompt = f"""당신은 한국 주식 자동매매 시스템의 장마감 사후분석 AI입니다.
+        prompt = f"""당신은 {market_label}의 장마감 사후분석 AI입니다.
 오늘 체결된 거래와 실제 시장 결과를 보고, 판단 정확도와 실행 품질을 같이 평가하세요.
 
 [오늘 판단 요약]
@@ -347,7 +363,10 @@ def run(market: str, date: str, today_judgment: dict,
 }}"""
 
     # 코드 기반 HIT/MISS 사전 계산 (Claude 응답 오염 제거)
-    market_chg = actual_result.get("market_change", 0)
+    try:
+        market_chg = float(actual_result.get("market_change"))
+    except Exception:
+        market_chg = 0.0
     code_bull    = _code_judge_hit_miss(judgments.get("bull",    {}).get("stance", "NEUTRAL"), market_chg)
     code_bear    = _code_judge_hit_miss(judgments.get("bear",    {}).get("stance", "NEUTRAL"), market_chg)
     code_neutral = _code_judge_hit_miss(judgments.get("neutral", {}).get("stance", "NEUTRAL"), market_chg)
@@ -371,6 +390,7 @@ def run(market: str, date: str, today_judgment: dict,
             market=market, call_date=date,
             model=MODEL,
             call_id=call_id,
+            prompt_version="postmortem_v2_market_scoped",
             parse_stage="raw",
             duration_ms=duration_ms,
             extra={"_raw_only": True},
@@ -385,6 +405,7 @@ def run(market: str, date: str, today_judgment: dict,
                 market=market, call_date=date,
                 model=MODEL,
                 call_id=call_id,
+                prompt_version="postmortem_v2_market_scoped",
                 parse_error=True,
                 parse_stage="parse_failed",
                 duration_ms=duration_ms,
@@ -398,6 +419,7 @@ def run(market: str, date: str, today_judgment: dict,
             market=market, call_date=date,
             model=MODEL,
             call_id=call_id,
+            prompt_version="postmortem_v2_market_scoped",
             parse_error=False,
             parse_stage="parsed",
             duration_ms=duration_ms,
@@ -460,12 +482,13 @@ def run(market: str, date: str, today_judgment: dict,
 
     policy_key_lesson = "" if pm.get("_system_error") else pm.get("key_lesson", "")
     policy_issue_type = "" if pm.get("_system_error") else pm.get("issue_type", "")
+    sell_count = int(actual_result.get("trades", len(sells)) or 0)
 
     BrainDB.add_daily_record(market, {
         "date":              date,
         "mode":              consensus_mode,
         "pnl_pct":           actual_result.get("pnl_pct", 0),
-        "market_change":     actual_result.get("market_change", 0),
+        "market_change":     market_chg,
         "win":               actual_result.get("win", False),
         "bull_result":       pm["bull_result"],
         "bear_result":       pm["bear_result"],
@@ -481,7 +504,7 @@ def run(market: str, date: str, today_judgment: dict,
         "best_trade":        pm.get("best_trade"),
         "worst_trade":       pm.get("worst_trade"),
         "worst_trade_reason": pm.get("worst_trade_reason", ""),
-        "trades":            len(trade_log),
+        "trades":            sell_count,
         "selection_feedback": BrainDB.get_recent_selection_feedback_text(market, days=20, max_chars=400),
     })
 
@@ -527,4 +550,3 @@ def run(market: str, date: str, today_judgment: dict,
     )
 
     return pm
-

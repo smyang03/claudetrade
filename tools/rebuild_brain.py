@@ -26,9 +26,11 @@ import argparse
 import glob
 import json
 import math
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).parent.parent
 
@@ -75,6 +77,23 @@ def _safe_float(v, default=0.0) -> float:
         return default
 
 
+def _infer_market_change(record: dict) -> Optional[float]:
+    patterns = (
+        r"(?:지수|S&P500|SP500|코스피|KOSPI)(?:\s*(?:intraday|장중|개장 대비))?\s*([+-]\d+(?:\.\d+)?)%",
+        r"(?:현재\s*)?(?:S&P500|SP500|코스피|KOSPI)\s*([+-]\d+(?:\.\d+)?)%",
+    )
+    for event in reversed(record.get("session_events", []) or []):
+        text = " ".join(
+            str(event.get(key, "") or "")
+            for key in ("reason", "trigger", "warning")
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, re.I)
+            if match:
+                return _safe_float(match.group(1), default=None)
+    return None
+
+
 def load_records(market: str) -> list[dict]:
     """daily_judgment 파일에서 유효 레코드 로드.
 
@@ -98,6 +117,8 @@ def load_records(market: str) -> list[dict]:
             bear_stance    = j.get("bear",    {}).get("stance", "")
             neutral_stance = j.get("neutral", {}).get("stance", "")
             market_change  = _safe_float(ar.get("market_change"), default=None)
+            if market_change is None:
+                market_change = _infer_market_change(d)
 
             if not bull_stance or market_change is None:
                 continue

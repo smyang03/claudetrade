@@ -1,0 +1,247 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+PLANB_CANCEL_CONFIDENCE_MIN = 0.75
+
+
+@dataclass
+class RouteDecision:
+    ticker: str
+    market: str
+    final_action: str
+    route: str | None = None
+    reason: str = ""
+    original_action: str = ""
+    demoted_to: str = ""
+    runtime_gate_reason: str = ""
+    runtime_gate: dict[str, Any] = field(default_factory=dict)
+    cancel_pathb: bool = False
+    suspend_pathb: bool = False
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ticker": self.ticker,
+            "market": self.market,
+            "final_action": self.final_action,
+            "route": self.route,
+            "reason": self.reason,
+            "original_action": self.original_action,
+            "demoted_to": self.demoted_to,
+            "runtime_gate_reason": self.runtime_gate_reason,
+            "runtime_gate": dict(self.runtime_gate),
+            "cancel_pathb": self.cancel_pathb,
+            "suspend_pathb": self.suspend_pathb,
+            "warnings": list(self.warnings),
+        }
+
+
+def has_pullback_target(price_targets: dict[str, Any] | None) -> bool:
+    targets = price_targets or {}
+    # Live PathB registration delegates to parse_plan_from_claude(), which needs a
+    # complete executable plan. Loose hints stay in WATCH instead of creating a
+    # wait run that fails later.
+    required = ("buy_zone_low", "buy_zone_high", "sell_target", "stop_loss", "hold_days", "confidence")
+    return all(targets.get(key) not in (None, "") for key in required)
+
+
+def route_candidate_action(
+    action: dict[str, Any],
+    *,
+    market: str,
+    gate_final_action: str | None = None,
+    gate_blocker: str | None = None,
+    has_local_position: bool = False,
+    has_broker_position: bool = False,
+    active_order_route: str | None = None,
+    pathb_waiting: bool = False,
+    pathb_active_order: bool = False,
+    add_enabled: bool = False,
+    overextended: bool = False,
+    data_quality: str = "good",
+    planb_cancel_confidence_min: float = PLANB_CANCEL_CONFIDENCE_MIN,
+    execution_context: dict[str, Any] | None = None,
+) -> RouteDecision:
+    ticker = str((action or {}).get("ticker") or "")
+    market_text = str(market or (action or {}).get("market") or "").upper()
+    requested = str((action or {}).get("action") or "WATCH")
+    confidence = float((action or {}).get("confidence") or 0.0)
+    price_targets = dict((action or {}).get("price_targets") or {})
+    context = dict(execution_context or {})
+
+    def _positive_float(value: Any) -> float:
+        try:
+            parsed = float(value)
+        except Exception:
+            return 0.0
+        return parsed if parsed > 0 else 0.0
+
+    current_price = _positive_float(
+        context.get("current_price")
+        or price_targets.get("current_price")
+        or price_targets.get("reference_price")
+    )
+    buy_zone_high = _positive_float(context.get("buy_zone_high") or price_targets.get("buy_zone_high"))
+    cancel_if_open_above = _positive_float(
+        context.get("cancel_if_open_above") or price_targets.get("cancel_if_open_above")
+    )
+    if context.get("overextended") is not None:
+        overextended = bool(context.get("overextended"))
+    elif str(context.get("momentum_state") or "").strip().lower() == "overextended":
+        overextended = True
+    else:
+        try:
+            ret_5m = float(context.get("ret_5m_pct"))
+            threshold = float(context.get("threshold_used"))
+            overextended = ret_5m >= threshold
+        except Exception:
+            pass
+    data_quality = str(context.get("data_quality") or data_quality or "good")
+
+    gate_context = {
+        key: context.get(key)
+        for key in (
+            "market",
+            "ticker",
+            "momentum_state",
+            "ret_5m_pct",
+            "threshold_used",
+            "pullback_from_high_pct",
+            "data_quality",
+        )
+        if context.get(key) is not None
+    }
+    if current_price > 0:
+        gate_context["current_price"] = current_price
+    if buy_zone_high > 0:
+        gate_context["buy_zone_high"] = buy_zone_high
+    if cancel_if_open_above > 0:
+        gate_context["cancel_if_open_above"] = cancel_if_open_above
+    gate_context["overextended"] = bool(overextended)
+
+    def _decision(
+        final_action: str,
+        *,
+        route: str | None = None,
+        reason: str = "",
+        cancel_pathb: bool = False,
+        suspend_pathb: bool = False,
+        warnings: list[str] | None = None,
+        demoted_to: str = "",
+        runtime_gate_reason: str = "",
+    ) -> RouteDecision:
+        gate_payload = dict(gate_context)
+        if runtime_gate_reason:
+            gate_payload["reason"] = runtime_gate_reason
+        if demoted_to:
+            gate_payload["demoted_to"] = demoted_to
+        return RouteDecision(
+            ticker,
+            market_text,
+            final_action,
+            route=route,
+            reason=reason,
+            original_action=requested,
+            demoted_to=demoted_to,
+            runtime_gate_reason=runtime_gate_reason,
+            runtime_gate=gate_payload,
+            cancel_pathb=cancel_pathb,
+            suspend_pathb=suspend_pathb,
+            warnings=list(warnings or []),
+        )
+
+    if gate_final_action == "HARD_BLOCK" or gate_blocker:
+        return _decision("HARD_BLOCK", reason=gate_blocker or "hard_safety")
+
+    if active_order_route:
+        return _decision(
+            "WATCH",
+            reason=f"active_order_lock:{active_order_route}",
+            warnings=["route_locked_by_active_order"],
+        )
+
+    if pathb_active_order and requested in {"PROBE_READY", "BUY_READY", "ADD_READY"}:
+        return _decision(
+            "WATCH",
+            reason="pathb_active_order_blocks_plana",
+            warnings=["same_ticker_route_lock"],
+        )
+
+    if requested == "PROBE_READY":
+        return _decision("PROBE_READY", route="PlanA.probe", reason="probe_ready")
+
+    if requested == "BUY_READY":
+        if current_price > 0 and cancel_if_open_above > 0 and current_price > cancel_if_open_above:
+            return _decision(
+                "WATCH",
+                reason="buy_ready_chase_blocked",
+                warnings=["runtime_gate_chase_blocked"],
+                demoted_to="WATCH",
+                runtime_gate_reason="chase_above_cancel",
+            )
+        if pathb_waiting:
+            good_data = str(data_quality or "").lower() in {"good", "normal", "ok"}
+            has_buy_zone_context = current_price > 0 and buy_zone_high > 0
+            pathb_price_allows_cancel = not has_buy_zone_context or current_price > buy_zone_high
+            if confidence >= float(planb_cancel_confidence_min) and not overextended and good_data and pathb_price_allows_cancel:
+                return _decision(
+                    "BUY_READY",
+                    route="PlanA.buy",
+                    reason="buy_ready_cancels_pathb_waiting",
+                    cancel_pathb=True,
+                )
+            keep_reason = "pathb_waiting_kept"
+            keep_warning = "buy_ready_not_confident_enough_to_cancel_pathb"
+            gate_reason = ""
+            if overextended:
+                keep_reason = "pathb_waiting_kept_overextended"
+                keep_warning = "buy_ready_overextended_keeps_pathb"
+                gate_reason = "overextended"
+            elif not good_data:
+                keep_reason = "pathb_waiting_kept_bad_data"
+                keep_warning = "buy_ready_bad_data_keeps_pathb"
+                gate_reason = "data_quality"
+            elif not pathb_price_allows_cancel:
+                keep_reason = "pathb_waiting_kept_inside_buy_zone"
+                keep_warning = "buy_ready_inside_pathb_buy_zone_keeps_wait"
+                gate_reason = "inside_buy_zone"
+            return _decision(
+                "WATCH",
+                reason=keep_reason,
+                warnings=[keep_warning],
+                demoted_to="WATCH",
+                runtime_gate_reason=gate_reason,
+            )
+        if overextended:
+            return _decision(
+                "PROBE_READY",
+                route="PlanA.probe",
+                reason="buy_ready_demoted_overextended",
+                warnings=["runtime_gate_overextended_demoted"],
+                demoted_to="PROBE_READY",
+                runtime_gate_reason="overextended",
+            )
+        return _decision("BUY_READY", route="PlanA.buy", reason="buy_ready")
+
+    if requested == "ADD_READY":
+        if not has_local_position or not has_broker_position:
+            return _decision("WATCH", reason="add_without_position")
+        if not add_enabled:
+            return _decision("WATCH", reason="add_shadow_only")
+        return _decision("ADD_READY", route="PlanA.add", reason="add_ready")
+
+    if requested == "PULLBACK_WAIT":
+        if not has_pullback_target(price_targets):
+            return _decision("WATCH", reason="missing_pullback_target")
+        return _decision("PULLBACK_WAIT", route="PathB.wait", reason="pullback_wait")
+
+    if requested == "AVOID":
+        return _decision("WATCH", reason="claude_avoid")
+
+    if requested == "EXPIRED":
+        return _decision("EXPIRED", reason="action_expired")
+
+    return _decision("WATCH", reason="watch")

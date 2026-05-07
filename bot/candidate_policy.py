@@ -246,6 +246,8 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
     if not max_position_pct and max_order_cap_pct:
         max_position_pct = dict(max_order_cap_pct)
     raw_price_targets = parsed.get("price_targets", {}) if isinstance(parsed.get("price_targets"), dict) else {}
+    raw_candidate_actions = parsed.get("candidate_actions", [])
+    candidate_actions = raw_candidate_actions if isinstance(raw_candidate_actions, list) else []
     price_targets = {}
     trade_ready_set = set(trade_ready)
     for key, value in raw_price_targets.items():
@@ -276,6 +278,7 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
         "risk_budget_pct": risk_budget_pct,
         "size_reason": {k: str(v) for k, v in size_reason.items()},
         "price_targets": price_targets,
+        "candidate_actions": candidate_actions,
         "_price_target_coverage": {
             "trade_ready_count": len(trade_ready),
             "price_target_count": len(price_targets),

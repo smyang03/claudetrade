@@ -44,11 +44,11 @@ def _safe_float(value, default: float = 0.0) -> float:
 
 
 def _preopen_top_n(market: str) -> int:
-    raw = os.getenv(f"PREOPEN_{market}_TOP_N", os.getenv("PREOPEN_TOP_N", "60" if market == "KR" else "50"))
+    raw = os.getenv(f"PREOPEN_{market}_TOP_N", os.getenv("PREOPEN_TOP_N", "60"))
     try:
         return max(1, int(raw))
     except Exception:
-        return 60 if market == "KR" else 50
+        return 60
 
 
 def _screen_mode(market: str) -> str:

@@ -19,7 +19,7 @@ import schedule
 from collections import deque
 from pathlib import Path
 from datetime import date, datetime, timedelta, time as dt_time
-from typing import Optional
+from typing import Any, Optional
 try:
     import psutil
 except Exception:  # pragma: no cover - optional dependency
@@ -146,6 +146,26 @@ from strategy.entry_priority import compute as entry_priority_score
 import strategy.param_tuner as _param_tuner
 from claude_memory import brain as BrainDB
 from runtime_paths import get_runtime_path
+from config.runtime_config import EffectiveRuntimeConfig
+from runtime.funnel_observability import append_funnel_event, candidate_trace_id
+from runtime.gate_evaluation import (
+    apply_size_cap_once,
+    build_judgment_gate_evaluation,
+    unconfirmed_soft_cap,
+)
+from runtime.candidate_actions import action_counts, candidate_actions_from_response
+from runtime.action_routing import route_candidate_action
+from runtime.candidate_pool_runtime import build_candidate_pool
+from runtime.exit_lifecycle import decide_exit_lifecycle
+from runtime.post_open_features import (
+    DEFAULT_OVEREXTENDED_5M_PCT,
+    OVEREXTENDED_5M_PCT_BY_MARKET,
+    append_feature_snapshot,
+    build_post_open_snapshot,
+    infer_momentum_state,
+    returns_from_price_history,
+)
+from runtime.pathb_reasons import normalize_pathb_decision_exit_reason
 from bot.candidate_health import CandidateHealthTracker, normalize_ticker as _candidate_health_ticker
 from bot.candidate_policy import filter_tradable_candidates, selection_limits
 from bot.entry_timing import EntryTimingTracker
@@ -508,7 +528,7 @@ def _mode_family(mode: str) -> str:
     normalized = str(mode or "").upper()
     if normalized in {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL"}:
         return "RISK_ON"
-    if not normalized or normalized in {"CAUTIOUS", "NEUTRAL"}:
+    if not normalized or normalized in {"BALANCED", "CAUTIOUS", "NEUTRAL"}:
         return "BALANCED"
     return "RISK_OFF"
 def _normalize_strategy_name(raw: str) -> str:
@@ -713,6 +733,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._last_entry_scan_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._last_rescreen_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self.entry_timing = EntryTimingTracker(runtime_mode=self._mode)
+        self.runtime_config = EffectiveRuntimeConfig.from_env(
+            runtime_mode=self._mode,
+            env_file=_dotenv_path,
+            start_config_path=os.getenv("V2_START_CONFIG_PATH", "config/v2_start_config.json"),
+        )
+        self._funnel_jsonl_enabled = self.runtime_config.get_bool("ENABLE_LIVE_FUNNEL_JSONL", True)
+        self._runtime_config_snapshot_path = ""
+        if self.runtime_config.get_bool("ENABLE_EFFECTIVE_CONFIG_SNAPSHOT", True):
+            try:
+                self._runtime_config_snapshot_path = str(self.runtime_config.write_redacted_snapshot(label=self._mode))
+                log.info(f"[config snapshot] {self._runtime_config_snapshot_path}")
+            except Exception as exc:
+                log.warning(f"[config snapshot failed] {exc}")
         self.shadow_audit = _ShadowAuditWriter.from_env(runtime_mode=self._mode) if _SHADOW_AUDIT_AVAILABLE else None
         if self.shadow_audit is not None:
             self.shadow_audit.start()
@@ -824,6 +857,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # WS tick 기반 장중 고가/저가 누적 — 당일봉 주입 시 단일가봉 탈출에 사용
         self._intraday_high: dict[str, float] = {}
         self._intraday_low:  dict[str, float] = {}
+        self._post_open_price_history: dict[str, list[dict]] = {}
+        self._post_open_anchor: dict[str, dict] = {}
+        self._post_open_feature_last_emit: dict[str, float] = {}
+        self._last_post_open_features_by_ticker: dict[str, dict[str, dict]] = {"KR": {}, "US": {}}
         # OR(opening range) state used by KR OR pullback entry.
         self._or_high: dict[str, float] = {}
         self._or_low: dict[str, float] = {}
@@ -2723,6 +2760,391 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             price_targets,
         )
         return normalized_meta
+
+    def _runtime_bool(self, key: str, default: bool = False) -> bool:
+        runtime_cfg = getattr(self, "runtime_config", None)
+        if runtime_cfg is not None and hasattr(runtime_cfg, "get_bool"):
+            return bool(runtime_cfg.get_bool(key, default))
+        value = os.getenv(key)
+        if value is None or str(value).strip() == "":
+            return bool(default)
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _runtime_float(self, key: str, default: float = 0.0) -> float:
+        runtime_cfg = getattr(self, "runtime_config", None)
+        if runtime_cfg is not None and hasattr(runtime_cfg, "get_float"):
+            return float(runtime_cfg.get_float(key, default))
+        value = os.getenv(key)
+        if value is None or str(value).strip() == "":
+            return float(default)
+        try:
+            return float(str(value).replace(",", ""))
+        except Exception:
+            return float(default)
+
+    def _normalize_candidate_actions_for_meta(self, market: str, meta: dict) -> tuple[list[dict], str]:
+        payload = {"candidate_actions": meta.get("candidate_actions")} if isinstance(meta.get("candidate_actions"), list) else meta
+        actions = candidate_actions_from_response(
+            payload,
+            market=market,
+            created_at=datetime.now(KST).replace(tzinfo=None).isoformat(timespec="seconds"),
+            source_prompt_id=str(meta.get("prompt_id") or ""),
+        )
+        source = "candidate_actions_v1" if isinstance(meta.get("candidate_actions"), list) else "legacy_selection_shadow"
+        return actions, source
+
+    def _candidate_action_expired(self, action: dict) -> bool:
+        expires_at = str((action or {}).get("expires_at") or "").strip()
+        if not expires_at:
+            return False
+        try:
+            return datetime.fromisoformat(expires_at.replace("Z", "+00:00")).replace(tzinfo=None) < datetime.now(KST).replace(tzinfo=None)
+        except Exception:
+            return False
+
+    def _candidate_action_size_cap_pct(self, action: dict) -> Optional[int]:
+        raw_intent = str((action or {}).get("size_intent") or "").strip().lower()
+        action_name = str((action or {}).get("action") or "").strip().upper()
+        if action_name == "PROBE_READY" and raw_intent in ("", "none", "normal"):
+            raw_intent = "probe"
+        if action_name == "ADD_READY" and raw_intent in ("", "none", "normal"):
+            raw_intent = "add"
+        ratio_key = {
+            "micro": "MICRO_SIZE_RATIO",
+            "probe": "PROBE_SIZE_RATIO",
+            "reduced": "REDUCED_SIZE_RATIO",
+            "add": "ADD_SIZE_RATIO",
+        }.get(raw_intent)
+        if not ratio_key:
+            return None
+        ratio = max(0.0, min(1.0, self._runtime_float(ratio_key, 0.0)))
+        if ratio <= 0:
+            return None
+        return max(1, min(100, int(round(ratio * 100))))
+
+    def _local_position_keys(self, market: str) -> set[str]:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        keys: set[str] = set()
+        for pos in list(getattr(getattr(self, "risk", None), "positions", []) or []):
+            ticker = str((pos or {}).get("ticker") or "").strip()
+            if not ticker:
+                continue
+            pos_market = str((pos or {}).get("market") or self._ticker_market(ticker) or market_key).upper()
+            if pos_market != market_key:
+                continue
+            keys.add(self._selection_ticker_key(market_key, ticker))
+        return keys
+
+    def _active_order_route_for_ticker(self, market: str, ticker: str) -> str:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        target_key = self._selection_ticker_key(market_key, ticker)
+        for order in list(getattr(self, "pending_orders", []) or []):
+            order_ticker = str((order or {}).get("ticker") or "").strip()
+            if not order_ticker:
+                continue
+            order_market = str((order or {}).get("market") or self._ticker_market(order_ticker) or market_key).upper()
+            if order_market != market_key:
+                continue
+            if self._selection_ticker_key(market_key, order_ticker) != target_key:
+                continue
+            if str((order or {}).get("path_type") or "") == "claude_price":
+                return "PathB"
+            return "PlanA"
+        return ""
+
+    def _pathb_route_state_for_ticker(self, market: str, ticker: str) -> dict:
+        pathb = getattr(self, "pathb", None)
+        if pathb is None or not hasattr(pathb, "_active_path_for_ticker"):
+            return {}
+        try:
+            run = pathb._active_path_for_ticker(market, ticker)
+        except Exception:
+            return {}
+        if not run:
+            return {}
+        status = str((run or {}).get("status") or "").upper()
+        return {
+            "path_run_id": str((run or {}).get("path_run_id") or ""),
+            "status": status,
+            "waiting": status in {"WAITING", "HIT"},
+            "active_order": status in {"ORDER_SENT", "ORDER_ACKED", "ORDER_UNKNOWN"},
+        }
+
+    def _candidate_action_runtime_execution_context(
+        self,
+        market: str,
+        ticker: str,
+        action: dict,
+        meta: dict,
+        price_targets: dict,
+    ) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+
+        def _num_or_none(value: Any) -> Optional[float]:
+            try:
+                if value in (None, ""):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        def _positive_or_none(value: Any) -> Optional[float]:
+            parsed = _num_or_none(value)
+            return parsed if parsed is not None and parsed > 0 else None
+
+        def _feature_for_ticker(raw: Any) -> dict:
+            if not isinstance(raw, dict):
+                return {}
+            for raw_key in (key, str(ticker or "").strip()):
+                value = raw.get(raw_key)
+                if isinstance(value, dict):
+                    return dict(value)
+            if market_key == "US":
+                for raw_key, value in raw.items():
+                    if str(raw_key or "").strip().upper() == key and isinstance(value, dict):
+                        return dict(value)
+            raw_ticker = raw.get("ticker")
+            if raw_ticker and self._selection_ticker_key(market_key, raw_ticker) == key:
+                return dict(raw)
+            return {}
+
+        features: dict[str, Any] = {}
+        action_features = (action or {}).get("post_open_features")
+        if isinstance(action_features, dict):
+            features.update(action_features)
+        for raw_map in (
+            (meta or {}).get("_post_open_features_by_ticker"),
+            (meta or {}).get("post_open_features_by_ticker"),
+            (meta or {}).get("post_open_features"),
+        ):
+            found = _feature_for_ticker(raw_map)
+            if found:
+                features.update(found)
+                break
+
+        target = dict((action or {}).get("price_targets") or {})
+        if not target:
+            target = self._selection_price_target_for_ticker(market_key, price_targets, key)
+
+        cache_raw = getattr(self, "price_cache_raw", {}) or {}
+        cache_krw = getattr(self, "price_cache", {}) or {}
+        current_price = (
+            _positive_or_none(features.get("current_price"))
+            or _positive_or_none((action or {}).get("current_price"))
+            or _positive_or_none(cache_raw.get(key))
+            or _positive_or_none(cache_raw.get(str(ticker or "").strip()))
+        )
+        if current_price is None and market_key == "KR":
+            current_price = _positive_or_none(cache_krw.get(key)) or _positive_or_none(cache_krw.get(str(ticker or "").strip()))
+        if current_price is None:
+            current_price = _positive_or_none(target.get("reference_price"))
+
+        ret_3m = _num_or_none(features.get("ret_3m_pct") or (action or {}).get("post_open_ret_3m_pct"))
+        ret_5m = _num_or_none(features.get("ret_5m_pct") or (action or {}).get("post_open_ret_5m_pct"))
+        ret_10m = _num_or_none(features.get("ret_10m_pct") or (action or {}).get("post_open_ret_10m_pct"))
+        ret_30m = _num_or_none(features.get("ret_30m_pct") or (action or {}).get("post_open_ret_30m_pct"))
+        pullback = _num_or_none(
+            features.get("pullback_from_high_pct")
+            or (action or {}).get("post_open_pullback_from_high_pct")
+        )
+        threshold = _num_or_none(
+            features.get("threshold_used")
+            or features.get("overextended_threshold")
+            or features.get("overextended_5m_pct")
+        )
+        if threshold is None:
+            threshold = float(OVEREXTENDED_5M_PCT_BY_MARKET.get(market_key, DEFAULT_OVEREXTENDED_5M_PCT))
+
+        momentum_state = str(
+            features.get("momentum_state")
+            or (action or {}).get("post_open_momentum_state")
+            or ""
+        ).strip().lower()
+        if not momentum_state and any(value is not None for value in (ret_3m, ret_5m, ret_10m, ret_30m, pullback)):
+            momentum_state = infer_momentum_state(
+                market=market_key,
+                ret_3m_pct=ret_3m,
+                ret_5m_pct=ret_5m,
+                ret_10m_pct=ret_10m,
+                ret_30m_pct=ret_30m,
+                pullback_from_high_pct=pullback,
+                overextended_5m_pct=threshold,
+            )
+
+        if momentum_state == "overextended":
+            overextended = True
+        elif momentum_state and momentum_state != "unknown":
+            overextended = False
+        else:
+            overextended = bool(ret_5m is not None and ret_5m >= threshold)
+        return {
+            "market": market_key,
+            "ticker": key,
+            "momentum_state": momentum_state or "unknown",
+            "overextended": overextended,
+            "ret_5m_pct": ret_5m,
+            "threshold_used": threshold,
+            "pullback_from_high_pct": pullback,
+            "data_quality": str(
+                features.get("data_quality")
+                or (action or {}).get("data_quality")
+                or (meta or {}).get("data_quality")
+                or "good"
+            ),
+            "current_price": current_price,
+            "buy_zone_high": _positive_or_none(target.get("buy_zone_high")),
+            "cancel_if_open_above": _positive_or_none(target.get("cancel_if_open_above")),
+        }
+
+    def _apply_candidate_action_live_routes(self, market: str, meta: dict) -> dict:
+        normalized_meta = dict(meta or {})
+        actions = list(normalized_meta.get("candidate_actions") or [])
+        if not actions:
+            return normalized_meta
+        if not (
+            self._runtime_bool("ENABLE_CLAUDE_CANDIDATE_ACTIONS", False)
+            and self._runtime_bool("ENABLE_ACTION_ROUTING", False)
+        ):
+            return normalized_meta
+
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        held = self._local_position_keys(market_key)
+        add_enabled = self._runtime_bool("ENABLE_ADD_READY_LIVE", False)
+        planb_conf_min = self._runtime_float("PLANB_CANCEL_CONFIDENCE_MIN", 0.75)
+        watchlist = list(dict.fromkeys(normalized_meta.get("watchlist") or []))
+        watch_keys = {self._selection_ticker_key(market_key, ticker) for ticker in watchlist}
+        plan_a_ready: list[str] = []
+        pathb_wait: list[str] = []
+        pathb_targets: dict[str, dict] = {}
+        action_routes: list[dict] = []
+        allocation_intent = dict(normalized_meta.get("allocation_intent") or {})
+        max_order_cap_pct = dict(normalized_meta.get("max_order_cap_pct") or {})
+        size_reason = dict(normalized_meta.get("size_reason") or {})
+        price_targets = dict(normalized_meta.get("price_targets") or {})
+
+        for action in actions:
+            ticker = str((action or {}).get("ticker") or "").strip()
+            if not ticker:
+                continue
+            key = self._selection_ticker_key(market_key, ticker)
+            if key not in watch_keys:
+                requested_action = str((action or {}).get("action") or "")
+                route_payload = {
+                    "ticker": key,
+                    "market": market_key,
+                    "final_action": "HARD_BLOCK",
+                    "route": None,
+                    "reason": "off_list_action",
+                    "blocker": "off_list_action",
+                    "requested_action": requested_action,
+                    "claude_action": requested_action,
+                    "pathb_status": "",
+                    "warnings": ["candidate_action_ticker_not_in_watchlist"],
+                }
+                action_routes.append(route_payload)
+                try:
+                    self._write_funnel_event(
+                        "gate_evaluation",
+                        market_key,
+                        {
+                            "candidate_trace_id": self._candidate_trace_id(market_key, key),
+                            "ticker": key,
+                            "claude_action": requested_action,
+                            "final_action": "HARD_BLOCK",
+                            "blocker": "off_list_action",
+                            "hard_safety": {"passed": False, "reason": "off_list_action"},
+                            "route_lock": {"passed": False, "reason": "off_list_action"},
+                            "warnings": ["candidate_action_ticker_not_in_watchlist"],
+                        },
+                    )
+                except Exception:
+                    pass
+                continue
+            route_state = self._pathb_route_state_for_ticker(market_key, key)
+            active_route = self._active_order_route_for_ticker(market_key, key)
+            action_for_route = dict(action)
+            if self._candidate_action_expired(action_for_route):
+                action_for_route["action"] = "EXPIRED"
+            execution_context = self._candidate_action_runtime_execution_context(
+                market_key,
+                key,
+                action_for_route,
+                normalized_meta,
+                price_targets,
+            )
+            decision = route_candidate_action(
+                action_for_route,
+                market=market_key,
+                has_local_position=key in held,
+                has_broker_position=key in held,
+                active_order_route=active_route,
+                pathb_waiting=bool(route_state.get("waiting")),
+                pathb_active_order=bool(route_state.get("active_order")),
+                add_enabled=add_enabled,
+                planb_cancel_confidence_min=planb_conf_min,
+                execution_context=execution_context,
+            )
+            route_payload = decision.to_dict()
+            route_payload["requested_action"] = str((action or {}).get("action") or "")
+            route_payload["pathb_status"] = route_state.get("status", "")
+            if decision.cancel_pathb and route_state.get("waiting"):
+                pathb = getattr(self, "pathb", None)
+                if pathb is not None and hasattr(pathb, "cancel_waiting_for_ticker"):
+                    try:
+                        route_payload["pathb_cancelled"] = int(
+                            pathb.cancel_waiting_for_ticker(
+                                market_key,
+                                key,
+                                reason="candidate_action_buy_ready",
+                            )
+                        )
+                    except Exception as exc:
+                        route_payload["pathb_cancel_error"] = str(exc)
+            action_routes.append(route_payload)
+
+            if decision.final_action in {"PROBE_READY", "BUY_READY", "ADD_READY"}:
+                plan_a_ready.append(key)
+                if decision.final_action == "PROBE_READY":
+                    allocation_intent[key] = "probe"
+                elif decision.final_action == "ADD_READY":
+                    allocation_intent[key] = "add"
+                else:
+                    allocation_intent.setdefault(key, str((action or {}).get("size_intent") or "normal"))
+                cap_pct = self._candidate_action_size_cap_pct(action)
+                if cap_pct is not None:
+                    existing_cap = max_order_cap_pct.get(key)
+                    try:
+                        existing_cap_int = int(float(existing_cap))
+                    except Exception:
+                        existing_cap_int = 0
+                    max_order_cap_pct[key] = min(existing_cap_int, cap_pct) if existing_cap_int > 0 else cap_pct
+                reason = str((action or {}).get("reason") or decision.reason or "").strip()
+                if reason:
+                    size_reason[key] = reason
+                target = dict((action or {}).get("price_targets") or {})
+                if target:
+                    price_targets[key] = target
+            elif decision.final_action == "PULLBACK_WAIT":
+                pathb_wait.append(key)
+                target = dict((action or {}).get("price_targets") or {})
+                if target:
+                    pathb_targets[key] = target
+
+        normalized_meta["watchlist"] = watchlist
+        normalized_meta["trade_ready"] = list(dict.fromkeys(plan_a_ready))
+        normalized_meta["allocation_intent"] = allocation_intent
+        normalized_meta["max_order_cap_pct"] = max_order_cap_pct
+        normalized_meta["size_reason"] = size_reason
+        normalized_meta["price_targets"] = price_targets
+        normalized_meta["_trade_ready_without_price_targets_allowed"] = list(dict.fromkeys(plan_a_ready))
+        normalized_meta["_candidate_action_routes"] = action_routes
+        normalized_meta["_candidate_action_plan_a_ready"] = list(dict.fromkeys(plan_a_ready))
+        normalized_meta["_pathb_wait_tickers"] = list(dict.fromkeys(pathb_wait))
+        normalized_meta["_pathb_price_targets"] = pathb_targets
+        normalized_meta["_pathb_registration_scope"] = "candidate_actions_wait_only"
+        return normalized_meta
+
     def _v2_prompt_version(self) -> str:
         return self.v2.prompt_version() if getattr(self, "v2", None) is not None else str(os.getenv("PROMPT_VERSION", "v2") or "v2")
     def _market_enabled(self, market: str) -> bool:
@@ -2878,6 +3300,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         pnl_krw: float | None = None,
         pnl_pct: float | None = None,
         occurred_at: str | None = None,
+        suppress_market_count: bool = False,
     ) -> int:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         ticker_key = str(ticker or "").strip()
@@ -2907,6 +3330,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
             return count
         seen.add(event_key)
+        if suppress_market_count:
+            log.warning(
+                f"[stop cluster ticker-only] {market_key} count={count} "
+                f"ticker={ticker_key} reason={reason or 'stop'}"
+            )
+            return count
         self._daily_sl_count[market_key] = int(self._daily_sl_count.get(market_key, 0) or 0) + 1
         self._daily_sl_last_at[market_key] = datetime.now(KST)
         count = int(self._daily_sl_count.get(market_key, 0) or 0)
@@ -3303,6 +3732,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "size_reason": {},
             }
         mode = str(mode or (self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
+        candidate_actions, candidate_actions_source = self._normalize_candidate_actions_for_meta(market, meta)
+        meta["candidate_actions"] = candidate_actions
+        meta["_candidate_actions_source"] = candidate_actions_source
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        last_post_open = (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key)
+        if isinstance(last_post_open, dict) and last_post_open and not meta.get("_post_open_features_by_ticker"):
+            meta["_post_open_features_by_ticker"] = dict(last_post_open)
+        meta = self._apply_candidate_action_live_routes(market, meta)
         meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
         allow_missing_price_targets = meta.get("_trade_ready_without_price_targets_allowed") or []
         meta = self._enforce_trade_ready_price_targets(
@@ -3343,9 +3780,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "stages": stages,
             }},
         )
+        self._record_candidate_funnel_snapshot(
+            market,
+            selected=list(selected or []),
+            meta=meta,
+            stages=stages,
+        )
         self.selection_meta[market] = meta
         self.trade_ready_tickers[market] = list(meta.get("trade_ready") or [])
-        v2_ids = self._v2_register_trade_ready(market, meta)
+        v2_meta = meta
+        if meta.get("_pathb_wait_tickers"):
+            v2_meta = {
+                **meta,
+                "trade_ready": list(dict.fromkeys(list(meta.get("trade_ready") or []) + list(meta.get("_pathb_wait_tickers") or []))),
+                "price_targets": {
+                    **(meta.get("price_targets") or {}),
+                    **(meta.get("_pathb_price_targets") or {}),
+                },
+            }
+        v2_ids = self._v2_register_trade_ready(market, v2_meta)
         if v2_ids:
             meta["v2_decision_ids"] = v2_ids
             self.selection_meta[market] = meta
@@ -4904,6 +5357,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 return "high", atr_pct
             return "extreme", atr_pct
         enriched_rows = []
+        post_open_features_by_ticker: dict[str, dict] = {}
         for candidate in candidates:
             row = dict(candidate or {})
             ticker = str(row.get("ticker", "") or "").strip().upper()
@@ -4997,7 +5451,65 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 row["kr_momentum_shrink_signals"] = list(shrink_signals)
             except Exception:
                 pass
+            try:
+                runtime_cfg = getattr(self, "runtime_config", None)
+                post_open_enabled = True
+                if runtime_cfg is not None:
+                    post_open_enabled = bool(
+                        runtime_cfg.get_bool("ENABLE_POST_OPEN_FEATURES_SHADOW", True)
+                        or runtime_cfg.get_bool("ENABLE_POST_OPEN_FEATURES", False)
+                    )
+                if post_open_enabled:
+                    raw_px = self._positive_float_or_none(
+                        row.get("price")
+                        or getattr(self, "price_cache_raw", {}).get(ticker)
+                        or getattr(self, "price_cache", {}).get(ticker)
+                    )
+                    if raw_px:
+                        self._observe_post_open_price(market_key, ticker, raw_px, source="candidate_annotation")
+                        po_key = self._post_open_key(market_key, ticker)
+                        anchor = self._post_open_anchor.get(po_key) or {}
+                        anchor_price = float(anchor.get("anchor_price") or 0.0)
+                        if anchor_price > 0:
+                            known = datetime.now(KST).replace(tzinfo=None)
+                            history = self._post_open_price_history.get(po_key, [])
+                            po_returns = returns_from_price_history(
+                                history,
+                                anchor_at=anchor.get("anchor_at"),
+                                anchor_price=anchor_price,
+                                known_at=known.isoformat(timespec="seconds"),
+                            )
+                            high = self._positive_float_or_none((getattr(self, "_intraday_high", {}) or {}).get(ticker))
+                            if not high and history:
+                                high = max(float(item.get("price") or 0.0) for item in history)
+                            po_snapshot = build_post_open_snapshot(
+                                market=market_key,
+                                ticker=ticker,
+                                known_at=known.isoformat(timespec="seconds"),
+                                anchor_at=anchor.get("anchor_at"),
+                                anchor_price=anchor_price,
+                                current_price=float(raw_px),
+                                returns=po_returns,
+                                open_high=high,
+                                opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(ticker)),
+                                data_quality=str(anchor.get("anchor_source") or "partial"),
+                            ).to_dict()
+                            row["post_open_features"] = po_snapshot
+                            row["post_open_momentum_state"] = po_snapshot.get("momentum_state")
+                            row["post_open_ret_3m_pct"] = po_snapshot.get("ret_3m_pct")
+                            row["post_open_ret_5m_pct"] = po_snapshot.get("ret_5m_pct")
+                            row["post_open_ret_10m_pct"] = po_snapshot.get("ret_10m_pct")
+                            row["post_open_ret_30m_pct"] = po_snapshot.get("ret_30m_pct")
+                            row["post_open_pullback_from_high_pct"] = po_snapshot.get("pullback_from_high_pct")
+                            post_open_features_by_ticker[self._selection_ticker_key(market_key, ticker)] = dict(po_snapshot)
+            except Exception:
+                pass
             enriched_rows.append(row)
+        store = getattr(self, "_last_post_open_features_by_ticker", None)
+        if not isinstance(store, dict):
+            store = {"KR": {}, "US": {}}
+        store[market_key] = dict(post_open_features_by_ticker)
+        self._last_post_open_features_by_ticker = store
         return enriched_rows
     def _is_entry_priority_blocked(self, score: float, market: str = "") -> bool:
         cutoff = self._effective_entry_priority_cutoff(market) if market else self._effective_entry_priority_cutoff()
@@ -5412,6 +5924,428 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             pass
         return {**pos, "mode": mode}
+
+    def _funnel_jsonl_is_enabled(self) -> bool:
+        return bool(getattr(self, "_funnel_jsonl_enabled", False))
+
+    def _candidate_trace_id(self, market: str, ticker: str, first_seen_at=None) -> str:
+        try:
+            session_date = self._current_session_date_str(market)
+        except Exception:
+            session_date = date.today().isoformat()
+        cycle_id = f"cycle_{int(time.time())}"
+        return candidate_trace_id(
+            session_date=session_date,
+            market=market,
+            ticker=ticker,
+            first_seen_at=first_seen_at,
+            cycle_id=cycle_id,
+        )
+
+    def _write_funnel_event(self, event_type: str, market: str, payload: dict) -> None:
+        if not self._funnel_jsonl_is_enabled():
+            return
+        try:
+            session_date = self._current_session_date_str(market)
+        except Exception:
+            session_date = date.today().isoformat()
+        try:
+            append_funnel_event(
+                event_type=event_type,
+                session_date=session_date,
+                market=market,
+                payload=payload,
+            )
+        except Exception as exc:
+            log.debug(f"[funnel jsonl write failed] {event_type} {market}: {exc}")
+
+    def _record_cycle_latency(self, market: str, started_at: float, *, stage: str, reason: str = "") -> None:
+        elapsed_ms = max(0.0, (time.perf_counter() - float(started_at or time.perf_counter())) * 1000.0)
+        baseline_ms = self._runtime_float("LIVE_CYCLE_BASELINE_P95_MS", 0.0)
+        hard_ms = self._runtime_float("CANDIDATE_CYCLE_MAX_MS", 25000.0)
+        alert_mult = self._runtime_float("CYCLE_LATENCY_ALERT_MULT", 2.0)
+        threshold_ms = hard_ms
+        if baseline_ms > 0:
+            threshold_ms = min(threshold_ms, baseline_ms * max(1.0, alert_mult))
+        payload = {
+            "stage": stage,
+            "reason": reason,
+            "elapsed_ms": round(elapsed_ms, 3),
+            "baseline_p95_ms": round(baseline_ms, 3) if baseline_ms > 0 else None,
+            "threshold_ms": round(threshold_ms, 3),
+            "alert": elapsed_ms > threshold_ms,
+        }
+        self._write_funnel_event("candidate_cycle_latency", market, payload)
+        if not payload["alert"]:
+            return
+        now = time.time()
+        if not hasattr(self, "_cycle_latency_alert_last_at"):
+            self._cycle_latency_alert_last_at = {}
+        last = float(self._cycle_latency_alert_last_at.get(market, 0.0) or 0.0)
+        throttle = self._runtime_float("CYCLE_LATENCY_ALERT_THROTTLE_SEC", 900.0)
+        if now - last < throttle:
+            return
+        self._cycle_latency_alert_last_at[market] = now
+        try:
+            system_alert(
+                f"{market} candidate cycle latency",
+                [
+                    f"stage={stage}",
+                    f"elapsed_ms={elapsed_ms:.0f}",
+                    f"threshold_ms={threshold_ms:.0f}",
+                    f"reason={reason or 'none'}",
+                ],
+                icon="⚠️",
+            )
+        except Exception as exc:
+            log.debug(f"[cycle latency alert failed] {market}: {exc}")
+
+    def _post_open_key(self, market: str, ticker: str) -> str:
+        ticker_text = str(ticker or "").strip()
+        if str(market).upper() == "US":
+            ticker_text = ticker_text.upper()
+        return f"{str(market).upper()}:{ticker_text}"
+
+    def _ensure_post_open_tracking(self) -> None:
+        if not hasattr(self, "_post_open_price_history"):
+            self._post_open_price_history = {}
+        if not hasattr(self, "_post_open_anchor"):
+            self._post_open_anchor = {}
+        if not hasattr(self, "_post_open_feature_last_emit"):
+            self._post_open_feature_last_emit = {}
+
+    def _reset_session_live_caches(self, market: str, selected: list[str]) -> None:
+        for attr in (
+            "_intraday_high",
+            "_intraday_low",
+            "_or_high",
+            "_or_low",
+            "_or_formed",
+        ):
+            if not isinstance(getattr(self, attr, None), dict):
+                setattr(self, attr, {})
+        self._ensure_post_open_tracking()
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        for ticker in list(dict.fromkeys(selected or [])):
+            raw_key = str(ticker or "").strip()
+            if not raw_key:
+                continue
+            ticker_key = self._selection_ticker_key(market_key, raw_key)
+            for cache_key in list(dict.fromkeys([raw_key, ticker_key])):
+                self._intraday_high.pop(cache_key, None)
+                self._intraday_low.pop(cache_key, None)
+                self._or_high.pop(cache_key, None)
+                self._or_low.pop(cache_key, None)
+                self._or_formed.pop(cache_key, None)
+            _po_key = self._post_open_key(market_key, ticker_key)
+            self._post_open_price_history.pop(_po_key, None)
+            self._post_open_anchor.pop(_po_key, None)
+            self._post_open_feature_last_emit.pop(_po_key, None)
+
+    def _observe_post_open_price(
+        self,
+        market: str,
+        ticker: str,
+        raw_price: float,
+        *,
+        observed_at: Optional[datetime] = None,
+        preopen_meta: Optional[dict] = None,
+        source: str = "run_cycle",
+    ) -> None:
+        if float(raw_price or 0.0) <= 0:
+            return
+        self._ensure_post_open_tracking()
+        market_key = str(market or "").upper()
+        key = self._post_open_key(market_key, ticker)
+        observed = observed_at or datetime.now(KST)
+        if observed.tzinfo is not None:
+            observed = observed.astimezone(KST).replace(tzinfo=None)
+        anchor = self._post_open_anchor.get(key)
+        if not anchor:
+            session_date = self._current_session_date_str(market_key)
+            regular_open = self._market_regular_open_dt(market_key, session_date=session_date).astimezone(KST).replace(tzinfo=None)
+            meta = dict(preopen_meta or {})
+            anchor_price = self._positive_float_or_none(
+                meta.get("preopen_anchor_price")
+                or meta.get("anchor_price")
+                or meta.get("open_price")
+            )
+            anchor_source = "preopen_anchor" if anchor_price else "first_observed"
+            if not anchor_price:
+                anchor_price = float(raw_price)
+                regular_open = observed
+            anchor = {
+                "anchor_at": regular_open.isoformat(timespec="seconds"),
+                "anchor_price": float(anchor_price),
+                "anchor_source": anchor_source,
+            }
+            self._post_open_anchor[key] = anchor
+        history = self._post_open_price_history.setdefault(key, [])
+        if not history or (observed - datetime.fromisoformat(history[-1]["ts"])).total_seconds() >= 10:
+            history.append({
+                "ts": observed.isoformat(timespec="seconds"),
+                "price": float(raw_price),
+                "source": source,
+            })
+            if len(history) > 240:
+                del history[:-240]
+
+    def _maybe_record_post_open_feature_snapshot(
+        self,
+        market: str,
+        ticker: str,
+        raw_price: float,
+        *,
+        price_info: Optional[dict] = None,
+        preopen_meta: Optional[dict] = None,
+        source: str = "run_cycle",
+    ) -> None:
+        runtime_cfg = getattr(self, "runtime_config", None)
+        shadow_enabled = True
+        live_enabled = False
+        if runtime_cfg is not None:
+            shadow_enabled = runtime_cfg.get_bool("ENABLE_POST_OPEN_FEATURES_SHADOW", True)
+            live_enabled = runtime_cfg.get_bool("ENABLE_POST_OPEN_FEATURES", False)
+        if not (shadow_enabled or live_enabled):
+            return
+        self._ensure_post_open_tracking()
+        market_key = str(market or "").upper()
+        key = self._post_open_key(market_key, ticker)
+        now_ts = time.time()
+        min_interval = 60
+        if runtime_cfg is not None:
+            min_interval = runtime_cfg.get_int("POST_OPEN_FEATURE_SNAPSHOT_MIN_INTERVAL_SEC", 60)
+        if now_ts - float(self._post_open_feature_last_emit.get(key, 0.0) or 0.0) < max(5, min_interval):
+            return
+        known = datetime.now(KST).replace(tzinfo=None)
+        self._observe_post_open_price(
+            market_key,
+            ticker,
+            raw_price,
+            observed_at=known,
+            preopen_meta=preopen_meta,
+            source=source,
+        )
+        anchor = self._post_open_anchor.get(key) or {}
+        anchor_price = float(anchor.get("anchor_price") or 0.0)
+        if anchor_price <= 0:
+            return
+        history = self._post_open_price_history.get(key, [])
+        returns = returns_from_price_history(
+            history,
+            anchor_at=anchor.get("anchor_at"),
+            anchor_price=anchor_price,
+            known_at=known.isoformat(timespec="seconds"),
+        )
+        high = self._positive_float_or_none((getattr(self, "_intraday_high", {}) or {}).get(str(ticker)))
+        if not high:
+            prices = [float(item.get("price") or 0.0) for item in history]
+            high = max(prices) if prices else None
+        price_info = dict(price_info or {})
+        snapshot = build_post_open_snapshot(
+            market=market_key,
+            ticker=ticker,
+            known_at=known.isoformat(timespec="seconds"),
+            anchor_at=anchor.get("anchor_at"),
+            anchor_price=anchor_price,
+            current_price=float(raw_price),
+            returns=returns,
+            open_high=high,
+            opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(str(ticker))),
+            volume_ratio_open=self._positive_float_or_none(price_info.get("volume_ratio_open")),
+            bid=self._positive_float_or_none(price_info.get("bid") or price_info.get("bid_price")),
+            ask=self._positive_float_or_none(price_info.get("ask") or price_info.get("ask_price")),
+            data_quality=str(anchor.get("anchor_source") or "partial"),
+        )
+        payload = snapshot.to_dict()
+        payload.update({
+            "source": source,
+            "shadow": not live_enabled,
+            "history_points": len(history),
+            "anchor_source": anchor.get("anchor_source", ""),
+        })
+        self._write_funnel_event("post_open_feature_snapshot", market_key, payload)
+        if runtime_cfg is None or runtime_cfg.get_bool("ENABLE_POST_OPEN_FEATURE_JSONL", True):
+            try:
+                append_feature_snapshot(snapshot)
+            except Exception as exc:
+                log.debug(f"[post_open_feature jsonl failed] {market_key} {ticker}: {exc}")
+        self._post_open_feature_last_emit[key] = now_ts
+
+    def _record_judgment_gate_event(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        judgment_gate_ok: bool,
+        judgment_gate_reason: str,
+        price: float = 0.0,
+        mode: str = "",
+        extra: Optional[dict] = None,
+    ) -> None:
+        gate = build_judgment_gate_evaluation(
+            market=market,
+            ticker=ticker,
+            judgment_gate_ok=judgment_gate_ok,
+            judgment_gate_reason=judgment_gate_reason,
+            cap_pct=_UNCONFIRMED_ENTRY_SIZE_CAP_PCT,
+        )
+        payload = gate.to_dict()
+        payload.update({
+            "candidate_trace_id": self._candidate_trace_id(market, ticker),
+            "price": float(price or 0.0),
+            "mode": mode,
+        })
+        if extra:
+            payload.update(extra)
+        self._write_funnel_event("gate_evaluation", market, payload)
+
+    def _record_candidate_funnel_snapshot(
+        self,
+        market: str,
+        *,
+        selected: list[str],
+        meta: dict,
+        stages: dict,
+    ) -> None:
+        watchlist = list((meta or {}).get("watchlist") or selected or [])
+        trade_ready = list((meta or {}).get("trade_ready") or [])
+        runtime_filtered = dict((meta or {}).get("_runtime_filtered_trade_ready") or {})
+        coverage = dict((meta or {}).get("_price_target_coverage") or {})
+        candidate_actions = list((meta or {}).get("candidate_actions") or [])
+        full_pool_count = (meta or {}).get("_full_pool_count")
+        prompt_pool_count = (meta or {}).get("_prompt_pool_count")
+        excluded_from_prompt = list((meta or {}).get("_excluded_from_prompt") or [])
+        deferred_sources = list((meta or {}).get("_deferred_sources") or [])
+        if prompt_pool_count is None:
+            prompt_pool_count = len(watchlist)
+        pool_separation_state = "separated"
+        if full_pool_count is None:
+            pool_separation_state = "legacy_prompt_only"
+        runtime_cfg = getattr(self, "runtime_config", None)
+        pool_shadow_enabled = False
+        if runtime_cfg is not None:
+            pool_shadow_enabled = bool(
+                runtime_cfg.get_bool("ENABLE_UNIFIED_CANDIDATE_POOL_SHADOW", True)
+                or runtime_cfg.get_bool("ENABLE_UNIFIED_CANDIDATE_POOL", False)
+            )
+        if pool_shadow_enabled:
+            try:
+                trade_ready_set = set(str(t).upper() if market == "US" else str(t) for t in trade_ready)
+                raw_pool = []
+                for idx, ticker in enumerate(watchlist, start=1):
+                    key = str(ticker).upper() if market == "US" else str(ticker)
+                    raw_pool.append({
+                        "ticker": key,
+                        "market": market,
+                        "source": "base_universe",
+                        "source_rank": idx,
+                        "source_score": 1.0 if key in trade_ready_set else 0.1,
+                        "screen_bucket": "trade_ready" if key in trade_ready_set else "watch",
+                    })
+                prompt_cap = runtime_cfg.get_int(f"{market}_PROMPT_POOL_CAP", runtime_cfg.get_int("PROMPT_POOL_CAP", 30))
+                pool_result = build_candidate_pool(raw_pool, market=market, prompt_cap=prompt_cap)
+                full_pool_count = len(pool_result.full_pool)
+                prompt_pool_count = len(pool_result.prompt_pool)
+                excluded_from_prompt = pool_result.excluded_from_prompt
+                deferred_sources = pool_result.deferred_sources
+                pool_separation_state = "unified_pool_shadow_legacy_input"
+            except Exception as exc:
+                pool_separation_state = "unified_pool_shadow_failed"
+                excluded_from_prompt.append({"reason": "pool_shadow_error", "detail": str(exc)})
+        payload = {
+            "full_pool_count": full_pool_count,
+            "prompt_pool_count": prompt_pool_count,
+            "pool_separation_state": pool_separation_state,
+            "excluded_from_prompt": excluded_from_prompt,
+            "deferred_sources": deferred_sources,
+            "execution_pool_count": len(trade_ready),
+            "watchlist_count": len(watchlist),
+            "trade_ready_count": len(trade_ready),
+            "candidate_action_counts": action_counts(candidate_actions),
+            "candidate_actions_source": (meta or {}).get("_candidate_actions_source", ""),
+            "runtime_filtered_count": len(runtime_filtered),
+            "runtime_filtered": runtime_filtered,
+            "price_target_coverage": coverage,
+            "candidate_action_routes": list((meta or {}).get("_candidate_action_routes") or []),
+            "pathb_wait_tickers": list((meta or {}).get("_pathb_wait_tickers") or []),
+            "selection_stages": stages,
+        }
+        self._write_funnel_event("candidate_funnel_snapshot", market, payload)
+        route_shadow_enabled = False
+        if runtime_cfg is not None:
+            route_shadow_enabled = bool(
+                runtime_cfg.get_bool("ENABLE_ACTION_ROUTING_SHADOW", True)
+                or runtime_cfg.get_bool("ENABLE_ACTION_ROUTING", False)
+            )
+        if route_shadow_enabled and candidate_actions:
+            held = {
+                str((pos or {}).get("ticker") or "").upper() if market == "US" else str((pos or {}).get("ticker") or "")
+                for pos in list(getattr(getattr(self, "risk", None), "positions", []) or [])
+            }
+            routing = []
+            for action in candidate_actions:
+                ticker_key = str((action or {}).get("ticker") or "")
+                lookup = ticker_key.upper() if market == "US" else ticker_key
+                decision = route_candidate_action(
+                    dict(action or {}),
+                    market=market,
+                    has_local_position=lookup in held,
+                    has_broker_position=lookup in held,
+                    add_enabled=runtime_cfg.get_bool("ENABLE_ADD_READY_LIVE", False),
+                    overextended="overextended" in [
+                        str(tag).lower()
+                        for tag in ((action or {}).get("risk_tags") or [])
+                    ],
+                )
+                routing.append(decision.to_dict())
+            self._write_funnel_event(
+                "action_routing_shadow",
+                market,
+                {
+                    "route_count": len(routing),
+                    "routes": routing,
+                },
+            )
+        quality_report = (meta or {}).get("candidate_quality_report")
+        if isinstance(quality_report, dict) and quality_report:
+            self._write_funnel_event("candidate_quality_report", market, quality_report)
+
+    def _apply_unconfirmed_phase_size_cap(
+        self,
+        market: str,
+        ticker: str,
+        effective_size: int,
+        *,
+        judgment_gate_reason: str = "ok_unconfirmed",
+    ) -> tuple[int, bool]:
+        soft_cap = unconfirmed_soft_cap(judgment_gate_reason, cap_pct=_UNCONFIRMED_ENTRY_SIZE_CAP_PCT)
+        capped_size, applied = apply_size_cap_once(
+            effective_size,
+            size_cap_pct=soft_cap.get("size_cap_pct"),
+        )
+        if applied:
+            self._write_funnel_event(
+                "gate_evaluation",
+                market,
+                {
+                    "candidate_trace_id": self._candidate_trace_id(market, ticker),
+                    "ticker": ticker,
+                    "final_action": "SIZE_CAP",
+                    "blocker": None,
+                    "soft_safety": {
+                        "passed": True,
+                        "size_cap_pct": soft_cap.get("size_cap_pct"),
+                        "warnings": soft_cap.get("warnings") or [],
+                    },
+                    "sizing": {
+                        "effective_size_before_cap": int(effective_size),
+                        "effective_size_after_cap": int(capped_size),
+                    },
+                },
+            )
+        return capped_size, applied
+
     def _flush_funnel(self, market: str):
         """세션 종료 시 퍼널 카운터를 일별 JSON 파일에 저장."""
         import json as _json
@@ -5421,6 +6355,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return  # 아무 활동 없으면 저장 생략
         today = self._current_session_date_str(market)
         log_dir = _grp("logs", "funnel", make_parents=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / f"funnel_{today}_{market}.json"
         # 기존 파일이 있으면 누적
         existing = {}
@@ -6065,12 +7000,52 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             return None
 
+    def _closed_decision_reentry_record(self, ticker: str, market: str) -> Optional[dict]:
+        market_key = str(market or "").upper()
+        today_iso = self._current_session_date_str(market_key)
+        normalized = ticker.upper() if market_key == "US" else ticker
+        try:
+            if not DECISIONS_FILE.exists():
+                return None
+            lines = DECISIONS_FILE.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            return None
+        for line in reversed(lines):
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if str(rec.get("type", "") or "").lower() != "closed":
+                continue
+            rec_market = str(rec.get("market", "") or "").upper()
+            rec_ticker = str(rec.get("ticker", "") or "")
+            rec_norm = rec_ticker.upper() if rec_market == "US" else rec_ticker
+            if rec_market != market_key or rec_norm != normalized:
+                continue
+            rec_session = str(rec.get("session_date") or "")
+            if rec_session != today_iso:
+                continue
+            if not (rec.get("order_no") or rec.get("broker_fill_confirmed") or rec.get("broker_fill_source")):
+                continue
+            return {
+                "side": "sell",
+                "ticker": normalized,
+                "market": market_key,
+                "session_date": today_iso,
+                "reason": str(rec.get("exit_reason") or rec.get("reason") or ""),
+                "pnl_pct": rec.get("pnl_pct", 0),
+                "closed_at": str(rec.get("timestamp") or rec.get("closed_at") or ""),
+                "order_no": str(rec.get("order_no") or ""),
+                "source": "decisions_jsonl",
+            }
+        return None
+
     def _same_day_reentry_state(self, ticker: str, market: str) -> dict:
         today_iso = self._current_session_date_str(market)
         normalized = ticker.upper() if market == "US" else ticker
         last_buy = None
         last_sell = None
-        for evt in reversed(self.risk.all_trade_log):
+        for evt in reversed(getattr(getattr(self, "risk", None), "all_trade_log", []) or []):
             evt_ticker = evt.get("ticker", "")
             evt_market = evt.get("market") or self._ticker_market(evt_ticker)
             evt_norm = evt_ticker.upper() if evt_market == "US" else evt_ticker
@@ -6084,6 +7059,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 last_buy = evt
             if last_buy is not None and last_sell is not None:
                 break
+        if last_sell is None:
+            last_sell = self._closed_decision_reentry_record(ticker, market)
+        restored_stops = getattr(self, "_v2_same_day_stop_tickers", {}).get(market, set())
+        if last_sell is None and normalized in restored_stops:
+            return {
+                "allowed": False,
+                "reason": "SAME_DAY_REENTRY_AFTER_STOP",
+                "details": {
+                    "market": market,
+                    "ticker": normalized,
+                    "close_reason": "restored_stop_ticker",
+                    "pnl_pct": 0.0,
+                    "policy": "session_block_after_stop",
+                },
+            }
         if last_sell is None and last_buy is None:
             return {"allowed": True, "reason": "", "details": {"market": market, "ticker": normalized}}
         if last_sell is None:
@@ -6906,7 +7896,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         realized = 0.0
         seen = set()
         def _realized_key(ticker: str, qty: int, pnl: float, reason: str) -> str:
-            return f"{ticker}:{int(qty or 0)}:{round(float(pnl or 0), 4)}:{str(reason or '')}:{session_date}"
+            reason_key = normalize_pathb_decision_exit_reason(reason)
+            return f"{ticker}:{int(qty or 0)}:{round(float(pnl or 0), 4)}:{reason_key}:{session_date}"
         for evt in list(getattr(self.risk, "all_trade_log", []) or []):
             if str(evt.get("side", "") or "").lower() != "sell":
                 continue
@@ -8056,6 +9047,49 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return datetime.now(KST) < until.astimezone(KST)
         except Exception:
             return False
+
+    def _exit_lifecycle_shadow_or_live_enabled(self) -> bool:
+        return bool(
+            self._runtime_bool("ENABLE_EXIT_LIFECYCLE_V2_SHADOW", True)
+            or self._runtime_bool("ENABLE_EXIT_LIFECYCLE_V2", False)
+        )
+
+    def _record_exit_lifecycle_decision(
+        self,
+        market: str,
+        position: dict,
+        *,
+        exit_candidate: Optional[dict] = None,
+        claude_vote: Optional[str] = None,
+        stage: str = "",
+    ) -> Optional[dict]:
+        if not self._exit_lifecycle_shadow_or_live_enabled():
+            return None
+        try:
+            decision = decide_exit_lifecycle(
+                position or {},
+                exit_candidate=exit_candidate,
+                claude_vote=claude_vote,
+            )
+            payload = decision.to_dict()
+            payload.update(
+                {
+                    "market": market,
+                    "stage": stage,
+                    "candidate_reason": str((exit_candidate or {}).get("reason") or ""),
+                    "claude_vote": str(claude_vote or ""),
+                    "live_enabled": self._runtime_bool("ENABLE_EXIT_LIFECYCLE_V2", False),
+                    "candidate_trace_id": self._candidate_trace_id(market, payload.get("ticker", "")),
+                }
+            )
+            if isinstance(position, dict):
+                position["exit_lifecycle_v2_last"] = payload
+            self._write_funnel_event("exit_lifecycle_decision", market, payload)
+            return payload
+        except Exception as exc:
+            log.warning(f"[exit lifecycle v2] decision failed {market}: {exc}")
+            return None
+
     def _try_soft_exit_arbitration(self, cand: dict, market: str) -> bool:
         reason = str(cand.get("reason", "") or "")
         if not bool(getattr(self, "soft_exit_arbitration_enabled", True)):
@@ -8185,8 +9219,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     remaining = int(self._SELL_FAIL_COOLDOWN_SEC - (time.time() - _fail_ts))
                     log.debug(f"[exit skip] {cand['ticker']} 매도 실패 쿨다운 {remaining}초 남음")
                     continue
+                _exit_pos = self._find_live_position_for_candidate(cand, market) or {}
+                _exit_lifecycle = self._record_exit_lifecycle_decision(
+                    market,
+                    _exit_pos,
+                    exit_candidate=cand,
+                    stage="exit_candidate",
+                )
+                _system_guard_exit = bool(
+                    _exit_lifecycle
+                    and _exit_lifecycle.get("final_action") == "SELL"
+                    and not bool(_exit_lifecycle.get("claude_override_allowed", True))
+                )
                 # KR trading halt check.
-                # ── TP 도달 → 트레일링 스탑 처리 ──────────────────────────────
+                if market == "KR" and is_trading_halted(cand["ticker"], self._token_for_market(market)):
                     self._sell_fail_at[cand["ticker"]] = time.time() + 600
                     log.warning(f"[trading halted] {cand['ticker']} sell blocked; retry after 10m")
                     continue
@@ -8200,7 +9246,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         self._block_entry(cand["ticker"], _TP_COOLDOWN_MIN, "take_profit")
                     continue
                 # Soft exits with a valid Claude reference target get one quick arbitration pass.
-                if self._try_soft_exit_arbitration(cand, market):
+                if not (
+                    self._runtime_bool("ENABLE_EXIT_LIFECYCLE_V2", False)
+                    and _system_guard_exit
+                ) and self._try_soft_exit_arbitration(cand, market):
                     continue
                 self._execute_sell(cand, market, reason=cand["reason"])
                 if cand["reason"] in ("loss_cap", "stop_loss", "trail_stop"):
@@ -8580,6 +9629,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     market,
                     digest,
                     decision_stage="PRE_CLOSE_CARRY",
+                    minutes_to_close=float(self._minutes_to_close(market)),
                 )
                 action = advice.get("action", "HOLD")
                 votes  = advice.get("votes", {})
@@ -8676,6 +9726,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             else:
                 net_str = f"{int(round(net)):+,} KRW"
             action, reason = "HOLD", ""
+            advice = None
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
                 advice = advisor_ask(
@@ -8696,6 +9747,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         p2["hold_advice"] = advice
             except Exception as e:
                 log.warning(f"[장중 리뷰] {ticker} 오류: {e}")
+            _exit_lifecycle = self._record_exit_lifecycle_decision(
+                market,
+                pos,
+                claude_vote=action,
+                stage="intraday_review",
+            )
+            if self._runtime_bool("ENABLE_EXIT_LIFECYCLE_V2", False) and _exit_lifecycle:
+                if _exit_lifecycle.get("final_action") == "SELL":
+                    action = "SELL"
+                elif _exit_lifecycle.get("final_action") == "HOLD":
+                    action = "HOLD"
             if pos.get("pending_next_open_sell"):
                 recheck_status = (
                     "sell_confirmed" if action == "SELL"
@@ -8878,6 +9940,121 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _auto_sell_review_required(reason: str) -> bool:
         return str(reason or "").strip().lower() not in {"manual_sell"}
 
+    @staticmethod
+    def _auto_sell_review_default_policy(reason: str) -> str:
+        reason_key = str(reason or "").strip().lower()
+        if reason_key == "loss_cap":
+            return (
+                "This loss_cap is a reviewable risk alert, not a blind forced liquidation. "
+                "SELL if the original thesis is broken, momentum failed, or downside is likely to expand. "
+                "HOLD only when the thesis remains intact, the current loss is still controlled, "
+                "and a concrete protective_stop, invalid_if, and next_review_min are provided."
+            )
+        if reason_key in {"stop_loss", "hard_stop"}:
+            return (
+                "This stop signal is serious. SELL unless fresh evidence shows the stop was a transient price check "
+                "and the position has a clear recovery thesis with bounded risk. "
+                "HOLD requires protective_stop, invalid_if, and a near next_review_min."
+            )
+        if reason_key in {"trail_stop", "profit_floor", "soft_exit_floor_price"}:
+            return (
+                "SELL if the move has failed or giveback risk now outweighs upside. "
+                "HOLD only when upside remains attractive and the retained profit/loss floor is explicit."
+            )
+        return (
+            "SELL only if this automatic sell signal is still valid after fresh review. "
+            "Return HOLD when evidence is stale, ambiguous, or the position should be rechecked later."
+        )
+
+    @staticmethod
+    def _review_position_pnl_pct(cand: dict, market: str, current_native: float = 0.0) -> float:
+        try:
+            if str(market or "").upper() == "US":
+                entry = float(cand.get("display_avg_price") or cand.get("entry_native") or 0)
+                current = float(current_native or cand.get("display_current_price") or 0)
+            else:
+                entry = float(cand.get("entry") or 0)
+                current = float(cand.get("exit_price") or cand.get("current_price") or current_native or 0)
+            if entry > 0 and current > 0:
+                return (current / entry - 1.0) * 100.0
+        except Exception:
+            pass
+        return 0.0
+
+    def _auto_sell_review_force_sell_threshold_pct(self, market: str) -> float:
+        market_key = str(market or "").upper()
+        raw = os.getenv(
+            f"{market_key}_AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT",
+            os.getenv("AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT", "2.5"),
+        )
+        try:
+            return max(0.0, float(raw or 0))
+        except Exception:
+            return 2.5
+
+    def _auto_sell_review_force_sell_required(
+        self,
+        cand: dict,
+        market: str,
+        reason: str,
+        *,
+        current_native: float = 0.0,
+    ) -> tuple[bool, str]:
+        reason_key = str(reason or "").strip().lower()
+        if reason_key in {"daily_loss_stop", "broker_mismatch", "operator_kill", "pathb_kill"}:
+            return True, f"catastrophic_exit:{reason_key}"
+        if reason_key not in {"loss_cap", "stop_loss", "hard_stop"}:
+            return False, ""
+        threshold = self._auto_sell_review_force_sell_threshold_pct(market)
+        if threshold <= 0:
+            return False, ""
+        pnl_pct = self._review_position_pnl_pct(cand, market, current_native=current_native)
+        if pnl_pct <= -threshold:
+            return True, f"loss {pnl_pct:.2f}% <= force threshold -{threshold:.2f}%"
+        return False, ""
+
+    def _auto_sell_review_cooldown_active(
+        self,
+        cand: dict,
+        market: str,
+        reason: str,
+        *,
+        current_native: float = 0.0,
+    ) -> tuple[bool, str]:
+        force_sell, force_detail = self._auto_sell_review_force_sell_required(
+            cand,
+            market,
+            reason,
+            current_native=current_native,
+        )
+        if force_sell:
+            return False, force_detail
+        raw = str(cand.get("auto_sell_review_cooldown_until") or "").strip()
+        if not raw:
+            return False, ""
+        try:
+            until = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=KST)
+            if datetime.now(KST) < until.astimezone(KST):
+                return True, f"cooldown_until={until.astimezone(KST).isoformat(timespec='seconds')}"
+        except Exception:
+            return False, ""
+        return False, ""
+
+    @staticmethod
+    def _auto_sell_review_next_review_minutes(advice: dict) -> int:
+        try:
+            minutes = int(float((advice or {}).get("next_review_min", 0) or 0))
+        except Exception:
+            minutes = 0
+        if minutes <= 0:
+            try:
+                minutes = int(float(os.getenv("AUTO_SELL_REVIEW_HOLD_COOLDOWN_MINUTES", "5") or 5))
+            except Exception:
+                minutes = 5
+        return max(1, min(60, minutes))
+
     def _run_auto_sell_review_gate(
         self,
         cand: dict,
@@ -8902,10 +10079,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         elif float(current_native or 0) > 0:
             review_pos["display_current_price"] = float(current_native or 0)
 
-        default_policy = (
-            "SELL only if this automatic sell signal is still valid after fresh review. "
-            "Return HOLD when evidence is stale, ambiguous, or the position should be rechecked later."
+        cooldown_active, cooldown_detail = self._auto_sell_review_cooldown_active(
+            cand,
+            market,
+            reason_key,
+            current_native=current_native,
         )
+        if cooldown_active:
+            payload = {
+                "auto_sell_reviewed_at": now_iso,
+                "auto_sell_review_reason": reason_key,
+                "auto_sell_review_action": "HOLD",
+                "auto_sell_review_detail": f"auto_sell_review_cooldown:{cooldown_detail}",
+                "auto_sell_review_confidence": float(cand.get("auto_sell_review_confidence", 0) or 0),
+                "auto_sell_review_fallback": False,
+                "auto_sell_review_cooldown_until": cand.get("auto_sell_review_cooldown_until", ""),
+            }
+            cand.update(payload)
+            log.warning(f"[auto sell review HOLD cooldown] {market} {ticker} reason={reason_key} {cooldown_detail}")
+            return {"allowed": False, **payload}
+
+        default_policy = self._auto_sell_review_default_policy(reason_key)
         try:
             from minority_report.hold_advisor import ask as advisor_ask
 
@@ -8939,6 +10133,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             confidence = 0.0
             fallback = True
 
+        force_sell, force_detail = self._auto_sell_review_force_sell_required(
+            cand,
+            market,
+            reason_key,
+            current_native=current_native,
+        )
+        if action != "SELL" and force_sell:
+            action = "SELL"
+            detail = (detail + " | " if detail else "") + f"system_force_sell_after_review:{force_detail}"
+
         payload = {
             "auto_sell_reviewed_at": now_iso,
             "auto_sell_review_reason": reason_key,
@@ -8947,6 +10151,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "auto_sell_review_confidence": confidence,
             "auto_sell_review_fallback": fallback,
         }
+        if action != "SELL":
+            cooldown_until = datetime.now(KST) + timedelta(minutes=self._auto_sell_review_next_review_minutes(advice))
+            payload["auto_sell_review_cooldown_until"] = cooldown_until.isoformat(timespec="seconds")
         for pos in list(getattr(self.risk, "positions", []) or []):
             if pos.get("ticker") != ticker:
                 continue
@@ -9129,6 +10336,37 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return True
         return reason == "trail_stop" and pnl_pct <= 0.0
 
+    def _closed_decision_is_pathb_ticker_only_stop(self, rec: dict, market: str) -> bool:
+        if not _env_bool("STOP_CLUSTER_PATHB_TICKER_ONLY_ENABLED", True):
+            return False
+        pathb_like = bool(
+            rec.get("path_run_id")
+            or rec.get("pathb_path_run_id")
+            or str(rec.get("path_type", "") or "") == "claude_price"
+            or str(rec.get("buy_path", "") or "") == "path_b"
+        )
+        if not pathb_like:
+            return False
+        try:
+            max_cost = float(os.getenv("STOP_CLUSTER_PATHB_TICKER_ONLY_MAX_COST_KRW", "250000") or 0)
+        except Exception:
+            max_cost = 250000.0
+        try:
+            max_loss_pct = float(os.getenv("STOP_CLUSTER_PATHB_TICKER_ONLY_MAX_LOSS_PCT", "2.5") or 0)
+        except Exception:
+            max_loss_pct = 2.5
+        try:
+            pnl_pct = abs(float(rec.get("pnl_pct") or rec.get("return_pct") or 0.0))
+        except Exception:
+            pnl_pct = 0.0
+        try:
+            pnl_krw = abs(float(rec.get("pnl_krw") or rec.get("realized_pnl") or rec.get("profit_loss") or 0.0))
+        except Exception:
+            pnl_krw = 0.0
+        pct_ok = max_loss_pct <= 0 or pnl_pct <= max_loss_pct
+        krw_ok = max_cost <= 0 or pnl_krw <= (max_cost * max(max_loss_pct, 0.0) / 100.0)
+        return bool(pct_ok and krw_ok)
+
     def _restore_intraday_execution_state_from_decisions(self, market: str) -> dict:
         market_key = str(market or "").upper()
         today = self._current_session_date_str(market_key)
@@ -9140,6 +10378,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "skipped_no_broker_evidence_count": 0,
             "skipped_no_broker_evidence_tickers": [],
             "restored_stop_count": 0,
+            "restored_ticker_only_stop_count": 0,
             "daily_stop_count": int((getattr(self, "_daily_sl_count", {}) or {}).get(market_key, 0) or 0),
             "stopped_tickers": [],
         }
@@ -9223,8 +10462,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
 
             self._daily_sl_event_keys.add(stop_key)
-            restored_stop_count += 1
             restored_stops.add(ticker)
+            if self._closed_decision_is_pathb_ticker_only_stop(rec, market_key):
+                summary["restored_ticker_only_stop_count"] += 1
+                continue
+            restored_stop_count += 1
             parsed_at = self._parse_decision_timestamp(occurred_at_raw)
             if parsed_at and (last_stop_at is None or parsed_at > last_stop_at):
                 last_stop_at = parsed_at
@@ -9409,6 +10651,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "auto_sell_review_detail",
             "auto_sell_review_confidence",
             "auto_sell_review_fallback",
+            "auto_sell_review_cooldown_until",
             "pathb_reference_target",
             "pathb_reference_stop",
             "pathb_reference_confidence",
@@ -10145,15 +11388,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
             except Exception as _psr_e:
                 log.warning(f"[preopen position review skip] {market}: {_psr_e}")
+            # Reset before WS ticks can repopulate session-scoped live state.
+            self._reset_session_live_caches(market, selected)
             self._start_ws_for_market(market, selected)
             self._session_open_at[market] = time.time()
             self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)
-            for _t in selected:
-                self._intraday_high.pop(_t, None)
-                self._intraday_low.pop(_t, None)
-                self._or_high.pop(_t, None)
-                self._or_low.pop(_t, None)
-                self._or_formed.pop(_t, None)
             log.info(f"[preopen watch ready] {market}: watch={selected} trade_ready=[]")
             self._maybe_push_dashboard(force=True)
             self._leave_market_task(market, "session_open")
@@ -10592,6 +11831,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             reason = "shared_cache_reuse" if _from_shared_cache else "same_day_reuse"
             log.info(f"[{reason}] consensus={consensus['mode']}")
         log.info(f"consensus: {consensus['mode']} size={consensus['size']}%")
+        # Reset before WS ticks can repopulate session-scoped live state.
+        self._reset_session_live_caches(market, selected)
         self._start_ws_for_market(market, selected)
         self._session_open_at[market] = time.time()
         self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)
@@ -10607,13 +11848,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._run_param_review(market, trigger="session_open")
         except Exception as _pt_e:
             log.warning(f"[param_tuner session_open] {market}: {_pt_e}")
-        # 새 세션 시작 시 장중 H/L 초기화 + continuation entry 플래그 리셋
-        for _t in selected:
-            self._intraday_high.pop(_t, None)
-            self._intraday_low.pop(_t, None)
-            self._or_high.pop(_t, None)
-            self._or_low.pop(_t, None)
-            self._or_formed.pop(_t, None)
         # session_open 완료 즉시 대시보드 강제 갱신 — stale live_status 방지
         self._maybe_push_dashboard(force=True)
         self._leave_market_task(market, "session_open")
@@ -10680,7 +11914,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _cur_low = self._intraday_low.get(ticker, float("inf"))
         if raw_price < _cur_low:
             self._intraday_low[ticker] = raw_price
-        # 장초 OR(opening range) 추적 — OR 윈도우 종료 후 freeze
+        self._observe_post_open_price(market, ticker, raw_price, source="ws_tick")
+        # 장초 OR(opening range) 추적 - OR 윈도우 종료 후 freeze
         if market in ("KR", "US") and self.session_active and self.current_market == market:
             _or_elapsed = self._market_elapsed_min(market)
             _or_minutes = 10 if market == "KR" else 15
@@ -11125,10 +12360,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def run_cycle(self, market: str):
         if not self._enter_market_task(market, "run_cycle"):
             return
+        _cycle_started_at = time.perf_counter()
         if not self.session_active:
+            self._record_cycle_latency(market, _cycle_started_at, stage="run_cycle", reason="session_inactive")
             self._leave_market_task(market, "run_cycle")
             return
         if self.current_market != market:
+            self._record_cycle_latency(market, _cycle_started_at, stage="run_cycle", reason="market_mismatch")
             self._leave_market_task(market, "run_cycle")
             return
         self._refresh_operational_halt(market)
@@ -11153,6 +12391,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "mode": self.today_judgment.get("consensus", {}).get("mode", ""),
                 }},
             )
+            self._record_cycle_latency(market, _cycle_started_at, stage="run_cycle", reason="session_halt")
             self._leave_market_task(market, "run_cycle")
             return
         # Wait briefly after session_open completes before run_cycle starts.
@@ -11164,6 +12403,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"[{market}] startup guard — session_open 후 {_since_open:.0f}s 경과 "
                 f"(최소 {_guard_sec:.0f}s 대기 중) — cycle 스킵"
             )
+            self._record_cycle_latency(market, _cycle_started_at, stage="run_cycle", reason="startup_guard")
             self._leave_market_task(market, "run_cycle")
             return
         # ── 장전 SELL 예약 큐 처리 ─────────────────────────────────────────
@@ -11518,6 +12758,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self.price_cache_raw[ticker] = price
                 self.price_cache[ticker] = risk_price
                 self.risk.update_prices(self.price_cache, self.price_cache_raw)
+                _po_meta_for_feature = _preopen_meta_by_ticker.get(ticker, {})
+                self._maybe_record_post_open_feature_snapshot(
+                    market,
+                    ticker,
+                    price,
+                    price_info=price_info,
+                    preopen_meta=_po_meta_for_feature,
+                    source="run_cycle",
+                )
                 # US는 WS 시세 미수신/실전 WS 수신 지연 시 scan polling 가격으로 OR 근사 추적
                 if market == "US" and self.session_active and self.current_market == "US":
                     _or_elapsed_us = self._market_elapsed_min("US")
@@ -11536,6 +12785,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self._process_exit_candidates()
                 if not _entry_judgment_ok:
                     _po_meta = _preopen_meta_by_ticker.get(ticker, {})
+                    _trade_ready_lookup = str(ticker).upper() if market == "US" else str(ticker)
+                    _raw_trade_ready_skip = self.trade_ready_tickers.get(market, []) or []
+                    _trade_ready_skip_set = (
+                        {str(t).upper() for t in _raw_trade_ready_skip}
+                        if market == "US"
+                        else {str(t) for t in _raw_trade_ready_skip}
+                    )
+                    _was_trade_ready_skip = _trade_ready_lookup in _trade_ready_skip_set
                     analysis_log.info(
                         f"[skip {market}] {ticker} judgment_not_executable",
                         extra={"extra": {
@@ -11550,8 +12807,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "preopen_grade": _po_meta.get("preopen_grade"),
                             "preopen_5m": _po_meta.get("post_open_5m_return_pct"),
                             "preopen_30m": _po_meta.get("post_open_30m_return_pct"),
-                            "was_trade_ready": ticker in self._trade_ready_set(market),
+                            "was_trade_ready": _was_trade_ready_skip,
                         }},
+                    )
+                    self._record_judgment_gate_event(
+                        market,
+                        ticker,
+                        judgment_gate_ok=False,
+                        judgment_gate_reason=_entry_judgment_block,
+                        price=float(price),
+                        mode=mode,
+                        extra={
+                            "preopen_rank": _po_meta.get("shadow_preopen_rank"),
+                            "preopen_grade": _po_meta.get("preopen_grade"),
+                            "was_trade_ready": _was_trade_ready_skip,
+                        },
                     )
                     log.debug(
                         f"  [{ticker}] executable judgment missing ({_entry_judgment_block}) -> skip new entry"
@@ -12799,11 +14069,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                     effective_size = max(1, min(100, _selection_size_cap))
                 if _entry_judgment_block == "ok_unconfirmed" and effective_size > _UNCONFIRMED_ENTRY_SIZE_CAP_PCT:
+                    _before_unconfirmed_cap = int(effective_size)
+                    effective_size, _unconfirmed_cap_applied = self._apply_unconfirmed_phase_size_cap(
+                        market,
+                        ticker,
+                        effective_size,
+                        judgment_gate_reason=_entry_judgment_block,
+                    )
                     log.info(
                         f"  [{ticker}] unconfirmed_phase size cap: "
-                        f"{effective_size}% -> {_UNCONFIRMED_ENTRY_SIZE_CAP_PCT}%"
+                        f"{_before_unconfirmed_cap}% -> {effective_size}%"
                     )
-                    effective_size = _UNCONFIRMED_ENTRY_SIZE_CAP_PCT
                 # ── 신호 수집 → 사이클 완료 후 score 정렬 후 주문 실행 ────────
                 _partial_signal_decision = self._partial_data_execution_decision(market, ticker, strategy_name)
                 if _partial_signal_decision.get("partial"):
@@ -13401,7 +14677,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         )
                         continue
                     if qty <= 0:
+                        _qty_zero_reason = str(affordability_diag.get("affordability_reason") or "qty_zero")
+                        _qty_zero_reason = _qty_zero_reason if _qty_zero_reason else "qty_zero"
                         self._bump_runtime_reason(market, _s_tk, "affordability_fail")
+                        self._bump_runtime_reason(market, _s_tk, _qty_zero_reason)
                         self._record_decision_event(
                             market,
                             "buy_skipped",
@@ -13410,7 +14689,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             qty=0,
                             price_native=float(_s_px),
                             price_krw=float(_s_rpx),
-                            reason="qty_zero",
+                            reason=_qty_zero_reason,
                             reason_family="affordability",
                             detail="risk engine returned zero quantity",
                             selected_reason=_s_sr,
@@ -13418,9 +14697,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         )
                         if _ML_DB_ENABLED:
                             _ml_write_eval(_s_tk, _s_px, _s_row, "SKIPPED",
-                                           block_reason_="qty_zero",
-                                           diag_json_={"reason": "qty_zero", **affordability_diag})
-                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, "qty_zero")
+                                           block_reason_=_qty_zero_reason,
+                                           diag_json_={"reason": _qty_zero_reason, **affordability_diag})
+                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, _qty_zero_reason)
                         log.debug(f"  [{_s_tk}] order price/qty invalid 0")
                         continue
                     if order_cost > avail:
@@ -13923,7 +15202,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             )
                             continue
                         if _t2_qty <= 0:
+                            _t2_zero_reason = str(_t2_affordability.get("affordability_reason") or "qty_zero")
+                            _t2_zero_reason = _t2_zero_reason if _t2_zero_reason else "qty_zero"
                             self._bump_runtime_reason("US", _t2_ticker, "affordability_fail")
+                            self._bump_runtime_reason("US", _t2_ticker, _t2_zero_reason)
                             self._record_decision_event(
                                 "US",
                                 "buy_skipped",
@@ -13932,17 +15214,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 qty=0,
                                 price_native=float(_t2_price),
                                 price_krw=float(_t2_risk_price),
-                                reason="qty_zero",
+                                reason=_t2_zero_reason,
                                 reason_family="affordability",
                                 detail=self._affordability_detail(_t2_affordability),
                                 selected_reason=f"sector_etf={_play['etf']}",
                                 **_t2_affordability,
                             )
                             analysis_log.info(
-                                f"[skip US] {_t2_ticker} qty_zero",
+                                f"[skip US] {_t2_ticker} {_t2_zero_reason}",
                                 extra={"extra": {
                                     "event": "entry_skip", "market": "US", "ticker": _t2_ticker,
-                                    "reason": "qty_zero", "strategy": "sector_play",
+                                    "reason": _t2_zero_reason, "strategy": "sector_play",
                                     "mode": mode, "price": _t2_price, "risk_price_krw": _t2_risk_price,
                                     "qty": int(_t2_qty), "order_cost_krw": float(_t2_cost),
                                     **_t2_affordability,
@@ -14134,7 +15416,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             )
                             continue
                         if _t2_qty <= 0:
+                            _t2_zero_reason = str(_t2_affordability.get("affordability_reason") or "qty_zero")
+                            _t2_zero_reason = _t2_zero_reason if _t2_zero_reason else "qty_zero"
                             self._bump_runtime_reason("KR", _t2_ticker, "affordability_fail")
+                            self._bump_runtime_reason("KR", _t2_ticker, _t2_zero_reason)
                             self._record_decision_event(
                                 "KR",
                                 "buy_skipped",
@@ -14143,17 +15428,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 qty=0,
                                 price_native=float(_t2_risk_price),
                                 price_krw=float(_t2_risk_price),
-                                reason="qty_zero",
+                                reason=_t2_zero_reason,
                                 reason_family="affordability",
                                 detail=self._affordability_detail(_t2_affordability),
                                 selected_reason=f"kr_sector_etf={_play['etf']}",
                                 **_t2_affordability,
                             )
                             analysis_log.info(
-                                f"[skip KR] {_t2_ticker} qty_zero",
+                                f"[skip KR] {_t2_ticker} {_t2_zero_reason}",
                                 extra={"extra": {
                                     "event": "entry_skip", "market": "KR", "ticker": _t2_ticker,
-                                    "reason": "qty_zero", "strategy": "kr_sector_play",
+                                    "reason": _t2_zero_reason, "strategy": "kr_sector_play",
                                     "mode": mode, "price": _t2_risk_price, "risk_price_krw": _t2_risk_price,
                                     "qty": int(_t2_qty), "order_cost_krw": float(_t2_cost),
                                     **_t2_affordability,
@@ -14251,6 +15536,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         self._write_live_status(market)
         self._maybe_push_dashboard()  # 포지션/P&L 변화 있으면 텔레그램 전송
+        self._record_cycle_latency(market, _cycle_started_at, stage="run_cycle", reason="completed")
         self._leave_market_task(market, "run_cycle")
     def run_tuning(self, market: str):
         if not self._enter_market_task(market, "run_tuning"):
@@ -15088,8 +16374,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "soft_exit_review_reason": kwargs.get("soft_exit_review_reason", ""),
             "soft_exit_review_confidence": float(kwargs.get("soft_exit_review_confidence", 0) or 0),
             "auto_sell_review_action": kwargs.get("auto_sell_review_action", ""),
+            "auto_sell_review_detail": kwargs.get("auto_sell_review_detail", ""),
             "auto_sell_review_confidence": float(kwargs.get("auto_sell_review_confidence", 0) or 0),
             "auto_sell_review_fallback": bool(kwargs.get("auto_sell_review_fallback", False)),
+            "auto_sell_review_cooldown_until": kwargs.get("auto_sell_review_cooldown_until", ""),
             "soft_exit_reference_source": kwargs.get("soft_exit_reference_source", ""),
             "soft_exit_reference_target": float(kwargs.get("soft_exit_reference_target", 0) or 0),
             "pathb_reference_target": float(kwargs.get("pathb_reference_target", 0) or 0),
@@ -15170,6 +16458,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "soft_exit_review_action": event.get("soft_exit_review_action", ""),
                     "soft_exit_review_reason": event.get("soft_exit_review_reason", ""),
                     "soft_exit_review_confidence": event.get("soft_exit_review_confidence", 0),
+                    "auto_sell_review_action": event.get("auto_sell_review_action", ""),
+                    "auto_sell_review_detail": event.get("auto_sell_review_detail", ""),
+                    "auto_sell_review_confidence": event.get("auto_sell_review_confidence", 0),
+                    "auto_sell_review_fallback": event.get("auto_sell_review_fallback", False),
+                    "auto_sell_review_cooldown_until": event.get("auto_sell_review_cooldown_until", ""),
                     "soft_exit_reference_source": event.get("soft_exit_reference_source", ""),
                     "soft_exit_reference_target": event.get("soft_exit_reference_target", 0),
                     "pathb_reference_target": event.get("pathb_reference_target", 0),
@@ -15190,6 +16483,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "trail_pct":    kwargs.get("trail_pct", 0),
                     "votes":        kwargs.get("votes", {}),
                     "source":       kwargs.get("source", ""),
+                })
+            elif action == "auto_sell_review":
+                record.update({
+                    "qty": event["qty"],
+                    "price_native": event["price_native"],
+                    "price_krw": event["price_krw"],
+                    "auto_sell_review_reason": event.get("auto_sell_review_reason") or event.get("reason", ""),
+                    "auto_sell_review_action": event.get("auto_sell_review_action", ""),
+                    "auto_sell_review_detail": event.get("auto_sell_review_detail") or event.get("detail", ""),
+                    "auto_sell_review_confidence": event.get("auto_sell_review_confidence", 0),
+                    "auto_sell_review_fallback": event.get("auto_sell_review_fallback", False),
+                    "auto_sell_review_cooldown_until": event.get("auto_sell_review_cooldown_until", ""),
                 })
             try:
                 with open(DECISIONS_FILE, "a", encoding="utf-8") as _df:
@@ -15383,8 +16688,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         risk_label = "VKOSPI" if market == "KR" else "VIX"
         risk_value_opt = self._positive_float_or_none(digest_ctx.get("vkospi") if market == "KR" else digest_ctx.get("vix"))
         risk_value = risk_value_opt or 0.0
-        pnl_pct   = self._daily_pnl_pct(market)
-        pnl_krw   = int(self.risk.daily_pnl)
+        realized_excluding_eval_pnl_krw = float(self._market_realized_pnl_krw(market) or 0.0)
+        if abs(realized_excluding_eval_pnl_krw) < 1e-9 and abs(float(self.risk.daily_pnl or 0.0)) > 0:
+            realized_excluding_eval_pnl_krw = float(self.risk.daily_pnl or 0.0)
+        unrealized_today_delta_krw = float(self._market_unrealized_session_pnl_krw(market) or 0.0)
+        trading_pnl_krw = realized_excluding_eval_pnl_krw + unrealized_today_delta_krw
+        base_equity = float(self._market_session_start_equity_krw(market) or 0.0)
+        pnl_pct = (trading_pnl_krw / base_equity * 100.0) if base_equity > 0 else self._daily_pnl_pct(market)
+        pnl_krw = int(round(trading_pnl_krw))
         market_positions = [
             p for p in list(self.risk.positions)
             if self._ticker_market(p.get("ticker", "")) == market
@@ -15412,7 +16723,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                        total_equity_krw=total_equity_krw,
                        risk_value=risk_value,
                        risk_label=risk_label,
-                       mode_order_limit_krw=self.risk.calc_order_budget(self.today_judgment.get("consensus", {}).get("size", 50)))
+                       mode_order_limit_krw=self.risk.calc_order_budget(self.today_judgment.get("consensus", {}).get("size", 50)),
+                       realized_excluding_eval_pnl_krw=realized_excluding_eval_pnl_krw,
+                       unrealized_today_delta_krw=unrealized_today_delta_krw)
         self._last_tg_state = state
     def _heartbeat(self):
         """1시간마다 로그 + 변화 없어도 강제 텔레그램 전송"""
@@ -15517,6 +16830,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     market,
                     digest,
                     decision_stage="PRE_CLOSE_CARRY",
+                    minutes_to_close=float(self._minutes_to_close(market)),
                 )
                 action = advice.get("action", "HOLD")
                 votes  = advice.get("votes", {})
@@ -15638,7 +16952,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _sell_log = [t for t in session_trades if t.get("side") == "sell"]
         execution_health = self._build_execution_health(market, session_trades)
         cumulative_equity = int(round(self._kis_total_equity_krw()))
+        market_change = self._get_market_change_pct(market)
+        secondary_market_change = self._get_secondary_change_pct(market)
         actual = {
+            "market_change": market_change,
+            "secondary_market_change": secondary_market_change,
             "trades": len(_sell_log),   # 청산(매도) 건수만
             "cumulative": cumulative_equity,
             "pnl_pct": self._daily_pnl_pct(market),
@@ -15750,6 +17068,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             actual["cumulative"],
             self.today_judgment.get("judgments", {}),
             pm,
+            realized_excluding_eval_pnl_krw=actual["pnl_krw"],
+            unrealized_today_delta_krw=0,
         )
         log.info(f"[{market}] summary | {actual['pnl_pct']:+.2f}% | {actual['pnl_krw']:+,}")
         try:

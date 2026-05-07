@@ -169,7 +169,10 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
         self.assertEqual(len(raw_calls), 2)
         self.assertTrue(raw_calls[0]["extra"]["active_lessons"]["injected"])
         self.assertTrue(raw_calls[1]["extra"]["active_lessons"]["retry"])
-        self.assertTrue(analysts_module.get_last_selection_meta()["active_lessons"]["retry"]["injected"])
+        meta = analysts_module.get_last_selection_meta()
+        self.assertTrue(meta["active_lessons"]["retry"]["injected"])
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_selection_retry_trade_ready_ignored"], ["AAPL"])
 
 
 if __name__ == "__main__":

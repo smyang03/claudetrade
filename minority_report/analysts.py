@@ -22,6 +22,7 @@ from minority_report.prompt_contracts import (
     SELECTION_EXECUTION_PHASE_CONTRACT,
     SIZING_DECISION_CONTRACT,
 )
+from runtime.candidate_actions import candidate_action_prompt_contract
 
 log          = get_minority_logger()
 analysis_log = get_analysis_logger()
@@ -439,6 +440,33 @@ def _candidate_execution_hint(candidate: dict) -> str:
     return "exec=" + ",".join(parts) if parts else ""
 
 
+def _candidate_post_open_hint(candidate: dict) -> str:
+    features = candidate.get("post_open_features") if isinstance(candidate.get("post_open_features"), dict) else {}
+    if not features:
+        return ""
+    parts = []
+    state = str(features.get("momentum_state") or candidate.get("post_open_momentum_state") or "").strip()
+    if state:
+        parts.append(f"state={state}")
+    for key, label in (
+        ("ret_3m_pct", "r3"),
+        ("ret_5m_pct", "r5"),
+        ("ret_10m_pct", "r10"),
+        ("ret_30m_pct", "r30"),
+        ("pullback_from_high_pct", "pb_high"),
+    ):
+        value = features.get(key)
+        if value is None:
+            continue
+        try:
+            parts.append(f"{label}={float(value):+.1f}%")
+        except Exception:
+            pass
+    if not parts:
+        return ""
+    return "post_open=" + ",".join(parts)
+
+
 def _candidate_earnings_hint(candidate: dict) -> str:
     earnings_window = str(candidate.get("earnings_window", "") or "").strip()
     earnings_date = str(candidate.get("earnings_date", "") or "").strip()
@@ -701,7 +729,7 @@ def _build_selection_retry_prompt(
     trade_max = min(selection_limits(market)["trade_max"], len(retry_candidates))
     watch_floor = min(watch_max, 10 if len(retry_candidates) >= 15 else max(1, len(retry_candidates) // 2))
     active_section = f"\n{active_lessons_context[:500]}\n" if active_lessons_context else ""
-    return f"""이전 종목선정 응답이 잘려서 다시 묻습니다. 이번에는 watchlist/trade_ready/reasons만 반환하세요.
+    return f"""이전 종목선정 응답이 잘려서 다시 묻습니다. 이번에는 watchlist/reasons 복구만 수행하고 trade_ready는 빈 배열로 반환하세요.
 시장: {market}
 모드: {consensus_mode}
 후보:
@@ -712,18 +740,19 @@ def _build_selection_retry_prompt(
 Required output rules:
 - keep a broad watchlist: if candidates >= 15 and mode is not DEFENSIVE/HALT, return at least {watch_floor} watchlist names.
 - required fields: watchlist, trade_ready, reasons
+- trade_ready must be [] in this retry response.
 - DO NOT include price_targets in this response. Price plans will be requested separately.
 - reasons는 종목당 15자 이내로 짧게.
 
 규칙:
 - 후보 중에서만 선택
 - watchlist 최대 {watch_max}개
-- trade_ready 최대 {trade_max}개
+- trade_ready는 반드시 빈 배열 []
 - JSON만 반환
 
 {{
   "watchlist":["code1","code2"],
-  "trade_ready":["code1"],
+  "trade_ready":[],
   "reasons":{{"code1":"짧은 이유"}}
 }}"""
 
@@ -796,6 +825,59 @@ def _fallback_result(error: Exception) -> dict:
         "key_contradictions": [],
         "suggested_strategy": "관망",
     }
+
+
+def _debate_defaults_for_stance(stance: str) -> dict:
+    stance_key = str(stance or "").strip().upper()
+    if stance_key == "AGGRESSIVE":
+        return {"suggested_size_pct": 90.0, "new_buy_permission": "allow", "max_gross_exposure_pct": 100}
+    if stance_key == "MODERATE_BULL":
+        return {"suggested_size_pct": 70.0, "new_buy_permission": "allow", "max_gross_exposure_pct": 90}
+    if stance_key == "MILD_BULL":
+        return {"suggested_size_pct": 50.0, "new_buy_permission": "selective", "max_gross_exposure_pct": 70}
+    if stance_key in {"CAUTIOUS", "NEUTRAL"}:
+        return {"suggested_size_pct": 35.0, "new_buy_permission": "selective", "max_gross_exposure_pct": 50}
+    if stance_key == "MILD_BEAR":
+        return {"suggested_size_pct": 20.0, "new_buy_permission": "selective", "max_gross_exposure_pct": 30}
+    if stance_key == "CAUTIOUS_BEAR":
+        return {"suggested_size_pct": 10.0, "new_buy_permission": "block", "max_gross_exposure_pct": 15}
+    return {"suggested_size_pct": 0.0, "new_buy_permission": "block", "max_gross_exposure_pct": 0}
+
+
+def _merge_debate_result(my_r1: dict, result: dict) -> dict:
+    clean = dict(result or {})
+    stance = str(clean.get("stance", my_r1.get("stance", "NEUTRAL")) or "NEUTRAL").strip().upper()
+    if stance not in ALLOWED_STANCES:
+        stance = str(my_r1.get("stance", "NEUTRAL") or "NEUTRAL").strip().upper()
+    clean["stance"] = stance
+    try:
+        clean["confidence"] = max(0.0, min(1.0, float(clean.get("confidence", my_r1.get("confidence", 0.5)) or 0.0)))
+    except Exception:
+        clean["confidence"] = float(my_r1.get("confidence", 0.5) or 0.5)
+
+    changed = bool(clean.get("changed")) or stance != str(my_r1.get("stance", "") or "").strip().upper()
+    defaults = _debate_defaults_for_stance(stance)
+    for key in ("suggested_size_pct", "max_gross_exposure_pct"):
+        if key in clean:
+            try:
+                clean[key] = max(0.0, min(100.0, float(clean.get(key) or 0.0)))
+            except Exception:
+                clean.pop(key, None)
+        elif changed:
+            clean[key] = defaults[key]
+    if "new_buy_permission" in clean:
+        permission = str(clean.get("new_buy_permission") or "").strip().lower()
+        if permission not in {"allow", "selective", "block"}:
+            clean.pop("new_buy_permission", None)
+        else:
+            clean["new_buy_permission"] = permission
+    elif changed:
+        clean["new_buy_permission"] = defaults["new_buy_permission"]
+    if "suggested_strategy" in clean:
+        strategy = str(clean.get("suggested_strategy") or "").strip()
+        if strategy not in ALLOWED_STRATEGIES:
+            clean.pop("suggested_strategy", None)
+    return {**my_r1, **clean}
 
 
 # ── 강화된 페르소나 ────────────────────────────────────────────────────────────
@@ -1046,33 +1128,36 @@ def call_analyst_debate(analyst_type: str, my_r1: dict,
 JSON으로만 응답:
 {{"stance":"{STANCES} 중 하나","confidence":0.0~1.0,
   "key_reason":"최종 핵심 근거 한 문장 (구체적 지표 포함)",
+  "suggested_size_pct":0~100,
+  "new_buy_permission":"allow|selective|block",
+  "max_gross_exposure_pct":0~100,
+  "suggested_strategy":"모멘텀|평균회귀|갭+눌림|변동성돌파|관망",
   "changed":true|false,
   "change_reason":"변경했다면 설득된 논거, 유지했다면 null"}}"""
 
     try:
-        resp = client.messages.create(model=MODEL, max_tokens=512,
+        resp = client.messages.create(model=MODEL, max_tokens=700,
                                       messages=[{"role": "user", "content": prompt}])
         raw = resp.content[0].text.strip()
         result = _extract_json(raw)
+        merged = _merge_debate_result(my_r1, result)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
                       f"analyst_{analyst_type}_r2", model=MODEL)
         save_raw_call(
             label=f"analyst_{analyst_type}_r2",
-            prompt=prompt, raw_response=raw, parsed=result,
+            prompt=prompt, raw_response=raw, parsed={**result, "_merged": merged},
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
             model=MODEL,
-            prompt_version="market_debate_v2",
+            prompt_version="market_debate_v3_sizing",
         )
 
-        changed = result.get("changed", False)
-        change_mark = f"→ {result['stance']}" if changed else "유지"
+        changed = merged.get("changed", False)
+        change_mark = f"→ {merged['stance']}" if changed else "유지"
         log.info(f"[{analyst_type} R2] {change_mark} "
-                 f"conf={result.get('confidence',0):.2f} | "
-                 f"{result.get('key_reason','')[:60]}")
+                 f"conf={merged.get('confidence',0):.2f} | "
+                 f"{merged.get('key_reason','')[:60]}")
 
-        # r1 데이터 병합 (full_reasoning, top_risks, suggested_strategy 보존)
-        merged = {**my_r1, **result}
         return merged
     except Exception as e:
         log.error(f"[{analyst_type} R2] 오류: {e}")
@@ -1276,6 +1361,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"liq={liquidity_bucket}",
             _candidate_earnings_hint(candidate),
             _candidate_preopen_pin_hint(candidate),
+            _candidate_post_open_hint(candidate),
             (
                 f"from_high={_safe_float(from_high_pct, 0.0):+.1f}%({from_high_bucket})"
                 if from_high_pct is not None else
@@ -1362,6 +1448,25 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         if active_lesson_section
         else (f"\n{lesson_context[:500]}\n" if lesson_context else "")
     )
+    candidate_action_shadow_enabled = (
+        not preopen_watch
+        and str(os.getenv("ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW", "false")).lower() in {"1", "true", "yes", "on"}
+    )
+    candidate_action_live_enabled = (
+        not preopen_watch
+        and str(os.getenv("ENABLE_CLAUDE_CANDIDATE_ACTIONS", "false")).lower() in {"1", "true", "yes", "on"}
+    )
+    candidate_action_section = candidate_action_prompt_contract(
+        enabled=candidate_action_shadow_enabled or candidate_action_live_enabled,
+    )
+    candidate_actions_example = (
+        ',\n  "candidate_actions":[{"ticker":"code1","action":"PROBE_READY","confidence":0.64,'
+        '"size_intent":"probe","reason":"early strength with risk control",'
+        '"invalidation_condition":"breaks opening range low","price_targets":{"buy_zone_low":73000,'
+        '"buy_zone_high":73500,"sell_target":76000,"stop_loss":71000},"valid_until":"2026-05-06T09:10:00"}]'
+        if candidate_action_section else ""
+    )
+
     prompt = f"""{phase_instruction}
 execution_phase: {execution_phase or 'unspecified'}
 오늘 {market} 세션에서 후보를 WATCH와 TRADE_READY로 분리하세요.
@@ -1376,6 +1481,7 @@ execution_phase: {execution_phase or 'unspecified'}
 {SIZING_DECISION_CONTRACT}
 {PRICE_PLAN_CONTRACT}
 {HARD_SOFT_RULE_CONTRACT}
+{candidate_action_section}
 규칙:
 {phase_rule_block}
 - 후보 종목 중에서만 고르세요.
@@ -1435,7 +1541,7 @@ execution_phase: {execution_phase or 'unspecified'}
       "exit_rationale":"near resistance",
       "rationale":"buy near support, sell into resistance"
     }}
-  }}
+  }}{candidate_actions_example}
 }}"""
 
     fallback_meta = normalize_selection_result(
@@ -1519,6 +1625,11 @@ execution_phase: {execution_phase or 'unspecified'}
                     )
                     retry_raw = retry_resp.content[0].text.strip()
                     retry_result = _extract_json(retry_raw)
+                    retry_trade_ready = list(retry_result.get("trade_ready") or []) if isinstance(retry_result.get("trade_ready"), list) else []
+                    if retry_trade_ready:
+                        retry_watch = list(retry_result.get("watchlist") or []) if isinstance(retry_result.get("watchlist"), list) else []
+                        retry_result["watchlist"] = list(dict.fromkeys(retry_watch + retry_trade_ready))
+                    retry_result["trade_ready"] = []
                     retry_meta = normalize_selection_result(retry_result, retry_candidates, market)
                     credit_record(retry_resp.usage.input_tokens, retry_resp.usage.output_tokens, "select_tickers_retry", model=MODEL)
                     save_raw_call(
@@ -1536,10 +1647,8 @@ execution_phase: {execution_phase or 'unspecified'}
                     if not retry_result.get("_parse_recovered") and retry_meta.get("watchlist"):
                         result = retry_result
                         selection_meta = retry_meta
-                        selection_meta["_trade_ready_without_price_targets_allowed"] = list(
-                            dict.fromkeys(selection_meta.get("trade_ready") or [])
-                        )
-                        selection_meta["_trade_ready_without_price_targets_source"] = "selection_retry"
+                        selection_meta["_selection_retry_trade_ready_ignored"] = retry_trade_ready
+                        selection_meta["_trade_ready_without_price_targets_source"] = "selection_retry_disabled"
                         selection_meta["active_lessons"] = {
                             "primary": active_lesson_meta,
                             "retry": retry_active_lesson_meta,

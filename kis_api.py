@@ -3369,6 +3369,16 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
         "day_gainers":  preset["quota_gainers"],
         "day_losers":   preset["quota_losers"],
     }
+    _target_n = max(1, int(top_n or 30))
+    _quota_total = sum(int(v or 0) for v in _quota.values())
+    if _target_n > _quota_total and _quota_total > 0:
+        scale = _target_n / float(_quota_total)
+        _quota = {key: max(int(value), int(round(int(value) * scale))) for key, value in _quota.items()}
+        _fill_order = ("most_actives", "day_gainers", "day_losers")
+        _idx = 0
+        while sum(_quota.values()) < _target_n:
+            _quota[_fill_order[_idx % len(_fill_order)]] += 1
+            _idx += 1
     _cache_mode = str(mode).upper()
     _logger.info(
         f"[US 스크리너] mode={mode} → "
@@ -3385,6 +3395,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
         "quota_gainers": _quota["day_gainers"],
         "quota_losers": _quota["day_losers"],
         "fmp_max": _fmp_max,
+        "top_n": _target_n,
     }
     _CACHE_TTL_SEC  = int(os.getenv("US_SCREEN_CACHE_TTL_SEC", "1800"))
 
@@ -3406,10 +3417,10 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                         )
                     elif source == "yf" and _has_meaningful_candidate_volume(cands):
                         _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
-                        return cands[:top_n]
+                        return cands[:_target_n]
                     elif source == "fmp" and cands:
                         _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
-                        return cands[:top_n]
+                        return cands[:_target_n]
                 else:
                     _logger.info(
                         f"[US 스크리너 캐시] 만료 ({cache_age/60:.0f}분 > TTL {_CACHE_TTL_SEC//60}분) → 재스크리닝"
@@ -3451,7 +3462,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                            ensure_ascii=False),
                 encoding="utf-8",
             )
-            return merged[:top_n]
+            return merged[:_target_n]
     except Exception as e:
         _logger.warning(f"[YF 스크리너] 실패: {e}")
 
@@ -3470,7 +3481,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                            ensure_ascii=False),
                 encoding="utf-8",
             )
-            return fmp_cands[:top_n]
+            return fmp_cands[:_target_n]
     except Exception as e:
         _logger.warning(f"[FMP 스크리너] 실패: {e}")
 

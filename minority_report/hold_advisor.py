@@ -70,6 +70,17 @@ STAGE_DEFAULT_POLICIES = {
     "MANUAL_REVIEW": "HOLD unless the supplied review context supports SELL.",
 }
 
+STAGE_LEAD_TEXT = {
+    "TP_REVIEW": "목표가에 도달한 포지션을 계속 보유할지 판단하세요.",
+    "PRE_SESSION": "개장 전 보유 포지션의 이월 리스크와 장초 대응 필요성을 판단하세요.",
+    "INTRADAY_REVIEW": "장중 보유 포지션의 기대수익과 하방 리스크를 재평가하세요.",
+    "MAX_HOLD": "최대 보유 기간을 초과했습니다. 예외적으로 한 번 더 보유할 근거가 있는지 판단하세요.",
+    "PRE_CLOSE_CARRY": "장마감까지 {minutes_to_close}분 남았습니다. 이 포지션을 다음 세션으로 이월할 예외가 있는지 판단하세요.",
+    "SOFT_EXIT": "소프트 매도 조건이 발생했습니다. 즉시 청산할지 보류할지 판단하세요.",
+    "AUTO_SELL_REVIEW": "자동 매도 조건이 발동됐습니다. 해당 매도 사유가 현재도 유효한지 재검토하세요.",
+    "MANUAL_REVIEW": "제공된 검토 사유를 기준으로 보유 또는 청산을 판단하세요.",
+}
+
 
 def _normalize_stage(decision_stage: Optional[str]) -> str:
     stage = str(decision_stage or "TP_REVIEW").strip().upper()
@@ -87,7 +98,16 @@ def _fallback_vote(reason: str, decision_stage: str = "TP_REVIEW", default_polic
         "confidence": 0.0,
         "trail_pct": 0.03,
         "sell_urgency": "wait",
+        "revised_sell_target": 0.0,
         "protective_stop": 0.0,
+        "hard_stop": 0.0,
+        "recover_above": 0.0,
+        "recovery_watch_min": 0,
+        "valid_for_min": 0,
+        "reask_after_min": 0,
+        "reask_drawdown_from_peak_pct": 0.0,
+        "reask_if_price_above": 0.0,
+        "max_rechecks": 0,
         "next_review_min": 30,
         "invalid_if": "",
         "reason": reason,
@@ -118,6 +138,42 @@ def _coerce_vote(result: dict, decision_stage: str = "TP_REVIEW", default_policy
     except Exception:
         protective_stop = 0.0
     try:
+        revised_sell_target = float((result or {}).get("revised_sell_target", 0.0) or 0.0)
+    except Exception:
+        revised_sell_target = 0.0
+    try:
+        hard_stop = float((result or {}).get("hard_stop", 0.0) or 0.0)
+    except Exception:
+        hard_stop = 0.0
+    try:
+        recover_above = float((result or {}).get("recover_above", 0.0) or 0.0)
+    except Exception:
+        recover_above = 0.0
+    try:
+        recovery_watch_min = int(float((result or {}).get("recovery_watch_min", 0) or 0))
+    except Exception:
+        recovery_watch_min = 0
+    try:
+        valid_for_min = int(float((result or {}).get("valid_for_min", 0) or 0))
+    except Exception:
+        valid_for_min = 0
+    try:
+        reask_after_min = int(float((result or {}).get("reask_after_min", 0) or 0))
+    except Exception:
+        reask_after_min = 0
+    try:
+        reask_drawdown_from_peak_pct = float((result or {}).get("reask_drawdown_from_peak_pct", 0.0) or 0.0)
+    except Exception:
+        reask_drawdown_from_peak_pct = 0.0
+    try:
+        reask_if_price_above = float((result or {}).get("reask_if_price_above", 0.0) or 0.0)
+    except Exception:
+        reask_if_price_above = 0.0
+    try:
+        max_rechecks = int(float((result or {}).get("max_rechecks", 0) or 0))
+    except Exception:
+        max_rechecks = 0
+    try:
         next_review_min = int(float((result or {}).get("next_review_min", 30) or 30))
     except Exception:
         next_review_min = 30
@@ -126,7 +182,16 @@ def _coerce_vote(result: dict, decision_stage: str = "TP_REVIEW", default_policy
         "confidence": max(0.0, min(1.0, confidence)),
         "trail_pct": max(0.02, min(0.05, trail_pct)),
         "sell_urgency": sell_urgency,
+        "revised_sell_target": max(0.0, revised_sell_target),
         "protective_stop": max(0.0, protective_stop),
+        "hard_stop": max(0.0, hard_stop),
+        "recover_above": max(0.0, recover_above),
+        "recovery_watch_min": max(0, min(30, recovery_watch_min)),
+        "valid_for_min": max(0, min(30, valid_for_min)),
+        "reask_after_min": max(0, min(30, reask_after_min)),
+        "reask_drawdown_from_peak_pct": max(0.0, min(10.0, reask_drawdown_from_peak_pct)),
+        "reask_if_price_above": max(0.0, reask_if_price_above),
+        "max_rechecks": max(0, min(8, max_rechecks)),
         "next_review_min": max(5, min(240, next_review_min)),
         "invalid_if": str((result or {}).get("invalid_if", "") or "")[:240],
         "reason": str((result or {}).get("reason", "") or ""),
@@ -240,13 +305,25 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
     mode_line = f"  시장 모드: {mode_str}\n" if mode_str else ""
 
     context_text = rt_context or (digest_prompt[:300] if digest_prompt else "  (정보 없음)")
+    if minutes_to_close is None:
+        minutes_to_close_text = "unknown"
+    else:
+        try:
+            minutes_to_close_text = f"{float(minutes_to_close):.1f}".rstrip("0").rstrip(".")
+        except Exception:
+            minutes_to_close_text = "unknown"
+    lead_text = STAGE_LEAD_TEXT.get(decision_stage, STAGE_LEAD_TEXT["MANUAL_REVIEW"]).format(
+        minutes_to_close=minutes_to_close_text
+    )
+    if force_exit_window:
+        lead_text += " 현재 force-exit window이면 HOLD는 시스템 강제청산을 override하지 못합니다."
 
     prompt = f"""{PERSONAS[analyst_type]}
 
 {COMMON_DECISION_CONTRACT}
 {HARD_SOFT_RULE_CONTRACT}
 
-목표가에 도달한 포지션을 계속 보유할지 판단하세요.
+{lead_text}
 
 ━━━ 포지션 ━━━
   종목: {ticker} ({market}, {ccy})  전략: {strat}
@@ -265,7 +342,9 @@ Decision stage:
 - default_policy: {default_policy_text}
 - minutes_to_close: {minutes_to_close if minutes_to_close is not None else "unknown"}
 - force_exit_window: {bool(force_exit_window)}
-- System hard exits override any HOLD output.
+- Catastrophic exits such as daily loss halt, broker mismatch, operator kill, and emergency close override HOLD.
+- Reviewable exits such as loss_cap, stop_loss, trail_stop, and profit_floor should be re-judged from the current thesis and risk/reward.
+- HOLD is valid only when the thesis is still intact, risk is bounded, and protective_stop / invalid_if / next_review_min are explicit.
 
 Perspective focus:
 {PERSONA_FOCUS.get(analyst_type, "")}
@@ -278,7 +357,16 @@ JSON으로만 응답:
   "confidence": 0.0~1.0,
   "sell_urgency": "now|next_open|wait",
   "trail_pct": 0.03,
+  "revised_sell_target": 0.0,
   "protective_stop": 0.0,
+  "hard_stop": 0.0,
+  "recover_above": 0.0,
+  "recovery_watch_min": 0,
+  "valid_for_min": 10,
+  "reask_after_min": 0,
+  "reask_drawdown_from_peak_pct": 0.8,
+  "reask_if_price_above": 0.0,
+  "max_rechecks": 2,
   "next_review_min": 30,
   "invalid_if": "price loses VWAP",
   "reason": "한 문장"
@@ -397,7 +485,41 @@ def ask(
     if action == "SELL":
         urgencies = [str(v.get("sell_urgency", "") or "") for v in action_voters]
         sell_urgency = "now" if "now" in urgencies else ("next_open" if "next_open" in urgencies else "wait")
+    def _positive_float_votes(field, source=None):
+        values = []
+        for vote in source or list(votes.values()):
+            try:
+                value = float(vote.get(field, 0.0) or 0.0)
+            except Exception:
+                value = 0.0
+            if value > 0:
+                values.append(value)
+        return values
+
+    def _positive_int_votes(field, source=None):
+        values = []
+        for vote in source or list(votes.values()):
+            try:
+                value = int(float(vote.get(field, 0) or 0))
+            except Exception:
+                value = 0
+            if value > 0:
+                values.append(value)
+        return values
+
+    # Lower revised targets are the conservative aggregation: they lock gains earlier
+    # when analysts disagree on how far to extend a target.
+    revised_target_values = _positive_float_votes("revised_sell_target", hold_voters or action_voters)
+    revised_sell_target = min(revised_target_values) if revised_target_values else 0.0
     protective_stop = max((float(v.get("protective_stop", 0.0) or 0.0) for v in votes.values()), default=0.0)
+    hard_stop = max(_positive_float_votes("hard_stop"), default=0.0)
+    recover_above = max(_positive_float_votes("recover_above"), default=0.0)
+    recovery_watch_min = min(_positive_int_votes("recovery_watch_min"), default=0)
+    valid_for_min = min(_positive_int_votes("valid_for_min"), default=0)
+    reask_after_min = min(_positive_int_votes("reask_after_min"), default=0)
+    reask_drawdown_from_peak_pct = min(_positive_float_votes("reask_drawdown_from_peak_pct"), default=0.0)
+    reask_if_price_above = min(_positive_float_votes("reask_if_price_above"), default=0.0)
+    max_rechecks = min(_positive_int_votes("max_rechecks"), default=0)
     next_review_min = min((int(v.get("next_review_min", 30) or 30) for v in votes.values()), default=30)
     reason = ""
     invalid_if = ""
@@ -421,7 +543,16 @@ def ask(
         "votes": votes,
         "confidence": round(confidence, 4),
         "sell_urgency": sell_urgency,
+        "revised_sell_target": revised_sell_target,
         "protective_stop": protective_stop,
+        "hard_stop": hard_stop,
+        "recover_above": recover_above,
+        "recovery_watch_min": recovery_watch_min,
+        "valid_for_min": valid_for_min,
+        "reask_after_min": reask_after_min,
+        "reask_drawdown_from_peak_pct": reask_drawdown_from_peak_pct,
+        "reask_if_price_above": reask_if_price_above,
+        "max_rechecks": max_rechecks,
         "next_review_min": next_review_min,
         "reason": reason,
         "invalid_if": invalid_if,

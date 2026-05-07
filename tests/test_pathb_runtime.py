@@ -21,6 +21,37 @@ class _Risk:
         self.cash = 1_000_000
         self.positions = []
 
+    def close_position(
+        self,
+        ticker: str,
+        exit_price: float,
+        reason: str,
+        session_date: str | None = None,
+        exit_meta: dict | None = None,
+    ) -> dict | None:
+        for idx, pos in enumerate(list(self.positions)):
+            if str(pos.get("ticker", "")) != ticker:
+                continue
+            self.positions.pop(idx)
+            qty = int(pos.get("qty", 0) or 0)
+            entry = float(pos.get("entry", 0) or 0)
+            pnl = (float(exit_price or 0) - entry) * qty
+            pnl_pct = ((float(exit_price or 0) / entry) - 1.0) * 100.0 if entry > 0 else 0.0
+            result = {
+                **pos,
+                **dict(exit_meta or {}),
+                "ticker": ticker,
+                "qty": qty,
+                "entry": entry,
+                "exit_price": float(exit_price or 0),
+                "exit_reason": reason,
+                "pnl": pnl,
+                "pnl_krw": pnl,
+                "pnl_pct": pnl_pct,
+            }
+            return result
+        return None
+
 
 class _V2:
     brain_snapshot_ids = {"KR": "brain_kr"}
@@ -39,8 +70,10 @@ class _Bot:
         self.price_cache_raw = {}
         self.price_cache = {}
         self._v2_same_day_stop_tickers = {"KR": set(), "US": set()}
+        self._daily_sl_count = {"KR": 0, "US": 0}
         self.saved_positions = False
         self.blocked_entries = []
+        self.decision_events = []
 
     def _current_session_date_str(self, market: str) -> str:
         return "2026-04-27"
@@ -59,6 +92,9 @@ class _Bot:
 
     def _block_entry(self, ticker: str, minutes: int, reason: str) -> None:
         self.blocked_entries.append((ticker, minutes, reason))
+
+    def _record_decision_event(self, market: str, action: str, ticker: str, **kwargs) -> None:
+        self.decision_events.append({"market": market, "action": action, "ticker": ticker, **kwargs})
 
 
 class _PnlBot:
@@ -127,6 +163,29 @@ class PathBRuntimeTests(unittest.TestCase):
 
         self.assertEqual(runtime._daily_pnl_pct("US"), -0.25)
         self.assertEqual(runtime._equity_daily_pnl_pct("US"), -3.5)
+
+    def test_pathb_sell_in_flight_detects_pending_sell_evidence(self) -> None:
+        self.assertTrue(PathBRuntime._pathb_sell_in_flight({"status": "SELL_SENT"}, {}))
+        self.assertTrue(
+            PathBRuntime._pathb_sell_in_flight(
+                {"status": "FILLED", "plan": {"exit_execution_id": "sell-1"}},
+                {},
+            )
+        )
+        self.assertTrue(PathBRuntime._pathb_sell_in_flight({"status": "FILLED"}, {"pathb_closing": "2026-05-06T23:00:00+09:00"}))
+        self.assertTrue(PathBRuntime._pathb_sell_in_flight({"status": "FILLED"}, {"pathb_pending_sell_order_no": "sell-2"}))
+        self.assertFalse(PathBRuntime._pathb_sell_in_flight({"status": "FILLED"}, {}))
+
+    def test_pathb_small_stop_can_be_ticker_only_for_stop_cluster(self) -> None:
+        env = {
+            "STOP_CLUSTER_PATHB_TICKER_ONLY_ENABLED": "true",
+            "STOP_CLUSTER_PATHB_TICKER_ONLY_MAX_COST_KRW": "250000",
+            "STOP_CLUSTER_PATHB_TICKER_ONLY_MAX_LOSS_PCT": "2.5",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            self.assertTrue(PathBRuntime._pathb_stop_ticker_only({"qty": 1, "entry": 160000, "pnl_pct": -1.6}, "US"))
+            self.assertFalse(PathBRuntime._pathb_stop_ticker_only({"qty": 2, "entry": 160000, "pnl_pct": -1.6}, "US"))
+            self.assertFalse(PathBRuntime._pathb_stop_ticker_only({"qty": 1, "entry": 160000, "pnl_pct": -3.0}, "US"))
 
     def test_balance_snapshot_uses_market_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -897,6 +956,65 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["plan"]["order_unknown_resolution"], "local_pathb_holding_recovered")
             self.assertEqual(run["plan"]["filled_qty"], 2)
             runtime._submit_sell.assert_not_called()
+
+    def test_finalize_pathb_sell_close_records_closed_decision_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_close",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=90,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=100,
+                qty=2,
+                execution_id="buy1",
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+            )
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                    "pathb_reference_target": 120,
+                    "strategy": "claude_price",
+                    "source_strategy": "claude_price",
+                }
+            )
+
+            runtime._finalize_pathb_sell_close(
+                plan,
+                price=95,
+                qty=2,
+                execution_id="sell1",
+                close_reason="CLOSED_LOSS_CAP",
+                evidence={"broker_fill_event_id": 1},
+            )
+
+            self.assertEqual(len(bot.decision_events), 1)
+            event = bot.decision_events[0]
+            self.assertEqual(event["action"], "sell_filled")
+            self.assertEqual(event["ticker"], "005930")
+            self.assertEqual(event["order_no"], "sell1")
+            self.assertEqual(event["reason"], "loss_cap")
+            self.assertEqual(event["qty"], 2)
+            self.assertEqual(event["pnl_krw"], -10)
+            self.assertTrue(event["broker_fill_confirmed"])
+            self.assertEqual(event["broker_fill_source"], "pathb_broker_truth")
 
     def test_stale_pathb_closing_is_cleared_for_still_held_position(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

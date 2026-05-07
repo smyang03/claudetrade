@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from bot.candidate_policy import normalize_selection_result
 from decision.claude_price_plan import parse_plan_from_claude
-from minority_report import hold_advisor
+from minority_report import hold_advisor, postmortem
 
 
 class SelectionSizingContractTests(unittest.TestCase):
@@ -149,6 +149,41 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertEqual(len(captured), 3)
         self.assertTrue(all(call["decision_stage"] == "INTRADAY_REVIEW" for call in captured))
 
+    def test_pre_close_carry_prompt_uses_stage_lead_and_minutes(self) -> None:
+        captured: dict[str, str] = {}
+
+        def _fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        text=(
+                            '{"action":"SELL","confidence":0.8,"sell_urgency":"next_open",'
+                            '"trail_pct":0.03,"protective_stop":0,"next_review_min":30,'
+                            '"invalid_if":"close weak","reason":"carry risk"}'
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0, "qty": 1}
+        with patch.object(hold_advisor.client.messages, "create", side_effect=_fake_create), \
+             patch.object(hold_advisor, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(hold_advisor, "save_raw_call", lambda *args, **kwargs: None):
+            hold_advisor._ask_one(
+                "neutral",
+                pos,
+                "KR",
+                "market context",
+                decision_stage="PRE_CLOSE_CARRY",
+                minutes_to_close=12.5,
+            )
+
+        self.assertIn("장마감까지 12.5분", captured["prompt"])
+        self.assertIn("다음 세션으로 이월", captured["prompt"])
+        self.assertNotIn("목표가에 도달한 포지션", captured["prompt"])
+
 
 class SelectionPromptContractTests(unittest.TestCase):
     def test_select_tickers_prompt_contains_contract_versions(self) -> None:
@@ -185,6 +220,116 @@ class SelectionPromptContractTests(unittest.TestCase):
         self.assertIn("execution_plan_v1", prompt)
         self.assertIn("max_order_cap_pct", prompt)
         self.assertIn("reward_risk", prompt)
+
+    def test_selection_retry_trade_ready_is_ignored_and_kept_watch_only(self) -> None:
+        from minority_report import analysts as analysts_module
+
+        def _fake_create(*, model, max_tokens, messages):
+            return SimpleNamespace(
+                content=[SimpleNamespace(text="{}")],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        parsed = [
+            {
+                "watchlist": ["AMD"],
+                "trade_ready": ["AMD"],
+                "reasons": {"AMD": "partial recovery"},
+                "_fallback_mode": "selection_partial",
+                "_parse_recovered": True,
+            },
+            {
+                "watchlist": ["AMD", "MSFT"],
+                "trade_ready": ["AMD"],
+                "reasons": {"AMD": "retry tried to promote", "MSFT": "watch"},
+            },
+        ]
+
+        with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
+             patch.object(analysts_module, "_extract_json", side_effect=parsed), \
+             patch.object(analysts_module, "build_active_lesson_context", return_value={"section": "", "metadata": {}}), \
+             patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(analysts_module, "save_raw_call", lambda **kwargs: None):
+            tickers, reasons = analysts_module.select_tickers(
+                market="US",
+                digest_prompt="market digest",
+                consensus_mode="NEUTRAL",
+                candidates=[
+                    {"ticker": "AMD", "price": 100.0, "volume": 1000, "change_rate": 1.0},
+                    {"ticker": "MSFT", "price": 200.0, "volume": 1000, "change_rate": 0.5},
+                ],
+                market_change_pct=0.0,
+                secondary_change_pct=0.0,
+            )
+
+        meta = analysts_module.get_last_selection_meta()
+        self.assertEqual(tickers, ["AMD", "MSFT"])
+        self.assertEqual(reasons["AMD"], "retry tried to promote")
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_selection_retry_trade_ready_ignored"], ["AMD"])
+
+
+class PostmortemPromptContractTests(unittest.TestCase):
+    def test_us_postmortem_prompt_is_market_scoped(self) -> None:
+        captured: dict[str, str] = {}
+
+        def _fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        text=(
+                            '{"bull_result":"HIT","bear_result":"MISS","neutral_result":"PARTIAL",'
+                            '"bull_why":"ok","bear_why":"ok","neutral_why":"ok",'
+                            '"best_trade":null,"worst_trade":null,"worst_trade_reason":"",'
+                            '"key_lesson":"US lesson","issue_type":"none","issue_desc":"",'
+                            '"pattern_id":null,'
+                            '"brain_updates":{"bull_reliability_change":"stable",'
+                            '"bear_reliability_change":"stable","new_lesson":null,'
+                            '"market_regime":"unknown"},'
+                            '"correction_guide":{"bull_adjustments":[],"bear_adjustments":[],'
+                            '"tuning_rules":[],"today_notes":""}}'
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        brain_payload = {"markets": {"US": {"recent_days": []}}}
+        no_op = lambda *args, **kwargs: None
+        with patch.object(postmortem.client.messages, "create", side_effect=_fake_create), \
+             patch.object(postmortem, "credit_record", no_op), \
+             patch.object(postmortem, "save_raw_call", no_op), \
+             patch.object(postmortem.BrainDB, "generate_prompt_summary", return_value=""), \
+             patch.object(postmortem.BrainDB, "load", return_value=brain_payload), \
+             patch.object(postmortem.BrainDB, "update_analyst", no_op), \
+             patch.object(postmortem.BrainDB, "update_mode_performance", no_op), \
+             patch.object(postmortem.BrainDB, "update_beliefs", no_op), \
+             patch.object(postmortem.BrainDB, "update_issue_pattern", no_op), \
+             patch.object(postmortem.BrainDB, "add_daily_record", no_op), \
+             patch.object(postmortem.BrainDB, "get_recent_selection_feedback_text", return_value=""), \
+             patch.object(postmortem.BrainDB, "update_strategy_performance", no_op), \
+             patch.object(postmortem.BrainDB, "update_debate_outcome", no_op), \
+             patch.object(postmortem.BrainDB, "update_correction_guide", no_op):
+            postmortem.run(
+                "US",
+                "2026-05-07",
+                {
+                    "judgments": {
+                        "bull": {"stance": "MILD_BULL", "key_reason": "SPY +1%"},
+                        "bear": {"stance": "NEUTRAL", "key_reason": "VIX calm"},
+                        "neutral": {"stance": "NEUTRAL", "key_reason": "mixed"},
+                    },
+                    "consensus": {"mode": "MILD_BULL"},
+                },
+                {"market_change": 1.0, "pnl_pct": 0.5, "win": True},
+                "US digest",
+                trade_log=[],
+                decision_event_log=[],
+            )
+
+        self.assertIn("미국 주식 자동매매 시스템", captured["prompt"])
+        self.assertNotIn("한국 주식 자동매매 시스템", captured["prompt"])
 
 
 if __name__ == "__main__":

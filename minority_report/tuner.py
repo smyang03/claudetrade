@@ -33,10 +33,10 @@ _VALID_MODES = {
     "HALT",
 }
 _RUNTIME_ADJUSTMENT_BOUNDS = {
-    "momentum_wait_adjust_min": (-15, 15),
-    "entry_priority_cutoff_adjust": (-0.08, 0.08),
-    "kr_momentum_atr_cap_adjust": (-0.02, 0.03),
-    "kr_momentum_atr_cap_high_adjust": (-0.02, 0.03),
+    "momentum_wait_adjust_min": (-10, 10),
+    "entry_priority_cutoff_adjust": (-0.05, 0.05),
+    "kr_momentum_atr_cap_adjust": (-0.01, 0.02),
+    "kr_momentum_atr_cap_high_adjust": (-0.01, 0.02),
 }
 
 
@@ -221,10 +221,10 @@ def tune(market: str, elapsed_min: int, current_state: dict,
 - KR momentum ATR cap은 완화/강화만 허용
 
 bounded override 범위:
-- momentum_wait_adjust_min: -15 ~ 15 정수
-- entry_priority_cutoff_adjust: -0.08 ~ 0.08
-- kr_momentum_atr_cap_adjust: -0.02 ~ 0.03
-- kr_momentum_atr_cap_high_adjust: -0.02 ~ 0.03
+- momentum_wait_adjust_min: -10 ~ 10 정수
+- entry_priority_cutoff_adjust: -0.05 ~ 0.05
+- kr_momentum_atr_cap_adjust: -0.01 ~ 0.02
+- kr_momentum_atr_cap_high_adjust: -0.01 ~ 0.02
 
 JSON으로만 응답:
 {{"action":"MAINTAIN|TIGHTEN|REVERSE","mode":"{prev_mode} 또는 조정된 모드",

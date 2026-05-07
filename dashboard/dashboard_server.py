@@ -17,8 +17,9 @@ from flask import Flask, jsonify, redirect, render_template_string, request
 from pathlib import Path
 from datetime import datetime, date, timedelta, time as dt_time
 import copy
+import math
 import json, sys, os, re, subprocess, threading, atexit, time as _time, sqlite3
-from collections import Counter
+from collections import Counter, deque
 from contextlib import contextmanager
 from typing import Optional
 import uuid
@@ -1018,6 +1019,82 @@ def _record_trade_count(rec: dict, market: str) -> int:
     return int(_record_metrics(rec, market).get("trades", 0) or 0)
 
 
+_BRAIN_BULL_STANCES = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL", "CAUTIOUS"}
+_BRAIN_BEAR_STANCES = {"MILD_BEAR", "CAUTIOUS_BEAR"}
+_BRAIN_AVOID_STANCES = {"DEFENSIVE", "HALT"}
+_BRAIN_HIT_THRESHOLD = 0.5
+_BRAIN_FLAT_THRESHOLD = 0.5
+_BRAIN_FLAT_PARTIAL = 1.5
+_BRAIN_AVOID_MISS = 1.0
+
+
+def _float_or_none(value) -> Optional[float]:
+    try:
+        if value is None or value == "":
+            return None
+        num = float(value)
+        if math.isnan(num) or math.isinf(num):
+            return None
+        return num
+    except Exception:
+        return None
+
+
+def _judge_brain_result(stance: str, market_change_pct: float) -> str:
+    stance_key = str(stance or "").strip().upper()
+    chg = float(market_change_pct or 0.0)
+    abs_chg = abs(chg)
+    if stance_key in _BRAIN_BULL_STANCES:
+        if chg >= _BRAIN_HIT_THRESHOLD:
+            return "HIT"
+        if chg > 0:
+            return "PARTIAL"
+        return "MISS"
+    if stance_key in _BRAIN_BEAR_STANCES:
+        if chg <= -_BRAIN_HIT_THRESHOLD:
+            return "HIT"
+        if chg < 0:
+            return "PARTIAL"
+        return "MISS"
+    if stance_key in _BRAIN_AVOID_STANCES:
+        if chg < -_BRAIN_HIT_THRESHOLD:
+            return "HIT"
+        if chg < _BRAIN_AVOID_MISS:
+            return "PARTIAL"
+        return "MISS"
+    if abs_chg <= _BRAIN_FLAT_THRESHOLD:
+        return "HIT"
+    if abs_chg <= _BRAIN_FLAT_PARTIAL:
+        return "PARTIAL"
+    return "MISS"
+
+
+def _record_market_change(rec: dict, market: str) -> Optional[float]:
+    actual = rec.get("actual_result", {}) or {}
+    direct = _float_or_none(actual.get("market_change"))
+    if direct is not None:
+        return direct
+
+    # Older live records missed actual_result.market_change. The tuning/reinvoke
+    # session events still carry the same primary index change used at runtime.
+    patterns = (
+        r"(?:지수|S&P500|SP500|코스피|KOSPI)(?:\s*(?:intraday|장중|개장 대비))?\s*([+-]\d+(?:\.\d+)?)%",
+        r"(?:현재\s*)?(?:S&P500|SP500|코스피|KOSPI)\s*([+-]\d+(?:\.\d+)?)%",
+    )
+    for event in reversed(rec.get("session_events", []) or []):
+        text = " ".join(
+            str(event.get(key, "") or "")
+            for key in ("reason", "trigger", "warning")
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, re.I)
+            if match:
+                inferred = _float_or_none(match.group(1))
+                if inferred is not None:
+                    return inferred
+    return None
+
+
 def _record_metrics(rec: dict, market: str) -> dict:
     trades = _trades_for_record(rec, market)
     sells = [t for t in trades if t.get("side") == "sell"]
@@ -1972,7 +2049,10 @@ def _merge_position_context(base: dict, overlay: Optional[dict]) -> dict:
     for key in (
         "strategy", "entry", "avg_price", "display_avg_price", "display_current_price",
         "tp", "tp_price", "sl", "tp_triggered", "trailing", "trail_sl", "trail_pct",
-        "held_days", "entry_date", "hold_advice", "name", "qty",
+        "held_days", "entry_date", "entry_time", "hold_advice", "name", "qty",
+        "source_strategy", "path_type", "pathb_path_run_id", "pathb_plan",
+        "v2_decision_id", "v2_execution_id", "position_id", "order_no",
+        "currency", "display_currency", "raw_avg_price", "raw_current_price",
     ):
         value = overlay.get(key)
         if value not in (None, "", 0) or key in ("tp_triggered", "trailing"):
@@ -2547,6 +2627,141 @@ def _known_sell_pnl_for_date(rows: list[dict], trade_date: str) -> float:
     return float(total)
 
 
+def _dashboard_usd_krw_for_pnl(mode: str) -> float:
+    try:
+        live_us = _load_live_status("US", mode=mode) or {}
+        snap = ((live_us.get("broker") or {}).get("last_trusted_snapshot") or {})
+        for usd_key, krw_key in (("cash_usd", "cash_krw"), ("eval_usd", "eval_krw")):
+            usd = float(snap.get(usd_key, 0) or 0)
+            krw = float(snap.get(krw_key, 0) or 0)
+            if usd > 0 and krw > 0:
+                return krw / usd
+    except Exception:
+        pass
+    return _get_usd_krw_cached()
+
+
+def _broker_today_fill_fifo_realized_pnl(market: str, mode: str) -> Optional[dict]:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    broker = _broker_truth_market_for_accounting(market_key, mode)
+    if not broker:
+        return None
+    fills = list(broker.get("today_fills") or [])
+    if not fills:
+        return None
+    usd_krw = _dashboard_usd_krw_for_pnl(mode)
+    queues: dict[str, deque] = {}
+    pnl_krw = 0.0
+    sell_count = 0
+    matched_sell_qty = 0
+    unknown_sell_qty = 0
+    for fill in sorted(
+        fills,
+        key=lambda f: (
+            str(f.get("fill_time", "") or f.get("order_time", "") or ""),
+            str(f.get("order_no", "") or ""),
+        ),
+    ):
+        ticker = str(fill.get("ticker", "") or "").strip().upper()
+        side = str(fill.get("side", "") or "").strip().lower()
+        qty = int(fill.get("filled_qty", fill.get("qty", 0)) or 0)
+        price = float(fill.get("avg_price", fill.get("price", 0)) or 0)
+        if not ticker or qty <= 0 or price <= 0:
+            continue
+        q = queues.setdefault(ticker, deque())
+        if side == "buy":
+            q.append([qty, price])
+            continue
+        if side != "sell":
+            continue
+        sell_count += 1
+        remaining = qty
+        while remaining > 0 and q:
+            buy_qty, buy_price = q[0]
+            take = min(remaining, int(buy_qty or 0))
+            if take <= 0:
+                q.popleft()
+                continue
+            pnl_native = (price - float(buy_price or 0)) * take
+            pnl_krw += pnl_native * usd_krw if market_key == "US" else pnl_native
+            matched_sell_qty += take
+            remaining -= take
+            buy_qty -= take
+            if buy_qty <= 0:
+                q.popleft()
+            else:
+                q[0][0] = buy_qty
+        if remaining > 0:
+            unknown_sell_qty += remaining
+    if sell_count <= 0:
+        return None
+    if unknown_sell_qty > 0:
+        return {
+            "available": False,
+            "pnl_krw": round(pnl_krw, 6),
+            "source": "broker_today_fill_fifo_partial",
+            "usd_krw": round(usd_krw, 6),
+            "broker_sell_count": sell_count,
+            "matched_sell_qty": matched_sell_qty,
+            "unknown_sell_qty": unknown_sell_qty,
+        }
+    return {
+        "available": True,
+        "pnl_krw": round(pnl_krw, 6),
+        "source": "broker_today_fill_fifo",
+        "usd_krw": round(usd_krw, 6),
+        "broker_sell_count": sell_count,
+        "matched_sell_qty": matched_sell_qty,
+        "unknown_sell_qty": 0,
+    }
+
+
+def _current_session_trade_turnover(market: str, mode: str) -> dict:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    broker = _broker_truth_market_for_accounting(market_key, mode)
+    usd_krw = _dashboard_usd_krw_for_pnl(mode)
+    buy_krw = 0.0
+    sell_krw = 0.0
+    buy_count = 0
+    sell_count = 0
+    fill_count = 0
+    if broker:
+        for fill in broker.get("today_fills") or []:
+            side = str(fill.get("side", "") or "").strip().lower()
+            qty = int(fill.get("filled_qty", fill.get("qty", 0)) or 0)
+            price = float(fill.get("avg_price", fill.get("price", 0)) or 0)
+            if qty <= 0 or price <= 0:
+                continue
+            amount = price * qty
+            amount_krw = amount * usd_krw if market_key == "US" else amount
+            fill_count += 1
+            if side == "buy":
+                buy_krw += amount_krw
+                buy_count += 1
+            elif side == "sell":
+                sell_krw += amount_krw
+                sell_count += 1
+        return {
+            "source": "broker_today_fills",
+            "fill_count": fill_count,
+            "buy_count": buy_count,
+            "sell_count": sell_count,
+            "buy_krw": round(buy_krw, 0),
+            "sell_krw": round(sell_krw, 0),
+            "total_krw": round(buy_krw + sell_krw, 0),
+            "usd_krw": round(usd_krw, 6),
+        }
+    return {
+        "source": "unavailable",
+        "fill_count": 0,
+        "buy_count": 0,
+        "sell_count": 0,
+        "buy_krw": 0,
+        "sell_krw": 0,
+        "total_krw": 0,
+    }
+
+
 def _parse_iso_dt(value: str) -> Optional[datetime]:
     raw = str(value or "").strip()
     if not raw:
@@ -2588,6 +2803,37 @@ def _fresh_broker_truth_market(market: str, mode: str) -> dict:
     return data
 
 
+def _broker_truth_market_for_accounting(market: str, mode: str) -> dict:
+    fresh = _fresh_broker_truth_market(market, mode)
+    if fresh:
+        return fresh
+    runtime_mode = _normalize_mode(mode)
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    path = get_runtime_path("state", f"{runtime_mode}_broker_truth_snapshot.json")
+    if not path.exists() and runtime_mode == "live":
+        path = get_runtime_path("state", "broker_truth_snapshot.json")
+    if not path.exists():
+        return {}
+    try:
+        snap = json.loads(path.read_text(encoding="utf-8", errors="replace") or "{}")
+    except Exception:
+        return {}
+    data = (snap.get("markets") or {}).get(market_key) or {}
+    if not isinstance(data, dict) or data.get("missing") or data.get("error"):
+        return {}
+    last = _parse_iso_dt(str(data.get("last_success_at", "") or ""))
+    if last is None:
+        return {}
+    try:
+        max_age_sec = max(60, int(os.getenv("DASHBOARD_ACCOUNTING_BROKER_TRUTH_MAX_AGE_SEC", "1800") or 1800))
+    except Exception:
+        max_age_sec = 1800
+    now = datetime.now(last.tzinfo) if last.tzinfo is not None else datetime.now(KST)
+    if max(0.0, (now - last).total_seconds()) > max_age_sec:
+        return {}
+    return data
+
+
 def _broker_confirmed_local_realized_pnl(market: str, mode: str, session_date: str) -> Optional[dict]:
     market_key = "US" if str(market or "").upper() == "US" else "KR"
     broker = _fresh_broker_truth_market(market_key, mode)
@@ -2598,7 +2844,11 @@ def _broker_confirmed_local_realized_pnl(market: str, mode: str, session_date: s
         if str(f.get("side", "") or "").lower() == "sell"
         and int(f.get("filled_qty", f.get("qty", 0)) or 0) > 0
     ]
-    order_nos = {str(f.get("order_no", "") or "").strip() for f in sell_fills if str(f.get("order_no", "") or "").strip()}
+    order_remaining: Counter[str] = Counter(
+        str(f.get("order_no", "") or "").strip()
+        for f in sell_fills
+        if str(f.get("order_no", "") or "").strip()
+    )
     loose_remaining: Counter[tuple[str, int]] = Counter()
     for fill in sell_fills:
         ticker = str(fill.get("ticker", "") or "").strip().upper()
@@ -2624,7 +2874,10 @@ def _broker_confirmed_local_realized_pnl(market: str, mode: str, session_date: s
                 order_no = str(rec.get("order_no", "") or "").strip()
                 ticker = str(rec.get("ticker", "") or "").strip().upper()
                 qty = int(rec.get("qty", 0) or 0)
-                use = bool(order_no and order_no in order_nos)
+                use = False
+                if order_no and order_remaining.get(order_no, 0) > 0:
+                    order_remaining[order_no] -= 1
+                    use = True
                 loose_key = (ticker, qty)
                 if not use and loose_remaining.get(loose_key, 0) > 0:
                     loose_remaining[loose_key] -= 1
@@ -2635,13 +2888,16 @@ def _broker_confirmed_local_realized_pnl(market: str, mode: str, session_date: s
                 matched += 1
         except Exception:
             pass
+    if matched < len(sell_fills):
+        return None
+
     return {
         "available": True,
         "pnl_krw": float(pnl),
         "source": "broker_truth_confirmed_local_pnl",
         "broker_sell_count": len(sell_fills),
         "matched_local_count": matched,
-        "confirmed_order_nos": sorted(order_nos),
+        "confirmed_order_nos": sorted(order_remaining.keys()),
     }
 
 
@@ -2670,15 +2926,29 @@ def _deduped_local_session_realized_pnl(market: str, mode: str, session_date: st
         return None
     if not records:
         return None
-    by_ticker: dict[str, list[dict]] = {}
+    by_key: dict[str, list[dict]] = {}
     for rec in records:
-        by_ticker.setdefault(str(rec.get("ticker", "") or "").strip().upper(), []).append(rec)
-    duplicate_tickers = sorted(ticker for ticker, items in by_ticker.items() if len(items) > 1)
-    if not duplicate_tickers:
+        order_no = str(rec.get("order_no", "") or "").strip()
+        ticker = str(rec.get("ticker", "") or "").strip().upper()
+        if order_no:
+            key = f"order:{order_no}"
+        else:
+            key = "|".join(
+                (
+                    "event",
+                    ticker,
+                    str(rec.get("qty", "") or ""),
+                    str(round(float(rec.get("pnl_krw", 0) or 0), 4)),
+                    str(rec.get("exit_reason", "") or ""),
+                )
+            )
+        by_key.setdefault(key, []).append(rec)
+    duplicate_keys = sorted(key for key, items in by_key.items() if len(items) > 1)
+    if not duplicate_keys:
         return None
 
     kept: list[dict] = []
-    for ticker, items in by_ticker.items():
+    for key, items in by_key.items():
         if len(items) == 1:
             kept.extend(items)
             continue
@@ -2690,13 +2960,24 @@ def _deduped_local_session_realized_pnl(market: str, mode: str, session_date: st
         "source": "local_decisions_duplicate_sell_deduped",
         "local_closed_count": len(records),
         "deduped_closed_count": len(kept),
-        "duplicate_tickers": duplicate_tickers,
+        "duplicate_tickers": sorted(
+            {
+                str(rec.get("ticker", "") or "").strip().upper()
+                for key in duplicate_keys
+                for rec in by_key.get(key, [])
+                if str(rec.get("ticker", "") or "").strip()
+            }
+        ),
+        "duplicate_keys": duplicate_keys,
     }
 
 
 def _current_session_realized_pnl_status(market: str, mode: str, live: Optional[dict] = None) -> dict:
     market_key = "US" if str(market or "").upper() == "US" else "KR"
     session_date = _session_trade_date(market_key).isoformat()
+    broker_fifo = _broker_today_fill_fifo_realized_pnl(market_key, mode)
+    if broker_fifo is not None and bool(broker_fifo.get("available", False)):
+        return broker_fifo
     broker_confirmed = _broker_confirmed_local_realized_pnl(market_key, mode, session_date)
     if broker_confirmed is not None:
         return broker_confirmed
@@ -3050,7 +3331,10 @@ _EVENT_KO_MAP = {
     "signal_check": "신호없음",
     "entry_signal": "진입신호",
     "entry_skip": "진입보류",
+    "entry_failed": "주문실패",
     "signal_blocked": "신호차단",
+    "pending_order": "미체결주문",
+    "live_position": "보유중",
     "buy_filled": "매수체결",
     "sell_filled": "매도체결",
     "trailing": "추적중",
@@ -3715,12 +3999,15 @@ def api_summary():
     broker_trade_date = _session_trade_date(market).strftime("%Y%m%d")
     broker_realized_pnl_krw = _broker_realized_pnl_krw(market, broker_trade_date, mode=mode)
     realized_pnl_krw = broker_realized_pnl_krw
+    realized_pnl_source = "broker_trade_history"
     if abs(float(realized_pnl_krw or 0)) < 1e-9:
         realized_status = _current_session_realized_pnl_status(market, mode, live=live)
         if bool(realized_status.get("available", False)):
             realized_pnl_krw = float(realized_status.get("pnl_krw", 0) or 0)
+            realized_pnl_source = str(realized_status.get("source", "") or "current_session_status")
         else:
             realized_pnl_krw = live.get("daily_pnl", metrics_today.get("pnl_krw", result.get("pnl_krw", 0)))
+            realized_pnl_source = "live_status_or_metrics_fallback"
     unrealized_pnl_krw = 0.0
     pnl_krw  = realized_pnl_krw
     pnl_pct  = live.get("daily_pnl_pct", result.get("pnl_pct", 0))
@@ -3739,6 +4026,15 @@ def api_summary():
     name_map = _ticker_name_map(market, mode=mode)
     for pos in positions:
         pos["display_ticker"] = _display_ticker_label(pos.get("ticker", ""), pos.get("name", ""), name_map)
+        path_type = str(
+            pos.get("path_type", "")
+            or pos.get("source_strategy", "")
+            or pos.get("strategy", "")
+        ).strip()
+        is_pathb = bool(pos.get("pathb_path_run_id")) or path_type.lower() in ("claude_price", "pathb")
+        is_synced_only = str(pos.get("strategy", "") or "").strip() in ("broker_sync", "broker_balance")
+        pos["buy_path"] = "PathB" if is_pathb else ("브로커" if is_synced_only else "PlanA")
+        pos["path_type"] = path_type
     for order in pending_orders:
         order["display_ticker"] = _display_ticker_label(order.get("ticker", ""), order.get("name", ""), name_map)
     broker = _broker_snapshot(mode=mode)
@@ -3835,18 +4131,25 @@ def api_summary():
         "cumulative_cash_flow_krw",
         0.0,
     )
+    realized_excluding_eval_pnl_krw = float(realized_pnl_krw or 0.0)
+    if live_equity_summary:
+        realized_excluding_eval_pnl_krw = float(trading_pnl_krw or 0.0) - float(unrealized_today_delta_krw or 0.0)
     starting_asset_krw = float(live_equity_summary.get("starting_asset_krw", 0.0) or 0.0)
     starting_capital_krw = float(live_equity_summary.get("starting_capital_krw", 0.0) or 0.0)
     lifetime_realized_pnl = _lifetime_realized_pnl_summary(mode)
+    trade_turnover = _current_session_trade_turnover(market, mode)
     pnl_summary = {
         "today": {
             "selected_market": market,
             "trading_pnl_krw": round(trading_pnl_krw, 0),
             "trading_pnl_pct": round(trading_pnl_pct, 4),
             "realized_pnl_krw": round(float(realized_pnl_krw or 0), 0),
+            "realized_excluding_eval_pnl_krw": round(realized_excluding_eval_pnl_krw, 0),
+            "realized_pnl_source": realized_pnl_source,
             "unrealized_pnl_krw": round(float(unrealized_pnl_krw or 0), 0),
             "unrealized_today_delta_krw": round(float(unrealized_today_delta_krw or 0), 0),
             "holding_unrealized_pnl_krw": round(float(unrealized_pnl_krw or 0), 0),
+            "trade_turnover": trade_turnover,
             "basis": "selected_market_realized_plus_unrealized_delta",
         },
         "lifetime_realized": lifetime_realized_pnl,
@@ -3920,9 +4223,16 @@ def api_summary():
             "account_asset_source": "kis_broker_account" if broker else asset_source,
             "performance_basis": "broker_realized_plus_unrealized_delta" if broker else "engine_fallback",
             "realized_pnl_krw": round(realized_pnl_krw, 0),
+            "realized_excluding_eval_pnl_krw": round(realized_excluding_eval_pnl_krw, 0),
+            "realized_pnl_source": realized_pnl_source,
             "unrealized_pnl_krw": round(unrealized_pnl_krw, 0),
             "unrealized_today_delta_krw": round(unrealized_today_delta_krw, 0),
             "holding_unrealized_pnl_krw": round(unrealized_pnl_krw, 0),
+            "trade_turnover": trade_turnover,
+            "today_trade_total_krw": trade_turnover.get("total_krw", 0),
+            "today_trade_buy_krw": trade_turnover.get("buy_krw", 0),
+            "today_trade_sell_krw": trade_turnover.get("sell_krw", 0),
+            "today_trade_fill_count": trade_turnover.get("fill_count", 0),
             "pnl_summary":    pnl_summary,
             "asset_source":   asset_source,
             "win":            metrics_today.get("win", result.get("win", False)),
@@ -4457,7 +4767,7 @@ def api_preopen():
     market = "US" if market == "US" else "KR"
     mode = _request_mode()
     session_date = request.args.get("session_date") or _session_trade_date(market).isoformat()
-    limit = int(request.args.get("limit", "50") or 50)
+    limit = int(request.args.get("limit", "60") or 60)
     try:
         from preopen.storage import load_preopen_dashboard
         return jsonify(load_preopen_dashboard(market, session_date=session_date, limit=limit, mode=mode))
@@ -5010,6 +5320,26 @@ def api_brain_history():
         item = dict(day)
         rec = record_map.get((day.get("date", "") or "")[:10], {}) or {}
         actual = rec.get("actual_result", {}) or {}
+        if rec:
+            for key in ("pnl_pct", "win", "trades"):
+                if actual.get(key) is not None:
+                    item[key] = actual.get(key)
+            market_change = _record_market_change(rec, mkt)
+            if market_change is not None:
+                item["market_change"] = market_change
+                judgments = rec.get("judgments", {}) or {}
+                for analyst in ("bull", "bear", "neutral"):
+                    stance = (
+                        ((judgments.get(analyst) or {}).get("stance"))
+                        or item.get(f"{analyst}_stance")
+                    )
+                    if stance:
+                        item[f"{analyst}_result"] = _judge_brain_result(stance, market_change)
+                        item[f"{analyst}_stance"] = stance
+                pm = rec.get("postmortem", {}) or {}
+                for key in ("best_trade", "worst_trade", "worst_trade_reason"):
+                    if not item.get(key) and pm.get(key):
+                        item[key] = pm.get(key)
         execution_issues = list(actual.get("execution_issues", []) or [])
         execution_contaminated = bool(actual.get("execution_contaminated", False))
         item["execution_contaminated"] = execution_contaminated
@@ -6018,6 +6348,7 @@ def api_tickers_today():
     ticker_skip_reasons: dict[str, list] = {}
     selection_reasons: dict[str, str] = {}
     watch_only_details: dict[str, str] = {}
+    ticker_first_price: dict[str, dict] = {}
     candidates_list: list[str] = []
     def _prefer_ticker_event(prev: dict, cand: dict) -> dict:
         if not prev:
@@ -6050,6 +6381,7 @@ def api_tickers_today():
                 ticker_skip_reasons.clear()
                 selection_reasons.clear()
                 watch_only_details.clear()
+                ticker_first_price.clear()
                 candidates_list.clear()
                 continue
             # 선택 이유 수집 (ticker_selection / ticker_rescreen)
@@ -6063,6 +6395,13 @@ def api_tickers_today():
             t = extra.get("ticker", "")
             if not t:
                 continue
+            event_price = float(extra.get("price", extra.get("risk_price_krw", 0)) or 0)
+            if event_price > 0 and t not in ticker_first_price:
+                ticker_first_price[t] = {
+                    "price": event_price,
+                    "ts": r.get("timestamp", ""),
+                    "event": ev,
+                }
             ticker_last[t] = _prefer_ticker_event(
                 ticker_last.get(t, {}),
                 {"event": ev, "ts": r.get("timestamp", ""),
@@ -6213,15 +6552,23 @@ def api_tickers_today():
 
     watch_hist = _today_watchlist_history(market)
     tickers = watch_hist.get("current") or tickers
-    realtime_quotes = _dashboard_realtime_quotes(market, tickers, mode)
+    monitor_tickers = list(tickers or [])
+    monitor_seen = {str(t or "").strip().upper() for t in monitor_tickers}
+    for extra_ticker in list(live_pos_map) + list(broker_map) + list(pending_map):
+        extra_ticker = str(extra_ticker or "").strip().upper()
+        if extra_ticker and extra_ticker not in monitor_seen:
+            monitor_tickers.append(extra_ticker)
+            monitor_seen.add(extra_ticker)
+    realtime_quotes = _dashboard_realtime_quotes(market, monitor_tickers, mode)
 
     result = []
-    for t in tickers:
+    for t in monitor_tickers:
         last = ticker_last.get(t, {})
         raw_reasons = ticker_skip_reasons.get(t, [])
         skip_reasons_ko = [_REASON_KO.get(r, r) for r in raw_reasons]
         selection_status = _selection_status_for_ticker(rec, t, market)
         select_reason = selection_reasons.get(t, "") or rec.get("ticker_reasons", {}).get(t, "")
+        first_seen = ticker_first_price.get(t, {})
         result.append({
             "ticker":          t,
             "display_ticker":  _display_ticker_label(t, "", name_map),
@@ -6236,6 +6583,10 @@ def api_tickers_today():
             "selection_status_ko": "매수 가능" if selection_status == "TRADE_READY" else "감시 전용",
             "watch_only_detail": watch_only_details.get(t, ""),
             "skip_reasons":    skip_reasons_ko,   # 오늘 누적 미체결 사유
+            "pinned_position":  t not in tickers and (t in live_pos_map or t in broker_map or t in pending_map),
+            "selection_price":  float(first_seen.get("price", 0) or 0),
+            "selection_price_ts": _format_hhmm(first_seen.get("ts", "")),
+            "selection_price_event": first_seen.get("event", ""),
         })
     # 선택되지 않은 후보 목록 (축약)
     for item in result:
@@ -6253,20 +6604,44 @@ def api_tickers_today():
         recent_trade = recent_trade_map.get(ticker, {})
         if item["held_qty"] <= 0:
             item["held_qty"] = int(live_pos.get("qty", 0) or 0)
+        path_type = str(
+            live_pos.get("path_type", "")
+            or live_pos.get("source_strategy", "")
+            or live_pos.get("strategy", "")
+        ).strip()
+        is_pathb_position = bool(live_pos.get("pathb_path_run_id")) or path_type.lower() in ("claude_price", "pathb")
+        item["path_type"] = path_type
+        item["buy_path"] = "PathB" if is_pathb_position else ("PlanA" if item.get("held_qty", 0) > 0 else "")
+        item["pathb_path_run_id"] = live_pos.get("pathb_path_run_id", "")
+        item["pathb_plan"] = live_pos.get("pathb_plan", {}) or {}
+        item["entry_time"] = live_pos.get("entry_time", "") or live_pos.get("entry_date", "")
         _apply_monitor_display_price(
             item,
             market,
             recent_trade=recent_trade,
             quote=realtime_quotes.get(ticker),
         )
-        if item.get("pending_count", 0) > 0 and item.get("last_event") in ("waiting", "", None):
+        selection_price = float(item.get("selection_price", 0) or 0)
+        display_price = float(item.get("display_price", 0) or item.get("current_price", 0) or 0)
+        if selection_price > 0 and display_price > 0:
+            item["selection_return_pct"] = round((display_price / selection_price - 1.0) * 100.0, 4)
+        else:
+            item["selection_return_pct"] = None
+        if item.get("held_qty", 0) > 0:
+            prev_event = item.get("last_event")
+            if prev_event not in ("", None, "waiting", "live_position"):
+                item["last_event_before_position"] = prev_event
+                item["last_reason_before_position"] = item.get("last_reason", "")
+            item["last_event"] = "live_position"
+            item["last_reason"] = "PathB 보유" if is_pathb_position else "보유중"
+            item["last_ts"] = _format_hhmm(item.get("entry_time") or live.get("updated_at", ""))
+            if item.get("last_price", 0) <= 0:
+                item["last_price"] = float(item.get("current_price", 0) or item.get("display_price", 0) or 0)
+        elif item.get("pending_count", 0) > 0 and item.get("last_event") in ("waiting", "", None):
             item["last_event"] = "pending_order"
             item["last_ts"] = _format_hhmm(next((o.get("created_at", "") for o in live_pending if str(o.get("ticker", "")).strip().upper() == ticker), ""))
             if item.get("last_price", 0) <= 0:
                 item["last_price"] = float(next((o.get("raw_price", 0) for o in live_pending if str(o.get("ticker", "")).strip().upper() == ticker), 0) or 0)
-        elif item.get("held_qty", 0) > 0 and item.get("last_event") in ("waiting", "", None):
-            item["last_event"] = "live_position"
-            item["last_ts"] = _format_hhmm(live.get("updated_at", ""))
         elif recent_trade and item.get("last_event") in ("waiting", "", None):
             item["last_event"] = "sell_filled" if recent_trade.get("side") == "sell" else "buy_filled"
             item["last_ts"] = _format_hhmm(recent_trade.get("time", ""))
@@ -6439,6 +6814,9 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 }}
 .card-value {{
   font-family: var(--mono); font-size: 26px; font-weight: 700; line-height: 1.1;
+}}
+.card-value-extra {{
+  font-size: 13px; font-weight: 700; margin-left: 6px; vertical-align: middle;
 }}
 .card-sub {{ font-size: 12px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }}
 
@@ -6767,6 +7145,9 @@ function renderLifetimeRealized(today) {
   const us = Number(lifetime.us_pnl_krw ?? ((lifetime.US || {}).pnl_krw) ?? 0);
   const total = Number(lifetime.total_pnl_krw ?? (kr + us));
   const unknown = Number(lifetime.unknown_cost_basis_count || 0);
+  const krSource = ((lifetime.KR || {}).current_session_source || '');
+  const usSource = ((lifetime.US || {}).current_session_source || '');
+  const sourceHint = [krSource ? 'KR ' + krSource : '', usSource ? 'US ' + usSource : ''].filter(Boolean).join(' · ');
   const totalEl = document.getElementById('lifetime-pnl-total');
   const splitEl = document.getElementById('lifetime-pnl-split');
   const basisEl = document.getElementById('lifetime-pnl-basis');
@@ -6775,7 +7156,7 @@ function renderLifetimeRealized(today) {
     totalEl.className = 'card-value ' + colorClass(total);
   }
   if (splitEl) splitEl.textContent = `KR ${fmt.krw(kr)} · US ${fmt.krw(us)}`;
-  if (basisEl) basisEl.textContent = `입출금 제외 · 매수/매도 실현 기준${unknown > 0 ? ` · 원가불명 ${unknown}건 제외` : ''}`;
+  if (basisEl) basisEl.textContent = `입출금 제외 · 매수/매도 실현 기준${unknown > 0 ? ` · 원가불명 ${unknown}건 제외` : ''}${sourceHint ? ' · 당일보정 ' + sourceHint : ''}`;
 }
 
 const MODE_KO = {
@@ -7040,7 +7421,7 @@ PAGE_TODAY_HTML = """
 <!-- 5 요약 카드 -->
 <div class="grid-5">
   <div class="card cyan">
-    <div class="card-label">오늘 매매손익</div>
+    <div class="card-label">오늘 총손익</div>
     <div class="card-value" id="today-pnl">--</div>
     <div class="card-sub"  id="today-krw">--</div>
   </div>
@@ -7569,6 +7950,10 @@ async function loadMonitorTickers() {
     'entry_failed':  { icon: '❌', label: '주문실패', color: '#ef4444' },
     'signal_blocked':{ icon: '🚫', label: '모드차단', color: '#f59e0b' },
     'entry_skip':    { icon: '⏸', label: '진입보류', color: '#f59e0b' },
+    'pending_order': { icon: '⏳', label: '미체결', color: '#38bdf8' },
+    'live_position': { icon: '📌', label: '보유중', color: '#38bdf8' },
+    'buy_filled':    { icon: '🟢', label: '매수체결', color: '#10b981' },
+    'sell_filled':   { icon: '🔴', label: '매도체결', color: '#ef4444' },
     'signal_check':  { icon: '⬜', label: '신호없음', color: '#64748b' },
     'waiting':       { icon: '⏳', label: '대기중',   color: '#cbd5e1' },
     'cycle_error':   { icon: '⚠', label: '처리오류', color: '#ef4444' },
@@ -7578,9 +7963,16 @@ async function loadMonitorTickers() {
     quickBoard.innerHTML = tickers.map(t => {
       const ev = EVENT_MAP[t.last_event] || EVENT_MAP['waiting'];
       const displayPrice = Number(t.display_price || 0);
+      const selectionPrice = Number(t.selection_price || 0);
+      const selectionReturn = t.selection_return_pct === null || typeof t.selection_return_pct === 'undefined'
+        ? null
+        : Number(t.selection_return_pct || 0);
       const priceText = displayPrice > 0
         ? (MARKET === 'KR' ? Math.round(displayPrice).toLocaleString() + '원' : '$' + displayPrice.toFixed(2))
         : '--';
+      const selectionText = selectionPrice > 0 && Number.isFinite(selectionReturn)
+        ? `선정 ${selectionReturn >= 0 ? '+' : ''}${selectionReturn.toFixed(1)}%`
+        : '';
       const pickStatus = t.selection_status_ko ? ` · ${t.selection_status_ko}` : '';
       const statusText = Number(t.sig_count || 0) > 0 ? `신호 ${t.sig_count}` : `${ev.label}${pickStatus}`;
       return `
@@ -7591,6 +7983,7 @@ async function loadMonitorTickers() {
           </div>
           <div style="font-family:var(--mono);font-size:12px;color:var(--text);margin-bottom:3px">${priceText}</div>
           <div style="font-size:10px;color:${ev.color}">${statusText}</div>
+          ${selectionText ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">${selectionText}</div>` : ''}
         </div>`;
     }).join('');
   }
@@ -7651,6 +8044,10 @@ async function loadMonitorTickers() {
     const displayPrice = Number(t.display_price || 0);
     const avgPrice = Number(t.avg_price || 0);
     const currentPrice = Number(t.current_price || 0);
+    const selectionPrice = Number(t.selection_price || 0);
+    const selectionReturn = t.selection_return_pct === null || typeof t.selection_return_pct === 'undefined'
+      ? null
+      : Number(t.selection_return_pct || 0);
     let pendingExplain = '';
     const reasons = t.skip_reasons || [];
     const shownPriceStr = displayPrice > 0
@@ -7678,10 +8075,34 @@ async function loadMonitorTickers() {
       ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${statusBits.join(' · ')}</div>`
       : '';
     const priceMetaBits = [];
+    const fmtCardPrice = v => MARKET === 'KR' ? fmt.asset(v) : '$' + Number(v).toFixed(2);
+    if (selectionPrice > 0) {
+      const selectedParts = [`선정가 ${fmtCardPrice(selectionPrice)}`];
+      if (displayPrice > 0) selectedParts.push(`현재가 ${fmtCardPrice(displayPrice)}`);
+      if (Number.isFinite(selectionReturn)) {
+        selectedParts.push(`선정후 ${selectionReturn >= 0 ? '+' : ''}${selectionReturn.toFixed(2)}%`);
+      }
+      priceMetaBits.push(selectedParts.join(' · '));
+    }
     if (avgPrice > 0) priceMetaBits.push(`매수가 ${MARKET === 'KR' ? fmt.asset(avgPrice) : '$' + avgPrice.toFixed(2)}`);
     if (currentPrice > 0) priceMetaBits.push(`현재가 ${MARKET === 'KR' ? fmt.asset(currentPrice) : '$' + currentPrice.toFixed(2)}`);
     const priceMetaHtml = priceMetaBits.length
       ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${priceMetaBits.join(' · ')}</div>`
+      : '';
+    const buyPath = t.buy_path || '';
+    const pathbPlan = t.pathb_plan || {};
+    const zoneLow = Number(pathbPlan.buy_zone_low || 0);
+    const zoneHigh = Number(pathbPlan.buy_zone_high || 0);
+    const pathBits = [];
+    if (buyPath) pathBits.push(`진입경로 ${buyPath}`);
+    if (buyPath === 'PathB' && zoneLow > 0 && zoneHigh > 0) {
+      const zoneText = MARKET === 'KR'
+        ? `${fmt.asset(zoneLow)}~${fmt.asset(zoneHigh)}`
+        : `$${zoneLow.toFixed(2)}~$${zoneHigh.toFixed(2)}`;
+      pathBits.push(`대기구간 ${zoneText}`);
+    }
+    const pathHtml = pathBits.length
+      ? `<div style="font-size:10px;color:#93c5fd;margin-top:4px">${pathBits.join(' · ')}</div>`
       : '';
     const selectReasonHtml = t.select_reason
       ? `<div style="font-size:10px;color:#64748b;margin-top:5px;line-height:1.4;border-top:1px solid var(--border);padding-top:5px">${t.select_reason}</div>`
@@ -7709,6 +8130,7 @@ async function loadMonitorTickers() {
       <div style="font-size:10px;color:#475569;margin-top:2px">${t.last_ts}${t.last_reason ? ' · ' + t.last_reason : ''}</div>
       ${statusHtml}
       ${priceMetaHtml}
+      ${pathHtml}
       ${skipHtmlFinal}
       ${noneReasonHtml}
       ${selectReasonHtml}
@@ -7742,6 +8164,8 @@ async function loadSignalFeed() {
     entry_skip: '진입 보류',
     signal_check: '신호 없음',
     signal_blocked: '신호 차단',
+    pending_order: '미체결',
+    live_position: '보유중',
     buy_filled: '매수 체결',
     sell_filled: '매도 체결',
     trailing: '추적 중',
@@ -7914,12 +8338,14 @@ async function loadSummary() {
   const accountAsset = Number(t.account_asset_krw ?? t.cumulative ?? 0);
   const realizedKrw = Number(t.realized_pnl_krw || 0);
   const evalDeltaKrw = Number(t.unrealized_today_delta_krw ?? t.unrealized_pnl_krw ?? 0);
+  const realizedExEvalKrw = Number(t.realized_excluding_eval_pnl_krw ?? (tradingKrw - evalDeltaKrw) ?? realizedKrw);
   const holdingEvalKrw = Number(t.holding_unrealized_pnl_krw ?? t.unrealized_pnl_krw ?? 0);
-  pnlEl.textContent = fmt.pct(tradingPct);
+  const tradeTotalKrw = Number(t.today_trade_total_krw || ((t.trade_turnover || {}).total_krw) || 0);
+  pnlEl.innerHTML = `${fmt.pct(tradingPct)} <span class="card-value-extra ${colorClass(tradingKrw)}">${fmt.krw(tradingKrw)}</span>`;
   pnlEl.className = 'card-value ' + colorClass(tradingPct);
   const todayKrw = document.getElementById('today-krw');
-  todayKrw.textContent = `${MARKET} 확정 ${fmt.krw(realizedKrw)} · 평가변동 ${fmt.krw(evalDeltaKrw)}`;
-  todayKrw.title = `보유평가 누적 ${fmt.krw(holdingEvalKrw)}`;
+  todayKrw.textContent = `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 평가손익 ${fmt.krw(evalDeltaKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}`;
+  todayKrw.title = `총손익 ${fmt.krw(tradingKrw)} · 보유평가 누적 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${t.realized_pnl_source || '-'}`;
   document.getElementById('cumulative').textContent = fmt.asset(accountAsset);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
@@ -8015,6 +8441,13 @@ async function loadSummary() {
       ? (netPnl >= 0 ? '+' : '') + Math.round(netPnl).toLocaleString() + '원'
       : (netPnl >= 0 ? '+$' : '-$') + Math.abs(netPnl).toFixed(2);
     const netColor = netPnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const fmtPositionValue = v => {
+      if (!(v > 0)) return '--';
+      if (isKR) return fmt.asset(v);
+      return fmtUsd(v) + (usdKrw > 0 ? ' · ' + fmt.asset(v * usdKrw) : '');
+    };
+    const buyValue = fmtPositionValue(avgPrice * qty);
+    const curValue = fmtPositionValue(curPrice * qty);
     // 전략명 정제
     const stratRaw = pos.strategy || '';
     const stratLabel = !stratRaw || stratRaw === 'broker_balance' || stratRaw === 'broker_sync' ? '' : stratRaw;
@@ -8089,6 +8522,10 @@ async function loadSummary() {
       <div style="display:flex;gap:16px;margin-bottom:4px">
         <div><div style="font-size:10px;color:var(--text-dim)">매수가</div><div style="font-family:var(--mono);font-size:12px">${entry}</div></div>
         <div><div style="font-size:10px;color:var(--text-dim)">현재가</div><div style="font-family:var(--mono);font-size:12px">${cur}</div></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--text-dim);margin-bottom:5px;flex-wrap:wrap">
+        <span>매수 ${buyValue}</span>
+        <span>평가 ${curValue}</span>
       </div>
       ${stopLine ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px">${stopLine}</div>` : ''}
       ${advHtml}
@@ -8902,15 +9339,17 @@ async function loadSummary() {
   const accountAsset = Number(t.account_asset_krw ?? t.cumulative ?? 0);
   const realizedKrw = Number(t.realized_pnl_krw || 0);
   const evalDeltaKrw = Number(t.unrealized_today_delta_krw ?? t.unrealized_pnl_krw ?? 0);
+  const realizedExEvalKrw = Number(t.realized_excluding_eval_pnl_krw ?? (tradingKrw - evalDeltaKrw) ?? realizedKrw);
   const holdingEvalKrw = Number(t.holding_unrealized_pnl_krw ?? t.unrealized_pnl_krw ?? 0);
+  const tradeTotalKrw = Number(t.today_trade_total_krw || ((t.trade_turnover || {}).total_krw) || 0);
   if (pnlEl) {
-    pnlEl.textContent = fmt.pct(tradingPct);
+    pnlEl.innerHTML = `${fmt.pct(tradingPct)} <span class="card-value-extra ${colorClass(tradingKrw)}">${fmt.krw(tradingKrw)}</span>`;
     pnlEl.className = 'card-value ' + colorClass(tradingPct);
   }
   const todayKrw = document.getElementById('today-krw');
   if (todayKrw) {
-    todayKrw.textContent = `${MARKET} 확정 ${fmt.krw(realizedKrw)} · 평가변동 ${fmt.krw(evalDeltaKrw)}`;
-    todayKrw.title = `보유평가 누적 ${fmt.krw(holdingEvalKrw)}`;
+    todayKrw.textContent = `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 평가손익 ${fmt.krw(evalDeltaKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}`;
+    todayKrw.title = `총손익 ${fmt.krw(tradingKrw)} · 보유평가 누적 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${t.realized_pnl_source || '-'}`;
   }
   const cumulative = document.getElementById('cumulative');
   if (cumulative) cumulative.textContent = fmt.asset(accountAsset);
@@ -9039,12 +9478,18 @@ async function loadSummary() {
         : (netPnl2 >= 0 ? '+$' : '-$') + Math.abs(netPnl2).toFixed(2);
       const netColor2 = netPnl2 >= 0 ? 'var(--green)' : 'var(--red)';
       const pnlKrwText = !isKRW && usdKrw > 0 ? fmt.krw(netPnl2 * usdKrw) : '';
+      const buyValueText2 = isKRW
+        ? fmt.asset(buyTotal)
+        : `${fmtUsd(buyTotal)}${usdKrw > 0 ? ' · ' + fmt.asset(buyTotal * usdKrw) : ''}`;
       const valueText2 = isKRW
         ? fmt.asset(curTotal)
         : `${fmtUsd(curTotal)}${usdKrw > 0 ? ' · ' + fmt.asset(curTotal * usdKrw) : ''}`;
       // 전략명 정제
       const stratRaw = pos.strategy || '';
       const stratLabel = !stratRaw || stratRaw === 'broker_balance' || stratRaw === 'broker_sync' ? '' : stratRaw;
+      const buyPath = pos.buy_path || ((pos.pathb_path_run_id || pos.path_type === 'claude_price') ? 'PathB' : (stratLabel ? 'PlanA' : '브로커'));
+      const planColor = buyPath === 'PathB' ? '#93c5fd' : (buyPath === 'PlanA' ? '#34d399' : '#94a3b8');
+      const planBadge = `<span style="font-size:10px;color:${planColor};border:1px solid ${planColor}66;border-radius:999px;padding:1px 6px;margin-left:6px;white-space:nowrap">${buyPath}</span>`;
       const tickerDisp2 = pos.display_ticker || pos.ticker;
       const nameDisp2   = pos.name && !tickerDisp2.includes(pos.name) ? pos.name : '';
       // 트레일링 / 손절 / 목표
@@ -9115,6 +9560,7 @@ async function loadSummary() {
           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px">
             <div>
               <span style="font-size:15px;font-weight:700">${tickerDisp2}</span>
+              ${planBadge}
               ${nameDisp2 ? `<span style="font-size:11px;color:var(--text-dim);margin-left:6px">${nameDisp2}</span>` : ''}
             </div>
             <div style="text-align:right">
@@ -9122,12 +9568,13 @@ async function loadSummary() {
               <div style="font-size:11px;color:${netColor2}">${netStr2}${pnlKrwText ? ' · '+pnlKrwText : ''}</div>
             </div>
           </div>
-          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${[stratLabel, qty+'주', entryDate ? entryDate+(heldDays?' ('+heldDays+'일째)':'') : (heldDays?heldDays+'일째':'')].filter(Boolean).join(' · ')}</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${[buyPath === 'PathB' ? 'B플랜 가격대 진입' : (buyPath === 'PlanA' ? 'A플랜 신호 진입' : ''), stratLabel, qty+'주', entryDate ? entryDate+(heldDays?' ('+heldDays+'일째)':'') : (heldDays?heldDays+'일째':'')].filter(Boolean).join(' · ')}</div>
           <div style="display:flex;gap:16px;margin-bottom:4px">
             <div><div style="font-size:10px;color:var(--text-dim)">매수가</div><div style="font-family:var(--mono);font-size:12px">${entry}</div></div>
             <div><div style="font-size:10px;color:var(--text-dim)">현재가</div><div style="font-family:var(--mono);font-size:12px">${cur}</div></div>
           </div>
-          <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--text-dim);margin-bottom:5px">
+          <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--text-dim);margin-bottom:5px;flex-wrap:wrap">
+            <span>매수 ${buyValueText2}</span>
             <span>평가 ${valueText2}</span>
             <span id="${chartId2}-meta"></span>
           </div>
@@ -9311,6 +9758,8 @@ async function loadClaudeNarrative() {
     entry_skip: '진입 보류',
     signal_check: '신호 없음',
     signal_blocked: '신호 차단',
+    pending_order: '미체결',
+    live_position: '보유중',
     buy_filled: '매수 체결',
     sell_filled: '매도 체결',
     trailing: '추적중',
@@ -10123,21 +10572,34 @@ async function loadPathB() {
   document.getElementById('pathb-watch').innerHTML = watchRows
     ? `<table><thead><tr><th>종목</th><th>구분</th><th>B플랜 상태</th><th>매수 존</th><th>목표</th><th>손절</th><th>신뢰도</th><th>차단 사유</th><th>Claude 선택 이유</th><th>진입 근거</th><th>청산 근거</th></tr></thead><tbody>${watchRows}</tbody></table>`
     : '<div class="muted">오늘 B플랜 관찰 대상이 없습니다.</div>';
-  const posRows = (d.positions || []).map(p => `
+  const posRows = (d.positions || []).map(p => {
+    const pMarket = String(p.market || market || '').toUpperCase();
+    const isKR = pMarket === 'KR';
+    const asNumber = v => Number(String(v ?? '').replace(/,/g, '')) || 0;
+    const qty = asNumber(p.qty);
+    const entry = asNumber(p.entry);
+    const cur = asNumber(p.current_price);
+    const fmtNativeAmount = v => {
+      if (!(v > 0)) return '';
+      return isKR ? `${fmtMoney(v)}원` : `$${Number(v).toFixed(2)}`;
+    };
+    return `
     <tr>
       <td>${p.display_ticker || p.ticker || ''}</td>
       <td>${koBuyPath(p.buy_path || '')}</td>
       <td>${p.qty || ''}</td>
       <td>${p.entry || ''}</td>
       <td>${p.current_price || ''}</td>
+      <td>${fmtNativeAmount(entry * qty)}</td>
+      <td>${fmtNativeAmount(cur * qty)}</td>
       <td>${koStrategy(p.strategy || '')}</td>
       <td>${p.target || ''}</td>
       <td>${p.stop_loss || ''}</td>
       <td>${koSource(p.source || '')}</td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
   document.getElementById('pathb-position-paths').innerHTML = posRows
-    ? `<table><thead><tr><th>종목</th><th>매수 경로</th><th>수량</th><th>진입가</th><th>현재가</th><th>전략</th><th>B플랜 목표</th><th>B플랜 손절</th><th>상태 기준</th></tr></thead><tbody>${posRows}</tbody></table>`
+    ? `<table><thead><tr><th>종목</th><th>매수 경로</th><th>수량</th><th>진입가</th><th>현재가</th><th>매수금액</th><th>평가금액</th><th>전략</th><th>B플랜 목표</th><th>B플랜 손절</th><th>상태 기준</th></tr></thead><tbody>${posRows}</tbody></table>`
     : '<div class="muted">현재 보유 포지션이 없습니다.</div>';
   drawPathBCharts(b.charts || {});
   const rows = (b.active || []).map(r => `
@@ -10495,7 +10957,7 @@ function renderBucketMonitor(bucket) {
     </tr>
   `).join('');
   summaryEl.innerHTML = bucketRows
-    ? `<div class="muted" style="margin-bottom:8px;">세션 ${bucket.session_date || ''} | 후보 ${bucket.unique_candidate_count || 0}개 | 표시 ${bucket.candidate_display_limit || 30}개 | 로그 ${bucket.row_count || 0}행${warnings ? ' | 경고 ' + warnings : ''}</div>`
+    ? `<div class="muted" style="margin-bottom:8px;">세션 ${bucket.session_date || ''} | 후보 ${bucket.unique_candidate_count || 0}개 | 표시 ${bucket.candidate_display_limit || 60}개 | 로그 ${bucket.row_count || 0}행${warnings ? ' | 경고 ' + warnings : ''}</div>`
       + `<table><thead><tr><th>바구니</th><th>후보</th><th>Claude 입력</th><th>관찰</th><th>매수 후보</th><th>미입력</th><th>30분 승</th><th>60분 승</th><th>종가 승</th><th>놓친 승</th><th>30분 수익률</th><th>60분 수익률</th><th>종가 수익률</th></tr></thead><tbody>${bucketRows}</tbody></table>`
     : '<div class="muted">집계 가능한 바구니가 없습니다.</div>';
   const candidateRows = (bucket.candidates || []).map(r => `
@@ -10806,7 +11268,7 @@ function preopenDisplayTicker(r) {
 }
 function preopenReturnCell(v, status) {
   if (v === null || v === undefined || v === '') {
-    const label = status === 'pending_price_provider' ? '미수집' : '-';
+    const label = status === 'pending_price_provider' || status === 'NO_DATA' ? '데이터 없음' : '-';
     return preopenTrustedHtml(`<span class="muted">${preopenEscapeHtml(label)}</span>`);
   }
   const n = Number(v);
@@ -10920,14 +11382,16 @@ async function loadPreopen(button) {
   if (preopenLastMarket && preopenLastMarket !== market && dateInput) dateInput.value = '';
   preopenLastMarket = market;
   const sessionDate = dateInput && dateInput.value ? dateInput.value : '';
-  const query = 'market=' + encodeURIComponent(market) + '&mode=' + encodeURIComponent(MODE) + (sessionDate ? '&session_date=' + encodeURIComponent(sessionDate) : '');
+  const query = 'market=' + encodeURIComponent(market) + '&mode=' + encodeURIComponent(MODE) + '&limit=60' + (sessionDate ? '&session_date=' + encodeURIComponent(sessionDate) : '');
   try {
     const d = await apiGet('/api/preopen', query).then(r => r.json()).catch(() => ({}));
     const s = d.summary || {};
     renderPreopenSessions(d.recent_sessions || [], d.session_date || '', !!sessionDate);
     renderPreopenBanner(s, d.next_actions || []);
     document.getElementById('preopen-status').textContent = koResult(s.collector_status || '-');
-    document.getElementById('preopen-count').textContent = s.candidate_count ?? 0;
+    const requestedDisplay = Number(s.requested_display_limit || s.outcome_display_limit || 60);
+    const candidateDisplay = Number(s.candidate_display_count ?? s.candidate_count ?? 0);
+    document.getElementById('preopen-count').textContent = requestedDisplay > 0 ? `${candidateDisplay}/${requestedDisplay}` : (s.candidate_count ?? 0);
     document.getElementById('preopen-age').textContent = s.state_age_min === null || s.state_age_min === undefined ? '-' : `${s.state_age_min}분`;
     document.getElementById('preopen-diff-count').textContent = s.rank_diff_count ?? 0;
     const ps = d.performance_summary || {};
@@ -10958,7 +11422,8 @@ async function loadPreopen(button) {
       r => [r.ticker || '', fmtPreopen(r.shadow_preopen_rank), fmtPreopen(r.actual_selection_rank), fmtPreopen(r.rank_delta),
             r.actual_selected ? '예' : '-', r.actual_trade_ready ? '예' : '-', r.actual_ordered ? '예' : '-', r.actual_rejection_reason || '']
     );
-    document.getElementById('preopen-outcome').innerHTML = tableOrEmpty(
+    const outcomeCoverage = `<div class="muted" style="margin-bottom:8px">표시 ${s.outcome_display_count ?? 0}/${s.outcome_display_limit ?? 60}개${s.outcome_shortage_reason ? ' · ' + preopenEscapeHtml(s.outcome_shortage_reason) : ''}</div>`;
+    document.getElementById('preopen-outcome').innerHTML = outcomeCoverage + tableOrEmpty(
       d.outcome_timeline || [],
       ['순위','종목','선점가','현재가','최근','최고','최저'].concat((d.outcome_offsets_min || []).map(o => `${o}분`)),
       r => [

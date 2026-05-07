@@ -5,12 +5,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 import json
+import os
 
 from bot.bucket_classifier import classify_candidate_bucket
 from runtime_paths import get_runtime_path
 
 
-CANDIDATE_DISPLAY_LIMIT = 30
+def _candidate_display_limit() -> int:
+    try:
+        return max(1, int(os.getenv("BUCKET_CANDIDATE_DISPLAY_LIMIT", "60") or 60))
+    except Exception:
+        return 60
+
+
+CANDIDATE_DISPLAY_LIMIT = _candidate_display_limit()
 
 
 def build_bucket_summary(

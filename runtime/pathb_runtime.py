@@ -11,7 +11,14 @@ from zoneinfo import ZoneInfo
 
 from config.v2 import DEFAULT_V2_CONFIG, V2Config
 from decision.claude_price_plan import PricePlan, parse_plan_from_claude
-from execution.claude_price_adapter import ClaudePriceAdapter, EntrySignal
+from execution.claude_price_adapter import (
+    ClaudePriceAdapter,
+    EntrySignal,
+    round_down_to_cent,
+    round_down_to_kr_tick,
+    round_up_to_cent,
+    round_up_to_kr_tick,
+)
 from execution.claude_price_sell_manager import ClaudePriceSellManager, ExitSignal
 from execution.order_failure import is_permanent_order_failure
 from execution.path_arbiter import SameDayReentryGuard
@@ -20,6 +27,7 @@ from kis_api import cancel_order, get_balance, get_price, place_order, precheck_
 from lifecycle.event_store import EventStore
 from logger import get_trading_logger
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
+from runtime.pathb_reasons import normalize_pathb_decision_exit_reason
 from runtime_paths import get_runtime_path
 from telegram_reporter import buy_order_alert, send as tg_send
 
@@ -108,6 +116,10 @@ class PathBRuntime:
     }
     ORDER_UNKNOWN_OPEN_LOOKBACK_SESSIONS = 5
     PRE_CLOSE_CARRY_REVIEW_MINUTES = 15.0
+    HOLD_POLICY_MIN_VALID_MINUTES = 3
+    HOLD_POLICY_MAX_VALID_MINUTES = 30
+    HOLD_POLICY_DEFAULT_VALID_MINUTES = 10
+    HOLD_POLICY_HARD_GAP_CAP = {"US": 0.015, "KR": 0.01}
 
     def __init__(
         self,
@@ -230,6 +242,23 @@ class PathBRuntime:
             "SELL_PARTIAL_FILLED",
             "CLOSED",
         }
+        pathb_event_keys_with_path_run = set()
+        for event in events:
+            event_type = str(event.get("event_type", "") or "")
+            if event_type not in lifecycle_status_types:
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            payload_path_run_id = str(payload.get("path_run_id", "") or "")
+            if not payload_path_run_id:
+                continue
+            pathb_event_keys_with_path_run.add(
+                (
+                    event_type,
+                    str(event.get("decision_id", "") or ""),
+                    self._ticker_key(market_key, str(event.get("ticker", "") or "")),
+                    str(event.get("occurred_at", "") or ""),
+                )
+            )
         for event in events:
             event_type = str(event.get("event_type", "") or "")
             if event_type not in lifecycle_status_types:
@@ -246,6 +275,13 @@ class PathBRuntime:
                 or decision_match
             )
             if not pathb_related:
+                continue
+            if not payload_path_run_id and (
+                event_type,
+                event_decision_id,
+                event_ticker,
+                str(event.get("occurred_at", "") or ""),
+            ) in pathb_event_keys_with_path_run:
                 continue
             if not event_decision_id:
                 issues.append(
@@ -407,7 +443,8 @@ class PathBRuntime:
         market_key = str(market or "").upper()
         reason = str((entry_gate or {}).get("reason") or "NEW_BUY_BLOCKED")
         scope = str((entry_gate or {}).get("scope") or "market")
-        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        now_dt = datetime.now(KST)
+        now_iso = now_dt.isoformat(timespec="seconds")
         episode_id = ""
         if reason == "ORDER_UNKNOWN_UNRESOLVED" and callable(active_episode):
             episode_id = active_episode(
@@ -738,8 +775,12 @@ class PathBRuntime:
         if not self._market_live_enabled(market):
             log.warning(f"[PathB paper-only] {market} live Claude Price registration skipped")
             return []
-        trade_ready = list(meta.get("trade_ready") or [])
-        price_targets = meta.get("price_targets") or {}
+        if str(meta.get("_pathb_registration_scope") or "") == "candidate_actions_wait_only":
+            trade_ready = list(meta.get("_pathb_wait_tickers") or [])
+            price_targets = meta.get("_pathb_price_targets") or {}
+        else:
+            trade_ready = list(meta.get("trade_ready") or [])
+            price_targets = meta.get("price_targets") or {}
         decision_ids = meta.get("v2_decision_ids") or {}
         session_date = self._session_date(market)
         registered: list[str] = []
@@ -930,6 +971,8 @@ class PathBRuntime:
             if str(run.get("status", "")) not in {"FILLED", "PARTIAL_FILLED"}:
                 continue
             self._clear_stale_pathb_closing_lock(pos, market, plan.path_run_id)
+            if self._pathb_sell_in_flight(run, pos):
+                continue
             current = self._current_native_price(market, plan.ticker)
             if current <= 0:
                 continue
@@ -943,8 +986,17 @@ class PathBRuntime:
                 and current <= loss_cap_price
             ):
                 exit_signal = ExitSignal(True, "loss_cap", "CLOSED_LOSS_CAP", current, plan.path_run_id)
+            elif hard_stop_price is not None and hard_stop_price > 0 and current <= hard_stop_price:
+                exit_signal = ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", current, plan.path_run_id)
             else:
-                exit_signal = self.sell_manager.check_exit(plan.path_run_id, current, hard_stop_price=hard_stop_price)
+                policy_eval = self._evaluate_pathb_auto_sell_policy(plan, pos, current)
+                policy_action = str(policy_eval.get("action", "proceed") or "proceed")
+                if policy_action == "skip":
+                    continue
+                if policy_action in {"sell", "recheck"} and isinstance(policy_eval.get("signal"), ExitSignal):
+                    exit_signal = policy_eval["signal"]
+                else:
+                    exit_signal = self.sell_manager.check_exit(plan.path_run_id, current, hard_stop_price=hard_stop_price)
             if not exit_signal.signal:
                 self._maybe_run_pre_close_carry_review(plan, pos, current, minutes_to_close)
             if not exit_signal.signal and self._pre_close_force_exit(plan.path_run_id, minutes_to_close):
@@ -1052,6 +1104,30 @@ class PathBRuntime:
             if str(run.get("path_type", "")) != "claude_price":
                 continue
             if str(run.get("status", "")) not in {"WAITING", "HIT", "ORDER_SENT", "ORDER_ACKED"}:
+                continue
+            self.adapter.cancel_plan(
+                str(run.get("path_run_id", "")),
+                reason=reason,
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+            )
+            count += 1
+        return count
+
+    def cancel_waiting_for_ticker(self, market: str, ticker: str, *, reason: str) -> int:
+        count = 0
+        market = str(market or "").upper()
+        target = self._ticker_key(market, ticker)
+        for run in self.store.path_runs_for_session(
+            market=market,
+            runtime_mode=self.mode,
+            session_date=self._session_date(market),
+        ):
+            if str(run.get("path_type", "")) != "claude_price":
+                continue
+            if self._ticker_key(market, str(run.get("ticker", "") or "")) != target:
+                continue
+            if str(run.get("status", "")) not in {"WAITING", "HIT"}:
                 continue
             self.adapter.cancel_plan(
                 str(run.get("path_run_id", "")),
@@ -1449,12 +1525,312 @@ class PathBRuntime:
 
     @staticmethod
     def _pathb_sell_review_required(signal: ExitSignal) -> bool:
-        return str(signal.reason or "").strip().lower() not in {"pathb_kill", "pathb_closeall", "operator_kill"}
+        return str(signal.reason or "").strip().lower() not in {
+            "pathb_kill",
+            "pathb_closeall",
+            "operator_kill",
+            "policy_protective_stop",
+            "policy_hard_stop",
+        }
+
+    @staticmethod
+    def _pathb_hold_policy_mode() -> str:
+        raw = str(os.getenv("PATHB_HOLD_POLICY_MODE", "enforce") or "enforce").strip().lower()
+        return raw if raw in {"off", "shadow", "enforce"} else "enforce"
+
+    @staticmethod
+    def _parse_kst_iso(raw: Any) -> datetime | None:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        try:
+            value = datetime.fromisoformat(text)
+        except Exception:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=KST)
+        return value.astimezone(KST)
+
+    @staticmethod
+    def _policy_float(value: Any) -> float:
+        try:
+            if isinstance(value, str):
+                value = value.replace(",", "").replace("$", "").strip()
+            return float(value or 0)
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _policy_int(value: Any) -> int:
+        try:
+            return int(float(value or 0))
+        except Exception:
+            return 0
+
+    def _round_policy_price(self, price: Any, market: str, *, direction: str) -> float:
+        value = self._policy_float(price)
+        if value <= 0:
+            return 0.0
+        market_key = str(market or "").upper()
+        if market_key == "KR":
+            return round_up_to_kr_tick(value) if direction == "up" else round_down_to_kr_tick(value)
+        return round_up_to_cent(value) if direction == "up" else round_down_to_cent(value)
+
+    def _policy_valid_minutes(self, advice: dict[str, Any]) -> int:
+        raw = self._policy_int((advice or {}).get("valid_for_min"))
+        if raw <= 0:
+            raw = self._policy_int((advice or {}).get("next_review_min"))
+        if raw <= 0:
+            raw = self.HOLD_POLICY_DEFAULT_VALID_MINUTES
+        return max(self.HOLD_POLICY_MIN_VALID_MINUTES, min(self.HOLD_POLICY_MAX_VALID_MINUTES, raw))
+
+    def _pathb_auto_sell_policy_from_advice(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        advice: dict[str, Any],
+        current_native: float,
+        *,
+        now: datetime,
+    ) -> tuple[dict[str, Any], str]:
+        if not isinstance(advice, dict) or bool(advice.get("fallback", False)):
+            return {}, "fallback_or_invalid_advice"
+        if str((advice or {}).get("action", "") or "").upper() != "HOLD":
+            return {}, "action_not_hold"
+        close_reason = str(signal.close_reason or "").strip().upper()
+        if close_reason not in {"CLOSED_CLAUDE_PRICE_TARGET", "CLOSED_CLAUDE_PRICE_STOP"}:
+            return {}, "unsupported_close_reason"
+        current = float(current_native or 0)
+        if current <= 0:
+            return {}, "invalid_current_price"
+        market = str(plan.market or "").upper()
+        valid_for_min = self._policy_valid_minutes(advice)
+        valid_until = now + timedelta(minutes=valid_for_min)
+        reask_after_min = self._policy_int(advice.get("reask_after_min"))
+        if reask_after_min <= 0:
+            reask_after_min = valid_for_min
+        reask_after_min = max(self.HOLD_POLICY_MIN_VALID_MINUTES, min(valid_for_min, reask_after_min))
+        reask_after_at = now + timedelta(minutes=reask_after_min)
+        base: dict[str, Any] = {
+            "version": 1,
+            "status": "active",
+            "source": "hold_advisor",
+            "created_at": now.isoformat(timespec="seconds"),
+            "valid_until": valid_until.isoformat(timespec="seconds"),
+            "valid_for_min": valid_for_min,
+            "reask_after_at": reask_after_at.isoformat(timespec="seconds"),
+            "reask_after_min": reask_after_min,
+            "signal_reason": str(signal.reason or ""),
+            "signal_close_reason": close_reason,
+            "created_price": current,
+            "peak_price": current,
+            "original_sell_target": float(plan.sell_target or 0),
+            "original_stop_loss": float(plan.stop_loss or 0),
+            "confidence": self._policy_float(advice.get("confidence")),
+            "reason": self._hold_advice_reason(advice),
+            "invalid_if": str(advice.get("invalid_if", "") or "")[:240],
+            "max_rechecks": max(0, min(8, self._policy_int(advice.get("max_rechecks")))),
+        }
+        if close_reason == "CLOSED_CLAUDE_PRICE_TARGET":
+            revised_target = self._round_policy_price(advice.get("revised_sell_target"), market, direction="up")
+            if revised_target <= current:
+                return {}, "revised_target_not_above_current"
+            protective_stop = self._round_policy_price(advice.get("protective_stop"), market, direction="down")
+            if protective_stop <= 0:
+                return {}, "protective_stop_missing"
+            if protective_stop >= current:
+                return {}, "protective_stop_not_below_current"
+            original_stop = float(plan.stop_loss or 0)
+            if original_stop > 0 and protective_stop < original_stop:
+                return {}, "protective_stop_looser_than_plan_stop"
+            drawdown_trigger = self._policy_float(advice.get("reask_drawdown_from_peak_pct"))
+            if drawdown_trigger <= 0:
+                drawdown_trigger = 0.8
+            reask_if_price_above = self._round_policy_price(
+                advice.get("reask_if_price_above") or revised_target,
+                market,
+                direction="up",
+            )
+            return {
+                **base,
+                "mode": "target_extension",
+                "revised_sell_target": revised_target,
+                "protective_stop": protective_stop,
+                "trail_pct": self._policy_float(advice.get("trail_pct")),
+                "reask_drawdown_from_peak_pct": max(0.1, min(10.0, drawdown_trigger)),
+                "reask_if_price_above": reask_if_price_above,
+            }, ""
+
+        hard_stop = self._round_policy_price(
+            advice.get("hard_stop") or advice.get("protective_stop"),
+            market,
+            direction="down",
+        )
+        if hard_stop <= 0:
+            return {}, "hard_stop_missing"
+        if hard_stop >= current:
+            return {}, "hard_stop_not_below_current"
+        claude_stop = float(plan.stop_loss or 0)
+        gap_cap = float(self.HOLD_POLICY_HARD_GAP_CAP.get(market, 0.02))
+        if claude_stop > 0 and hard_stop < claude_stop * (1.0 - gap_cap):
+            return {}, "hard_stop_gap_too_wide"
+        recover_above = self._round_policy_price(advice.get("recover_above") or claude_stop, market, direction="up")
+        if recover_above <= current:
+            return {}, "recover_above_not_above_current"
+        recovery_watch_min = self._policy_int(advice.get("recovery_watch_min"))
+        if recovery_watch_min <= 0:
+            recovery_watch_min = valid_for_min
+        return {
+            **base,
+            "mode": "stop_recovery",
+            "hard_stop": hard_stop,
+            "recover_above": recover_above,
+            "recovery_watch_min": max(1, min(valid_for_min, recovery_watch_min)),
+            "stop_gap_pct": round(((claude_stop - hard_stop) / claude_stop) * 100.0, 4) if claude_stop > 0 else 0.0,
+        }, ""
+
+    def _mark_pathb_auto_sell_policy(self, path_run_id: str, **updates: Any) -> None:
+        try:
+            run = self.store.find_path_run(path_run_id) or {}
+            plan_json = run.get("plan") or {}
+            policy = dict(plan_json.get("auto_sell_policy") or {})
+            if not policy:
+                return
+            policy.update(updates)
+            self.store.update_path_run(path_run_id, plan={"auto_sell_policy": policy}, merge_plan=True)
+        except Exception:
+            pass
+
+    def _policy_skip_or_shadow(
+        self,
+        plan: PricePlan,
+        policy: dict[str, Any],
+        *,
+        current: float,
+        reason: str,
+    ) -> dict[str, Any]:
+        mode = self._pathb_hold_policy_mode()
+        if mode == "shadow":
+            payload = {
+                "auto_sell_policy_shadow": {
+                    "at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "reason": reason,
+                    "current": float(current or 0),
+                    "mode": str(policy.get("mode", "") or ""),
+                }
+            }
+            try:
+                self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+            except Exception:
+                pass
+            log.info(f"[PathB hold policy shadow] {plan.market} {plan.ticker} would_skip={reason} price={current:g}")
+            return {"action": "proceed", "reason": f"shadow_{reason}", "policy": policy}
+        log.debug(f"[PathB hold policy skip] {plan.market} {plan.ticker} reason={reason} price={current:g}")
+        return {"action": "skip", "reason": reason, "policy": policy}
+
+    def _evaluate_pathb_auto_sell_policy(self, plan: PricePlan, pos: dict[str, Any], current: float) -> dict[str, Any]:
+        if self._pathb_hold_policy_mode() == "off":
+            return {"action": "proceed", "reason": "policy_mode_off"}
+        run = self.store.find_path_run(plan.path_run_id) or {}
+        plan_json = run.get("plan") or {}
+        policy = plan_json.get("auto_sell_policy") if isinstance(plan_json, dict) else {}
+        if not isinstance(policy, dict) or str(policy.get("status", "") or "") != "active":
+            return {"action": "proceed", "reason": "no_active_policy"}
+        now = datetime.now(KST)
+        valid_until = self._parse_kst_iso(policy.get("valid_until"))
+        if valid_until is None or valid_until <= now:
+            self._mark_pathb_auto_sell_policy(
+                plan.path_run_id,
+                status="expired",
+                expired_at=now.isoformat(timespec="seconds"),
+            )
+            return {"action": "proceed", "reason": "policy_expired", "policy": policy}
+        current_price = float(current or 0)
+        if current_price <= 0:
+            return {"action": "proceed", "reason": "invalid_current_price", "policy": policy}
+        mode = str(policy.get("mode", "") or "")
+        reask_at = self._parse_kst_iso(policy.get("reask_after_at"))
+        if reask_at is not None and reask_at <= now:
+            close_reason = "CLOSED_CLAUDE_PRICE_STOP" if mode == "stop_recovery" else "CLOSED_CLAUDE_PRICE_TARGET"
+            return {
+                "action": "recheck",
+                "reason": "policy_time_decay",
+                "signal": ExitSignal(True, "policy_recheck", close_reason, current_price, plan.path_run_id),
+                "policy": policy,
+            }
+
+        if mode == "target_extension":
+            protective_stop = self._policy_float(policy.get("protective_stop"))
+            if protective_stop > 0 and current_price <= protective_stop:
+                return {
+                    "action": "sell",
+                    "reason": "policy_protective_stop",
+                    "signal": ExitSignal(
+                        True,
+                        "policy_protective_stop",
+                        "CLOSED_CLAUDE_PRICE_STOP",
+                        current_price,
+                        plan.path_run_id,
+                    ),
+                    "policy": policy,
+                }
+            revised_target = self._policy_float(policy.get("revised_sell_target") or plan_json.get("sell_target"))
+            if revised_target > 0 and current_price >= revised_target:
+                return {"action": "proceed", "reason": "revised_target_reached", "policy": policy}
+            reask_price = self._policy_float(policy.get("reask_if_price_above"))
+            if reask_price > 0 and current_price >= reask_price:
+                return {
+                    "action": "recheck",
+                    "reason": "policy_price_above_trigger",
+                    "signal": ExitSignal(True, "policy_recheck", "CLOSED_CLAUDE_PRICE_TARGET", current_price, plan.path_run_id),
+                    "policy": policy,
+                }
+            peak = max(self._policy_float(policy.get("peak_price")), current_price)
+            if peak > self._policy_float(policy.get("peak_price")):
+                self._mark_pathb_auto_sell_policy(plan.path_run_id, peak_price=peak)
+            drawdown_trigger = self._policy_float(policy.get("reask_drawdown_from_peak_pct"))
+            if peak > 0 and drawdown_trigger > 0:
+                drawdown_pct = ((peak - current_price) / peak) * 100.0
+                if drawdown_pct >= drawdown_trigger:
+                    return {
+                        "action": "recheck",
+                        "reason": "policy_drawdown_trigger",
+                        "signal": ExitSignal(True, "policy_recheck", "CLOSED_CLAUDE_PRICE_TARGET", current_price, plan.path_run_id),
+                        "policy": policy,
+                    }
+            return self._policy_skip_or_shadow(plan, policy, current=current_price, reason="inside_target_policy")
+
+        if mode == "stop_recovery":
+            hard_stop = self._policy_float(policy.get("hard_stop"))
+            if hard_stop > 0 and current_price <= hard_stop:
+                return {
+                    "action": "sell",
+                    "reason": "policy_hard_stop",
+                    "signal": ExitSignal(True, "policy_hard_stop", "CLOSED_HARD_STOP", current_price, plan.path_run_id),
+                    "policy": policy,
+                }
+            recover_above = self._policy_float(policy.get("recover_above"))
+            if recover_above > 0 and current_price >= recover_above:
+                self._mark_pathb_auto_sell_policy(
+                    plan.path_run_id,
+                    status="recovered",
+                    recovered_at=now.isoformat(timespec="seconds"),
+                    recovered_price=current_price,
+                )
+                return {"action": "proceed", "reason": "stop_recovery_completed", "policy": policy}
+            return self._policy_skip_or_shadow(plan, policy, current=current_price, reason="inside_stop_recovery_policy")
+
+        return {"action": "proceed", "reason": "unknown_policy_mode", "policy": policy}
 
     def _run_pathb_sell_review_gate(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> dict[str, Any]:
+        raw_close_reason = str(signal.close_reason or "").strip().upper()
+        if raw_close_reason in {"CLOSED_HARD_STOP", "CLOSED_LOSS_CAP"}:
+            return {"allowed": True, "bypassed": True, "reason": raw_close_reason.lower()}
         if not self._pathb_sell_review_required(signal):
             return {"allowed": True, "bypassed": True, "reason": "operator_close"}
-        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        now_dt = datetime.now(KST)
+        now_iso = now_dt.isoformat(timespec="seconds")
         current_native = float(signal.price or 0)
         review_pos = dict(pos)
         review_pos["ticker"] = plan.ticker
@@ -1530,6 +1906,26 @@ class PathBRuntime:
             "auto_sell_review_confidence": confidence,
             "auto_sell_review_fallback": fallback,
         }
+        if action == "HOLD":
+            policy, reject_reason = self._pathb_auto_sell_policy_from_advice(
+                plan,
+                pos,
+                signal,
+                advice if isinstance(advice, dict) else {},
+                current_native,
+                now=now_dt,
+            )
+            if policy:
+                payload["auto_sell_policy"] = policy
+                payload["auto_sell_policy_reject_reason"] = ""
+                if (
+                    str(policy.get("mode", "") or "") == "target_extension"
+                    and self._pathb_hold_policy_mode() == "enforce"
+                ):
+                    payload["sell_target"] = float(policy.get("revised_sell_target", 0) or 0)
+            elif reject_reason:
+                payload["auto_sell_policy_reject_reason"] = reject_reason
+                payload["auto_sell_policy_rejected_at"] = now_iso
         pos.update(payload)
         try:
             self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
@@ -1553,7 +1949,12 @@ class PathBRuntime:
 
     def _submit_sell(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> bool:
         market = plan.market
-        if str(pos.get("pathb_closing", "") or ""):
+        run = self.store.find_path_run(plan.path_run_id) or {}
+        if self._pathb_sell_in_flight(run, pos):
+            log.info(
+                f"[PathB sell skipped] {market} {plan.ticker} sell already in flight "
+                f"run={plan.path_run_id}"
+            )
             return False
         qty = int(pos.get("qty", 0) or 0)
         order_price = self._compute_sell_order_price(market, signal.price)
@@ -2229,6 +2630,10 @@ class PathBRuntime:
     def _broker_position_qty(positions: list[dict[str, Any]]) -> int:
         return sum(max(0, int(row.get("qty", 0) or 0)) for row in positions)
 
+    @staticmethod
+    def _pathb_decision_exit_reason(close_reason: str) -> str:
+        return normalize_pathb_decision_exit_reason(close_reason)
+
     def _sell_ttl_expired(self, run: dict[str, Any], *, partial: bool) -> bool:
         plan = run.get("plan") or {}
         raw = str(plan.get("sell_order_sent_at", "") or "").strip()
@@ -2258,6 +2663,7 @@ class PathBRuntime:
         exit_price_krw = self._price_to_krw(price_native, market)
         pos = self._find_position(market, plan.ticker, path_run_id=plan.path_run_id) or self._find_position(market, plan.ticker)
         ex: dict[str, Any] | None = None
+        exit_meta: dict[str, Any] = {}
         if pos is not None:
             pos.pop("pathb_closing", None)
             exit_meta = self._pathb_exit_meta(pos, market, close_reason)
@@ -2274,6 +2680,17 @@ class PathBRuntime:
             except Exception as exc:
                 log.warning(f"[PathB SELL reconcile] local close failed {market} {plan.ticker}: {exc}")
             self._save_positions_if_possible()
+        self._record_pathb_sell_decision_event(
+            plan,
+            price_native=price_native,
+            exit_price_krw=exit_price_krw,
+            qty=qty,
+            execution_id=execution_id,
+            close_reason=close_reason,
+            ex=ex,
+            pos=pos,
+            exit_meta=exit_meta,
+        )
         if close_reason in {"CLOSED_LOSS_CAP", "CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_STOP"}:
             try:
                 key = plan.ticker.upper() if market == "US" else plan.ticker
@@ -2288,6 +2705,7 @@ class PathBRuntime:
                         pnl_krw=float((ex or {}).get("pnl_krw", (ex or {}).get("pnl", 0)) or 0),
                         pnl_pct=float((ex or {}).get("pnl_pct", 0) or 0),
                         occurred_at=datetime.now(KST).isoformat(timespec="seconds"),
+                        suppress_market_count=self._pathb_stop_ticker_only(ex or pos or {}, market),
                     )
                 else:
                     self.bot._v2_same_day_stop_tickers.setdefault(market, set()).add(key)
@@ -2356,6 +2774,55 @@ class PathBRuntime:
             f"[PathB SELL CLOSED] {market} {plan.ticker} qty={qty} price={price_native:g} "
             f"reason={close_reason} order={execution_id}"
         )
+
+    def _record_pathb_sell_decision_event(
+        self,
+        plan: PricePlan,
+        *,
+        price_native: float,
+        exit_price_krw: float,
+        qty: int,
+        execution_id: str,
+        close_reason: str,
+        ex: dict[str, Any] | None,
+        pos: dict[str, Any] | None,
+        exit_meta: dict[str, Any],
+    ) -> None:
+        recorder = getattr(self.bot, "_record_decision_event", None)
+        if not callable(recorder) or ex is None:
+            return
+        try:
+            record_qty = int((ex or {}).get("qty", qty) or qty or 0)
+            pnl_krw = float((ex or {}).get("pnl_krw", (ex or {}).get("pnl", 0)) or 0)
+            pnl_pct = float((ex or {}).get("pnl_pct", 0) or 0)
+            strategy = str((ex or {}).get("strategy") or (pos or {}).get("strategy") or "claude_price")
+            source_strategy = str(
+                (ex or {}).get("source_strategy") or (pos or {}).get("source_strategy") or "claude_price"
+            )
+            recorder(
+                plan.market,
+                "sell_filled",
+                plan.ticker,
+                strategy=strategy,
+                source_strategy=source_strategy,
+                qty=record_qty,
+                price_native=float(price_native or 0),
+                price_krw=float(exit_price_krw or 0),
+                reason=self._pathb_decision_exit_reason(close_reason),
+                detail=f"pathb_run={plan.path_run_id} close_reason={close_reason}",
+                order_no=str(execution_id or ""),
+                pnl_krw=pnl_krw,
+                pnl_pct=pnl_pct,
+                actual_fill_price=float(price_native or 0),
+                broker_fill_confirmed=True,
+                broker_filled_qty=int(qty or record_qty or 0),
+                broker_fill_source="pathb_broker_truth",
+                pathb_reference_target=float((pos or {}).get("pathb_reference_target", 0) or 0),
+                selection_reference_target=float((pos or {}).get("selection_reference_target", 0) or 0),
+                **dict(exit_meta or {}),
+            )
+        except Exception as exc:
+            log.warning(f"[PathB SELL reconcile] decision event record failed {plan.market} {plan.ticker}: {exc}")
 
     def _update_local_pathb_remaining_qty(self, plan: PricePlan, remaining_qty: int) -> None:
         pos = self._find_position(plan.market, plan.ticker, path_run_id=plan.path_run_id)
@@ -3415,6 +3882,26 @@ class PathBRuntime:
             add(self.store.find_path_run(str(pos.get("pathb_path_run_id", "") or "")))
         return runs
 
+    @staticmethod
+    def _pathb_sell_in_flight(run: dict[str, Any] | None, pos: dict[str, Any] | None) -> bool:
+        """Return True when a PathB sell is already requested but not reconciled."""
+        run = run or {}
+        pos = pos or {}
+        status = str(run.get("status", "") or "").upper()
+        if status in {"SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED"}:
+            return True
+        plan = run.get("plan") or {}
+        if isinstance(plan, dict):
+            if str(plan.get("exit_execution_id", "") or "").strip():
+                return True
+            if str(plan.get("sell_order_sent_at", "") or "").strip():
+                return True
+        if str(pos.get("pathb_closing", "") or "").strip():
+            return True
+        if str(pos.get("pathb_pending_sell_order_no", "") or "").strip():
+            return True
+        return False
+
     def _local_pathb_positions(self, market: str) -> list[dict[str, Any]]:
         market_key = str(market or "").upper()
         positions: list[dict[str, Any]] = []
@@ -3631,9 +4118,12 @@ class PathBRuntime:
         if close_reason == "CLOSED_LOSS_CAP":
             meta["effective_stop_price"] = float(meta.get("loss_cap_price", 0) or 0)
             meta["exit_owner"] = "system_hard_rule"
-        elif close_reason in {"CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_STOP"}:
+        elif close_reason == "CLOSED_HARD_STOP":
             meta["effective_stop_price"] = float(meta.get("strategy_stop_price", 0) or 0)
             meta["exit_owner"] = "system_hard_rule"
+        elif close_reason == "CLOSED_CLAUDE_PRICE_STOP":
+            meta["effective_stop_price"] = float(meta.get("strategy_stop_price", 0) or 0)
+            meta["exit_owner"] = "claude_price_policy"
         return meta
 
     def _maybe_run_pre_close_carry_review(
@@ -4020,6 +4510,35 @@ class PathBRuntime:
                 return krw_min
             return float(self.config.us_min_order_usd) * self._usd_krw()
         return float(self.config.kr_min_order_krw)
+
+    @staticmethod
+    def _pathb_stop_ticker_only(record: dict[str, Any], market: str) -> bool:
+        if not _env_bool("STOP_CLUSTER_PATHB_TICKER_ONLY_ENABLED", True):
+            return False
+        try:
+            qty = int(float(record.get("qty", 0) or 0))
+        except Exception:
+            qty = 0
+        try:
+            entry_krw = float(record.get("entry", 0) or record.get("risk_price_krw", 0) or 0)
+        except Exception:
+            entry_krw = 0.0
+        try:
+            pnl_pct = abs(float(record.get("pnl_pct", 0) or 0))
+        except Exception:
+            pnl_pct = 0.0
+        try:
+            max_cost = float(os.getenv("STOP_CLUSTER_PATHB_TICKER_ONLY_MAX_COST_KRW", "250000") or 0)
+        except Exception:
+            max_cost = 250000.0
+        try:
+            max_loss_pct = float(os.getenv("STOP_CLUSTER_PATHB_TICKER_ONLY_MAX_LOSS_PCT", "2.5") or 0)
+        except Exception:
+            max_loss_pct = 2.5
+        entry_cost = entry_krw * max(qty, 0)
+        cost_ok = max_cost <= 0 or (entry_cost > 0 and entry_cost <= max_cost)
+        loss_ok = max_loss_pct <= 0 or pnl_pct <= max_loss_pct
+        return bool(cost_ok and loss_ok)
 
     def _pathb_qty(self, market: str, price_krw: float, *, cash_krw: float) -> int:
         price = float(price_krw or 0)
