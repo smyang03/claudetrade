@@ -189,6 +189,12 @@ def normalize_candidate_action(
     if action not in CLAUDE_ACTIONS:
         warnings.append(f"invalid_action:{action or 'EMPTY'}")
         action = "WATCH"
+    _raw_conf = raw.get("confidence")
+    try:
+        confidence = max(0.0, min(1.0, float(_raw_conf or 0.0)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+        warnings.append(f"invalid_confidence:{_raw_conf!r}")
     price_targets = raw.get("price_targets") if isinstance(raw.get("price_targets"), dict) else {}
     expires_at, expiry_warnings = _min_expiry(created, action, raw.get("valid_until") or raw.get("expires_at"))
     warnings.extend(expiry_warnings)
@@ -196,7 +202,7 @@ def normalize_candidate_action(
         ticker=ticker,
         market=str(market or raw.get("market") or "").upper(),
         action=action,
-        confidence=max(0.0, min(1.0, float(raw.get("confidence") or 0.0))),
+        confidence=confidence,
         size_intent=str(raw.get("size_intent") or ("normal" if action == "BUY_READY" else "none")),
         reason=str(raw.get("reason") or ""),
         invalidation_condition=str(raw.get("invalidation_condition") or ""),

@@ -123,6 +123,23 @@ class ClaudeCandidateActionsTests(unittest.TestCase):
         self.assertIn("must not output HARD_BLOCK", contract)
         self.assertIn("hold_days", contract)
 
+    def test_string_confidence_is_downgraded_to_zero_and_cycle_continues(self) -> None:
+        actions = candidate_actions_from_response(
+            {
+                "candidate_actions": [
+                    {"ticker": "AMD", "action": "BUY_READY", "confidence": "high"},
+                    {"ticker": "NVDA", "action": "BUY_READY", "confidence": 0.9},
+                ]
+            },
+            market="US",
+        )
+
+        by_ticker = {a["ticker"]: a for a in actions}
+        self.assertEqual(len(actions), 2)
+        self.assertEqual(by_ticker["AMD"]["confidence"], 0.0)
+        self.assertTrue(any("invalid_confidence" in w for w in by_ticker["AMD"].get("warnings", [])))
+        self.assertAlmostEqual(by_ticker["NVDA"]["confidence"], 0.9)
+
 
 if __name__ == "__main__":
     unittest.main()

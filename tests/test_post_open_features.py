@@ -115,6 +115,31 @@ class PostOpenFeatureTests(unittest.TestCase):
 
         self.assertIsNone(returns["ret_5m_pct"])
 
+    def test_returns_from_history_rejects_tick_after_known_at(self) -> None:
+        # Only available tick is at 09:05:40, but known_at is 09:05:20.
+        # The tick is after known_at → must not be selected (future leak).
+        returns = returns_from_price_history(
+            [{"ts": "2026-05-06T09:05:40", "price": 103.0}],
+            anchor_at="2026-05-06T09:00:00",
+            anchor_price=100.0,
+            known_at="2026-05-06T09:05:20",
+            max_lag_sec=180,
+        )
+
+        self.assertIsNone(returns["ret_5m_pct"])
+
+    def test_returns_from_history_accepts_tick_at_known_boundary(self) -> None:
+        # Tick exactly at known_at boundary should be accepted.
+        returns = returns_from_price_history(
+            [{"ts": "2026-05-06T09:05:10", "price": 102.0}],
+            anchor_at="2026-05-06T09:00:00",
+            anchor_price=100.0,
+            known_at="2026-05-06T09:05:20",
+            max_lag_sec=180,
+        )
+
+        self.assertAlmostEqual(returns["ret_5m_pct"], 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

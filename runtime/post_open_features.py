@@ -111,7 +111,7 @@ def returns_from_price_history(
         if known < target:
             out[key] = None
             continue
-        sample = next((item for item in ordered if item["ts"] >= target), None)
+        sample = next((item for item in ordered if target <= item["ts"] <= known), None)
         if sample is None:
             out[key] = None
             continue

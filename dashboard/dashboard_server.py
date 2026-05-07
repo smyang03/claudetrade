@@ -2926,29 +2926,19 @@ def _deduped_local_session_realized_pnl(market: str, mode: str, session_date: st
         return None
     if not records:
         return None
-    by_key: dict[str, list[dict]] = {}
+    # Broker-fill-missing fallback: group by ticker so same-ticker records with
+    # different order_nos are still detected as duplicates.
+    by_ticker: dict[str, list[dict]] = {}
     for rec in records:
-        order_no = str(rec.get("order_no", "") or "").strip()
         ticker = str(rec.get("ticker", "") or "").strip().upper()
-        if order_no:
-            key = f"order:{order_no}"
-        else:
-            key = "|".join(
-                (
-                    "event",
-                    ticker,
-                    str(rec.get("qty", "") or ""),
-                    str(round(float(rec.get("pnl_krw", 0) or 0), 4)),
-                    str(rec.get("exit_reason", "") or ""),
-                )
-            )
-        by_key.setdefault(key, []).append(rec)
-    duplicate_keys = sorted(key for key, items in by_key.items() if len(items) > 1)
-    if not duplicate_keys:
+        if ticker:
+            by_ticker.setdefault(ticker, []).append(rec)
+    duplicate_tickers = sorted(t for t, items in by_ticker.items() if len(items) > 1)
+    if not duplicate_tickers:
         return None
 
     kept: list[dict] = []
-    for key, items in by_key.items():
+    for ticker, items in by_ticker.items():
         if len(items) == 1:
             kept.extend(items)
             continue
@@ -2960,15 +2950,8 @@ def _deduped_local_session_realized_pnl(market: str, mode: str, session_date: st
         "source": "local_decisions_duplicate_sell_deduped",
         "local_closed_count": len(records),
         "deduped_closed_count": len(kept),
-        "duplicate_tickers": sorted(
-            {
-                str(rec.get("ticker", "") or "").strip().upper()
-                for key in duplicate_keys
-                for rec in by_key.get(key, [])
-                if str(rec.get("ticker", "") or "").strip()
-            }
-        ),
-        "duplicate_keys": duplicate_keys,
+        "duplicate_tickers": duplicate_tickers,
+        "duplicate_keys": [f"ticker:{t}" for t in duplicate_tickers],
     }
 
 
