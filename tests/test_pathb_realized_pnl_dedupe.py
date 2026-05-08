@@ -62,8 +62,50 @@ class PathBRealizedPnlDedupeTests(unittest.TestCase):
         self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_LOSS_CAP"), "loss_cap")
         self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_HARD_STOP"), "hard_stop")
         self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_CLAUDE_PRICE_STOP"), "claude_price_stop")
+        self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_MFE_BREAKEVEN"), "mfe_breakeven")
         self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_TIMEOUT"), "closed_timeout")
         self.assertEqual(normalize_pathb_decision_exit_reason(""), "pathb_closed")
+
+    def test_pathb_path_run_id_dedupes_trade_log_and_decision_record(self) -> None:
+        session_date = "2026-05-07"
+        bot = TradingBot.__new__(TradingBot)
+        bot._current_session_date_str = lambda market: session_date
+        bot._ticker_market = lambda ticker: "US"
+        bot.risk = type("Risk", (), {})()
+        bot.risk.all_trade_log = [
+            {
+                "side": "sell",
+                "ticker": "IREN",
+                "market": "US",
+                "session_date": session_date,
+                "qty": 2,
+                "pnl": -123.0,
+                "reason": "CLOSED_LOSS_CAP",
+                "pathb_path_run_id": "pathb-iren-1",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            decisions_file = Path(tmp) / "decisions.jsonl"
+            decisions_file.write_text(
+                json.dumps(
+                    {
+                        "type": "closed",
+                        "market": "US",
+                        "session_date": session_date,
+                        "ticker": "IREN",
+                        "qty": 2,
+                        "pnl_krw": -123.0,
+                        "exit_reason": "loss_cap",
+                        "pathb_path_run_id": "pathb-iren-1",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(trading_bot_module, "DECISIONS_FILE", decisions_file):
+                self.assertEqual(TradingBot._market_realized_pnl_krw(bot, "US"), -123.0)
 
 
 if __name__ == "__main__":

@@ -973,32 +973,29 @@ class TradingBotGateTests(unittest.TestCase):
 
     def test_risk_off_mr_exception_blocks_panic_and_position_overlap(self):
         bot = self._make_bot()
-        bot.today_judgment = {
-            "digest_raw": {
-                "context": {
-                    "sp500": {"change_pct": -3.1},
-                    "nasdaq": {"change_pct": -4.0},
-                }
-            }
-        }
-        blocked = bot._risk_off_mr_exception(
-            "US",
-            "CAUTIOUS_BEAR",
-            "mean_reversion",
-            {"vol_ratio": 1.1},
-        )
+
+        # _get_market_change_pct/secondary는 실시간 kis_api 호출을 우선하므로
+        # 테스트 시나리오값을 직접 주입한다.
+        with patch.object(bot, "_get_market_change_pct", return_value=-3.1), \
+             patch.object(bot, "_get_secondary_change_pct", return_value=-4.0):
+            blocked = bot._risk_off_mr_exception(
+                "US",
+                "CAUTIOUS_BEAR",
+                "mean_reversion",
+                {"vol_ratio": 1.1},
+            )
         self.assertFalse(blocked["allowed"])
         self.assertEqual(blocked["reason"], "panic_primary")
 
-        bot.today_judgment["digest_raw"]["context"]["sp500"]["change_pct"] = -0.5
-        bot.today_judgment["digest_raw"]["context"]["nasdaq"]["change_pct"] = -0.8
         bot.risk = SimpleNamespace(positions=[{"ticker": "AAPL"}])
-        blocked = bot._risk_off_mr_exception(
-            "US",
-            "CAUTIOUS_BEAR",
-            "mean_reversion",
-            {"vol_ratio": 1.1},
-        )
+        with patch.object(bot, "_get_market_change_pct", return_value=-0.5), \
+             patch.object(bot, "_get_secondary_change_pct", return_value=-0.8):
+            blocked = bot._risk_off_mr_exception(
+                "US",
+                "CAUTIOUS_BEAR",
+                "mean_reversion",
+                {"vol_ratio": 1.1},
+            )
         self.assertFalse(blocked["allowed"])
         self.assertEqual(blocked["reason"], "risk_off_position_limit")
 
@@ -2012,10 +2009,10 @@ class TunerRuntimeAdjustmentTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(result["momentum_wait_adjust_min"], -15)
-        self.assertEqual(result["entry_priority_cutoff_adjust"], 0.08)
-        self.assertEqual(result["kr_momentum_atr_cap_adjust"], -0.02)
-        self.assertEqual(result["kr_momentum_atr_cap_high_adjust"], 0.03)
+        self.assertEqual(result["momentum_wait_adjust_min"], -10)
+        self.assertEqual(result["entry_priority_cutoff_adjust"], 0.05)
+        self.assertEqual(result["kr_momentum_atr_cap_adjust"], -0.01)
+        self.assertEqual(result["kr_momentum_atr_cap_high_adjust"], 0.02)
 
     def test_runtime_adjustment_summary_formats_all_override_fields(self):
         summary = tuner_module._runtime_adjustment_summary(
@@ -3446,7 +3443,9 @@ class UniverseManagerTests(unittest.TestCase):
         self.assertIn("price_targets", prompts[1])
         self.assertEqual(tickers, ["NVDA", "AAPL"])
         self.assertEqual(reasons["NVDA"], "strong")
-        self.assertEqual(analysts_module.get_last_selection_meta()["trade_ready"], ["NVDA"])
+        meta = analysts_module.get_last_selection_meta()
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_selection_retry_trade_ready_ignored"], ["NVDA"])
 
     def test_select_tickers_total_failure_uses_safe_watch_fallback(self):
         try:

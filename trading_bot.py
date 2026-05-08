@@ -2105,7 +2105,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             raw_candidates = screen_market_kr(self._token_for_market("KR"), top_n=top_n, mode=mode)
         else:
             raw_candidates = screen_market_us(top_n=top_n, mode=mode)
-        return self._screen_quality_guard(market, raw_candidates, phase="screen_market_candidates")
+        screened = self._screen_quality_guard(market, raw_candidates, phase="screen_market_candidates")
+        try:
+            state = self._load_candidate_cohort_reliability(market_key)
+            self._candidate_cohort_reliability_cache = state
+            annotated = []
+            for row in screened or []:
+                item = dict(row or {})
+                key = self._candidate_cohort_key(market_key, item, "screen_market_candidates")
+                reliability = self._cohort_reliability_score(state, key)
+                penalty = self._candidate_cohort_penalty(market_key, item)
+                item["trainer_cohort_key"] = key
+                item["trainer_cohort_reliability"] = round(float(reliability), 4)
+                item["trainer_cohort_penalty"] = round(float(penalty), 4)
+                if penalty > 0 and item.get("source_score") not in (None, ""):
+                    try:
+                        item["source_score"] = max(0.0, float(item.get("source_score") or 0.0) - penalty)
+                    except Exception:
+                        pass
+                annotated.append(item)
+            return annotated
+        except Exception:
+            return screened
     def _candidate_identity_key(self, market: str, candidate: dict) -> str:
         ticker = str((candidate or {}).get("ticker", "") or "").strip()
         return self._selection_ticker_key(market, ticker) if ticker else ""
@@ -2802,6 +2823,245 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             return False
 
+    @staticmethod
+    def _parse_candidate_route_time(value: Any) -> Optional[datetime]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            return None
+
+    def _ready_action_no_signal_grace_active(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        routes = (self.selection_meta.get(market_key) or {}).get("_candidate_action_routes") or []
+        if not routes:
+            return False
+        market_default = 45.0 if market_key == "US" else 30.0
+        grace_min = self._runtime_float(
+            f"{market_key}_READY_ACTION_NO_SIGNAL_GRACE_MIN",
+            self._runtime_float("READY_ACTION_NO_SIGNAL_GRACE_MIN", market_default),
+        )
+        if grace_min <= 0:
+            return False
+        current = (now or datetime.now(KST)).replace(tzinfo=None)
+        ready_actions = {"PROBE_READY", "BUY_READY", "ADD_READY"}
+        for route in routes:
+            if not isinstance(route, dict):
+                continue
+            if self._selection_ticker_key(market_key, route.get("ticker")) != key:
+                continue
+            if str(route.get("final_action") or "").upper() not in ready_actions:
+                continue
+            expires_at = self._parse_candidate_route_time(
+                route.get("action_expires_at") or route.get("expires_at")
+            )
+            if expires_at is not None and expires_at < current:
+                continue
+            anchor = self._parse_candidate_route_time(
+                route.get("routed_at") or route.get("action_created_at") or route.get("created_at")
+            )
+            if anchor is None:
+                continue
+            age_min = (current - anchor).total_seconds() / 60.0
+            if 0.0 <= age_min <= grace_min:
+                return True
+        return False
+
+    def _candidate_stale_threshold_min(self, market: str) -> float:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        default = 90.0 if market_key == "US" else 60.0
+        return self._runtime_float(
+            f"{market_key}_CANDIDATE_STALE_MIN",
+            self._runtime_float("CANDIDATE_STALE_MIN", default),
+        )
+
+    def _candidate_stale_age_min(
+        self,
+        market: str,
+        health: dict,
+        *,
+        now: Optional[datetime] = None,
+    ) -> Optional[float]:
+        last_seen = self._parse_candidate_route_time((health or {}).get("last_seen_at"))
+        if last_seen is None:
+            return None
+        current = (now or datetime.now(KST)).replace(tzinfo=None)
+        try:
+            return max(0.0, (current - last_seen).total_seconds() / 60.0)
+        except Exception:
+            return None
+
+    def _candidate_health_is_stale(
+        self,
+        market: str,
+        health: dict,
+        *,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        threshold = self._candidate_stale_threshold_min(market)
+        if threshold <= 0:
+            return False
+        age_min = self._candidate_stale_age_min(market, health, now=now)
+        if age_min is None or age_min < threshold:
+            return False
+        ready_count = int(self._candidate_health_num((health or {}).get("ready_count"), 0.0))
+        state = str((health or {}).get("health_state") or "OBSERVE")
+        last_status = str((health or {}).get("last_status") or "").upper()
+        return bool(
+            ready_count > 0
+            or state in {"FAILED_READY", "WEAKENING_READY", "WATCH_WEAK", "WATCH_STRENGTHENING", "STABLE_READY", "STRONG_READY"}
+            or last_status == "TRADE_READY"
+        )
+
+    def _candidate_trainer_included_reason(
+        self,
+        market: str,
+        ticker: str,
+        health: dict,
+        *,
+        active_now: bool,
+        stopped: set[str],
+    ) -> str:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        state = str((health or {}).get("health_state") or "OBSERVE")
+        ready_count = int(self._candidate_health_num((health or {}).get("ready_count"), 0.0))
+        if active_now:
+            return "active_watchlist"
+        if key in stopped:
+            return "same_day_stopped"
+        if state in {"FAILED_READY", "WEAKENING_READY"} or self._candidate_health_ready_degraded(health):
+            return "health_failure"
+        if self._candidate_health_is_stale(market_key, health):
+            return "stale"
+        if state == "WATCH_WEAK":
+            return "watch_weak"
+        if ready_count > 0:
+            return "ready_history"
+        return ""
+
+    def _candidate_runtime_gate_info(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        candidate: Optional[dict] = None,
+        now: Optional[datetime] = None,
+    ) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        candidate = dict(candidate or {})
+        try:
+            health = self._candidate_health_tracker(market_key).state_for(key)
+        except Exception:
+            health = {"ticker": key, "health_state": "OBSERVE"}
+        health_state = str(health.get("health_state") or "OBSERVE")
+        ready_degraded = self._candidate_health_ready_degraded(health)
+        stale = self._candidate_health_is_stale(market_key, health, now=now)
+        stopped = set((getattr(self, "_v2_same_day_stop_tickers", {}) or {}).get(market_key, set()) or set())
+        try:
+            trainer_tier = self._candidate_trainer_tier(market_key, key, candidate=candidate)
+        except Exception:
+            trainer_tier = ""
+        cohort_key = str(candidate.get("trainer_cohort_key") or "").strip()
+        if not cohort_key and candidate:
+            cohort_key = self._candidate_cohort_key(market_key, candidate)
+        reliability = 0.0
+        if cohort_key:
+            try:
+                state = getattr(self, "_candidate_cohort_reliability_cache", None)
+                if not isinstance(state, dict):
+                    state = self._load_candidate_cohort_reliability(market_key)
+                    self._candidate_cohort_reliability_cache = state
+                reliability = round(float(self._cohort_reliability_score(state, cohort_key)), 4)
+            except Exception:
+                reliability = 0.0
+        block_reason = ""
+        if key in stopped:
+            block_reason = "same_day_stopped"
+        elif health_state == "FAILED_READY":
+            block_reason = "failed_ready"
+        elif health_state == "WEAKENING_READY":
+            block_reason = "weakening_ready"
+        elif ready_degraded:
+            block_reason = "ready_degraded"
+        elif trainer_tier == "QUARANTINE":
+            block_reason = "trainer_quarantine"
+        return {
+            "ticker": key,
+            "health": health,
+            "health_state": health_state,
+            "ready_degraded": bool(ready_degraded),
+            "stale": bool(stale),
+            "stale_age_min": self._candidate_stale_age_min(market_key, health, now=now),
+            "trainer_tier": trainer_tier,
+            "cohort_key": cohort_key,
+            "cohort_reliability": reliability,
+            "blocked": bool(block_reason),
+            "blocker": "candidate_quarantine" if block_reason else "",
+            "block_reason": block_reason,
+        }
+
+    def _write_candidate_action_gate_event(
+        self,
+        market: str,
+        ticker: str,
+        action: dict,
+        route_payload: dict,
+        gate_info: dict,
+    ) -> None:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        final_action = str((route_payload or {}).get("final_action") or "")
+        blocker = str((route_payload or {}).get("blocker") or "")
+        passed = bool(final_action and final_action != "HARD_BLOCK" and not blocker)
+        reason = str((route_payload or {}).get("reason") or (gate_info or {}).get("block_reason") or "")
+        try:
+            self._write_funnel_event(
+                "gate_evaluation",
+                market_key,
+                {
+                    "candidate_trace_id": self._candidate_trace_id(market_key, key),
+                    "ticker": key,
+                    "known_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "claude_action": str((action or {}).get("action") or (route_payload or {}).get("requested_action") or ""),
+                    "requested_action": str((route_payload or {}).get("requested_action") or (action or {}).get("action") or ""),
+                    "final_action": final_action,
+                    "route": (route_payload or {}).get("route"),
+                    "passed": passed,
+                    "blocker": blocker or None,
+                    "reason": reason,
+                    "hard_safety": {
+                        "passed": passed,
+                        "reason": reason if not passed else "",
+                    },
+                    "route_lock": {
+                        "passed": passed,
+                        "reason": str((route_payload or {}).get("runtime_gate_reason") or ""),
+                    },
+                    "runtime_gate": dict((route_payload or {}).get("runtime_gate") or {}),
+                    "health_state": (gate_info or {}).get("health_state", ""),
+                    "ready_degraded": bool((gate_info or {}).get("ready_degraded")),
+                    "stale": bool((gate_info or {}).get("stale")),
+                    "stale_age_min": (gate_info or {}).get("stale_age_min"),
+                    "trainer_tier": (gate_info or {}).get("trainer_tier", ""),
+                    "cohort_key": (gate_info or {}).get("cohort_key", ""),
+                    "cohort_reliability": (gate_info or {}).get("cohort_reliability", 0.0),
+                    "warnings": list((route_payload or {}).get("warnings") or []),
+                },
+            )
+        except Exception:
+            pass
+
     def _candidate_action_size_cap_pct(self, action: dict) -> Optional[int]:
         raw_intent = str((action or {}).get("size_intent") or "").strip().lower()
         action_name = str((action or {}).get("action") or "").strip().upper()
@@ -2863,11 +3123,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not run:
             return {}
         status = str((run or {}).get("status") or "").upper()
+        plan = dict((run or {}).get("plan") or {})
         return {
             "path_run_id": str((run or {}).get("path_run_id") or ""),
             "status": status,
             "waiting": status in {"WAITING", "HIT"},
             "active_order": status in {"ORDER_SENT", "ORDER_ACKED", "ORDER_UNKNOWN"},
+            "buy_zone_low": plan.get("buy_zone_low"),
+            "buy_zone_high": plan.get("buy_zone_high"),
+            "sell_target": plan.get("sell_target"),
+            "stop_loss": plan.get("stop_loss"),
         }
 
     def _candidate_action_runtime_execution_context(
@@ -2877,6 +3142,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         action: dict,
         meta: dict,
         price_targets: dict,
+        route_state: dict | None = None,
     ) -> dict:
         market_key = "US" if str(market).upper() == "US" else "KR"
         key = self._selection_ticker_key(market_key, ticker)
@@ -2994,6 +3260,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             ),
             "current_price": current_price,
             "buy_zone_high": _positive_or_none(target.get("buy_zone_high")),
+            "pathb_waiting_buy_zone_low": _positive_or_none((route_state or {}).get("buy_zone_low")),
+            "pathb_waiting_buy_zone_high": _positive_or_none((route_state or {}).get("buy_zone_high")),
             "cancel_if_open_above": _positive_or_none(target.get("cancel_if_open_above")),
         }
 
@@ -3043,23 +3311,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "warnings": ["candidate_action_ticker_not_in_watchlist"],
                 }
                 action_routes.append(route_payload)
-                try:
-                    self._write_funnel_event(
-                        "gate_evaluation",
-                        market_key,
-                        {
-                            "candidate_trace_id": self._candidate_trace_id(market_key, key),
-                            "ticker": key,
-                            "claude_action": requested_action,
-                            "final_action": "HARD_BLOCK",
-                            "blocker": "off_list_action",
-                            "hard_safety": {"passed": False, "reason": "off_list_action"},
-                            "route_lock": {"passed": False, "reason": "off_list_action"},
-                            "warnings": ["candidate_action_ticker_not_in_watchlist"],
-                        },
-                    )
-                except Exception:
-                    pass
+                self._write_candidate_action_gate_event(
+                    market_key,
+                    key,
+                    action or {},
+                    route_payload,
+                    {"health_state": "", "trainer_tier": "", "block_reason": "off_list_action"},
+                )
                 continue
             route_state = self._pathb_route_state_for_ticker(market_key, key)
             active_route = self._active_order_route_for_ticker(market_key, key)
@@ -3072,7 +3330,43 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 action_for_route,
                 normalized_meta,
                 price_targets,
+                route_state,
             )
+            gate_info = self._candidate_runtime_gate_info(
+                market_key,
+                key,
+                candidate=action_for_route,
+            )
+            if gate_info.get("blocked"):
+                requested_action = str((action or {}).get("action") or "")
+                route_payload = {
+                    "ticker": key,
+                    "market": market_key,
+                    "final_action": "HARD_BLOCK",
+                    "route": None,
+                    "reason": gate_info.get("block_reason") or "candidate_quarantine",
+                    "blocker": gate_info.get("blocker") or "candidate_quarantine",
+                    "requested_action": requested_action,
+                    "claude_action": requested_action,
+                    "pathb_status": route_state.get("status", ""),
+                    "runtime_gate": execution_context,
+                    "health_state": gate_info.get("health_state", ""),
+                    "ready_degraded": bool(gate_info.get("ready_degraded")),
+                    "stale": bool(gate_info.get("stale")),
+                    "trainer_tier": gate_info.get("trainer_tier", ""),
+                    "cohort_key": gate_info.get("cohort_key", ""),
+                    "cohort_reliability": gate_info.get("cohort_reliability", 0.0),
+                    "warnings": ["candidate_quarantine_block"],
+                }
+                action_routes.append(route_payload)
+                self._write_candidate_action_gate_event(
+                    market_key,
+                    key,
+                    action_for_route,
+                    route_payload,
+                    gate_info,
+                )
+                continue
             decision = route_candidate_action(
                 action_for_route,
                 market=market_key,
@@ -3087,7 +3381,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
             route_payload = decision.to_dict()
             route_payload["requested_action"] = str((action or {}).get("action") or "")
+            route_payload["action_created_at"] = str(action_for_route.get("created_at") or "")
+            route_payload["action_expires_at"] = str(action_for_route.get("expires_at") or "")
+            route_payload["routed_at"] = datetime.now(KST).isoformat(timespec="seconds")
             route_payload["pathb_status"] = route_state.get("status", "")
+            route_payload["health_state"] = gate_info.get("health_state", "")
+            route_payload["ready_degraded"] = bool(gate_info.get("ready_degraded"))
+            route_payload["stale"] = bool(gate_info.get("stale"))
+            route_payload["trainer_tier"] = gate_info.get("trainer_tier", "")
+            route_payload["cohort_key"] = gate_info.get("cohort_key", "")
+            route_payload["cohort_reliability"] = gate_info.get("cohort_reliability", 0.0)
             if decision.cancel_pathb and route_state.get("waiting"):
                 pathb = getattr(self, "pathb", None)
                 if pathb is not None and hasattr(pathb, "cancel_waiting_for_ticker"):
@@ -3101,7 +3404,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         )
                     except Exception as exc:
                         route_payload["pathb_cancel_error"] = str(exc)
+            if decision.suspend_pathb and route_state.get("waiting"):
+                route_payload["pathb_suspend_shadow"] = True
+                route_payload["pathb_suspend_path_run_id"] = route_state.get("path_run_id", "")
+                route_payload["pathb_suspend_reason"] = decision.reason
+                try:
+                    self._write_funnel_event(
+                        "pathb_suspend_shadow",
+                        market_key,
+                        {
+                            "candidate_trace_id": self._candidate_trace_id(market_key, key),
+                            "ticker": key,
+                            "path_run_id": route_state.get("path_run_id", ""),
+                            "pathb_status": route_state.get("status", ""),
+                            "claude_action": str((action or {}).get("action") or ""),
+                            "final_action": decision.final_action,
+                            "reason": decision.reason,
+                            "runtime_gate": route_payload.get("runtime_gate", {}),
+                            "shadow_only": True,
+                        },
+                    )
+                except Exception:
+                    pass
             action_routes.append(route_payload)
+            self._write_candidate_action_gate_event(
+                market_key,
+                key,
+                action_for_route,
+                route_payload,
+                gate_info,
+            )
 
             if decision.final_action in {"PROBE_READY", "BUY_READY", "ADD_READY"}:
                 plan_a_ready.append(key)
@@ -3358,6 +3690,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         freeze_min = max(0, int(os.getenv("STOP_CLUSTER_FIRST_FREEZE_MINUTES", "30")))
         hard_count = max(1, int(os.getenv("STOP_CLUSTER_HARD_BLOCK_COUNT", "2")))
         disaster_count = max(hard_count, int(os.getenv("STOP_CLUSTER_DISASTER_BLOCK_COUNT", "3")))
+        concentrated_default = "false"
+        concentrated_enabled = str(
+            os.getenv(
+                f"{market_key}_STOP_CLUSTER_CONCENTRATED_SCOPE_ENABLED",
+                os.getenv("STOP_CLUSTER_CONCENTRATED_SCOPE_ENABLED", concentrated_default),
+            )
+            or ""
+        ).strip().lower() in {"1", "true", "yes", "y", "on"}
+        try:
+            concentrated_max_tickers = max(
+                1,
+                int(
+                    os.getenv(
+                        f"{market_key}_STOP_CLUSTER_CONCENTRATED_MAX_TICKERS",
+                        os.getenv("STOP_CLUSTER_CONCENTRATED_MAX_TICKERS", "1"),
+                    )
+                ),
+            )
+        except Exception:
+            concentrated_max_tickers = 1
         elapsed_min = None
         if last_at is not None:
             try:
@@ -3374,6 +3726,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "first_stop_freeze_minutes": freeze_min,
             "hard_block_count": hard_count,
             "disaster_block_count": disaster_count,
+            "concentrated_scope_enabled": concentrated_enabled,
+            "concentrated_max_tickers": concentrated_max_tickers,
         }
         if ticker_key and ticker_key in stopped:
             return {
@@ -3392,6 +3746,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "details": details,
             }
         if count >= hard_count:
+            if (
+                concentrated_enabled
+                and ticker_key
+                and stopped
+                and len(stopped) <= concentrated_max_tickers
+            ):
+                relaxed_details = {
+                    **details,
+                    "market_block_relaxed": True,
+                    "relaxed_reason": "concentrated_stop_cluster",
+                    "would_have_blocked_reason": "STOP_CLUSTER_MARKET_BLOCK",
+                }
+                return {
+                    "allowed": True,
+                    "blocked": False,
+                    "reason": "",
+                    "scope": "",
+                    "details": relaxed_details,
+                }
             return {
                 "allowed": False,
                 "blocked": True,
@@ -3678,6 +4051,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             tracker = self._candidate_health_tracker(market_key)
             watchlist = list((selection_meta or {}).get("watchlist") or selected or [])
             trade_ready = list((selection_meta or {}).get("trade_ready") or [])
+            routed_ready = [
+                self._selection_ticker_key(market_key, route.get("ticker"))
+                for route in list((selection_meta or {}).get("_candidate_action_routes") or [])
+                if isinstance(route, dict)
+                and str(route.get("final_action") or "").upper() in {"PROBE_READY", "BUY_READY", "ADD_READY"}
+                and str(route.get("route") or "").startswith("PlanA")
+            ]
+            if routed_ready:
+                trade_ready = list(dict.fromkeys(trade_ready + routed_ready))
             price_map = self._candidate_health_price_map(market_key, candidates)
             states = tracker.update_selection(
                 watchlist=watchlist,
@@ -3711,8 +4093,195 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     f"mae={state.get('mae_pct')} mfe={state.get('mfe_pct')} "
                     f"recovered={bool(state.get('recovered_first_ready'))}"
                 )
+            self._update_candidate_cohort_reliability(market_key, phase, candidates)
+            self._write_candidate_trainer_snapshot(market_key, phase, watchlist, trade_ready, candidates)
         except Exception as exc:
             log.warning(f"[candidate_health] update failed {market_key} {phase}: {exc}")
+
+    def _update_candidate_cohort_reliability(self, market: str, phase: str, candidates: list[dict]) -> None:
+        if not _env_bool("CANDIDATE_COHORT_RELIABILITY_ENABLED", True):
+            return
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        try:
+            tracker = self._candidate_health_tracker(market_key)
+            state = self._load_candidate_cohort_reliability(market_key)
+            cohorts = state.setdefault("cohorts", {})
+            for row in candidates or []:
+                if not isinstance(row, dict):
+                    continue
+                ticker = self._selection_ticker_key(market_key, row.get("ticker"))
+                if not ticker:
+                    continue
+                health = tracker.state_for(ticker)
+                health_state = str(health.get("health_state") or "OBSERVE")
+                key = self._candidate_cohort_key(market_key, row, phase)
+                rec = cohorts.setdefault(
+                    key,
+                    {
+                        "sample_count": 0,
+                        "healthy_count": 0,
+                        "weak_count": 0,
+                        "ready_count": 0,
+                        "last_seen_at": "",
+                    },
+                )
+                rec["sample_count"] = int(rec.get("sample_count") or 0) + 1
+                if int(health.get("ready_count") or 0) > 0:
+                    rec["ready_count"] = int(rec.get("ready_count") or 0) + 1
+                if health_state in {"STRONG_READY", "WATCH_STRENGTHENING"} or self._candidate_health_mfe_protect_allowed(health):
+                    rec["healthy_count"] = int(rec.get("healthy_count") or 0) + 1
+                if health_state in {"FAILED_READY", "WEAKENING_READY", "WATCH_WEAK"} or self._candidate_health_ready_degraded(health):
+                    rec["weak_count"] = int(rec.get("weak_count") or 0) + 1
+                rec["score"] = round(self._cohort_reliability_score(state, key), 4)
+                rec["last_seen_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            state["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            self._save_candidate_cohort_reliability(market_key, state)
+            self._candidate_cohort_reliability_cache = state
+        except Exception as exc:
+            log.warning(f"[candidate cohort reliability] update failed {market_key} {phase}: {exc}")
+
+    def _candidate_trainer_tier(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        trade_ready: Optional[set[str]] = None,
+        candidate: Optional[dict] = None,
+    ) -> str:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        stopped = set((getattr(self, "_v2_same_day_stop_tickers", {}) or {}).get(market_key, set()) or set())
+        if key in stopped:
+            return "QUARANTINE"
+        try:
+            health = self._candidate_health_tracker(market_key).state_for(key)
+        except Exception:
+            health = {"health_state": "OBSERVE"}
+        state = str(health.get("health_state") or "OBSERVE")
+        if state in {"FAILED_READY", "WEAKENING_READY"} or self._candidate_health_ready_degraded(health):
+            return "QUARANTINE"
+        if self._candidate_health_is_stale(market_key, health):
+            return "PROBATION"
+        if state == "STRONG_READY" or (
+            self._candidate_health_mfe_protect_allowed(health)
+            and self._candidate_health_num(health.get("mfe_pct"), 0.0) >= 3.0
+        ):
+            return "CORE_PROTECTED"
+        ready_set = trade_ready or set()
+        if key in ready_set:
+            return "ACTIVE_READY"
+        if state == "WATCH_WEAK":
+            return "PROBATION"
+        no_signal = self._candidate_health_num(
+            self._ticker_no_signal_minutes.get(key, self._ticker_no_signal_minutes.get(ticker, 0.0)),
+            0.0,
+        )
+        threshold = float(_KR_NO_SIGNAL_SWAP_MIN if market_key == "KR" else _US_NO_SIGNAL_SWAP_CYCLES * 5)
+        if threshold > 0 and no_signal >= threshold * 0.75:
+            return "PROBATION"
+        return "WATCH" if candidate is not None else "BENCH"
+
+    def _write_candidate_trainer_snapshot(
+        self,
+        market: str,
+        phase: str,
+        watchlist: list[str],
+        trade_ready: list[str],
+        candidates: list[dict],
+    ) -> None:
+        if not _env_bool("CANDIDATE_TRAINER_STATE_ENABLED", True):
+            return
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        try:
+            ready_set = {self._selection_ticker_key(market_key, ticker) for ticker in trade_ready or []}
+            candidate_map = {
+                self._selection_ticker_key(market_key, row.get("ticker")): dict(row or {})
+                for row in candidates or []
+                if isinstance(row, dict) and self._selection_ticker_key(market_key, row.get("ticker"))
+            }
+            stopped = set((getattr(self, "_v2_same_day_stop_tickers", {}) or {}).get(market_key, set()) or set())
+            tickers = list(dict.fromkeys(
+                [self._selection_ticker_key(market_key, ticker) for ticker in watchlist or []]
+                + list(candidate_map.keys())
+            ))
+            try:
+                tracker = self._candidate_health_tracker(market_key)
+                health_records = (getattr(tracker, "data", {}) or {}).get("tickers", {}) or {}
+                for raw_ticker in health_records.keys():
+                    ticker_key = self._selection_ticker_key(market_key, raw_ticker)
+                    if not ticker_key or ticker_key in tickers:
+                        continue
+                    health = tracker.state_for(ticker_key)
+                    reason = self._candidate_trainer_included_reason(
+                        market_key,
+                        ticker_key,
+                        health,
+                        active_now=False,
+                        stopped=stopped,
+                    )
+                    if reason:
+                        tickers.append(ticker_key)
+            except Exception:
+                pass
+            tiers: dict[str, list[str]] = {}
+            records: dict[str, dict] = {}
+            for ticker in tickers:
+                if not ticker:
+                    continue
+                candidate = candidate_map.get(ticker)
+                active_now = ticker in {
+                    self._selection_ticker_key(market_key, raw)
+                    for raw in watchlist or []
+                }
+                try:
+                    health = self._candidate_health_tracker(market_key).state_for(ticker)
+                except Exception:
+                    health = {"ticker": ticker, "health_state": "OBSERVE"}
+                tier = self._candidate_trainer_tier(
+                    market_key,
+                    ticker,
+                    trade_ready=ready_set,
+                    candidate=candidate,
+                )
+                included_reason = self._candidate_trainer_included_reason(
+                    market_key,
+                    ticker,
+                    health,
+                    active_now=active_now,
+                    stopped=stopped,
+                ) or ("candidate_pool" if candidate is not None else "history")
+                tiers.setdefault(tier, []).append(ticker)
+                records[ticker] = {
+                    "tier": tier,
+                    "trainer_score": self._candidate_trainer_score(market_key, ticker, candidate or {}),
+                    "cohort_key": self._candidate_cohort_key(market_key, candidate or {}, phase) if candidate else "",
+                    "active_now": bool(active_now),
+                    "included_reason": included_reason,
+                    "health_state": health.get("health_state", "OBSERVE"),
+                    "ready_count": int(self._candidate_health_num(health.get("ready_count"), 0.0)),
+                    "mae_pct": self._candidate_health_num(health.get("mae_pct"), 0.0),
+                    "mfe_pct": self._candidate_health_num(health.get("mfe_pct"), 0.0),
+                    "current_vs_first_ready_pct": health.get("current_vs_first_ready_pct"),
+                    "last_seen_at": health.get("last_seen_at", ""),
+                    "last_status": health.get("last_status", ""),
+                    "stale": self._candidate_health_is_stale(market_key, health),
+                }
+            payload = {
+                "market": market_key,
+                "session_date": self._current_session_date_str(market_key),
+                "phase": str(phase or ""),
+                "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "tiers": tiers,
+                "records": records,
+                "advisory_only": True,
+            }
+            path = self._candidate_trainer_state_path(market_key, "candidate_trainer")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+            tmp.replace(path)
+        except Exception as exc:
+            log.debug(f"[candidate trainer] snapshot failed {market_key} {phase}: {exc}")
     def _apply_selection_meta(self, market: str, selected: list[str], mode: str = "") -> dict:
         """Persist Claude WATCH/TRADE_READY split while keeping legacy tickers intact."""
         raw_meta = dict(get_last_selection_meta() or {})
@@ -4200,6 +4769,165 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if isinstance(trade_ready, list):
             return list(trade_ready)
         return list(selected or [])
+
+    def _candidate_cohort_key(self, market: str, candidate: dict, phase: str = "") -> str:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        row = dict(candidate or {})
+        pieces = [
+            market_key,
+            str(row.get("source") or "base_universe").strip().lower(),
+            str(row.get("primary_bucket") or row.get("category") or "unclassified").strip().lower(),
+            str(row.get("liquidity_bucket") or "unknown_liq").strip().lower(),
+            str(row.get("from_high_bucket") or "unknown_from_high").strip().lower(),
+            str(row.get("execution_fit_strategy") or row.get("raw_execution_fit_strategy") or "unknown_strategy").strip().lower(),
+        ]
+        return "|".join(piece or "-" for piece in pieces)
+
+    def _candidate_trainer_state_path(self, market: str, name: str) -> Path:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        try:
+            session_date = self._current_session_date_str(market_key).replace("-", "")
+        except Exception:
+            session_date = datetime.now(KST).strftime("%Y%m%d")
+        return get_runtime_path("state", f"{name}_{market_key}_{session_date}.json")
+
+    def _load_candidate_cohort_reliability(self, market: str) -> dict:
+        path = self._candidate_trainer_state_path(market, "candidate_cohort_reliability")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8") or "{}")
+            if isinstance(data, dict):
+                data.setdefault("cohorts", {})
+                return data
+        except Exception:
+            pass
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        return {"market": market_key, "session_date": self._current_session_date_str(market_key), "cohorts": {}}
+
+    def _save_candidate_cohort_reliability(self, market: str, state: dict) -> None:
+        path = self._candidate_trainer_state_path(market, "candidate_cohort_reliability")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(state or {}, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(path)
+
+    def _cohort_reliability_score(self, state: dict, cohort_key: str) -> float:
+        rec = ((state or {}).get("cohorts") or {}).get(str(cohort_key or ""), {}) or {}
+        sample = float(rec.get("sample_count") or 0.0)
+        if sample <= 0:
+            return 0.0
+        healthy = float(rec.get("healthy_count") or 0.0)
+        weak = float(rec.get("weak_count") or 0.0)
+        score = (healthy - weak) / max(sample, 1.0)
+        return max(-1.0, min(1.0, score))
+
+    def _candidate_cohort_penalty(self, market: str, candidate: dict) -> float:
+        if not candidate:
+            return 0.0
+        state = getattr(self, "_candidate_cohort_reliability_cache", None)
+        if not isinstance(state, dict) or state.get("market") != ("US" if str(market).upper() == "US" else "KR"):
+            try:
+                state = self._load_candidate_cohort_reliability(market)
+                self._candidate_cohort_reliability_cache = state
+            except Exception:
+                return 0.0
+        key = str((candidate or {}).get("trainer_cohort_key") or "").strip()
+        if not key:
+            key = self._candidate_cohort_key(market, candidate)
+        score = self._cohort_reliability_score(state, key)
+        try:
+            min_sample = float(os.getenv("TRAINER_COHORT_MIN_SAMPLE", "3") or 3)
+        except Exception:
+            min_sample = 3.0
+        rec = ((state or {}).get("cohorts") or {}).get(key, {}) or {}
+        if float(rec.get("sample_count") or 0.0) < min_sample:
+            return 0.0
+        if score >= -0.25:
+            return 0.0
+        return min(2.0, abs(score) * 2.0)
+
+    def _candidate_trainer_score(
+        self,
+        market: str,
+        ticker: str,
+        candidate: Optional[dict] = None,
+    ) -> float:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        candidate = dict(candidate or {})
+        score = 3.0
+        try:
+            health = self._candidate_health_tracker(market_key).state_for(key)
+        except Exception:
+            health = {"health_state": "OBSERVE"}
+        state = str(health.get("health_state") or "OBSERVE")
+        score += {
+            "STRONG_READY": 5.0,
+            "WATCH_STRENGTHENING": 3.0,
+            "STABLE_READY": 2.0,
+            "OBSERVE": 0.0,
+            "WATCH_WEAK": -1.5,
+            "WEAKENING_READY": -4.0,
+            "FAILED_READY": -6.0,
+        }.get(state, 0.0)
+        mfe = self._candidate_health_num(health.get("mfe_pct"), 0.0)
+        if mfe > 0 and self._candidate_health_mfe_protect_allowed(health):
+            score += min(2.0, mfe * 0.08)
+        if self._candidate_health_ready_degraded(health):
+            score -= 4.0
+        if self._candidate_health_is_stale(market_key, health):
+            score -= 2.0
+        try:
+            entry_score = float(candidate.get("entry_priority_score") or candidate.get("raw_entry_priority_score") or 0.0)
+        except Exception:
+            entry_score = 0.0
+        score += min(2.0, max(0.0, entry_score))
+        if str(candidate.get("liquidity_bucket") or "").strip().lower() == "low":
+            score -= 1.0
+        momentum_state = str(
+            candidate.get("post_open_momentum_state")
+            or (candidate.get("post_open_features") or {}).get("momentum_state")
+            or ""
+        ).strip().lower()
+        if momentum_state in {"fade", "fading", "weak", "weakening", "overextended"}:
+            score -= 1.5
+        score -= self._candidate_cohort_penalty(market_key, candidate)
+        return round(float(score), 4)
+
+    def _candidate_replacement_delta_ok(
+        self,
+        market: str,
+        outgoing: str,
+        incoming: str,
+        candidate_map: dict[str, dict],
+    ) -> tuple[bool, dict]:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        in_key = self._selection_ticker_key(market_key, incoming)
+        out_score = self._candidate_trainer_score(market_key, outgoing, {})
+        in_score = self._candidate_trainer_score(market_key, in_key, candidate_map.get(in_key, {}) or candidate_map.get(incoming, {}) or {})
+        gate_enabled = self._runtime_bool(
+            f"{market_key}_TRAINER_REPLACEMENT_DELTA_GATE_ENABLED",
+            self._runtime_bool("TRAINER_REPLACEMENT_DELTA_GATE_ENABLED", market_key == "US"),
+        )
+        min_score = self._runtime_float(
+            f"{market_key}_TRAINER_REPLACEMENT_MIN_IN_SCORE",
+            self._runtime_float("TRAINER_REPLACEMENT_MIN_IN_SCORE", 4.0),
+        )
+        delta = self._runtime_float(
+            f"{market_key}_TRAINER_REPLACEMENT_DELTA",
+            self._runtime_float("TRAINER_REPLACEMENT_DELTA", 0.75),
+        )
+        ok = True if not gate_enabled else bool(in_score >= min_score and in_score >= out_score + delta)
+        return ok, {
+            "outgoing": outgoing,
+            "incoming": incoming,
+            "outgoing_score": out_score,
+            "incoming_score": in_score,
+            "min_score": min_score,
+            "delta": delta,
+            "enabled": gate_enabled,
+            "passed": ok,
+        }
+
     def _pick_partial_replace_in(
         self,
         market: str,
@@ -4271,16 +4999,39 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if pullback:
                 selected_pullbacks.add(pullback)
             selected.append(ticker)
-        for target_strategy in target_strategies:
+        # health guard: FAILED_READY/WEAKENING_READY 후보는 교체 인 대상에서 제외
+        try:
+            _in_health_tracker = self._candidate_health_tracker(market)
+            _BAD_HEALTH = {"FAILED_READY", "WEAKENING_READY"}
+            remaining = [
+                t for t in remaining
+                if (
+                    str(_in_health_tracker.state_for(t).get("health_state") or "OBSERVE") not in _BAD_HEALTH
+                    and not self._candidate_health_ready_degraded(_in_health_tracker.state_for(t))
+                    and not self._candidate_health_is_stale(market, _in_health_tracker.state_for(t))
+                )
+            ]
+        except Exception:
+            pass
+        for idx, target_strategy in enumerate(target_strategies):
             if len(selected) >= n_replace or not remaining:
                 break
-            best = max(remaining, key=lambda ticker: _score(ticker, target_strategy))
-            remaining.remove(best)
-            _accept(best)
-        while len(selected) < n_replace and remaining:
-            best = max(remaining, key=lambda ticker: _score(ticker, ""))
-            remaining.remove(best)
-            _accept(best)
+            outgoing = replace_out[idx] if idx < len(replace_out) else replace_out[-1]
+            accepted = False
+            for best in sorted(remaining, key=lambda ticker: _score(ticker, target_strategy), reverse=True):
+                gate_ok, gate = self._candidate_replacement_delta_ok(market, outgoing, best, candidate_map)
+                if not gate_ok:
+                    continue
+                remaining.remove(best)
+                _accept(best)
+                accepted = True
+                break
+            if not accepted:
+                log.info(
+                    f"[partial replacement gate] {market} outgoing={outgoing} "
+                    f"no incoming cleared trainer delta"
+                )
+                continue
         return selected[:n_replace]
     def _watch_only_reason_text(self, market: str, ticker: str) -> str:
         parts: list[str] = []
@@ -5006,6 +5757,40 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
             return rows
         return filtered
+    @staticmethod
+    def _candidate_health_num(value: Any, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return float(default)
+            return float(value)
+        except Exception:
+            return float(default)
+
+    @staticmethod
+    def _candidate_health_optional_num(value: Any) -> Optional[float]:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    def _candidate_health_mfe_protect_allowed(self, health: dict) -> bool:
+        ready_count = int(self._candidate_health_num((health or {}).get("ready_count"), 0.0))
+        if ready_count < 1:
+            return False
+        mae_pct = self._candidate_health_num((health or {}).get("mae_pct"), 0.0)
+        current_ready = self._candidate_health_optional_num((health or {}).get("current_vs_first_ready_pct"))
+        return mae_pct > -2.0 and (current_ready is None or current_ready >= -1.0)
+
+    def _candidate_health_ready_degraded(self, health: dict) -> bool:
+        ready_count = int(self._candidate_health_num((health or {}).get("ready_count"), 0.0))
+        if ready_count < 1:
+            return False
+        mae_pct = self._candidate_health_num((health or {}).get("mae_pct"), 0.0)
+        current_ready = self._candidate_health_optional_num((health or {}).get("current_vs_first_ready_pct"))
+        return current_ready is not None and current_ready <= -2.0 and mae_pct <= -2.0
+
     def _partial_replace_score(self, market: str, ticker: str, protected: Optional[set] = None) -> float:
         normalized = str(ticker).upper() if market == "US" else str(ticker)
         if protected and normalized in protected:
@@ -5033,6 +5818,37 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         score += float(rejection_counts.get("gap_insufficient", 0)) * 0.5
         score += float(rejection_counts.get("pullback_missing", 0)) * 0.5
         score += float(rejection_counts.get("highpoint_missing", 0)) * 0.5
+        # candidate_health 반영: ready 이력이 있는 종목은 교체 보호, 실패/약화는 교체 우선
+        try:
+            tracker = self._candidate_health_tracker(market)
+            h = tracker.state_for(normalized)
+            health_state = str(h.get("health_state") or "OBSERVE")
+            ready_count = int(h.get("ready_count") or 0)
+            mfe_pct = float(h.get("mfe_pct") or 0.0)
+            _HEALTH_SCORE_DELTA = {
+                "FAILED_READY": 6.0,
+                "WEAKENING_READY": 3.5,
+                "WATCH_WEAK": 1.0,
+                "OBSERVE": 0.0,
+                "WATCH_STRENGTHENING": -2.0,
+                "STRONG_READY": -6.0,
+            }
+            score += _HEALTH_SCORE_DELTA.get(health_state, 0.0)
+            if health_state == "STABLE_READY":
+                if self._candidate_health_mfe_protect_allowed(h):
+                    score -= 3.0
+                elif self._candidate_health_ready_degraded(h):
+                    score += 2.0
+                elif self._candidate_health_is_stale(market, h):
+                    score += 2.0
+            # ready 이력이 있고 현재도 건전할 때만 mfe 비례 보호 (최대 -3.0)
+            # MAE -2% 초과 하락 or 현재가가 first_ready 대비 -1% 이상 밀린 경우 보호 제외
+            if ready_count >= 1 and mfe_pct > 0 and self._candidate_health_mfe_protect_allowed(h):
+                score -= min(mfe_pct * 0.15, 3.0)
+            if self._candidate_health_is_stale(market, h):
+                score += 2.0
+        except Exception:
+            pass
         return score
     def _reset_runtime_overrides(self, market: str) -> None:
         market_key = "US" if str(market).upper() == "US" else "KR"
@@ -7895,8 +8711,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         session_date = self._current_session_date_str(market_key)
         realized = 0.0
         seen = set()
-        def _realized_key(ticker: str, qty: int, pnl: float, reason: str) -> str:
+        def _realized_key(ticker: str, qty: int, pnl: float, reason: str, order_no: str = "", path_run_id: str = "") -> str:
             reason_key = normalize_pathb_decision_exit_reason(reason)
+            order_key = str(order_no or "").strip()
+            if order_key:
+                return f"order:{market_key}:{order_key}:{session_date}"
+            path_key = str(path_run_id or "").strip()
+            if path_key:
+                return f"path:{market_key}:{path_key}:{reason_key}:{session_date}"
             return f"{ticker}:{int(qty or 0)}:{round(float(pnl or 0), 4)}:{reason_key}:{session_date}"
         for evt in list(getattr(self.risk, "all_trade_log", []) or []):
             if str(evt.get("side", "") or "").lower() != "sell":
@@ -7908,7 +8730,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             evt_session = str(evt.get("session_date") or evt.get("date") or "")
             if evt_session != session_date:
                 continue
-            key = _realized_key(evt_ticker, int(evt.get("qty", 0) or 0), float(evt.get("pnl", evt.get("pnl_krw", 0)) or 0), str(evt.get("reason", "") or ""))
+            key = _realized_key(
+                evt_ticker,
+                int(evt.get("qty", 0) or 0),
+                float(evt.get("pnl", evt.get("pnl_krw", 0)) or 0),
+                str(evt.get("reason", "") or ""),
+                str(evt.get("order_no", "") or ""),
+                str(evt.get("pathb_path_run_id", evt.get("path_run_id", "")) or ""),
+            )
             if key in seen:
                 continue
             seen.add(key)
@@ -7930,6 +8759,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         int(rec.get("qty", 0) or 0),
                         float(rec.get("pnl_krw", 0) or 0),
                         str(rec.get("exit_reason", "") or ""),
+                        str(rec.get("order_no", "") or ""),
+                        str(rec.get("pathb_path_run_id", rec.get("path_run_id", "")) or ""),
                     )
                     if key in seen:
                         continue
@@ -10241,13 +11072,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "confirmation_source": "paper_or_disabled",
             }
         try:
-            attempts = max(1, int(os.getenv("LIVE_SELL_CONFIRM_ATTEMPTS", "3") or 3))
+            attempts = max(1, int(os.getenv("LIVE_SELL_CONFIRM_ATTEMPTS", "5") or 5))
         except Exception:
-            attempts = 3
+            attempts = 5
         try:
-            delay_sec = max(0.0, float(os.getenv("LIVE_SELL_CONFIRM_DELAY_SEC", "1.0") or 1.0))
+            delay_sec = max(0.0, float(os.getenv("LIVE_SELL_CONFIRM_DELAY_SEC", "1.5") or 1.5))
         except Exception:
-            delay_sec = 1.0
+            delay_sec = 1.5
         want_qty = max(1, int(qty or 0))
         last_fill = None
         for attempt in range(attempts):
@@ -10289,6 +11120,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             pos["pending_sell_price"] = float(order_px or 0)
             pos["pending_sell_created_at"] = now_iso
             pos["pending_sell_status"] = "order_accepted_fill_unconfirmed"
+            pos["pending_sell_last_checked_at"] = ""
+            pos["pending_sell_retry_count"] = int(pos.get("pending_sell_retry_count", 0) or 0)
+            pos["pending_sell_reissue_after"] = ""
+            pos["pending_sell_broker_status"] = "ORDER_ACCEPTED_BUT_FILL_LAG"
+            pos["pending_sell_resolution"] = "ORDER_ACCEPTED_BUT_FILL_LAG"
             break
         try:
             self._save_positions()
@@ -10308,6 +11144,426 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if pos_key == key and pos.get("sell_confirmation_pending"):
                 return True
         return False
+
+    @staticmethod
+    def _sell_order_no_matches(left: object, right: object) -> bool:
+        lhs = str(left or "").strip()
+        rhs = str(right or "").strip()
+        if not lhs or not rhs:
+            return False
+        if lhs == rhs:
+            return True
+        try:
+            return int(lhs) == int(rhs)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _broker_row_side_matches(row: dict, side: str) -> bool:
+        raw = str(row.get("side", "") or row.get("order_side", "") or row.get("tr_side", "") or "").strip().lower()
+        wanted = str(side or "").strip().lower()
+        if raw == wanted:
+            return True
+        if wanted == "sell":
+            return raw in {"s", "sell", "ask", "매도", "2", "02"}
+        if wanted == "buy":
+            return raw in {"b", "buy", "bid", "매수", "1", "01"}
+        return False
+
+    def _broker_rows_for_local_ticker(self, rows: object, market: str, ticker: str) -> list[dict]:
+        market_key = str(market or "").upper()
+        key = str(ticker or "").strip().upper() if market_key == "US" else str(ticker or "").strip()
+        out: list[dict] = []
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            row_ticker = str(row.get("ticker", "") or "").strip()
+            row_key = row_ticker.upper() if market_key == "US" else row_ticker
+            if row_key == key:
+                out.append(row)
+        return out
+
+    def _broker_sell_fill_rows(self, rows: object, *, order_no: str = "") -> list[dict]:
+        matches: list[dict] = []
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            qty = int(row.get("filled_qty", row.get("qty", 0)) or 0)
+            if qty <= 0 or not self._broker_row_side_matches(row, "sell"):
+                continue
+            if order_no and not self._sell_order_no_matches(row.get("order_no", ""), order_no):
+                continue
+            matches.append(row)
+        return matches
+
+    def _broker_sell_open_order_rows(self, rows: object, *, order_no: str = "") -> list[dict]:
+        matches: list[dict] = []
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            remaining = int(row.get("remaining_qty", row.get("qty", 0)) or 0)
+            if remaining <= 0 or not self._broker_row_side_matches(row, "sell"):
+                continue
+            if order_no and not self._sell_order_no_matches(row.get("order_no", ""), order_no):
+                continue
+            matches.append(row)
+        return matches
+
+    @staticmethod
+    def _weighted_broker_fill_price(rows: list[dict]) -> float:
+        total_qty = 0
+        total_value = 0.0
+        for row in rows:
+            qty = int(row.get("filled_qty", row.get("qty", 0)) or 0)
+            price = float(row.get("fill_price", row.get("avg_price", row.get("price", 0))) or 0)
+            if qty > 0 and price > 0:
+                total_qty += qty
+                total_value += qty * price
+        return total_value / total_qty if total_qty > 0 else 0.0
+
+    def _dedupe_broker_rows(self, rows: list[dict]) -> list[dict]:
+        deduped: list[dict] = []
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            key = "|".join(
+                str(row.get(field, "") or "").strip()
+                for field in ("order_no", "ticker", "filled_qty", "qty", "fill_price", "avg_price", "time", "order_time", "trade_time")
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        return deduped
+
+    def _pending_sell_exit_price_native(self, pos: dict, market: str, fill_price: float = 0.0) -> float:
+        if float(fill_price or 0) > 0:
+            return float(fill_price)
+        for key in ("pending_sell_price", "display_current_price", "current_price", "display_avg_price", "entry"):
+            value = self._float_or_zero(pos.get(key))
+            if value <= 0:
+                continue
+            if str(market or "").upper() == "US" and value > 1000 and self.usd_krw_rate > 0:
+                return value / float(self.usd_krw_rate)
+            return value
+        return 0.0
+
+    def _clear_sell_confirmation_pending(self, pos: dict, resolution: str, extra: Optional[dict] = None) -> None:
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        pos["sell_confirmation_pending"] = False
+        pos["pending_sell_status"] = "resolved"
+        pos["pending_sell_resolution"] = str(resolution or "")
+        pos["pending_sell_last_checked_at"] = now_iso
+        pos["pending_sell_broker_status"] = str(resolution or "")
+        for key, value in dict(extra or {}).items():
+            pos[key] = value
+
+    def _close_position_from_pending_sell(
+        self,
+        pos: dict,
+        market: str,
+        *,
+        qty: int,
+        price_native: float,
+        reason: str,
+        order_no: str,
+        broker_fill_source: str,
+        resolution: str,
+        broker_fill_confirmed: bool,
+    ) -> Optional[dict]:
+        market_key = str(market or "").upper()
+        ticker = str(pos.get("ticker", "") or "")
+        close_qty = max(0, int(qty or 0))
+        pos_qty = max(0, int(pos.get("qty", 0) or 0))
+        if not ticker or close_qty <= 0 or pos_qty <= 0:
+            return None
+        close_qty = min(close_qty, pos_qty)
+        exit_price_krw = self._price_to_krw(float(price_native or 0), market_key)
+        if exit_price_krw <= 0:
+            return None
+        exit_meta = {
+            "pending_sell_order_no": order_no,
+            "pending_sell_resolution": resolution,
+            "pending_sell_broker_status": resolution,
+            "broker_fill_source": broker_fill_source,
+            "broker_fill_confirmed": bool(broker_fill_confirmed),
+            "broker_filled_qty": int(close_qty),
+        }
+        if reason in ("loss_cap", "profit_floor", "stop_loss", "trail_stop", "soft_exit_floor_price"):
+            exit_meta.setdefault("exit_owner", "system_hard_rule")
+        if close_qty >= pos_qty:
+            ex = self.risk.close_position(
+                ticker,
+                exit_price_krw,
+                reason,
+                session_date=self._current_session_date_str(market_key),
+                exit_meta=exit_meta,
+            )
+        else:
+            ex = None
+            partial_close = getattr(self.risk, "close_position_qty", None)
+            if callable(partial_close):
+                try:
+                    ex = partial_close(
+                        ticker,
+                        exit_price_krw,
+                        close_qty,
+                        reason,
+                        session_date=self._current_session_date_str(market_key),
+                        exit_meta=exit_meta,
+                    )
+                except Exception as exc:
+                    log.warning(f"[pending sell reconcile] risk partial close failed {market_key} {ticker}: {exc}")
+                    ex = None
+                if ex:
+                    pos["sell_confirmation_pending"] = False
+                    pos["pending_sell_status"] = "resolved"
+                    pos["pending_sell_qty"] = int(pos.get("qty", 0) or 0)
+                    pos["pending_sell_resolution"] = resolution
+                    pos["pending_sell_broker_status"] = resolution
+            if ex is None:
+                original = dict(pos)
+                fee_fn = getattr(self.risk, "_fee", None)
+                sell_fee = float(fee_fn("sell", exit_price_krw * close_qty) if callable(fee_fn) else 0.0)
+                gross_pnl = (exit_price_krw - float(original.get("entry", 0) or 0)) * close_qty
+                pnl = gross_pnl - sell_fee
+                cost_basis = float(original.get("entry", 0) or 0) * close_qty
+                pnl_pct = (pnl / cost_basis * 100.0) if cost_basis else 0.0
+                self.risk.cash += exit_price_krw * close_qty - sell_fee
+                self.risk.total_fee = float(getattr(self.risk, "total_fee", 0.0) or 0.0) + sell_fee
+                self.risk.daily_pnl = float(getattr(self.risk, "daily_pnl", 0.0) or 0.0) + pnl
+                pos["qty"] = max(0, pos_qty - close_qty)
+                pos["sell_confirmation_pending"] = False
+                pos["pending_sell_status"] = "resolved"
+                pos["pending_sell_qty"] = int(pos["qty"])
+                ex = {
+                    **original,
+                    **exit_meta,
+                    "ticker": ticker,
+                    "qty": close_qty,
+                    "exit_price": exit_price_krw,
+                    "pnl": pnl,
+                    "pnl_krw": pnl,
+                    "pnl_pct": pnl_pct,
+                    "reason": reason,
+                }
+                evt = {
+                    "side": "sell",
+                    "market": market_key,
+                    "ticker": ticker,
+                    "price": exit_price_krw,
+                    "qty": close_qty,
+                    "strategy": original.get("strategy", ""),
+                    "source_strategy": original.get("source_strategy", ""),
+                    "date": date.today().isoformat(),
+                    "session_date": self._current_session_date_str(market_key),
+                    "closed_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "reason": reason,
+                    "pnl": pnl,
+                    "pnl_krw": pnl,
+                    "pnl_pct": pnl_pct,
+                    **exit_meta,
+                }
+                if not hasattr(self.risk, "trade_log") or not isinstance(getattr(self.risk, "trade_log"), list):
+                    self.risk.trade_log = []
+                if not hasattr(self.risk, "all_trade_log") or not isinstance(getattr(self.risk, "all_trade_log"), list):
+                    self.risk.all_trade_log = []
+                self.risk.trade_log.append(evt)
+                self.risk.all_trade_log.append(evt)
+        if not ex:
+            return None
+        _closed_key = ticker.upper() if market_key == "US" else ticker
+        self._session_closed_tickers.setdefault(market_key, set()).add(_closed_key)
+        event_exit_meta = {
+            key: value
+            for key, value in exit_meta.items()
+            if key not in {"broker_fill_source", "broker_fill_confirmed", "broker_filled_qty"}
+        }
+        self._record_decision_event(
+            market_key,
+            "sell_filled",
+            ticker,
+            strategy=ex.get("strategy", pos.get("strategy", "")),
+            source_strategy=ex.get("source_strategy", pos.get("source_strategy", "")),
+            qty=int(ex.get("qty", close_qty) or close_qty),
+            price_native=float(price_native or 0),
+            price_krw=float(exit_price_krw or 0),
+            reason=reason,
+            detail=f"pending_sell_reconcile:{resolution}",
+            order_no=str(order_no or ""),
+            pnl_krw=float(ex.get("pnl_krw", ex.get("pnl", 0)) or 0),
+            pnl_pct=float(ex.get("pnl_pct", 0) or 0),
+            actual_fill_price=float(price_native or 0),
+            broker_fill_confirmed=bool(broker_fill_confirmed),
+            broker_filled_qty=int(close_qty),
+            broker_fill_source=broker_fill_source,
+            **event_exit_meta,
+        )
+        try:
+            proceeds_krw = float(exit_price_krw or 0) * int(close_qty)
+            self._note_recent_sell_proceeds(market_key, ticker, order_no=str(order_no or ""), proceeds_krw=proceeds_krw, reason=reason)
+        except Exception:
+            pass
+        try:
+            pnl_pct = float(ex.get("pnl_pct", 0) or 0)
+            if reason in ("loss_cap", "stop_loss") or (reason == "trail_stop" and pnl_pct <= 0):
+                self._note_stop_loss_event(
+                    market_key,
+                    _closed_key,
+                    reason,
+                    order_no=str(order_no or ""),
+                    qty=int(close_qty),
+                    pnl_krw=float(ex.get("pnl_krw", ex.get("pnl", 0)) or 0),
+                    pnl_pct=pnl_pct,
+                    occurred_at=datetime.now(KST).isoformat(timespec="seconds"),
+                )
+        except Exception:
+            pass
+        return ex
+
+    def _reconcile_pending_sell_confirmations(
+        self,
+        market: str,
+        *,
+        ticker_filter: str = "",
+        force: bool = True,
+    ) -> dict:
+        market_key = str(market or "").upper()
+        summary = {
+            "market": market_key,
+            "checked": 0,
+            "closed": 0,
+            "partial": 0,
+            "kept_pending": 0,
+            "cleared_stale": 0,
+            "broker_truth_unavailable": False,
+            "errors": [],
+        }
+        target_key = str(ticker_filter or "").strip()
+        target_key = target_key.upper() if market_key == "US" else target_key
+        pending_positions = []
+        for pos in list(getattr(self.risk, "positions", []) or []):
+            ticker = str(pos.get("ticker", "") or "")
+            if self._ticker_market(ticker) != market_key or not pos.get("sell_confirmation_pending"):
+                continue
+            key = ticker.upper() if market_key == "US" else ticker
+            if target_key and key != target_key:
+                continue
+            pending_positions.append(pos)
+        if not pending_positions:
+            return summary
+        try:
+            market_data = self._broker_truth_market_snapshot(market_key, force=force, ttl_sec=15)
+        except Exception as exc:
+            market_data = {}
+            summary["broker_truth_unavailable"] = True
+            summary["errors"].append(str(exc))
+        broker_unavailable = (
+            not market_data
+            or bool(market_data.get("missing"))
+            or bool(market_data.get("stale"))
+            or bool(str(market_data.get("error", "") or ""))
+        )
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        for pos in pending_positions:
+            summary["checked"] += 1
+            ticker = str(pos.get("ticker", "") or "")
+            order_no = str(pos.get("pending_sell_order_no", "") or "")
+            reason = str(pos.get("pending_sell_reason", "") or "sell_confirmation_pending")
+            requested_qty = int(pos.get("pending_sell_qty", pos.get("qty", 0)) or 0)
+            pos["pending_sell_last_checked_at"] = now_iso
+            pos["pending_sell_retry_count"] = int(pos.get("pending_sell_retry_count", 0) or 0) + 1
+            lookup_fill = None
+            if order_no:
+                try:
+                    lookup_fill = self._lookup_order_fill(market_key, order_no, ticker, created_at=str(pos.get("pending_sell_created_at", "") or ""))
+                except Exception as exc:
+                    summary["errors"].append(f"{ticker}:lookup_fill:{exc}")
+            if broker_unavailable:
+                if lookup_fill and int(lookup_fill.get("filled_qty", 0) or 0) > 0:
+                    fill_rows = [dict(lookup_fill, side="sell")]
+                else:
+                    pos["pending_sell_broker_status"] = "BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING"
+                    pos["pending_sell_resolution"] = "BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING"
+                    summary["broker_truth_unavailable"] = True
+                    summary["kept_pending"] += 1
+                    log.warning(f"[pending sell reconcile] {market_key} {ticker} BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING order={order_no}")
+                    continue
+            else:
+                rows_positions = self._broker_rows_for_local_ticker(market_data.get("positions", []), market_key, ticker)
+                rows_open = self._broker_rows_for_local_ticker(market_data.get("open_orders", []), market_key, ticker)
+                rows_fills = self._broker_rows_for_local_ticker(market_data.get("today_fills", []), market_key, ticker)
+                fill_rows = self._broker_sell_fill_rows(rows_fills, order_no=order_no)
+                if lookup_fill and int(lookup_fill.get("filled_qty", 0) or 0) > 0:
+                    fill_rows = [dict(lookup_fill, side="sell"), *fill_rows]
+                fill_rows = self._dedupe_broker_rows(fill_rows)
+                open_rows = self._broker_sell_open_order_rows(rows_open, order_no=order_no)
+                broker_qty = sum(max(0, int(row.get("qty", 0) or 0)) for row in rows_positions)
+            filled_qty = sum(max(0, int(row.get("filled_qty", row.get("qty", 0)) or 0)) for row in fill_rows)
+            fill_price = self._weighted_broker_fill_price(fill_rows)
+            if filled_qty > 0:
+                close_qty = min(filled_qty, requested_qty or filled_qty, int(pos.get("qty", 0) or filled_qty))
+                resolution = "BROKER_SELL_FILL_CONFIRMED" if close_qty >= int(pos.get("qty", 0) or close_qty) else "BROKER_SELL_PARTIAL_FILL_CONFIRMED"
+                ex = self._close_position_from_pending_sell(
+                    pos,
+                    market_key,
+                    qty=close_qty,
+                    price_native=self._pending_sell_exit_price_native(pos, market_key, fill_price),
+                    reason=reason,
+                    order_no=order_no,
+                    broker_fill_source="broker_fill_query_reconcile",
+                    resolution=resolution,
+                    broker_fill_confirmed=True,
+                )
+                if ex:
+                    if resolution == "BROKER_SELL_PARTIAL_FILL_CONFIRMED":
+                        summary["partial"] += 1
+                    else:
+                        summary["closed"] += 1
+                continue
+            if not broker_unavailable and open_rows:
+                pos["pending_sell_broker_status"] = "BROKER_OPEN_ORDER_FOUND_KEEP_PENDING"
+                pos["pending_sell_resolution"] = "BROKER_OPEN_ORDER_FOUND_KEEP_PENDING"
+                summary["kept_pending"] += 1
+                log.warning(f"[pending sell reconcile] {market_key} {ticker} BROKER_OPEN_ORDER_FOUND_KEEP_PENDING order={order_no}")
+                continue
+            if not broker_unavailable and broker_qty <= 0:
+                resolution = "BROKER_POSITION_GONE_ASSUME_SOLD"
+                ex = self._close_position_from_pending_sell(
+                    pos,
+                    market_key,
+                    qty=int(pos.get("qty", requested_qty) or requested_qty or 0),
+                    price_native=self._pending_sell_exit_price_native(pos, market_key, 0.0),
+                    reason=reason,
+                    order_no=order_no,
+                    broker_fill_source="broker_position_absent_inferred",
+                    resolution=resolution,
+                    broker_fill_confirmed=True,
+                )
+                if ex:
+                    summary["closed"] += 1
+                    log.warning(f"[pending sell reconcile] {market_key} {ticker} {resolution} order={order_no}")
+                continue
+            if not broker_unavailable:
+                resolution = "BROKER_STILL_HELD_NO_OPEN_ORDER_CLEAR_STALE_PENDING"
+                self._clear_sell_confirmation_pending(
+                    pos,
+                    resolution,
+                    {
+                        "pending_sell_reissue_after": now_iso,
+                        "pending_sell_open_order_absent": True,
+                    },
+                )
+                summary["cleared_stale"] += 1
+                log.warning(f"[pending sell reconcile] {market_key} {ticker} {resolution} order={order_no}")
+        if summary["checked"]:
+            try:
+                self._save_positions()
+                self._write_live_status(market_key, force=True)
+            except Exception as exc:
+                summary["errors"].append(f"save:{exc}")
+        return summary
 
     def _parse_decision_timestamp(self, value: object) -> Optional[datetime]:
         raw = str(value or "").strip()
@@ -10509,6 +11765,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if float(cand.get("exit_price", 0) or 0) <= 0 or float(raw_px or 0) <= 0:
             log.error(f"sell skipped [{cand['ticker']}]: invalid exit/raw price exit={cand.get('exit_price')} raw={raw_px}")
             return False
+        if self._has_pending_sell_confirmation(cand["ticker"], market):
+            try:
+                self._reconcile_pending_sell_confirmations(market, ticker_filter=cand["ticker"], force=True)
+            except Exception as exc:
+                log.warning(f"[pending sell reconcile before sell failed] {market} {cand['ticker']}: {exc}")
         if self._has_pending_sell_confirmation(cand["ticker"], market):
             log.warning(f"sell skipped [{cand['ticker']}]: previous sell order is pending broker fill confirmation")
             return False
@@ -10996,7 +12257,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if rec_session_date != today:
                     continue
                 order_no = str(rec.get("order_no", "") or "").strip()
-                dedup_key = order_no or f"{rec.get('ticker', '')}_{rec.get('timestamp', '')}"
+                path_run_id = str(rec.get("pathb_path_run_id", rec.get("path_run_id", "")) or "").strip()
+                reason_key = normalize_pathb_decision_exit_reason(str(rec.get("exit_reason", "") or ""))
+                dedup_key = (
+                    f"order:{order_no}"
+                    if order_no
+                    else (f"path:{path_run_id}:{reason_key}" if path_run_id else f"{rec.get('ticker', '')}_{rec.get('timestamp', '')}")
+                )
                 if dedup_key in seen_keys:
                     continue
                 seen_keys.add(dedup_key)
@@ -12419,6 +13686,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._consume_pending_claude_trigger(market)
         self._consume_pending_position_review(market)
         self._consume_pending_sell(market)
+        try:
+            self._reconcile_pending_sell_confirmations(market, force=False)
+        except Exception as _pending_sell_reconcile_e:
+            log.warning(f"[pending sell reconcile cycle] {market}: {_pending_sell_reconcile_e}")
         self._maybe_refresh_opening_judgment(market)
         self._maybe_run_opening_fresh_screener(market)
         self._maybe_recheck_pending_next_open_sells(market)
@@ -13537,9 +14808,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         isdb.update_signal(_intraday_log_row_id)
                 else:
                     _prev_cnt = self._ticker_no_signal_cycles.get(ticker, 0)
-                    self._ticker_no_signal_cycles[ticker] = _prev_cnt + 1
-                    _prev_min = float(self._ticker_no_signal_minutes.get(ticker, 0.0) or 0.0)
-                    self._ticker_no_signal_minutes[ticker] = _prev_min + _scan_interval_min
+                    # Fresh PROBE_READY/BUY_READY routes get a short no-signal grace period.
+                    if self._ready_action_no_signal_grace_active(market, ticker):
+                        self._ticker_no_signal_cycles[ticker] = 0
+                        self._ticker_no_signal_minutes[ticker] = 0.0
+                    else:
+                        self._ticker_no_signal_cycles[ticker] = _prev_cnt + 1
+                        _prev_min = float(self._ticker_no_signal_minutes.get(ticker, 0.0) or 0.0)
+                        self._ticker_no_signal_minutes[ticker] = _prev_min + _scan_interval_min
                     # Replace inactive watch tickers only when no position is held.
                     _holding = ticker in {p["ticker"] for p in self.risk.positions}
                     _swap_due = (
@@ -13557,8 +14833,43 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             t for t in _universe
                             if t not in _current and t not in _cooldown
                         ]
+                        # health guard: 후보를 건강 점수로 정렬하고 품질 미달이면 교체 스킵
+                        _inline_new: Optional[str] = None
                         if _cands:
-                            _new = _cands[0]
+                            _inline_health_tracker = self._candidate_health_tracker(market)
+                            _INLINE_HEALTH_ORDER = {
+                                "STRONG_READY": 5, "WATCH_STRENGTHENING": 4,
+                                "STABLE_READY": 3, "OBSERVE": 2,
+                                "WATCH_WEAK": 1, "WEAKENING_READY": 0, "FAILED_READY": -1,
+                            }
+                            def _inline_score(t: str) -> float:
+                                _h = _inline_health_tracker.state_for(t)
+                                _st = str(_h.get("health_state") or "OBSERVE")
+                                _mfe = self._candidate_health_num(_h.get("mfe_pct"), 0.0)
+                                _score = float(_INLINE_HEALTH_ORDER.get(_st, 2))
+                                if self._candidate_health_ready_degraded(_h):
+                                    _score -= 3.0
+                                if _mfe > 0 and self._candidate_health_mfe_protect_allowed(_h):
+                                    _score += min(_mfe * 0.05, 1.0)
+                                return _score
+                            _cands_scored = sorted(_cands, key=_inline_score, reverse=True)
+                            _best_cand = _cands_scored[0]
+                            _best_h = _inline_health_tracker.state_for(_best_cand)
+                            _best_health = _best_h.get("health_state", "OBSERVE")
+                            # FAILED_READY / WEAKENING_READY 후보는 인라인 교체 대상에서 제외
+                            if (
+                                _best_health not in ("FAILED_READY", "WEAKENING_READY")
+                                and not self._candidate_health_ready_degraded(_best_h)
+                                and not self._candidate_health_is_stale(market, _best_h)
+                            ):
+                                _inline_new = _best_cand
+                            else:
+                                log.info(
+                                    f"[인라인교체 스킵 {market}] {ticker}: 대체 후보 품질 미달"
+                                    f" best={_best_cand} state={_best_health}"
+                                )
+                        if _inline_new is not None:
+                            _new = _inline_new
                             _cur_list = list(self.today_tickers.get(market, []))
                             if ticker in _cur_list:
                                 _cur_list[_cur_list.index(ticker)] = _new
@@ -16031,13 +17342,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not replace_in:
             log.info(f"[부분교체] {market}: 유효 신규 종목 없음 → 스킵")
             return
-        final = [t for t in current_tickers if t not in set(replace_out)] + replace_in
+        effective_replace_out = replace_out[:len(replace_in)]
+        final = [t for t in current_tickers if t not in set(effective_replace_out)] + replace_in
         self.today_tickers[market] = final
         self._entry_timing_mark_candidates(market, replace_in, "partial_reselect")
         self.today_judgment["tickers"] = final
         current_ready = [
             t for t in self.trade_ready_tickers.get(market, [])
-            if t in final and t not in set(replace_out)
+            if t in final and t not in set(effective_replace_out)
         ]
         final_ready = list(dict.fromkeys(current_ready + [t for t in replace_in if t in final]))
         existing_meta = self.selection_meta.get(market) or {}
@@ -16066,7 +17378,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.today_judgment["selection_meta"] = final_meta
         self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
         # 교체된 종목 쿨다운 등록 (60분)
-        for t in replace_out:
+        for t in effective_replace_out:
             self._ticker_exclude_log.setdefault(market, []).append(
                 {"ticker": t, "reason": "partial_replace_no_signal", "ts": now}
             )
@@ -16083,10 +17395,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._run_param_review(market, trigger="rescreen")
         except Exception as _pt_e:
             log.debug("[param_tuner rescreen] %s: %s", market, _pt_e)
-        out_str = ", ".join(replace_out)
+        out_str = ", ".join(effective_replace_out)
         in_str  = ", ".join(replace_in)
         log.info(f"[부분교체] {market}: [{out_str}] → [{in_str}] (무신호 지속)")
-        watchlist_change_alert(market, replace_out, replace_in, reason="no_signal_delay")
+        watchlist_change_alert(market, effective_replace_out, replace_in, reason="no_signal_delay")
     def _should_reinvoke_analysts(self, result: dict, current_state: dict) -> tuple:
         """분석가 재투입 여부. (bool, trigger_reason)"""
         if not self.is_claude_reinvoke_enabled():
@@ -16333,6 +17645,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "mode": mode,
             "strategy": kwargs.get("strategy", ""),
             "source_strategy": kwargs.get("source_strategy", ""),
+            "path_type": kwargs.get("path_type", ""),
+            "pathb_path_run_id": kwargs.get("pathb_path_run_id", kwargs.get("path_run_id", "")),
+            "v2_decision_id": kwargs.get("v2_decision_id", kwargs.get("decision_id", "")),
+            "v2_execution_id": kwargs.get("v2_execution_id", kwargs.get("execution_id", "")),
+            "position_id": kwargs.get("position_id", ""),
             "micro_probe": bool(kwargs.get("micro_probe", False)),
             "micro_probe_reason": kwargs.get("micro_probe_reason", ""),
             "recovery_micro": bool(kwargs.get("recovery_micro", False)),
@@ -16419,6 +17736,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "mode":      mode,
                 "strategy":  event["strategy"],
                 "source_strategy": event.get("source_strategy", ""),
+                "path_type": event.get("path_type", ""),
+                "pathb_path_run_id": event.get("pathb_path_run_id", ""),
+                "v2_decision_id": event.get("v2_decision_id", ""),
+                "v2_execution_id": event.get("v2_execution_id", ""),
+                "position_id": event.get("position_id", ""),
                 "micro_probe": event.get("micro_probe", False),
                 "micro_probe_reason": event.get("micro_probe_reason", ""),
                 "recovery_micro": event.get("recovery_micro", False),
@@ -16430,8 +17752,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if action in ("buy_order", "buy_signal"):
                 record.update({
                     "entry_price": event["price_krw"] or event["price_native"],
+                    "entry_price_native": event["price_native"],
                     "qty":         event["qty"],
+                    "order_no":    event["order_no"],
                     "selected_reason": event["selected_reason"],
+                    "broker_fill_confirmed": event.get("broker_fill_confirmed", False),
+                    "broker_filled_qty": event.get("broker_filled_qty", 0),
+                    "broker_fill_source": event.get("broker_fill_source", ""),
                     "recovery_micro_force_exit_at": event.get("recovery_micro_force_exit_at", ""),
                     "recovery_micro_hard_loss_pct": event.get("recovery_micro_hard_loss_pct", 0),
                 })
@@ -16596,6 +17923,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 for order in self.pending_orders
                 if order.get("market", market) == market
             ]
+            market_realized_pnl_krw = float(self._market_realized_pnl_krw(market) or 0.0)
+            market_daily_pnl_by_market = {
+                "KR": round(float(self._market_realized_pnl_krw("KR") or 0.0), 0),
+                "US": round(float(self._market_realized_pnl_krw("US") or 0.0), 0),
+            }
             path = get_runtime_path("state", f"{self._mode}_live_status_{market}.json")
             _atomic_json_dump(path, {
                     "market":         market,
@@ -16606,6 +17938,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "max_order_krw":  round(self.risk.max_order_krw, 0),
                     "session_active": bool(self.session_active and self.current_market == market),
                     "daily_pnl":      round(status.get("daily_pnl", 0), 0),
+                    "market_daily_pnl_krw": market_daily_pnl_by_market,
+                    "current_market_daily_pnl_krw": round(market_realized_pnl_krw, 0),
+                    "market_realized_pnl_krw": round(market_realized_pnl_krw, 0),
+                    "market_realized_pnl_source": "market_realized_pnl_krw",
                     "daily_pnl_pct":  round(self._daily_pnl_pct(market), 4),
                     "cash":           market_cash_krw,
                     "total_equity":   kis_total_equity,
@@ -16753,6 +18089,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as e:
             self._flag_execution_issue(market, "session_close_sync_failed")
             _log_risk("warning", f"[{market}] session_close 최종 체결 동기화 실패: {e}")
+        try:
+            self._reconcile_pending_sell_confirmations(market, force=True)
+        except Exception as _pending_sell_reconcile_e:
+            log.warning(f"[pending sell reconcile session_close] {market}: {_pending_sell_reconcile_e}")
         if getattr(self, "pathb", None) is not None:
             try:
                 self.pathb.refresh_broker_truth(market, force=True)

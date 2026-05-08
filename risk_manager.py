@@ -674,6 +674,87 @@ class RiskManager:
                 return True
         return False
 
+    def close_position_qty(
+        self,
+        ticker: str,
+        exit_price: float,
+        qty: int,
+        reason: str,
+        session_date: Optional[str] = None,
+        exit_meta: Optional[dict] = None,
+    ):
+        close_qty = max(0, int(qty or 0))
+        if close_qty <= 0:
+            return None
+        for pos in list(self.positions):
+            if pos["ticker"] != ticker:
+                continue
+
+            pos_qty = max(0, int(pos.get("qty", 0) or 0))
+            if pos_qty <= 0:
+                return None
+            close_qty = min(close_qty, pos_qty)
+            remaining_qty = max(0, pos_qty - close_qty)
+            entry = float(pos.get("entry", 0) or 0)
+            gross_pnl = (exit_price - entry) * close_qty
+            sell_fee = self._fee("sell", exit_price * close_qty)
+            pnl = gross_pnl - sell_fee
+            cost_basis = entry * close_qty
+            pnl_pct = (pnl / cost_basis * 100) if cost_basis else 0.0
+            self.cash += exit_price * close_qty - sell_fee
+            self.total_fee += sell_fee
+            self.daily_pnl += pnl
+            if remaining_qty > 0:
+                pos["qty"] = remaining_qty
+            else:
+                self.positions.remove(pos)
+            session_date = session_date or str(pos.get("session_date") or _market_session_date_local(self.market).isoformat())
+
+            closed = {
+                **pos,
+                "exit_price": exit_price,
+                "qty": close_qty,
+                "remaining_qty": remaining_qty,
+                "pnl": pnl,
+                "pnl_krw": pnl,
+                "pnl_pct": pnl_pct,
+                "reason": reason,
+                "partial_close": remaining_qty > 0,
+                **(exit_meta or {}),
+            }
+            evt = {
+                "side": "sell",
+                "ticker": pos["ticker"],
+                "price": exit_price,
+                "qty": close_qty,
+                "strategy": pos["strategy"],
+                "source_strategy": pos.get("source_strategy", ""),
+                "micro_probe": bool(pos.get("micro_probe")),
+                "micro_probe_reason": pos.get("micro_probe_reason", ""),
+                "recovery_micro": bool(pos.get("recovery_micro")),
+                "recovery_micro_reason": pos.get("recovery_micro_reason", ""),
+                "recovery_micro_source_strategy": pos.get("recovery_micro_source_strategy", pos.get("source_strategy", "")),
+                "recovery_micro_no_carry": bool(pos.get("recovery_micro_no_carry", False)),
+                "original_order_cost_krw": float(pos.get("original_order_cost_krw", 0) or 0),
+                "adjusted_order_cost_krw": float(pos.get("adjusted_order_cost_krw", 0) or 0),
+                "oversize_ratio": float(pos.get("oversize_ratio", 0) or 0),
+                "date": date.today().isoformat(),
+                "session_date": session_date,
+                "closed_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "reason": reason,
+                "pnl": pnl,
+                "pnl_krw": pnl,
+                "pnl_pct": pnl_pct,
+                "partial_close": remaining_qty > 0,
+                "remaining_qty": remaining_qty,
+                **(exit_meta or {}),
+            }
+            self.trade_log.append(evt)
+            self.all_trade_log.append(evt)
+            log.info(f"[{reason}] {pos['ticker']} partial={remaining_qty > 0} {pnl:+,.0f} ({pnl_pct:+.2f}%)")
+            return closed
+        return None
+
     def close_position(
         self,
         ticker: str,

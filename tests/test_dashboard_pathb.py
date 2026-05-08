@@ -546,6 +546,119 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(status["deduped_closed_count"], 2)
         self.assertEqual(status["source"], "local_decisions_duplicate_sell_deduped")
 
+    def test_current_session_realized_pnl_dedupes_when_fresh_broker_fills_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            now = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+            (state_dir / "live_broker_truth_snapshot.json").write_text(
+                json.dumps(
+                    {
+                        "markets": {
+                            "US": {
+                                "missing": False,
+                                "stale": False,
+                                "last_success_at": now,
+                                "ttl_sec": 3600,
+                                "error": "",
+                                "today_fills": [],
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "live_decisions.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "closed",
+                                "timestamp": "2026-05-05T22:30:20+09:00",
+                                "session_date": "2026-05-05",
+                                "market": "US",
+                                "ticker": "EAT",
+                                "qty": 1,
+                                "order_no": "0030650645",
+                                "pnl_krw": -12372.0,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "closed",
+                                "timestamp": "2026-05-05T22:30:55+09:00",
+                                "session_date": "2026-05-05",
+                                "market": "US",
+                                "ticker": "CRCL",
+                                "qty": 1,
+                                "order_no": "0030651849",
+                                "pnl_krw": 12414.0,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "closed",
+                                "timestamp": "2026-05-05T22:58:47+09:00",
+                                "session_date": "2026-05-05",
+                                "market": "US",
+                                "ticker": "EAT",
+                                "qty": 1,
+                                "order_no": "0030699267",
+                                "pnl_krw": -14724.0,
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            def fake_runtime_path(*parts, make_parents=True):
+                path = root.joinpath(*parts)
+                if make_parents:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                return path
+
+            with patch.object(dashboard_server, "get_runtime_path", side_effect=fake_runtime_path), patch.object(
+                dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)
+            ):
+                status = dashboard_server._current_session_realized_pnl_status(
+                    "US",
+                    "live",
+                    live={"session_active": True, "trading_date": "2026-05-05", "daily_pnl": -14682.0},
+                )
+
+        self.assertTrue(status["available"])
+        self.assertEqual(status["pnl_krw"], -2310.0)
+        self.assertEqual(status["duplicate_tickers"], ["EAT"])
+        self.assertEqual(status["source"], "local_decisions_duplicate_sell_deduped")
+
+    def test_current_session_realized_pnl_live_fallback_does_not_call_load_today(self) -> None:
+        with patch.object(dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None), patch.object(
+            dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_deduped_local_session_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)
+        ), patch.object(
+            dashboard_server, "load_today", side_effect=AssertionError("load_today should not be called")
+        ):
+            status = dashboard_server._current_session_realized_pnl_status(
+                "US",
+                "live",
+                live={
+                    "market": "US",
+                    "session_active": True,
+                    "trading_date": "2026-05-05",
+                    "daily_pnl": -250.0,
+                    "market_realized_pnl_krw": -125.0,
+                },
+            )
+
+        self.assertTrue(status["available"])
+        self.assertEqual(status["pnl_krw"], -125.0)
+        self.assertEqual(status["source"], "live_status_market_realized_pnl")
+
     def test_v2_ops_market_uses_session_trade_date(self) -> None:
         captured = {}
 

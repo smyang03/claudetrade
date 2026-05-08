@@ -140,6 +140,23 @@ class ClaudeCandidateActionsTests(unittest.TestCase):
         self.assertTrue(any("invalid_confidence" in w for w in by_ticker["AMD"].get("warnings", [])))
         self.assertAlmostEqual(by_ticker["NVDA"]["confidence"], 0.9)
 
+    def test_non_finite_confidence_is_downgraded_to_zero(self) -> None:
+        actions = candidate_actions_from_response(
+            {
+                "candidate_actions": [
+                    {"ticker": "AMD", "action": "BUY_READY", "confidence": "NaN"},
+                    {"ticker": "NVDA", "action": "BUY_READY", "confidence": "inf"},
+                ]
+            },
+            market="US",
+        )
+
+        by_ticker = {a["ticker"]: a for a in actions}
+        self.assertEqual(by_ticker["AMD"]["confidence"], 0.0)
+        self.assertEqual(by_ticker["NVDA"]["confidence"], 0.0)
+        self.assertTrue(any("invalid_confidence" in w for w in by_ticker["AMD"].get("warnings", [])))
+        self.assertTrue(any("invalid_confidence" in w for w in by_ticker["NVDA"].get("warnings", [])))
+
 
 if __name__ == "__main__":
     unittest.main()

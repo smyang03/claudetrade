@@ -187,6 +187,55 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertFalse(PathBRuntime._pathb_stop_ticker_only({"qty": 2, "entry": 160000, "pnl_pct": -1.6}, "US"))
             self.assertFalse(PathBRuntime._pathb_stop_ticker_only({"qty": 1, "entry": 160000, "pnl_pct": -3.0}, "US"))
 
+    def test_pathb_mfe_breakeven_signal_after_peak(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.bot = _Bot()
+        plan = make_price_plan(
+            decision_id="dec_mfe",
+            ticker="005930",
+            market="KR",
+            session_date="2026-05-07",
+            buy_zone_low=98,
+            buy_zone_high=101,
+            sell_target=110,
+            stop_loss=95,
+            hold_days=1,
+            confidence=0.7,
+        )
+        pos = {"ticker": "005930", "entry": 100.0, "peak_pnl_pct": 2.6}
+
+        with patch.dict(
+            "os.environ",
+            {"PATHB_MFE_BREAKEVEN_ENABLED": "true", "PATHB_MFE_BREAKEVEN_TRIGGER_PCT": "2.5"},
+            clear=False,
+        ):
+            signal = runtime._pathb_mfe_breakeven_signal(plan, pos, 100.05, hard_stop_price=95.0)
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.reason, "mfe_breakeven")
+        self.assertEqual(signal.close_reason, "CLOSED_MFE_BREAKEVEN")
+
+    def test_pathb_mfe_breakeven_does_not_override_hard_stop_breach(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.bot = _Bot()
+        plan = make_price_plan(
+            decision_id="dec_mfe_hard",
+            ticker="005930",
+            market="KR",
+            session_date="2026-05-07",
+            buy_zone_low=98,
+            buy_zone_high=101,
+            sell_target=110,
+            stop_loss=95,
+            hold_days=1,
+            confidence=0.7,
+        )
+        pos = {"ticker": "005930", "entry": 100.0, "peak_pnl_pct": 2.6}
+
+        signal = runtime._pathb_mfe_breakeven_signal(plan, pos, 94.0, hard_stop_price=95.0)
+
+        self.assertIsNone(signal)
+
     def test_balance_snapshot_uses_market_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _MarketTokenBot()
@@ -1015,6 +1064,94 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(event["pnl_krw"], -10)
             self.assertTrue(event["broker_fill_confirmed"])
             self.assertEqual(event["broker_fill_source"], "pathb_broker_truth")
+
+    def test_on_buy_fill_records_common_entry_decision_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_buy",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=90,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+
+            runtime.on_buy_fill(
+                {
+                    "pathb_path_run_id": plan.path_run_id,
+                    "market": "KR",
+                    "ticker": "005930",
+                    "qty": 2,
+                    "filled_price_native": 100,
+                    "order_no": "buy1",
+                }
+            )
+
+            self.assertEqual(len(bot.decision_events), 1)
+            event = bot.decision_events[0]
+            self.assertEqual(event["action"], "buy_order")
+            self.assertEqual(event["path_type"], "claude_price")
+            self.assertEqual(event["pathb_path_run_id"], plan.path_run_id)
+            self.assertEqual(event["v2_decision_id"], "dec_buy")
+            self.assertEqual(event["order_no"], "buy1")
+            self.assertTrue(event["broker_fill_confirmed"])
+            self.assertEqual(event["broker_fill_source"], "pathb_broker_truth")
+
+    def test_finalize_pathb_sell_close_records_event_when_local_close_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_missing_close",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=90,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=100,
+                qty=2,
+                execution_id="buy1",
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+            )
+
+            runtime._finalize_pathb_sell_close(
+                plan,
+                price=95,
+                qty=2,
+                execution_id="sell_missing",
+                close_reason="CLOSED_LOSS_CAP",
+                evidence={"broker_fill_event_id": 2},
+            )
+
+            self.assertEqual(len(bot.decision_events), 1)
+            event = bot.decision_events[0]
+            self.assertEqual(event["action"], "sell_filled")
+            self.assertEqual(event["ticker"], "005930")
+            self.assertEqual(event["path_type"], "claude_price")
+            self.assertEqual(event["pathb_path_run_id"], plan.path_run_id)
+            self.assertEqual(event["order_no"], "sell_missing")
+            self.assertEqual(event["reason"], "loss_cap")
+            self.assertEqual(event["pnl_krw"], -10)
+            self.assertAlmostEqual(event["pnl_pct"], -5.0)
+            self.assertTrue(event["broker_fill_confirmed"])
 
     def test_stale_pathb_closing_is_cleared_for_still_held_position(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

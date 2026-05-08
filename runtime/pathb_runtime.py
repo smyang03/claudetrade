@@ -979,7 +979,15 @@ class PathBRuntime:
             self._audit_pathb_price_seen(plan, current, source="pathb:exit_scan")
             hard_stop_price = self._native_hard_stop(pos, market)
             loss_cap_price = self._native_loss_cap_stop(pos, market)
-            if (
+            mfe_signal = self._pathb_mfe_breakeven_signal(
+                plan,
+                pos,
+                current,
+                hard_stop_price=hard_stop_price,
+            )
+            if mfe_signal is not None:
+                exit_signal = mfe_signal
+            elif (
                 loss_cap_price is not None
                 and loss_cap_price > 0
                 and (hard_stop_price is None or loss_cap_price >= hard_stop_price)
@@ -1031,6 +1039,7 @@ class PathBRuntime:
                 brain_snapshot_id=self._brain_snapshot_id(str(order.get("market", run.get("market", "KR")) or "KR")),
             )
             self._audit_pathb_buy_fill(run, order, price=price, qty=qty, partial=True)
+            self._record_pathb_buy_decision_event(run, order, price=price, qty=qty, partial=True)
             return
         self.adapter.mark_filled(
             path_run_id,
@@ -1041,6 +1050,59 @@ class PathBRuntime:
             brain_snapshot_id=self._brain_snapshot_id(str(order.get("market", run.get("market", "KR")) or "KR")),
         )
         self._audit_pathb_buy_fill(run, order, price=price, qty=qty, partial=False)
+        self._record_pathb_buy_decision_event(run, order, price=price, qty=qty, partial=False)
+
+    def _record_pathb_buy_decision_event(
+        self,
+        run: dict[str, Any],
+        order: dict[str, Any],
+        *,
+        price: float,
+        qty: int,
+        partial: bool,
+    ) -> None:
+        recorder = getattr(self.bot, "_record_decision_event", None)
+        if not callable(recorder):
+            return
+        plan = self._plan_from_run(run)
+        plan_json = run.get("plan") or {}
+        market = str(order.get("market") or run.get("market") or (plan.market if plan else "") or "KR").upper()
+        ticker = str(order.get("ticker") or run.get("ticker") or (plan.ticker if plan else "") or "").strip()
+        if not ticker or int(qty or 0) <= 0:
+            return
+        path_run_id = str(order.get("pathb_path_run_id", "") or run.get("path_run_id", "") or (plan.path_run_id if plan else "") or "")
+        decision_id = str(order.get("v2_decision_id", "") or run.get("decision_id", "") or (plan.decision_id if plan else "") or "")
+        execution_id = str(order.get("v2_execution_id", "") or order.get("order_no", "") or "")
+        selected_reason = str(
+            order.get("selected_reason")
+            or plan_json.get("entry_rationale")
+            or plan_json.get("rationale")
+            or "claude_price"
+        )
+        try:
+            recorder(
+                market,
+                "buy_order",
+                ticker,
+                strategy=str(order.get("strategy") or "claude_price"),
+                source_strategy=str(order.get("source_strategy") or "claude_price"),
+                path_type="claude_price",
+                pathb_path_run_id=path_run_id,
+                v2_decision_id=decision_id,
+                v2_execution_id=execution_id,
+                qty=int(qty or 0),
+                price_native=float(price or 0),
+                price_krw=float(self._price_to_krw(float(price or 0), market) or 0),
+                selected_reason=selected_reason,
+                detail=f"pathb_run={path_run_id} partial={bool(partial)}",
+                order_no=str(order.get("order_no", "") or ""),
+                actual_fill_price=float(price or 0),
+                broker_fill_confirmed=True,
+                broker_filled_qty=int(qty or 0),
+                broker_fill_source="pathb_broker_truth",
+            )
+        except Exception as exc:
+            log.warning(f"[PathB BUY fill] decision event record failed {market} {ticker}: {exc}")
 
     def on_external_close(
         self,
@@ -1822,6 +1884,65 @@ class PathBRuntime:
             return self._policy_skip_or_shadow(plan, policy, current=current_price, reason="inside_stop_recovery_policy")
 
         return {"action": "proceed", "reason": "unknown_policy_mode", "policy": policy}
+
+    def _pathb_mfe_breakeven_signal(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        current: float,
+        *,
+        hard_stop_price: float | None = None,
+    ) -> ExitSignal | None:
+        if not _env_bool("PATHB_MFE_BREAKEVEN_ENABLED", True):
+            return None
+        current_price = float(current or 0)
+        if current_price <= 0:
+            return None
+        if hard_stop_price is not None and float(hard_stop_price or 0) > 0 and current_price <= float(hard_stop_price):
+            return None
+        try:
+            trigger_pct = float(os.getenv("PATHB_MFE_BREAKEVEN_TRIGGER_PCT", "2.5") or 2.5)
+        except Exception:
+            trigger_pct = 2.5
+        try:
+            buffer_pct = float(os.getenv("PATHB_MFE_BREAKEVEN_BUFFER_PCT", "0.001") or 0.001)
+        except Exception:
+            buffer_pct = 0.001
+        if trigger_pct <= 0:
+            return None
+        entry = self._position_entry_native(pos, plan.market)
+        if entry <= 0:
+            store = getattr(self, "store", None)
+            run = store.find_path_run(plan.path_run_id) if store is not None else {}
+            entry = float((run or {}).get("plan", {}).get("actual_entry_price", 0) or 0)
+        if entry <= 0:
+            return None
+        try:
+            mfe_pct = float(pos.get("peak_pnl_pct") or pos.get("position_mfe_pct") or 0)
+        except Exception:
+            mfe_pct = 0.0
+        if mfe_pct <= 0:
+            peak_price = 0.0
+            try:
+                run = self.store.find_path_run(plan.path_run_id) or {}
+                policy = (run.get("plan") or {}).get("auto_sell_policy") or {}
+                peak_price = float(policy.get("peak_price") or 0)
+            except Exception:
+                peak_price = 0.0
+            if peak_price > 0:
+                mfe_pct = ((peak_price / entry) - 1.0) * 100.0
+        if mfe_pct < trigger_pct:
+            return None
+        breakeven_stop = entry * (1.0 + max(0.0, buffer_pct))
+        if current_price > breakeven_stop:
+            return None
+        return ExitSignal(
+            True,
+            "mfe_breakeven",
+            "CLOSED_MFE_BREAKEVEN",
+            current_price,
+            plan.path_run_id,
+        )
 
     def _run_pathb_sell_review_gate(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> dict[str, Any]:
         raw_close_reason = str(signal.close_reason or "").strip().upper()
@@ -2789,22 +2910,51 @@ class PathBRuntime:
         exit_meta: dict[str, Any],
     ) -> None:
         recorder = getattr(self.bot, "_record_decision_event", None)
-        if not callable(recorder) or ex is None:
+        if not callable(recorder):
             return
         try:
+            run = self.store.find_path_run(plan.path_run_id) or {}
+            plan_json = run.get("plan") or {}
             record_qty = int((ex or {}).get("qty", qty) or qty or 0)
+            entry_native = float(
+                (ex or {}).get("display_entry_price", 0)
+                or (pos or {}).get("display_avg_price", 0)
+                or plan_json.get("actual_entry_price", 0)
+                or (pos or {}).get("avg_price", 0)
+                or (pos or {}).get("entry", 0)
+                or 0
+            )
+            if plan.market == "US" and entry_native > 1000:
+                try:
+                    entry_native = entry_native / float(self._usd_krw() or 1)
+                except Exception:
+                    pass
             pnl_krw = float((ex or {}).get("pnl_krw", (ex or {}).get("pnl", 0)) or 0)
             pnl_pct = float((ex or {}).get("pnl_pct", 0) or 0)
+            if ex is None and entry_native > 0 and price_native > 0 and record_qty > 0:
+                entry_krw = self._price_to_krw(entry_native, plan.market)
+                pnl_krw = (float(exit_price_krw or 0) - float(entry_krw or 0)) * record_qty
+                pnl_pct = ((float(price_native or 0) / entry_native) - 1.0) * 100.0
             strategy = str((ex or {}).get("strategy") or (pos or {}).get("strategy") or "claude_price")
             source_strategy = str(
                 (ex or {}).get("source_strategy") or (pos or {}).get("source_strategy") or "claude_price"
             )
+            event_meta = {
+                key: value
+                for key, value in dict(exit_meta or {}).items()
+                if key not in {"path_type", "pathb_path_run_id", "v2_decision_id", "v2_execution_id"}
+            }
             recorder(
                 plan.market,
                 "sell_filled",
                 plan.ticker,
                 strategy=strategy,
                 source_strategy=source_strategy,
+                path_type="claude_price",
+                pathb_path_run_id=plan.path_run_id,
+                v2_decision_id=plan.decision_id,
+                v2_execution_id=str(execution_id or ""),
+                position_id=str((ex or pos or {}).get("position_id", "") or ""),
                 qty=record_qty,
                 price_native=float(price_native or 0),
                 price_krw=float(exit_price_krw or 0),
@@ -2819,7 +2969,7 @@ class PathBRuntime:
                 broker_fill_source="pathb_broker_truth",
                 pathb_reference_target=float((pos or {}).get("pathb_reference_target", 0) or 0),
                 selection_reference_target=float((pos or {}).get("selection_reference_target", 0) or 0),
-                **dict(exit_meta or {}),
+                **event_meta,
             )
         except Exception as exc:
             log.warning(f"[PathB SELL reconcile] decision event record failed {plan.market} {plan.ticker}: {exc}")
@@ -4124,6 +4274,14 @@ class PathBRuntime:
         elif close_reason == "CLOSED_CLAUDE_PRICE_STOP":
             meta["effective_stop_price"] = float(meta.get("strategy_stop_price", 0) or 0)
             meta["exit_owner"] = "claude_price_policy"
+        elif close_reason == "CLOSED_MFE_BREAKEVEN":
+            entry = float(pos.get("entry", 0) or pos.get("avg_price", 0) or 0)
+            try:
+                buffer_pct = float(os.getenv("PATHB_MFE_BREAKEVEN_BUFFER_PCT", "0.001") or 0.001)
+            except Exception:
+                buffer_pct = 0.001
+            meta["effective_stop_price"] = entry * (1.0 + max(0.0, buffer_pct)) if entry > 0 else 0.0
+            meta["exit_owner"] = "mfe_breakeven_policy"
         return meta
 
     def _maybe_run_pre_close_carry_review(

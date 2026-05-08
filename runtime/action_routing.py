@@ -85,6 +85,8 @@ def route_candidate_action(
         or price_targets.get("reference_price")
     )
     buy_zone_high = _positive_float(context.get("buy_zone_high") or price_targets.get("buy_zone_high"))
+    pathb_waiting_buy_zone_high = _positive_float(context.get("pathb_waiting_buy_zone_high"))
+    pathb_waiting_buy_zone_low = _positive_float(context.get("pathb_waiting_buy_zone_low"))
     cancel_if_open_above = _positive_float(
         context.get("cancel_if_open_above") or price_targets.get("cancel_if_open_above")
     )
@@ -118,6 +120,10 @@ def route_candidate_action(
         gate_context["current_price"] = current_price
     if buy_zone_high > 0:
         gate_context["buy_zone_high"] = buy_zone_high
+    if pathb_waiting_buy_zone_high > 0:
+        gate_context["pathb_waiting_buy_zone_high"] = pathb_waiting_buy_zone_high
+    if pathb_waiting_buy_zone_low > 0:
+        gate_context["pathb_waiting_buy_zone_low"] = pathb_waiting_buy_zone_low
     if cancel_if_open_above > 0:
         gate_context["cancel_if_open_above"] = cancel_if_open_above
     gate_context["overextended"] = bool(overextended)
@@ -153,6 +159,34 @@ def route_candidate_action(
             warnings=list(warnings or []),
         )
 
+    def _negative_watch_context() -> bool:
+        momentum = str(context.get("momentum_state") or "").strip().lower()
+        quality = str(data_quality or "").strip().lower()
+        reason_text = " ".join(
+            str(value or "")
+            for value in (
+                (action or {}).get("reason"),
+                (action or {}).get("invalidation_condition"),
+                context.get("reason"),
+            )
+        ).lower()
+        if momentum in {"fade", "fading", "weak", "weakening", "direction_unconfirmed"}:
+            return True
+        if quality in {"bad", "bad_data", "stale", "invalid"}:
+            return True
+        negative_keywords = (
+            "fade",
+            "fading",
+            "direction_unconfirmed",
+            "volume_collapse",
+            "weakening",
+            "거래량 급감",
+            "방향 미확인",
+            "반등 확인",
+            "반등 실패",
+        )
+        return any(keyword in reason_text for keyword in negative_keywords)
+
     if gate_final_action == "HARD_BLOCK" or gate_blocker:
         return _decision("HARD_BLOCK", reason=gate_blocker or "hard_safety")
 
@@ -171,6 +205,22 @@ def route_candidate_action(
         )
 
     if requested == "PROBE_READY":
+        if pathb_waiting and current_price > 0 and pathb_waiting_buy_zone_high > 0 and current_price > pathb_waiting_buy_zone_high:
+            good_data = str(data_quality or "").lower() in {"good", "normal", "ok"}
+            if confidence >= float(planb_cancel_confidence_min) and not overextended and good_data:
+                return _decision(
+                    "PROBE_READY",
+                    route="PlanA.probe",
+                    reason="probe_ready_cancels_pathb_above_zone",
+                    cancel_pathb=True,
+                )
+            return _decision(
+                "WATCH",
+                reason="probe_blocked_above_pathb_zone",
+                warnings=["probe_above_pathb_buy_zone"],
+                demoted_to="WATCH",
+                runtime_gate_reason="above_pathb_buy_zone",
+            )
         return _decision("PROBE_READY", route="PlanA.probe", reason="probe_ready")
 
     if requested == "BUY_READY":
@@ -236,12 +286,43 @@ def route_candidate_action(
     if requested == "PULLBACK_WAIT":
         if not has_pullback_target(price_targets):
             return _decision("WATCH", reason="missing_pullback_target")
+        if _negative_watch_context():
+            return _decision(
+                "WATCH",
+                reason="pullback_wait_blocked_negative_context",
+                suspend_pathb=bool(pathb_waiting),
+                warnings=["pullback_wait_negative_context"],
+                demoted_to="WATCH",
+                runtime_gate_reason="negative_pullback_context",
+            )
         return _decision("PULLBACK_WAIT", route="PathB.wait", reason="pullback_wait")
 
+    if requested == "WATCH":
+        if pathb_waiting and _negative_watch_context():
+            return _decision(
+                "WATCH",
+                reason="watch_suspends_stale_pathb",
+                suspend_pathb=True,
+                warnings=["pathb_waiting_negative_context_shadow"],
+            )
+        return _decision("WATCH", reason="watch")
+
     if requested == "AVOID":
-        return _decision("WATCH", reason="claude_avoid")
+        return _decision(
+            "WATCH",
+            reason="claude_avoid",
+            suspend_pathb=bool(pathb_waiting),
+            warnings=["pathb_waiting_avoid_shadow"] if pathb_waiting else [],
+        )
 
     if requested == "EXPIRED":
         return _decision("EXPIRED", reason="action_expired")
 
+    if pathb_waiting and _negative_watch_context():
+        return _decision(
+            "WATCH",
+            reason="watch_suspends_stale_pathb",
+            suspend_pathb=True,
+            warnings=["pathb_waiting_negative_context_shadow"],
+        )
     return _decision("WATCH", reason="watch")

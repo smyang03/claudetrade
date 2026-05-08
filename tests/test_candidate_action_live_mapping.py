@@ -50,6 +50,15 @@ class _DummyPathB:
         return 1
 
 
+class _HealthTracker:
+    def __init__(self, states: dict[str, dict] | None = None) -> None:
+        self.states = states or {}
+
+    def state_for(self, ticker: str) -> dict:
+        key = str(ticker).upper()
+        return dict(self.states.get(key, {"ticker": key, "health_state": "OBSERVE"}))
+
+
 def _make_bot() -> TradingBot:
     bot = TradingBot.__new__(TradingBot)
     bot.runtime_config = _RuntimeConfig(
@@ -74,6 +83,13 @@ def _make_bot() -> TradingBot:
     bot.enable_kr_momentum_shrink = False
     bot._data_insufficient_watch_tickers = {"US": set(), "KR": set()}
     bot._record_candidate_funnel_snapshot = lambda *args, **kwargs: None
+    bot._v2_same_day_stop_tickers = {"US": set(), "KR": set()}
+    bot._ticker_no_signal_minutes = {}
+    bot._candidate_cohort_reliability_cache = {"market": "US", "cohorts": {}}
+    bot._current_session_date_str = lambda market: "2026-05-07"
+    bot._candidate_health_tracker = lambda market: _HealthTracker()
+    bot._gate_events = []
+    bot._write_funnel_event = lambda event_type, market, payload: bot._gate_events.append((event_type, market, payload))
     bot.v2 = _DummyV2()
     bot.pathb = _DummyPathB()
     return bot
@@ -135,6 +151,102 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], ["GXO"])
         self.assertIn("GXO", bot.v2.registered_meta["trade_ready"])
 
+    def test_pullback_wait_with_fade_context_does_not_register_pathb(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["IONQ"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "IONQ",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 45.5,
+                        "buy_zone_high": 46.8,
+                        "sell_target": 49.5,
+                        "stop_loss": 43.8,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "IONQ": {"ticker": "IONQ", "market": "US", "momentum_state": "fade", "data_quality": "good"}
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["IONQ"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["reason"], "pullback_wait_blocked_negative_context")
+        self.assertEqual(route["runtime_gate_reason"], "negative_pullback_context")
+
+    def test_buy_ready_records_passing_gate_evaluation(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["NVDA"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "NVDA", "action": "BUY_READY", "confidence": 0.82}],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["NVDA"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], ["NVDA"])
+        gate_events = [payload for event_type, _, payload in bot._gate_events if event_type == "gate_evaluation"]
+        self.assertTrue(any(evt.get("ticker") == "NVDA" and evt.get("passed") is True for evt in gate_events))
+
+    def test_quarantine_blocks_pathb_wait_before_registration(self) -> None:
+        bot = _make_bot()
+        bot._candidate_health_tracker = lambda market: _HealthTracker(
+            {
+                "IONQ": {
+                    "ticker": "IONQ",
+                    "health_state": "FAILED_READY",
+                    "ready_count": 4,
+                    "mae_pct": -8.8,
+                    "mfe_pct": 0.0,
+                    "current_vs_first_ready_pct": -8.8,
+                }
+            }
+        )
+        raw_meta = {
+            "watchlist": ["IONQ"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "IONQ",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.7,
+                    "price_targets": {
+                        "buy_zone_low": 45.5,
+                        "buy_zone_high": 46.8,
+                        "sell_target": 49.5,
+                        "stop_loss": 43.8,
+                        "hold_days": 1,
+                        "confidence": 0.7,
+                    },
+                }
+            ],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["IONQ"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "HARD_BLOCK")
+        self.assertEqual(route["blocker"], "candidate_quarantine")
+        self.assertEqual(route["reason"], "failed_ready")
+        gate_events = [payload for event_type, _, payload in bot._gate_events if event_type == "gate_evaluation"]
+        self.assertTrue(any(evt.get("ticker") == "IONQ" and evt.get("passed") is False for evt in gate_events))
+
     def test_add_ready_without_position_is_not_trade_ready(self) -> None:
         bot = _make_bot()
         raw_meta = {
@@ -161,6 +273,65 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
 
         self.assertEqual(meta["trade_ready"], [])
         self.assertEqual(meta["_candidate_action_routes"][0]["reason"], "pathb_active_order_blocks_plana")
+
+    def test_probe_ready_above_existing_pathb_zone_is_not_trade_ready(self) -> None:
+        bot = _make_bot()
+        bot.pathb = _DummyPathB(
+            {
+                "path_run_id": "run_hb",
+                "status": "WAITING",
+                "plan": {"buy_zone_low": 4300.0, "buy_zone_high": 4420.0},
+            }
+        )
+        raw_meta = {
+            "watchlist": ["078150"],
+            "candidate_actions": [
+                {
+                    "ticker": "078150",
+                    "action": "PROBE_READY",
+                    "confidence": 0.58,
+                    "price_targets": {"buy_zone_low": 4560.0, "buy_zone_high": 4660.0},
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "078150": {"ticker": "078150", "market": "KR", "current_price": 4655.0, "data_quality": "good"}
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["078150"], mode="MODERATE_BULL")
+
+        self.assertEqual(meta["trade_ready"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["reason"], "probe_blocked_above_pathb_zone")
+        self.assertEqual(route["runtime_gate"]["pathb_waiting_buy_zone_high"], 4420.0)
+        self.assertEqual(bot.pathb.cancelled, [])
+
+    def test_negative_watch_records_pathb_suspend_shadow(self) -> None:
+        bot = _make_bot()
+        bot.pathb = _DummyPathB(
+            {
+                "path_run_id": "run_kbi",
+                "status": "WAITING",
+                "plan": {"buy_zone_low": 8900.0, "buy_zone_high": 9100.0},
+            }
+        )
+        raw_meta = {
+            "watchlist": ["024840"],
+            "candidate_actions": [{"ticker": "024840", "action": "WATCH", "reason": "fade 지속, 방향 미확인"}],
+            "_post_open_features_by_ticker": {
+                "024840": {"ticker": "024840", "market": "KR", "momentum_state": "fade", "data_quality": "good"}
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["024840"], mode="MODERATE_BULL")
+
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["reason"], "watch_suspends_stale_pathb")
+        self.assertTrue(route["suspend_pathb"])
+        self.assertTrue(route["pathb_suspend_shadow"])
+        self.assertEqual(route["pathb_suspend_path_run_id"], "run_kbi")
 
     def test_confident_buy_ready_cancels_pathb_waiting_before_plana(self) -> None:
         bot = _make_bot()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import math
 from typing import Any
 
 
@@ -191,8 +192,11 @@ def normalize_candidate_action(
         action = "WATCH"
     _raw_conf = raw.get("confidence")
     try:
-        confidence = max(0.0, min(1.0, float(_raw_conf or 0.0)))
-    except (TypeError, ValueError):
+        confidence_raw = float(_raw_conf or 0.0)
+        if not math.isfinite(confidence_raw):
+            raise ValueError("non_finite_confidence")
+        confidence = max(0.0, min(1.0, confidence_raw))
+    except (TypeError, ValueError, OverflowError):
         confidence = 0.0
         warnings.append(f"invalid_confidence:{_raw_conf!r}")
     price_targets = raw.get("price_targets") if isinstance(raw.get("price_targets"), dict) else {}

@@ -2844,6 +2844,8 @@ def _broker_confirmed_local_realized_pnl(market: str, mode: str, session_date: s
         if str(f.get("side", "") or "").lower() == "sell"
         and int(f.get("filled_qty", f.get("qty", 0)) or 0) > 0
     ]
+    if not sell_fills:
+        return None
     order_remaining: Counter[str] = Counter(
         str(f.get("order_no", "") or "").strip()
         for f in sell_fills
@@ -2969,15 +2971,22 @@ def _current_session_realized_pnl_status(market: str, mode: str, live: Optional[
         return deduped
 
     live_status = live if live is not None else (_load_live_status(market_key, mode=mode) or {})
-    if not _is_fresh_live_status(live_status, load_today(market_key)):
+    if not isinstance(live_status, dict) or not live_status:
         return {"available": False, "pnl_krw": 0.0, "source": ""}
     live_date = str(live_status.get("trading_date", "") or "")[:10]
     if live_date and live_date != session_date:
         return {"available": False, "pnl_krw": 0.0, "source": ""}
+    pnl_value = live_status.get("market_realized_pnl_krw")
+    if pnl_value is None:
+        pnl_map = live_status.get("market_daily_pnl_krw")
+        if isinstance(pnl_map, dict):
+            pnl_value = pnl_map.get(market_key, 0)
+        else:
+            pnl_value = pnl_map if pnl_map is not None else live_status.get("daily_pnl", 0)
     return {
         "available": True,
-        "pnl_krw": float(live_status.get("daily_pnl", 0) or 0),
-        "source": "live_status_daily_pnl",
+        "pnl_krw": float(pnl_value or 0),
+        "source": "live_status_market_realized_pnl",
     }
 
 

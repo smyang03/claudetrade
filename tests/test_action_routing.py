@@ -39,6 +39,30 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.final_action, "WATCH")
         self.assertEqual(decision.reason, "missing_pullback_target")
 
+    def test_pullback_wait_negative_context_stays_watch(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "IONQ",
+                "action": "PULLBACK_WAIT",
+                "confidence": 0.72,
+                "price_targets": {
+                    "buy_zone_low": 45.5,
+                    "buy_zone_high": 46.8,
+                    "sell_target": 49.5,
+                    "stop_loss": 43.8,
+                    "hold_days": 1,
+                    "confidence": 0.72,
+                },
+            },
+            market="US",
+            execution_context={"momentum_state": "fade", "data_quality": "good"},
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "pullback_wait_blocked_negative_context")
+        self.assertEqual(decision.runtime_gate_reason, "negative_pullback_context")
+        self.assertEqual(decision.demoted_to, "WATCH")
+
     def test_buy_ready_can_cancel_pathb_when_confident_and_not_extended(self) -> None:
         decision = route_candidate_action(
             {"ticker": "AAPL", "action": "BUY_READY", "confidence": 0.8},
@@ -134,6 +158,68 @@ class ActionRoutingTests(unittest.TestCase):
 
         self.assertEqual(decision.final_action, "WATCH")
         self.assertEqual(decision.reason, "pathb_active_order_blocks_plana")
+
+    def test_probe_ready_above_existing_pathb_zone_is_blocked(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "078150",
+                "action": "PROBE_READY",
+                "confidence": 0.58,
+                "price_targets": {"buy_zone_high": 4660.0},
+            },
+            market="KR",
+            pathb_waiting=True,
+            execution_context={
+                "current_price": 4655.0,
+                "pathb_waiting_buy_zone_high": 4420.0,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "probe_blocked_above_pathb_zone")
+        self.assertFalse(decision.cancel_pathb)
+        self.assertEqual(decision.runtime_gate_reason, "above_pathb_buy_zone")
+
+    def test_probe_ready_can_cancel_pathb_above_zone_when_confident(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "AAPL", "action": "PROBE_READY", "confidence": 0.8},
+            market="US",
+            pathb_waiting=True,
+            execution_context={
+                "current_price": 105.0,
+                "pathb_waiting_buy_zone_high": 101.0,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "PROBE_READY")
+        self.assertEqual(decision.reason, "probe_ready_cancels_pathb_above_zone")
+        self.assertTrue(decision.cancel_pathb)
+
+    def test_watch_negative_context_suspends_pathb_shadow(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "KBI", "action": "WATCH", "reason": "fade 지속, 방향 미확인"},
+            market="KR",
+            pathb_waiting=True,
+            execution_context={"momentum_state": "fade", "data_quality": "good"},
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "watch_suspends_stale_pathb")
+        self.assertTrue(decision.suspend_pathb)
+        self.assertFalse(decision.cancel_pathb)
+
+    def test_avoid_suspends_pathb_shadow(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "KBI", "action": "AVOID"},
+            market="KR",
+            pathb_waiting=True,
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "claude_avoid")
+        self.assertTrue(decision.suspend_pathb)
 
     def test_add_ready_requires_broker_and_local_position(self) -> None:
         decision = route_candidate_action(

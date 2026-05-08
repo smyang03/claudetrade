@@ -150,6 +150,7 @@ class LossCapProfitFloorTests(unittest.TestCase):
         self.assertEqual(v2_close_reason("profit_floor"), "CLOSED_PROFIT_FLOOR")
         self.assertEqual(v2_close_reason("soft_exit_floor_price"), "CLOSED_SOFT_EXIT_FLOOR")
         self.assertEqual(v2_close_reason("recovery_micro_time_stop"), "CLOSED_TIME_STOP")
+        self.assertEqual(v2_close_reason("mfe_breakeven"), "CLOSED_MFE_BREAKEVEN")
         self.assertEqual(v2_close_reason("CLOSED_LOSS_CAP"), "CLOSED_LOSS_CAP")
 
     def test_recovery_micro_time_stop_has_explicit_exit_candidate(self) -> None:
