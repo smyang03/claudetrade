@@ -124,6 +124,51 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             data = response.get_json()
             self.assertEqual(data["session_date"], "2026-05-08")
 
+    def test_candidate_audit_default_session_date_uses_latest_db_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "old_call",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-07",
+                    "known_at": "2026-05-08T04:56:24",
+                    "ticker": "OLD",
+                    "price": 10.0,
+                    "classification": "watch_only",
+                }
+            )
+            store.upsert_candidate(
+                {
+                    "call_id": "new_call",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-08",
+                    "known_at": "2026-05-08T04:56:24",
+                    "ticker": "NEW",
+                    "price": 20.0,
+                    "classification": "watch_only",
+                }
+            )
+
+            import dashboard.dashboard_server as dashboard_server
+
+            with patch.object(dashboard_server, "_candidate_audit_db_path", return_value=db_path), patch.object(
+                dashboard_server,
+                "resolve_session_date",
+                return_value=date(2026, 5, 7),
+            ):
+                response = dashboard_server.app.test_client().get(
+                    "/api/candidate-audit/rows?market=US&mode=live"
+                )
+
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertEqual(data["session_date"], "2026-05-08")
+            self.assertEqual([row["ticker"] for row in data["rows"]], ["NEW"])
+
     def test_local_realized_dedupe_uses_close_reason_priority(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             decisions = Path(tmp) / "live_decisions.jsonl"

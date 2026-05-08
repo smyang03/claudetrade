@@ -3861,6 +3861,29 @@ def _resolve_ticker_select_reason(
             return f"TRADE_READY 제외 · {slot_label} 슬롯 한도 도달"
         if runtime_filtered_reason == "total_cap_reached":
             return "TRADE_READY 제외 · 전체 TRADE_READY 한도 도달"
+        runtime_reason_labels = {
+            "already_holding": "TRADE_READY 제외 · 이미 보유 중",
+            "same_day_reentry_blocked": "TRADE_READY 제외 · 당일 재진입 차단",
+            "SAME_DAY_REENTRY_AFTER_STOP": "TRADE_READY 제외 · 당일 손절 후 재진입 차단",
+            "SAME_DAY_REENTRY_COOLDOWN": "TRADE_READY 제외 · 당일 매도 후 재진입 쿨다운",
+            "loss_cap_exited": "TRADE_READY 제외 · 손실 한도 청산 후 재진입 차단",
+            "stop_loss_exited": "TRADE_READY 제외 · 손절 청산 후 재진입 차단",
+            "hard_stop_exited": "TRADE_READY 제외 · 하드스탑 청산 후 재진입 차단",
+            "trail_stop_exited": "TRADE_READY 제외 · 손실 트레일링 청산 후 재진입 차단",
+            "claude_price_stop_exited": "TRADE_READY 제외 · Claude 가격 스탑 청산 후 재진입 차단",
+        }
+        if runtime_filtered_reason in runtime_reason_labels:
+            return runtime_reason_labels[runtime_filtered_reason]
+        if runtime_filtered_reason.startswith("inline_replacement_no_signal:"):
+            replacement = runtime_filtered_reason.split(":", 1)[1].strip()
+            return f"TRADE_READY 제외 · 신호 미발생으로 교체됨" + (f" → {replacement}" if replacement else "")
+        if runtime_filtered_reason.startswith("inline_replacement_invalid_price:"):
+            replacement = runtime_filtered_reason.split(":", 1)[1].strip()
+            return f"TRADE_READY 제외 · 가격 오류로 교체됨" + (f" → {replacement}" if replacement else "")
+        if runtime_filtered_reason.startswith("inline_replacement_outlier_price:"):
+            replacement = runtime_filtered_reason.split(":", 1)[1].strip()
+            return f"TRADE_READY 제외 · 이상 가격으로 교체됨" + (f" → {replacement}" if replacement else "")
+        return f"TRADE_READY 제외 · {runtime_filtered_reason}"
 
     veto_reason = str(_selection_meta_lookup(meta.get("veto", {}), ticker, market) or "").strip()
     if veto_reason:
@@ -5979,10 +6002,38 @@ def _candidate_audit_connect_readonly() -> Optional[sqlite3.Connection]:
     return conn
 
 
-def _candidate_audit_date(market: str) -> str:
+def _candidate_audit_latest_session_date(market: str, mode: str) -> str:
+    path = _candidate_audit_db_path()
+    if not path.exists():
+        return ""
+    market_key = str(market or "").upper()
+    mode_key = str(mode or "live").lower()
+    conn = None
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3)
+        row = conn.execute(
+            """
+            SELECT MAX(session_date) AS session_date
+            FROM audit_candidate_rows
+            WHERE market=? AND runtime_mode=?
+            """,
+            (market_key, mode_key),
+        ).fetchone()
+        return str(row[0] or "") if row else ""
+    except Exception:
+        return ""
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _candidate_audit_date(market: str, mode: str = "live") -> str:
     requested = str(request.args.get("date") or "").strip()
     if requested:
         return requested
+    latest = _candidate_audit_latest_session_date(market, mode)
+    if latest:
+        return latest
     try:
         return resolve_session_date(market).isoformat()
     except Exception:
@@ -6014,7 +6065,7 @@ def api_candidate_audit_summary():
     market = str(request.args.get("market") or "KR").strip().upper()
     if market not in {"KR", "US"}:
         return jsonify({"ok": False, "error": "market must be KR or US"}), 400
-    session_date = _candidate_audit_date(market)
+    session_date = _candidate_audit_date(market, mode)
     try:
         horizon_min = int(request.args.get("horizon_min", "60") or 60)
     except Exception:
@@ -6145,7 +6196,7 @@ def api_candidate_audit_rows():
     market = str(request.args.get("market") or "KR").strip().upper()
     if market not in {"KR", "US"}:
         return jsonify({"ok": False, "error": "market must be KR or US"}), 400
-    session_date = _candidate_audit_date(market)
+    session_date = _candidate_audit_date(market, mode)
     classification = str(request.args.get("classification") or "").strip()
     ticker = str(request.args.get("ticker") or "").strip().upper()
     try:

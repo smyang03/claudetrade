@@ -2694,6 +2694,177 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = str(market or "").upper()
         text = str(ticker or "").strip()
         return text.upper() if market_key == "US" else text
+    def _commit_selection_meta_runtime(self, market: str, meta: dict, *, persist: bool = False) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not hasattr(self, "selection_meta") or not isinstance(self.selection_meta, dict):
+            self.selection_meta = {"KR": {}, "US": {}}
+        if not hasattr(self, "trade_ready_tickers") or not isinstance(self.trade_ready_tickers, dict):
+            self.trade_ready_tickers = {"KR": [], "US": []}
+        clean_meta = dict(meta or {})
+        self.selection_meta[market_key] = clean_meta
+        self.trade_ready_tickers[market_key] = list(clean_meta.get("trade_ready") or [])
+
+        stages = None
+        if hasattr(self, "selection_stages") and isinstance(self.selection_stages, dict):
+            stages = dict(self.selection_stages.get(market_key) or {})
+            normalized = dict(stages.get("normalized") or {})
+            normalized["trade_ready"] = list(clean_meta.get("trade_ready") or [])
+            normalized["runtime_filtered"] = dict(clean_meta.get("_runtime_filtered_trade_ready") or {})
+            stages["normalized"] = normalized
+            applied = dict(stages.get("applied") or {})
+            applied["trade_ready"] = list(clean_meta.get("trade_ready") or [])
+            stages["applied"] = applied
+            self.selection_stages[market_key] = stages
+
+        today = getattr(self, "today_judgment", None)
+        if isinstance(today, dict) and today.get("market") == market_key:
+            today["selection_meta"] = clean_meta
+            today["trade_ready_tickers"] = self.trade_ready_tickers[market_key]
+            if stages is not None:
+                today["selection_stages"] = stages
+
+        if persist:
+            try:
+                self._persist_live_judgment(market_key)
+            except Exception as exc:
+                log.debug(f"[selection_meta] persist skipped {market_key}: {exc}")
+
+    def _selection_meta_mark_runtime_filtered(
+        self,
+        market: str,
+        ticker: str,
+        reason: str,
+        *,
+        remove_trade_ready: bool = True,
+        persist: bool = False,
+    ) -> bool:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        if not key or not hasattr(self, "selection_meta") or not isinstance(self.selection_meta, dict):
+            return False
+        meta = dict(self.selection_meta.get(market_key) or {})
+        if not meta:
+            return False
+        reason_text = str(reason or "runtime_filtered").strip() or "runtime_filtered"
+        changed = False
+
+        runtime_filtered = dict(meta.get("_runtime_filtered_trade_ready") or {})
+        if str(runtime_filtered.get(key) or "") != reason_text:
+            runtime_filtered[key] = reason_text
+            meta["_runtime_filtered_trade_ready"] = runtime_filtered
+            changed = True
+
+        def _same(raw: str) -> bool:
+            return self._selection_ticker_key(market_key, raw) == key
+
+        if remove_trade_ready:
+            for list_key in ("trade_ready", "_pathb_wait_tickers"):
+                current = list(meta.get(list_key) or [])
+                kept = [item for item in current if not _same(item)]
+                if len(kept) != len(current):
+                    meta[list_key] = kept
+                    changed = True
+
+        if changed:
+            self._commit_selection_meta_runtime(market_key, meta, persist=persist)
+            analysis_log.info(
+                f"[selection_meta] {market_key} {key} runtime_filtered={reason_text}",
+                extra={"extra": {
+                    "event": "selection_meta_runtime_filtered",
+                    "market": market_key,
+                    "ticker": key,
+                    "reason": reason_text,
+                    "trade_ready": list(meta.get("trade_ready") or []),
+                }},
+            )
+        return changed
+
+    def _selection_meta_apply_inline_replacement(
+        self,
+        market: str,
+        old_ticker: str,
+        new_ticker: str,
+        *,
+        reason: str = "inline_replacement_no_signal",
+        persist: bool = False,
+    ) -> bool:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        old_key = self._selection_ticker_key(market_key, old_ticker)
+        new_key = self._selection_ticker_key(market_key, new_ticker)
+        if (
+            not old_key
+            or not new_key
+            or old_key == new_key
+            or not hasattr(self, "selection_meta")
+            or not isinstance(self.selection_meta, dict)
+        ):
+            return False
+        meta = dict(self.selection_meta.get(market_key) or {})
+        if not meta:
+            return False
+        new_value = new_key if market_key == "US" else str(new_ticker or "").strip()
+        changed = False
+
+        def _key(raw: str) -> str:
+            return self._selection_ticker_key(market_key, raw)
+
+        watchlist = list(meta.get("watchlist") or [])
+        updated_watchlist: list[str] = []
+        inserted_new = False
+        replaced_old = False
+        for item in watchlist:
+            item_key = _key(item)
+            if item_key == new_key:
+                if not inserted_new:
+                    updated_watchlist.append(item)
+                    inserted_new = True
+                else:
+                    changed = True
+                continue
+            if item_key == old_key:
+                if not inserted_new:
+                    updated_watchlist.append(new_value)
+                    inserted_new = True
+                replaced_old = True
+                continue
+            updated_watchlist.append(item)
+        if replaced_old:
+            if updated_watchlist != watchlist:
+                meta["watchlist"] = updated_watchlist
+                changed = True
+        elif new_key not in {_key(item) for item in watchlist}:
+            meta["watchlist"] = watchlist + [new_value]
+            changed = True
+
+        for list_key in ("trade_ready", "_pathb_wait_tickers"):
+            current = list(meta.get(list_key) or [])
+            kept = [item for item in current if _key(item) != old_key]
+            if len(kept) != len(current):
+                meta[list_key] = kept
+                changed = True
+
+        runtime_filtered = dict(meta.get("_runtime_filtered_trade_ready") or {})
+        reason_text = f"{reason}:{new_key}"
+        if str(runtime_filtered.get(old_key) or "") != reason_text:
+            runtime_filtered[old_key] = reason_text
+            meta["_runtime_filtered_trade_ready"] = runtime_filtered
+            changed = True
+
+        if changed:
+            self._commit_selection_meta_runtime(market_key, meta, persist=persist)
+            analysis_log.info(
+                f"[selection_meta] {market_key} {old_key} replaced_by={new_key}",
+                extra={"extra": {
+                    "event": "selection_meta_inline_replacement",
+                    "market": market_key,
+                    "ticker": old_key,
+                    "replacement": new_key,
+                    "reason": reason,
+                    "watchlist": list(meta.get("watchlist") or []),
+                    "trade_ready": list(meta.get("trade_ready") or []),
+                }},
+            )
+        return changed
     def _selection_price_target_for_ticker(
         self,
         market: str,
@@ -11649,6 +11820,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return None
         _closed_key = ticker.upper() if market_key == "US" else ticker
         self._session_closed_tickers.setdefault(market_key, set()).add(_closed_key)
+        if reason in ("loss_cap", "stop_loss", "hard_stop") or (
+            reason == "trail_stop" and float(ex.get("pnl_pct", 0) or 0) <= 0
+        ):
+            self._selection_meta_mark_runtime_filtered(
+                market_key,
+                ticker,
+                f"{reason}_exited",
+                remove_trade_ready=True,
+                persist=True,
+            )
         event_exit_meta = {
             key: value
             for key, value in exit_meta.items()
@@ -12269,6 +12450,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _fst_mult = float(os.getenv("STOP_CLUSTER_FIRST_STOP_SIZE_MULT", "0.5"))
                 log.info(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 이후 size x {_fst_mult}")
         # ML DB: 거래 결과 기록
+        if reason in ("loss_cap", "stop_loss") or (reason == "trail_stop" and _stop_pnl_pct <= 0):
+            self._selection_meta_mark_runtime_filtered(
+                market,
+                ex["ticker"].upper() if market == "US" else ex["ticker"],
+                f"{reason}_exited",
+                remove_trade_ready=True,
+                persist=True,
+            )
         if _ML_DB_ENABLED and ex.get("decision_id"):
             try:
                 _ml_update_outcome(
@@ -14224,6 +14413,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             self.today_tickers[market] = new_tickers
                             self._entry_timing_mark_candidates(market, [replacement], "inline_replacement")
                             self.today_judgment["tickers"] = new_tickers
+                            self._selection_meta_apply_inline_replacement(
+                                market,
+                                ticker,
+                                replacement,
+                                reason="inline_replacement_invalid_price",
+                                persist=True,
+                            )
                             self._invalid_price_count.pop(ticker, None)
                             log.info(f"[종목 교체] {market} {ticker} → {replacement}")
                             _now_inv = datetime.now(KST).replace(tzinfo=None)
@@ -14302,6 +14498,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 self.today_tickers[market] = _new_tickers
                                 self._entry_timing_mark_candidates(market, [_replacement], "inline_replacement")
                                 self.today_judgment["tickers"] = _new_tickers
+                                self._selection_meta_apply_inline_replacement(
+                                    market,
+                                    ticker,
+                                    _replacement,
+                                    reason="inline_replacement_outlier_price",
+                                    persist=True,
+                                )
                                 self._invalid_price_count.pop(ticker, None)
                                 log.info(f"[종목 교체] {market} {ticker} → {_replacement} (outlier {cnt}회)")
                                 _now_out = datetime.now(KST).replace(tzinfo=None)
@@ -14594,6 +14797,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             block_reason_=_same_day_reason,
                             diag_json_={"reason": _same_day_reason, **_same_day_details},
                         )
+                    self._selection_meta_mark_runtime_filtered(
+                        market,
+                        ticker,
+                        _same_day_reason,
+                        remove_trade_ready=True,
+                        persist=True,
+                    )
                     _watch_trigger_shadow_block(_same_day_reason)
                     log.debug(f"  [{ticker}] 당일 동일 종목 체결 이력 있음 → 재진입 스킵")
                     continue
@@ -14632,6 +14842,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             block_reason_="already_holding",
                             diag_json_={"reason": "already_holding"},
                         )
+                    self._selection_meta_mark_runtime_filtered(
+                        market,
+                        ticker,
+                        "already_holding",
+                        remove_trade_ready=True,
+                        persist=True,
+                    )
                     _watch_trigger_shadow_block("already_holding")
                     log.debug(f"  [{ticker}] 브로커/런타임 보유중 → 재진입 스킵")
                     continue
@@ -14664,6 +14881,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             ticker, price, {}, "SKIPPED",
                             block_reason_=str(reason),
                             diag_json_={"reason": str(reason)},
+                        )
+                    if reason == "already_holding":
+                        self._selection_meta_mark_runtime_filtered(
+                            market,
+                            ticker,
+                            "already_holding",
+                            remove_trade_ready=True,
+                            persist=True,
                         )
                     _watch_trigger_shadow_block(str(reason))
                     log.debug(f"  [{ticker}] 진입불가: {reason}")
@@ -15318,6 +15543,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 self.today_tickers[market] = _cur_list
                                 self._entry_timing_mark_candidates(market, [_new], "inline_replacement")
                                 self.today_judgment["tickers"] = _cur_list
+                                self._selection_meta_apply_inline_replacement(
+                                    market,
+                                    ticker,
+                                    _new,
+                                    reason="inline_replacement_no_signal",
+                                    persist=True,
+                                )
                                 self._ticker_no_signal_cycles.pop(ticker, None)
                                 self._ticker_no_signal_minutes.pop(ticker, None)
                                 # 교체 종목 60분 쿨다운 등록

@@ -1022,6 +1022,7 @@ class PathBRuntime:
                 pos,
                 current,
                 hard_stop_price=hard_stop_price,
+                loss_cap_price=loss_cap_price,
             )
             if mfe_signal is not None:
                 exit_signal = mfe_signal
@@ -1930,6 +1931,7 @@ class PathBRuntime:
         current: float,
         *,
         hard_stop_price: float | None = None,
+        loss_cap_price: float | None = None,
     ) -> ExitSignal | None:
         if not _env_bool("PATHB_MFE_BREAKEVEN_ENABLED", True):
             return None
@@ -1937,6 +1939,8 @@ class PathBRuntime:
         if current_price <= 0:
             return None
         if hard_stop_price is not None and float(hard_stop_price or 0) > 0 and current_price <= float(hard_stop_price):
+            return None
+        if loss_cap_price is not None and float(loss_cap_price or 0) > 0 and current_price <= float(loss_cap_price):
             return None
         try:
             trigger_pct = float(os.getenv("PATHB_MFE_BREAKEVEN_TRIGGER_PCT", "2.5") or 2.5)
@@ -2869,6 +2873,23 @@ class PathBRuntime:
                 else:
                     self.bot._v2_same_day_stop_tickers.setdefault(market, set()).add(key)
                     self.bot._daily_sl_count[market] = int(self.bot._daily_sl_count.get(market, 0) or 0) + 1
+            except Exception:
+                pass
+            try:
+                mark_runtime = getattr(self.bot, "_selection_meta_mark_runtime_filtered", None)
+                if callable(mark_runtime):
+                    reason_map = {
+                        "CLOSED_LOSS_CAP": "loss_cap_exited",
+                        "CLOSED_HARD_STOP": "hard_stop_exited",
+                        "CLOSED_CLAUDE_PRICE_STOP": "claude_price_stop_exited",
+                    }
+                    mark_runtime(
+                        market,
+                        plan.ticker,
+                        reason_map.get(close_reason, str(close_reason).lower()),
+                        remove_trade_ready=True,
+                        persist=True,
+                    )
             except Exception:
                 pass
         pnl_pct = 0.0

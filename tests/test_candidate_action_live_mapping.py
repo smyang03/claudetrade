@@ -120,6 +120,67 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(meta["max_order_cap_pct"]["INTC"], 30)
         self.assertIn("INTC", meta["_trade_ready_without_price_targets_allowed"])
 
+    def test_inline_replacement_updates_selection_meta_and_persists(self) -> None:
+        bot = _make_bot()
+        bot.selection_meta["US"] = {
+            "watchlist": ["AKAM", "MNST", "CTRA"],
+            "trade_ready": ["AKAM", "MNST"],
+            "_pathb_wait_tickers": ["AKAM"],
+            "_runtime_filtered_trade_ready": {},
+        }
+        persisted = []
+        bot._persist_live_judgment = lambda market: persisted.append(market)
+
+        changed = TradingBot._selection_meta_apply_inline_replacement(
+            bot,
+            "US",
+            "AKAM",
+            "TERN",
+            persist=True,
+        )
+
+        self.assertTrue(changed)
+        meta = bot.selection_meta["US"]
+        self.assertEqual(meta["watchlist"], ["TERN", "MNST", "CTRA"])
+        self.assertEqual(meta["trade_ready"], ["MNST"])
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        self.assertEqual(
+            meta["_runtime_filtered_trade_ready"]["AKAM"],
+            "inline_replacement_no_signal:TERN",
+        )
+        self.assertEqual(bot.trade_ready_tickers["US"], ["MNST"])
+        self.assertEqual(bot.today_judgment["selection_meta"], meta)
+        self.assertEqual(persisted, ["US"])
+
+    def test_runtime_filtered_removes_active_trade_ready_candidate(self) -> None:
+        bot = _make_bot()
+        bot.selection_meta["US"] = {
+            "watchlist": ["DKNG", "RKLB"],
+            "trade_ready": ["DKNG", "RKLB"],
+            "_pathb_wait_tickers": ["DKNG"],
+            "_runtime_filtered_trade_ready": {},
+        }
+        persisted = []
+        bot._persist_live_judgment = lambda market: persisted.append(market)
+
+        changed = TradingBot._selection_meta_mark_runtime_filtered(
+            bot,
+            "US",
+            "DKNG",
+            "loss_cap_exited",
+            remove_trade_ready=True,
+            persist=True,
+        )
+
+        self.assertTrue(changed)
+        meta = bot.selection_meta["US"]
+        self.assertEqual(meta["trade_ready"], ["RKLB"])
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        self.assertEqual(meta["_runtime_filtered_trade_ready"]["DKNG"], "loss_cap_exited")
+        self.assertEqual(bot.trade_ready_tickers["US"], ["RKLB"])
+        self.assertEqual(bot.today_judgment["selection_meta"], meta)
+        self.assertEqual(persisted, ["US"])
+
     def test_pullback_wait_registers_only_pathb_wait_tickers(self) -> None:
         bot = _make_bot()
         raw_meta = {

@@ -236,6 +236,33 @@ class PathBRuntimeTests(unittest.TestCase):
 
         self.assertIsNone(signal)
 
+    def test_pathb_mfe_breakeven_does_not_override_loss_cap_breach(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.bot = _Bot()
+        plan = make_price_plan(
+            decision_id="dec_mfe_loss_cap",
+            ticker="005930",
+            market="KR",
+            session_date="2026-05-07",
+            buy_zone_low=98,
+            buy_zone_high=101,
+            sell_target=110,
+            stop_loss=95,
+            hold_days=1,
+            confidence=0.7,
+        )
+        pos = {"ticker": "005930", "entry": 100.0, "peak_pnl_pct": 2.6}
+
+        signal = runtime._pathb_mfe_breakeven_signal(
+            plan,
+            pos,
+            98.9,
+            hard_stop_price=95.0,
+            loss_cap_price=99.0,
+        )
+
+        self.assertIsNone(signal)
+
     def test_balance_snapshot_uses_market_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _MarketTokenBot()
@@ -988,6 +1015,55 @@ class PathBRuntimeTests(unittest.TestCase):
             runtime._submit_sell.assert_called_once()
             signal = runtime._submit_sell.call_args.args[2]
             self.assertEqual(signal.close_reason, "CLOSED_CLAUDE_PRICE_TARGET")
+
+    def test_scan_exits_prioritizes_loss_cap_over_mfe_breakeven(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_mfe_loss_cap_scan",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-26",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=95,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "sl": 95,
+                    "peak_pnl_pct": 2.6,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+            bot.risk.loss_cap_price = Mock(return_value=99.0)
+            bot.price_cache_raw["005930"] = 98.9
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            with patch.dict(
+                "os.environ",
+                {"PATHB_MFE_BREAKEVEN_ENABLED": "true", "PATHB_MFE_BREAKEVEN_TRIGGER_PCT": "2.5"},
+                clear=False,
+            ):
+                runtime.scan_exits("KR", force=True)
+
+            runtime._submit_sell.assert_called_once()
+            signal = runtime._submit_sell.call_args.args[2]
+            self.assertEqual(signal.reason, "loss_cap")
+            self.assertEqual(signal.close_reason, "CLOSED_LOSS_CAP")
 
     def test_order_unknown_local_pathb_holding_recovers_to_filled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
