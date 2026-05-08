@@ -42,7 +42,7 @@
 | 파일 | 분류 | 현재 판단 |
 | --- | --- | --- |
 | `docs/plans/kr_us_live_ops_qa_20260427.md` | P0 운영 QA | 최신 guardian `BLOCK_START`, US broker truth stale hard fail로 active |
-| `docs/plans/live_sell_reconciliation_dashboard_pnl_plan_20260506.md` | P0 hotfix | pending sell 일부 구현/테스트 완료, dashboard PathB QA 2건 실패와 `RECOVERY_MICRO` gate 누락으로 active |
+| `docs/plans/live_sell_reconciliation_dashboard_pnl_plan_20260506.md` | P1 cleanup | dashboard PathB QA와 `RECOVERY_MICRO` gate는 완료, legacy `daily_pnl` fallback source labeling 검토만 남음 |
 | `docs/plans/entry_risk_control_development_20260508.md` | 완료/삭제 후보 | untracked 새 plan, 구현 완료 및 `tests/test_entry_risk_controls.py` green, QA report 보존 후 삭제 가능 |
 | `docs/plans/order_equity_reconciliation_improvement_20260429.md` | P0/P1 follow-up | path_run_id dedupe 등 일부 완료, KIS 수동 확인/dashboard mismatch/SafetyContext 후속 남음 |
 | `docs/plans/MODULARIZATION.md` | P1/P3 구조 | `RiskManager` KR/US 분리 미완료, 전체 파일 분리는 보류 |

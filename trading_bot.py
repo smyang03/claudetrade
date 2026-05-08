@@ -764,6 +764,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.continuation_atr_position_sizing = _env_bool("CONTINUATION_ATR_POSITION_SIZING", False)
         self.enable_continuation_live = _env_bool("ENABLE_CONTINUATION_LIVE", False)
         self.enable_soft_watch_promotion = _env_bool("ENABLE_SOFT_WATCH_PROMOTION", False)
+        self.enable_watch_trigger_shadow = self.runtime_config.get_bool("ENABLE_WATCH_TRIGGER_SHADOW", True)
+        self.watch_trigger_shadow_max_per_cycle = max(
+            0,
+            self.runtime_config.get_int("WATCH_TRIGGER_SHADOW_MAX_PER_CYCLE", 3),
+        )
         self.enable_kr_momentum_shrink = _env_bool("ENABLE_KR_MOMENTUM_SHRINK", True)
         self.enable_micro_probe = _env_bool("MICRO_PROBE_ENABLED", False)
         self.micro_probe_paper_only = _env_bool("MICRO_PROBE_PAPER_ONLY", True)
@@ -3935,20 +3940,37 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             }
         stop_cluster = self._daily_stop_cluster_state(market_key, ticker_key)
         if bool((stop_cluster or {}).get("blocked")):
-            state = {
-                "allowed": False,
-                "blocked": True,
-                "reason": str((stop_cluster or {}).get("reason") or "STOP_CLUSTER_MARKET_BLOCK"),
-                "scope": str((stop_cluster or {}).get("scope") or "market"),
-                "details": {**details, **dict((stop_cluster or {}).get("details") or {})},
-            }
-            self._maybe_alert_stop_cluster_block(
-                market_key,
-                str(state.get("reason") or ""),
-                str(state.get("scope") or ""),
-                dict(state.get("details") or {}),
+            cluster_reason = str((stop_cluster or {}).get("reason") or "STOP_CLUSTER_MARKET_BLOCK")
+            cluster_scope = str((stop_cluster or {}).get("scope") or "market")
+            recovery_micro_first_stop_exempt = (
+                str(strategy or "").strip().upper() == _RECOVERY_MICRO_STRATEGY
+                and cluster_reason == "STOP_CLUSTER_FIRST_STOP_COOLDOWN"
+                and cluster_scope == "market"
             )
-            return state
+            if recovery_micro_first_stop_exempt:
+                details.update(
+                    {
+                        "stop_cluster_exemption": "RECOVERY_MICRO_FIRST_STOP_COOLDOWN",
+                        "stop_cluster_reason": cluster_reason,
+                        "stop_cluster_scope": cluster_scope,
+                        "stop_cluster_details": dict((stop_cluster or {}).get("details") or {}),
+                    }
+                )
+            else:
+                state = {
+                    "allowed": False,
+                    "blocked": True,
+                    "reason": cluster_reason,
+                    "scope": cluster_scope,
+                    "details": {**details, **dict((stop_cluster or {}).get("details") or {})},
+                }
+                self._maybe_alert_stop_cluster_block(
+                    market_key,
+                    str(state.get("reason") or ""),
+                    str(state.get("scope") or ""),
+                    dict(state.get("details") or {}),
+                )
+                return state
         analyst_state = self._analyst_new_buy_block_state(market_key)
         if bool((analyst_state or {}).get("blocked")):
             return {
@@ -4862,6 +4884,92 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if str(mode or "").upper() in {"DEFENSIVE", "HALT"}:
             return False
         return True
+    def _watch_trigger_shadow_strategy_for_ticker(self, market: str, ticker: str) -> tuple[str, str]:
+        strategy = self._recommended_strategy_for_ticker(market, ticker)
+        if strategy:
+            return strategy, "recommended_strategy"
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        lookup = self._selection_ticker_key(market_key, ticker)
+        meta = self.selection_meta.get(market_key, {}) if hasattr(self, "selection_meta") else {}
+        for action in (meta or {}).get("candidate_actions") or []:
+            if not isinstance(action, dict):
+                continue
+            action_ticker = self._selection_ticker_key(market_key, action.get("ticker", ""))
+            if action_ticker != lookup:
+                continue
+            for key in ("recommended_strategy", "strategy", "route_strategy", "strategy_name"):
+                strategy = _normalize_strategy_name(action.get(key, ""))
+                if strategy:
+                    return strategy, f"candidate_action.{key}"
+        return "", ""
+    def _log_watch_trigger_not_evaluated(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        price: float = 0.0,
+        mode: str = "",
+        watch_bucket: str = "",
+        watch_only_reason: str = "",
+        reason: str = "soft_watch_promotion_disabled",
+    ) -> None:
+        payload = {
+            "event": "watch_trigger_not_evaluated",
+            "market": market,
+            "ticker": ticker,
+            "price": float(price or 0.0),
+            "mode": mode,
+            "watch_bucket": watch_bucket,
+            "watch_only_reason": watch_only_reason,
+            "promotion_enabled": bool(getattr(self, "enable_soft_watch_promotion", False)),
+            "shadow_enabled": bool(getattr(self, "enable_watch_trigger_shadow", False)),
+            "shadow_only": True,
+            "reason": reason,
+        }
+        analysis_log.info(
+            f"[watch_trigger_not_evaluated {market}] {ticker} {reason}",
+            extra={"extra": payload},
+        )
+        self._write_funnel_event("watch_trigger_not_evaluated", market, payload)
+    def _log_watch_trigger_shadow(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        price: float = 0.0,
+        mode: str = "",
+        watch_bucket: str = "SOFT",
+        watch_only_reason: str = "",
+        strategy: str = "",
+        strategy_source: str = "",
+        signal_fired: bool = False,
+        result: str = "",
+        blocked_reason: str = "",
+        detail: str = "",
+    ) -> None:
+        payload = {
+            "event": "watch_trigger_shadow",
+            "market": market,
+            "ticker": ticker,
+            "price": float(price or 0.0),
+            "mode": mode,
+            "watch_bucket": watch_bucket,
+            "watch_only_reason": watch_only_reason,
+            "strategy": strategy,
+            "strategy_source": strategy_source,
+            "signal_fired": bool(signal_fired),
+            "result": result or ("would_promote" if signal_fired else "no_signal"),
+            "blocked_reason": blocked_reason,
+            "trigger_basis": "strategy_signal",
+            "promotion_enabled": bool(getattr(self, "enable_soft_watch_promotion", False)),
+            "shadow_only": True,
+            "detail": detail,
+        }
+        analysis_log.info(
+            f"[watch_trigger_shadow {market}] {ticker} {payload['result']}",
+            extra={"extra": payload},
+        )
+        self._write_funnel_event("watch_trigger_shadow", market, payload)
     def _promote_trade_ready_ticker(
         self,
         market: str,
@@ -14048,6 +14156,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         else:
             _us_strat_list = []
         _pending_signals: list[dict] = []   # 사이클 내 신호 수집 → 정렬 후 실행
+        _watch_trigger_shadow_evaluated_this_cycle = 0
+        _watch_trigger_shadow_enabled = bool(getattr(self, "enable_watch_trigger_shadow", False))
+        _watch_trigger_shadow_max_per_cycle = max(
+            0,
+            int(getattr(self, "watch_trigger_shadow_max_per_cycle", 0) or 0),
+        )
         for ticker in tickers:
             try:
                 candles = None
@@ -14302,47 +14416,141 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _watch_bucket = "TRADE_READY"
                 _watch_only_reason = ""
                 _soft_watch_candidate = False
+                _watch_trigger_shadow_candidate = False
+                _watch_trigger_shadow_strategy = ""
+                _watch_trigger_shadow_strategy_source = ""
                 if not self._is_trade_ready_ticker(market, ticker):
                     _watch_bucket = self._watch_only_bucket(market, ticker)
                     _watch_only_reason = self._watch_only_reason_text(market, ticker)
                     if self._can_recheck_soft_watch_only(market, ticker, mode):
                         _soft_watch_candidate = True
                     else:
-                        analysis_log.info(
-                            f"[skip {market}] {ticker} watch_only",
-                            extra={"extra": {
-                                "event": "entry_skip",
-                                "market": market,
-                                "ticker": ticker,
-                                "reason": "watch_only",
-                                "price": float(price),
-                                "mode": mode,
-                                "detail": _watch_only_reason,
-                                "select_reason": _watch_only_reason,
-                                "watch_status": f"WATCH_ONLY_{_watch_bucket}",
-                                "watch_bucket": _watch_bucket,
-                                "trade_ready": list(_norm_trade_ready),
-                            }},
-                        )
-                        if _ML_DB_ENABLED:
-                            _ml_write_eval(
-                                ticker, price, {}, "SKIPPED",
-                                block_reason_="watch_only",
-                                diag_json_={
-                                    "trade_ready": list(_norm_trade_ready),
-                                    "watch_only_reason": _watch_only_reason,
-                                    "watch_bucket": _watch_bucket,
-                                },
+                        _skip_reason = "soft_watch_promotion_disabled"
+                        _shadow_block_logged = False
+                        if (
+                            _watch_trigger_shadow_enabled
+                            and not bool(getattr(self, "enable_soft_watch_promotion", False))
+                            and _watch_bucket == "SOFT"
+                            and str(mode or "").upper() not in {"DEFENSIVE", "HALT"}
+                        ):
+                            (
+                                _watch_trigger_shadow_strategy,
+                                _watch_trigger_shadow_strategy_source,
+                            ) = self._watch_trigger_shadow_strategy_for_ticker(market, ticker)
+                            if _watch_trigger_shadow_max_per_cycle <= 0:
+                                _skip_reason = "shadow_cycle_cap_zero"
+                            elif _watch_trigger_shadow_evaluated_this_cycle >= _watch_trigger_shadow_max_per_cycle:
+                                _skip_reason = "shadow_cycle_cap_exceeded"
+                            elif not _watch_trigger_shadow_strategy:
+                                self._log_watch_trigger_shadow(
+                                    market,
+                                    ticker,
+                                    price=float(price),
+                                    mode=mode,
+                                    watch_bucket=_watch_bucket,
+                                    watch_only_reason=_watch_only_reason,
+                                    result="blocked",
+                                    blocked_reason="missing_strategy",
+                                )
+                                _shadow_block_logged = True
+                                _skip_reason = "missing_strategy"
+                            else:
+                                _watch_trigger_shadow_candidate = True
+                                _watch_trigger_shadow_evaluated_this_cycle += 1
+                        elif _watch_bucket == "RECOVERY":
+                            _skip_reason = "recovery_bucket_deferred"
+                        elif str(mode or "").upper() in {"DEFENSIVE", "HALT"}:
+                            _skip_reason = "mode_blocked"
+                        elif not _watch_trigger_shadow_enabled:
+                            _skip_reason = "watch_trigger_shadow_disabled"
+                        if (
+                            not _watch_trigger_shadow_candidate
+                            and not _shadow_block_logged
+                            and _watch_bucket in {"SOFT", "RECOVERY"}
+                            and not bool(getattr(self, "enable_soft_watch_promotion", False))
+                        ):
+                            self._log_watch_trigger_not_evaluated(
+                                market,
+                                ticker,
+                                price=float(price),
+                                mode=mode,
+                                watch_bucket=_watch_bucket,
+                                watch_only_reason=_watch_only_reason,
+                                reason=_skip_reason,
                             )
-                        log.debug(
-                            f"  [{ticker}] WATCH_ONLY({ _watch_bucket }) — trade_ready 아님 → 신규진입 스킵"
-                        )
-                        continue
+                        if _watch_trigger_shadow_candidate:
+                            analysis_log.info(
+                                f"[watch_trigger_shadow {market}] {ticker} selected",
+                                extra={"extra": {
+                                    "event": "watch_trigger_shadow_selected",
+                                    "market": market,
+                                    "ticker": ticker,
+                                    "price": float(price),
+                                    "mode": mode,
+                                    "watch_bucket": _watch_bucket,
+                                    "watch_only_reason": _watch_only_reason,
+                                    "strategy": _watch_trigger_shadow_strategy,
+                                    "strategy_source": _watch_trigger_shadow_strategy_source,
+                                    "cycle_index": _watch_trigger_shadow_evaluated_this_cycle,
+                                    "cycle_cap": _watch_trigger_shadow_max_per_cycle,
+                                    "shadow_only": True,
+                                }},
+                            )
+                        else:
+                            analysis_log.info(
+                                f"[skip {market}] {ticker} watch_only",
+                                extra={"extra": {
+                                    "event": "entry_skip",
+                                    "market": market,
+                                    "ticker": ticker,
+                                    "reason": "watch_only",
+                                    "price": float(price),
+                                    "mode": mode,
+                                    "detail": _watch_only_reason,
+                                    "select_reason": _watch_only_reason,
+                                    "watch_status": f"WATCH_ONLY_{_watch_bucket}",
+                                    "watch_bucket": _watch_bucket,
+                                    "trade_ready": list(_norm_trade_ready),
+                                }},
+                            )
+                            if _ML_DB_ENABLED:
+                                _ml_write_eval(
+                                    ticker, price, {}, "SKIPPED",
+                                    block_reason_="watch_only",
+                                    diag_json_={
+                                        "trade_ready": list(_norm_trade_ready),
+                                        "watch_only_reason": _watch_only_reason,
+                                        "watch_bucket": _watch_bucket,
+                                    },
+                                )
+                        if not _watch_trigger_shadow_candidate:
+                            log.debug(f"  [{ticker}] WATCH_ONLY({_watch_bucket}) keep watch_only")
+                            continue
+                        # Shadow candidates fall through only for signal evaluation.
+                        # They must continue before promotion/order paths below.
+                        pass
                 # 인버스 ETF는 약세(MILD_BEAR 이하) 모드에서만 매수 허용
+                def _watch_trigger_shadow_block(blocked_reason: str, detail: str = "") -> None:
+                    if not _watch_trigger_shadow_candidate:
+                        return
+                    self._log_watch_trigger_shadow(
+                        market,
+                        ticker,
+                        price=float(price),
+                        mode=mode,
+                        watch_bucket=_watch_bucket,
+                        watch_only_reason=_watch_only_reason,
+                        strategy=_watch_trigger_shadow_strategy,
+                        strategy_source=_watch_trigger_shadow_strategy_source,
+                        result="blocked",
+                        blocked_reason=str(blocked_reason or "blocked"),
+                        detail=detail,
+                    )
                 _INVERSE = {"SQQQ", "114800"}
                 _BEAR_ONLY_MODES = {"MILD_BEAR", "CAUTIOUS_BEAR", "DEFENSIVE", "HALT"}
                 if ticker in _INVERSE and mode not in _BEAR_ONLY_MODES:
                     log.debug(f"  [{ticker}] 인버스 ETF — 약세 모드 아님({mode}) → 스킵")
+                    _watch_trigger_shadow_block("inverse_mode_block")
                     continue
                 if self._in_entry_blackout(market):
                     self._bump_runtime_reason(market, ticker, "entry_blackout")
@@ -14350,8 +14558,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if _ML_DB_ENABLED:
                         _ml_write_eval(ticker, price, {}, "SKIPPED",
                                        block_reason_="entry_blackout")
+                    _watch_trigger_shadow_block("entry_blackout")
                     continue
                 if self._is_entry_blocked(ticker):
+                    _watch_trigger_shadow_block("entry_blocked")
                     log.debug(f"  [{ticker}] 진입 차단 중(쿨다운)")
                     continue
                 _same_day_state = self._same_day_reentry_state(ticker, market)
@@ -14384,6 +14594,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             block_reason_=_same_day_reason,
                             diag_json_={"reason": _same_day_reason, **_same_day_details},
                         )
+                    _watch_trigger_shadow_block(_same_day_reason)
                     log.debug(f"  [{ticker}] 당일 동일 종목 체결 이력 있음 → 재진입 스킵")
                     continue
                 if _low_conf:
@@ -14393,6 +14604,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             block_reason_="low_confidence",
                             diag_json_={"avg_conf": round(_avg_conf, 4), "min_conf": _MIN_ENTRY_CONF},
                         )
+                    _watch_trigger_shadow_block("low_confidence")
                     log.debug(f"  [{ticker}] confidence 부족 ({_avg_conf:.2f} < {_MIN_ENTRY_CONF}) → 신규 진입 스킵")
                     continue
                 if self._has_open_position(ticker, market):
@@ -14420,6 +14632,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             block_reason_="already_holding",
                             diag_json_={"reason": "already_holding"},
                         )
+                    _watch_trigger_shadow_block("already_holding")
                     log.debug(f"  [{ticker}] 브로커/런타임 보유중 → 재진입 스킵")
                     continue
                 ok, reason = self._entry_allowed_by_broker_state(market)
@@ -14452,6 +14665,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             block_reason_=str(reason),
                             diag_json_={"reason": str(reason)},
                         )
+                    _watch_trigger_shadow_block(str(reason))
                     log.debug(f"  [{ticker}] 진입불가: {reason}")
                     continue
                 if self._has_pending_order(ticker, market):
@@ -14479,6 +14693,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             block_reason_="pending_order",
                             diag_json_={"reason": "pending_order"},
                         )
+                    _watch_trigger_shadow_block("pending_order")
                     log.debug(f"  [{ticker}] 미체결 주문 존재 → 재주문 스킵")
                     continue
                 # 시장별 예산 초과 확인
@@ -14501,10 +14716,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             block_reason_="budget_exhausted",
                             diag_json_={"available_budget_krw": float(avail), "risk_price_krw": float(risk_price)},
                         )
+                    _watch_trigger_shadow_block("budget_exhausted")
                     log.debug(f"  [{ticker}] 예산 소진 (잔여 {avail:,.0f}원 < {risk_price:,.0f}원) → 스킵")
                     continue
                 candles = self._get_ohlcv_cached(ticker, market)
                 if candles is None or getattr(candles, "empty", True):
+                    _watch_trigger_shadow_block("missing_candles")
                     log.debug(f"  [{ticker}] 캔들 없음")
                     continue
                 # ── 장중 임시 당일봉 주입 (KR/US 공통) ───────────────────
@@ -14600,6 +14817,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             )
                 sig_df = calc_all(candles)
                 if sig_df.empty or len(sig_df) < self._MIN_SIGNAL_ROWS:
+                    _watch_trigger_shadow_block("signal_rows_insufficient")
                     log.warning(f"  [{ticker}] 신호계산 불가 — 유효행 {len(sig_df)}개 (최소 {self._MIN_SIGNAL_ROWS})")
                     continue
                 i = len(sig_df) - 1
@@ -14640,6 +14858,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         f"[selection_meta] {market} {ticker} recommended_strategy={_recommended_strategy} "
                         f"order={_selected_order}"
                     )
+                if _watch_trigger_shadow_candidate:
+                    _shadow_order = _ticker_kr_strat_list if market == "KR" else _ticker_us_strat_list
+                    if _watch_trigger_shadow_strategy not in set(_shadow_order or []):
+                        _watch_trigger_shadow_block("strategy_unavailable")
+                        continue
+                    if market == "KR":
+                        _ticker_kr_strat_list = [_watch_trigger_shadow_strategy]
+                    else:
+                        _ticker_us_strat_list = [_watch_trigger_shadow_strategy]
                 def _orp_detail(_df, _i, _p):
                     _d = orp_diag(_df, _i, _p)
                     return (
@@ -14993,6 +15220,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 }},
                             )
                 # 활성도 추적 — 시장별 인라인 교체 기준으로 활용
+                if _watch_trigger_shadow_candidate:
+                    self._log_watch_trigger_shadow(
+                        market,
+                        ticker,
+                        price=float(price),
+                        mode=mode,
+                        watch_bucket=_watch_bucket,
+                        watch_only_reason=_watch_only_reason,
+                        strategy=strategy_name or _watch_trigger_shadow_strategy,
+                        strategy_source=_watch_trigger_shadow_strategy_source,
+                        signal_fired=bool(signal_fired),
+                        result="would_promote" if signal_fired else "no_signal",
+                        detail=str(none_detail or ""),
+                    )
+                    continue
                 _scan_interval_min = self._entry_scan_interval_sec(market) / 60.0
                 if signal_fired:
                     if _soft_watch_candidate:

@@ -5984,7 +5984,7 @@ def _candidate_audit_date(market: str) -> str:
     if requested:
         return requested
     try:
-        return resolve_session_date(market)
+        return resolve_session_date(market).isoformat()
     except Exception:
         return datetime.now(KST).date().isoformat()
 
@@ -7303,6 +7303,7 @@ def _header_html(active_page: str) -> str:
         ("/",          "오늘 현황"),
         ("/pathb",     "B플랜 실시간"),
         ("/preopen",   "장전 후보"),
+        ("/candidate-audit", "후보 감사"),
         ("/analytics", "분석"),
         ("/logs",      "로그"),
     ]
@@ -11884,6 +11885,404 @@ setInterval(loadPreopen, 30000);
 """
 
 
+PAGE_CANDIDATE_AUDIT_HTML = """
+<style>
+.audit-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.audit-filter {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  min-height: 32px;
+}
+.audit-filter:focus { outline: none; border-color: var(--blue); }
+.audit-note { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.audit-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(100,116,139,0.28);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #cbd5e1;
+  background: rgba(15,23,42,0.45);
+  white-space: nowrap;
+}
+.audit-pill.good {
+  color: #34d399;
+  border-color: rgba(16,185,129,0.28);
+  background: rgba(16,185,129,0.12);
+}
+.audit-pill.warn {
+  color: #fbbf24;
+  border-color: rgba(245,158,11,0.30);
+  background: rgba(245,158,11,0.12);
+}
+.audit-pill.bad {
+  color: #f87171;
+  border-color: rgba(239,68,68,0.28);
+  background: rgba(239,68,68,0.12);
+}
+.audit-card-hint {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.audit-compact-table td,
+.audit-compact-table th { padding: 7px 9px; }
+.audit-reason {
+  max-width: 420px;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.45;
+  color: #cbd5e1;
+}
+@media (max-width: 768px) {
+  .audit-toolbar { align-items: stretch; }
+  .audit-filter,
+  .audit-toolbar .apply-btn { width: 100%; }
+}
+</style>
+<main>
+  <section class="section">
+    <div class="section-title">후보 감사 모니터</div>
+    <div class="audit-toolbar">
+      <input id="audit-date" class="audit-filter" type="date" title="비워두면 현재 세션을 조회합니다.">
+      <select id="audit-horizon" class="audit-filter" title="사후 성과 관찰 구간">
+        <option value="60">60분 성과</option>
+        <option value="30">30분 성과</option>
+      </select>
+      <select id="audit-classification" class="audit-filter" title="후보 분류">
+        <option value="">전체 분류</option>
+        <option value="not_in_prompt">not_in_prompt</option>
+        <option value="in_prompt_not_selected">in_prompt_not_selected</option>
+        <option value="ready_no_signal">ready_no_signal</option>
+        <option value="watch_only">watch_only</option>
+        <option value="avoid_watch">avoid_watch</option>
+        <option value="ready_route_blocked">ready_route_blocked</option>
+        <option value="filled_loss">filled_loss</option>
+        <option value="filled_win">filled_win</option>
+      </select>
+      <input id="audit-ticker" class="audit-filter" type="text" placeholder="종목코드" style="width:120px">
+      <select id="audit-limit" class="audit-filter">
+        <option value="100">최근 100개</option>
+        <option value="200" selected>최근 200개</option>
+        <option value="500">최근 500개</option>
+        <option value="1000">최근 1000개</option>
+      </select>
+      <button class="apply-btn" type="button" onclick="loadCandidateAudit()">갱신</button>
+      <button class="apply-btn" type="button" onclick="clearCandidateAuditDate()">최신 세션</button>
+    </div>
+    <div class="audit-note" id="candidate-audit-status">audit DB를 확인하는 중...</div>
+  </section>
+
+  <section class="section">
+    <div class="grid-5">
+      <div class="card"><div class="card-sub">세션</div><div class="metric" id="audit-session">-</div><div class="audit-card-hint" id="audit-db-path">-</div></div>
+      <div class="card blue"><div class="card-sub">후보 row</div><div class="metric" id="audit-candidate-rows">-</div><div class="audit-card-hint" id="audit-unique-tickers">-</div></div>
+      <div class="card green"><div class="card-sub">체결 종목</div><div class="metric" id="audit-filled-tickers">-</div><div class="audit-card-hint">실제 실행 결과 기준</div></div>
+      <div class="card yellow"><div class="card-sub">성과 커버리지</div><div class="metric" id="audit-coverage">-</div><div class="audit-card-hint" id="audit-coverage-detail">-</div></div>
+      <div class="card purple"><div class="card-sub">Claude 토큰</div><div class="metric" id="audit-tokens">-</div><div class="audit-card-hint" id="audit-calls">-</div></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-title">분류별 사후 성과</div>
+    <div id="candidate-audit-buckets" class="table-wrap"><div class="muted">로딩 중...</div></div>
+  </section>
+
+  <section class="section">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">PathB route shadow</div>
+        <div id="candidate-audit-route-shadow" class="table-wrap"><div class="muted">로딩 중...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">전략 mismatch</div>
+        <div id="candidate-audit-strategy" class="table-wrap"><div class="muted">로딩 중...</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-title">후보 원장</div>
+    <div id="candidate-audit-rows" class="table-wrap"><div class="muted">로딩 중...</div></div>
+  </section>
+</main>
+<script>
+function auditNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function auditInt(v) {
+  const n = auditNum(v);
+  return n === null ? '-' : Math.round(n).toLocaleString();
+}
+function auditPct(v, digits = 2) {
+  const n = auditNum(v);
+  if (n === null) return '-';
+  const sign = n > 0 ? '+' : '';
+  return sign + n.toFixed(digits) + '%';
+}
+function auditRate(v) {
+  const n = auditNum(v);
+  if (n === null) return '-';
+  return (n * 100).toFixed(1) + '%';
+}
+function auditColorClass(v) {
+  const n = auditNum(v);
+  if (n === null || n === 0) return '';
+  return n > 0 ? 'up' : 'down';
+}
+function auditShortTime(v) {
+  const s = String(v || '');
+  if (!s) return '-';
+  return s.replace('T', ' ').slice(0, 19);
+}
+function auditLabel(v) {
+  return escapeHtml(String(v || '-'));
+}
+function auditParams() {
+  const params = new URLSearchParams();
+  params.set('market', MARKET);
+  params.set('mode', MODE);
+  params.set('horizon_min', document.getElementById('audit-horizon').value || '60');
+  const date = String(document.getElementById('audit-date').value || '').trim();
+  if (date) params.set('date', date);
+  return params;
+}
+function clearCandidateAuditDate() {
+  document.getElementById('audit-date').value = '';
+  loadCandidateAudit();
+}
+function renderCandidateAuditMissing(data) {
+  document.getElementById('candidate-audit-status').innerHTML =
+    `<span class="audit-pill warn">DB 없음</span> ${auditLabel(data.db_path || '')}`;
+  ['audit-session', 'audit-candidate-rows', 'audit-filled-tickers', 'audit-coverage', 'audit-tokens'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = '-';
+  });
+  document.getElementById('audit-db-path').textContent = data.db_path || '-';
+  document.getElementById('audit-unique-tickers').textContent = '-';
+  document.getElementById('audit-coverage-detail').textContent = 'outcome 없음';
+  document.getElementById('audit-calls').textContent = '-';
+  document.getElementById('candidate-audit-buckets').innerHTML = '<div class="muted">candidate_audit.db가 아직 없습니다.</div>';
+  document.getElementById('candidate-audit-route-shadow').innerHTML = '<div class="muted">데이터 없음</div>';
+  document.getElementById('candidate-audit-strategy').innerHTML = '<div class="muted">데이터 없음</div>';
+  document.getElementById('candidate-audit-rows').innerHTML = '<div class="muted">데이터 없음</div>';
+}
+function renderCandidateAuditSummary(data) {
+  if (!data || !data.exists) {
+    renderCandidateAuditMissing(data || {});
+    return;
+  }
+  const horizon = String(data.outcome_horizon_min || document.getElementById('audit-horizon').value || '60');
+  const totals = data.totals || {};
+  const calls = data.calls || {};
+  const coverage = ((data.outcome_coverage || {})[horizon]) || {};
+  const totalOutcome = Number(coverage.total || 0);
+  const sparse = Number(coverage.audit_sparse || 0);
+  const coverageRate = auditNum(coverage.coverage_rate);
+  const inputTokens = Number(calls.input_tokens || 0);
+  const outputTokens = Number(calls.output_tokens || 0);
+  document.getElementById('candidate-audit-status').innerHTML =
+    `<span class="audit-pill good">READ ONLY</span> ${auditLabel(data.market)} ${auditLabel(data.runtime_mode)} · ${auditLabel(data.session_date)} · ${horizon}분 · 갱신 ${new Date().toLocaleTimeString()}`;
+  document.getElementById('audit-session').textContent = data.session_date || '-';
+  document.getElementById('audit-db-path').textContent = data.db_path || '-';
+  document.getElementById('audit-candidate-rows').textContent = auditInt(totals.candidate_rows);
+  document.getElementById('audit-unique-tickers').textContent = `고유 ${auditInt(totals.unique_tickers)}종목`;
+  document.getElementById('audit-filled-tickers').textContent = auditInt(totals.filled_tickers);
+  document.getElementById('audit-coverage').textContent = coverageRate === null ? '-' : auditRate(coverageRate);
+  document.getElementById('audit-coverage-detail').textContent = `분석 가능 ${auditInt(sparse)} / outcome ${auditInt(totalOutcome)} · 부족 ${auditInt(coverage.insufficient_samples)}`;
+  document.getElementById('audit-tokens').textContent = auditInt(inputTokens + outputTokens);
+  document.getElementById('audit-calls').textContent = `호출 ${auditInt(calls.call_count)}회 · 입력 ${auditInt(inputTokens)} · 출력 ${auditInt(outputTokens)}`;
+  renderCandidateAuditBuckets(data.outcome_buckets || []);
+  renderCandidateAuditRouteShadow(data.route_shadow_summary || {});
+  renderCandidateAuditStrategy(data.strategy_mismatch || {});
+}
+function renderCandidateAuditBuckets(rows) {
+  const el = document.getElementById('candidate-audit-buckets');
+  if (!rows.length) {
+    el.innerHTML = '<div class="muted">분류별 outcome 데이터가 없습니다.</div>';
+    return;
+  }
+  el.innerHTML = `<table class="audit-compact-table">
+    <thead><tr>
+      <th>분류</th><th>rows</th><th>라벨</th><th>중앙 수익</th><th>평균 수익</th><th>P90 수익</th>
+      <th>P90 MFE</th><th>MFE ≥3%</th><th>MAE ≤-2%</th><th>샘플</th>
+    </tr></thead>
+    <tbody>${rows.map(row => {
+      const median = auditNum(row.median_return_pct);
+      const mean = auditNum(row.mean_return_pct);
+      const p90 = auditNum(row.p90_return_pct);
+      const mfe = auditNum(row.p90_mfe_pct);
+      const sample = row.small_bucket_sample ? '<span class="audit-pill warn">small</span>' : '<span class="audit-pill good">ok</span>';
+      return `<tr>
+        <td>${auditLabel(row.classification)}</td>
+        <td>${auditInt(row.rows)}</td>
+        <td>${auditInt(row.labeled_rows)}</td>
+        <td class="${auditColorClass(median)}">${auditPct(median)}</td>
+        <td class="${auditColorClass(mean)}">${auditPct(mean)}</td>
+        <td class="${auditColorClass(p90)}">${auditPct(p90)}</td>
+        <td class="${auditColorClass(mfe)}">${auditPct(mfe)}</td>
+        <td>${auditRate(row.mfe_3pct_rate)}</td>
+        <td>${auditRate(row.mae_minus2pct_rate)}</td>
+        <td>${sample}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+function renderCandidateAuditRouteShadow(summary) {
+  const counts = summary.reason_counts || {};
+  const tickers = summary.tickers_by_reason || {};
+  const rows = Object.keys(counts).sort((a, b) => Number(counts[b] || 0) - Number(counts[a] || 0));
+  const head = `<div class="audit-note" style="margin-bottom:8px">
+    suspend ${auditInt(summary.route_suspend_pathb_rows)} · cancel ${auditInt(summary.route_cancel_pathb_rows)}
+  </div>`;
+  if (!rows.length) {
+    document.getElementById('candidate-audit-route-shadow').innerHTML = head + '<div class="muted">감지된 stale/zone route 이벤트 없음</div>';
+    return;
+  }
+  document.getElementById('candidate-audit-route-shadow').innerHTML = head + `<table class="audit-compact-table">
+    <thead><tr><th>reason</th><th>rows</th><th>tickers</th></tr></thead>
+    <tbody>${rows.map(reason => `<tr>
+      <td>${auditLabel(reason)}</td>
+      <td>${auditInt(counts[reason])}</td>
+      <td class="audit-reason">${auditLabel((tickers[reason] || []).join(', '))}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+function renderCandidateAuditStrategy(summary) {
+  if (summary.error) {
+    document.getElementById('candidate-audit-strategy').innerHTML = `<div class="muted">${auditLabel(summary.error)}</div>`;
+    return;
+  }
+  const pairs = summary.pairs || [];
+  const rate = auditNum(summary.mismatch_rate);
+  const head = `<div class="audit-note" style="margin-bottom:8px">
+    대상 ${auditInt(summary.filled_strategy_rows)} · mismatch ${auditInt(summary.mismatch_count)}${rate === null ? '' : ` (${auditRate(rate)})`} · match ${auditInt(summary.match_count)}
+  </div>`;
+  if (!pairs.length) {
+    document.getElementById('candidate-audit-strategy').innerHTML = head + '<div class="muted">체결 전략 비교 데이터 없음</div>';
+    return;
+  }
+  document.getElementById('candidate-audit-strategy').innerHTML = head + `<table class="audit-compact-table">
+    <thead><tr><th>권고 → 실행</th><th>상태</th><th>건수</th><th>중앙 PnL</th></tr></thead>
+    <tbody>${pairs.slice(0, 12).map(row => {
+      const cls = row.status === 'mismatch' ? 'bad' : (row.status === 'match' ? 'good' : 'warn');
+      return `<tr>
+        <td class="audit-reason">${auditLabel((row.recommended_strategy || '-') + ' → ' + (row.strategy_used || '-'))}</td>
+        <td><span class="audit-pill ${cls}">${auditLabel(row.status)}</span></td>
+        <td>${auditInt(row.count)}</td>
+        <td class="${auditColorClass(row.median_pnl_pct)}">${auditPct(row.median_pnl_pct)}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+function renderCandidateAuditRows(data) {
+  const rows = (data && data.rows) || [];
+  const el = document.getElementById('candidate-audit-rows');
+  if (!data || !data.exists) {
+    el.innerHTML = '<div class="muted">candidate_audit.db가 아직 없습니다.</div>';
+    return;
+  }
+  if (!rows.length) {
+    el.innerHTML = '<div class="muted">조건에 맞는 후보 row가 없습니다.</div>';
+    return;
+  }
+  el.innerHTML = `<table class="audit-compact-table">
+    <thead><tr>
+      <th>시간</th><th>종목</th><th>분류</th><th>rank</th><th>Claude</th><th>Route</th>
+      <th>가격</th><th>등락</th><th>체결</th><th>실현</th><th>사후수익</th><th>MFE</th><th>MAE</th><th>outcome</th><th>사유</th>
+    </tr></thead>
+    <tbody>${rows.map(row => {
+      const pnl = auditNum(row.pnl_pct);
+      const ret = auditNum(row.outcome_return_pct);
+      const mfe = auditNum(row.outcome_max_runup_pct);
+      const mae = auditNum(row.outcome_max_drawdown_pct);
+      const reason = row.route_reason || row.route_runtime_gate_reason || row.claude_reason || '';
+      return `<tr>
+        <td>${auditLabel(auditShortTime(row.known_at))}</td>
+        <td>${auditLabel(row.ticker)}</td>
+        <td>${auditLabel(row.classification)}</td>
+        <td>${auditLabel(row.prompt_rank ?? '-')}</td>
+        <td>${auditLabel(row.claude_action)}</td>
+        <td>${auditLabel(row.route_final_action)}</td>
+        <td>${auditLabel(row.price)}</td>
+        <td class="${auditColorClass(row.change_pct)}">${auditPct(row.change_pct)}</td>
+        <td>${auditInt(row.filled_count)}</td>
+        <td class="${auditColorClass(pnl)}">${auditPct(pnl)}</td>
+        <td class="${auditColorClass(ret)}">${auditPct(ret)}</td>
+        <td class="${auditColorClass(mfe)}">${auditPct(mfe)}</td>
+        <td class="${auditColorClass(mae)}">${auditPct(mae)}</td>
+        <td>${auditLabel(row.outcome_status)}</td>
+        <td class="audit-reason">${auditLabel(reason)}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+async function loadCandidateAudit() {
+  const status = document.getElementById('candidate-audit-status');
+  if (status) status.innerHTML = '<span class="audit-pill warn">LOADING</span> audit DB 조회 중...';
+  const params = auditParams();
+  const rowParams = new URLSearchParams(params);
+  const classification = String(document.getElementById('audit-classification').value || '').trim();
+  const ticker = String(document.getElementById('audit-ticker').value || '').trim().toUpperCase();
+  const limit = String(document.getElementById('audit-limit').value || '200');
+  if (classification) rowParams.set('classification', classification);
+  if (ticker) rowParams.set('ticker', ticker);
+  rowParams.set('limit', limit);
+  try {
+    const [summaryResp, rowsResp] = await Promise.all([
+      fetch('/api/candidate-audit/summary?' + params.toString()),
+      fetch('/api/candidate-audit/rows?' + rowParams.toString()),
+    ]);
+    const summary = await summaryResp.json();
+    const rows = await rowsResp.json();
+    if (!summary.ok) throw new Error(summary.error || 'summary error');
+    if (!rows.ok) throw new Error(rows.error || 'rows error');
+    renderCandidateAuditSummary(summary);
+    renderCandidateAuditRows(rows);
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    document.getElementById('candidate-audit-status').innerHTML =
+      `<span class="audit-pill bad">ERROR</span> ${auditLabel(msg)}`;
+  }
+}
+async function loadAll() {
+  await loadCandidateAudit();
+}
+['audit-date', 'audit-horizon', 'audit-classification', 'audit-limit'].forEach(id => {
+  document.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', loadCandidateAudit);
+  });
+});
+document.addEventListener('DOMContentLoaded', () => {
+  const ticker = document.getElementById('audit-ticker');
+  if (ticker) {
+    ticker.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') loadCandidateAudit();
+    });
+  }
+});
+loadCandidateAudit();
+setInterval(loadCandidateAudit, 60000);
+</script>
+"""
+
+
 PAGE_LOGS_HTML = """
 <main>
   <section class="section">
@@ -12031,6 +12430,18 @@ def page_preopen():
     return render_template_string(html)
 
 
+@app.route("/candidate-audit")
+def page_candidate_audit():
+    html = (
+        _head("후보 감사")
+        + _header_html("/candidate-audit")
+        + COMMON_JS_BLOCK
+        + PAGE_CANDIDATE_AUDIT_HTML
+        + "</body></html>"
+    )
+    return render_template_string(html)
+
+
 @app.route("/analytics")
 def page_analytics():
     html = (
@@ -12067,6 +12478,7 @@ if __name__ == "__main__":
     print("  /            오늘 현황")
     print("  /pathb       B플랜 실시간")
     print("  /preopen     장전 후보")
+    print("  /candidate-audit 후보 감사")
     print("  /analytics   분석")
     print("  /logs        위험/오류 로그")
     print("=" * 52)

@@ -8,22 +8,22 @@ This plan separates mandatory fixes from optional hardening so the first impleme
 
 ## Current Status - 2026-05-08
 
-Keep this plan active.
+Keep this plan active for the remaining low-risk dashboard source-label cleanup.
 
 Implemented/covered in code:
 
 - Pending sell reconciliation path exists: `_reconcile_pending_sell_confirmations()`, `_clear_sell_confirmation_pending()`, `_close_position_from_pending_sell()`.
 - Focused pending-sell reconciliation tests pass: `python -m pytest tests/test_live_sell_pending_reconcile.py tests/test_pathb_realized_pnl_dedupe.py -q` -> `9 passed, 2 warnings`.
 - `_write_live_status()` now writes market-scoped realized PnL fields including `market_daily_pnl_krw` and `market_realized_pnl_krw`.
+- Dashboard lifetime realized PnL tests are isolated from live broker/session state.
+- `_new_buy_block_state()` allows `RECOVERY_MICRO` through only `STOP_CLUSTER_FIRST_STOP_COOLDOWN` with market scope.
+- Recovery micro guard tests cover normal strategy block, first-stop recovery allow, same stopped ticker block, second-stop market block, and zero-freeze normal flow.
+- Broker-confirmed local PnL matching consumes order-number and loose `(ticker, qty)` slots.
+- Focused regression batch now passes: `python -m pytest tests/test_order_equity_reconciliation_improvement.py tests/test_dashboard_pathb.py tests/test_auto_sell_claude_gate.py -q` -> `70 passed, 2 warnings`.
 
 Still open:
 
-- `python -m pytest tests/test_order_equity_reconciliation_improvement.py tests/test_dashboard_pathb.py tests/test_auto_sell_claude_gate.py -q` fails 2 dashboard tests:
-  - `tests/test_dashboard_pathb.py::DashboardPathBTests::test_lifetime_realized_pnl_summary_adds_active_session_realized_adjustment`
-  - `tests/test_dashboard_pathb.py::DashboardPathBTests::test_lifetime_realized_pnl_summary_splits_markets_and_excludes_unknown_cost_basis`
-- `_new_buy_block_state()` still returns the raw stop-cluster block before applying a `RECOVERY_MICRO` first-stop cooldown exemption.
 - Dashboard fallback source labeling still needs review: legacy `daily_pnl` fallback is not clearly labeled separately from market-scoped live status.
-- Broker-confirmed local PnL matching should be rechecked so an order-number match also consumes the corresponding loose `(ticker, qty)` slot.
 
 ## Scope Decision
 

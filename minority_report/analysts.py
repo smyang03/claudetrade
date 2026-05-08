@@ -29,9 +29,10 @@ analysis_log = get_analysis_logger()
 judgment_log = get_judgment_logger()
 client       = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-# R1 분석가: 비용 절감을 위해 Haiku 사용 (R2 토론은 Sonnet 유지)
-# R1_MODEL 환경변수로 오버라이드 가능 (기본 Haiku 4.5)
-R1_MODEL     = os.getenv("R1_MODEL", "claude-haiku-4-5-20251001")
+# R1: bear/neutral은 Haiku(저비용), bull은 Sonnet(방향 conviction 품질 확보)
+# R2 토론은 전원 Sonnet 유지
+R1_MODEL      = os.getenv("R1_MODEL", "claude-haiku-4-5-20251001")
+BULL_R1_MODEL = os.getenv("BULL_R1_MODEL", MODEL)
 
 
 def _env_int_bound(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -986,36 +987,19 @@ def call_analyst(analyst_type: str, digest_prompt: str,
                  portfolio_info=None,
                  lesson_context: str = "",
                  market: str = "") -> dict:
-    """1라운드 독립 판단"""
+    """1라운드 독립 판단 — stance/confidence/key_reason 3필드만 반환. 상세 분석은 R2에서."""
     feedback_section = f"\n[나의 과거 실적]\n{analyst_feedback}\n" if analyst_feedback else ""
-
-    # 포트폴리오 현황 섹션
-    if portfolio_info:
-        cash        = portfolio_info.get("cash", 0)
-        total       = portfolio_info.get("total_equity", cash)
-        max_order   = portfolio_info.get("max_order_krw", 0)
-        n_pos       = portfolio_info.get("n_positions", 0)
-        max_pos     = portfolio_info.get("max_positions", 3)
-        portfolio_section = (
-            f"\n[포트폴리오 현황]\n"
-            f"• 가용 현금: {cash:,.0f}원\n"
-            f"• 총 자산: {total:,.0f}원\n"
-            f"• 1회 최대 주문: {max_order:,.0f}원\n"
-            f"• 현재 보유 종목: {n_pos}/{max_pos}개\n"
-            f"• 잔여 슬롯: {max(0, max_pos - n_pos)}개\n"
-        )
-    else:
-        portfolio_section = ""
-
     lesson_section = f"\n[recent lesson candidates]\n{lesson_context[:500]}\n" if lesson_context else ""
+
+    # bull은 방향 conviction 품질 확보를 위해 Sonnet 사용
+    _r1_model = BULL_R1_MODEL if analyst_type == "bull" else R1_MODEL
 
     prompt = f"""{_persona_for(analyst_type, market)}
 
 {BREADTH_FIRST_CONTRACT}
 {COMMON_DECISION_CONTRACT}
 {HARD_SOFT_RULE_CONTRACT}
-{SIZING_DECISION_CONTRACT}
-{feedback_section}{portfolio_section}{lesson_section}
+{feedback_section}{lesson_section}
 [데이터 해석 가이드 — 반드시 준수]
 • 코스피: "1d X% / 5d Y%" 형태 — 1d는 전일 대비, 5d는 주간 추세. 둘 다 확인할 것.
 • USD/KRW: "1,465 (1d -0.8%, 5d -3.8%, 20일고점대비 -4.2%)" 형태
@@ -1036,37 +1020,26 @@ def call_analyst(analyst_type: str, digest_prompt: str,
 {digest_prompt}
 
 위 데이터를 당신의 전문 영역 관점에서 분석하세요. 반드시 트렌드 수치(1d/5d)를 근거로 언급하세요.
-포트폴리오 현황을 참고하여 이 시장 상황에서 1회 최대 주문금액 대비 몇 %를 투자할지 제안하세요.
 JSON으로만 응답 (다른 텍스트 없이):
 {{"stance":"{STANCES} 중 하나","confidence":0.0~1.0,
-  "key_reason":"핵심 근거 한 문장 (구체적 지표 수치 포함)",
-  "full_reasoning":"상세 분석 2~3문장",
-  "top_risks":["위험1","위험2"],
-  "suggested_strategy":"모멘텀|평균회귀|갭+눌림|변동성돌파|관망",
-  "suggested_size_pct":0~100,
-  "market_regime":"risk_on|balanced|risk_off|panic|unknown",
-  "data_quality":"good|mixed|poor|unknown",
-  "new_buy_permission":"allow|selective|block",
-  "max_gross_exposure_pct":0~100,
-  "key_confirmations":["short evidence"],
-  "key_contradictions":["short contradiction"]}}"""
+  "key_reason":"핵심 근거 한 문장 (구체적 지표 수치 포함)"}}"""
 
     try:
-        resp = client.messages.create(model=R1_MODEL, max_tokens=2048,
+        resp = client.messages.create(model=_r1_model, max_tokens=400,
                                       messages=[{"role": "user", "content": prompt}])
         raw = resp.content[0].text.strip()
         result = _sanitize_analyst_result(_extract_json(raw), analyst_type)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
-                      f"analyst_{analyst_type}_r1", model=R1_MODEL)
+                      f"analyst_{analyst_type}_r1", model=_r1_model)
         save_raw_call(
             label=f"analyst_{analyst_type}_r1",
             prompt=prompt, raw_response=raw, parsed=result,
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
-            model=R1_MODEL,
-            prompt_version="market_judgment_v3",
+            model=_r1_model,
+            prompt_version="market_judgment_v4_slim",
         )
-        log.info(f"[{analyst_type} R1] {result.get('stance','-')} "
+        log.info(f"[{analyst_type} R1/{_r1_model.split('-')[1]}] {result.get('stance','-')} "
                  f"conf={result.get('confidence',0):.2f} | "
                  f"{result.get('key_reason','')[:60]}")
         analysis_log.info(
@@ -1074,11 +1047,10 @@ JSON으로만 응답 (다른 텍스트 없이):
             extra={"extra": {
                 "event": "analyst_response_r1",
                 "analyst": analyst_type,
+                "r1_model": _r1_model,
                 "stance": result.get("stance"),
                 "confidence": result.get("confidence"),
                 "key_reason": result.get("key_reason"),
-                "top_risks": result.get("top_risks", []),
-                "suggested_strategy": result.get("suggested_strategy"),
             }},
         )
         return result

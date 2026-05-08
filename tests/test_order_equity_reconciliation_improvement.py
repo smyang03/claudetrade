@@ -348,6 +348,108 @@ class NewBuyGateTests(unittest.TestCase):
         self.assertEqual(state["reason"], "STOP_CLUSTER_MARKET_BLOCK")
         self.assertEqual(state["scope"], "market")
 
+    def test_first_stop_cluster_cooldown_blocks_normal_strategy(self) -> None:
+        bot = self._bot()
+        bot._daily_sl_count = {"KR": 1}
+        bot._daily_sl_last_at = {"KR": datetime(2026, 4, 29, 9, 55, tzinfo=market_utils.KST)}
+        bot._v2_same_day_stop_tickers = {"KR": {"000660"}}
+
+        with self._with_now(10, 0), patch.object(trading_bot, "datetime", _FrozenDateTime), patch.dict(
+            os.environ,
+            {
+                "STOP_CLUSTER_FIRST_FREEZE_MINUTES": "30",
+                "STOP_CLUSTER_HARD_BLOCK_COUNT": "2",
+                "STOP_CLUSTER_DISASTER_BLOCK_COUNT": "3",
+            },
+        ), patch.dict(market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "momentum")
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "STOP_CLUSTER_FIRST_STOP_COOLDOWN")
+        self.assertEqual(state["scope"], "market")
+
+    def test_first_stop_cluster_cooldown_allows_recovery_micro(self) -> None:
+        bot = self._bot()
+        bot._daily_sl_count = {"KR": 1}
+        bot._daily_sl_last_at = {"KR": datetime(2026, 4, 29, 9, 55, tzinfo=market_utils.KST)}
+        bot._v2_same_day_stop_tickers = {"KR": {"000660"}}
+
+        with self._with_now(10, 0), patch.object(trading_bot, "datetime", _FrozenDateTime), patch.dict(
+            os.environ,
+            {
+                "STOP_CLUSTER_FIRST_FREEZE_MINUTES": "30",
+                "STOP_CLUSTER_HARD_BLOCK_COUNT": "2",
+                "STOP_CLUSTER_DISASTER_BLOCK_COUNT": "3",
+            },
+        ), patch.dict(market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "RECOVERY_MICRO")
+
+        self.assertTrue(state["allowed"])
+        self.assertFalse(state["blocked"])
+        self.assertEqual(
+            state["details"]["stop_cluster_exemption"],
+            "RECOVERY_MICRO_FIRST_STOP_COOLDOWN",
+        )
+
+    def test_recovery_micro_still_blocks_same_stopped_ticker(self) -> None:
+        bot = self._bot()
+        bot._daily_sl_count = {"KR": 1}
+        bot._daily_sl_last_at = {"KR": datetime(2026, 4, 29, 9, 55, tzinfo=market_utils.KST)}
+        bot._v2_same_day_stop_tickers = {"KR": {"005930"}}
+
+        with self._with_now(10, 0), patch.object(trading_bot, "datetime", _FrozenDateTime), patch.dict(
+            os.environ,
+            {
+                "STOP_CLUSTER_FIRST_FREEZE_MINUTES": "30",
+                "STOP_CLUSTER_HARD_BLOCK_COUNT": "2",
+                "STOP_CLUSTER_DISASTER_BLOCK_COUNT": "3",
+            },
+        ), patch.dict(market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "RECOVERY_MICRO")
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "SAME_DAY_REENTRY_AFTER_STOP")
+        self.assertEqual(state["scope"], "ticker")
+
+    def test_recovery_micro_still_blocks_second_stop_cluster(self) -> None:
+        bot = self._bot()
+        bot._daily_sl_count = {"KR": 2}
+        bot._daily_sl_last_at = {"KR": datetime(2026, 4, 29, 9, 55, tzinfo=market_utils.KST)}
+        bot._v2_same_day_stop_tickers = {"KR": {"000660"}}
+
+        with self._with_now(10, 0), patch.object(trading_bot, "datetime", _FrozenDateTime), patch.dict(
+            os.environ,
+            {
+                "STOP_CLUSTER_FIRST_FREEZE_MINUTES": "30",
+                "STOP_CLUSTER_HARD_BLOCK_COUNT": "2",
+                "STOP_CLUSTER_DISASTER_BLOCK_COUNT": "3",
+            },
+        ), patch.dict(market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "RECOVERY_MICRO")
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "STOP_CLUSTER_MARKET_BLOCK")
+        self.assertEqual(state["scope"], "market")
+
+    def test_zero_first_stop_freeze_allows_normal_flow_without_recovery_exemption(self) -> None:
+        bot = self._bot()
+        bot._daily_sl_count = {"KR": 1}
+        bot._daily_sl_last_at = {"KR": datetime(2026, 4, 29, 9, 55, tzinfo=market_utils.KST)}
+        bot._v2_same_day_stop_tickers = {"KR": {"000660"}}
+
+        with self._with_now(10, 0), patch.object(trading_bot, "datetime", _FrozenDateTime), patch.dict(
+            os.environ,
+            {
+                "STOP_CLUSTER_FIRST_FREEZE_MINUTES": "0",
+                "STOP_CLUSTER_HARD_BLOCK_COUNT": "2",
+                "STOP_CLUSTER_DISASTER_BLOCK_COUNT": "3",
+            },
+        ), patch.dict(market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "momentum")
+
+        self.assertTrue(state["allowed"])
+        self.assertNotIn("stop_cluster_exemption", state["details"])
+
 
 class StopClusterDedupeTests(unittest.TestCase):
     def test_duplicate_stop_event_does_not_increment_count(self) -> None:

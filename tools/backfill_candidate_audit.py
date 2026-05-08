@@ -960,6 +960,15 @@ def backfill_candidate_audit(
     changed = store.refresh_classifications(session_date=session_date, market=market_key, runtime_mode=mode)
     summary = store.summary(session_date=session_date, market=market_key, runtime_mode=mode)
     summary["classification_rows_refreshed"] = changed
+    try:
+        from tools.analyze_candidate_audit import watch_trigger_funnel_summary
+
+        summary["watch_trigger_shadow_summary"] = watch_trigger_funnel_summary(
+            session_date=session_date,
+            market=market_key,
+        )
+    except Exception:
+        summary["watch_trigger_shadow_summary"] = {}
     return summary
 
 

@@ -5,14 +5,74 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from audit.candidate_audit_store import CandidateAuditStore, candidate_key
-from tools.analyze_candidate_audit import analyze_candidate_audit, classify_strategy_match
+from tools.analyze_candidate_audit import analyze_candidate_audit, classify_strategy_match, watch_trigger_funnel_summary
 from tools.backfill_candidate_audit import backfill_candidate_audit
 from tools.update_candidate_audit_outcomes import update_candidate_audit_outcomes
 
 
 class CandidateAuditBackfillTests(unittest.TestCase):
+    def test_watch_trigger_funnel_summary_counts_shadow_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            funnel_dir = root / "logs" / "funnel"
+            funnel_dir.mkdir(parents=True)
+            (funnel_dir / "watch_trigger_not_evaluated_20260508_US.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event": "watch_trigger_not_evaluated",
+                        "market": "US",
+                        "ticker": "AAPL",
+                        "reason": "shadow_cycle_cap_exceeded",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (funnel_dir / "watch_trigger_shadow_20260508_US.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "event": "watch_trigger_shadow",
+                                "market": "US",
+                                "ticker": "AAPL",
+                                "result": "would_promote",
+                                "strategy": "opening_range_pullback",
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            {
+                                "event": "watch_trigger_shadow",
+                                "market": "US",
+                                "ticker": "MSFT",
+                                "result": "blocked",
+                                "blocked_reason": "missing_strategy",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "tools.analyze_candidate_audit.get_runtime_path",
+                side_effect=lambda *parts, **kwargs: root.joinpath(*parts),
+            ):
+                summary = watch_trigger_funnel_summary(session_date="2026-05-08", market="US")
+
+        self.assertEqual(summary["watch_trigger_not_evaluated_count"], 1)
+        self.assertEqual(summary["watch_trigger_shadow_count"], 2)
+        self.assertEqual(summary["watch_trigger_would_promote_count"], 1)
+        self.assertEqual(summary["watch_trigger_blocked_count"], 1)
+        self.assertEqual(summary["blocked_reason_counts"]["missing_strategy"], 1)
+
     def test_backfill_builds_separate_candidate_audit_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

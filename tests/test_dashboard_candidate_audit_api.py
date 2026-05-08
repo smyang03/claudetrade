@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,6 +11,17 @@ from audit.candidate_audit_store import CandidateAuditStore, candidate_key
 
 
 class DashboardCandidateAuditApiTests(unittest.TestCase):
+    def test_candidate_audit_page_renders_monitor_tab(self) -> None:
+        import dashboard.dashboard_server as dashboard_server
+
+        response = dashboard_server.app.test_client().get("/candidate-audit")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"/api/candidate-audit/summary", response.data)
+        self.assertIn(b"/api/candidate-audit/rows", response.data)
+        self.assertIn(b"candidate-audit-status", response.data)
+        self.assertIn(b"/candidate-audit", response.data)
+
     def test_candidate_audit_summary_includes_outcomes_and_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
@@ -93,6 +105,24 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             self.assertEqual(data["outcome_status"], [])
             self.assertEqual(data["outcome_coverage"], {})
             self.assertEqual(data["outcome_buckets"], [])
+
+    def test_candidate_audit_default_session_date_is_iso_string(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing.db"
+            import dashboard.dashboard_server as dashboard_server
+
+            with patch.object(dashboard_server, "_candidate_audit_db_path", return_value=missing), patch.object(
+                dashboard_server,
+                "resolve_session_date",
+                return_value=date(2026, 5, 8),
+            ):
+                response = dashboard_server.app.test_client().get(
+                    "/api/candidate-audit/summary?market=KR&mode=live"
+                )
+
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertEqual(data["session_date"], "2026-05-08")
 
     def test_local_realized_dedupe_uses_close_reason_priority(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

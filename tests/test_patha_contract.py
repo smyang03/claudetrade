@@ -143,6 +143,36 @@ class PathAContractTests(unittest.TestCase):
         self.assertEqual(bot.selection_meta["US"]["_missing_price_target_allowed"], ["TWLO"])
         self.assertEqual(bot.selection_meta["US"]["price_targets"], {})
 
+    def test_watch_trigger_shadow_strategy_uses_recommended_strategy(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.selection_meta = {
+            "KR": {},
+            "US": {
+                "recommended_strategy": {"AAPL": "opening_range_pullback"},
+                "candidate_actions": [],
+            },
+        }
+
+        strategy, source = bot._watch_trigger_shadow_strategy_for_ticker("US", "aapl")
+
+        self.assertEqual(strategy, "opening_range_pullback")
+        self.assertEqual(source, "recommended_strategy")
+
+    def test_watch_trigger_shadow_strategy_can_use_candidate_action_fallback(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.selection_meta = {
+            "KR": {},
+            "US": {
+                "recommended_strategy": {},
+                "candidate_actions": [{"ticker": "AAPL", "strategy": "gap_pullback"}],
+            },
+        }
+
+        strategy, source = bot._watch_trigger_shadow_strategy_for_ticker("US", "aapl")
+
+        self.assertEqual(strategy, "gap_pullback")
+        self.assertEqual(source, "candidate_action.strategy")
+
     def test_pathb_disable_flags_do_not_block_path_a_safety_gate(self) -> None:
         gate = SafetyGate(V2Config(pathb_enabled=False, pathb_emergency_disable=True))
         decision = gate.evaluate(

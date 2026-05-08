@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -318,6 +319,127 @@ def _route_shadow_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return summary
 
 
+def _iter_jsonl_rows(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                item = json.loads(text)
+            except Exception:
+                continue
+            if isinstance(item, dict):
+                rows.append(item)
+    return rows
+
+
+def _watch_trigger_funnel_paths(event_type: str, *, session_date: str, market: str) -> list[Path]:
+    log_dir = get_runtime_path("logs", "funnel")
+    day = str(session_date or "").replace("-", "") or "*"
+    market_part = str(market or "").upper() or "*"
+    return sorted(log_dir.glob(f"{event_type}_{day}_{market_part}.jsonl"))
+
+
+def watch_trigger_funnel_summary(*, session_date: str = "", market: str = "") -> dict[str, Any]:
+    not_evaluated_rows: list[dict[str, Any]] = []
+    shadow_rows: list[dict[str, Any]] = []
+    for path in _watch_trigger_funnel_paths(
+        "watch_trigger_not_evaluated",
+        session_date=session_date,
+        market=market,
+    ):
+        not_evaluated_rows.extend(_iter_jsonl_rows(path))
+    for path in _watch_trigger_funnel_paths(
+        "watch_trigger_shadow",
+        session_date=session_date,
+        market=market,
+    ):
+        shadow_rows.extend(_iter_jsonl_rows(path))
+
+    result_counts: Counter[str] = Counter()
+    blocked_reason_counts: Counter[str] = Counter()
+    not_eval_reason_counts: Counter[str] = Counter()
+    strategy_counts: Counter[str] = Counter()
+    tickers_by_result: dict[str, set[str]] = defaultdict(set)
+    for row in not_evaluated_rows:
+        reason = str(row.get("reason") or "unknown")
+        not_eval_reason_counts[reason] += 1
+    for row in shadow_rows:
+        result = str(row.get("result") or "unknown")
+        result_counts[result] += 1
+        strategy = str(row.get("strategy") or "unassigned")
+        strategy_counts[strategy] += 1
+        blocked = str(row.get("blocked_reason") or "").strip()
+        if blocked:
+            blocked_reason_counts[blocked] += 1
+        ticker = str(row.get("ticker") or "").strip().upper()
+        if ticker:
+            tickers_by_result[result].add(ticker)
+
+    return {
+        "watch_trigger_not_evaluated_count": len(not_evaluated_rows),
+        "watch_trigger_shadow_count": len(shadow_rows),
+        "watch_trigger_would_promote_count": int(result_counts.get("would_promote", 0)),
+        "watch_trigger_no_signal_count": int(result_counts.get("no_signal", 0)),
+        "watch_trigger_blocked_count": int(result_counts.get("blocked", 0)),
+        "not_evaluated_reason_counts": dict(not_eval_reason_counts.most_common()),
+        "shadow_result_counts": dict(result_counts.most_common()),
+        "blocked_reason_counts": dict(blocked_reason_counts.most_common()),
+        "strategy_counts": dict(strategy_counts.most_common()),
+        "tickers_by_result": {
+            result: sorted(tickers)[:30]
+            for result, tickers in sorted(tickers_by_result.items())
+        },
+    }
+
+
+def _watch_trigger_shadow_outcomes(
+    rows: list[dict[str, Any]],
+    *,
+    session_date: str = "",
+    market: str = "",
+) -> dict[str, Any]:
+    shadow_rows: list[dict[str, Any]] = []
+    for path in _watch_trigger_funnel_paths(
+        "watch_trigger_shadow",
+        session_date=session_date,
+        market=market,
+    ):
+        shadow_rows.extend(_iter_jsonl_rows(path))
+
+    audit_by_ticker: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        market_key = str(row.get("market") or "").upper()
+        ticker = str(row.get("ticker") or "").strip().upper()
+        if market_key and ticker:
+            audit_by_ticker[(market_key, ticker)].append(row)
+
+    events_by_result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    matched_by_result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in shadow_rows:
+        result = str(event.get("result") or "unknown")
+        events_by_result[result].append(event)
+        market_key = str(event.get("market") or "").upper()
+        ticker = str(event.get("ticker") or "").strip().upper()
+        matches = audit_by_ticker.get((market_key, ticker), [])
+        if matches:
+            matched_by_result[result].append(matches[0])
+
+    out: dict[str, Any] = {}
+    for result, events in sorted(events_by_result.items()):
+        matched = matched_by_result.get(result, [])
+        out[result] = {
+            "shadow_events": len(events),
+            "matched_outcomes": len(matched),
+            **_metric_summary(matched),
+        }
+    return out
+
+
 def analyze_candidate_audit(
     *,
     db_path: str | Path | None = None,
@@ -370,6 +492,15 @@ def analyze_candidate_audit(
         },
         "route_shadow_summary": _route_shadow_summary(rows),
         "strategy_mismatch": _strategy_mismatch(rows),
+        "watch_trigger_shadow_summary": watch_trigger_funnel_summary(
+            session_date=session_date,
+            market=market,
+        ),
+        "watch_trigger_shadow_outcomes": _watch_trigger_shadow_outcomes(
+            rows,
+            session_date=session_date,
+            market=market,
+        ),
     }
 
 

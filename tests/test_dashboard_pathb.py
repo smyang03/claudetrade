@@ -396,7 +396,9 @@ class DashboardPathBTests(unittest.TestCase):
                 {"side": "sell", "pnl_known": True, "pnl": 600.0},
             ]
 
-        with patch.object(dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows):
+        with patch.object(dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows), patch.object(
+            dashboard_server, "_apply_current_session_realized_adjustment", return_value=None
+        ):
             summary = dashboard_server._lifetime_realized_pnl_summary("live")
 
         self.assertEqual(summary["KR"]["pnl_krw"], -1200.0)
@@ -428,6 +430,10 @@ class DashboardPathBTests(unittest.TestCase):
             return {"market": market, "session_active": False}
 
         with patch.object(dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows), patch.object(
+            dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
+        ), patch.object(
             dashboard_server, "_load_live_status", side_effect=fake_live
         ), patch.object(
             dashboard_server, "_is_fresh_live_status", side_effect=lambda live, today: bool(live.get("session_active"))

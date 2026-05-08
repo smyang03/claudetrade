@@ -47,7 +47,7 @@
 ## 현재 완료로 보지 않는 항목
 
 - KR/US live ops QA: guardian가 아직 `BLOCK_START`입니다.
-- Live sell/dashboard PnL hotfix: pending sell 일부는 완료됐지만 `tests/test_dashboard_pathb.py` 2건 실패와 `RECOVERY_MICRO` gate 누락이 남았습니다.
+- Live sell/dashboard PnL hotfix: dashboard PathB QA와 `RECOVERY_MICRO` gate는 완료됐고, legacy `daily_pnl` fallback source labeling 검토만 남았습니다.
 - RiskManager KR/US 분리: 아직 단일 `self.risk` 구조입니다.
 - Preopen/extended-hours 성능 판단: shadow 구현은 있지만 10세션 관찰 리포트가 필요합니다.
 - Candidate tier state machine: future plan이며 tier book runtime은 아직 없습니다.
