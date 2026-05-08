@@ -1,0 +1,491 @@
+{
+  "advisory_only": true,
+  "market": "US",
+  "phase": "manual_rescreen",
+  "records": {
+    "AAL": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 6.801
+    },
+    "AAOI": {
+      "cohort_key": "US|base_universe|day_losers|high|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.7
+    },
+    "AAPL": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.275
+    },
+    "AMD": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "PROBATION",
+      "trainer_score": 2.5
+    },
+    "AMZN": {
+      "cohort_key": "US|base_universe|most_actives|high|near_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.582
+    },
+    "ARM": {
+      "cohort_key": "US|base_universe|day_losers|high|near_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.408
+    },
+    "ARQT": {
+      "cohort_key": "US|base_universe|day_losers|low|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.0
+    },
+    "AXON": {
+      "cohort_key": "US|base_universe|day_gainers|high|near_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.658
+    },
+    "BLBD": {
+      "cohort_key": "US|base_universe|day_gainers|low|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.5
+    },
+    "BLLN": {
+      "cohort_key": "US|base_universe|day_gainers|low|pullback|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.431
+    },
+    "BROS": {
+      "cohort_key": "US|base_universe|day_losers|mid|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.7
+    },
+    "CDE": {
+      "cohort_key": "US|base_universe|most_actives|mid|at_high|mean_reversion",
+      "tier": "WATCH",
+      "trainer_score": 1.747
+    },
+    "CHYM": {
+      "cohort_key": "US|base_universe|day_losers|mid|deep|mean_reversion",
+      "tier": "WATCH",
+      "trainer_score": 3.882
+    },
+    "COKE": {
+      "cohort_key": "US|base_universe|day_losers|mid|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.641
+    },
+    "COLD": {
+      "cohort_key": "US|base_universe|day_gainers|mid|at_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.044
+    },
+    "CORZ": {
+      "cohort_key": "US|base_universe|most_actives|high|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.5
+    },
+    "CRWV": {
+      "cohort_key": "US|base_universe|most_actives|high|deep|gap_pullback",
+      "tier": "PROBATION",
+      "trainer_score": 2.441
+    },
+    "CTRA": {
+      "cohort_key": "US|base_universe|most_actives|high|pullback|momentum",
+      "tier": "WATCH",
+      "trainer_score": 5.0
+    },
+    "CTRI": {
+      "cohort_key": "US|base_universe|day_losers|low|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.5
+    },
+    "DUOL": {
+      "cohort_key": "US|base_universe|day_gainers|mid|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.576
+    },
+    "DXPE": {
+      "cohort_key": "US|base_universe|day_losers|low|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.0
+    },
+    "EXK": {
+      "cohort_key": "US|base_universe|day_gainers|mid|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.5
+    },
+    "F": {
+      "cohort_key": "US|base_universe|most_actives|mid|at_high|mean_reversion",
+      "tier": "WATCH",
+      "trainer_score": 3.847
+    },
+    "FA": {
+      "cohort_key": "US|base_universe|day_gainers|low|near_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.0
+    },
+    "FTNT": {
+      "cohort_key": "US|base_universe|day_gainers|high|at_high|opening_range_pullback",
+      "tier": "QUARANTINE",
+      "trainer_score": 2.5
+    },
+    "FUN": {
+      "cohort_key": "US|base_universe|day_gainers|low|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.7
+    },
+    "GWRE": {
+      "cohort_key": "US|base_universe|day_gainers|low|pullback|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.21
+    },
+    "INTC": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "QUARANTINE",
+      "trainer_score": 4.0
+    },
+    "IONQ": {
+      "cohort_key": "US|base_universe|most_actives|high|pullback|opening_range_pullback",
+      "tier": "QUARANTINE",
+      "trainer_score": -7.646
+    },
+    "IREN": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "QUARANTINE",
+      "trainer_score": 0.5
+    },
+    "ITUB": {
+      "cohort_key": "US|base_universe|most_actives|mid|pullback|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.615
+    },
+    "JOBY": {
+      "cohort_key": "US|base_universe|most_actives|mid|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.3
+    },
+    "KTB": {
+      "cohort_key": "US|base_universe|day_gainers|low|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.62
+    },
+    "LFST": {
+      "cohort_key": "US|base_universe|day_gainers|low|at_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.0
+    },
+    "LGND": {
+      "cohort_key": "US|base_universe|day_losers|low|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.7
+    },
+    "LUMN": {
+      "cohort_key": "US|base_universe|day_losers|low|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 1.2
+    },
+    "MARA": {
+      "cohort_key": "US|base_universe|most_actives|mid|at_high|opening_range_pullback",
+      "tier": "PROBATION",
+      "trainer_score": 2.5
+    },
+    "MDB": {
+      "cohort_key": "US|base_universe|day_gainers|high|pullback|gap_pullback",
+      "tier": "QUARANTINE",
+      "trainer_score": 3.0
+    },
+    "MIDD": {
+      "cohort_key": "US|base_universe|day_gainers|low|near_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.0
+    },
+    "MSFT": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.314
+    },
+    "NAMS": {
+      "cohort_key": "US|base_universe|day_gainers|low|at_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.0
+    },
+    "NOK": {
+      "cohort_key": "US|base_universe|most_actives|high|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.2
+    },
+    "NP": {
+      "cohort_key": "US|base_universe|day_gainers|low|near_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.319
+    },
+    "NTCT": {
+      "cohort_key": "US|base_universe|day_gainers|low|pullback|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.0
+    },
+    "NVDA": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 5.7
+    },
+    "OKLO": {
+      "cohort_key": "US|base_universe|day_losers|high|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 1.996
+    },
+    "ONDS": {
+      "cohort_key": "US|base_universe|most_actives|mid|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.0
+    },
+    "OPEN": {
+      "cohort_key": "US|base_universe|most_actives|mid|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.406
+    },
+    "ORCL": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.566
+    },
+    "PATH": {
+      "cohort_key": "US|base_universe|most_actives|mid|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.046
+    },
+    "PAYC": {
+      "cohort_key": "US|base_universe|day_gainers|mid|at_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.627
+    },
+    "PFE": {
+      "cohort_key": "US|base_universe|most_actives|high|near_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.244
+    },
+    "PL": {
+      "cohort_key": "US|base_universe|day_losers|mid|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.7
+    },
+    "PRMB": {
+      "cohort_key": "US|base_universe|day_gainers|mid|near_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.899
+    },
+    "PTC": {
+      "cohort_key": "US|base_universe|day_gainers|mid|pullback|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 5.0
+    },
+    "PTON": {
+      "cohort_key": "US|base_universe|most_actives|mid|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 5.0
+    },
+    "PTRN": {
+      "cohort_key": "US|base_universe|day_gainers|low|at_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.612
+    },
+    "QCOM": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "PROBATION",
+      "trainer_score": 2.242
+    },
+    "RUN": {
+      "cohort_key": "US|base_universe|day_gainers|mid|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.5
+    },
+    "RXO": {
+      "cohort_key": "US|base_universe|day_gainers|low|at_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.264
+    },
+    "RYAN": {
+      "cohort_key": "US|base_universe|day_gainers|low|at_high|mean_reversion",
+      "tier": "WATCH",
+      "trainer_score": 2.615
+    },
+    "SEZL": {
+      "cohort_key": "US|base_universe|day_gainers|mid|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.5
+    },
+    "SMCI": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "PROBATION",
+      "trainer_score": 2.373
+    },
+    "SNAP": {
+      "cohort_key": "US|base_universe|most_actives|mid|deep|gap_pullback",
+      "tier": "PROBATION",
+      "trainer_score": 0.984
+    },
+    "SNEX": {
+      "cohort_key": "US|base_universe|day_gainers|low|pullback|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.0
+    },
+    "SOFI": {
+      "cohort_key": "US|base_universe|most_actives|high|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.8
+    },
+    "SOUN": {
+      "cohort_key": "US|base_universe|most_actives|mid|deep|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.005
+    },
+    "SRPT": {
+      "cohort_key": "US|base_universe|day_losers|low|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.187
+    },
+    "T": {
+      "cohort_key": "US|base_universe|most_actives|high|pullback|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.346
+    },
+    "TFX": {
+      "cohort_key": "US|base_universe|day_gainers|low|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.7
+    },
+    "TPC": {
+      "cohort_key": "US|base_universe|day_losers|low|deep|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.5
+    },
+    "TSLA": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 5.757
+    },
+    "VERX": {
+      "cohort_key": "US|base_universe|day_gainers|low|near_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.0
+    },
+    "VNT": {
+      "cohort_key": "US|base_universe|day_losers|low|deep|mean_reversion",
+      "tier": "WATCH",
+      "trainer_score": 2.377
+    },
+    "WDAY": {
+      "cohort_key": "US|base_universe|day_gainers|mid|at_high|gap_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.403
+    },
+    "WIX": {
+      "cohort_key": "US|base_universe|day_gainers|low|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 2.116
+    },
+    "WRBY": {
+      "cohort_key": "US|base_universe|day_gainers|mid|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.5
+    },
+    "WULF": {
+      "cohort_key": "US|base_universe|most_actives|high|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 4.038
+    },
+    "ZS": {
+      "cohort_key": "US|base_universe|day_gainers|mid|at_high|opening_range_pullback",
+      "tier": "WATCH",
+      "trainer_score": 3.5
+    }
+  },
+  "session_date": "2026-05-07",
+  "tiers": {
+    "PROBATION": [
+      "AMD",
+      "QCOM",
+      "SMCI",
+      "MARA",
+      "SNAP",
+      "CRWV"
+    ],
+    "QUARANTINE": [
+      "MDB",
+      "IONQ",
+      "IREN",
+      "INTC",
+      "FTNT"
+    ],
+    "WATCH": [
+      "NVDA",
+      "TSLA",
+      "AAL",
+      "CTRA",
+      "SNEX",
+      "FA",
+      "NOK",
+      "SOFI",
+      "ONDS",
+      "PTON",
+      "PFE",
+      "ITUB",
+      "SOUN",
+      "AAPL",
+      "CORZ",
+      "JOBY",
+      "T",
+      "PATH",
+      "CDE",
+      "OPEN",
+      "WULF",
+      "F",
+      "MSFT",
+      "ORCL",
+      "AMZN",
+      "WRBY",
+      "LFST",
+      "NP",
+      "SEZL",
+      "FUN",
+      "RXO",
+      "COLD",
+      "VERX",
+      "PTRN",
+      "MIDD",
+      "PRMB",
+      "NAMS",
+      "BLLN",
+      "BLBD",
+      "AXON",
+      "ZS",
+      "EXK",
+      "PAYC",
+      "PTC",
+      "WDAY",
+      "GWRE",
+      "TFX",
+      "WIX",
+      "NTCT",
+      "RUN",
+      "DUOL",
+      "RYAN",
+      "KTB",
+      "CTRI",
+      "TPC",
+      "DXPE",
+      "COKE",
+      "ARQT",
+      "AAOI",
+      "LUMN",
+      "VNT",
+      "PL",
+      "BROS",
+      "ARM",
+      "CHYM",
+      "SRPT",
+      "OKLO",
+      "LGND"
+    ]
+  },
+  "updated_at": "2026-05-08T04:56:24+09:00"
+}

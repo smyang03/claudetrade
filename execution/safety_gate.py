@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import os
 from typing import Any
 
 from config.v2 import DEFAULT_V2_CONFIG, V2Config, SAFETY_REASON_CODES
@@ -66,7 +67,22 @@ class SafetyGate:
             return _blocked("ORDER_UNKNOWN_UNRESOLVED", "unresolved ORDER_UNKNOWN blocks new entry", details)
         if not ctx.market_open:
             return _blocked("MARKET_CLOSED", "market is closed for new entry", details)
-        if str(ctx.broker_trust_level or "").lower() == "untrusted":
+        broker_trust = str(ctx.broker_trust_level or "").lower()
+        if (
+            market == "US"
+            and _env_bool("US_BROKER_SYNC_QUARANTINE_ENABLED", True)
+            and broker_trust in {"degraded", "untrusted"}
+        ):
+            return _blocked(
+                "BROKER_SYNC_QUARANTINE",
+                "US broker sync quarantine blocks new entry",
+                {
+                    **details,
+                    "broker_trust_level": broker_trust,
+                    "policy_name": "us_broker_trust_quarantine",
+                },
+            )
+        if broker_trust == "untrusted":
             return _blocked("BROKER_UNTRUSTED", "broker state is untrusted", details)
         if float(ctx.price_krw or 0.0) <= 0 or int(ctx.qty or 0) <= 0:
             return _blocked("INVALID_PRICE", "invalid price or quantity", details)
@@ -162,6 +178,13 @@ class PathBSafetyGate:
 
 def validate_reason_code(reason_code: str) -> bool:
     return str(reason_code or "").upper() in set(SAFETY_REASON_CODES)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _blocked(reason_code: str, message: str, details: dict[str, Any]) -> SafetyDecision:

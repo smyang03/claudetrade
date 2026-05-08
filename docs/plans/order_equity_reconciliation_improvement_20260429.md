@@ -1,4 +1,4 @@
-# Order / Equity Reconciliation Improvement Plan - 2026-04-29
+﻿# Order / Equity Reconciliation Improvement Plan - 2026-04-29
 
 ## Goal
 
@@ -100,7 +100,9 @@ This cannot be replaced by a code patch because the current broker may already h
 
 ### P2. Ops / Metrics
 
-- [ ] Deduplicate v2 close metrics by `path_run_id`.
+- [x] Deduplicate v2 close metrics by `path_run_id`.
+  - Current code uses `pathb_path_run_id` / `path_run_id` in `_market_realized_pnl_krw()`.
+  - Covered by `tests/test_pathb_realized_pnl_dedupe.py`.
 - [ ] Keep dashboard and ops review grouped by `session_date`.
 - [ ] Surface broker/local order mismatches in dashboard ops.
 - [ ] Escalate repeated Telegram timeout as an ops visibility warning.
@@ -169,5 +171,7 @@ This cannot be replaced by a code patch because the current broker may already h
 
 - Manual KIS cleanup for `006340` and `047040` remains an operator action.
 - SafetyContext audit-field expansion remains intentionally deferred.
+- Dashboard/session-date ops grouping remains a follow-up item.
 - Dashboard display for broker/local mismatch remains a follow-up item.
+- Repeated Telegram timeout visibility remains a follow-up item.
 - Strategy follow-ups remain separate tuning work.

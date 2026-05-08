@@ -53,6 +53,50 @@ class TelegramPositionsTests(unittest.TestCase):
         self.assertIn("local_fallback", message)
         self.assertIn("Local fallback: US", message)
 
+    def test_stop_cluster_command_reports_and_resets_market_counter_only(self) -> None:
+        bot = SimpleNamespace(
+            current_market="KR",
+            claude_control={},
+            _daily_sl_count={"KR": 4, "US": 0},
+            _v2_same_day_stop_tickers={"KR": {"078150"}, "US": set()},
+        )
+
+        def status_payload(market: str) -> dict:
+            count = bot._daily_sl_count.get(market, 0)
+            stopped = sorted(bot._v2_same_day_stop_tickers.get(market, set()))
+            return {
+                "allowed": count < 4,
+                "blocked": count >= 4,
+                "reason": "STOP_CLUSTER_MARKET_BLOCK" if count >= 4 else "",
+                "scope": "market" if count >= 4 else "",
+                "daily_stop_count": count,
+                "hard_block_count": 4,
+                "disaster_block_count": 6,
+                "first_stop_freeze_minutes": 30,
+                "stopped_tickers": stopped,
+            }
+
+        def consume(market: str) -> None:
+            bot._daily_sl_count[market] = 0
+            bot.claude_control["pending_stop_cluster_reset"] = None
+            bot.claude_control["last_stop_cluster_reset_market"] = market
+            bot.claude_control["last_stop_cluster_reset_count_before"] = 4
+
+        bot._stop_cluster_status_payload = status_payload
+        bot._refresh_claude_control = lambda: None
+        bot._save_claude_control = lambda: None
+        bot._consume_pending_stop_cluster_reset = consume
+
+        status = telegram_commander._handle("/stop_cluster KR", bot)
+        reset = telegram_commander._handle("/stop_cluster_reset KR", bot)
+
+        self.assertIn("KR 4/4", status)
+        self.assertIn("078150", status)
+        self.assertIn("KR 0/4", reset)
+        self.assertIn("078150", reset)
+        self.assertEqual(bot._daily_sl_count["KR"], 0)
+        self.assertEqual(bot._v2_same_day_stop_tickers["KR"], {"078150"})
+
 
 if __name__ == "__main__":
     unittest.main()

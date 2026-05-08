@@ -309,12 +309,37 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
             run = runtime.store.find_path_run(plan.path_run_id)
             self.assertEqual(run["plan"]["order_unknown_resolution"], "broker_no_evidence")
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["order_unknown_phase"], "UNKNOWN_PENDING")
+            self.assertEqual(run["plan"]["order_unknown_reconcile_attempts"], 1)
+            self.assertEqual(run["plan"]["order_unknown_soft_timeout_sec"], 90)
+            self.assertEqual(run["plan"]["order_unknown_hard_timeout_sec"], 300)
 
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan = _runtime(tmp, balance_provider=lambda market, force: (_ for _ in ()).throw(RuntimeError("timeout")))
             runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
             run = runtime.store.find_path_run(plan.path_run_id)
             self.assertEqual(run["plan"]["order_unknown_resolution"], "broker_truth_unavailable")
+
+    def test_order_unknown_phase_final_blocked_is_metadata_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "order_unknown_first_seen_at": "2026-01-01T09:00:00+09:00",
+                    "order_unknown_reconcile_attempts": 1,
+                },
+                merge_plan=True,
+            )
+
+            runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["order_unknown_phase"], "UNKNOWN_FINAL_BLOCKED")
+            self.assertEqual(run["plan"]["order_unknown_reconcile_attempts"], 2)
+            self.assertEqual(run["plan"]["order_unknown_min_reconcile_attempts"], 2)
 
     def test_session_close_marks_unresolved_without_new_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

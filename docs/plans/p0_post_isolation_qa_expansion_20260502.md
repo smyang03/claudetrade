@@ -1,15 +1,13 @@
-# P0 Post-Isolation QA Expansion
+﻿# P0 Post-Isolation QA Expansion
 
-## Current Status - 2026-05-05
+## Current Status - 2026-05-08
 
-Keep this QA expansion active. A 2026-05-05 focused regression run hit two `tests/test_pathb_runtime.py` failures while the surrounding KIS fill/dashboard/preflight checks passed.
+Code-level scope is complete and the old 2026-05-05 PathB runtime blockers are no longer reproduced.
 
-Current blocker:
+- `python -m pytest tests/test_pathb_runtime.py tests/test_broker_truth_snapshot.py tests/test_dashboard_kis_profile.py tests/test_live_preflight_credentials.py tests/test_kis_ws_fill_notice.py tests/test_live_order_reconciliation.py -q` -> `72 passed, 2 warnings`.
+- `python -m pytest tests/test_pid_lock.py tests/test_startup_token_refresh.py tests/test_kis_market_profile.py tests/test_kis_token_auto_refresh.py tests/test_live_token_balance.py tests/test_order_equity_reconciliation_improvement.py tests/test_v2_phase5.py -q` -> `36 passed, 2 warnings`.
 
-- Active `ORDER_UNKNOWN` should block new PathB plan registration, but the test observed a new plan being created.
-- Same-day re-entry guard still blocks before order submission, but the stored cancel reason changed from the expected `SAME_DAY_REENTRY_COOLDOWN` to `SAME_DAY_REENTRY_AFTER_STOP`.
-
-This must be resolved or the expected contract must be deliberately updated before the plan is considered complete.
+This plan is now a deletion candidate. Keep only a short completion note in `docs/DEVELOPED_WORK.md` and remove this file from `docs/plans/` during the next cleanup pass.
 
 ## Purpose
 

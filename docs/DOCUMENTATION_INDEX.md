@@ -1,4 +1,4 @@
-﻿# Documentation Index - 2026-05-05
+﻿# Documentation Index - 2026-05-08
 
 ## Scope
 
@@ -17,12 +17,14 @@
 
 ## Current Cleanup State
 
-2026-05-05 정리 기준:
+2026-05-08 코드 기준 재분류:
 
-- 완료된 plan 문서 27개를 `docs/plans/`에서 삭제했습니다.
-- active plan 문서는 12개만 남겼습니다.
+- `docs/plans/` 현재 Markdown 17개 중 13개는 active/보류, 4개는 삭제/정리 후보입니다.
+- `p0_pathb_fill_dashboard_followup_20260503.md`와 `p0_post_isolation_qa_expansion_20260502.md`는 focused QA가 green으로 확인되어 삭제 후보로 이동했습니다.
+- `entry_risk_control_development_20260508.md`는 구현 완료와 focused QA green으로 확인되어 삭제 후보로 이동했습니다.
+- `TRADING_IMPROVEMENT_WORKLOG_20260421.md`는 과거 worklog라 archive/delete 후보입니다.
 - 상세 완료 이력은 Git history 또는 [DEVELOPED_WORK.md](DEVELOPED_WORK.md)의 요약으로 확인합니다.
-- 현재 우선순위/장단점/리스크 분석은 [TODO_ROADMAP.md](TODO_ROADMAP.md)를 기준으로 봅니다.
+- 현재 우선순위/장단점/리스크 분석과 삭제 후보 목록은 [TODO_ROADMAP.md](TODO_ROADMAP.md)를 기준으로 봅니다.
 
 ## Reading Order
 

@@ -629,7 +629,7 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
 
         unknown_rows = conn.execute(
             """
-            SELECT market, runtime_mode, session_date, ticker, path_run_id, status, updated_at
+            SELECT market, runtime_mode, session_date, ticker, path_run_id, status, updated_at, plan_json
             FROM v2_path_runs
             WHERE runtime_mode=? AND status='ORDER_UNKNOWN'
             ORDER BY updated_at DESC
@@ -641,6 +641,13 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
         previous_unknown: list[dict[str, Any]] = []
         for row in unknown_rows:
             item = dict(row)
+            try:
+                plan = json.loads(str(item.pop("plan_json", "") or "{}"))
+            except Exception:
+                plan = {}
+            item["order_unknown_phase"] = str(plan.get("order_unknown_phase") or "")
+            item["order_unknown_age_sec"] = plan.get("order_unknown_age_sec")
+            item["order_unknown_reconcile_attempts"] = plan.get("order_unknown_reconcile_attempts")
             session_for_market = current_sessions.get(str(item.get("market") or ""))
             if item.get("session_date") == session_for_market:
                 current_unknown.append(item)

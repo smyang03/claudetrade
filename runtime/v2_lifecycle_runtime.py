@@ -282,8 +282,13 @@ class V2LifecycleRuntime:
                 count += 1
         return count
 
-    def max_daily_entries(self) -> int | None:
-        raw = str(os.getenv("V2_MAX_DAILY_ENTRIES", os.getenv("MAX_DAILY_ENTRIES", "0")) or "0").strip()
+    def max_daily_entries(self, market: str | None = None) -> int | None:
+        market_key = str(market or "").strip().upper()
+        market_env = ""
+        if market_key in {"KR", "US"}:
+            market_env = str(os.getenv(f"{market_key}_DAILY_ENTRY_CAP", "") or "").strip()
+        default_cap = "2" if market_key in {"KR", "US"} else "0"
+        raw = market_env or str(os.getenv("V2_MAX_DAILY_ENTRIES", os.getenv("MAX_DAILY_ENTRIES", default_cap)) or default_cap).strip()
         try:
             value = int(raw)
         except ValueError:
@@ -379,7 +384,7 @@ class V2LifecycleRuntime:
             positions=list(getattr(self.bot.risk, "positions", []) or []),
             pending_orders=list(getattr(self.bot, "pending_orders", []) or []),
             daily_entry_count=self.daily_entry_count(market),
-            max_daily_entries=self.max_daily_entries(),
+            max_daily_entries=self.max_daily_entries(market),
             daily_pnl_pct=realized_daily_pnl_pct,
             daily_pnl_basis="realized",
             realized_daily_pnl_pct=realized_daily_pnl_pct,

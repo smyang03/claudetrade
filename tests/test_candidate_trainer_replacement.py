@@ -132,6 +132,27 @@ class CandidateTrainerReplacementTests(unittest.TestCase):
             )
         )
 
+    def test_stop_cluster_defaults_allow_third_stop_before_market_block(self) -> None:
+        bot = _bot_with_health({})
+        bot._daily_sl_last_at = {"KR": None}
+        bot._v2_same_day_stop_tickers = {"KR": set()}
+
+        with patch.dict("os.environ", {}, clear=True):
+            bot._daily_sl_count = {"KR": 3}
+            third = TradingBot._daily_stop_cluster_state(bot, "KR", "005930")
+            bot._daily_sl_count = {"KR": 4}
+            fourth = TradingBot._daily_stop_cluster_state(bot, "KR", "005930")
+            bot._daily_sl_count = {"KR": 6}
+            sixth = TradingBot._daily_stop_cluster_state(bot, "KR", "005930")
+
+        self.assertTrue(third["allowed"])
+        self.assertEqual(third["details"]["hard_block_count"], 4)
+        self.assertEqual(third["details"]["disaster_block_count"], 6)
+        self.assertFalse(fourth["allowed"])
+        self.assertEqual(fourth["reason"], "STOP_CLUSTER_MARKET_BLOCK")
+        self.assertFalse(sixth["allowed"])
+        self.assertEqual(sixth["reason"], "STOP_CLUSTER_DISASTER_BLOCK")
+
     def test_us_concentrated_stop_cluster_allows_other_ticker_before_disaster(self) -> None:
         bot = _bot_with_health({})
         bot._daily_sl_count = {"US": 2}
@@ -183,6 +204,62 @@ class CandidateTrainerReplacementTests(unittest.TestCase):
 
         self.assertFalse(state["allowed"])
         self.assertEqual(state["reason"], "SAME_DAY_REENTRY_AFTER_STOP")
+
+    def test_stop_cluster_operator_reset_keeps_same_day_ticker_block(self) -> None:
+        bot = _bot_with_health({})
+        bot._daily_sl_count = {"KR": 4}
+        bot._daily_sl_last_at = {"KR": None}
+        bot._v2_same_day_stop_tickers = {"KR": {"078150"}}
+        bot.claude_control = {
+            "pending_stop_cluster_reset": {
+                "market": "KR",
+                "source": "dashboard",
+                "reason": "test_reset",
+                "keep_stopped_tickers": True,
+            }
+        }
+        bot._refresh_claude_control = lambda: None
+        bot._save_claude_control = lambda: None
+        bot._write_live_status = lambda *args, **kwargs: None
+
+        TradingBot._consume_pending_stop_cluster_reset(bot, "KR")
+
+        self.assertEqual(bot._daily_sl_count["KR"], 0)
+        self.assertIn("078150", bot._v2_same_day_stop_tickers["KR"])
+        self.assertIsNone(bot.claude_control["pending_stop_cluster_reset"])
+        self.assertEqual(bot.claude_control["last_stop_cluster_reset_count_before"], 4)
+        ticker_state = TradingBot._daily_stop_cluster_state(bot, "KR", "078150")
+        other_state = TradingBot._daily_stop_cluster_state(bot, "KR", "005930")
+        self.assertFalse(ticker_state["allowed"])
+        self.assertTrue(other_state["allowed"])
+
+    def test_stop_cluster_block_alert_is_throttled_by_market_reason_and_count(self) -> None:
+        bot = _bot_with_health({})
+        bot._stop_cluster_alert_keys = {}
+        details = {
+            "daily_stop_count": 4,
+            "hard_block_count": 4,
+            "disaster_block_count": 6,
+            "stopped_tickers": ["078150"],
+        }
+
+        with patch("trading_bot.block_alert") as alert:
+            TradingBot._maybe_alert_stop_cluster_block(
+                bot,
+                "KR",
+                "STOP_CLUSTER_MARKET_BLOCK",
+                "market",
+                details,
+            )
+            TradingBot._maybe_alert_stop_cluster_block(
+                bot,
+                "KR",
+                "STOP_CLUSTER_MARKET_BLOCK",
+                "market",
+                details,
+            )
+
+        alert.assert_called_once()
 
     def test_replacement_delta_gate_rejects_weaker_incoming(self) -> None:
         bot = _bot_with_health(

@@ -848,10 +848,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 진입 차단: {ticker: unblock_epoch_sec} — 손절 쿨다운 + 중복 매수 방지
         self._entry_blocked: dict[str, float] = {}
         self.claude_control: dict = {}
-        # Stop cluster counter: first stop cools down and shrinks size; second stop blocks new entries.
+        # Stop cluster counter: early stops cool down/shrink size; hard threshold blocks new entries.
         self._daily_sl_count: dict[str, int] = {"KR": 0, "US": 0}
         self._daily_sl_last_at: dict[str, Optional[datetime]] = {"KR": None, "US": None}
         self._daily_sl_event_keys: set[str] = set()
+        self._stop_cluster_alert_keys: dict[str, float] = {}
         # 이번 세션에서 매도 완료된 티커 — broker sync 재주입 방지
         self._session_closed_tickers: dict[str, set] = {"KR": set(), "US": set()}
         # WS tick 기반 장중 고가/저가 누적 — 당일봉 주입 시 단일가봉 탈출에 사용
@@ -3688,8 +3689,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         last_at = sl_last_at.get(market_key)
         stopped = set(same_day_stops.get(market_key, set()) or set())
         freeze_min = max(0, int(os.getenv("STOP_CLUSTER_FIRST_FREEZE_MINUTES", "30")))
-        hard_count = max(1, int(os.getenv("STOP_CLUSTER_HARD_BLOCK_COUNT", "2")))
-        disaster_count = max(hard_count, int(os.getenv("STOP_CLUSTER_DISASTER_BLOCK_COUNT", "3")))
+        hard_count = max(1, int(os.getenv("STOP_CLUSTER_HARD_BLOCK_COUNT", "4")))
+        disaster_count = max(hard_count, int(os.getenv("STOP_CLUSTER_DISASTER_BLOCK_COUNT", "6")))
         concentrated_default = "false"
         concentrated_enabled = str(
             os.getenv(
@@ -3782,6 +3783,130 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             }
         return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
 
+    def _stop_cluster_status_payload(self, market: str) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        state = self._daily_stop_cluster_state(market_key)
+        details = dict((state or {}).get("details") or {})
+        pending = {}
+        last_reset = {}
+        try:
+            control = self._normalize_claude_control_state(getattr(self, "claude_control", {}) or {})
+            pending_raw = control.get("pending_stop_cluster_reset") or {}
+            if isinstance(pending_raw, dict) and str(pending_raw.get("market", "")).upper() == market_key:
+                pending = dict(pending_raw)
+            if str(control.get("last_stop_cluster_reset_market", "")).upper() == market_key:
+                last_reset = {
+                    "at": control.get("last_stop_cluster_reset_at", ""),
+                    "by": control.get("last_stop_cluster_reset_by", ""),
+                    "reason": control.get("last_stop_cluster_reset_reason", ""),
+                    "count_before": int(control.get("last_stop_cluster_reset_count_before", 0) or 0),
+                }
+        except Exception:
+            pending = {}
+            last_reset = {}
+        return {
+            "allowed": bool((state or {}).get("allowed", True)),
+            "blocked": bool((state or {}).get("blocked", False)),
+            "reason": str((state or {}).get("reason") or ""),
+            "scope": str((state or {}).get("scope") or ""),
+            "daily_stop_count": int(details.get("daily_stop_count", 0) or 0),
+            "hard_block_count": int(details.get("hard_block_count", 0) or 0),
+            "disaster_block_count": int(details.get("disaster_block_count", 0) or 0),
+            "first_stop_freeze_minutes": int(details.get("first_stop_freeze_minutes", 0) or 0),
+            "minutes_since_last_stop": details.get("minutes_since_last_stop"),
+            "last_stop_at": details.get("last_stop_at", ""),
+            "stopped_tickers": list(details.get("stopped_tickers", []) or []),
+            "concentrated_scope_enabled": bool(details.get("concentrated_scope_enabled", False)),
+            "pending_reset": pending,
+            "last_operator_reset": last_reset,
+        }
+
+    def _consume_pending_stop_cluster_reset(self, market: str) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        self._refresh_claude_control()
+        control = getattr(self, "claude_control", None)
+        if not isinstance(control, dict):
+            return
+        pending = control.get("pending_stop_cluster_reset")
+        if not isinstance(pending, dict) or str(pending.get("market", "")).upper() != market_key:
+            return
+        requested_by = str(pending.get("source") or pending.get("updated_by") or "dashboard")
+        reason = str(pending.get("reason") or "operator_stop_cluster_reset")
+        keep_stopped = bool(pending.get("keep_stopped_tickers", True))
+        before_count = int((getattr(self, "_daily_sl_count", {}) or {}).get(market_key, 0) or 0)
+        stopped_before = sorted((getattr(self, "_v2_same_day_stop_tickers", {}) or {}).get(market_key, set()) or [])
+        self._daily_sl_count[market_key] = 0
+        self._daily_sl_last_at[market_key] = None
+        if not keep_stopped:
+            self._v2_same_day_stop_tickers[market_key] = set()
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        control["pending_stop_cluster_reset"] = None
+        control["last_stop_cluster_reset_at"] = now_iso
+        control["last_stop_cluster_reset_market"] = market_key
+        control["last_stop_cluster_reset_count_before"] = before_count
+        control["last_stop_cluster_reset_by"] = requested_by
+        control["last_stop_cluster_reset_reason"] = reason
+        self._save_claude_control()
+        log.warning(
+            f"[stop cluster reset] {market_key} count {before_count}->0 by={requested_by} "
+            f"keep_stopped={keep_stopped} stopped={stopped_before}"
+        )
+        try:
+            self._write_live_status(market_key, force=True)
+        except Exception as exc:
+            log.debug(f"[stop cluster reset] live_status update failed {market_key}: {exc}")
+
+    def _maybe_alert_stop_cluster_block(self, market: str, reason: str, scope: str, details: dict) -> None:
+        reason_key = str(reason or "")
+        if reason_key not in {
+            "STOP_CLUSTER_FIRST_STOP_COOLDOWN",
+            "STOP_CLUSTER_MARKET_BLOCK",
+            "STOP_CLUSTER_DISASTER_BLOCK",
+        }:
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        details = dict(details or {})
+        count = int(details.get("daily_stop_count", 0) or 0)
+        hard = int(details.get("hard_block_count", 0) or 0)
+        disaster = int(details.get("disaster_block_count", 0) or 0)
+        stopped = list(details.get("stopped_tickers", []) or [])
+        key = f"{market_key}:{reason_key}:{count}:{scope or 'market'}"
+        now = time.time()
+        try:
+            cooldown_min = max(1.0, float(os.getenv("STOP_CLUSTER_TG_ALERT_COOLDOWN_MINUTES", "15") or 15))
+        except Exception:
+            cooldown_min = 15.0
+        seen = getattr(self, "_stop_cluster_alert_keys", None)
+        if not isinstance(seen, dict):
+            self._stop_cluster_alert_keys = {}
+            seen = self._stop_cluster_alert_keys
+        if now - float(seen.get(key, 0.0) or 0.0) < cooldown_min * 60.0:
+            return
+        seen[key] = now
+        label = {
+            "STOP_CLUSTER_FIRST_STOP_COOLDOWN": "첫 손절 쿨다운",
+            "STOP_CLUSTER_MARKET_BLOCK": "시장 신규매수 차단",
+            "STOP_CLUSTER_DISASTER_BLOCK": "재난 차단",
+        }.get(reason_key, reason_key)
+        lines = [
+            f"상태: {label}",
+            f"카운트: {count}/{hard or '-'}" + (f" · 재난 {disaster}" if disaster else ""),
+            f"범위: {scope or 'market'}",
+        ]
+        last_stop_at = str(details.get("last_stop_at") or "")
+        minutes = details.get("minutes_since_last_stop")
+        if last_stop_at:
+            lines.append(f"마지막 손절: {last_stop_at[-14:]}" + (f" · {minutes}분 전" if minutes is not None else ""))
+        if stopped:
+            lines.append(f"당일 재진입 차단: {', '.join([str(x) for x in stopped[:12]])}")
+        lines.append("조회: /stop_cluster")
+        lines.append(f"시장 카운터 해제: /stop_cluster_reset {market_key}")
+        lines.append("해제해도 당일 손절 종목 재진입 차단은 유지됩니다.")
+        try:
+            block_alert("손실클러스터 신규진입 중단", lines, market=market_key, icon="🚧", show_time=True)
+        except Exception as exc:
+            log.debug(f"[stop cluster alert failed] {market_key} {reason_key}: {exc}")
+
     def _new_buy_block_state(self, market: str, ticker: str = "", strategy: str = "") -> dict:
         market_key = str(market or "").upper()
         raw_ticker = str(ticker or "").strip()
@@ -3810,13 +3935,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             }
         stop_cluster = self._daily_stop_cluster_state(market_key, ticker_key)
         if bool((stop_cluster or {}).get("blocked")):
-            return {
+            state = {
                 "allowed": False,
                 "blocked": True,
                 "reason": str((stop_cluster or {}).get("reason") or "STOP_CLUSTER_MARKET_BLOCK"),
                 "scope": str((stop_cluster or {}).get("scope") or "market"),
                 "details": {**details, **dict((stop_cluster or {}).get("details") or {})},
             }
+            self._maybe_alert_stop_cluster_block(
+                market_key,
+                str(state.get("reason") or ""),
+                str(state.get("scope") or ""),
+                dict(state.get("details") or {}),
+            )
+            return state
         analyst_state = self._analyst_new_buy_block_state(market_key)
         if bool((analyst_state or {}).get("blocked")):
             return {
@@ -3860,6 +3992,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "scope": str((state or {}).get("scope") or "ticker"),
                     "details": {**details, "unknown_state": state},
                 }
+        broker_trust = self._broker_trust_level(market_key)
+        if (
+            market_key == "US"
+            and self._runtime_bool("US_BROKER_SYNC_QUARANTINE_ENABLED", True)
+            and broker_trust in {"degraded", "untrusted"}
+        ):
+            try:
+                recheck_after_seconds = max(
+                    5,
+                    int(float(os.getenv("US_BROKER_SYNC_QUARANTINE_RECHECK_SECONDS", "60") or 60)),
+                )
+            except Exception:
+                recheck_after_seconds = 60
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": "BROKER_SYNC_QUARANTINE",
+                "scope": "market",
+                "details": {
+                    **details,
+                    "broker_trust_level": broker_trust,
+                    "policy_name": "us_broker_trust_quarantine",
+                    "recheck_after_seconds": recheck_after_seconds,
+                },
+            }
         return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
     def _record_new_buy_block(
         self,
@@ -3931,6 +4088,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                     self._audit_link_signal_episode(_audit_signal_id, _episode_id, reason="ORDER_UNKNOWN_SIGNAL_BLOCKED")
         log.warning(f"[NEW_BUY_BLOCKED] {market_key} {ticker_key or '*'} {strategy} {reason} scope={scope}")
+        self._maybe_alert_stop_cluster_block(market_key, reason, scope, details)
         if signal_row is not None and _ML_DB_ENABLED:
             try:
                 _ml_write_eval(
@@ -8495,16 +8653,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "fetched_at": datetime.now(KST).isoformat(timespec="seconds"),
         }
     def _broker_trust_level(self, market: str) -> str:
-        return str(self._broker_state.get(market, {}).get("trust_level", "unknown") or "unknown")
+        return str(getattr(self, "_broker_state", {}).get(market, {}).get("trust_level", "unknown") or "unknown")
     def _entry_allowed_by_broker_state(self, market: str) -> tuple[bool, str]:
-        trust = self._broker_trust_level(market)
+        market_key = str(market or "").upper()
+        trust = self._broker_trust_level(market_key)
         if trust == "trusted":
             return True, "OK"
+        if (
+            market_key == "US"
+            and self._runtime_bool("US_BROKER_SYNC_QUARANTINE_ENABLED", True)
+            and trust in {"degraded", "untrusted"}
+        ):
+            return False, "BROKER_SYNC_QUARANTINE"
         # 포지션이 없을 때는 degraded 상태에서도 신규 진입 허용
         # (보호할 기존 포지션이 없으므로 브로커 불신이 진입을 막을 이유 없음)
         has_positions = any(
-            self._ticker_market(p.get("ticker", "")) == market
-            for p in self.risk.positions
+            self._ticker_market(p.get("ticker", "")) == market_key
+            for p in getattr(getattr(self, "risk", None), "positions", [])
         )
         if trust == "degraded":
             if not has_positions:
@@ -10017,12 +10182,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             reason_priority = {
                 "loss_cap": 0,
                 "soft_exit_floor_price": 1,
-                "profit_floor": 2,
-                "stop_loss": 3,
-                "trail_stop": 4,
-                "recovery_micro_time_stop": 5,
-                "pre_close": 6,
-                "tp_check": 7,
+                "mfe_breakeven": 2,
+                "profit_floor": 3,
+                "stop_loss": 4,
+                "trail_stop": 5,
+                "recovery_micro_time_stop": 6,
+                "pre_close": 7,
+                "tp_check": 8,
             }
             deduped: dict[tuple[str, str], dict] = {}
             for cand in candidates:
@@ -10769,7 +10935,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     @staticmethod
     def _auto_sell_review_required(reason: str) -> bool:
-        return str(reason or "").strip().lower() not in {"manual_sell"}
+        return str(reason or "").strip().lower() not in {"manual_sell", "mfe_breakeven"}
 
     @staticmethod
     def _auto_sell_review_default_policy(reason: str) -> str:
@@ -11635,6 +11801,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "skipped_no_broker_evidence_tickers": [],
             "restored_stop_count": 0,
             "restored_ticker_only_stop_count": 0,
+            "restored_stop_suppressed_by_reset_count": 0,
             "daily_stop_count": int((getattr(self, "_daily_sl_count", {}) or {}).get(market_key, 0) or 0),
             "stopped_tickers": [],
         }
@@ -11656,6 +11823,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         restored_stops: set[str] = set()
         restored_stop_count = 0
         last_stop_at: Optional[datetime] = None
+        operator_reset_at: Optional[datetime] = None
+        try:
+            control = self._normalize_claude_control_state(getattr(self, "claude_control", {}) or {})
+            if str(control.get("last_stop_cluster_reset_market", "") or "").upper() == market_key:
+                operator_reset_at = self._parse_decision_timestamp(control.get("last_stop_cluster_reset_at"))
+        except Exception:
+            operator_reset_at = None
 
         try:
             lines = DECISIONS_FILE.read_text(encoding="utf-8").splitlines()
@@ -11719,11 +11893,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
             self._daily_sl_event_keys.add(stop_key)
             restored_stops.add(ticker)
+            parsed_at = self._parse_decision_timestamp(occurred_at_raw)
+            if operator_reset_at is not None and parsed_at is not None and parsed_at <= operator_reset_at:
+                summary["restored_stop_suppressed_by_reset_count"] += 1
+                continue
             if self._closed_decision_is_pathb_ticker_only_stop(rec, market_key):
                 summary["restored_ticker_only_stop_count"] += 1
                 continue
             restored_stop_count += 1
-            parsed_at = self._parse_decision_timestamp(occurred_at_raw)
             if parsed_at and (last_stop_at is None or parsed_at > last_stop_at):
                 last_stop_at = parsed_at
 
@@ -11906,6 +12083,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "soft_exit_review_fallback",
             "soft_exit_reference_source",
             "soft_exit_reference_target",
+            "mfe_breakeven_price",
+            "mfe_breakeven_triggered",
+            "mfe_breakeven_trigger_pct",
+            "mfe_breakeven_buffer_pct",
             "auto_sell_reviewed_at",
             "auto_sell_review_reason",
             "auto_sell_review_action",
@@ -11939,7 +12120,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "exit_owner",
         )
         exit_meta = {key: cand[key] for key in audit_keys if key in cand}
-        if reason in ("loss_cap", "profit_floor", "stop_loss", "trail_stop", "soft_exit_floor_price"):
+        if reason == "mfe_breakeven":
+            exit_meta.setdefault("exit_owner", "mfe_breakeven_policy")
+        elif reason in ("loss_cap", "profit_floor", "stop_loss", "trail_stop", "soft_exit_floor_price"):
             exit_meta.setdefault("exit_owner", "system_hard_rule")
         ex = self.risk.close_position(cand["ticker"], cand["exit_price"], reason, exit_meta=exit_meta)
         if not ex:
@@ -11971,7 +12154,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 occurred_at=str(ex.get("timestamp") or ex.get("closed_at") or ""),
             )
             _sl_cnt = self._daily_sl_count[_sl_mkt]
-            if _sl_cnt >= 2:
+            _sl_hard_count = max(1, int(os.getenv("STOP_CLUSTER_HARD_BLOCK_COUNT", "4")))
+            if _sl_cnt >= _sl_hard_count:
                 log.warning(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 신규 진입 차단")
             else:
                 _fst_mult = float(os.getenv("STOP_CLUSTER_FIRST_STOP_SIZE_MULT", "0.5"))
@@ -12285,6 +12469,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # ── 휴장일 체크 (주말 + 공휴일) ───────────────────────────────────────
         _log_flow("info", f"[{market}] session_open")
         self._refresh_claude_control()
+        self._consume_pending_stop_cluster_reset(market)
         session_date_obj = _market_session_date(market)
         # ── 휴장일 체크 (주말 + 공휴일) ───────────────────────────────────────
         if not _is_trading_day(market, session_date_obj):
@@ -13683,6 +13868,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 cause="legacy_pre_session_sell_queue_disabled",
             )
         self._refresh_claude_control()
+        self._consume_pending_stop_cluster_reset(market)
         self._consume_pending_claude_trigger(market)
         self._consume_pending_position_review(market)
         self._consume_pending_sell(market)
@@ -14678,15 +14864,29 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     ):
                         _cont_p = _ap("continuation")
                         if cont_sig(sig_df, i, _cont_p):
-                            signal_fired = True
-                            strategy_name = "continuation"
-                            params = _cont_p
-                            self._continuation_used[ticker] = True
-                            log.info(
-                                f"[continuation entry {market}] {ticker} "
-                                f"elapsed={self._market_elapsed_min(market):.1f}min "
-                                f"size_mult={_cont_p.get('size_mult', 0.5)}"
-                            )
+                            if str(os.getenv("KR_CONTINUATION_NEW_ENTRY_BLOCK", "true")).strip().lower() in {"1", "true", "yes", "y", "on"}:
+                                self._bump_runtime_reason(market, ticker, "kr_continuation_new_entry_block")
+                                analysis_log.info(
+                                    f"[skip {market}] {ticker} kr_continuation_new_entry_block",
+                                    extra={"extra": {
+                                        "event": "entry_skip",
+                                        "market": market,
+                                        "ticker": ticker,
+                                        "strategy": "continuation",
+                                        "reason": "kr_continuation_new_entry_block",
+                                        "mode": mode,
+                                    }},
+                                )
+                            else:
+                                signal_fired = True
+                                strategy_name = "continuation"
+                                params = _cont_p
+                                self._continuation_used[ticker] = True
+                                log.info(
+                                    f"[continuation entry {market}] {ticker} "
+                                    f"elapsed={self._market_elapsed_min(market):.1f}min "
+                                    f"size_mult={_cont_p.get('size_mult', 0.5)}"
+                                )
                     elif not signal_fired:
                         _cont_p = _ap("continuation")
                         if cont_sig(sig_df, i, _cont_p):
@@ -15334,24 +15534,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     log.info(
                         f"  [{ticker}] score={_ep_score:.3f} -> size_mult x {_ep_size_mult} = {size_mult:.2f}"
                     )
-                # Stop cluster: first stop shrinks size; second stop blocks new entries.
+                # Stop cluster: stops below the hard threshold shrink size; hard threshold blocks new entries.
                 _sl_cnt_now = self._daily_sl_count.get(market, 0)
-                if _sl_cnt_now >= 3:
+                _sl_hard_count = max(1, int(os.getenv("STOP_CLUSTER_HARD_BLOCK_COUNT", "4")))
+                if _sl_cnt_now >= _sl_hard_count:
                     log.warning(
-                        f"  [{ticker}] stop cluster count={_sl_cnt_now} -> new entry blocked"
-                    )
-                    continue
-                elif _sl_cnt_now == 2:
-                    log.warning(
-                        f"  [{ticker}] stop cluster count={_sl_cnt_now} -> new entry blocked"
+                        f"  [{ticker}] stop cluster count={_sl_cnt_now} >= {_sl_hard_count} -> new entry blocked"
                     )
                     continue
                 # ── 3. 장 후반 진입 기준 강화 ───────────────────────────────
-                elif _sl_cnt_now == 1:
+                elif _sl_cnt_now > 0:
                     _first_stop_mult = float(os.getenv("STOP_CLUSTER_FIRST_STOP_SIZE_MULT", "0.5"))
                     size_mult = round(size_mult * max(0.1, min(1.0, _first_stop_mult)), 2)
                 # 인버스 ETF 제외 — 장 후반 하락 지속 시 진입 기회가 더 좋을 수 있음
-                    log.info(f"  [{ticker}] stop cluster count=1 size_mult={size_mult:.2f}")
+                    log.info(f"  [{ticker}] stop cluster count={_sl_cnt_now} size_mult={size_mult:.2f}")
                 # ── 3. 장 후반 진입 기준 강화 ───────────────────────────────
                 # KR 14:00 이후 / US 03:00 이후: score < 0.6이면 진입 보류
                 # 인버스 ETF 제외 — 장 후반 하락 지속 시 진입 기회가 더 좋을 수 있음
@@ -17959,6 +18155,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "active": bool(self.risk.halted),
                         "reason": self.risk.halt_reason or "",
                     },
+                    "stop_cluster": self._stop_cluster_status_payload(market),
                     "positions":      positions,
                     "position_count": len(positions),
                     "pending_orders": pending_orders,

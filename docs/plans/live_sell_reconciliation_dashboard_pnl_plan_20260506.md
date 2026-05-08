@@ -1,10 +1,29 @@
-# Live Sell Reconciliation / Dashboard PnL Hotfix Plan - 2026-05-06
+﻿# Live Sell Reconciliation / Dashboard PnL Hotfix Plan - 2026-05-06
 
 ## Goal
 
 Fix the operationally risky gaps found in live sell confirmation, first-stop recovery entry gating, and dashboard realized PnL aggregation.
 
 This plan separates mandatory fixes from optional hardening so the first implementation batch stays small and safe.
+
+## Current Status - 2026-05-08
+
+Keep this plan active.
+
+Implemented/covered in code:
+
+- Pending sell reconciliation path exists: `_reconcile_pending_sell_confirmations()`, `_clear_sell_confirmation_pending()`, `_close_position_from_pending_sell()`.
+- Focused pending-sell reconciliation tests pass: `python -m pytest tests/test_live_sell_pending_reconcile.py tests/test_pathb_realized_pnl_dedupe.py -q` -> `9 passed, 2 warnings`.
+- `_write_live_status()` now writes market-scoped realized PnL fields including `market_daily_pnl_krw` and `market_realized_pnl_krw`.
+
+Still open:
+
+- `python -m pytest tests/test_order_equity_reconciliation_improvement.py tests/test_dashboard_pathb.py tests/test_auto_sell_claude_gate.py -q` fails 2 dashboard tests:
+  - `tests/test_dashboard_pathb.py::DashboardPathBTests::test_lifetime_realized_pnl_summary_adds_active_session_realized_adjustment`
+  - `tests/test_dashboard_pathb.py::DashboardPathBTests::test_lifetime_realized_pnl_summary_splits_markets_and_excludes_unknown_cost_basis`
+- `_new_buy_block_state()` still returns the raw stop-cluster block before applying a `RECOVERY_MICRO` first-stop cooldown exemption.
+- Dashboard fallback source labeling still needs review: legacy `daily_pnl` fallback is not clearly labeled separately from market-scoped live status.
+- Broker-confirmed local PnL matching should be rechecked so an order-number match also consumes the corresponding loose `(ticker, qty)` slot.
 
 ## Scope Decision
 

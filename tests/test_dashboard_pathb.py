@@ -22,6 +22,8 @@ class DashboardPathBTests(unittest.TestCase):
         body = res.get_data(as_text=True)
         self.assertIn('id="today-pnl"', body)
         self.assertIn('id="today-krw"', body)
+        self.assertIn('id="bar-stop-cluster"', body)
+        self.assertIn('requestStopClusterReset', body)
         self.assertIn('id="lifetime-pnl-total"', body)
         self.assertIn('id="lifetime-pnl-split"', body)
         self.assertIn('id="lifetime-pnl-basis"', body)
@@ -37,6 +39,34 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertLess(body.index("function escapeHtml"), body.index("async function loadJudgments"))
         self.assertLess(body.index("function escapeHtml"), body.index("basis.digest_built_at"))
         self.assertIn("${escapeHtml(basis.warning)}", body)
+
+    def test_today_page_distinguishes_watch_only_fill_history_labels(self) -> None:
+        res = app.test_client().get("/")
+
+        self.assertEqual(res.status_code, 200)
+        body = res.get_data(as_text=True)
+        self.assertIn("displayEventLabel", body)
+        self.assertIn("오늘 매수 이력", body)
+        self.assertIn("오늘 매도 이력", body)
+
+    def test_watch_only_fill_history_reason_mentions_current_buy_exclusion(self) -> None:
+        buy_reason = dashboard_server._fallback_select_reason(
+            "078150",
+            "KR",
+            "MODERATE_BULL",
+            {"selection_status": "WATCH_ONLY", "last_event": "buy_filled"},
+        )
+        sell_reason = dashboard_server._fallback_select_reason(
+            "006345",
+            "KR",
+            "MODERATE_BULL",
+            {"selection_status": "WATCH_ONLY", "last_event": "sell_filled"},
+        )
+
+        self.assertIn("오늘 매수체결 이력 있음", buy_reason)
+        self.assertIn("현재 신규매수 후보 아님", buy_reason)
+        self.assertIn("오늘 매도체결 완료", sell_reason)
+        self.assertIn("현재 재진입 후보 아님", sell_reason)
 
     def test_pathb_page_loads_and_old_pages_redirect(self) -> None:
         client = app.test_client()
@@ -270,7 +300,20 @@ class DashboardPathBTests(unittest.TestCase):
         ), patch.object(
             dashboard_server, "load_today", return_value={"date": "2026-05-04", "actual_result": {}, "consensus": {"mode": "NEUTRAL"}}
         ), patch.object(
-            dashboard_server, "_load_live_status", return_value={"mode": "NEUTRAL", "pending_orders": [], "broker": {}}
+            dashboard_server,
+            "_load_live_status",
+            return_value={
+                "mode": "NEUTRAL",
+                "pending_orders": [],
+                "broker": {},
+                "stop_cluster": {
+                    "daily_stop_count": 3,
+                    "hard_block_count": 4,
+                    "disaster_block_count": 6,
+                    "blocked": False,
+                    "reason": "",
+                },
+            },
         ), patch.object(
             dashboard_server, "_is_fresh_live_status", return_value=True
         ), patch.object(
@@ -319,6 +362,25 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(today["pnl_summary"]["lifetime_realized"]["kr_pnl_krw"], -1000.0)
         self.assertEqual(today["pnl_summary"]["lifetime_realized"]["us_pnl_krw"], 2500.0)
         self.assertEqual(today["pnl_summary"]["lifetime_realized"]["total_pnl_krw"], 1500.0)
+        self.assertEqual(today["stop_cluster"]["daily_stop_count"], 3)
+        self.assertEqual(today["stop_cluster"]["hard_block_count"], 4)
+
+    def test_stop_cluster_reset_endpoint_queues_operator_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            control_path = Path(tmp) / "live_claude_control.json"
+            with patch.object(dashboard_server, "_claude_control_path", return_value=control_path):
+                response = app.test_client().post(
+                    "/api/control/stop-cluster-reset",
+                    json={"market": "US", "mode": "live"},
+                )
+
+                self.assertEqual(response.status_code, 200)
+                payload = json.loads(control_path.read_text(encoding="utf-8"))
+
+        pending = payload["pending_stop_cluster_reset"]
+        self.assertEqual(pending["market"], "US")
+        self.assertTrue(pending["keep_stopped_tickers"])
+        self.assertEqual(payload["updated_by"], "dashboard")
 
     def test_lifetime_realized_pnl_summary_splits_markets_and_excludes_unknown_cost_basis(self) -> None:
         def fake_rows(market, period, start, end, mode="paper"):

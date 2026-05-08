@@ -27,7 +27,12 @@ from kis_api import cancel_order, get_balance, get_price, place_order, precheck_
 from lifecycle.event_store import EventStore
 from logger import get_trading_logger
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
-from runtime.pathb_reasons import normalize_pathb_decision_exit_reason
+from runtime.pathb_reasons import (
+    ORDER_UNKNOWN_HARD_TIMEOUT_SEC_DEFAULT,
+    ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS_DEFAULT,
+    ORDER_UNKNOWN_SOFT_TIMEOUT_SEC_DEFAULT,
+    normalize_pathb_decision_exit_reason,
+)
 from runtime_paths import get_runtime_path
 from telegram_reporter import buy_order_alert, send as tg_send
 
@@ -115,6 +120,9 @@ class PathBRuntime:
         "session_end_unresolved",
     }
     ORDER_UNKNOWN_OPEN_LOOKBACK_SESSIONS = 5
+    ORDER_UNKNOWN_SOFT_TIMEOUT_SEC = ORDER_UNKNOWN_SOFT_TIMEOUT_SEC_DEFAULT
+    ORDER_UNKNOWN_HARD_TIMEOUT_SEC = ORDER_UNKNOWN_HARD_TIMEOUT_SEC_DEFAULT
+    ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS = ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS_DEFAULT
     PRE_CLOSE_CARRY_REVIEW_MINUTES = 15.0
     HOLD_POLICY_MIN_VALID_MINUTES = 3
     HOLD_POLICY_MAX_VALID_MINUTES = 30
@@ -890,6 +898,11 @@ class PathBRuntime:
         if not self._market_live_enabled(market):
             self.cancel_waiting(market, reason="PATHB_MANUALLY_DISABLED")
             return
+        kr_new_entry_blocked = (
+            market == "KR"
+            and str(os.getenv("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK", "true")).strip().lower()
+            in {"1", "true", "yes", "y", "on"}
+        )
         entry_gate = self._new_buy_block_state(market, strategy="path_b")
         if not bool(entry_gate.get("allowed", True)):
             self._audit_entry_scan_blocked(market, entry_gate)
@@ -898,6 +911,7 @@ class PathBRuntime:
                 f"scope={entry_gate.get('scope')}"
             )
             return
+        kr_blocked_tickers: list[str] = []
         for run in self.adapter.get_waiting_runs(market, self.mode, self._session_date(market)):
             plan = self._plan_from_run(run)
             if plan is None:
@@ -917,8 +931,32 @@ class PathBRuntime:
                 continue
             if not signal.signal:
                 continue
+            if kr_new_entry_blocked:
+                kr_blocked_tickers.append(plan.ticker)
+                self._record_blocked(
+                    market,
+                    plan.ticker,
+                    plan.decision_id,
+                    "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
+                    {
+                        "stage": "pathb_waiting_scan",
+                        "scope": "market",
+                        "reason": "kr_claude_price_new_entry_block",
+                        "price": float(current or 0.0),
+                        "limit_price": float(signal.limit_price or 0.0),
+                        "signal_reason": str(signal.reason or ""),
+                    },
+                    plan.path_run_id,
+                )
+                continue
             self._audit_pathb_zone_hit(plan, signal)
             self._submit_buy(plan, signal)
+        if kr_blocked_tickers:
+            sample = ",".join(kr_blocked_tickers[:8])
+            log.warning(
+                f"[PathB entry scan blocked] KR KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK "
+                f"count={len(kr_blocked_tickers)} tickers={sample}"
+            )
 
     def reconcile_buy_pending_cancel_above(self, market: str, *, force: bool = False) -> dict[str, Any]:
         market_key = str(market or "").upper()
@@ -1449,7 +1487,7 @@ class PathBRuntime:
             positions=list(getattr(getattr(self.bot, "risk", None), "positions", []) or []),
             pending_orders=list(getattr(self.bot, "pending_orders", []) or []),
             daily_entry_count=self._base_daily_entry_count(market),
-            max_daily_entries=self._base_max_daily_entries(),
+            max_daily_entries=self._base_max_daily_entries(market),
             daily_pnl_pct=realized_daily_pnl_pct,
             daily_pnl_basis="realized",
             realized_daily_pnl_pct=realized_daily_pnl_pct,
@@ -3404,12 +3442,53 @@ class PathBRuntime:
         *,
         next_retry: bool,
     ) -> None:
+        now_dt = datetime.now(KST)
+        run = self.store.find_path_run(path_run_id) or {}
+        plan = run.get("plan") or {}
+        first_seen = str(
+            plan.get("order_unknown_first_seen_at")
+            or run.get("updated_at")
+            or run.get("created_at")
+            or ""
+        )
+
+        def _parse_dt(raw: str) -> datetime | None:
+            text = str(raw or "").strip()
+            if not text:
+                return None
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except Exception:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=KST)
+            return parsed.astimezone(KST)
+
+        first_seen_dt = _parse_dt(first_seen) or now_dt
+        age_sec = max(0, int((now_dt - first_seen_dt).total_seconds()))
+        attempts = int(plan.get("order_unknown_reconcile_attempts") or 0) + 1
+        soft_sec = int(self.ORDER_UNKNOWN_SOFT_TIMEOUT_SEC)
+        hard_sec = int(self.ORDER_UNKNOWN_HARD_TIMEOUT_SEC)
+        min_attempts = int(self.ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS)
+        if age_sec >= hard_sec and attempts >= min_attempts:
+            phase = "UNKNOWN_FINAL_BLOCKED"
+        elif age_sec >= soft_sec:
+            phase = "UNKNOWN_SOFT_TIMEOUT"
+        else:
+            phase = "UNKNOWN_PENDING"
         payload = {
             "order_unknown_resolution": str(resolution or ""),
-            "order_unknown_resolution_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "order_unknown_resolution_at": now_dt.isoformat(timespec="seconds"),
+            "order_unknown_first_seen_at": first_seen_dt.isoformat(timespec="seconds"),
+            "order_unknown_phase": phase,
+            "order_unknown_age_sec": age_sec,
+            "order_unknown_reconcile_attempts": attempts,
+            "order_unknown_soft_timeout_sec": soft_sec,
+            "order_unknown_hard_timeout_sec": hard_sec,
+            "order_unknown_min_reconcile_attempts": min_attempts,
         }
         if next_retry:
-            payload["next_broker_truth_recheck_at"] = (datetime.now(KST) + timedelta(minutes=5)).isoformat(timespec="seconds")
+            payload["next_broker_truth_recheck_at"] = (now_dt + timedelta(minutes=5)).isoformat(timespec="seconds")
         else:
             payload["next_broker_truth_recheck_at"] = ""
         payload.update(extra or {})
@@ -4548,11 +4627,11 @@ class PathBRuntime:
         except Exception:
             return 0
 
-    def _base_max_daily_entries(self) -> int | None:
+    def _base_max_daily_entries(self, market: str = "") -> int | None:
         try:
             v2 = getattr(self.bot, "v2", None)
             if v2 is not None and hasattr(v2, "max_daily_entries"):
-                return v2.max_daily_entries()
+                return v2.max_daily_entries(market)
         except Exception:
             return None
         return None

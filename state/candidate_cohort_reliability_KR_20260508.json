@@ -1,0 +1,295 @@
+{
+  "cohorts": {
+    "KR|base_universe|unclassified|high|at_high|gap_pullback": {
+      "healthy_count": 3,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 8,
+      "sample_count": 21,
+      "score": -0.0952,
+      "weak_count": 5
+    },
+    "KR|base_universe|unclassified|high|at_high|momentum": {
+      "healthy_count": 1,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 2,
+      "sample_count": 7,
+      "score": 0.0,
+      "weak_count": 1
+    },
+    "KR|base_universe|unclassified|high|at_high|opening_range_pullback": {
+      "healthy_count": 2,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 14,
+      "sample_count": 53,
+      "score": -0.1509,
+      "weak_count": 10
+    },
+    "KR|base_universe|unclassified|high|deep|gap_pullback": {
+      "healthy_count": 11,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 9,
+      "sample_count": 40,
+      "score": 0.1,
+      "weak_count": 7
+    },
+    "KR|base_universe|unclassified|high|deep|momentum": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 0,
+      "sample_count": 7,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|high|deep|opening_range_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 12,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|high|near_high|gap_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T13:28:58+09:00",
+      "ready_count": 1,
+      "sample_count": 1,
+      "score": -1.0,
+      "weak_count": 1
+    },
+    "KR|base_universe|unclassified|high|near_high|opening_range_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T13:59:09+09:00",
+      "ready_count": 0,
+      "sample_count": 6,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|high|pullback|gap_pullback": {
+      "healthy_count": 2,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 8,
+      "sample_count": 14,
+      "score": -0.2857,
+      "weak_count": 6
+    },
+    "KR|base_universe|unclassified|high|pullback|momentum": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 1,
+      "sample_count": 4,
+      "score": -0.25,
+      "weak_count": 1
+    },
+    "KR|base_universe|unclassified|high|pullback|opening_range_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 15,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|at_high|gap_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 18,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|at_high|momentum": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 0,
+      "sample_count": 3,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|at_high|opening_range_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 25,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|deep|gap_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 31,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|deep|mean_reversion": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 6,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|deep|momentum": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 0,
+      "sample_count": 13,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|deep|opening_range_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 46,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|near_high|momentum": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 0,
+      "sample_count": 3,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|near_high|opening_range_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 3,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|pullback|gap_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 3,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|pullback|mean_reversion": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 6,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|pullback|momentum": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 0,
+      "sample_count": 5,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|low|pullback|opening_range_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 17,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|mid|at_high|gap_pullback": {
+      "healthy_count": 3,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 8,
+      "sample_count": 13,
+      "score": 0.1538,
+      "weak_count": 1
+    },
+    "KR|base_universe|unclassified|mid|at_high|momentum": {
+      "healthy_count": 1,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 1,
+      "sample_count": 6,
+      "score": 0.1667,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|mid|at_high|observe": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 0,
+      "sample_count": 3,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|mid|at_high|opening_range_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 6,
+      "sample_count": 45,
+      "score": -0.2222,
+      "weak_count": 10
+    },
+    "KR|base_universe|unclassified|mid|deep|gap_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 0,
+      "sample_count": 6,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|mid|deep|momentum": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 0,
+      "sample_count": 13,
+      "score": -0.0769,
+      "weak_count": 1
+    },
+    "KR|base_universe|unclassified|mid|deep|opening_range_pullback": {
+      "healthy_count": 1,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 5,
+      "sample_count": 52,
+      "score": -0.1346,
+      "weak_count": 8
+    },
+    "KR|base_universe|unclassified|mid|near_high|momentum": {
+      "healthy_count": 1,
+      "last_seen_at": "2026-05-08T09:41:22+09:00",
+      "ready_count": 1,
+      "sample_count": 2,
+      "score": 0.5,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|mid|near_high|opening_range_pullback": {
+      "healthy_count": 1,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 1,
+      "sample_count": 13,
+      "score": 0.0769,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|mid|pullback|gap_pullback": {
+      "healthy_count": 0,
+      "last_seen_at": "2026-05-08T10:08:01+09:00",
+      "ready_count": 0,
+      "sample_count": 3,
+      "score": 0.0,
+      "weak_count": 0
+    },
+    "KR|base_universe|unclassified|mid|pullback|momentum": {
+      "healthy_count": 1,
+      "last_seen_at": "2026-05-08T11:09:23+09:00",
+      "ready_count": 2,
+      "sample_count": 3,
+      "score": 0.0,
+      "weak_count": 1
+    },
+    "KR|base_universe|unclassified|mid|pullback|opening_range_pullback": {
+      "healthy_count": 2,
+      "last_seen_at": "2026-05-08T15:00:33+09:00",
+      "ready_count": 6,
+      "sample_count": 12,
+      "score": -0.0833,
+      "weak_count": 3
+    }
+  },
+  "market": "KR",
+  "session_date": "2026-05-08",
+  "updated_at": "2026-05-08T15:00:33+09:00"
+}

@@ -192,6 +192,12 @@ class StateMixin:
             "pending_trigger": None,
             "pending_position_review": None,
             "pending_sell": None,
+            "pending_stop_cluster_reset": None,
+            "last_stop_cluster_reset_at": "",
+            "last_stop_cluster_reset_market": "",
+            "last_stop_cluster_reset_count_before": 0,
+            "last_stop_cluster_reset_by": "",
+            "last_stop_cluster_reset_reason": "",
         }
 
     def _save_claude_control(self):

@@ -189,6 +189,50 @@ class IntradayExecutionRestoreTests(unittest.TestCase):
         self.assertEqual(bot._daily_sl_count["US"], 1)
         self.assertEqual(bot._v2_same_day_stop_tickers["US"], {"NBIS"})
 
+    def test_restore_keeps_stopped_tickers_but_not_count_before_operator_reset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            decisions_path = Path(tmp) / "decisions.jsonl"
+            _write_jsonl(
+                decisions_path,
+                [
+                    {
+                        "type": "closed",
+                        "market": "US",
+                        "ticker": "IONQ",
+                        "session_date": "2026-05-05",
+                        "timestamp": "2026-05-05T22:31:00+09:00",
+                        "exit_reason": "loss_cap",
+                        "order_no": "US-BEFORE",
+                        "qty": 1,
+                        "pnl_krw": -1200,
+                    },
+                    {
+                        "type": "closed",
+                        "market": "US",
+                        "ticker": "NBIS",
+                        "session_date": "2026-05-05",
+                        "timestamp": "2026-05-05T23:10:00+09:00",
+                        "exit_reason": "loss_cap",
+                        "order_no": "US-AFTER",
+                        "qty": 1,
+                        "pnl_krw": -900,
+                    },
+                ],
+            )
+            bot = _bot("2026-05-05")
+            bot.claude_control = {
+                "last_stop_cluster_reset_market": "US",
+                "last_stop_cluster_reset_at": "2026-05-05T22:45:00+09:00",
+            }
+
+            with patch("trading_bot.DECISIONS_FILE", decisions_path):
+                summary = bot._restore_intraday_execution_state_from_decisions("US")
+
+        self.assertEqual(summary["restored_stop_count"], 1)
+        self.assertEqual(summary["restored_stop_suppressed_by_reset_count"], 1)
+        self.assertEqual(bot._daily_sl_count["US"], 1)
+        self.assertEqual(bot._v2_same_day_stop_tickers["US"], {"IONQ", "NBIS"})
+
     def test_restore_kr_state_independently(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             decisions_path = Path(tmp) / "decisions.jsonl"

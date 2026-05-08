@@ -1,16 +1,13 @@
-# P0 PathB Fill Dashboard Follow-up
+﻿# P0 PathB Fill Dashboard Follow-up
 
-## Current Status - 2026-05-05
+## Current Status - 2026-05-08
 
-Keep this plan active. The code-level items in this plan are present, but the current focused QA command is not clean:
+Code-level scope is complete and the old 2026-05-05 blockers are no longer reproduced.
 
-- `python -m pytest tests/test_pathb_runtime.py tests/test_kis_ws_fill_notice.py tests/test_dashboard_kis_profile.py tests/test_live_order_reconciliation.py tests/test_live_preflight_credentials.py tests/test_p0_data_quality.py tests/test_p0_data_quality_backfill.py -q`
-- Result: `71 passed, 2 failed, 2 warnings`.
-- Failing cases:
-  - `tests/test_pathb_runtime.py::PathBRuntimeTests::test_register_from_selection_meta_blocks_when_active_order_unknown_exists`
-  - `tests/test_pathb_runtime.py::PathBRuntimeTests::test_submit_buy_same_day_reentry_guard_blocks_before_order`
+- `python -m pytest tests/test_pathb_runtime.py -q` -> `39 passed, 2 warnings`.
+- `python -m pytest tests/test_pathb_runtime.py tests/test_kis_ws_fill_notice.py tests/test_dashboard_kis_profile.py tests/test_live_order_reconciliation.py tests/test_live_preflight_credentials.py tests/test_p0_data_quality.py tests/test_p0_data_quality_backfill.py -q` -> `81 passed, 2 warnings`.
 
-Do not delete this plan until PathB runtime regression QA is green again.
+This plan is now a deletion candidate. Keep only a short completion note in `docs/DEVELOPED_WORK.md` and remove this file from `docs/plans/` during the next cleanup pass.
 
 ## Purpose
 

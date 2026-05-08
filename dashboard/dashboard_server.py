@@ -21,7 +21,7 @@ import math
 import json, sys, os, re, subprocess, threading, atexit, time as _time, sqlite3
 from collections import Counter, deque
 from contextlib import contextmanager
-from typing import Optional
+from typing import Any, Optional
 import uuid
 
 # .env 로드 (trading_bot과 동일한 환경변수 사용)
@@ -239,6 +239,10 @@ def _live_status_path(mode: str, market: str) -> Path:
 
 def _decisions_path(mode: str) -> Path:
     return get_runtime_path("state", f"{_normalize_mode(mode)}_decisions.jsonl")
+
+
+def _candidate_audit_db_path() -> Path:
+    return get_runtime_path("data", "audit", "candidate_audit.db", make_parents=False)
 
 
 def _judgment_path(market: str, trade_date: str, mode: str) -> Path:
@@ -1797,6 +1801,14 @@ def _default_claude_control() -> dict:
         "last_result_status": "idle",
         "last_error": "",
         "pending_trigger": None,
+        "pending_position_review": None,
+        "pending_sell": None,
+        "pending_stop_cluster_reset": None,
+        "last_stop_cluster_reset_at": "",
+        "last_stop_cluster_reset_market": "",
+        "last_stop_cluster_reset_count_before": 0,
+        "last_stop_cluster_reset_by": "",
+        "last_stop_cluster_reset_reason": "",
     }
 
 
@@ -2939,12 +2951,56 @@ def _deduped_local_session_realized_pnl(market: str, mode: str, session_date: st
     if not duplicate_tickers:
         return None
 
+    try:
+        from runtime.pathb_reasons import (
+            PATHB_MANUAL_CLOSE_REASONS,
+            choose_primary_pathb_close_reason,
+            pathb_close_reason_priority,
+        )
+    except Exception:
+        PATHB_MANUAL_CLOSE_REASONS = {"CLOSED_USER_MANUAL", "USER_MANUAL", "MANUAL"}
+        choose_primary_pathb_close_reason = None
+        pathb_close_reason_priority = None
+
+    def _close_reason(rec: dict) -> str:
+        return str(rec.get("close_reason") or rec.get("exit_reason") or rec.get("reason") or "").strip().upper()
+
+    def _timestamp(rec: dict) -> str:
+        return str(rec.get("timestamp") or rec.get("closed_at") or rec.get("updated_at") or "")
+
+    def _priority(rec: dict) -> int:
+        if callable(pathb_close_reason_priority):
+            return int(pathb_close_reason_priority(_close_reason(rec)))
+        return 999
+
+    primary_close_reasons: dict[str, str] = {}
+    secondary_close_reasons: dict[str, list[str]] = {}
+    close_reason_counts: dict[str, dict[str, int]] = {}
     kept: list[dict] = []
     for ticker, items in by_ticker.items():
         if len(items) == 1:
             kept.extend(items)
             continue
-        kept.append(sorted(items, key=lambda r: str(r.get("timestamp", "") or ""))[-1])
+        reasons = [_close_reason(item) or "CLOSED_UNKNOWN" for item in items]
+        primary = (
+            choose_primary_pathb_close_reason(reasons)
+            if callable(choose_primary_pathb_close_reason)
+            else sorted(items, key=lambda r: (_priority(r), _timestamp(r)))[0].get("exit_reason", "CLOSED_UNKNOWN")
+        )
+        primary = str(primary or "CLOSED_UNKNOWN").strip().upper()
+        reason_counts: dict[str, int] = {}
+        for reason in reasons:
+            reason_counts[reason] = int(reason_counts.get(reason, 0) or 0) + 1
+        primary_close_reasons[ticker] = primary
+        secondary_close_reasons[ticker] = sorted(reason for reason in reason_counts if reason != primary)
+        close_reason_counts[ticker] = reason_counts
+
+        if primary == "CLOSED_USER_MANUAL":
+            matches = [item for item in items if _close_reason(item) in PATHB_MANUAL_CLOSE_REASONS]
+        else:
+            matches = [item for item in items if _close_reason(item) == primary]
+        candidates = matches or sorted(items, key=lambda r: (_priority(r), _timestamp(r)))
+        kept.append(sorted(candidates, key=_timestamp)[-1])
     pnl = sum(float(rec.get("pnl_krw", 0) or 0) for rec in kept)
     return {
         "available": True,
@@ -2954,6 +3010,9 @@ def _deduped_local_session_realized_pnl(market: str, mode: str, session_date: st
         "deduped_closed_count": len(kept),
         "duplicate_tickers": duplicate_tickers,
         "duplicate_keys": [f"ticker:{t}" for t in duplicate_tickers],
+        "primary_close_reasons": primary_close_reasons,
+        "secondary_close_reasons": secondary_close_reasons,
+        "close_reason_counts": close_reason_counts,
     }
 
 
@@ -3731,6 +3790,10 @@ def _fallback_select_reason(ticker: str, market: str, mode: str, item: dict) -> 
     if pending_count > 0:
         return f"{mode_ko} 환경에서 미체결 주문 추적 중"
     if selection_status == "WATCH_ONLY":
+        if last_event == "buy_filled":
+            return f"{mode_ko} 환경에서 오늘 매수체결 이력 있음 · 현재 신규매수 후보 아님"
+        if last_event == "sell_filled":
+            return f"{mode_ko} 환경에서 오늘 매도체결 완료 · 현재 재진입 후보 아님"
         return f"{mode_ko} 환경에서 감시 후보 유지 · 실제 매수 후보 아님"
     if last_event == "signal_check":
         return f"{mode_ko} 환경에서 스크리너 통과 종목 · 신호 대기"
@@ -4183,6 +4246,23 @@ def api_summary():
     if not summary_date or summary_date[:10] != expected_date:
         summary_date = expected_date
     risk = _current_risk_snapshot(market, today_rec)
+    stop_cluster = {}
+    if isinstance(live.get("stop_cluster") if isinstance(live, dict) else None, dict):
+        stop_cluster = dict(live.get("stop_cluster") or {})
+    elif isinstance(raw_live.get("stop_cluster") if isinstance(raw_live, dict) else None, dict):
+        stop_cluster = dict(raw_live.get("stop_cluster") or {})
+        stop_cluster["stale"] = True
+    control_state = _load_claude_control(mode=mode)
+    pending_reset = control_state.get("pending_stop_cluster_reset") or {}
+    if isinstance(pending_reset, dict) and str(pending_reset.get("market", "")).upper() == market:
+        stop_cluster["pending_reset"] = pending_reset
+    if str(control_state.get("last_stop_cluster_reset_market", "")).upper() == market:
+        stop_cluster["last_operator_reset"] = {
+            "at": control_state.get("last_stop_cluster_reset_at", ""),
+            "by": control_state.get("last_stop_cluster_reset_by", ""),
+            "reason": control_state.get("last_stop_cluster_reset_reason", ""),
+            "count_before": int(control_state.get("last_stop_cluster_reset_count_before", 0) or 0),
+        }
     broker_status = raw_live.get("broker", {}) if isinstance(raw_live.get("broker", {}), dict) else {}
     broker_cache = (broker.get("cache", {}) if isinstance(broker, dict) else {}) or _broker_snapshot_status(mode)
     broker_positions_cache = _broker_positions_status(mode, market)
@@ -4280,6 +4360,7 @@ def api_summary():
             "risk_label":     risk.get("risk_label", ""),
             "risk_value":     risk.get("risk_value", ""),
             "risk_status":    risk.get("risk_status", "normal"),
+            "stop_cluster":   stop_cluster,
             "signal_digest":  signal_digest,
             "ml_db":          ml_digest,
             "adaptive":       adaptive_digest,
@@ -5247,6 +5328,33 @@ def api_control_restart_bot():
     return jsonify({"ok": ok, "message": message}), status
 
 
+@app.route("/api/control/stop-cluster-reset", methods=["POST"])
+def api_control_stop_cluster_reset():
+    body = request.get_json(silent=True) or {}
+    mode = _request_mode()
+    market = str(body.get("market") or request.args.get("market") or "KR").strip().upper()
+    if market not in {"KR", "US"}:
+        return jsonify({"ok": False, "error": "market must be KR or US"}), 400
+    control = _load_claude_control(mode=mode)
+    now_iso = datetime.now(KST).isoformat(timespec="seconds")
+    reason = str(body.get("reason") or "dashboard_stop_cluster_reset").strip() or "dashboard_stop_cluster_reset"
+    control["pending_stop_cluster_reset"] = {
+        "market": market,
+        "requested_at": now_iso,
+        "source": "dashboard",
+        "reason": reason,
+        "keep_stopped_tickers": True,
+    }
+    control["updated_at"] = now_iso
+    control["updated_by"] = "dashboard"
+    _save_claude_control(control, mode=mode)
+    return jsonify({
+        "ok": True,
+        "market": market,
+        "message": "손실 클러스터 시장 차단 해제 요청을 보냈습니다. 당일 손절 종목 재진입 차단은 유지됩니다.",
+    })
+
+
 @app.route("/api/brain")
 def api_brain():
     mkt   = request.args.get("market", "KR")
@@ -5860,6 +5968,255 @@ def api_decisions():
             pass
     rows.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return jsonify(rows[:limit])
+
+
+def _candidate_audit_connect_readonly() -> Optional[sqlite3.Connection]:
+    path = _candidate_audit_db_path()
+    if not path.exists():
+        return None
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _candidate_audit_date(market: str) -> str:
+    requested = str(request.args.get("date") or "").strip()
+    if requested:
+        return requested
+    try:
+        return resolve_session_date(market)
+    except Exception:
+        return datetime.now(KST).date().isoformat()
+
+
+def _candidate_audit_outcome_status(conn: sqlite3.Connection, params: tuple[str, str, str]) -> list[dict[str, Any]]:
+    return [
+        dict(row)
+        for row in conn.execute(
+            """
+            SELECT o.horizon_min,
+                   COALESCE(o.status, 'unknown') AS status,
+                   COUNT(*) AS rows
+            FROM audit_candidate_rows r
+            JOIN audit_candidate_outcomes o ON o.candidate_key = r.candidate_key
+            WHERE r.session_date=? AND r.market=? AND r.runtime_mode=?
+            GROUP BY o.horizon_min, COALESCE(o.status, 'unknown')
+            ORDER BY o.horizon_min ASC, rows DESC
+            """,
+            params,
+        )
+    ]
+
+
+@app.route("/api/candidate-audit/summary")
+def api_candidate_audit_summary():
+    mode = _request_mode()
+    market = str(request.args.get("market") or "KR").strip().upper()
+    if market not in {"KR", "US"}:
+        return jsonify({"ok": False, "error": "market must be KR or US"}), 400
+    session_date = _candidate_audit_date(market)
+    try:
+        horizon_min = int(request.args.get("horizon_min", "60") or 60)
+    except Exception:
+        horizon_min = 60
+    conn = _candidate_audit_connect_readonly()
+    if conn is None:
+        return jsonify({
+            "ok": True,
+            "exists": False,
+            "db_path": str(_candidate_audit_db_path()),
+            "session_date": session_date,
+            "market": market,
+            "runtime_mode": mode,
+            "calls": {},
+            "classifications": [],
+            "route_matrix": [],
+            "outcome_status": [],
+            "outcome_coverage": {},
+            "outcome_buckets": [],
+            "route_shadow_summary": {},
+            "strategy_mismatch": {},
+        })
+    params = (session_date, market, mode)
+    try:
+        calls = dict(conn.execute(
+            """
+            SELECT COUNT(*) AS call_count,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                   COALESCE(SUM(prompt_candidate_count), 0) AS prompt_candidate_rows
+            FROM audit_claude_calls
+            WHERE session_date=? AND market=? AND runtime_mode=?
+            """,
+            params,
+        ).fetchone() or {})
+        totals = dict(conn.execute(
+            """
+            SELECT COUNT(*) AS candidate_rows,
+                   COUNT(DISTINCT ticker) AS unique_tickers,
+                   COUNT(DISTINCT CASE WHEN filled_count > 0 THEN ticker END) AS filled_tickers
+            FROM audit_candidate_rows
+            WHERE session_date=? AND market=? AND runtime_mode=?
+            """,
+            params,
+        ).fetchone() or {})
+        classifications = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT COALESCE(classification, 'unknown') AS classification,
+                       COUNT(*) AS rows,
+                       COUNT(DISTINCT ticker) AS unique_tickers,
+                       COUNT(DISTINCT CASE WHEN filled_count > 0 THEN ticker END) AS filled_tickers,
+                       ROUND(AVG(CASE WHEN pnl_pct IS NOT NULL THEN pnl_pct END), 4) AS avg_pnl_pct
+                FROM audit_candidate_rows
+                WHERE session_date=? AND market=? AND runtime_mode=?
+                GROUP BY COALESCE(classification, 'unknown')
+                ORDER BY rows DESC
+                """,
+                params,
+            )
+        ]
+        route_matrix = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT COALESCE(claude_action, '') AS claude_action,
+                       COALESCE(route_final_action, '') AS route_final_action,
+                       COUNT(*) AS rows,
+                       COUNT(DISTINCT ticker) AS unique_tickers
+                FROM audit_candidate_rows
+                WHERE session_date=? AND market=? AND runtime_mode=?
+                GROUP BY COALESCE(claude_action, ''), COALESCE(route_final_action, '')
+                ORDER BY rows DESC
+                LIMIT 40
+                """,
+                params,
+            )
+        ]
+        outcome_status = _candidate_audit_outcome_status(conn, params)
+        try:
+            from tools.analyze_candidate_audit import analyze_candidate_audit
+
+            analysis = analyze_candidate_audit(
+                db_path=_candidate_audit_db_path(),
+                session_date=session_date,
+                market=market,
+                runtime_mode=mode,
+                horizon_min=horizon_min,
+                limit=10,
+            )
+            outcome_buckets = analysis.get("buckets", [])
+            outcome_coverage = analysis.get("outcome_coverage", {})
+            route_shadow_summary = analysis.get("route_shadow_summary", {})
+            strategy_mismatch = analysis.get("strategy_mismatch", {})
+        except Exception as exc:
+            outcome_buckets = []
+            outcome_coverage = {}
+            route_shadow_summary = {}
+            strategy_mismatch = {"error": str(exc)}
+        return jsonify({
+            "ok": True,
+            "exists": True,
+            "db_path": str(_candidate_audit_db_path()),
+            "session_date": session_date,
+            "market": market,
+            "runtime_mode": mode,
+            "calls": calls,
+            "totals": totals,
+            "classifications": classifications,
+            "route_matrix": route_matrix,
+            "outcome_status": outcome_status,
+            "outcome_horizon_min": horizon_min,
+            "outcome_coverage": outcome_coverage,
+            "outcome_buckets": outcome_buckets,
+            "route_shadow_summary": route_shadow_summary,
+            "strategy_mismatch": strategy_mismatch,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/candidate-audit/rows")
+def api_candidate_audit_rows():
+    mode = _request_mode()
+    market = str(request.args.get("market") or "KR").strip().upper()
+    if market not in {"KR", "US"}:
+        return jsonify({"ok": False, "error": "market must be KR or US"}), 400
+    session_date = _candidate_audit_date(market)
+    classification = str(request.args.get("classification") or "").strip()
+    ticker = str(request.args.get("ticker") or "").strip().upper()
+    try:
+        limit = max(min(int(request.args.get("limit", "200") or 200), 1000), 1)
+    except Exception:
+        limit = 200
+    conn = _candidate_audit_connect_readonly()
+    if conn is None:
+        return jsonify({
+            "ok": True,
+            "exists": False,
+            "db_path": str(_candidate_audit_db_path()),
+            "rows": [],
+        })
+    where = ["session_date=?", "market=?", "runtime_mode=?"]
+    params: list[Any] = [session_date, market, mode]
+    if classification:
+        where.append("classification=?")
+        params.append(classification)
+    if ticker:
+        where.append("ticker=?")
+        params.append(ticker)
+    try:
+        outcome_horizon = int(request.args.get("horizon_min", "60") or 60)
+    except Exception:
+        outcome_horizon = 60
+    params.append(limit)
+    try:
+        query_params = [outcome_horizon, *params]
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                f"""
+                SELECT r.candidate_key, r.call_id, r.known_at, r.ticker, r.prompt_rank,
+                       r.in_prompt, r.screener_seen, r.input_to_claude_reported,
+                       r.price, r.change_pct, r.volume_ratio, r.primary_bucket,
+                       r.claude_action, r.claude_reason, r.route_final_action,
+                       r.route_reason, r.route_runtime_gate_reason,
+                       r.buy_signal_count, r.filled_count, r.pnl_pct, r.exit_reason,
+                       r.close_reason, r.classification,
+                       o.status AS outcome_status,
+                       o.return_pct AS outcome_return_pct,
+                       o.max_runup_pct AS outcome_max_runup_pct,
+                       o.max_drawdown_pct AS outcome_max_drawdown_pct,
+                       o.observed_at AS outcome_observed_at,
+                       o.observed_price AS outcome_observed_price
+                FROM audit_candidate_rows r
+                LEFT JOIN audit_candidate_outcomes o
+                  ON o.candidate_key = r.candidate_key
+                 AND o.horizon_min = ?
+                WHERE {' AND '.join(where)}
+                ORDER BY r.known_at DESC, r.prompt_rank ASC, r.ticker ASC
+                LIMIT ?
+                """,
+                query_params,
+            )
+        ]
+        return jsonify({
+            "ok": True,
+            "exists": True,
+            "db_path": str(_candidate_audit_db_path()),
+            "session_date": session_date,
+            "market": market,
+            "runtime_mode": mode,
+            "outcome_horizon_min": outcome_horizon,
+            "rows": rows,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    finally:
+        conn.close()
 
 
 def _is_live_market(market: str) -> bool:
@@ -7151,6 +7508,52 @@ function renderLifetimeRealized(today) {
   if (basisEl) basisEl.textContent = `입출금 제외 · 매수/매도 실현 기준${unknown > 0 ? ` · 원가불명 ${unknown}건 제외` : ''}${sourceHint ? ' · 당일보정 ' + sourceHint : ''}`;
 }
 
+function koStopClusterReason(reason) {
+  return ({
+    SAME_DAY_REENTRY_AFTER_STOP: '손절종목 재진입 차단',
+    STOP_CLUSTER_FIRST_STOP_COOLDOWN: '첫 손절 쿨다운',
+    STOP_CLUSTER_MARKET_BLOCK: '시장 차단',
+    STOP_CLUSTER_DISASTER_BLOCK: '재난 차단',
+  }[String(reason || '')] || String(reason || '정상'));
+}
+
+function renderStopClusterBar(today) {
+  const sc = (today || {}).stop_cluster || {};
+  const el = document.getElementById('bar-stop-cluster');
+  const btn = document.getElementById('stop-cluster-reset-btn');
+  if (!el) return;
+  const count = Number(sc.daily_stop_count || 0);
+  const hard = Number(sc.hard_block_count || 0);
+  const disaster = Number(sc.disaster_block_count || 0);
+  const stopped = Array.isArray(sc.stopped_tickers) ? sc.stopped_tickers : [];
+  const pending = sc.pending_reset && Object.keys(sc.pending_reset || {}).length > 0;
+  const blocked = !!sc.blocked;
+  const reason = koStopClusterReason(sc.reason || '');
+  let label = hard ? `${count}/${hard}` : String(count);
+  if (blocked) label += ` ${reason}`;
+  else if (count > 0) label += ' 감액운용';
+  else label = hard ? `정상 0/${hard}` : '정상';
+  if (pending) label += ' · 해제요청 대기';
+  if (sc.stale) label += ' · 상태 오래됨';
+  el.textContent = label;
+  el.style.color = blocked ? '#f87171' : (pending ? '#fbbf24' : (count > 0 ? '#f59e0b' : 'var(--green)'));
+  el.title = [
+    hard ? `시장 차단 ${hard}회` : '',
+    disaster ? `재난 차단 ${disaster}회` : '',
+    sc.first_stop_freeze_minutes ? `첫 손절 쿨다운 ${sc.first_stop_freeze_minutes}분` : '',
+    sc.last_stop_at ? `마지막 손절 ${String(sc.last_stop_at).slice(11, 19)}` : '',
+    stopped.length ? `당일 재진입 차단 ${stopped.join(', ')}` : '',
+    (sc.last_operator_reset || {}).at ? `최근 해제 ${String(sc.last_operator_reset.at).slice(11, 19)} 이전 count ${(sc.last_operator_reset || {}).count_before || 0}` : '',
+  ].filter(Boolean).join(' | ');
+  if (btn) {
+    btn.style.display = count > 0 || blocked || pending ? 'inline-flex' : 'none';
+    btn.disabled = pending;
+    btn.style.opacity = pending ? '0.55' : '1';
+    btn.textContent = pending ? '해제요청 대기' : '클러스터 해제';
+    btn.title = '시장 손실클러스터 카운터만 0으로 되돌립니다. 당일 손절 종목 재진입 차단은 유지됩니다.';
+  }
+}
+
 const MODE_KO = {
   AGGRESSIVE: '공격매수',
   MODERATE_BULL: '강한상승',
@@ -7463,6 +7866,10 @@ PAGE_TODAY_HTML = """
   <span style="color:var(--border)">|</span>
   <span style="color:var(--text-dim)">오늘 진입</span>
   <span id="bar-entry-count" style="font-weight:700;color:var(--text)">--</span>
+  <span style="color:var(--border)">|</span>
+  <span style="color:var(--text-dim)">손실클러스터</span>
+  <span id="bar-stop-cluster" style="font-weight:700;color:var(--text)">--</span>
+  <button id="stop-cluster-reset-btn" class="apply-btn" style="display:none;padding:6px 10px;font-size:12px" onclick="requestStopClusterReset()">시장차단 해제</button>
 </div>
 <div id="position-board" style="display:flex;flex-wrap:nowrap;gap:10px;margin-bottom:20px;overflow-x:auto;overflow-y:hidden;padding-bottom:6px;scrollbar-width:thin"></div>
 
@@ -7950,10 +8357,18 @@ async function loadMonitorTickers() {
     'waiting':       { icon: '⏳', label: '대기중',   color: '#cbd5e1' },
     'cycle_error':   { icon: '⚠', label: '처리오류', color: '#ef4444' },
   };
+  const displayEventLabel = (t, ev) => {
+    const event = t.last_event || '';
+    const watchOnly = (t.selection_status || '') === 'WATCH_ONLY';
+    if (watchOnly && event === 'buy_filled') return '오늘 매수 이력';
+    if (watchOnly && event === 'sell_filled') return '오늘 매도 이력';
+    return ev.label;
+  };
 
   if (quickBoard) {
     quickBoard.innerHTML = tickers.map(t => {
       const ev = EVENT_MAP[t.last_event] || EVENT_MAP['waiting'];
+      const evLabel = displayEventLabel(t, ev);
       const displayPrice = Number(t.display_price || 0);
       const selectionPrice = Number(t.selection_price || 0);
       const selectionReturn = t.selection_return_pct === null || typeof t.selection_return_pct === 'undefined'
@@ -7966,7 +8381,7 @@ async function loadMonitorTickers() {
         ? `선정 ${selectionReturn >= 0 ? '+' : ''}${selectionReturn.toFixed(1)}%`
         : '';
       const pickStatus = t.selection_status_ko ? ` · ${t.selection_status_ko}` : '';
-      const statusText = Number(t.sig_count || 0) > 0 ? `신호 ${t.sig_count}` : `${ev.label}${pickStatus}`;
+      const statusText = Number(t.sig_count || 0) > 0 ? `신호 ${t.sig_count}` : `${evLabel}${pickStatus}`;
       return `
         <div class="card" style="padding:10px 12px;min-width:132px;flex:0 0 auto;border-color:${ev.color}33">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
@@ -8033,6 +8448,7 @@ async function loadMonitorTickers() {
 
   board.innerHTML = tickers.map(t => {
     const ev = EVENT_MAP[t.last_event] || EVENT_MAP['waiting'];
+    const evLabel = displayEventLabel(t, ev);
     const displayPrice = Number(t.display_price || 0);
     const avgPrice = Number(t.avg_price || 0);
     const currentPrice = Number(t.current_price || 0);
@@ -8118,7 +8534,7 @@ async function loadMonitorTickers() {
     return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:160px;max-width:280px;cursor:default">
       <div style="font-family:var(--mono);font-weight:700;font-size:14px;color:#e2e8f0">${t.display_ticker || t.ticker}${sigBadge}${selectBadge}</div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${shownPriceStr}</div>
-      <div style="margin-top:6px;font-size:12px;color:${ev.color}">${ev.icon} ${ev.label}</div>
+      <div style="margin-top:6px;font-size:12px;color:${ev.color}">${ev.icon} ${evLabel}</div>
       <div style="font-size:10px;color:#475569;margin-top:2px">${t.last_ts}${t.last_reason ? ' · ' + t.last_reason : ''}</div>
       ${statusHtml}
       ${priceMetaHtml}
@@ -8395,6 +8811,7 @@ async function loadSummary() {
   const barEnt = document.getElementById('bar-entry-count');
   if (barPos) barPos.textContent = `${t.position_count ?? positions.length}/${t.position_limit || 0}개`;
   if (barEnt) barEnt.textContent = `${t.entries_today ?? 0}/${t.max_daily_entries || 0}회`;
+  renderStopClusterBar(t);
 
   if (!posBoard) return;
   if (positions.length === 0) {
@@ -9428,6 +9845,7 @@ async function loadSummary() {
   const barEnt2 = document.getElementById('bar-entry-count');
   if (barPos2) barPos2.textContent = `${t.position_count ?? (t.positions || []).length}/${t.position_limit || 0}개`;
   if (barEnt2) barEnt2.textContent = `${t.entries_today ?? 0}/${t.max_daily_entries || 0}회`;
+  renderStopClusterBar(t);
 
   const positions = t.positions || [];
   const posBoard = document.getElementById('position-board');
@@ -9701,6 +10119,19 @@ async function restartTradingBot() {
     .catch(() => ({ ok: false, data: {} }));
   if (errLine) errLine.textContent = res.data.message || (res.ok ? '봇 재시작 요청 완료' : '봇 재시작 요청 실패');
   await loadProcessControl();
+}
+
+async function requestStopClusterReset() {
+  if (!confirm('손실클러스터 시장 차단 카운터를 해제할까요? 당일 손절 종목 재진입 차단은 유지됩니다.')) return;
+  const errLine = document.getElementById('control-error-line');
+  if (errLine) errLine.textContent = '손실클러스터 해제 요청 중..';
+  const res = await apiPost('/api/control/stop-cluster-reset', {
+    market: MARKET,
+    reason: 'dashboard_manual_stop_cluster_reset'
+  }).then(async r => ({ ok: r.ok, data: await r.json() })).catch(() => ({ ok: false, data: {} }));
+  if (errLine) errLine.textContent = res.data.message || (res.ok ? '해제 요청 완료' : '해제 요청 실패');
+  await loadSummary();
+  await loadClaudeControl();
 }
 
 async function toggleClaudeReinvoke() {
