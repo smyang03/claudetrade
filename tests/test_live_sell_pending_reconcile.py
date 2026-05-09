@@ -219,6 +219,54 @@ def test_pending_sell_partial_fill_uses_risk_partial_close() -> None:
     assert event["detail"] == "pending_sell_reconcile:BROKER_SELL_PARTIAL_FILL_CONFIRMED"
 
 
+def test_pending_sell_partial_fill_with_open_order_keeps_remaining_pending() -> None:
+    bot = _bot_with_snapshot(
+        {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "positions": [{"ticker": "IREN", "qty": 2}],
+            "open_orders": [
+                {
+                    "ticker": "IREN",
+                    "side": "sell",
+                    "order_no": "0031706077",
+                    "remaining_qty": 2,
+                }
+            ],
+            "today_fills": [
+                {
+                    "ticker": "IREN",
+                    "side": "sell",
+                    "order_no": "0031706077",
+                    "filled_qty": 1,
+                    "fill_price": 59.5,
+                }
+            ],
+        }
+    )
+    bot.risk.positions[0]["qty"] = 3
+    bot.risk.positions[0]["pending_sell_qty"] = 3
+
+    summary = TradingBot._reconcile_pending_sell_confirmations(bot, "US", force=True)
+
+    assert summary["checked"] == 1
+    assert summary["partial"] == 1
+    assert summary["kept_pending"] == 1
+    assert bot.risk.partial_close_calls == 1
+    pos = bot.risk.positions[0]
+    assert pos["qty"] == 2
+    assert pos["sell_confirmation_pending"] is True
+    assert pos["pending_sell_order_no"] == "0031706077"
+    assert pos["pending_sell_qty"] == 2
+    assert pos["pending_sell_status"] == "partial_fill_open_order"
+    assert pos["pending_sell_broker_status"] == "BROKER_SELL_PARTIAL_FILL_OPEN_ORDER_KEEP_PENDING"
+    assert pos["pending_sell_resolution"] == "BROKER_SELL_PARTIAL_FILL_OPEN_ORDER_KEEP_PENDING"
+    event = bot.decision_events[-1]
+    assert event["qty"] == 1
+    assert event["detail"] == "pending_sell_reconcile:BROKER_SELL_PARTIAL_FILL_CONFIRMED"
+
+
 def test_pending_sell_position_absent_assumes_sold_and_closes_local_position() -> None:
     bot = _bot_with_snapshot(
         {

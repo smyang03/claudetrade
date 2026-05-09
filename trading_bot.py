@@ -12155,6 +12155,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if ex:
                     if resolution == "BROKER_SELL_PARTIAL_FILL_CONFIRMED":
                         summary["partial"] += 1
+                        if not broker_unavailable and open_rows:
+                            keep_resolution = "BROKER_SELL_PARTIAL_FILL_OPEN_ORDER_KEEP_PENDING"
+                            remaining_qty = max(0, int(pos.get("qty", 0) or 0))
+                            if remaining_qty > 0:
+                                pos["sell_confirmation_pending"] = True
+                                pos["pending_sell_status"] = "partial_fill_open_order"
+                                pos["pending_sell_qty"] = remaining_qty
+                                pos["pending_sell_broker_status"] = keep_resolution
+                                pos["pending_sell_resolution"] = keep_resolution
+                                summary["kept_pending"] += 1
+                                log.warning(
+                                    f"[pending sell reconcile] {market_key} {ticker} {keep_resolution} "
+                                    f"order={order_no} remaining_qty={remaining_qty}"
+                                )
                     else:
                         summary["closed"] += 1
                 continue
