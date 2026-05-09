@@ -50,7 +50,11 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
 
             def balance(market: str, force: bool) -> dict:
                 if market == "US":
-                    raise RuntimeError("US timeout")
+                    raise RuntimeError(
+                        "HTTPSConnectionPool(host='openapi.koreainvestment.com', port=9443): "
+                        "Max retries exceeded with url: /uapi/overseas-stock/v1/trading/inquire-balance?"
+                        "CANO=12345678&ACNT_PRDT_CD=01&OVRS_EXCG_CD=NASD"
+                    )
                 return {"cash": 1000, "stocks": [{"ticker": "005930", "qty": 1, "avg_price": 1, "current_price": 1}]}
 
             snapshot = BrokerTruthSnapshot(
@@ -62,7 +66,12 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             data = snapshot.refresh_all(force=True, ttl_by_market={"KR": 30, "US": 30})
             self.assertFalse(data["markets"]["KR"]["missing"])
             self.assertTrue(data["markets"]["US"]["stale"])
-            self.assertIn("US timeout", data["markets"]["US"]["error"])
+            self.assertIn("CANO=12345678", data["markets"]["US"]["error"])
+
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self.assertIn("CANO=***", raw["markets"]["US"]["error"])
+            self.assertIn("ACNT_PRDT_CD=***", raw["markets"]["US"]["error"])
+            self.assertNotIn("CANO=12345678", raw["markets"]["US"]["error"])
 
     def test_ttl_and_force_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

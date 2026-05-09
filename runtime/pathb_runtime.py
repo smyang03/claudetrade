@@ -5,7 +5,7 @@ import math
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -895,6 +895,7 @@ class PathBRuntime:
         self._last_entry_scan_at[market] = time.time()
         self.reconcile_order_unknowns(market, force=False)
         self.reconcile_buy_pending_cancel_above(market, force=False)
+        self.process_miss_quality_followups(market)
         if not self._market_live_enabled(market):
             self.cancel_waiting(market, reason="PATHB_MANUALLY_DISABLED")
             return
@@ -922,6 +923,16 @@ class PathBRuntime:
             self._audit_pathb_price_seen(plan, current, source="pathb:waiting_scan")
             signal = self.adapter.check_entry(plan.path_run_id, current)
             if signal.reason == "cancel_if_open_above":
+                self.store.update_path_run(
+                    plan.path_run_id,
+                    plan={
+                        "cancel_trigger_price": float(current),
+                        "cancel_trigger_source": "waiting_scan",
+                        "cancel_trigger_at": datetime.now(KST).isoformat(timespec="seconds"),
+                        "market_close_at": self._market_close_at(market),
+                    },
+                    merge_plan=True,
+                )
                 self.adapter.cancel_plan(
                     plan.path_run_id,
                     reason="cancel_if_open_above",
@@ -981,6 +992,149 @@ class PathBRuntime:
         if summary["checked"] or summary["errors"]:
             log.info(f"[PathB BUY cancel_above reconcile] {summary}")
         return summary
+
+    def process_miss_quality_followups(self, market: str = "", *, limit: int = 20) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        summary: dict[str, Any] = {"checked": 0, "filled": 0, "insufficient_quotes": 0, "market_closed": 0, "quote_error": 0}
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        try:
+            rows = self.store.pending_pathb_miss_quality(now_iso=now_iso, limit=int(limit or 20))
+        except Exception as exc:
+            log.debug(f"[PathB miss-quality] pending query failed: {exc}")
+            return summary
+        for row in rows:
+            if market_key and str(row.get("market", "") or "").upper() != market_key:
+                continue
+            summary["checked"] += 1
+            try:
+                status = self._fill_miss_quality_followup(row)
+            except Exception as exc:
+                status = "quote_error"
+                try:
+                    self.store.update_pathb_miss_quality_followup(
+                        int(row.get("id") or 0),
+                        followup_status=status,
+                        payload={**(row.get("payload") or {}), "followup_error": str(exc)},
+                    )
+                except Exception:
+                    pass
+            summary[status] = int(summary.get(status, 0) or 0) + 1
+        if summary["checked"]:
+            log.info(f"[PathB miss-quality followup] {summary}")
+        return summary
+
+    def _fill_miss_quality_followup(self, row: dict[str, Any]) -> str:
+        row_id = int(row.get("id") or 0)
+        market = str(row.get("market", "") or "").upper()
+        ticker = str(row.get("ticker", "") or "").strip()
+        baseline = float(row.get("baseline_price") or 0)
+        buy_zone_high = float(row.get("buy_zone_high") or 0)
+        if row_id <= 0 or not market or not ticker or baseline <= 0:
+            self.store.update_pathb_miss_quality_followup(
+                row_id,
+                followup_status="insufficient_quotes",
+                payload={**(row.get("payload") or {}), "reason": "missing_baseline_or_identity"},
+            )
+            return "insufficient_quotes"
+
+        due_at = self._parse_followup_time(row.get("followup_due_at"))
+        close_at = self._parse_followup_time(row.get("market_close_at"))
+        if close_at is not None and due_at is not None and due_at > close_at:
+            self.store.update_pathb_miss_quality_followup(
+                row_id,
+                followup_status="market_closed",
+                payload={**(row.get("payload") or {}), "reason": "followup_due_after_market_close"},
+            )
+            return "market_closed"
+
+        samples = self._miss_quality_price_samples(market, ticker, row)
+        sample_source = "post_open_history"
+        if not samples:
+            current = self._current_native_price(market, ticker)
+            if current > 0:
+                samples = [current]
+                sample_source = "current_quote_only"
+        if not samples:
+            self.store.update_pathb_miss_quality_followup(
+                row_id,
+                followup_status="insufficient_quotes",
+                payload={**(row.get("payload") or {}), "reason": "no_price_sample"},
+            )
+            return "insufficient_quotes"
+
+        max_price = max(samples)
+        min_price = min(samples)
+        observed = samples[-1]
+        mfe_pct = (max_price / baseline - 1.0) * 100.0
+        mae_pct = (min_price / baseline - 1.0) * 100.0
+        zone_reentered = None if buy_zone_high <= 0 else min_price <= buy_zone_high
+        self.store.update_pathb_miss_quality_followup(
+            row_id,
+            followup_status="filled",
+            zone_reentered_after_cancel=zone_reentered,
+            mfe_30m_pct=float(mfe_pct),
+            mae_30m_pct=float(mae_pct),
+            observed_price_30m=float(observed),
+            quote_sample_count=len(samples),
+            payload={
+                **(row.get("payload") or {}),
+                "sample_source": sample_source,
+                "baseline_price": baseline,
+                "max_price_after_cancel": float(max_price),
+                "min_price_after_cancel": float(min_price),
+            },
+        )
+        return "filled"
+
+    def _miss_quality_price_samples(self, market: str, ticker: str, row: dict[str, Any]) -> list[float]:
+        key_func = getattr(self.bot, "_post_open_key", None)
+        key = key_func(market, ticker) if callable(key_func) else f"{market}:{ticker.upper() if market == 'US' else ticker}"
+        history = list((getattr(self.bot, "_post_open_price_history", {}) or {}).get(key, []) or [])
+        if not history:
+            return []
+        start = self._parse_followup_time(row.get("cancelled_at"))
+        end = self._parse_followup_time(row.get("followup_due_at"))
+        samples: list[float] = []
+        for item in history:
+            try:
+                ts = self._parse_followup_time((item or {}).get("ts"))
+                price = float((item or {}).get("price") or 0)
+            except Exception:
+                continue
+            if price <= 0 or ts is None:
+                continue
+            if start is not None and ts < start:
+                continue
+            if end is not None and ts > end:
+                continue
+            samples.append(price)
+        return samples
+
+    @staticmethod
+    def _parse_followup_time(raw: Any) -> datetime | None:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        try:
+            value = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=KST)
+        return value.astimezone(KST)
+
+    def _market_close_at(self, market: str) -> str:
+        market_key = str(market or "").upper()
+        try:
+            close_dt = self.bot._market_regular_close_dt(
+                market_key,
+                session_date=self._session_date(market_key),
+            )
+            if close_dt.tzinfo is None:
+                close_dt = close_dt.replace(tzinfo=KST)
+            return close_dt.astimezone(KST).isoformat(timespec="seconds")
+        except Exception:
+            return ""
 
     def scan_exits(self, market: str, *, force: bool = False) -> None:
         market = str(market or "").upper()
@@ -4315,8 +4469,13 @@ class PathBRuntime:
     def _attach_pathb_order_metadata(order: dict[str, Any], plan: PricePlan) -> None:
         order["path_type"] = "claude_price"
         order["pathb_path_run_id"] = plan.path_run_id
+        order["path_run_id"] = plan.path_run_id
         order["pathb_plan"] = plan.to_dict()
         order["v2_decision_id"] = plan.decision_id
+        order["entry_route"] = "path_b"
+        order["parent_decision_id"] = plan.decision_id
+        order["strategy_used"] = "claude_price"
+        order["route_source"] = "buy_zone_hit"
         order.setdefault("strategy", "claude_price")
         order.setdefault("source_strategy", "claude_price")
 
@@ -4324,8 +4483,13 @@ class PathBRuntime:
     def _attach_pathb_position_metadata(pos: dict[str, Any], plan: PricePlan) -> None:
         pos["path_type"] = "claude_price"
         pos["pathb_path_run_id"] = plan.path_run_id
+        pos["path_run_id"] = plan.path_run_id
         pos["pathb_plan"] = plan.to_dict()
         pos["v2_decision_id"] = plan.decision_id
+        pos["entry_route"] = "path_b"
+        pos["parent_decision_id"] = plan.decision_id
+        pos["strategy_used"] = "claude_price"
+        pos["route_source"] = "buy_zone_hit"
         pos.setdefault("strategy", "claude_price")
         pos.setdefault("source_strategy", "claude_price")
 

@@ -2705,13 +2705,39 @@ def _kr_screen_reserve_limit(top_n: int) -> int:
     return max(limit, min(limit * 2, 80))
 
 
+def _kr_screen_kosdaq_min_ratio() -> float:
+    default = 0.35
+    raw = str(os.getenv("KR_SCREEN_KOSDAQ_MIN_RATIO", "") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw.replace("%", ""))
+    except ValueError:
+        log.warning(f"[KR screener] invalid KR_SCREEN_KOSDAQ_MIN_RATIO={raw!r}; fallback={default:.2f}")
+        return default
+    if value > 1.0:
+        value = value / 100.0
+    if value < 0.0 or value > 0.8:
+        clamped = max(0.0, min(0.8, value))
+        log.warning(
+            f"[KR screener] KR_SCREEN_KOSDAQ_MIN_RATIO={raw!r} out of range; "
+            f"applied={clamped:.2f}"
+        )
+        return clamped
+    return value
+
+
 def _merge_kr_market_buckets(kospi: list[dict], kosdaq: list[dict], top_n: int) -> list[dict]:
     """Merge KOSPI/KOSDAQ screen buckets without letting one board crowd out the other."""
     limit = max(1, int(top_n or 1))
-    kosdaq_min_ratio = max(0.0, min(0.8, float(os.getenv("KR_SCREEN_KOSDAQ_MIN_RATIO", "0.35"))))
+    kosdaq_min_ratio = _kr_screen_kosdaq_min_ratio()
     forced_kosdaq_min = os.getenv("KR_SCREEN_KOSDAQ_MIN")
     if forced_kosdaq_min:
-        kosdaq_min = max(0, int(forced_kosdaq_min))
+        try:
+            kosdaq_min = max(0, int(forced_kosdaq_min))
+        except ValueError:
+            log.warning(f"[KR screener] invalid KR_SCREEN_KOSDAQ_MIN={forced_kosdaq_min!r}; using ratio")
+            kosdaq_min = int(round(limit * kosdaq_min_ratio))
     else:
         kosdaq_min = int(round(limit * kosdaq_min_ratio))
 
@@ -2747,6 +2773,10 @@ def _merge_kr_market_buckets(kospi: list[dict], kosdaq: list[dict], top_n: int) 
         _add(row)
 
     selected.sort(key=lambda c: c.get("screen_score", 0.0), reverse=True)
+    log.info(
+        f"[KR screener] kosdaq_min_ratio={kosdaq_min_ratio:.2f} "
+        f"kosdaq_min={kosdaq_min} limit={limit} kosdaq_pool={len(kq_sorted)} kospi_pool={len(kp_sorted)}"
+    )
     return selected[:limit]
 
 

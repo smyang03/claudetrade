@@ -965,6 +965,33 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(events[0]["ticker"], "AAPL")
         self.assertEqual(events[0]["price"], 190.5)
 
+    def test_runtime_events_exclude_same_kst_day_previous_us_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            system_dir = Path(tmp)
+            (system_dir / "live_trading_20260508.log").write_text(
+                "2026-05-08 00:30:00 [INFO] bot | [PAPER BUY] AMD 1@120.0 | gap | prior\n"
+                "2026-05-08 22:31:00 [INFO] bot | [PAPER BUY] AAPL 1@190.5 | gap | live\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(dashboard_server, "SYSTEM_LOG_DIR", system_dir), patch.object(
+                dashboard_server, "_session_trade_date", return_value=date(2026, 5, 8)
+            ):
+                events = dashboard_server._parse_runtime_events("US", mode="live")
+
+        self.assertEqual([event["ticker"] for event in events], ["AAPL"])
+
+    def test_us_session_window_excludes_same_kst_day_previous_session(self) -> None:
+        self.assertFalse(
+            dashboard_server._log_ts_in_session_window("US", "2026-05-08T00:30:00", "2026-05-08")
+        )
+        self.assertTrue(
+            dashboard_server._log_ts_in_session_window("US", "2026-05-08T22:31:00", "2026-05-08")
+        )
+        self.assertTrue(
+            dashboard_server._log_ts_in_session_window("US", "2026-05-09T05:03:00", "2026-05-08")
+        )
+
     def test_position_chart_uses_entry_date_range_and_buy_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

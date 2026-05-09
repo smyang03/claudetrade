@@ -21,6 +21,10 @@ def attach_path_context(
     merged["path_type"] = str(path_type)
     merged["path_run_id"] = str(path_run_id)
     merged["parent_decision_id"] = str(parent_decision_id)
+    if str(path_type or "") == "claude_price":
+        merged.setdefault("entry_route", "path_b")
+        merged.setdefault("strategy_used", "claude_price")
+        merged.setdefault("route_source", "buy_zone_hit")
     if path_status:
         merged["path_status"] = str(path_status)
     return merged

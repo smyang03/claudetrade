@@ -2701,6 +2701,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not hasattr(self, "trade_ready_tickers") or not isinstance(self.trade_ready_tickers, dict):
             self.trade_ready_tickers = {"KR": [], "US": []}
         clean_meta = dict(meta or {})
+        if not str(clean_meta.get("selection_snapshot_ts") or "").strip():
+            clean_meta["selection_snapshot_ts"] = datetime.now(KST).isoformat(timespec="seconds")
         self.selection_meta[market_key] = clean_meta
         self.trade_ready_tickers[market_key] = list(clean_meta.get("trade_ready") or [])
 
@@ -2884,6 +2886,176 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if str(raw_key or "").strip().upper() == key and isinstance(raw_plan, dict) and raw_plan:
                     return raw_plan
         return {}
+
+    def _selection_snapshot_ts_for_market(self, market: str) -> str:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            meta = (getattr(self, "selection_meta", {}) or {}).get(market_key, {}) or {}
+        except Exception:
+            meta = {}
+        for key in ("selection_snapshot_ts", "_selection_snapshot_ts", "selected_at", "created_at", "updated_at"):
+            value = str((meta or {}).get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _selection_snapshot_age_min(self, market: str, snapshot_ts: str = "") -> Optional[float]:
+        raw = str(snapshot_ts or self._selection_snapshot_ts_for_market(market) or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=KST)
+        return max(0.0, (datetime.now(KST) - parsed.astimezone(KST)).total_seconds() / 60.0)
+
+    def _entry_route_payload(
+        self,
+        market: str,
+        ticker: str,
+        strategy: str,
+        *,
+        decision_id: str = "",
+        entry_route: str = "plan_a",
+        path_run_id: str = "",
+        route_source: str = "signal_entry",
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        route = str(entry_route or "").strip() or ("path_b" if path_run_id else "plan_a")
+        return {
+            "entry_route": route,
+            "path_run_id": str(path_run_id or ""),
+            "parent_decision_id": str(decision_id or ""),
+            "selection_snapshot_ts": self._selection_snapshot_ts_for_market(market_key),
+            "strategy_used": str(strategy or ("claude_price" if route == "path_b" else "")),
+            "route_source": str(route_source or ("buy_zone_hit" if route == "path_b" else "signal_entry")),
+        }
+
+    def _normalize_order_attribution(self, order: dict) -> dict:
+        if not isinstance(order, dict):
+            return order
+        market = "US" if str(order.get("market", "KR") or "KR").upper() == "US" else "KR"
+        path_run_id = str(order.get("path_run_id") or order.get("pathb_path_run_id") or "").strip()
+        path_type = str(order.get("path_type", "") or "").strip()
+        route = str(order.get("entry_route", "") or "").strip()
+        if not route:
+            route = "path_b" if path_run_id or path_type == "claude_price" else "plan_a"
+        order["entry_route"] = route
+        if path_run_id:
+            order["path_run_id"] = path_run_id
+        order.setdefault("parent_decision_id", str(order.get("v2_decision_id", "") or order.get("decision_id", "") or ""))
+        order.setdefault("selection_snapshot_ts", self._selection_snapshot_ts_for_market(market))
+        if route == "path_b":
+            order.setdefault("strategy_used", "claude_price")
+            order.setdefault("route_source", "buy_zone_hit")
+        else:
+            order.setdefault("strategy_used", str(order.get("strategy") or order.get("source_strategy") or ""))
+            order.setdefault("route_source", "signal_entry")
+        return order
+
+    def _hybrid_gap_pullback_gate_payload(
+        self,
+        market: str,
+        ticker: str,
+        strategy: str,
+        current_price: float,
+        *,
+        session_minute: Optional[float] = None,
+        signal_payload: Optional[dict] = None,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        strategy_key = _normalize_strategy_name(strategy)
+        if strategy_key != "gap_pullback":
+            return {}
+        if not self._runtime_bool("HYBRID_GAP_PULLBACK_GATE_ENABLED", True):
+            return {}
+        mode = str(os.getenv("HYBRID_GAP_PULLBACK_GATE_MODE", "observe_only") or "observe_only").strip().lower()
+        if mode not in {"observe_only", "size_cap", "hard_skip"}:
+            mode = "observe_only"
+        current = self._float_or_zero(current_price)
+        meta = (getattr(self, "selection_meta", {}) or {}).get(market_key, {}) or {}
+        price_targets = meta.get("price_targets") or {}
+        snapshot_ts = self._selection_snapshot_ts_for_market(market_key)
+        snapshot_age_min = self._selection_snapshot_age_min(market_key, snapshot_ts)
+        stale_min = self._runtime_float("HYBRID_PRICE_TARGET_STALE_MIN", 180.0)
+        target = self._selection_price_target_for_ticker(market_key, price_targets, ticker)
+        target_state = "price_target_usable"
+        if not target:
+            target_state = "price_target_missing"
+        elif snapshot_age_min is not None and stale_min > 0 and snapshot_age_min > stale_min:
+            target_state = "price_target_stale"
+        buy_zone_high = self._float_or_zero((target or {}).get("buy_zone_high"))
+        buy_zone_low = self._float_or_zero((target or {}).get("buy_zone_low"))
+        zone_dist_pct = None
+        zone_category = "missing_target"
+        would_action = "observe_no_gate"
+        threshold_reduce = self._runtime_float(
+            "HYBRID_US_REDUCE_ABOVE_BUY_ZONE_PCT" if market_key == "US" else "HYBRID_KR_REDUCE_ABOVE_BUY_ZONE_PCT",
+            2.0 if market_key == "US" else 4.0,
+        )
+        threshold_skip = self._runtime_float(
+            "HYBRID_US_SKIP_ABOVE_BUY_ZONE_PCT" if market_key == "US" else "HYBRID_KR_SKIP_ABOVE_BUY_ZONE_PCT",
+            5.0 if market_key == "US" else 0.0,
+        )
+        if target_state == "price_target_stale":
+            zone_category = "stale_target"
+        elif target_state == "price_target_usable" and current > 0 and buy_zone_high > 0:
+            zone_dist_pct = (current / buy_zone_high - 1.0) * 100.0
+            if buy_zone_low > 0 and current >= buy_zone_low and current <= buy_zone_high:
+                zone_category = "within_zone"
+                would_action = "allow"
+            elif zone_dist_pct <= 0:
+                zone_category = "within_zone"
+                would_action = "allow"
+            elif zone_dist_pct <= max(0.0, threshold_reduce):
+                zone_category = "near_above_zone"
+                would_action = "allow"
+            elif threshold_skip > 0 and zone_dist_pct > threshold_skip:
+                zone_category = "far_extended"
+                would_action = "would_skip"
+            else:
+                zone_category = "slightly_extended" if zone_dist_pct <= max(threshold_reduce, 0.0) + 2.0 else "extended"
+                would_action = "would_reduce_size"
+        payload = {
+            "event": "hybrid_gap_pullback_gate",
+            "market": market_key,
+            "ticker": self._selection_ticker_key(market_key, ticker),
+            "strategy": strategy_key,
+            "gate_enabled": True,
+            "gate_mode": mode,
+            "observe_only": mode == "observe_only",
+            "target_state": target_state,
+            "selection_snapshot_ts": snapshot_ts,
+            "selection_snapshot_age_min": None if snapshot_age_min is None else round(float(snapshot_age_min), 3),
+            "stale_min": float(stale_min),
+            "current_price": float(current or 0),
+            "buy_zone_low": float(buy_zone_low or 0),
+            "buy_zone_high": float(buy_zone_high or 0),
+            "zone_dist_pct": None if zone_dist_pct is None else round(float(zone_dist_pct), 4),
+            "zone_category": zone_category,
+            "would_action": would_action,
+            "would_block_live": False,
+            "would_size_mult": 1.0 if would_action in {"allow", "observe_no_gate"} else (0.0 if would_action == "would_skip" else 0.7),
+            "reduce_above_buy_zone_pct": float(threshold_reduce or 0),
+            "skip_above_buy_zone_pct": float(threshold_skip or 0),
+            "session_minute": session_minute,
+            "signal": dict(signal_payload or {}),
+            "logged_at": datetime.now(KST).isoformat(timespec="seconds"),
+        }
+        try:
+            self._write_funnel_event("hybrid_gap_pullback_gate", market_key, payload)
+        except Exception:
+            pass
+        try:
+            analysis_log.info(
+                f"[hybrid gap_pullback] {market_key} {ticker} {zone_category} action={would_action}",
+                extra={"extra": payload},
+            )
+        except Exception:
+            pass
+        return payload
     def _enforce_trade_ready_price_targets(
         self,
         market: str,
@@ -4667,6 +4839,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             meta,
             allow_missing_price_targets=allow_missing_price_targets,
         )
+        if not str(meta.get("selection_snapshot_ts") or "").strip():
+            meta["selection_snapshot_ts"] = datetime.now(KST).isoformat(timespec="seconds")
         stages = {
             "raw": {
                 "watchlist": list(dict.fromkeys(raw_meta.get("watchlist") or selected or [])),
@@ -9713,6 +9887,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "v2_decision_id": order.get("v2_decision_id", ""),
             "v2_execution_id": order.get("v2_execution_id", order.get("order_no", "")),
             "position_id": order.get("position_id") or f"pos_{market}_{order.get('ticker', '')}_{order.get('order_no', '') or int(time.time())}",
+            "entry_route": order.get("entry_route", ""),
+            "path_run_id": order.get("path_run_id", order.get("pathb_path_run_id", "")),
+            "parent_decision_id": order.get("parent_decision_id", order.get("v2_decision_id", "")),
+            "selection_snapshot_ts": order.get("selection_snapshot_ts", ""),
+            "strategy_used": order.get("strategy_used", order.get("strategy", "")),
+            "route_source": order.get("route_source", ""),
             "path_type": order.get("path_type", ""),
             "pathb_path_run_id": order.get("pathb_path_run_id", ""),
             "pathb_plan": order.get("pathb_plan", {}),
@@ -10050,6 +10230,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market = str(market or "KR").strip().upper()
         ticker_key = ticker.upper() if market == "US" else ticker
         order["market"] = market
+        self._normalize_order_attribution(order)
         order_no = str(order.get("order_no", "") or "").strip()
         if order_no:
             next_orders = []
@@ -16231,6 +16412,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         arbiter_shadow=getattr(_v2_arb, "shadow", {}) if _v2_arb is not None else {},
                         reentry_shadow=getattr(_v2_reentry, "shadow", {}) if _v2_reentry is not None else {},
                     )
+                    _hybrid_gate_payload = self._hybrid_gap_pullback_gate_payload(
+                        market,
+                        _s_tk,
+                        _s_strat,
+                        float(_s_px),
+                        session_minute=_s_elapsed_min,
+                        signal_payload={
+                            "score": float(_s_ep),
+                            "selected_reason": _s_sr,
+                            "signal_at": _sig_at,
+                        },
+                    )
+                    if _hybrid_gate_payload:
+                        _v2_late_payload["hybrid_gap_pullback_gate"] = _hybrid_gate_payload
                     _partial_order_decision = self._partial_data_execution_decision(market, _s_tk, _s_strat)
                     if _partial_order_decision.get("partial") and not _partial_order_decision.get("allowed"):
                         _partial_reason = str(_partial_order_decision.get("reason") or "partial_data_blocked")
@@ -17021,6 +17216,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         isdb.update_trade(_isdb_id)
                     _v2_decision_id = self._v2_decision_id_for_ticker(market, _s_tk)
                     _v2_execution_id = str(result.get("order_no", "") or f"exec_{market}_{_s_tk}_{int(time.time())}")
+                    _route_payload = self._entry_route_payload(
+                        market,
+                        _s_tk,
+                        _s_strat,
+                        decision_id=_v2_decision_id,
+                        entry_route="plan_a",
+                        route_source="signal_entry",
+                    )
                     self._v2_record_lifecycle_event(
                         "ORDER_SENT",
                         market,
@@ -17033,6 +17236,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "price_native": float(_s_px),
                             "price_krw": float(_s_rpx),
                             "strategy": _s_strat,
+                            **_route_payload,
                             **{k: v for k, v in _recovery_micro_meta.items() if k != "allowed"},
                             **_v2_late_payload,
                         },
@@ -17050,6 +17254,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "order_no": result.get("order_no", ""),
                             "qty": int(qty),
                             "v2_execution_id": _v2_execution_id,
+                            **_route_payload,
                             **{k: v for k, v in _recovery_micro_meta.items() if k != "allowed"},
                             **_v2_late_payload,
                         },
@@ -17081,6 +17286,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "decision_id":    _ml_decision_id,
                         "v2_decision_id": _v2_decision_id,
                         "v2_execution_id": _v2_execution_id,
+                        **_route_payload,
                         "entry_timing":   _entry_timing_order_snapshot,
                         **{k: v for k, v in _recovery_micro_meta.items() if k != "allowed"},
                         **_entry_reference_meta,

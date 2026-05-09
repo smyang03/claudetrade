@@ -102,6 +102,11 @@ def mask_sensitive(value: Any) -> Any:
         return masked
     if isinstance(value, list):
         return [mask_sensitive(item) for item in value]
+    if isinstance(value, str):
+        text = re.sub(r"(?i)(CANO=)[^&\s'\"<>]+", r"\1***", value)
+        text = re.sub(r"(?i)(ACNT_PRDT_CD=)[^&\s'\"<>]+", r"\1***", text)
+        text = re.sub(r"(?i)(account_no=)[^&\s'\"<>]+", r"\1***", text)
+        return text
     return value
 
 

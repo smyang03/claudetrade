@@ -237,6 +237,15 @@ class V2LifecycleRuntime:
         if not resolved_decision_id:
             return
         try:
+            enriched_payload = self._enrich_route_attribution(
+                event_type,
+                market,
+                ticker,
+                decision_id=resolved_decision_id,
+                execution_id=execution_id,
+                position_id=position_id,
+                payload=payload or {},
+            )
             self.registry.record_event(
                 event_type=event_type,
                 market=market,
@@ -249,10 +258,98 @@ class V2LifecycleRuntime:
                 execution_id=execution_id or None,
                 position_id=position_id or None,
                 reason_code=reason_code or None,
-                payload=payload or {},
+                payload=enriched_payload,
             )
         except Exception as exc:
             log.warning(f"[V2 lifecycle] append failed {event_type} {market} {ticker}: {exc}")
+
+    def _selection_snapshot_ts(self, market: str) -> str:
+        try:
+            meta = getattr(self.bot, "selection_meta", {}).get(market, {}) or {}
+        except Exception:
+            meta = {}
+        for key in ("selection_snapshot_ts", "_selection_snapshot_ts", "selected_at", "created_at", "updated_at"):
+            value = str((meta or {}).get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    @staticmethod
+    def _route_from_payload(payload: dict[str, Any]) -> str:
+        route = str((payload or {}).get("entry_route", "") or "").strip()
+        if route:
+            return route
+        if str((payload or {}).get("path_type", "") or "") == "claude_price":
+            return "path_b"
+        if str((payload or {}).get("path_run_id", "") or (payload or {}).get("pathb_path_run_id", "") or "").strip():
+            return "path_b"
+        if (payload or {}).get("path_a_lifecycle_evidence"):
+            return "recovered_unknown"
+        return ""
+
+    def _enrich_route_attribution(
+        self,
+        event_type: str,
+        market: str,
+        ticker: str,
+        *,
+        decision_id: str,
+        execution_id: str = "",
+        position_id: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        data = dict(payload or {})
+        event = str(event_type or "").upper()
+        route = self._route_from_payload(data)
+        path_run_id = str(data.get("path_run_id") or data.get("pathb_path_run_id") or "").strip()
+
+        if not route and self.registry is not None:
+            try:
+                carried = self.registry.store.latest_event_attribution(
+                    market=market,
+                    runtime_mode=self.bot._mode,
+                    session_date=self.bot._current_session_date_str(market),
+                    ticker=ticker,
+                    execution_id=str(execution_id or data.get("order_no", "") or ""),
+                    position_id=str(position_id or ""),
+                    decision_id=str(decision_id or ""),
+                )
+            except Exception:
+                carried = {}
+            if carried:
+                route = str(carried.get("entry_route") or "")
+                path_run_id = path_run_id or str(carried.get("path_run_id") or "")
+                for key in (
+                    "parent_decision_id",
+                    "selection_snapshot_ts",
+                    "strategy_used",
+                    "route_source",
+                    "attribution_source_event_id",
+                    "attribution_source_event_type",
+                ):
+                    if carried.get(key) and not data.get(key):
+                        data[key] = carried.get(key)
+
+        if not route and event == "ORDER_SENT":
+            route = "path_b" if path_run_id or str(data.get("path_type", "") or "") == "claude_price" else "plan_a"
+        if not route and data.get("path_a_lifecycle_evidence"):
+            route = "recovered_unknown"
+        if not route:
+            route = "unknown"
+
+        data.setdefault("entry_route", route)
+        if path_run_id:
+            data.setdefault("path_run_id", path_run_id)
+        data.setdefault("parent_decision_id", str(data.get("parent_decision_id") or decision_id or ""))
+        data.setdefault("selection_snapshot_ts", self._selection_snapshot_ts(market))
+        if route == "path_b":
+            data.setdefault("strategy_used", "claude_price")
+            data.setdefault("route_source", "buy_zone_hit")
+        else:
+            data.setdefault("strategy_used", str(data.get("strategy") or data.get("source_strategy") or ""))
+            if route == "plan_a":
+                data.setdefault("route_source", "signal_entry")
+        return data
 
     def fixed_size_entry(self, market: str, risk_price_krw: float):
         if not self.fixed_sizing_enabled or self.fixed_sizer is None:
@@ -411,7 +508,18 @@ class V2LifecycleRuntime:
             decision_id=str(order.get("v2_decision_id", "") or ""),
             execution_id=execution_id,
             reason_code="ORDER_UNKNOWN_UNRESOLVED",
-            payload={"detail": detail, "order_no": order.get("order_no", ""), "qty": int(order.get("qty", 0) or 0)},
+            payload={
+                "detail": detail,
+                "order_no": order.get("order_no", ""),
+                "qty": int(order.get("qty", 0) or 0),
+                "entry_route": order.get("entry_route", ""),
+                "path_run_id": order.get("path_run_id", order.get("pathb_path_run_id", "")),
+                "pathb_path_run_id": order.get("pathb_path_run_id", ""),
+                "parent_decision_id": order.get("parent_decision_id", order.get("v2_decision_id", "")),
+                "selection_snapshot_ts": order.get("selection_snapshot_ts", ""),
+                "strategy_used": order.get("strategy_used", order.get("strategy", "")),
+                "route_source": order.get("route_source", ""),
+            },
         )
         if self.order_unknown is not None:
             try:

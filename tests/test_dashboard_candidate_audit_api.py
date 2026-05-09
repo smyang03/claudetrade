@@ -20,7 +20,21 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
         self.assertIn(b"/api/candidate-audit/summary", response.data)
         self.assertIn(b"/api/candidate-audit/rows", response.data)
         self.assertIn(b"candidate-audit-status", response.data)
+        self.assertIn(b"candidate-audit-freshness", response.data)
+        self.assertIn(b"candidate-audit-missed", response.data)
+        self.assertIn(b"candidate-audit-watch-trigger", response.data)
         self.assertIn(b"/candidate-audit", response.data)
+
+    def test_candidate_audit_page_honors_market_and_mode_query_params(self) -> None:
+        import dashboard.dashboard_server as dashboard_server
+
+        response = dashboard_server.app.test_client().get("/candidate-audit?market=US&mode=live")
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("URL_PARAMS.get('market')", body)
+        self.assertIn("URL_PARAMS.get('mode')", body)
+        self.assertIn("localStorage.setItem('market', MARKET)", body)
 
     def test_candidate_audit_summary_includes_outcomes_and_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -86,6 +100,11 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             self.assertIn("outcome_buckets", data)
             self.assertIn("route_shadow_summary", data)
             self.assertIn("strategy_mismatch", data)
+            self.assertIn("freshness", data)
+            self.assertIn("missed_winners", data)
+            self.assertIn("routing_delta", data)
+            self.assertIn("latency_sla", data)
+            self.assertIn("watch_trigger_shadow_summary", data)
             self.assertEqual(data["strategy_mismatch"]["mismatch_count"], 1)
 
     def test_candidate_audit_summary_missing_db_is_non_fatal(self) -> None:
@@ -168,6 +187,37 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             data = response.get_json()
             self.assertEqual(data["session_date"], "2026-05-08")
             self.assertEqual([row["ticker"] for row in data["rows"]], ["NEW"])
+
+    def test_candidate_audit_empty_requested_date_falls_back_to_latest_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "new_call",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-08",
+                    "known_at": "2026-05-08T23:59:39",
+                    "ticker": "NEW",
+                    "price": 20.0,
+                    "classification": "watch_only",
+                }
+            )
+
+            import dashboard.dashboard_server as dashboard_server
+
+            with patch.object(dashboard_server, "_candidate_audit_db_path", return_value=db_path):
+                response = dashboard_server.app.test_client().get(
+                    "/api/candidate-audit/summary?market=US&mode=live&date=2026-05-09"
+                )
+
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertEqual(data["requested_session_date"], "2026-05-09")
+            self.assertEqual(data["session_date"], "2026-05-08")
+            self.assertTrue(data["session_date_fallback"])
+            self.assertEqual(data["totals"]["candidate_rows"], 1)
 
     def test_local_realized_dedupe_uses_close_reason_priority(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

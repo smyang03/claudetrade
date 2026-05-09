@@ -259,6 +259,7 @@ class ClaudePriceAdapter:
             brain_snapshot_id=brain_snapshot_id,
             path_status="EXPIRED",
         )
+        self._record_miss_quality(path_run_id, cancel_reason="EXPIRED")
         return True
 
     def cancel_plan(self, path_run_id: str, *, reason: str, runtime_mode: str, brain_snapshot_id: str) -> bool:
@@ -274,6 +275,7 @@ class ClaudePriceAdapter:
             path_status="CANCELLED",
             extra={"reason": reason},
         )
+        self._record_miss_quality(path_run_id, cancel_reason=reason)
         return True
 
     def get_waiting_runs(self, market: str, runtime_mode: str, session_date: str) -> list[dict[str, Any]]:
@@ -324,3 +326,45 @@ class ClaudePriceAdapter:
                 payload=payload,
             )
         )
+
+    def _record_miss_quality(self, path_run_id: str, *, cancel_reason: str) -> None:
+        run = self.store.find_path_run(path_run_id)
+        if not run:
+            return
+        plan = run.get("plan") or {}
+        if not isinstance(plan, dict):
+            plan = {}
+
+        def _num(key: str) -> float | None:
+            try:
+                value = float(plan.get(key) or 0)
+            except Exception:
+                value = 0.0
+            return value if value > 0 else None
+
+        try:
+            self.store.record_pathb_miss_quality(
+                path_run_id=path_run_id,
+                decision_id=str(run.get("decision_id") or plan.get("decision_id") or ""),
+                market=str(run.get("market") or plan.get("market") or ""),
+                runtime_mode=str(run.get("runtime_mode") or ""),
+                session_date=str(run.get("session_date") or plan.get("session_date") or ""),
+                ticker=str(run.get("ticker") or plan.get("ticker") or ""),
+                cancel_reason=str(cancel_reason or "CANCELLED"),
+                cancelled_at=None,
+                current_at_plan=_num("current_at_plan"),
+                open_price=_num("open_price"),
+                buy_zone_low=_num("buy_zone_low"),
+                buy_zone_high=_num("buy_zone_high"),
+                cancel_if_open_above=_num("cancel_if_open_above"),
+                cancel_trigger_price=_num("cancel_trigger_price"),
+                reference_price=_num("reference_price") or _num("entry_order_price") or _num("buy_zone_high"),
+                market_close_at=str(plan.get("market_close_at") or ""),
+                payload={
+                    "recorded_by": "claude_price_adapter",
+                    "path_status": str(run.get("status") or ""),
+                    "cancel_trigger_source": str(plan.get("cancel_trigger_source") or ""),
+                },
+            )
+        except Exception:
+            return

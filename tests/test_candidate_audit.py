@@ -440,6 +440,131 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(result["strategy_mismatch"]["match_count"], 1)
             self.assertEqual(result["strategy_mismatch"]["mismatch_count"], 1)
 
+    def test_analysis_exposes_live_monitoring_operational_summaries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "logs" / "raw_calls").mkdir(parents=True)
+            (root / "logs" / "funnel").mkdir(parents=True)
+            (root / "logs" / "screener_quality").mkdir(parents=True)
+            db_path = root / "data" / "audit" / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            session_date = "2026-05-08"
+            store.upsert_call(
+                {
+                    "call_id": "call_1",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": session_date,
+                    "called_at": "2026-05-08T09:00:00",
+                    "label": "select_tickers",
+                    "prompt_candidate_count": 2,
+                }
+            )
+            store.upsert_candidate(
+                {
+                    "call_id": "call_1",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": session_date,
+                    "known_at": "2026-05-08T09:00:00",
+                    "ticker": "AAA",
+                    "price": 100.0,
+                    "claude_watchlist": True,
+                    "classification": "watch_only",
+                }
+            )
+            key = candidate_key(session_date=session_date, market="US", call_id="call_1", ticker="AAA")
+            store.upsert_outcome(
+                {
+                    "candidate_key": key,
+                    "horizon_min": 30,
+                    "target_at": "2026-05-08T09:30:00",
+                    "observed_at": "2026-05-08T09:30:00",
+                    "observed_price": 103.0,
+                    "return_pct": 3.0,
+                    "max_runup_pct": 3.2,
+                    "max_drawdown_pct": -1.0,
+                    "status": "audit_sparse",
+                    "source": "audit_candidate_rows",
+                    "payload": {"sample_count": 2},
+                }
+            )
+            (root / "logs" / "raw_calls" / "20260508_US_select_tickers_090500_test.json").write_text(
+                json.dumps({"timestamp": "2026-05-08T09:05:00"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (root / "logs" / "funnel" / "candidate_funnel_snapshot_20260508_US.jsonl").write_text(
+                json.dumps(
+                    {
+                        "written_at": "2026-05-08T09:05:00",
+                        "session_date": session_date,
+                        "market": "US",
+                        "full_pool_count": 3,
+                        "prompt_pool_count": 2,
+                        "selection_stages": {
+                            "raw": {"trade_ready": ["AAA", "BBB"]},
+                            "normalized": {"trade_ready": ["AAA"]},
+                            "applied": {"trade_ready": ["AAA"]},
+                        },
+                        "runtime_filtered": {"BBB": "slot_cap"},
+                        "runtime_filtered_count": 1,
+                        "pathb_wait_tickers": ["CCC"],
+                        "candidate_action_routes": [
+                            {
+                                "ticker": "BBB",
+                                "original_action": "BUY_READY",
+                                "final_action": "WATCH",
+                                "reason": "slot_cap",
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (root / "logs" / "funnel" / "candidate_cycle_latency_20260508_US.jsonl").write_text(
+                json.dumps({"written_at": "2026-05-08T09:05:00", "elapsed_ms": 70000, "alert": True})
+                + "\n",
+                encoding="utf-8",
+            )
+            (root / "logs" / "funnel" / "watch_trigger_shadow_20260508_US.jsonl").write_text(
+                json.dumps(
+                    {
+                        "written_at": "2026-05-08T09:05:00",
+                        "market": "US",
+                        "ticker": "AAA",
+                        "result": "blocked",
+                        "blocked_reason": "missing_strategy",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "tools.analyze_candidate_audit.get_runtime_path",
+                side_effect=lambda *parts, **kwargs: root.joinpath(*parts),
+            ):
+                result = analyze_candidate_audit(
+                    db_path=db_path,
+                    session_date=session_date,
+                    market="US",
+                    horizon_min=30,
+                )
+
+            self.assertEqual(result["freshness"]["status"], "stale")
+            self.assertEqual(result["freshness"]["max_lag_sec"], 300)
+            self.assertEqual(result["outcome_coverage"]["30"]["maturity"], "ready")
+            self.assertEqual(result["missed_winners"][0]["ticker"], "AAA")
+            self.assertEqual(result["missed_winners"][0]["miss_stage"], "claude_watch")
+            self.assertEqual(result["routing_delta"]["raw_trade_ready_count"], 2)
+            self.assertEqual(result["routing_delta"]["applied_trade_ready_count"], 1)
+            self.assertEqual(result["routing_delta"]["dropped_after_raw"], ["BBB"])
+            self.assertEqual(result["latency_sla"]["status"], "critical")
+            self.assertTrue(result["watch_trigger_shadow_summary"]["data_gap_dominant"])
+
 
 if __name__ == "__main__":
     unittest.main()

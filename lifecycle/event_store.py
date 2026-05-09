@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Iterable
+from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
 
@@ -117,6 +118,48 @@ class EventStore:
                     ON v2_path_runs(market, runtime_mode, session_date, status);
                 CREATE INDEX IF NOT EXISTS idx_v2_path_runs_ticker_session
                     ON v2_path_runs(market, ticker, session_date);
+
+                CREATE TABLE IF NOT EXISTS pathb_miss_quality (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    path_run_id TEXT NOT NULL,
+                    decision_id TEXT,
+                    market TEXT NOT NULL,
+                    runtime_mode TEXT NOT NULL,
+                    session_date TEXT NOT NULL,
+                    ticker TEXT NOT NULL,
+                    cancelled_at TEXT NOT NULL,
+                    cancel_reason TEXT NOT NULL,
+                    current_at_plan REAL,
+                    open_price REAL,
+                    buy_zone_low REAL,
+                    buy_zone_high REAL,
+                    cancel_if_open_above REAL,
+                    cancel_trigger_price REAL,
+                    reference_price REAL,
+                    baseline_price REAL,
+                    baseline_source TEXT,
+                    market_close_at TEXT,
+                    followup_due_at TEXT NOT NULL,
+                    followup_filled_at TEXT,
+                    followup_status TEXT NOT NULL DEFAULT 'pending',
+                    zone_reentered_after_cancel INTEGER,
+                    mfe_30m_pct REAL,
+                    mae_30m_pct REAL,
+                    observed_price_30m REAL,
+                    quote_sample_count INTEGER,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_pathb_miss_quality_run_reason
+                    ON pathb_miss_quality(path_run_id, cancel_reason);
+                CREATE INDEX IF NOT EXISTS idx_pathb_miss_quality_due
+                    ON pathb_miss_quality(followup_status, followup_due_at);
+                CREATE INDEX IF NOT EXISTS idx_pathb_miss_quality_run
+                    ON pathb_miss_quality(path_run_id);
+                CREATE INDEX IF NOT EXISTS idx_pathb_miss_quality_market_date
+                    ON pathb_miss_quality(market, session_date);
                 """
             )
 
@@ -474,6 +517,215 @@ class EventStore:
                 row = conn.execute("SELECT COUNT(*) AS n FROM lifecycle_events").fetchone()
         return int(row["n"])
 
+    def latest_event_attribution(
+        self,
+        *,
+        market: str,
+        runtime_mode: str,
+        session_date: str,
+        ticker: str,
+        execution_id: str = "",
+        position_id: str = "",
+        decision_id: str = "",
+    ) -> dict[str, Any]:
+        ticker_value = str(ticker or "").strip().upper() if market == "US" else str(ticker or "").strip()
+        clauses = ["market=?", "runtime_mode=?", "session_date=?", "ticker=?"]
+        params: list[Any] = [market, runtime_mode, session_date, ticker_value]
+        match_clauses: list[str] = []
+        if execution_id:
+            match_clauses.append("execution_id=?")
+            params.append(execution_id)
+        if position_id:
+            match_clauses.append("position_id=?")
+            params.append(position_id)
+        if decision_id:
+            match_clauses.append("decision_id=?")
+            params.append(decision_id)
+        if match_clauses:
+            clauses.append("(" + " OR ".join(match_clauses) + ")")
+        clauses.append(
+            "event_type IN ('ORDER_SENT','ORDER_ACKED','PARTIAL_FILLED','FILLED','ORDER_UNKNOWN','CLOSED')"
+        )
+        sql = (
+            "SELECT * FROM lifecycle_events WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY event_id DESC LIMIT 25"
+        )
+        with self.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        for row in rows:
+            data = self._event_row_to_dict(row)
+            payload = data.get("payload") or {}
+            if isinstance(payload, dict) and (
+                payload.get("entry_route") or payload.get("path_run_id") or payload.get("pathb_path_run_id")
+            ):
+                return {
+                    "entry_route": str(payload.get("entry_route") or ""),
+                    "path_run_id": str(payload.get("path_run_id") or payload.get("pathb_path_run_id") or ""),
+                    "parent_decision_id": str(payload.get("parent_decision_id") or data.get("decision_id") or ""),
+                    "selection_snapshot_ts": str(payload.get("selection_snapshot_ts") or ""),
+                    "strategy_used": str(payload.get("strategy_used") or payload.get("strategy") or ""),
+                    "route_source": str(payload.get("route_source") or "carry_forward_event"),
+                    "attribution_source_event_id": data.get("event_id"),
+                    "attribution_source_event_type": data.get("event_type"),
+                }
+        return {}
+
+    def record_pathb_miss_quality(
+        self,
+        *,
+        path_run_id: str,
+        decision_id: str,
+        market: str,
+        runtime_mode: str,
+        session_date: str,
+        ticker: str,
+        cancel_reason: str,
+        cancelled_at: str | None = None,
+        current_at_plan: float | None = None,
+        open_price: float | None = None,
+        buy_zone_low: float | None = None,
+        buy_zone_high: float | None = None,
+        cancel_if_open_above: float | None = None,
+        cancel_trigger_price: float | None = None,
+        reference_price: float | None = None,
+        market_close_at: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        now = utc_now_iso()
+        cancelled = str(cancelled_at or now)
+        try:
+            base_dt = datetime.fromisoformat(cancelled.replace("Z", "+00:00"))
+        except Exception:
+            base_dt = datetime.now(timezone.utc)
+        if base_dt.tzinfo is None:
+            base_dt = base_dt.replace(tzinfo=timezone.utc)
+        followup_due_at = (base_dt.astimezone(timezone.utc) + timedelta(minutes=30)).isoformat(timespec="seconds")
+
+        baseline_price = None
+        baseline_source = ""
+        for source, value in (
+            ("cancel_trigger_price", cancel_trigger_price),
+            ("reference_price", reference_price),
+            ("buy_zone_high", buy_zone_high),
+        ):
+            try:
+                parsed = float(value or 0)
+            except Exception:
+                parsed = 0.0
+            if parsed > 0:
+                baseline_price = parsed
+                baseline_source = source
+                break
+
+        ticker_value = str(ticker or "").strip().upper() if market == "US" else str(ticker or "").strip()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO pathb_miss_quality (
+                    path_run_id, decision_id, market, runtime_mode, session_date, ticker,
+                    cancelled_at, cancel_reason, current_at_plan, open_price,
+                    buy_zone_low, buy_zone_high, cancel_if_open_above, cancel_trigger_price,
+                    reference_price, baseline_price, baseline_source, market_close_at,
+                    followup_due_at, followup_status, payload_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                ON CONFLICT(path_run_id, cancel_reason) DO UPDATE SET
+                    current_at_plan=excluded.current_at_plan,
+                    open_price=excluded.open_price,
+                    buy_zone_low=excluded.buy_zone_low,
+                    buy_zone_high=excluded.buy_zone_high,
+                    cancel_if_open_above=excluded.cancel_if_open_above,
+                    cancel_trigger_price=excluded.cancel_trigger_price,
+                    reference_price=excluded.reference_price,
+                    baseline_price=excluded.baseline_price,
+                    baseline_source=excluded.baseline_source,
+                    market_close_at=excluded.market_close_at,
+                    payload_json=excluded.payload_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    path_run_id,
+                    decision_id,
+                    market,
+                    runtime_mode,
+                    session_date,
+                    ticker_value,
+                    cancelled,
+                    cancel_reason,
+                    current_at_plan,
+                    open_price,
+                    buy_zone_low,
+                    buy_zone_high,
+                    cancel_if_open_above,
+                    cancel_trigger_price,
+                    reference_price,
+                    baseline_price,
+                    baseline_source,
+                    market_close_at,
+                    followup_due_at,
+                    json.dumps(payload or {}, ensure_ascii=False, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+
+    def pending_pathb_miss_quality(self, *, now_iso: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM pathb_miss_quality
+                WHERE followup_status='pending' AND followup_due_at <= ?
+                ORDER BY followup_due_at
+                LIMIT ?
+                """,
+                (now_iso, int(limit or 20)),
+            ).fetchall()
+        return [self._pathb_miss_quality_row_to_dict(row) for row in rows]
+
+    def update_pathb_miss_quality_followup(
+        self,
+        row_id: int,
+        *,
+        followup_status: str,
+        zone_reentered_after_cancel: bool | None = None,
+        mfe_30m_pct: float | None = None,
+        mae_30m_pct: float | None = None,
+        observed_price_30m: float | None = None,
+        quote_sample_count: int | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        now = utc_now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE pathb_miss_quality
+                SET followup_status=?,
+                    followup_filled_at=?,
+                    zone_reentered_after_cancel=?,
+                    mfe_30m_pct=?,
+                    mae_30m_pct=?,
+                    observed_price_30m=?,
+                    quote_sample_count=?,
+                    payload_json=?,
+                    updated_at=?
+                WHERE id=?
+                """,
+                (
+                    followup_status,
+                    now,
+                    None if zone_reentered_after_cancel is None else (1 if zone_reentered_after_cancel else 0),
+                    mfe_30m_pct,
+                    mae_30m_pct,
+                    observed_price_30m,
+                    quote_sample_count,
+                    json.dumps(payload or {}, ensure_ascii=False, sort_keys=True),
+                    now,
+                    int(row_id),
+                ),
+            )
+
     def record_phase_validation(
         self,
         *,
@@ -522,4 +774,13 @@ class EventStore:
             data["plan"] = json.loads(data.pop("plan_json") or "{}")
         except json.JSONDecodeError:
             data["plan"] = {}
+        return data
+
+    @staticmethod
+    def _pathb_miss_quality_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+        data = dict(row)
+        try:
+            data["payload"] = json.loads(data.pop("payload_json") or "{}")
+        except json.JSONDecodeError:
+            data["payload"] = {}
         return data

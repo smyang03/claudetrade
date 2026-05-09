@@ -6,6 +6,7 @@ import re
 import sqlite3
 import sys
 from collections import Counter, defaultdict
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,11 @@ if str(ROOT) not in sys.path:
 
 from runtime_paths import get_runtime_path
 from tools.update_candidate_audit_outcomes import MIN_SAMPLES_BY_HORIZON
+
+KST = timezone(timedelta(hours=9))
+FRESHNESS_WARN_SEC = 120
+MISSED_WINNER_MFE_PCT = 2.0
+MISSED_WINNER_MIN_DRAWDOWN_PCT = -2.0
 
 
 def _to_float(value: Any) -> float | None:
@@ -48,6 +54,32 @@ def _mean(values: list[float]) -> float | None:
 
 def _round(value: float | None, digits: int = 4) -> float | None:
     return round(value, digits) if value is not None else None
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except Exception:
+        try:
+            parsed = datetime.fromisoformat(normalized[:19])
+        except Exception:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=KST)
+    return parsed.astimezone(timezone.utc)
+
+
+def _iso(value: datetime | None) -> str:
+    return value.astimezone(KST).replace(microsecond=0).isoformat() if value else ""
+
+
+def _latest_dt(values: list[Any]) -> datetime | None:
+    parsed = [dt for dt in (_parse_dt(value) for value in values) if dt is not None]
+    return max(parsed) if parsed else None
 
 
 def _rate(values: list[float], predicate) -> float | None:
@@ -171,6 +203,86 @@ def _top_by_mfe(
     return out
 
 
+def _miss_stage(classification: str) -> str:
+    mapping = {
+        "not_in_prompt": "prompt",
+        "in_prompt_not_selected": "claude",
+        "watch_only": "claude_watch",
+        "ready_no_signal": "signal",
+    }
+    return mapping.get(classification, "unknown")
+
+
+def _miss_type(classification: str) -> str:
+    mapping = {
+        "not_in_prompt": "not_in_prompt",
+        "in_prompt_not_selected": "claude_not_selected",
+        "watch_only": "watch_only",
+        "ready_no_signal": "ready_no_signal",
+    }
+    return mapping.get(classification, classification or "unknown")
+
+
+def missed_winners(
+    rows: list[dict[str, Any]],
+    *,
+    limit: int,
+    horizon_min: int,
+    min_mfe_pct: float = MISSED_WINNER_MFE_PCT,
+    min_drawdown_pct: float = MISSED_WINNER_MIN_DRAWDOWN_PCT,
+) -> list[dict[str, Any]]:
+    allowed = {"not_in_prompt", "in_prompt_not_selected", "watch_only", "ready_no_signal"}
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        classification = str(row.get("classification") or "unknown")
+        if classification not in allowed:
+            continue
+        mfe = _to_float(row.get("max_runup_pct"))
+        mae = _to_float(row.get("max_drawdown_pct"))
+        if mfe is None or mfe < min_mfe_pct:
+            continue
+        if mae is not None and mae <= min_drawdown_pct:
+            continue
+        sample_count = None
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+            sample_count = payload.get("sample_count")
+        except Exception:
+            sample_count = None
+        items.append(
+            {
+                "candidate_key": row.get("candidate_key"),
+                "session_date": row.get("session_date"),
+                "market": row.get("market"),
+                "call_id": row.get("call_id"),
+                "known_at": row.get("known_at"),
+                "ticker": row.get("ticker"),
+                "classification": classification,
+                "miss_type": _miss_type(classification),
+                "miss_stage": _miss_stage(classification),
+                "return_pct": _round(_to_float(row.get("return_pct"))),
+                "max_runup_pct": _round(mfe),
+                "max_drawdown_pct": _round(mae),
+                "horizon_min": int(horizon_min),
+                "sample_count": sample_count,
+                "route_reason": row.get("route_reason") or "",
+            }
+        )
+    best_by_ticker: dict[str, dict[str, Any]] = {}
+    for item in items:
+        ticker = str(item.get("ticker") or "").upper()
+        if not ticker:
+            continue
+        current = best_by_ticker.get(ticker)
+        if current is None or (_to_float(item.get("max_runup_pct")) or -9999.0) > (
+            _to_float(current.get("max_runup_pct")) or -9999.0
+        ):
+            best_by_ticker[ticker] = item
+    deduped = list(best_by_ticker.values())
+    deduped.sort(key=lambda row: (_to_float(row.get("max_runup_pct")) or -9999.0), reverse=True)
+    return deduped[: max(int(limit or 10), 1)]
+
+
 def _strategy_tokens(value: Any) -> set[str]:
     raw = str(value or "").strip().lower()
     if not raw:
@@ -280,8 +392,32 @@ def _outcome_coverage(
     for item in by_horizon.values():
         total = int(item.get("total") or 0)
         audit_sparse = int(item.get("audit_sparse") or 0)
-        item["coverage_rate"] = _round(audit_sparse / total if total else None)
+        coverage_rate = audit_sparse / total if total else None
+        item["coverage_rate"] = _round(coverage_rate)
+        item["maturity"] = _coverage_maturity(coverage_rate)
+        item["interpretation"] = _coverage_interpretation(coverage_rate)
     return by_horizon
+
+
+def _coverage_maturity(coverage_rate: float | None) -> str:
+    if coverage_rate is None:
+        return "missing"
+    if coverage_rate < 0.20:
+        return "immature"
+    if coverage_rate < 0.60:
+        return "partial"
+    return "ready"
+
+
+def _coverage_interpretation(coverage_rate: float | None) -> str:
+    maturity = _coverage_maturity(coverage_rate)
+    if maturity == "ready":
+        return "comparison_ready"
+    if maturity == "partial":
+        return "reference_only"
+    if maturity == "immature":
+        return "do_not_interpret_yet"
+    return "no_outcome_rows"
 
 
 def _route_shadow_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -337,6 +473,229 @@ def _iter_jsonl_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _session_day(session_date: str) -> str:
+    return str(session_date or "").replace("-", "") or "*"
+
+
+def _market_part(market: str) -> str:
+    return str(market or "").upper() or "*"
+
+
+def _latest_json_file_timestamp(paths: list[Path], key: str) -> tuple[datetime | None, str]:
+    latest: datetime | None = None
+    latest_path = ""
+    for path in paths:
+        row = _read_json(path)
+        candidate = _parse_dt(row.get(key))
+        if candidate is None:
+            try:
+                candidate = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+            except Exception:
+                candidate = None
+        if candidate is not None and (latest is None or candidate > latest):
+            latest = candidate
+            latest_path = str(path)
+    return latest, latest_path
+
+
+def _latest_jsonl_timestamp(paths: list[Path], key: str) -> tuple[datetime | None, str]:
+    latest: datetime | None = None
+    latest_path = ""
+    for path in paths:
+        for row in _iter_jsonl_rows(path):
+            candidate = _parse_dt(row.get(key))
+            if candidate is not None and (latest is None or candidate > latest):
+                latest = candidate
+                latest_path = str(path)
+    return latest, latest_path
+
+
+def _latest_audit_db_call(conn: sqlite3.Connection, *, session_date: str, market: str, runtime_mode: str) -> datetime | None:
+    params: list[Any] = [str(runtime_mode or "live").lower()]
+    where = ["runtime_mode=?"]
+    if session_date:
+        where.append("session_date=?")
+        params.append(session_date)
+    if market:
+        where.append("market=?")
+        params.append(str(market).upper())
+    row = conn.execute(
+        f"""
+        SELECT MAX(called_at) AS latest_at
+        FROM audit_claude_calls
+        WHERE {' AND '.join(where)}
+        """,
+        params,
+    ).fetchone()
+    return _parse_dt(row["latest_at"] if row else "")
+
+
+def audit_freshness_summary(
+    conn: sqlite3.Connection,
+    *,
+    session_date: str,
+    market: str,
+    runtime_mode: str = "live",
+) -> dict[str, Any]:
+    day = _session_day(session_date)
+    market_key = _market_part(market)
+    db_latest = _latest_audit_db_call(
+        conn,
+        session_date=session_date,
+        market=market_key,
+        runtime_mode=runtime_mode,
+    )
+    raw_latest, raw_path = _latest_json_file_timestamp(
+        sorted(get_runtime_path("logs", "raw_calls").glob(f"{day}_{market_key}_select_tickers*.json")),
+        "timestamp",
+    )
+    source_specs = {
+        "raw_calls": (raw_latest, raw_path),
+        "candidate_funnel_snapshot": _latest_jsonl_timestamp(
+            sorted(get_runtime_path("logs", "funnel").glob(f"candidate_funnel_snapshot_{day}_{market_key}.jsonl")),
+            "written_at",
+        ),
+        "screener_quality": _latest_jsonl_timestamp(
+            sorted(get_runtime_path("logs", "screener_quality").glob(f"{day}_{market_key}_candidates.jsonl")),
+            "timestamp",
+        ),
+        "watch_trigger_shadow": _latest_jsonl_timestamp(
+            sorted(get_runtime_path("logs", "funnel").glob(f"watch_trigger_shadow_{day}_{market_key}.jsonl")),
+            "written_at",
+        ),
+        "watch_trigger_not_evaluated": _latest_jsonl_timestamp(
+            sorted(get_runtime_path("logs", "funnel").glob(f"watch_trigger_not_evaluated_{day}_{market_key}.jsonl")),
+            "written_at",
+        ),
+    }
+    sources: dict[str, dict[str, Any]] = {}
+    max_lag_sec = 0
+    stale_sources: list[str] = []
+    for name, (latest, path) in source_specs.items():
+        lag_sec = None
+        if latest is not None and db_latest is not None:
+            lag_sec = max(int((latest - db_latest).total_seconds()), 0)
+            max_lag_sec = max(max_lag_sec, lag_sec)
+            if lag_sec > FRESHNESS_WARN_SEC:
+                stale_sources.append(name)
+        sources[name] = {
+            "latest_at": _iso(latest),
+            "path": path,
+            "lag_sec": lag_sec,
+            "stale": lag_sec is not None and lag_sec > FRESHNESS_WARN_SEC,
+        }
+    status = "missing_db" if db_latest is None else ("stale" if stale_sources else "ok")
+    return {
+        "db_latest_at": _iso(db_latest),
+        "max_lag_sec": max_lag_sec if db_latest is not None else None,
+        "warn_threshold_sec": FRESHNESS_WARN_SEC,
+        "status": status,
+        "stale_sources": stale_sources,
+        "sources": sources,
+    }
+
+
+def _latest_candidate_funnel_snapshot(*, session_date: str, market: str) -> dict[str, Any]:
+    day = _session_day(session_date)
+    market_key = _market_part(market)
+    rows: list[dict[str, Any]] = []
+    for path in sorted(get_runtime_path("logs", "funnel").glob(f"candidate_funnel_snapshot_{day}_{market_key}.jsonl")):
+        rows.extend(_iter_jsonl_rows(path))
+    rows.sort(key=lambda row: _parse_dt(row.get("written_at")) or datetime.min.replace(tzinfo=timezone.utc))
+    return rows[-1] if rows else {}
+
+
+def routing_delta_summary(*, session_date: str = "", market: str = "") -> dict[str, Any]:
+    latest = _latest_candidate_funnel_snapshot(session_date=session_date, market=market)
+    if not latest:
+        return {"exists": False, "status": "missing"}
+    stages = latest.get("selection_stages") if isinstance(latest.get("selection_stages"), dict) else {}
+    raw = stages.get("raw") if isinstance(stages.get("raw"), dict) else {}
+    normalized = stages.get("normalized") if isinstance(stages.get("normalized"), dict) else {}
+    applied = stages.get("applied") if isinstance(stages.get("applied"), dict) else {}
+    routes = latest.get("candidate_action_routes") if isinstance(latest.get("candidate_action_routes"), list) else []
+    reason_counts: Counter[str] = Counter()
+    final_action_counts: Counter[str] = Counter()
+    demoted: list[dict[str, Any]] = []
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        final_action = str(route.get("final_action") or "unknown")
+        reason = str(route.get("reason") or route.get("runtime_gate_reason") or "unknown")
+        final_action_counts[final_action] += 1
+        reason_counts[reason] += 1
+        original = str(route.get("original_action") or route.get("requested_action") or "")
+        if original and final_action and original != final_action:
+            demoted.append(
+                {
+                    "ticker": str(route.get("ticker") or "").upper(),
+                    "original_action": original,
+                    "final_action": final_action,
+                    "reason": reason,
+                }
+            )
+    raw_ready = [str(t).upper() for t in raw.get("trade_ready") or []]
+    normalized_ready = [str(t).upper() for t in normalized.get("trade_ready") or []]
+    applied_ready = [str(t).upper() for t in applied.get("trade_ready") or []]
+    return {
+        "exists": True,
+        "status": "ok",
+        "latest_at": str(latest.get("written_at") or ""),
+        "full_pool_count": int(latest.get("full_pool_count") or 0),
+        "prompt_pool_count": int(latest.get("prompt_pool_count") or 0),
+        "execution_pool_count": int(latest.get("execution_pool_count") or 0),
+        "watchlist_count": int(latest.get("watchlist_count") or 0),
+        "trade_ready_count": int(latest.get("trade_ready_count") or 0),
+        "raw_trade_ready_count": len(raw_ready),
+        "normalized_trade_ready_count": len(normalized_ready),
+        "applied_trade_ready_count": len(applied_ready),
+        "raw_trade_ready": raw_ready,
+        "normalized_trade_ready": normalized_ready,
+        "applied_trade_ready": applied_ready,
+        "dropped_after_raw": sorted(set(raw_ready) - set(applied_ready)),
+        "runtime_filtered": latest.get("runtime_filtered") or {},
+        "runtime_filtered_count": int(latest.get("runtime_filtered_count") or 0),
+        "pathb_wait_tickers": latest.get("pathb_wait_tickers") or [],
+        "route_reason_counts": dict(reason_counts.most_common()),
+        "final_action_counts": dict(final_action_counts.most_common()),
+        "demoted_routes": demoted[:20],
+    }
+
+
+def latency_sla_summary(*, session_date: str = "", market: str = "") -> dict[str, Any]:
+    day = _session_day(session_date)
+    market_key = _market_part(market)
+    rows: list[dict[str, Any]] = []
+    for path in sorted(get_runtime_path("logs", "funnel").glob(f"candidate_cycle_latency_{day}_{market_key}.jsonl")):
+        rows.extend(_iter_jsonl_rows(path))
+    values = [_to_float(row.get("elapsed_ms")) for row in rows]
+    clean = [value for value in values if value is not None]
+    alert_count = sum(1 for row in rows if bool(row.get("alert")))
+    max_ms = max(clean) if clean else None
+    status = "missing"
+    if clean:
+        status = "critical" if (max_ms or 0.0) > 60000 else ("warn" if alert_count > 0 or (max_ms or 0.0) > 25000 else "ok")
+    return {
+        "exists": bool(clean),
+        "status": status,
+        "rows": len(rows),
+        "alert_count": alert_count,
+        "avg_ms": _round(_mean(clean), 3),
+        "max_ms": _round(max_ms, 3),
+        "p95_ms": _round(_percentile(clean, 0.95), 3),
+        "warn_threshold_ms": 25000,
+        "critical_threshold_ms": 60000,
+    }
+
+
 def _watch_trigger_funnel_paths(event_type: str, *, session_date: str, market: str) -> list[Path]:
     log_dir = get_runtime_path("logs", "funnel")
     day = str(session_date or "").replace("-", "") or "*"
@@ -380,12 +739,17 @@ def watch_trigger_funnel_summary(*, session_date: str = "", market: str = "") ->
         if ticker:
             tickers_by_result[result].add(ticker)
 
+    missing_strategy_count = int(blocked_reason_counts.get("missing_strategy", 0))
+    blocked_count = int(result_counts.get("blocked", 0))
     return {
         "watch_trigger_not_evaluated_count": len(not_evaluated_rows),
         "watch_trigger_shadow_count": len(shadow_rows),
         "watch_trigger_would_promote_count": int(result_counts.get("would_promote", 0)),
         "watch_trigger_no_signal_count": int(result_counts.get("no_signal", 0)),
-        "watch_trigger_blocked_count": int(result_counts.get("blocked", 0)),
+        "watch_trigger_blocked_count": blocked_count,
+        "missing_strategy_count": missing_strategy_count,
+        "missing_strategy_rate": _round(missing_strategy_count / blocked_count if blocked_count else None),
+        "data_gap_dominant": blocked_count > 0 and missing_strategy_count / blocked_count >= 0.5,
         "not_evaluated_reason_counts": dict(not_eval_reason_counts.most_common()),
         "shadow_result_counts": dict(result_counts.most_common()),
         "blocked_reason_counts": dict(blocked_reason_counts.most_common()),
@@ -466,6 +830,12 @@ def analyze_candidate_audit(
             market=market,
             runtime_mode=runtime_mode,
         )
+        freshness = audit_freshness_summary(
+            conn,
+            session_date=session_date,
+            market=market,
+            runtime_mode=runtime_mode,
+        )
     finally:
         conn.close()
 
@@ -484,12 +854,26 @@ def analyze_candidate_audit(
         "runtime_mode": str(runtime_mode or "live").lower(),
         "horizon_min": int(horizon_min),
         "candidate_rows": len(rows),
+        "freshness": freshness,
         "outcome_coverage": coverage,
         "buckets": buckets,
+        "missed_winners": missed_winners(
+            rows,
+            limit=limit,
+            horizon_min=int(horizon_min),
+        ),
         "top_mfe": {
             name: _top_by_mfe(rows, name, limit=limit, horizon_min=int(horizon_min))
             for name in top_classes
         },
+        "routing_delta": routing_delta_summary(
+            session_date=session_date,
+            market=market,
+        ),
+        "latency_sla": latency_sla_summary(
+            session_date=session_date,
+            market=market,
+        ),
         "route_shadow_summary": _route_shadow_summary(rows),
         "strategy_mismatch": _strategy_mismatch(rows),
         "watch_trigger_shadow_summary": watch_trigger_funnel_summary(

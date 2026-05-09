@@ -410,6 +410,43 @@ def _date_str_prefix(date_str: str) -> str:
     return day[:4] + "-" + day[4:6] + "-" + day[6:]
 
 
+def _parse_log_ts(value: str) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text[:19].replace(" ", "T"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(KST).replace(tzinfo=None)
+        return parsed
+    except Exception:
+        return None
+
+
+def _session_log_window(market: str, session_date: str) -> tuple[datetime, datetime]:
+    day_text = _date_str_prefix(session_date) if "-" not in str(session_date or "") else str(session_date or "")[:10]
+    try:
+        session_day = date.fromisoformat(day_text)
+    except Exception:
+        session_day = _session_trade_date(market)
+    if str(market or "").upper() == "US":
+        start = datetime.combine(session_day, dt_time(22, 20))
+        end = datetime.combine(session_day + timedelta(days=1), dt_time(5, 10))
+        return start, end
+    start = datetime.combine(session_day, dt_time.min)
+    end = start + timedelta(days=1)
+    return start, end
+
+
+def _log_ts_in_session_window(market: str, ts_value: str, session_date: Optional[str] = None) -> bool:
+    parsed = _parse_log_ts(ts_value)
+    if parsed is None:
+        return False
+    target_session = str(session_date or _session_trade_date(market).isoformat())[:10]
+    start, end = _session_log_window(market, target_session)
+    return start <= parsed < end
+
+
 def _preferred_analysis_log_path(date_str: str, mode: str) -> Optional[Path]:
     analysis_dir = BASE_DIR / "logs" / "analysis"
     mode_name = _normalize_mode(mode)
@@ -423,15 +460,11 @@ def _preferred_analysis_log_path(date_str: str, mode: str) -> Optional[Path]:
 
 def _load_analysis_records_for_session(market: str, mode: str) -> list[dict]:
     session_date = _market_log_date_str(market)
+    session_iso = _date_str_prefix(session_date)
     system_date = datetime.now(KST).strftime("%Y%m%d")
     day_candidates = [session_date]
     if system_date != session_date:
         day_candidates.append(system_date)
-    allowed_prefixes = {
-        prefix
-        for prefix in (_date_str_prefix(session_date), _date_str_prefix(system_date))
-        if prefix
-    }
 
     records: list[dict] = []
     seen_paths: set[str] = set()
@@ -453,7 +486,7 @@ def _load_analysis_records_for_session(market: str, mode: str) -> list[dict]:
             except Exception:
                 continue
             ts = str(rec.get("timestamp", "") or "")
-            if ts and allowed_prefixes and not any(ts.startswith(prefix) for prefix in allowed_prefixes):
+            if ts and not _log_ts_in_session_window(market, ts, session_iso):
                 continue
             records.append(rec)
     return records
@@ -728,13 +761,15 @@ def _normalized_trades(rec: dict, market: str) -> list:
         pnl_pct = round(float(t.get("pnl_pct", 0) or 0), 6)
         reason = t.get("reason", "") or ""
         trade_date = t.get("date", rec.get("date", "")) or ""
+        session_date = t.get("session_date", rec.get("session_date", rec.get("date", ""))) or trade_date
         strategy = t.get("strategy", "") or ""
-        key = (trade_date, side, ticker, strategy, qty, price, pnl, pnl_pct, reason)
+        key = (session_date, trade_date, side, ticker, strategy, qty, price, pnl, pnl_pct, reason)
         if key in seen:
             continue
         seen.add(key)
         result.append({
             "date": trade_date,
+            "session_date": str(session_date)[:10],
             "side": side,
             "ticker": ticker,
             "strategy": strategy,
@@ -800,8 +835,18 @@ def _parse_trade_log_lines(rec_date: str, market: str) -> list:
         if now_ts - cached_ts < ttl:
             return cached_result
 
-    path = _log_path_for_date(rec_date)
-    if not path.exists():
+    rec_date_iso = f"{rec_date[:4]}-{rec_date[4:6]}-{rec_date[6:8]}" if "-" not in rec_date else rec_date[:10]
+    paths = [_log_path_for_date(rec_date)]
+    if str(market or "").upper() == "US":
+        try:
+            next_day = (date.fromisoformat(rec_date_iso) + timedelta(days=1)).isoformat()
+            next_path = _log_path_for_date(next_day)
+            if str(next_path) not in {str(p) for p in paths}:
+                paths.append(next_path)
+        except Exception:
+            pass
+    existing_paths = [path for path in paths if path.exists()]
+    if not existing_paths:
         _log_parse_cache[cache_key] = (now_ts, [])
         return []
 
@@ -815,15 +860,18 @@ def _parse_trade_log_lines(rec_date: str, market: str) -> list:
         r"\[(?P<reason>[a-zA-Z_]+)\]\s+(?P<ticker>[A-Z0-9]+)\s+(?P<pnl>[+\-]?[0-9,]+(?:\.[0-9]+)?)\s+\((?P<pnl_pct>[+\-]?[0-9.]+)%\)"
     )
 
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return None
+    lines = []
+    for path in existing_paths:
+        try:
+            lines.extend(path.read_text(encoding="utf-8").splitlines())
+        except Exception:
+            continue
 
     rows = []
     pending_sell = None
-    rec_date_iso = f"{rec_date[:4]}-{rec_date[4:6]}-{rec_date[6:8]}" if "-" not in rec_date else rec_date[:10]
     for line in lines:
+        if not _log_ts_in_session_window(market, line[:19], rec_date_iso):
+            continue
         buy_match = buy_re.search(line)
         if buy_match:
             ticker = buy_match.group("ticker").upper()
@@ -831,6 +879,7 @@ def _parse_trade_log_lines(rec_date: str, market: str) -> list:
                 continue
             rows.append({
                 "date": rec_date_iso,
+                "session_date": rec_date_iso,
                 "time": line[11:16],
                 "side": "buy",
                 "ticker": ticker,
@@ -860,6 +909,7 @@ def _parse_trade_log_lines(rec_date: str, market: str) -> list:
                 continue
             pending_sell = {
                 "date": rec_date_iso,
+                "session_date": rec_date_iso,
                 "time": line[11:16],
                 "side": "sell",
                 "ticker": ticker,
@@ -1423,11 +1473,14 @@ def _parse_runtime_events(market: str, limit: int = 200, mode: Optional[str] = N
 
     events = []
     pending_sell_reason = {}
+    session_iso = _session_trade_date(market).isoformat()
     for line in lines:
         ts_match = ts_re.search(line)
         if not ts_match:
             continue
         ts = ts_match.group("ts").replace(" ", "T")
+        if not _log_ts_in_session_window(market, ts, session_iso):
+            continue
 
         m = trailing_re.search(line)
         if m:
@@ -3454,10 +3507,13 @@ def _today_signal_digest(market: str, selected_count: int = 0, universe_count: i
         lines = log_path.read_text(encoding="utf-8").splitlines()
     except Exception:
         return summary
+    session_iso = _session_trade_date(market).isoformat()
     for line in lines:
         try:
             rec = json.loads(line)
         except Exception:
+            continue
+        if not _log_ts_in_session_window(market, str(rec.get("timestamp", "") or ""), session_iso):
             continue
         extra = rec.get("extra", {})
         if "extra" in extra:
@@ -6027,9 +6083,39 @@ def _candidate_audit_latest_session_date(market: str, mode: str) -> str:
             conn.close()
 
 
+def _candidate_audit_session_row_count(session_date: str, market: str, mode: str = "live") -> int:
+    path = _candidate_audit_db_path()
+    if not path.exists():
+        return 0
+    market_key = str(market or "").upper()
+    mode_key = str(mode or "live").lower()
+    conn = None
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3)
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS rows
+            FROM audit_candidate_rows
+            WHERE session_date=? AND market=? AND runtime_mode=?
+            """,
+            (session_date, market_key, mode_key),
+        ).fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _candidate_audit_date(market: str, mode: str = "live") -> str:
     requested = str(request.args.get("date") or "").strip()
     if requested:
+        if _candidate_audit_session_row_count(requested, market, mode) > 0:
+            return requested
+        latest = _candidate_audit_latest_session_date(market, mode)
+        if latest:
+            return latest
         return requested
     latest = _candidate_audit_latest_session_date(market, mode)
     if latest:
@@ -6065,6 +6151,7 @@ def api_candidate_audit_summary():
     market = str(request.args.get("market") or "KR").strip().upper()
     if market not in {"KR", "US"}:
         return jsonify({"ok": False, "error": "market must be KR or US"}), 400
+    requested_session_date = str(request.args.get("date") or "").strip()
     session_date = _candidate_audit_date(market, mode)
     try:
         horizon_min = int(request.args.get("horizon_min", "60") or 60)
@@ -6077,6 +6164,8 @@ def api_candidate_audit_summary():
             "exists": False,
             "db_path": str(_candidate_audit_db_path()),
             "session_date": session_date,
+            "requested_session_date": requested_session_date,
+            "session_date_fallback": bool(requested_session_date and requested_session_date != session_date),
             "market": market,
             "runtime_mode": mode,
             "calls": {},
@@ -6087,6 +6176,11 @@ def api_candidate_audit_summary():
             "outcome_buckets": [],
             "route_shadow_summary": {},
             "strategy_mismatch": {},
+            "freshness": {},
+            "missed_winners": [],
+            "routing_delta": {},
+            "latency_sla": {},
+            "watch_trigger_shadow_summary": {},
         })
     params = (session_date, market, mode)
     try:
@@ -6161,16 +6255,28 @@ def api_candidate_audit_summary():
             outcome_coverage = analysis.get("outcome_coverage", {})
             route_shadow_summary = analysis.get("route_shadow_summary", {})
             strategy_mismatch = analysis.get("strategy_mismatch", {})
+            freshness = analysis.get("freshness", {})
+            missed_winners = analysis.get("missed_winners", [])
+            routing_delta = analysis.get("routing_delta", {})
+            latency_sla = analysis.get("latency_sla", {})
+            watch_trigger_shadow_summary = analysis.get("watch_trigger_shadow_summary", {})
         except Exception as exc:
             outcome_buckets = []
             outcome_coverage = {}
             route_shadow_summary = {}
             strategy_mismatch = {"error": str(exc)}
+            freshness = {"error": str(exc)}
+            missed_winners = []
+            routing_delta = {}
+            latency_sla = {}
+            watch_trigger_shadow_summary = {}
         return jsonify({
             "ok": True,
             "exists": True,
             "db_path": str(_candidate_audit_db_path()),
             "session_date": session_date,
+            "requested_session_date": requested_session_date,
+            "session_date_fallback": bool(requested_session_date and requested_session_date != session_date),
             "market": market,
             "runtime_mode": mode,
             "calls": calls,
@@ -6183,6 +6289,11 @@ def api_candidate_audit_summary():
             "outcome_buckets": outcome_buckets,
             "route_shadow_summary": route_shadow_summary,
             "strategy_mismatch": strategy_mismatch,
+            "freshness": freshness,
+            "missed_winners": missed_winners,
+            "routing_delta": routing_delta,
+            "latency_sla": latency_sla,
+            "watch_trigger_shadow_summary": watch_trigger_shadow_summary,
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
@@ -6196,6 +6307,7 @@ def api_candidate_audit_rows():
     market = str(request.args.get("market") or "KR").strip().upper()
     if market not in {"KR", "US"}:
         return jsonify({"ok": False, "error": "market must be KR or US"}), 400
+    requested_session_date = str(request.args.get("date") or "").strip()
     session_date = _candidate_audit_date(market, mode)
     classification = str(request.args.get("classification") or "").strip()
     ticker = str(request.args.get("ticker") or "").strip().upper()
@@ -6209,6 +6321,9 @@ def api_candidate_audit_rows():
             "ok": True,
             "exists": False,
             "db_path": str(_candidate_audit_db_path()),
+            "session_date": session_date,
+            "requested_session_date": requested_session_date,
+            "session_date_fallback": bool(requested_session_date and requested_session_date != session_date),
             "rows": [],
         })
     where = ["session_date=?", "market=?", "runtime_mode=?"]
@@ -6259,6 +6374,8 @@ def api_candidate_audit_rows():
             "exists": True,
             "db_path": str(_candidate_audit_db_path()),
             "session_date": session_date,
+            "requested_session_date": requested_session_date,
+            "session_date_fallback": bool(requested_session_date and requested_session_date != session_date),
             "market": market,
             "runtime_mode": mode,
             "outcome_horizon_min": outcome_horizon,
@@ -6844,7 +6961,11 @@ def api_tickers_today():
         )
 
     recent_trade_map: dict[str, dict] = {}
+    current_session_iso = _session_trade_date(market).isoformat()
     for trade in _trade_rows_for_records(load_records(90, market), market):
+        trade_session = str(trade.get("session_date") or trade.get("date") or "")[:10]
+        if trade_session != current_session_iso:
+            continue
         ticker = str(trade.get("ticker", "") or "").upper()
         if not ticker or ticker in recent_trade_map:
             continue
@@ -6883,9 +7004,12 @@ def api_tickers_today():
         if not paths_to_read:
             return {"initial": initial, "current": current, "history": history}
         lines = []
+        session_iso = _session_trade_date(_market).isoformat()
         for p in paths_to_read:
             try:
-                lines.extend(p.read_text(encoding="utf-8").splitlines())
+                for line in p.read_text(encoding="utf-8").splitlines():
+                    if _log_ts_in_session_window(_market, line[:19], session_iso):
+                        lines.append(line)
             except Exception:
                 pass
         if not lines:
@@ -7398,11 +7522,21 @@ def _period_bar_html(extra_filters: str = "") -> str:
 COMMON_JS_BLOCK = """
 <script>
 // 공통 상태
-let MARKET = localStorage.getItem('market') || 'KR';
-let MODE   = localStorage.getItem('runtime_mode') || 'live';
+const URL_PARAMS = new URLSearchParams(window.location.search);
+function normalizeMarketValue(value) {
+  const text = String(value || '').toUpperCase();
+  return text === 'US' ? 'US' : 'KR';
+}
+function normalizeRuntimeMode(value) {
+  return String(value || '').toLowerCase() === 'paper' ? 'paper' : 'live';
+}
+let MARKET = normalizeMarketValue(URL_PARAMS.get('market') || localStorage.getItem('market') || 'KR');
+let MODE   = normalizeRuntimeMode(URL_PARAMS.get('mode') || localStorage.getItem('runtime_mode') || 'live');
 let PERIOD = localStorage.getItem('period') || 'month';
 let DATE_START = localStorage.getItem('date_start') || '';
 let DATE_END   = localStorage.getItem('date_end')   || '';
+localStorage.setItem('market', MARKET);
+localStorage.setItem('runtime_mode', MODE);
 
 let charts = {};
 
@@ -12049,6 +12183,32 @@ PAGE_CANDIDATE_AUDIT_HTML = """
   </section>
 
   <section class="section">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">감사 최신성</div>
+        <div id="candidate-audit-freshness" class="table-wrap"><div class="muted">로딩 중...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">사이클 지연</div>
+        <div id="candidate-audit-latency" class="table-wrap"><div class="muted">로딩 중...</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">Missed winner</div>
+        <div id="candidate-audit-missed" class="table-wrap"><div class="muted">로딩 중...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Raw → Applied</div>
+        <div id="candidate-audit-routing-delta" class="table-wrap"><div class="muted">로딩 중...</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
     <div class="section-title">분류별 사후 성과</div>
     <div id="candidate-audit-buckets" class="table-wrap"><div class="muted">로딩 중...</div></div>
   </section>
@@ -12056,9 +12216,18 @@ PAGE_CANDIDATE_AUDIT_HTML = """
   <section class="section">
     <div class="grid-2">
       <div class="card">
+        <div class="card-title">WATCH_TRIGGER shadow</div>
+        <div id="candidate-audit-watch-trigger" class="table-wrap"><div class="muted">로딩 중...</div></div>
+      </div>
+      <div class="card">
         <div class="card-title">PathB route shadow</div>
         <div id="candidate-audit-route-shadow" class="table-wrap"><div class="muted">로딩 중...</div></div>
       </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="grid-2">
       <div class="card">
         <div class="card-title">전략 mismatch</div>
         <div id="candidate-audit-strategy" class="table-wrap"><div class="muted">로딩 중...</div></div>
@@ -12104,6 +12273,11 @@ function auditShortTime(v) {
 function auditLabel(v) {
   return escapeHtml(String(v || '-'));
 }
+function auditStatusPill(status) {
+  const s = String(status || 'unknown');
+  const cls = ['ok', 'ready'].includes(s) ? 'good' : (['stale', 'critical', 'immature'].includes(s) ? 'bad' : 'warn');
+  return `<span class="audit-pill ${cls}">${auditLabel(s)}</span>`;
+}
 function auditParams() {
   const params = new URLSearchParams();
   params.set('market', MARKET);
@@ -12131,12 +12305,21 @@ function renderCandidateAuditMissing(data) {
   document.getElementById('candidate-audit-buckets').innerHTML = '<div class="muted">candidate_audit.db가 아직 없습니다.</div>';
   document.getElementById('candidate-audit-route-shadow').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-strategy').innerHTML = '<div class="muted">데이터 없음</div>';
+  document.getElementById('candidate-audit-freshness').innerHTML = '<div class="muted">데이터 없음</div>';
+  document.getElementById('candidate-audit-latency').innerHTML = '<div class="muted">데이터 없음</div>';
+  document.getElementById('candidate-audit-missed').innerHTML = '<div class="muted">데이터 없음</div>';
+  document.getElementById('candidate-audit-routing-delta').innerHTML = '<div class="muted">데이터 없음</div>';
+  document.getElementById('candidate-audit-watch-trigger').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-rows').innerHTML = '<div class="muted">데이터 없음</div>';
 }
 function renderCandidateAuditSummary(data) {
   if (!data || !data.exists) {
     renderCandidateAuditMissing(data || {});
     return;
+  }
+  if (data.session_date_fallback) {
+    const dateEl = document.getElementById('audit-date');
+    if (dateEl) dateEl.value = data.session_date || '';
   }
   const horizon = String(data.outcome_horizon_min || document.getElementById('audit-horizon').value || '60');
   const totals = data.totals || {};
@@ -12147,8 +12330,11 @@ function renderCandidateAuditSummary(data) {
   const coverageRate = auditNum(coverage.coverage_rate);
   const inputTokens = Number(calls.input_tokens || 0);
   const outputTokens = Number(calls.output_tokens || 0);
+  const fallbackText = data.session_date_fallback
+    ? ` · requested ${auditLabel(data.requested_session_date)} → latest ${auditLabel(data.session_date)}`
+    : '';
   document.getElementById('candidate-audit-status').innerHTML =
-    `<span class="audit-pill good">READ ONLY</span> ${auditLabel(data.market)} ${auditLabel(data.runtime_mode)} · ${auditLabel(data.session_date)} · ${horizon}분 · 갱신 ${new Date().toLocaleTimeString()}`;
+    `<span class="audit-pill good">READ ONLY</span> ${auditLabel(data.market)} ${auditLabel(data.runtime_mode)} · ${auditLabel(data.session_date)} · ${horizon}분${fallbackText} · 갱신 ${new Date().toLocaleTimeString()}`;
   document.getElementById('audit-session').textContent = data.session_date || '-';
   document.getElementById('audit-db-path').textContent = data.db_path || '-';
   document.getElementById('audit-candidate-rows').textContent = auditInt(totals.candidate_rows);
@@ -12158,9 +12344,127 @@ function renderCandidateAuditSummary(data) {
   document.getElementById('audit-coverage-detail').textContent = `분석 가능 ${auditInt(sparse)} / outcome ${auditInt(totalOutcome)} · 부족 ${auditInt(coverage.insufficient_samples)}`;
   document.getElementById('audit-tokens').textContent = auditInt(inputTokens + outputTokens);
   document.getElementById('audit-calls').textContent = `호출 ${auditInt(calls.call_count)}회 · 입력 ${auditInt(inputTokens)} · 출력 ${auditInt(outputTokens)}`;
+  renderCandidateAuditFreshness(data.freshness || {});
+  renderCandidateAuditLatency(data.latency_sla || {});
+  renderCandidateAuditMissed(data.missed_winners || []);
+  renderCandidateAuditRoutingDelta(data.routing_delta || {});
+  renderCandidateAuditWatchTrigger(data.watch_trigger_shadow_summary || {});
   renderCandidateAuditBuckets(data.outcome_buckets || []);
   renderCandidateAuditRouteShadow(data.route_shadow_summary || {});
   renderCandidateAuditStrategy(data.strategy_mismatch || {});
+}
+function renderCandidateAuditFreshness(summary) {
+  const el = document.getElementById('candidate-audit-freshness');
+  if (!summary || summary.error) {
+    el.innerHTML = `<div class="muted">${auditLabel((summary && summary.error) || '최신성 데이터 없음')}</div>`;
+    return;
+  }
+  const sources = summary.sources || {};
+  const rows = Object.keys(sources).sort();
+  const head = `<div class="audit-note" style="margin-bottom:8px">
+    ${auditStatusPill(summary.status)} DB ${auditLabel(auditShortTime(summary.db_latest_at))} · max lag ${auditInt(summary.max_lag_sec)}s · threshold ${auditInt(summary.warn_threshold_sec)}s
+  </div>`;
+  if (!rows.length) {
+    el.innerHTML = head + '<div class="muted">비교할 로그 소스 없음</div>';
+    return;
+  }
+  el.innerHTML = head + `<table class="audit-compact-table">
+    <thead><tr><th>source</th><th>latest</th><th>lag</th><th>상태</th></tr></thead>
+    <tbody>${rows.map(name => {
+      const row = sources[name] || {};
+      return `<tr>
+        <td>${auditLabel(name)}</td>
+        <td>${auditLabel(auditShortTime(row.latest_at))}</td>
+        <td>${auditInt(row.lag_sec)}s</td>
+        <td>${row.stale ? '<span class="audit-pill bad">stale</span>' : '<span class="audit-pill good">ok</span>'}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+function renderCandidateAuditLatency(summary) {
+  const el = document.getElementById('candidate-audit-latency');
+  if (!summary || !summary.exists) {
+    el.innerHTML = '<div class="muted">latency 로그 없음</div>';
+    return;
+  }
+  el.innerHTML = `<div class="audit-note" style="margin-bottom:8px">
+    ${auditStatusPill(summary.status)} rows ${auditInt(summary.rows)} · alerts ${auditInt(summary.alert_count)}
+  </div>
+  <table class="audit-compact-table">
+    <thead><tr><th>avg</th><th>p95</th><th>max</th><th>warn</th><th>critical</th></tr></thead>
+    <tbody><tr>
+      <td>${auditInt(summary.avg_ms)}ms</td>
+      <td>${auditInt(summary.p95_ms)}ms</td>
+      <td>${auditInt(summary.max_ms)}ms</td>
+      <td>${auditInt(summary.warn_threshold_ms)}ms</td>
+      <td>${auditInt(summary.critical_threshold_ms)}ms</td>
+    </tr></tbody>
+  </table>`;
+}
+function renderCandidateAuditMissed(rows) {
+  const el = document.getElementById('candidate-audit-missed');
+  if (!rows.length) {
+    el.innerHTML = '<div class="muted">현재 기준 missed winner 없음</div>';
+    return;
+  }
+  el.innerHTML = `<table class="audit-compact-table">
+    <thead><tr><th>종목</th><th>stage</th><th>분류</th><th>MFE</th><th>MAE</th><th>수익</th><th>시간</th></tr></thead>
+    <tbody>${rows.slice(0, 12).map(row => `<tr>
+      <td>${auditLabel(row.ticker)}</td>
+      <td>${auditLabel(row.miss_stage)}</td>
+      <td>${auditLabel(row.miss_type)}</td>
+      <td class="${auditColorClass(row.max_runup_pct)}">${auditPct(row.max_runup_pct)}</td>
+      <td class="${auditColorClass(row.max_drawdown_pct)}">${auditPct(row.max_drawdown_pct)}</td>
+      <td class="${auditColorClass(row.return_pct)}">${auditPct(row.return_pct)}</td>
+      <td>${auditLabel(auditShortTime(row.known_at))}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+function renderCandidateAuditRoutingDelta(summary) {
+  const el = document.getElementById('candidate-audit-routing-delta');
+  if (!summary || !summary.exists) {
+    el.innerHTML = '<div class="muted">funnel snapshot 없음</div>';
+    return;
+  }
+  const dropped = summary.dropped_after_raw || [];
+  const runtimeFiltered = summary.runtime_filtered || {};
+  const reasons = summary.route_reason_counts || {};
+  const reasonRows = Object.keys(reasons).sort((a, b) => Number(reasons[b] || 0) - Number(reasons[a] || 0)).slice(0, 8);
+  el.innerHTML = `<div class="audit-note" style="margin-bottom:8px">
+    ${auditLabel(auditShortTime(summary.latest_at))} · raw ${auditInt(summary.raw_trade_ready_count)} → normalized ${auditInt(summary.normalized_trade_ready_count)} → applied ${auditInt(summary.applied_trade_ready_count)}
+  </div>
+  <table class="audit-compact-table">
+    <thead><tr><th>구분</th><th>값</th></tr></thead>
+    <tbody>
+      <tr><td>dropped</td><td class="audit-reason">${auditLabel(dropped.join(', '))}</td></tr>
+      <tr><td>runtime filtered</td><td class="audit-reason">${auditLabel(Object.keys(runtimeFiltered).map(k => `${k}:${runtimeFiltered[k]}`).join(', '))}</td></tr>
+      <tr><td>PathB wait</td><td class="audit-reason">${auditLabel((summary.pathb_wait_tickers || []).join(', '))}</td></tr>
+      <tr><td>route reasons</td><td class="audit-reason">${auditLabel(reasonRows.map(k => `${k}:${reasons[k]}`).join(', '))}</td></tr>
+    </tbody>
+  </table>`;
+}
+function renderCandidateAuditWatchTrigger(summary) {
+  const el = document.getElementById('candidate-audit-watch-trigger');
+  if (!summary || summary.error) {
+    el.innerHTML = '<div class="muted">WATCH_TRIGGER shadow 데이터 없음</div>';
+    return;
+  }
+  const blocked = summary.blocked_reason_counts || {};
+  const notEval = summary.not_evaluated_reason_counts || {};
+  const strategy = summary.strategy_counts || {};
+  const blockedRows = Object.keys(blocked).sort((a, b) => Number(blocked[b] || 0) - Number(blocked[a] || 0));
+  const flags = summary.data_gap_dominant ? '<span class="audit-pill bad">data gap dominant</span>' : '<span class="audit-pill good">data ok</span>';
+  el.innerHTML = `<div class="audit-note" style="margin-bottom:8px">
+    ${flags} shadow ${auditInt(summary.watch_trigger_shadow_count)} · promote ${auditInt(summary.watch_trigger_would_promote_count)} · blocked ${auditInt(summary.watch_trigger_blocked_count)} · missing_strategy ${auditInt(summary.missing_strategy_count)} (${auditRate(summary.missing_strategy_rate)})
+  </div>
+  <table class="audit-compact-table">
+    <thead><tr><th>구분</th><th>상위 사유</th></tr></thead>
+    <tbody>
+      <tr><td>blocked</td><td class="audit-reason">${auditLabel(blockedRows.map(k => `${k}:${blocked[k]}`).join(', '))}</td></tr>
+      <tr><td>not evaluated</td><td class="audit-reason">${auditLabel(Object.keys(notEval).map(k => `${k}:${notEval[k]}`).join(', '))}</td></tr>
+      <tr><td>strategy</td><td class="audit-reason">${auditLabel(Object.keys(strategy).map(k => `${k}:${strategy[k]}`).join(', '))}</td></tr>
+    </tbody>
+  </table>`;
 }
 function renderCandidateAuditBuckets(rows) {
   const el = document.getElementById('candidate-audit-buckets');
