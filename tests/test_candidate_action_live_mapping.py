@@ -601,6 +601,96 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["runtime_gate_reason"], "kr_momentum_not_confirmed")
         self.assertEqual(route["confirmation_state"], "CONFIRMING")
 
+    def test_kr_confirmation_live_blocks_missing_momentum(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+            }
+        )
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["runtime_gate_reason"], "kr_momentum_not_confirmed")
+        checks = route["runtime_gate"]["kr_confirmation_checks"]
+        self.assertFalse(checks["ret_3m_present"])
+        self.assertFalse(checks["ret_5m_present"])
+
+    def test_kr_confirmation_live_blocks_missing_data_quality(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+            }
+        )
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": 0.2,
+                    "ret_5m_pct": 0.3,
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["runtime_gate_reason"], "kr_data_quality_not_confirmed")
+        checks = route["runtime_gate"]["kr_confirmation_checks"]
+        self.assertFalse(checks["data_quality_present"])
+
+    def test_kr_confirmation_shadow_marks_missing_momentum_confirming(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": True,
+                "KR_CONFIRMATION_GATE_ENABLED": False,
+            }
+        )
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], ["005930"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "BUY_READY")
+        self.assertEqual(route["confirmation_state"], "CONFIRMING")
+        self.assertEqual(route["confirmation_reason"], "kr_momentum_not_confirmed")
+        self.assertTrue(route["confirmation_shadow"])
+        self.assertIn("kr_confirmation_required_shadow", route["warnings"])
+
     def test_kr_confirmation_live_allows_confirmed_ready(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update(

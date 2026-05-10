@@ -302,13 +302,45 @@ def _start_config_env_overrides(mode: str) -> dict:
 
 
 def _get_env_int(mode: str, key: str, default: int) -> int:
-    env = _runtime_env(mode)
-    overrides = _start_config_env_overrides(mode)
-    raw = overrides.get(key) or env.get(key) or os.getenv(key)
+    raw = _get_env_raw(mode, key)
     try:
         return int(raw) if raw else default
     except (ValueError, TypeError):
         return default
+
+
+def _get_env_raw(mode: str, key: str) -> Any:
+    env = _runtime_env(mode)
+    overrides = _start_config_env_overrides(mode)
+    return overrides.get(key) or env.get(key) or os.getenv(key)
+
+
+def _get_env_int_optional(mode: str, key: str) -> Optional[int]:
+    raw = _get_env_raw(mode, key)
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return None
+
+
+def _max_daily_entries_for_market(mode: str, market: str) -> int:
+    market_key = str(market or "").strip().upper()
+    if market_key in {"KR", "US"}:
+        market_cap = _get_env_int_optional(mode, f"{market_key}_DAILY_ENTRY_CAP")
+        if market_cap is not None and market_cap > 0:
+            return market_cap
+        default_cap = 2
+    else:
+        default_cap = 20
+    global_cap = _get_env_int_optional(mode, "V2_MAX_DAILY_ENTRIES")
+    if global_cap is not None and global_cap > 0:
+        return global_cap
+    legacy_cap = _get_env_int_optional(mode, "MAX_DAILY_ENTRIES")
+    if legacy_cap is not None and legacy_cap > 0:
+        return legacy_cap
+    return default_cap
 
 
 def _runtime_bool(values: dict, key: str, default: bool) -> bool:
@@ -4499,7 +4531,7 @@ def api_summary():
             "position_remaining": max(_get_env_int(mode, "KR_MAX_POSITIONS" if market == "KR" else "US_MAX_POSITIONS", MAX_POSITIONS) - len(positions), 0),
             "pyramid_limit": MAX_PYRAMID,
             "entries_today": _count_today_entries(mode, market),
-            "max_daily_entries": _get_env_int(mode, "V2_MAX_DAILY_ENTRIES", 20),
+            "max_daily_entries": _max_daily_entries_for_market(mode, market),
             "pending_orders": pending_orders,
             "pending_count":  len(pending_orders),
             "live_updated":   live.get("updated_at", ""),

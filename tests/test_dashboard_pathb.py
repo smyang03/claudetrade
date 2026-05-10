@@ -15,6 +15,26 @@ app = dashboard_server.app
 
 
 class DashboardPathBTests(unittest.TestCase):
+    def test_summary_daily_entry_cap_prefers_market_specific_config(self) -> None:
+        overrides = {
+            "V2_MAX_DAILY_ENTRIES": "20",
+            "KR_DAILY_ENTRY_CAP": "1",
+            "US_DAILY_ENTRY_CAP": "20",
+        }
+        with patch.object(dashboard_server, "_start_config_env_overrides", return_value=overrides), patch.object(
+            dashboard_server, "_runtime_env", return_value={}
+        ):
+            self.assertEqual(dashboard_server._max_daily_entries_for_market("live", "KR"), 1)
+            self.assertEqual(dashboard_server._max_daily_entries_for_market("live", "US"), 20)
+
+    def test_summary_daily_entry_cap_falls_back_to_global_config(self) -> None:
+        overrides = {"V2_MAX_DAILY_ENTRIES": "9", "KR_DAILY_ENTRY_CAP": "", "US_DAILY_ENTRY_CAP": ""}
+        with patch.object(dashboard_server, "_start_config_env_overrides", return_value=overrides), patch.object(
+            dashboard_server, "_runtime_env", return_value={}
+        ):
+            self.assertEqual(dashboard_server._max_daily_entries_for_market("live", "KR"), 9)
+            self.assertEqual(dashboard_server._max_daily_entries_for_market("live", "US"), 9)
+
     def test_today_page_exposes_separate_today_and_lifetime_pnl_cards(self) -> None:
         res = app.test_client().get("/")
 

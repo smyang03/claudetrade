@@ -450,23 +450,24 @@ def run(market: str, date: str, today_judgment: dict,
                                  "tuning_rules": [], "today_notes": ""},
         }
 
-    # ── brain 업데이트 ───────────────────────────────────────────────
-    recent = BrainDB.load()["markets"][market].get("recent_days", [])
-
-    BrainDB.update_analyst(market, "bull",    pm["bull_result"]    == "HIT", recent)
-    BrainDB.update_analyst(market, "bear",    pm["bear_result"]    == "HIT", recent)
-    BrainDB.update_analyst(market, "neutral", pm["neutral_result"] == "HIT", recent)
-    BrainDB.update_mode_performance(
-        market, consensus_mode,
-        actual_result.get("pnl_pct", 0), actual_result.get("win", False)
-    )
-
     execution_learning_excluded = bool(
         actual_result.get(
             "execution_learning_excluded",
             actual_result.get("execution_contaminated", False),
         )
     )
+
+    # ── brain 업데이트 ───────────────────────────────────────────────
+    if not execution_learning_excluded:
+        recent = BrainDB.load()["markets"][market].get("recent_days", [])
+
+        BrainDB.update_analyst(market, "bull",    pm["bull_result"]    == "HIT", recent)
+        BrainDB.update_analyst(market, "bear",    pm["bear_result"]    == "HIT", recent)
+        BrainDB.update_analyst(market, "neutral", pm["neutral_result"] == "HIT", recent)
+        BrainDB.update_mode_performance(
+            market, consensus_mode,
+            actual_result.get("pnl_pct", 0), actual_result.get("win", False)
+        )
 
     bu = pm.get("brain_updates", {})
     # new_lesson 없으면 key_lesson을 fallback으로 사용
@@ -521,15 +522,16 @@ def run(market: str, date: str, today_judgment: dict,
     })
 
     # 전략별 성과 자동 업데이트
-    for strat, pnls in _strategy_pnl(trade_log).items():
-        avg_pnl = sum(pnls) / len(pnls)
-        BrainDB.update_strategy_performance(market, strat, avg_pnl, avg_pnl > 0)
+    if not execution_learning_excluded:
+        for strat, pnls in _strategy_pnl(trade_log).items():
+            avg_pnl = sum(pnls) / len(pnls)
+            BrainDB.update_strategy_performance(market, strat, avg_pnl, avg_pnl > 0)
 
-    # ── 토론 결과 정답 여부 업데이트 ─────────────────────────────────
-    try:
-        BrainDB.update_debate_outcome(market, date, actual_result.get("win", False))
-    except Exception as e:
-        log.warning(f"토론 결과 업데이트 실패: {e}")
+        # ── 토론 결과 정답 여부 업데이트 ─────────────────────────────────
+        try:
+            BrainDB.update_debate_outcome(market, date, actual_result.get("win", False))
+        except Exception as e:
+            log.warning(f"토론 결과 업데이트 실패: {e}")
 
     # 당일 Claude 보정 지침 업데이트
     cg = pm.get("correction_guide", {})

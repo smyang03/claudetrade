@@ -3315,14 +3315,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         require_vwap = self._runtime_bool("KR_CONFIRMATION_REQUIRE_VWAP", False)
         require_or = self._runtime_bool("KR_CONFIRMATION_REQUIRE_OR_HIGH", False)
         require_volume = self._runtime_bool("KR_CONFIRMATION_REQUIRE_VOLUME", False)
-        data_quality = str((context or {}).get("data_quality") or "good").strip().lower()
+        raw_data_quality = (context or {}).get("data_quality")
+        data_quality_missing = bool((context or {}).get("data_quality_missing")) or raw_data_quality in (None, "")
+        data_quality = "missing" if data_quality_missing else str(raw_data_quality).strip().lower()
         overextended = bool((context or {}).get("overextended"))
 
         checks = {
-            "data_quality_ok": data_quality in {"good", "normal", "ok"},
+            "data_quality_present": not data_quality_missing,
+            "data_quality_ok": (not data_quality_missing) and data_quality in {"good", "normal", "ok"},
             "not_overextended": not overextended,
-            "ret_3m_ok": ret_3m is None or ret_3m >= min_ret_3m,
-            "ret_5m_ok": ret_5m is None or ret_5m >= min_ret_5m,
+            "ret_3m_present": ret_3m is not None,
+            "ret_5m_present": ret_5m is not None,
+            "ret_3m_ok": ret_3m is not None and ret_3m >= min_ret_3m,
+            "ret_5m_ok": ret_5m is not None and ret_5m >= min_ret_5m,
             "vwap_ok": (current is not None and vwap is not None and current >= vwap) if vwap is not None else not require_vwap,
             "opening_range_ok": (current is not None and or_high is not None and current >= or_high) if or_high is not None else not require_or,
             "volume_ok": (volume_accel is not None and volume_accel >= min_volume_accel) if volume_accel is not None else not require_volume,
@@ -3814,6 +3819,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             overextended = False
         else:
             overextended = bool(ret_5m is not None and ret_5m >= threshold)
+        data_quality_raw = (
+            features.get("data_quality")
+            or (action or {}).get("data_quality")
+            or (meta or {}).get("data_quality")
+        )
         return {
             "market": market_key,
             "ticker": key,
@@ -3831,12 +3841,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "vwap_proxy": vwap_proxy,
             "volume_acceleration": volume_acceleration,
             "spread_bps": spread_bps,
-            "data_quality": str(
-                features.get("data_quality")
-                or (action or {}).get("data_quality")
-                or (meta or {}).get("data_quality")
-                or "good"
-            ),
+            "data_quality": str(data_quality_raw or "good"),
+            "data_quality_missing": data_quality_raw in (None, ""),
             "current_price": current_price,
             "buy_zone_high": _positive_or_none(target.get("buy_zone_high")),
             "pathb_waiting_buy_zone_low": _positive_or_none((route_state or {}).get("buy_zone_low")),

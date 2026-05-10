@@ -418,10 +418,14 @@ class PostmortemPromptContractTests(unittest.TestCase):
 
     def test_execution_learning_excluded_does_not_write_policy_lessons(self) -> None:
         calls: dict[str, list] = {
+            "analysts": [],
             "beliefs": [],
+            "debate_outcomes": [],
             "issue_patterns": [],
+            "mode_performance": [],
             "daily_records": [],
             "correction_guides": [],
+            "strategy_performance": [],
         }
 
         def _fake_create(*, model, max_tokens, messages):
@@ -450,6 +454,12 @@ class PostmortemPromptContractTests(unittest.TestCase):
         def record_beliefs(*args, **kwargs):
             calls["beliefs"].append((args, kwargs))
 
+        def record_analyst(*args, **kwargs):
+            calls["analysts"].append((args, kwargs))
+
+        def record_mode_performance(*args, **kwargs):
+            calls["mode_performance"].append((args, kwargs))
+
         def record_issue_pattern(*args, **kwargs):
             calls["issue_patterns"].append((args, kwargs))
 
@@ -459,19 +469,25 @@ class PostmortemPromptContractTests(unittest.TestCase):
         def record_correction(*args, **kwargs):
             calls["correction_guides"].append((args, kwargs))
 
+        def record_strategy_performance(*args, **kwargs):
+            calls["strategy_performance"].append((args, kwargs))
+
+        def record_debate_outcome(*args, **kwargs):
+            calls["debate_outcomes"].append((args, kwargs))
+
         with patch.object(postmortem.client.messages, "create", side_effect=_fake_create), \
              patch.object(postmortem, "credit_record", no_op), \
              patch.object(postmortem, "save_raw_call", no_op), \
              patch.object(postmortem.BrainDB, "generate_prompt_summary", return_value=""), \
              patch.object(postmortem.BrainDB, "load", return_value={"markets": {"US": {"recent_days": []}}}), \
-             patch.object(postmortem.BrainDB, "update_analyst", no_op), \
-             patch.object(postmortem.BrainDB, "update_mode_performance", no_op), \
+             patch.object(postmortem.BrainDB, "update_analyst", side_effect=record_analyst), \
+             patch.object(postmortem.BrainDB, "update_mode_performance", side_effect=record_mode_performance), \
              patch.object(postmortem.BrainDB, "update_beliefs", side_effect=record_beliefs), \
              patch.object(postmortem.BrainDB, "update_issue_pattern", side_effect=record_issue_pattern), \
              patch.object(postmortem.BrainDB, "add_daily_record", side_effect=record_daily), \
              patch.object(postmortem.BrainDB, "get_recent_selection_feedback_text", return_value=""), \
-             patch.object(postmortem.BrainDB, "update_strategy_performance", no_op), \
-             patch.object(postmortem.BrainDB, "update_debate_outcome", no_op), \
+             patch.object(postmortem.BrainDB, "update_strategy_performance", side_effect=record_strategy_performance), \
+             patch.object(postmortem.BrainDB, "update_debate_outcome", side_effect=record_debate_outcome), \
              patch.object(postmortem.BrainDB, "update_correction_guide", side_effect=record_correction):
             postmortem.run(
                 "US",
@@ -497,8 +513,12 @@ class PostmortemPromptContractTests(unittest.TestCase):
                 decision_event_log=[],
             )
 
+        self.assertEqual(calls["analysts"], [])
+        self.assertEqual(calls["mode_performance"], [])
         self.assertEqual(calls["beliefs"], [])
         self.assertEqual(calls["issue_patterns"], [])
+        self.assertEqual(calls["strategy_performance"], [])
+        self.assertEqual(calls["debate_outcomes"], [])
         self.assertEqual(calls["correction_guides"], [])
         self.assertEqual(len(calls["daily_records"]), 1)
         daily_record = calls["daily_records"][0][0][1]

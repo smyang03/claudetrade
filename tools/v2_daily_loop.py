@@ -186,23 +186,27 @@ def build_checks(
     enabled = [str(item).upper() for item in config.get("enabled_markets", [])]
     disabled = [str(item).upper() for item in config.get("disabled_markets", [])]
     env_overrides = config.get("env_overrides") if isinstance(config.get("env_overrides"), dict) else {}
+    kr_fixed_order = _safe_int(_effective_config_value(config, env_overrides, "KR_FIXED_ORDER_KRW"), -1)
+    us_fixed_order = _safe_int(_effective_config_value(config, env_overrides, "US_FIXED_ORDER_KRW"), -1)
+    kr_min_order = _safe_int(_effective_config_value(config, env_overrides, "KR_MIN_ORDER_KRW"), -1)
+    us_min_order = _safe_int(_effective_config_value(config, env_overrides, "US_MIN_ORDER_KRW"), -1)
     kr_max_positions = _safe_int(_effective_config_value(config, env_overrides, "KR_MAX_POSITIONS"), -1)
     us_max_positions = _safe_int(_effective_config_value(config, env_overrides, "US_MAX_POSITIONS"), -1)
     max_daily_entries = _safe_int(_effective_config_value(config, env_overrides, "V2_MAX_DAILY_ENTRIES"), -1)
+    kr_daily_cap = _safe_int(_effective_config_value(config, env_overrides, "KR_DAILY_ENTRY_CAP"), max_daily_entries)
+    us_daily_cap = _safe_int(_effective_config_value(config, env_overrides, "US_DAILY_ENTRY_CAP"), max_daily_entries)
     pathb_max_positions = _safe_int(_effective_config_value(config, env_overrides, "PATHB_MAX_POSITIONS"), -1)
     pathb_max_daily_entries = _safe_int(_effective_config_value(config, env_overrides, "PATHB_MAX_DAILY_ENTRIES"), -1)
     return [
         {"name": "kr_us_enabled", "ok": set(enabled) == {"KR", "US"} and not disabled},
-        {"name": "min_size_kr_100k", "ok": int(config.get("KR_FIXED_ORDER_KRW", 0) or 0) == 100000},
-        {"name": "min_size_us_100k_krw_source", "ok": int(config.get("US_FIXED_ORDER_KRW", 0) or 0) == 100000},
-        {"name": "min_gate_kr_100k", "ok": int(config.get("KR_MIN_ORDER_KRW", 0) or 0) == 100000},
-        {"name": "min_gate_us_100k_krw_source", "ok": int(config.get("US_MIN_ORDER_KRW", 0) or 0) == 100000},
+        {"name": "kr_order_size_configured", "ok": kr_fixed_order > 0 and kr_min_order > 0 and kr_fixed_order >= kr_min_order},
+        {"name": "us_order_size_configured", "ok": us_fixed_order > 0 and us_min_order > 0 and us_fixed_order >= us_min_order},
         {
             "name": "us_fx_dynamic_not_static_usd",
             "ok": "US_FIXED_ORDER_USD" not in config and "US_FIXED_ORDER_USD" not in env_overrides,
         },
         {"name": "kr_us_max_positions_configured", "ok": kr_max_positions >= 1 and us_max_positions >= 1},
-        {"name": "daily_entry_limit_configured", "ok": max_daily_entries >= 1},
+        {"name": "daily_entry_limit_configured", "ok": max_daily_entries >= 1 or kr_daily_cap >= 1 or us_daily_cap >= 1},
         {"name": "pathb_limits_configured", "ok": pathb_max_positions >= 1 and pathb_max_daily_entries >= 1},
         {"name": "fresh_brain", "ok": str(config.get("brain_policy") or "") == "fresh_v2_reference_v1"},
         {"name": "same_close_research_only", "ok": str(config.get("same_close_policy") or "") == "research_only_disallowed_for_live"},
