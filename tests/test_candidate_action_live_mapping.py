@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
+from audit.candidate_audit_store import CandidateAuditStore
 from trading_bot import TradingBot, _mode_family
 
 
@@ -533,6 +537,134 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["reason"], "buy_ready_chase_blocked")
         self.assertEqual(route["runtime_gate_reason"], "chase_above_cancel")
         self.assertEqual(route["runtime_gate"]["current_price"], 130.0)
+
+    def test_kr_confirmation_shadow_keeps_ready_but_marks_confirming(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": True,
+                "KR_CONFIRMATION_GATE_ENABLED": False,
+            }
+        )
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": -0.2,
+                    "ret_5m_pct": -0.4,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], ["005930"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "BUY_READY")
+        self.assertEqual(route["confirmation_state"], "CONFIRMING")
+        self.assertEqual(route["confirmation_reason"], "kr_momentum_not_confirmed")
+        self.assertTrue(route["confirmation_shadow"])
+        self.assertIn("kr_confirmation_required_shadow", route["warnings"])
+
+    def test_kr_confirmation_live_blocks_unconfirmed_ready(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+            }
+        )
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "PROBE_READY", "confidence": 0.8}],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": -0.1,
+                    "ret_5m_pct": -0.1,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["demoted_to"], "WATCH")
+        self.assertEqual(route["runtime_gate_reason"], "kr_momentum_not_confirmed")
+        self.assertEqual(route["confirmation_state"], "CONFIRMING")
+
+    def test_kr_confirmation_live_allows_confirmed_ready(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+                "KR_CONFIRMATION_REQUIRE_VWAP": True,
+                "KR_CONFIRMATION_REQUIRE_OR_HIGH": True,
+            }
+        )
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70500,
+                    "ret_3m_pct": 0.2,
+                    "ret_5m_pct": 0.3,
+                    "vwap": 70200,
+                    "opening_range_high": 70400,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], ["005930"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "BUY_READY")
+        self.assertEqual(route["confirmation_state"], "CONFIRMED")
+        self.assertEqual(route["confirmation_reason"], "")
+
+    def test_candidate_audit_live_write_records_routes(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        raw_meta = {
+            "watchlist": ["AAPL"],
+            "candidate_actions": [{"ticker": "AAPL", "action": "BUY_READY", "confidence": 0.9, "reason": "ready"}],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+                    meta = TradingBot._apply_selection_meta(bot, "US", ["AAPL"], mode="BALANCED")
+                TradingBot._record_candidate_funnel_snapshot(
+                    bot,
+                    "US",
+                    selected=["AAPL"],
+                    meta=meta,
+                    stages=bot.selection_stages["US"],
+                )
+
+            store = CandidateAuditStore(db_path)
+            summary = store.summary(session_date="2026-05-07", market="US", runtime_mode="live")
+            rows = store.rows(session_date="2026-05-07", market="US", runtime_mode="live")
+
+        self.assertEqual(summary["calls"]["call_count"], 1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["ticker"], "AAPL")
+        self.assertEqual(rows[0]["claude_action"], "BUY_READY")
+        self.assertEqual(rows[0]["route_final_action"], "BUY_READY")
 
 
 if __name__ == "__main__":

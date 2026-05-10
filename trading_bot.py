@@ -9,6 +9,7 @@ import sys
 import json
 import time
 import math
+import hashlib
 import atexit
 import sqlite3
 import subprocess
@@ -191,6 +192,10 @@ except Exception:
     def _shadow_try_emit(_writer, _event):
         return False
     _SHADOW_AUDIT_AVAILABLE = False
+try:
+    from audit.candidate_audit_store import CandidateAuditStore as _CandidateAuditStore
+except Exception:
+    _CandidateAuditStore = None
 try:
     from runtime.v2_lifecycle_runtime import V2LifecycleRuntime as _V2LifecycleRuntime
     from runtime.v2_lifecycle_runtime import v2_close_reason as _v2_close_reason
@@ -693,6 +698,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if max_order <= 0 and init_cash_total > 0:
             max_order = min(env_cap, int(init_cash_total * order_pct))
         self.risk = RiskManager(init_cash=init_cash_total, max_order_krw=max_order, market="KR")
+        self._init_market_risk_shadow(
+            init_cash_krw=init_cash,
+            us_cash_init_krw=us_cash_init_krw,
+            max_order_krw=max_order,
+        )
         # KR/US 공유 풀 — 단일 현금 계좌, 시장 구분 없이 사용
         if us_cash_init_krw > 0:
             _log_normal("info", f"shared pool | total {init_cash_total:,.0f} KRW (KR {init_cash:,} + US {us_cash_init_krw:,})")
@@ -2769,6 +2779,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
         if changed:
             self._commit_selection_meta_runtime(market_key, meta, persist=persist)
+            self._write_candidate_audit_runtime_filter(market_key, key, reason_text, meta)
             analysis_log.info(
                 f"[selection_meta] {market_key} {key} runtime_filtered={reason_text}",
                 extra={"extra": {
@@ -3151,6 +3162,198 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return float(str(value).replace(",", ""))
         except Exception:
             return float(default)
+
+    def _init_market_risk_shadow(
+        self,
+        *,
+        init_cash_krw: float,
+        us_cash_init_krw: float,
+        max_order_krw: float,
+    ) -> None:
+        """Create market-scoped RiskManager mirrors without moving the write path."""
+        self.risk_by_market = {}
+        self.risk_shadow_enabled = _env_bool("ENABLE_MARKET_RISK_SHADOW", False)
+        if not self.risk_shadow_enabled:
+            return
+        try:
+            total_cash = max(1.0, float(getattr(self, "risk", None).cash or 0.0))
+        except Exception:
+            total_cash = max(1.0, float(init_cash_krw or 0.0) + float(us_cash_init_krw or 0.0))
+        seeds = {
+            "KR": max(1.0, float(init_cash_krw or 0.0)),
+            "US": max(1.0, float(us_cash_init_krw or 0.0)),
+        }
+        if seeds["KR"] <= 1.0 and seeds["US"] <= 1.0:
+            seeds = {"KR": total_cash, "US": total_cash}
+        elif seeds["US"] <= 1.0:
+            seeds["US"] = total_cash
+        elif seeds["KR"] <= 1.0:
+            seeds["KR"] = total_cash
+        for market_key, cash in seeds.items():
+            try:
+                manager = RiskManager(
+                    init_cash=float(cash),
+                    max_order_krw=float(max_order_krw or getattr(self.risk, "max_order_krw", 0) or 1),
+                    market=market_key,
+                )
+                manager.risk_instance_id = f"shadow_{market_key}_{int(time.time())}"
+                manager.risk_source = "market_shadow"
+                self.risk_by_market[market_key] = manager
+            except Exception as exc:
+                log.debug(f"[risk shadow] init failed {market_key}: {exc}")
+        self._sync_market_risk_shadow_from_global()
+
+    def _risk(self, market: Optional[str] = None, *, shadow: bool = False):
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if shadow or _env_bool("ENABLE_MARKET_RISK_ADAPTER_LIVE", False):
+            by_market = getattr(self, "risk_by_market", {}) or {}
+            manager = by_market.get(market_key)
+            if manager is not None:
+                return manager
+        return getattr(self, "risk", None)
+
+    def _sync_market_risk_shadow_from_global(self) -> None:
+        by_market = getattr(self, "risk_by_market", None)
+        risk = getattr(self, "risk", None)
+        if not by_market or risk is None:
+            return
+        positions = list(getattr(risk, "positions", []) or [])
+        trade_log = list(getattr(risk, "trade_log", []) or [])
+        all_trade_log = list(getattr(risk, "all_trade_log", []) or [])
+        for market_key, manager in list(by_market.items()):
+            try:
+                manager.positions = [
+                    dict(pos)
+                    for pos in positions
+                    if self._ticker_market(str((pos or {}).get("ticker") or "")) == market_key
+                ]
+                manager.trade_log = [
+                    dict(evt)
+                    for evt in trade_log
+                    if self._ticker_market(str((evt or {}).get("ticker") or "")) == market_key
+                ]
+                manager.all_trade_log = [
+                    dict(evt)
+                    for evt in all_trade_log
+                    if self._ticker_market(str((evt or {}).get("ticker") or "")) == market_key
+                ]
+                try:
+                    manager.daily_pnl = float(self._market_realized_pnl_krw(market_key) or 0.0)
+                except Exception:
+                    manager.daily_pnl = 0.0
+                try:
+                    manager.session_start_equity = float(self._market_session_start_equity_krw(market_key) or 0.0)
+                except Exception:
+                    manager.session_start_equity = float(getattr(risk, "session_start_equity", 0.0) or 0.0)
+                try:
+                    equity_ctx = self._market_equity_reference_context(market_key)
+                    cash_krw = float((equity_ctx or {}).get("cash_krw", 0) or 0.0)
+                    if cash_krw > 0:
+                        manager.cash = cash_krw
+                except Exception:
+                    pass
+                manager.halted = bool(getattr(risk, "halted", False))
+                manager.halt_reason = str(getattr(risk, "halt_reason", "") or "")
+            except Exception as exc:
+                log.debug(f"[risk shadow] sync failed {market_key}: {exc}")
+
+    def _market_risk_shadow_status(self, market: str) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        self._sync_market_risk_shadow_from_global()
+        manager = (getattr(self, "risk_by_market", {}) or {}).get(market_key)
+        if manager is None:
+            return {
+                "enabled": False,
+                "risk_source": "global",
+                "risk_market": market_key,
+                "risk_instance_id": "",
+            }
+        return {
+            "enabled": True,
+            "risk_source": str(getattr(manager, "risk_source", "market_shadow") or "market_shadow"),
+            "risk_market": market_key,
+            "risk_instance_id": str(getattr(manager, "risk_instance_id", "") or ""),
+            "cash_krw": round(float(getattr(manager, "cash", 0.0) or 0.0), 0),
+            "daily_pnl_krw": round(float(getattr(manager, "daily_pnl", 0.0) or 0.0), 0),
+            "session_start_equity_krw": round(float(getattr(manager, "session_start_equity", 0.0) or 0.0), 0),
+            "position_count": len(list(getattr(manager, "positions", []) or [])),
+            "trade_count": len(list(getattr(manager, "trade_log", []) or [])),
+            "halted": bool(getattr(manager, "halted", False)),
+            "halt_reason": str(getattr(manager, "halt_reason", "") or ""),
+            "write_path": "shadow_only",
+        }
+
+    def _kr_confirmation_gate_state(self, market: str, ticker: str, context: dict) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if market_key != "KR":
+            return {"kr_confirmation_gate_active": False}
+        enabled = self._runtime_bool("KR_CONFIRMATION_GATE_ENABLED", False)
+        shadow = self._runtime_bool("KR_CONFIRMATION_GATE_SHADOW", False)
+        active = bool(enabled or shadow)
+        if not active:
+            return {"kr_confirmation_gate_active": False}
+
+        def _float_or_none(value: Any) -> Optional[float]:
+            try:
+                if value in (None, ""):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        current = _float_or_none((context or {}).get("current_price"))
+        ret_3m = _float_or_none((context or {}).get("ret_3m_pct"))
+        ret_5m = _float_or_none((context or {}).get("ret_5m_pct"))
+        vwap = _float_or_none((context or {}).get("vwap") or (context or {}).get("vwap_proxy"))
+        or_high = _float_or_none((context or {}).get("opening_range_high"))
+        volume_accel = _float_or_none((context or {}).get("volume_acceleration"))
+        spread_bps = _float_or_none((context or {}).get("spread_bps"))
+        min_ret_3m = self._runtime_float("KR_CONFIRMATION_MIN_RET_3M_PCT", 0.0)
+        min_ret_5m = self._runtime_float("KR_CONFIRMATION_MIN_RET_5M_PCT", 0.0)
+        min_volume_accel = self._runtime_float("KR_CONFIRMATION_MIN_VOLUME_ACCEL", 0.0)
+        max_spread_bps = self._runtime_float("KR_CONFIRMATION_MAX_SPREAD_BPS", 0.0)
+        require_vwap = self._runtime_bool("KR_CONFIRMATION_REQUIRE_VWAP", False)
+        require_or = self._runtime_bool("KR_CONFIRMATION_REQUIRE_OR_HIGH", False)
+        require_volume = self._runtime_bool("KR_CONFIRMATION_REQUIRE_VOLUME", False)
+        data_quality = str((context or {}).get("data_quality") or "good").strip().lower()
+        overextended = bool((context or {}).get("overextended"))
+
+        checks = {
+            "data_quality_ok": data_quality in {"good", "normal", "ok"},
+            "not_overextended": not overextended,
+            "ret_3m_ok": ret_3m is None or ret_3m >= min_ret_3m,
+            "ret_5m_ok": ret_5m is None or ret_5m >= min_ret_5m,
+            "vwap_ok": (current is not None and vwap is not None and current >= vwap) if vwap is not None else not require_vwap,
+            "opening_range_ok": (current is not None and or_high is not None and current >= or_high) if or_high is not None else not require_or,
+            "volume_ok": (volume_accel is not None and volume_accel >= min_volume_accel) if volume_accel is not None else not require_volume,
+            "spread_ok": (spread_bps is None or max_spread_bps <= 0 or spread_bps <= max_spread_bps),
+        }
+        reason = ""
+        if not checks["data_quality_ok"]:
+            reason = "kr_data_quality_not_confirmed"
+        elif not checks["not_overextended"]:
+            reason = "kr_overextended_not_confirmed"
+        elif not checks["ret_3m_ok"] or not checks["ret_5m_ok"]:
+            reason = "kr_momentum_not_confirmed"
+        elif not checks["vwap_ok"]:
+            reason = "kr_vwap_not_confirmed"
+        elif not checks["opening_range_ok"]:
+            reason = "kr_or_not_confirmed"
+        elif not checks["volume_ok"]:
+            reason = "kr_volume_not_confirmed"
+        elif not checks["spread_ok"]:
+            reason = "kr_spread_not_confirmed"
+        confirmed = not reason
+        return {
+            "kr_confirmation_gate_active": True,
+            "kr_confirmation_gate_enabled": bool(enabled),
+            "kr_confirmation_gate_shadow": bool(shadow or not enabled),
+            "kr_confirmation_confirmed": bool(confirmed),
+            "kr_confirmation_state": "CONFIRMED" if confirmed else "CONFIRMING",
+            "kr_confirmation_reason": "" if confirmed else reason,
+            "kr_confirmation_checks": checks,
+            "kr_confirmation_ticker": self._selection_ticker_key(market_key, ticker),
+        }
 
     def _normalize_candidate_actions_for_meta(self, market: str, meta: dict) -> tuple[list[dict], str]:
         payload = {"candidate_actions": meta.get("candidate_actions")} if isinstance(meta.get("candidate_actions"), list) else meta
@@ -3559,6 +3762,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ret_5m = _num_or_none(features.get("ret_5m_pct") or (action or {}).get("post_open_ret_5m_pct"))
         ret_10m = _num_or_none(features.get("ret_10m_pct") or (action or {}).get("post_open_ret_10m_pct"))
         ret_30m = _num_or_none(features.get("ret_30m_pct") or (action or {}).get("post_open_ret_30m_pct"))
+        opening_range_high = _positive_or_none(
+            features.get("opening_range_high")
+            or features.get("or_high")
+            or (action or {}).get("opening_range_high")
+        )
+        opening_range_low = _positive_or_none(
+            features.get("opening_range_low")
+            or features.get("or_low")
+            or (action or {}).get("opening_range_low")
+        )
+        vwap = _positive_or_none(features.get("vwap") or (action or {}).get("vwap"))
+        vwap_proxy = _positive_or_none(features.get("vwap_proxy") or (action or {}).get("vwap_proxy"))
+        volume_acceleration = _num_or_none(
+            features.get("volume_acceleration")
+            or features.get("volume_accel")
+            or (action or {}).get("volume_acceleration")
+        )
+        spread_bps = _num_or_none(features.get("spread_bps") or (action or {}).get("spread_bps"))
         pullback = _num_or_none(
             features.get("pullback_from_high_pct")
             or (action or {}).get("post_open_pullback_from_high_pct")
@@ -3598,9 +3819,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "ticker": key,
             "momentum_state": momentum_state or "unknown",
             "overextended": overextended,
+            "ret_3m_pct": ret_3m,
             "ret_5m_pct": ret_5m,
+            "ret_10m_pct": ret_10m,
+            "ret_30m_pct": ret_30m,
             "threshold_used": threshold,
             "pullback_from_high_pct": pullback,
+            "opening_range_high": opening_range_high,
+            "opening_range_low": opening_range_low,
+            "vwap": vwap,
+            "vwap_proxy": vwap_proxy,
+            "volume_acceleration": volume_acceleration,
+            "spread_bps": spread_bps,
             "data_quality": str(
                 features.get("data_quality")
                 or (action or {}).get("data_quality")
@@ -3681,6 +3911,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 price_targets,
                 route_state,
             )
+            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY"}:
+                execution_context.update(
+                    self._kr_confirmation_gate_state(market_key, key, execution_context)
+                )
             gate_info = self._candidate_runtime_gate_info(
                 market_key,
                 key,
@@ -3827,7 +4061,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         return normalized_meta
 
     def _v2_prompt_version(self) -> str:
-        return self.v2.prompt_version() if getattr(self, "v2", None) is not None else str(os.getenv("PROMPT_VERSION", "v2") or "v2")
+        v2_runtime = getattr(self, "v2", None)
+        if v2_runtime is not None and hasattr(v2_runtime, "prompt_version"):
+            return v2_runtime.prompt_version()
+        return str(os.getenv("PROMPT_VERSION", "v2") or "v2")
     def _market_enabled(self, market: str) -> bool:
         return str(market or "").upper() in getattr(self, "enabled_markets", {"KR", "US"})
     def _brain_context_for_judge(self, market: str) -> tuple[str, str]:
@@ -7737,6 +7974,222 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         quality_report = (meta or {}).get("candidate_quality_report")
         if isinstance(quality_report, dict) and quality_report:
             self._write_funnel_event("candidate_quality_report", market, quality_report)
+        self._write_candidate_audit_live(
+            market,
+            selected=selected,
+            meta=meta,
+            stages=stages,
+        )
+
+    def _candidate_audit_live_enabled(self) -> bool:
+        if _CandidateAuditStore is None:
+            return False
+        return bool(
+            self._runtime_bool("ENABLE_CANDIDATE_AUDIT_LIVE", False)
+            or self._runtime_bool("ENABLE_CANDIDATE_AUDIT_SHADOW", False)
+        )
+
+    def _candidate_audit_db_path(self) -> Path:
+        raw = str(os.getenv("CANDIDATE_AUDIT_DB_PATH", "") or "").strip()
+        if raw:
+            path = Path(raw)
+            if not path.is_absolute():
+                path = Path(__file__).parent / path
+            return path
+        return get_runtime_path("data", "audit", "candidate_audit.db")
+
+    def _candidate_audit_store(self):
+        if not self._candidate_audit_live_enabled():
+            return None
+        cache = getattr(self, "_candidate_audit_store_cache", None)
+        path = self._candidate_audit_db_path()
+        if cache is not None and getattr(cache, "path", None) == path:
+            return cache
+        try:
+            store = _CandidateAuditStore(path, timeout=1.0)
+            self._candidate_audit_store_cache = store
+            return store
+        except Exception as exc:
+            log.debug(f"[candidate audit] store open failed: {exc}")
+            return None
+
+    def _candidate_audit_call_id(self, market: str, meta: dict) -> str:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        explicit = str((meta or {}).get("prompt_id") or (meta or {}).get("source_prompt_id") or "").strip()
+        if explicit:
+            return explicit
+        session_date = self._current_session_date_str(market_key)
+        seed = {
+            "mode": getattr(self, "_mode", "live"),
+            "market": market_key,
+            "session_date": session_date,
+            "selection_snapshot_ts": (meta or {}).get("selection_snapshot_ts", ""),
+            "watchlist": list((meta or {}).get("watchlist") or []),
+            "candidate_actions": list((meta or {}).get("candidate_actions") or []),
+        }
+        digest = hashlib.sha1(json.dumps(seed, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:20]
+        return f"live_{getattr(self, '_mode', 'live')}_{market_key}_{session_date.replace('-', '')}_{digest}"
+
+    @staticmethod
+    def _candidate_audit_ticker_map(raw: Any, market: str) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, Any] = {}
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        for key, value in raw.items():
+            ticker = str(key or "").strip()
+            if not ticker:
+                continue
+            out[ticker.upper() if market_key == "US" else ticker] = value
+        return out
+
+    def _write_candidate_audit_live(
+        self,
+        market: str,
+        *,
+        selected: list[str],
+        meta: dict,
+        stages: dict,
+    ) -> None:
+        store = self._candidate_audit_store()
+        if store is None:
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = date.today().isoformat()
+        call_id = self._candidate_audit_call_id(market_key, meta)
+        known_at = str((meta or {}).get("selection_snapshot_ts") or datetime.now(KST).isoformat(timespec="seconds"))
+        watchlist = list(dict.fromkeys((meta or {}).get("watchlist") or selected or []))
+        trade_ready = {
+            self._selection_ticker_key(market_key, ticker)
+            for ticker in list((meta or {}).get("trade_ready") or [])
+        }
+        actions = list((meta or {}).get("candidate_actions") or [])
+        action_by_ticker = {
+            self._selection_ticker_key(market_key, (action or {}).get("ticker")): dict(action or {})
+            for action in actions
+            if isinstance(action, dict) and str((action or {}).get("ticker") or "").strip()
+        }
+        route_by_ticker = {
+            self._selection_ticker_key(market_key, (route or {}).get("ticker")): dict(route or {})
+            for route in list((meta or {}).get("_candidate_action_routes") or [])
+            if isinstance(route, dict) and str((route or {}).get("ticker") or "").strip()
+        }
+        reason_map = self._candidate_audit_ticker_map((meta or {}).get("reasons"), market_key)
+        veto_map = self._candidate_audit_ticker_map((meta or {}).get("veto"), market_key)
+        risk_tag_map = self._candidate_audit_ticker_map((meta or {}).get("risk_tags"), market_key)
+        strategy_map = self._candidate_audit_ticker_map((meta or {}).get("recommended_strategy"), market_key)
+        max_position_map = self._candidate_audit_ticker_map((meta or {}).get("max_position_pct"), market_key)
+        try:
+            store.upsert_call(
+                {
+                    "call_id": call_id,
+                    "runtime_mode": getattr(self, "_mode", "live"),
+                    "market": market_key,
+                    "session_date": session_date,
+                    "called_at": known_at,
+                    "label": "selection_meta_live",
+                    "model": str((meta or {}).get("model") or ""),
+                    "prompt_version": self._v2_prompt_version(),
+                    "source_file": "trading_bot._record_candidate_funnel_snapshot",
+                    "prompt_candidate_count": len(watchlist),
+                    "watchlist_count": len(watchlist),
+                    "trade_ready_count": len(trade_ready),
+                    "candidate_action_count": len(actions),
+                    "payload": {
+                        "candidate_actions_source": (meta or {}).get("_candidate_actions_source", ""),
+                        "selection_stages": stages,
+                        "audit_source": "live_write",
+                        "shadow_only": self._runtime_bool("ENABLE_CANDIDATE_AUDIT_SHADOW", False)
+                        and not self._runtime_bool("ENABLE_CANDIDATE_AUDIT_LIVE", False),
+                    },
+                }
+            )
+            for rank, ticker in enumerate(watchlist, start=1):
+                key = self._selection_ticker_key(market_key, ticker)
+                action = action_by_ticker.get(key, {})
+                route = route_by_ticker.get(key, {})
+                runtime_gate = dict(route.get("runtime_gate") or {})
+                risk_tags = risk_tag_map.get(key, [])
+                if isinstance(risk_tags, str):
+                    risk_tags = [risk_tags]
+                store.upsert_candidate(
+                    {
+                        "call_id": call_id,
+                        "runtime_mode": getattr(self, "_mode", "live"),
+                        "market": market_key,
+                        "session_date": session_date,
+                        "known_at": known_at,
+                        "ticker": key,
+                        "source_file": "trading_bot.selection_meta",
+                        "prompt_rank": rank,
+                        "in_prompt": True,
+                        "screener_seen": True,
+                        "input_to_claude_reported": True,
+                        "claude_action": str(action.get("action") or ""),
+                        "claude_reason": str(action.get("reason") or reason_map.get(key) or ""),
+                        "claude_veto_reason": str(veto_map.get(key) or ""),
+                        "claude_watchlist": True,
+                        "claude_trade_ready": key in trade_ready,
+                        "recommended_strategy": str(strategy_map.get(key) or ""),
+                        "risk_tags": risk_tags,
+                        "max_position_pct": max_position_map.get(key),
+                        "route_original_action": str(route.get("original_action") or route.get("requested_action") or ""),
+                        "route_final_action": str(route.get("final_action") or ""),
+                        "route_route": str(route.get("route") or ""),
+                        "route_reason": str(route.get("reason") or route.get("confirmation_reason") or ""),
+                        "route_demoted_to": str(route.get("demoted_to") or ""),
+                        "route_runtime_gate_reason": str(route.get("runtime_gate_reason") or runtime_gate.get("reason") or ""),
+                        "route_overextended": bool(runtime_gate.get("overextended")),
+                        "route_cancel_pathb": bool(route.get("cancel_pathb")),
+                        "route_suspend_pathb": bool(route.get("suspend_pathb")),
+                        "route_warnings": list(route.get("warnings") or []),
+                        "payload": {
+                            "confirmation_state": route.get("confirmation_state") or runtime_gate.get("kr_confirmation_state", ""),
+                            "confirmation_reason": route.get("confirmation_reason") or runtime_gate.get("kr_confirmation_reason", ""),
+                            "confirmation_shadow": route.get("confirmation_shadow", False),
+                            "runtime_gate": runtime_gate,
+                            "selection_stage": "live_selection_meta",
+                        },
+                    }
+                )
+        except Exception as exc:
+            log.debug(f"[candidate audit] live write failed {market_key}: {exc}")
+
+    def _write_candidate_audit_runtime_filter(self, market: str, ticker: str, reason: str, meta: dict) -> None:
+        store = self._candidate_audit_store()
+        if store is None:
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            session_date = self._current_session_date_str(market_key)
+            call_id = self._candidate_audit_call_id(market_key, meta)
+            known_at = str((meta or {}).get("selection_snapshot_ts") or datetime.now(KST).isoformat(timespec="seconds"))
+            key = self._selection_ticker_key(market_key, ticker)
+            store.upsert_candidate(
+                {
+                    "call_id": call_id,
+                    "runtime_mode": getattr(self, "_mode", "live"),
+                    "market": market_key,
+                    "session_date": session_date,
+                    "known_at": known_at,
+                    "ticker": key,
+                    "source_file": "trading_bot.runtime_filter",
+                    "in_prompt": True,
+                    "screener_seen": True,
+                    "route_final_action": "HARD_BLOCK",
+                    "route_reason": str(reason or "runtime_filtered"),
+                    "route_runtime_gate_reason": str(reason or "runtime_filtered"),
+                    "payload": {
+                        "runtime_filtered": True,
+                        "runtime_filter_reason": str(reason or "runtime_filtered"),
+                    },
+                }
+            )
+        except Exception as exc:
+            log.debug(f"[candidate audit] runtime filter write failed {market_key} {ticker}: {exc}")
 
     def _apply_unconfirmed_phase_size_cap(
         self,
@@ -8026,6 +8479,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if enriched.get("above_ma60") is None and price_ref > 0 and ma60 > 0:
             enriched["above_ma60"] = bool(price_ref >= ma60)
         return enriched
+    def _enrich_kr_candidate_quality(self, market: str, candidate: dict, candles) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        row = dict(candidate or {})
+        if market_key != "KR" or not _env_bool("ENABLE_KR_CANDIDATE_QUALITY_SHADOW", True):
+            return row
+        try:
+            from bot.kr_candidate_features import enrich_kr_candidate_with_features
+            index_ohlcv = None
+            flow = None
+            if _env_bool("ENABLE_KR_CANDIDATE_RS_INDEX_CACHE", False):
+                try:
+                    from bot.kr_index_cache import load_kr_index_history
+                    index_ohlcv = load_kr_index_history(row.get("market_type") or "KOSPI")
+                except Exception as index_exc:
+                    gaps = list(row.get("quality_data_gaps") or [])
+                    gaps.append("index_history_cache_error")
+                    row["quality_data_gaps"] = sorted(set(str(item) for item in gaps if item))
+                    row["candidate_quality_index_error"] = str(index_exc)[:160]
+            if _env_bool("ENABLE_KR_CANDIDATE_FLOW_SHADOW", False):
+                try:
+                    from bot.kr_investor_flow_cache import flow_for_ticker, load_flow_cache
+                    session_date = self._current_session_date_str(market_key)
+                    flow = flow_for_ticker(load_flow_cache(session_date), row.get("ticker"))
+                except Exception as flow_exc:
+                    gaps = list(row.get("quality_data_gaps") or [])
+                    gaps.append("flow_cache_error")
+                    row["quality_data_gaps"] = sorted(set(str(item) for item in gaps if item))
+                    row["candidate_quality_flow_error"] = str(flow_exc)[:160]
+            return enrich_kr_candidate_with_features(row, candles, index_ohlcv=index_ohlcv, flow=flow)
+        except Exception as exc:
+            gaps = list(row.get("quality_data_gaps") or [])
+            gaps.append("kr_candidate_quality_error")
+            row["quality_data_gaps"] = sorted(set(str(item) for item in gaps if item))
+            row["candidate_quality_error"] = str(exc)[:160]
+            return row
     def _filter_candidates_by_history(self, candidates: list, market: str) -> list:
         """
         스크리너 후보 중 신호 계산에 필요한 히스토리가 부족한 종목 제거.
@@ -8071,6 +8559,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self._hist_fill_enqueue(ticker, market)
                     if usable_rows >= watch_min_usable:
                         watch_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
+                        watch_candidate = self._enrich_kr_candidate_quality(market_key, watch_candidate, candles)
                         watch_candidate["data_quality"] = "WATCH_DATA_INSUFFICIENT"
                         watch_candidate["history_status"] = "DATA_INSUFFICIENT"
                         watch_candidate["history_usable_rows"] = usable_rows
@@ -8102,7 +8591,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     insufficient_shadow.append(shadow_candidate)
                     removed_v2.append((ticker, f"data_insufficient({usable_rows}usable)"))
                     continue
-                filtered_v2.append(self._enrich_candidate_with_history(candidate, candles, sig_df))
+                enriched_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
+                enriched_candidate = self._enrich_kr_candidate_quality(market_key, enriched_candidate, candles)
+                filtered_v2.append(enriched_candidate)
             except Exception as exc:
                 removed_v2.append((ticker, f"error:{exc}"))
                 continue
@@ -9159,6 +9650,39 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if self._has_broker_sync_risk(market):
             return False
         return True
+    @staticmethod
+    def _execution_issue_detail(issue: str) -> dict:
+        key = str(issue or "").strip()
+        if key.startswith("sell_failed:"):
+            reason = key.split(":", 1)[1].strip() or "unknown"
+            return {
+                "issue": key,
+                "label": f"매도 실패({reason})",
+                "severity": "trade_affecting",
+                "learning_excluded": True,
+            }
+        mapping = {
+            "sell_failed": ("매도 실패", "trade_affecting", True),
+            "pending_orders_remain": ("미해결 주문 잔존", "trade_affecting", True),
+            "duplicate_ticker_pending": ("동일 종목 중복 대기 주문", "trade_affecting", True),
+            "broker_only_open_order": ("브로커 단독 미체결 주문", "trade_affecting", True),
+            "broker_sync_trade": ("브로커 동기화 거래", "sync_trade", True),
+            "broker_sync_exit": ("브로커 동기화 청산", "sync_trade", True),
+            "broker_sync_fill": ("브로커 동기화 체결", "sync_trade", True),
+            "broker_position_removed": ("브로커 미보유 포지션 정리", "sync_warning", False),
+            "broker_position_injected": ("브로커 보유 포지션 재주입", "sync_warning", False),
+            "broker_qty_corrected": ("브로커 수량 보정", "sync_warning", False),
+            "quote_invalid": ("시세 무효/가격 수신 오류", "data_warning", True),
+            "quote_outlier": ("시세 이상치 감지", "data_warning", False),
+            "unknown_execution_issue": ("자동 판정", "trade_affecting", True),
+        }
+        label, severity, learning_excluded = mapping.get(key, (key or "자동 판정", "trade_affecting", True))
+        return {
+            "issue": key or "unknown_execution_issue",
+            "label": label,
+            "severity": severity,
+            "learning_excluded": bool(learning_excluded),
+        }
     def _build_execution_health(self, market: str, session_trades: Optional[list] = None) -> dict:
         session_trades = session_trades or []
         reasons = set(self._execution_flags.get(market, set()))
@@ -9179,9 +9703,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             reasons.add("broker_sync_trade")
         if any(o.get("market") == market for o in self.pending_orders):
             reasons.add("pending_orders_remain")
+        details = [self._execution_issue_detail(reason) for reason in sorted(reasons)]
+        learning_excluded = any(bool(detail.get("learning_excluded")) for detail in details)
         return {
             "contaminated": bool(reasons),
             "reasons": sorted(reasons),
+            "learning_excluded": bool(learning_excluded),
+            "warning": bool(details) and not learning_excluded,
+            "labels": [str(detail.get("label") or "-") for detail in details],
+            "details": details,
         }
     def _note_sell_failure(self, market: str, ticker: str, reason: str, detail: str = ""):
         sig = f"{reason}|{detail}".strip("|")
@@ -18734,6 +19264,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         try:
             status = self.risk.get_status()
             equity_ctx = self._market_equity_reference_context(market)
+            risk_shadow = self._market_risk_shadow_status(market)
             broker_state = self._broker_state.get(market, {})
             kis_total_equity = round(float(equity_ctx.get("total_krw", 0) or 0), 0)
             market_cash_krw = round(float(equity_ctx.get("cash_krw", 0) or 0), 0)
@@ -18832,6 +19363,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "current_market_daily_pnl_krw": round(market_realized_pnl_krw, 0),
                     "market_realized_pnl_krw": round(market_realized_pnl_krw, 0),
                     "market_realized_pnl_source": "market_realized_pnl_krw",
+                    "risk_shadow": risk_shadow,
+                    "risk_source": risk_shadow.get("risk_source", "global"),
+                    "risk_market": risk_shadow.get("risk_market", market),
+                    "risk_instance_id": risk_shadow.get("risk_instance_id", ""),
                     "daily_pnl_pct":  round(self._daily_pnl_pct(market), 4),
                     "cash":           market_cash_krw,
                     "total_equity":   kis_total_equity,
@@ -19197,6 +19732,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "cumulative": cumulative_equity,
             "execution_contaminated": execution_health["contaminated"],
             "execution_issues": execution_health["reasons"],
+            "execution_learning_excluded": execution_health.get("learning_excluded", execution_health["contaminated"]),
+            "execution_warning": execution_health.get("warning", False),
+            "execution_issue_labels": execution_health.get("labels", []),
+            "execution_issue_details": execution_health.get("details", []),
         }
         # 판단이 없는 날(HALT, 에러 등)은 postmortem 스킵
         if not self.today_judgment.get("judgments"):

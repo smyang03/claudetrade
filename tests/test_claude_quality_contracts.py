@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import credit_tracker
 import ticker_selection_db
+from audit.agent_call_event_store import AgentCallEventStore
 from minority_report import raw_call_logger
 from minority_report import hold_advisor
 
@@ -74,6 +75,42 @@ class RawCallLoggerTests(unittest.TestCase):
             self.assertEqual(data["call_id"], "stable")
             self.assertTrue(data["parse_error"])
             self.assertEqual(data["parse_stage"], "parse_failed")
+
+    def test_raw_call_can_write_agent_event_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_call_logger._RAW_CALLS_DIR = Path(tmp) / "raw"
+            raw_call_logger._AGENT_EVENT_STORE = None
+            db_path = Path(tmp) / "agent_call_events.db"
+            with patch.dict(
+                "os.environ",
+                {
+                    "ENABLE_AGENT_CALL_EVENT_STORE": "true",
+                    "AGENT_CALL_EVENT_DB_PATH": str(db_path),
+                },
+                clear=False,
+            ):
+                path = raw_call_logger.save(
+                    label="select_tickers",
+                    prompt="prompt",
+                    raw_response='{"ok": true}',
+                    parsed={"ok": True},
+                    input_tokens=11,
+                    output_tokens=7,
+                    market="US",
+                    model="claude-test",
+                    call_id="call_1",
+                    parse_error=False,
+                    parse_stage="parsed",
+                    prompt_version="v2",
+                )
+
+            self.assertIsNotNone(path)
+            store = AgentCallEventStore(db_path)
+            event = store.event("call_1")
+            self.assertIsNotNone(event)
+            self.assertEqual(event["market"], "US")
+            self.assertEqual(event["label"], "select_tickers")
+            self.assertEqual(event["input_tokens"], 11)
 
 
 class CreditTrackerTests(unittest.TestCase):

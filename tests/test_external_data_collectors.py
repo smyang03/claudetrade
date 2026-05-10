@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+
+from phase1_trainer.external_data_collectors import collect_ready_sources_dry_run
+
+
+class FakeResponse:
+    def __init__(self, payload: dict, status_code: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status_code
+
+    def json(self) -> dict:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"status={self.status_code}")
+
+
+class FakeSession:
+    def get(self, url: str, params: dict | None = None, timeout: int = 20) -> FakeResponse:
+        params = params or {}
+        if "opendart" in url:
+            return FakeResponse(
+                {
+                    "status": "000",
+                    "message": "OK",
+                    "list": [
+                        {
+                            "corp_name": "Samsung Electronics",
+                            "rcept_no": "202605100001",
+                            "rcept_dt": "20260510",
+                            "report_nm": "\uc720\uc0c1\uc99d\uc790 \uacb0\uc815",
+                        }
+                    ],
+                }
+            )
+        if "GetKrxListedInfoService" in url:
+            return FakeResponse(
+                {
+                    "response": {
+                        "header": {"resultCode": "00", "resultMsg": "NORMAL"},
+                        "body": {
+                            "items": {
+                                "item": {
+                                    "basDt": "20260508",
+                                    "srtnCd": "005930",
+                                    "isinCd": "KR7005930003",
+                                    "mrktCtg": "KOSPI",
+                                    "itmsNm": "Samsung Electronics",
+                                    "corpNm": "Samsung Electronics",
+                                    "crno": "1301110006246",
+                                }
+                            }
+                        },
+                    }
+                }
+            )
+        if "GetStockSecuritiesInfoService" in url:
+            return FakeResponse(
+                {
+                    "response": {
+                        "header": {"resultCode": "00", "resultMsg": "NORMAL"},
+                        "body": {
+                            "items": {
+                                "item": [
+                                    {
+                                        "basDt": "20260508",
+                                        "srtnCd": "005930",
+                                        "isinCd": "KR7005930003",
+                                        "mrktCtg": "KOSPI",
+                                        "itmsNm": "Samsung Electronics",
+                                        "mkp": "70000",
+                                        "hipr": "71000",
+                                        "lopr": "69000",
+                                        "clpr": "70500",
+                                        "fltRt": "1.23",
+                                        "trqu": "1234567",
+                                        "trPrc": "90000000000",
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                }
+            )
+        if "GetSecuritiesProductInfoService" in url:
+            return FakeResponse(
+                {
+                    "response": {
+                        "header": {"resultCode": "00", "resultMsg": "NORMAL"},
+                        "body": {
+                            "items": {
+                                "item": [
+                                    {
+                                        "basDt": "20260508",
+                                        "srtnCd": "091160",
+                                        "isinCd": "KR7091160002",
+                                        "mrktCtg": "ETF",
+                                        "itmsNm": "TIGER Semiconductor",
+                                        "mkp": "10000",
+                                        "hipr": "10100",
+                                        "lopr": "9900",
+                                        "clpr": "10050",
+                                        "fltRt": "0.50",
+                                        "trqu": "1000",
+                                        "trPrc": "10050000",
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                }
+            )
+        if "fred" in url:
+            return FakeResponse(
+                {
+                    "observations": [
+                        {
+                            "realtime_start": "2026-05-10",
+                            "realtime_end": "2026-05-10",
+                            "date": "2026-04-01",
+                            "value": "3.4",
+                        }
+                    ]
+                }
+            )
+        raise AssertionError(f"unexpected url: {url}")
+
+
+class ExternalDataCollectorsTest(unittest.TestCase):
+    def test_dry_run_normalizes_and_stores_ready_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_path = root / ".env.live"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "DART_API_KEY=fake_dart",
+                        "DATA_GO_KR_KEY=fake_data",
+                        "FRED_API_KEY=fake_fred",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            db_path = root / "external.sqlite"
+
+            summary = collect_ready_sources_dry_run(
+                db_path=db_path,
+                env_path=env_path,
+                target_date="2026-05-10",
+                session=FakeSession(),
+            )
+
+            self.assertTrue(db_path.exists())
+            self.assertFalse([c for c in summary["checks"] if c["status"] == "failed"])
+            self.assertTrue(all(c["columns_ok"] for c in summary["checks"]))
+            self.assertEqual(summary["table_counts"]["dart_disclosures"], 1)
+            self.assertEqual(summary["table_counts"]["public_krx_listed"], 1)
+            self.assertEqual(summary["table_counts"]["public_stock_quotes"], 1)
+            self.assertEqual(summary["table_counts"]["public_securities_products"], 1)
+            self.assertEqual(summary["table_counts"]["fred_observations"], 3)
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                dart = conn.execute("SELECT risk_level, risk_tags_json FROM dart_disclosures").fetchone()
+                self.assertEqual(dart["risk_level"], "high")
+                self.assertIn("capital_increase", dart["risk_tags_json"])
+
+                quote = conn.execute("SELECT close, volume FROM public_stock_quotes").fetchone()
+                self.assertEqual(quote["close"], 70500.0)
+                self.assertEqual(quote["volume"], 1234567.0)
+
+                fred = conn.execute(
+                    "SELECT series_id, observation_date, value FROM fred_observations WHERE series_id = 'CPIAUCSL'"
+                ).fetchone()
+                self.assertEqual(fred["observation_date"], "2026-04-01")
+                self.assertEqual(fred["value"], 3.4)
+            finally:
+                conn.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

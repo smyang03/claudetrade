@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from execution.safety_gate import SafetyContext, SafetyGate
+import risk_manager as risk_module
 from risk_manager import RiskManager
 from runtime.v2_lifecycle_runtime import V2LifecycleRuntime
 from trading_bot import TradingBot
@@ -57,6 +58,48 @@ class EntryRiskControlTests(unittest.TestCase):
             self.assertEqual(runtime.max_daily_entries("KR"), 2)
             self.assertEqual(runtime.max_daily_entries("US"), 2)
             self.assertIsNone(runtime.max_daily_entries("JP"))
+
+    def test_market_risk_shadow_keeps_market_scoped_snapshot(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.risk = SimpleNamespace(
+            cash=1_000_000,
+            max_order_krw=200_000,
+            positions=[
+                {"ticker": "005930", "qty": 1, "entry": 70_000},
+                {"ticker": "AAPL", "qty": 1, "entry": 200_000},
+            ],
+            trade_log=[
+                {"side": "buy", "ticker": "005930"},
+                {"side": "buy", "ticker": "AAPL"},
+            ],
+            all_trade_log=[
+                {"side": "buy", "ticker": "005930"},
+                {"side": "buy", "ticker": "AAPL"},
+            ],
+            halted=False,
+            halt_reason="",
+            session_start_equity=1_000_000,
+        )
+        bot._market_realized_pnl_krw = lambda market: -10_000 if market == "KR" else 5_000  # type: ignore[method-assign]
+        bot._market_session_start_equity_krw = lambda market: 500_000  # type: ignore[method-assign]
+        bot._market_equity_reference_context = lambda market: {"cash_krw": 300_000 if market == "KR" else 700_000}  # type: ignore[method-assign]
+
+        with patch.dict(os.environ, {"ENABLE_MARKET_RISK_SHADOW": "true"}, clear=False):
+            TradingBot._init_market_risk_shadow(
+                bot,
+                init_cash_krw=500_000,
+                us_cash_init_krw=500_000,
+                max_order_krw=200_000,
+            )
+
+        kr_status = TradingBot._market_risk_shadow_status(bot, "KR")
+        us_status = TradingBot._market_risk_shadow_status(bot, "US")
+        self.assertTrue(kr_status["enabled"])
+        self.assertEqual(kr_status["risk_source"], "market_shadow")
+        self.assertEqual(kr_status["position_count"], 1)
+        self.assertEqual(us_status["position_count"], 1)
+        self.assertEqual(kr_status["daily_pnl_krw"], -10000)
+        self.assertEqual(us_status["daily_pnl_krw"], 5000)
 
     def test_us_broker_sync_quarantine_blocks_degraded_safety_context(self) -> None:
         with patch.dict(os.environ, {"US_BROKER_SYNC_QUARANTINE_ENABLED": "true"}, clear=False):
@@ -131,32 +174,33 @@ class EntryRiskControlTests(unittest.TestCase):
         self.assertEqual(candidates[0]["effective_stop_price"], candidates[0]["mfe_breakeven_price"])
 
     def test_plana_mfe_breakeven_does_not_override_loss_cap(self) -> None:
-        risk = RiskManager(init_cash=1_000_000)
-        risk.reset_daily_state(override_base=1_000_000)
-        risk.positions = [
-            {
-                "ticker": "005930",
-                "entry": 10_000.0,
-                "qty": 1,
-                "current_price": 9_700.0,
-                "strategy": "momentum",
-                "tp": 11_000.0,
-                "sl": 9_500.0,
-                "peak_pnl_pct": 3.0,
-                "trough_pnl_pct": -3.0,
-            }
-        ]
+        with patch.dict(risk_module.HARD_RULES, {"max_single_loss_pct": -2.0}):
+            risk = RiskManager(init_cash=1_000_000)
+            risk.reset_daily_state(override_base=1_000_000)
+            risk.positions = [
+                {
+                    "ticker": "005930",
+                    "entry": 10_000.0,
+                    "qty": 1,
+                    "current_price": 9_700.0,
+                    "strategy": "momentum",
+                    "tp": 11_000.0,
+                    "sl": 9_500.0,
+                    "peak_pnl_pct": 3.0,
+                    "trough_pnl_pct": -3.0,
+                }
+            ]
 
-        with patch.dict(
-            os.environ,
-            {
-                "PLANA_MFE_BREAKEVEN_ENABLED": "true",
-                "PLANA_MFE_BREAKEVEN_TRIGGER_PCT": "2.5",
-                "PLANA_MFE_BREAKEVEN_BUFFER_PCT": "0.001",
-            },
-            clear=False,
-        ):
-            candidates = risk.get_exit_candidates()
+            with patch.dict(
+                os.environ,
+                {
+                    "PLANA_MFE_BREAKEVEN_ENABLED": "true",
+                    "PLANA_MFE_BREAKEVEN_TRIGGER_PCT": "2.5",
+                    "PLANA_MFE_BREAKEVEN_BUFFER_PCT": "0.001",
+                },
+                clear=False,
+            ):
+                candidates = risk.get_exit_candidates()
 
         self.assertEqual(candidates[0]["reason"], "loss_cap")
 

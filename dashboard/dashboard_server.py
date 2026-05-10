@@ -1155,6 +1155,7 @@ def _record_metrics(rec: dict, market: str) -> dict:
     actual = rec.get("actual_result", {}) or {}
     execution_contaminated = bool(actual.get("execution_contaminated", False))
     execution_issues = list(actual.get("execution_issues", []) or [])
+    execution_payload = _execution_issue_payload(execution_issues, execution_contaminated)
 
     if sells:
         pnl_krw = round(sum(float(t.get("pnl", 0) or 0) for t in sells), 6)
@@ -1169,8 +1170,7 @@ def _record_metrics(rec: dict, market: str) -> dict:
             "pnl_pct": pnl_pct,
             "win": pnl_krw > 0,
             "cumulative": cumulative,
-            "execution_contaminated": execution_contaminated,
-            "execution_issues": execution_issues,
+            **execution_payload,
         }
 
     if trades:
@@ -1180,8 +1180,7 @@ def _record_metrics(rec: dict, market: str) -> dict:
             "pnl_pct": float(actual.get("pnl_pct", 0) or 0),
             "win": bool(actual.get("win", False)),
             "cumulative": float(actual.get("cumulative", PAPER_CASH) or PAPER_CASH),
-            "execution_contaminated": execution_contaminated,
-            "execution_issues": execution_issues,
+            **execution_payload,
         }
 
     return {
@@ -1190,8 +1189,7 @@ def _record_metrics(rec: dict, market: str) -> dict:
         "pnl_pct": float(actual.get("pnl_pct", 0) or 0),
         "win": bool(actual.get("win", False)),
         "cumulative": float(actual.get("cumulative", PAPER_CASH) or PAPER_CASH),
-        "execution_contaminated": execution_contaminated,
-        "execution_issues": execution_issues,
+        **execution_payload,
     }
 
 
@@ -1583,12 +1581,73 @@ def _clean_lesson(text: str) -> str:
 
 
 def _execution_issue_label(issue: str) -> str:
-    mapping = {
-        "broker_position_removed": "브로커 포지션 동기화 오류",
-        "quote_invalid": "시세 무효/가격 수신 오류",
-    }
+    return _execution_issue_detail(issue).get("label", "-")
+
+
+def _execution_issue_detail(issue: str) -> dict:
     key = str(issue or "").strip()
-    return mapping.get(key, key or "-")
+    if not key:
+        return {
+            "issue": "",
+            "label": "-",
+            "severity": "trade_affecting",
+            "learning_excluded": True,
+        }
+    if key.startswith("sell_failed:"):
+        reason = key.split(":", 1)[1].strip() or "unknown"
+        return {
+            "issue": key,
+            "label": f"매도 실패({reason})",
+            "severity": "trade_affecting",
+            "learning_excluded": True,
+        }
+    mapping = {
+        "sell_failed": ("매도 실패", "trade_affecting", True),
+        "pending_orders_remain": ("미해결 주문 잔존", "trade_affecting", True),
+        "duplicate_ticker_pending": ("동일 종목 중복 대기 주문", "trade_affecting", True),
+        "broker_only_open_order": ("브로커 단독 미체결 주문", "trade_affecting", True),
+        "broker_sync_trade": ("브로커 동기화 거래", "sync_trade", True),
+        "broker_sync_exit": ("브로커 동기화 청산", "sync_trade", True),
+        "broker_sync_fill": ("브로커 동기화 체결", "sync_trade", True),
+        "broker_position_removed": ("브로커 미보유 포지션 정리", "sync_warning", False),
+        "broker_position_injected": ("브로커 보유 포지션 재주입", "sync_warning", False),
+        "broker_qty_corrected": ("브로커 수량 보정", "sync_warning", False),
+        "quote_invalid": ("시세 무효/가격 수신 오류", "data_warning", True),
+        "quote_outlier": ("시세 이상치 감지", "data_warning", False),
+        "unknown_execution_issue": ("자동 판정", "trade_affecting", True),
+    }
+    label, severity, learning_excluded = mapping.get(key, (key, "trade_affecting", True))
+    return {
+        "issue": key,
+        "label": label,
+        "severity": severity,
+        "learning_excluded": bool(learning_excluded),
+    }
+
+
+def _execution_issue_payload(issues: object, raw_contaminated: bool = False) -> dict:
+    raw_issues = []
+    seen = set()
+    for issue in list(issues or []):
+        key = str(issue or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        raw_issues.append(key)
+    if raw_contaminated and not raw_issues:
+        raw_issues.append("unknown_execution_issue")
+    details = [_execution_issue_detail(issue) for issue in raw_issues]
+    learning_excluded = any(bool(detail.get("learning_excluded")) for detail in details)
+    warning = bool(details) and not learning_excluded
+    return {
+        "execution_contaminated_raw": bool(raw_contaminated),
+        "execution_contaminated": bool(learning_excluded),
+        "execution_learning_excluded": bool(learning_excluded),
+        "execution_warning": bool(warning),
+        "execution_issues": raw_issues,
+        "execution_issue_labels": [str(detail.get("label") or "-") for detail in details],
+        "execution_issue_details": details,
+    }
 
 
 def load_digest_records_filtered(market: str, period: str, start: str, end: str) -> list:
@@ -4120,7 +4179,24 @@ def api_summary():
         return jsonify({})
 
     mode        = _request_mode()
-    today_rec   = load_today(market)
+    expected_date = _session_trade_date(market).isoformat()
+    loaded_today_rec = load_today(market)
+    loaded_today_date = str(
+        loaded_today_rec.get("date")
+        or loaded_today_rec.get("session_date")
+        or ""
+    )[:10]
+    if loaded_today_date == expected_date:
+        today_rec = loaded_today_rec
+    else:
+        today_rec = {
+            "date": expected_date,
+            "market": market,
+            "actual_result": {},
+            "consensus": {},
+            "tickers": [],
+            "universe_tickers": [],
+        }
     result      = today_rec.get("actual_result", {})
     raw_live    = _load_live_status(market, mode=mode)   # 장중/최근 실시간 상태
     live        = raw_live
@@ -4321,7 +4397,6 @@ def api_summary():
             break
 
     summary_date = today_rec.get("date", "")
-    expected_date = _session_trade_date(market).isoformat()
     if not summary_date or summary_date[:10] != expected_date:
         summary_date = expected_date
     risk = _current_risk_snapshot(market, today_rec)
@@ -4389,7 +4464,12 @@ def api_summary():
             "win":            metrics_today.get("win", result.get("win", False)),
             "trades":         metrics_today.get("trades", result.get("trades", 0)),
             "execution_contaminated": bool(metrics_today.get("execution_contaminated", False)),
+            "execution_contaminated_raw": bool(metrics_today.get("execution_contaminated_raw", metrics_today.get("execution_contaminated", False))),
+            "execution_learning_excluded": bool(metrics_today.get("execution_learning_excluded", metrics_today.get("execution_contaminated", False))),
+            "execution_warning": bool(metrics_today.get("execution_warning", False)),
             "execution_issues": metrics_today.get("execution_issues", []),
+            "execution_issue_labels": metrics_today.get("execution_issue_labels", metrics_today.get("execution_issues", [])),
+            "execution_issue_details": metrics_today.get("execution_issue_details", []),
             "mode":           live.get("mode") or today_rec.get("consensus", {}).get("mode", "-"),
             "mode_size_pct":  mode_size_pct,
             "max_order_krw":  round(max_order_krw, 0),
@@ -5519,14 +5599,9 @@ def api_brain_history():
                 for key in ("best_trade", "worst_trade", "worst_trade_reason"):
                     if not item.get(key) and pm.get(key):
                         item[key] = pm.get(key)
-        execution_issues = list(actual.get("execution_issues", []) or [])
-        execution_contaminated = bool(actual.get("execution_contaminated", False))
-        item["execution_contaminated"] = execution_contaminated
-        item["execution_issues"] = execution_issues
-        lesson = str(item.get("key_lesson", "") or "").strip()
-        if execution_contaminated and ("오류로 자동 판정" in lesson or not lesson):
-            labels = [_execution_issue_label(x) for x in execution_issues[:3]]
-            item["key_lesson"] = "실행오염: " + (", ".join(labels) if labels else "자동 판정")
+        execution_issues = list(actual.get("execution_issues", item.get("execution_issues", [])) or [])
+        execution_contaminated = bool(actual.get("execution_contaminated", item.get("execution_contaminated", False)))
+        item.update(_execution_issue_payload(execution_issues, execution_contaminated))
         enriched_days.append(item)
     beliefs = m.get("current_beliefs", {})
     return jsonify({
@@ -8948,8 +9023,10 @@ async function loadSummary() {
   }
   renderLifetimeRealized(t);
   const orderBreakdown = formatOrderableBreakdown(t);
+  const executionLabels = t.execution_issue_labels || t.execution_issues || [];
+  const executionBadge = t.execution_contaminated ? '실행오염' : (t.execution_warning ? '실행경고' : '');
   document.getElementById('today-mode').innerHTML =
-    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.asset(t.mode_order_limit_krw)}` : ''}${orderBreakdown ? ` | 주문가능 ${orderBreakdown}` : ''}${t.execution_contaminated ? ` <span style="color:#f59e0b">| 실행오염 ${((t.execution_issues||[]).slice(0,2)).join(', ')}</span>` : ''}`;
+    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.asset(t.mode_order_limit_krw)}` : ''}${orderBreakdown ? ` | 주문가능 ${orderBreakdown}` : ''}${executionBadge ? ` <span style="color:#f59e0b">| ${executionBadge} ${(executionLabels.slice(0,2)).join(', ')}</span>` : ''}`;
 
   const wrEl = document.getElementById('win-rate');
   wrEl.textContent = p.win_rate + '%';
@@ -10793,7 +10870,8 @@ async function loadBrainHistory() {
       const win    = day.win ? '<span style="color:var(--green)">승</span>' : '<span style="color:var(--red)">패</span>';
       const mode   = day.mode || '-';
       const modeCol = mode.includes('BULL') ? 'var(--green)' : mode.includes('BEAR') || mode === 'HALT' ? 'var(--red)' : mode === 'DEFENSIVE' ? 'var(--yellow)' : 'var(--cyan)';
-      const lesson  = (day.key_lesson || '').slice(0, 80) || '-';
+      const lessonText = day.key_lesson || '';
+      const lesson  = (lessonText || '').slice(0, 80) || '-';
       const trades  = day.trades != null ? day.trades : '-';
       const best    = day.best_trade  ? `<span style="color:var(--green)">${day.best_trade}</span>`  : '-';
       const worst   = day.worst_trade ? `<span style="color:var(--red)">${day.worst_trade}</span>`   : '-';
@@ -10812,7 +10890,7 @@ async function loadBrainHistory() {
         <td title="${neutTitle}">${resultBadge(day.neutral_result)}</td>
         <td style="text-align:center;color:var(--muted)">${trades}</td>
         <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cyan)"
-            title="${(day.key_lesson||'').replace(/"/g,'&quot;')}">${lesson}</td>
+            title="${(lessonText||'').replace(/"/g,'&quot;')}">${lesson}</td>
         <td style="font-family:var(--mono);font-size:11px">${best} / ${worst}</td>
       </tr>`;
     }).join('');

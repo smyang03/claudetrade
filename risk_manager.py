@@ -590,6 +590,20 @@ class RiskManager:
             trough_pnl_pct = float(pos.get("trough_pnl_pct") or 0)
             floor_triggered = self.profit_floor_triggered(pos)
 
+            def _mfe_breakeven_hit(current: float, breakeven_price: float, entry_price: float) -> bool:
+                if breakeven_price <= 0 or current <= 0:
+                    return False
+                if entry_price > 0 and current < entry_price:
+                    return False
+                return current <= breakeven_price
+
+            def _profit_floor_hit(current: float, floor_price: float, entry_price: float, triggered: bool) -> bool:
+                if not triggered or floor_price <= 0 or current <= 0:
+                    return False
+                if entry_price > 0 and current < entry_price:
+                    return False
+                return current <= floor_price
+
             # US 종목: 환율 드리프트 방지를 위해 USD 기준으로 TP/SL 비교
             if is_us and avg_usd > 0 and cp_usd > 0 and entry_krw > 0:
                 # tp_pct/sl_pct가 있으면 우선 사용, 없으면 KRW 비율에서 역산
@@ -613,8 +627,11 @@ class RiskManager:
                 )
                 exit_meta["soft_exit_floor_price"] = soft_floor_usd
                 exit_meta["soft_exit_floor_triggered"] = bool(soft_floor_usd > 0 and cp_usd <= soft_floor_usd)
+                floor_hit = _profit_floor_hit(cp_usd, floor_usd, avg_usd, floor_triggered)
+                exit_meta["profit_floor_triggered"] = bool(floor_hit)
                 exit_meta["mfe_breakeven_price"] = mfe_breakeven_usd
-                exit_meta["mfe_breakeven_triggered"] = bool(mfe_breakeven_usd > 0 and cp_usd <= mfe_breakeven_usd)
+                mfe_hit = _mfe_breakeven_hit(cp_usd, mfe_breakeven_usd, avg_usd)
+                exit_meta["mfe_breakeven_triggered"] = bool(mfe_hit)
                 exit_meta["mfe_breakeven_trigger_pct"] = _env_float("PLANA_MFE_BREAKEVEN_TRIGGER_PCT", 2.5)
                 exit_meta["mfe_breakeven_buffer_pct"] = _env_float("PLANA_MFE_BREAKEVEN_BUFFER_PCT", 0.001)
 
@@ -629,7 +646,7 @@ class RiskManager:
                     exit_meta["effective_stop_price"] = effective_stop
                     if not reason and soft_floor_usd > 0 and cp_usd <= soft_floor_usd:
                         reason = "soft_exit_floor_price"
-                    elif not reason and mfe_breakeven_usd > 0 and cp_usd <= mfe_breakeven_usd:
+                    elif not reason and mfe_hit:
                         reason = "mfe_breakeven"
                         exit_meta["effective_stop_price"] = mfe_breakeven_usd
                 elif pos.get("trailing"):
@@ -639,10 +656,10 @@ class RiskManager:
                     exit_meta["effective_stop_price"] = effective_stop
                     if soft_floor_usd > 0 and cp_usd <= soft_floor_usd and reason in (None, "trail_stop"):
                         reason = "soft_exit_floor_price"
-                    if not reason and mfe_breakeven_usd > 0 and cp_usd <= mfe_breakeven_usd:
+                    if not reason and mfe_hit:
                         reason = "mfe_breakeven"
                         exit_meta["effective_stop_price"] = mfe_breakeven_usd
-                    if not reason and floor_triggered and floor_usd > 0 and cp_usd <= floor_usd:
+                    if not reason and floor_hit:
                         reason = "profit_floor"
                 else:
                     reason, effective_stop = self._stop_reason(cp_usd, sl_usd, loss_cap_usd, "stop_loss")
@@ -651,10 +668,10 @@ class RiskManager:
                         pass
                     elif soft_floor_usd > 0 and cp_usd <= soft_floor_usd:
                         reason = "soft_exit_floor_price"
-                    elif mfe_breakeven_usd > 0 and cp_usd <= mfe_breakeven_usd:
+                    elif mfe_hit:
                         reason = "mfe_breakeven"
                         exit_meta["effective_stop_price"] = mfe_breakeven_usd
-                    elif floor_triggered and floor_usd > 0 and cp_usd <= floor_usd:
+                    elif floor_hit:
                         reason = "profit_floor"
                     elif cp_usd >= tp_usd and not pos.get("tp_triggered"):
                         reason = "tp_check"
@@ -669,6 +686,7 @@ class RiskManager:
             mfe_breakeven_krw = self.mfe_breakeven_price(pos)
             soft_floor_krw = self.soft_exit_floor_price(pos)
             base_stop = float(pos.get("sl") or 0)
+            mfe_entry_krw = float(pos.get("entry") or pos.get("avg_price") or pos.get("entry_price") or pos.get("buy_price") or 0)
             exit_meta = self._exit_meta(
                 strategy_stop_price=base_stop,
                 loss_cap_price=loss_cap_krw,
@@ -681,8 +699,11 @@ class RiskManager:
             )
             exit_meta["soft_exit_floor_price"] = soft_floor_krw
             exit_meta["soft_exit_floor_triggered"] = bool(soft_floor_krw > 0 and cp <= soft_floor_krw)
+            floor_hit = _profit_floor_hit(cp, floor_krw, mfe_entry_krw, floor_triggered)
+            exit_meta["profit_floor_triggered"] = bool(floor_hit)
             exit_meta["mfe_breakeven_price"] = mfe_breakeven_krw
-            exit_meta["mfe_breakeven_triggered"] = bool(mfe_breakeven_krw > 0 and cp <= mfe_breakeven_krw)
+            mfe_hit = _mfe_breakeven_hit(cp, mfe_breakeven_krw, mfe_entry_krw)
+            exit_meta["mfe_breakeven_triggered"] = bool(mfe_hit)
             exit_meta["mfe_breakeven_trigger_pct"] = _env_float("PLANA_MFE_BREAKEVEN_TRIGGER_PCT", 2.5)
             exit_meta["mfe_breakeven_buffer_pct"] = _env_float("PLANA_MFE_BREAKEVEN_BUFFER_PCT", 0.001)
             recovery_reason, recovery_trigger = self._recovery_micro_exit_signal(pos)
@@ -696,7 +717,7 @@ class RiskManager:
                 exit_meta["effective_stop_price"] = effective_stop
                 if not reason and soft_floor_krw > 0 and cp <= soft_floor_krw:
                     reason = "soft_exit_floor_price"
-                elif not reason and mfe_breakeven_krw > 0 and cp <= mfe_breakeven_krw:
+                elif not reason and mfe_hit:
                     reason = "mfe_breakeven"
                     exit_meta["effective_stop_price"] = mfe_breakeven_krw
             elif pos.get("trailing"):
@@ -706,10 +727,10 @@ class RiskManager:
                 exit_meta["effective_stop_price"] = effective_stop
                 if soft_floor_krw > 0 and cp <= soft_floor_krw and reason in (None, "trail_stop"):
                     reason = "soft_exit_floor_price"
-                if not reason and mfe_breakeven_krw > 0 and cp <= mfe_breakeven_krw:
+                if not reason and mfe_hit:
                     reason = "mfe_breakeven"
                     exit_meta["effective_stop_price"] = mfe_breakeven_krw
-                if not reason and floor_triggered and floor_krw > 0 and cp <= floor_krw:
+                if not reason and floor_hit:
                     reason = "profit_floor"
             else:
                 reason, effective_stop = self._stop_reason(cp, base_stop, loss_cap_krw, "stop_loss")
@@ -718,10 +739,10 @@ class RiskManager:
                     pass
                 elif soft_floor_krw > 0 and cp <= soft_floor_krw:
                     reason = "soft_exit_floor_price"
-                elif mfe_breakeven_krw > 0 and cp <= mfe_breakeven_krw:
+                elif mfe_hit:
                     reason = "mfe_breakeven"
                     exit_meta["effective_stop_price"] = mfe_breakeven_krw
-                elif floor_triggered and floor_krw > 0 and cp <= floor_krw:
+                elif floor_hit:
                     reason = "profit_floor"
                 elif cp >= pos["tp"] and not pos.get("tp_triggered"):
                     reason = "tp_check"      # TP 도달 → trading_bot에서 처리

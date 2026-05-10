@@ -56,6 +56,11 @@ def _brain_payload() -> dict:
                         "key_lesson": "JSON parser truncation should be fixed before retry.",
                         "trades": 1,
                     },
+                    {
+                        "date": "2026-05-02",
+                        "key_lesson": "실행오염: 브로커 동기화 거래",
+                        "trades": 1,
+                    },
                 ],
                 "execution_lessons": [
                     "Affordability failures should reduce execution confidence before order review.",
@@ -105,6 +110,8 @@ class ActiveLessonBuilderTests(unittest.TestCase):
         self.assertNotIn("KIS token", section)
         self.assertNotIn("JSON parser", section)
         self.assertNotIn("Broker stale", section)
+        self.assertNotIn("실행오염", section)
+        self.assertNotIn("브로커 동기화", section)
         self.assertNotIn("Legacy broad momentum", section)
 
 

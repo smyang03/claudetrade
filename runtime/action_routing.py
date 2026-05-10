@@ -21,6 +21,9 @@ class RouteDecision:
     cancel_pathb: bool = False
     suspend_pathb: bool = False
     warnings: list[str] = field(default_factory=list)
+    confirmation_state: str = ""
+    confirmation_reason: str = ""
+    confirmation_shadow: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +39,9 @@ class RouteDecision:
             "cancel_pathb": self.cancel_pathb,
             "suspend_pathb": self.suspend_pathb,
             "warnings": list(self.warnings),
+            "confirmation_state": self.confirmation_state,
+            "confirmation_reason": self.confirmation_reason,
+            "confirmation_shadow": self.confirmation_shadow,
         }
 
 
@@ -127,6 +133,28 @@ def route_candidate_action(
     if cancel_if_open_above > 0:
         gate_context["cancel_if_open_above"] = cancel_if_open_above
     gate_context["overextended"] = bool(overextended)
+    for key in (
+        "ret_3m_pct",
+        "ret_10m_pct",
+        "ret_30m_pct",
+        "opening_range_high",
+        "opening_range_low",
+        "vwap",
+        "vwap_proxy",
+        "volume_acceleration",
+        "spread_bps",
+        "kr_confirmation_gate_active",
+        "kr_confirmation_gate_enabled",
+        "kr_confirmation_gate_shadow",
+        "kr_confirmation_confirmed",
+        "kr_confirmation_state",
+        "kr_confirmation_reason",
+        "kr_confirmation_checks",
+    ):
+        if context.get(key) is not None:
+            gate_context[key] = context.get(key)
+
+    default_warnings: list[str] = []
 
     def _decision(
         final_action: str,
@@ -156,7 +184,10 @@ def route_candidate_action(
             runtime_gate=gate_payload,
             cancel_pathb=cancel_pathb,
             suspend_pathb=suspend_pathb,
-            warnings=list(warnings or []),
+            warnings=list(dict.fromkeys([*default_warnings, *(warnings or [])])),
+            confirmation_state=str(gate_payload.get("kr_confirmation_state") or ""),
+            confirmation_reason=str(gate_payload.get("kr_confirmation_reason") or ""),
+            confirmation_shadow=bool(gate_payload.get("kr_confirmation_gate_shadow")),
         )
 
     def _negative_watch_context() -> bool:
@@ -203,6 +234,24 @@ def route_candidate_action(
             reason="pathb_active_order_blocks_plana",
             warnings=["same_ticker_route_lock"],
         )
+
+    if (
+        market_text == "KR"
+        and requested in {"PROBE_READY", "BUY_READY"}
+        and bool(context.get("kr_confirmation_gate_active"))
+    ):
+        confirmation_reason = str(context.get("kr_confirmation_reason") or "kr_confirmation_required")
+        if not bool(context.get("kr_confirmation_confirmed")):
+            if bool(context.get("kr_confirmation_gate_shadow")):
+                default_warnings.append("kr_confirmation_required_shadow")
+            else:
+                return _decision(
+                    "WATCH",
+                    reason=confirmation_reason,
+                    warnings=["kr_confirmation_required"],
+                    demoted_to="WATCH",
+                    runtime_gate_reason=confirmation_reason,
+                )
 
     if requested == "PROBE_READY":
         if pathb_waiting and current_price > 0 and pathb_waiting_buy_zone_high > 0 and current_price > pathb_waiting_buy_zone_high:

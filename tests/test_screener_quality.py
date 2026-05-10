@@ -22,6 +22,13 @@ class ScreenerQualityTests(unittest.TestCase):
                 ],
                 prompt_candidates=[
                     {"ticker": "001510", "name": "SK증권", "price": 5370, "change_rate": 10.5, "volume": 1000, "market_type": "KOSPI"},
+                    {
+                        "ticker": "001510",
+                        "candidate_quality_score": 72.5,
+                        "candidate_quality_grade": "B",
+                        "rs_20d_vs_board": 4.2,
+                        "quality_data_gaps": ["flow_missing"],
+                    },
                 ],
                 selected=["001510"],
                 selection_meta={"trade_ready": ["001510"], "watchlist": ["001510"]},
@@ -44,6 +51,10 @@ class ScreenerQualityTests(unittest.TestCase):
             self.assertIn("momentum_now", by_ticker["001510"]["secondary_buckets"])
             self.assertEqual(by_ticker["001510"]["first_bucket_detected_at"], "2026-04-28T09:05:00")
             self.assertIn("score_vol_ratio_capped", by_ticker["001510"])
+            self.assertEqual(by_ticker["001510"]["candidate_quality_grade"], "B")
+            self.assertEqual(by_ticker["001510"]["candidate_quality_score"], 72.5)
+            self.assertEqual(by_ticker["001510"]["rs_20d_vs_board"], 4.2)
+            self.assertIn("flow_missing", by_ticker["001510"]["quality_data_gaps"])
 
     def test_opening_fresh_quality_metrics_triggers_when_top_gainers_missing(self) -> None:
         metrics = opening_fresh_quality_metrics(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -330,6 +331,180 @@ class PostmortemPromptContractTests(unittest.TestCase):
 
         self.assertIn("미국 주식 자동매매 시스템", captured["prompt"])
         self.assertNotIn("한국 주식 자동매매 시스템", captured["prompt"])
+
+    def test_warning_only_execution_still_writes_policy_lessons(self) -> None:
+        calls: dict[str, list] = {
+            "beliefs": [],
+            "issue_patterns": [],
+            "daily_records": [],
+            "correction_guides": [],
+        }
+
+        def _fake_create(*, model, max_tokens, messages):
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        text=(
+                            '{"bull_result":"HIT","bear_result":"MISS","neutral_result":"PARTIAL",'
+                            '"bull_why":"ok","bear_why":"ok","neutral_why":"ok",'
+                            '"best_trade":"SMCI","worst_trade":null,"worst_trade_reason":"",'
+                            '"key_lesson":"Valid market lesson should persist.",'
+                            '"issue_type":"selection","issue_desc":"valid issue",'
+                            '"pattern_id":"p-good",'
+                            '"brain_updates":{"new_lesson":"Valid new lesson should persist",'
+                            '"market_regime":"risk_on"},'
+                            '"correction_guide":{"bull_adjustments":["keep bullish filter"],'
+                            '"bear_adjustments":[],"tuning_rules":["keep valid rule"],'
+                            '"today_notes":"valid notes"}}'
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        no_op = lambda *args, **kwargs: None
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(postmortem.client.messages, "create", side_effect=_fake_create))
+            stack.enter_context(patch.object(postmortem, "credit_record", no_op))
+            stack.enter_context(patch.object(postmortem, "save_raw_call", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "generate_prompt_summary", return_value=""))
+            stack.enter_context(patch.object(postmortem.BrainDB, "load", return_value={"markets": {"US": {"recent_days": []}}}))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_analyst", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_mode_performance", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_beliefs", side_effect=lambda *a, **k: calls["beliefs"].append((a, k))))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_issue_pattern", side_effect=lambda *a, **k: calls["issue_patterns"].append((a, k))))
+            stack.enter_context(patch.object(postmortem.BrainDB, "add_daily_record", side_effect=lambda *a, **k: calls["daily_records"].append((a, k))))
+            stack.enter_context(patch.object(postmortem.BrainDB, "get_recent_selection_feedback_text", return_value=""))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_strategy_performance", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_debate_outcome", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_correction_guide", side_effect=lambda *a, **k: calls["correction_guides"].append((a, k))))
+            postmortem.run(
+                "US",
+                "2026-05-09",
+                {
+                    "judgments": {
+                        "bull": {"stance": "MILD_BULL", "key_reason": "ok"},
+                        "bear": {"stance": "NEUTRAL", "key_reason": "ok"},
+                        "neutral": {"stance": "NEUTRAL", "key_reason": "ok"},
+                    },
+                    "consensus": {"mode": "MILD_BULL"},
+                },
+                {
+                    "market_change": 1.0,
+                    "pnl_pct": 0.5,
+                    "win": True,
+                    "execution_contaminated": True,
+                    "execution_learning_excluded": False,
+                    "execution_warning": True,
+                    "execution_issues": ["broker_position_removed"],
+                },
+                "US digest",
+                trade_log=[{"side": "sell", "ticker": "SMCI", "pnl_pct": 0.5}],
+                decision_event_log=[],
+            )
+
+        self.assertEqual(len(calls["beliefs"]), 2)
+        self.assertEqual(calls["beliefs"][0][0], ("US", {"new_lesson": "Valid new lesson should persist"}))
+        self.assertEqual(calls["beliefs"][1][0], ("US", {"market_regime": "risk_on"}))
+        self.assertEqual(len(calls["issue_patterns"]), 1)
+        self.assertEqual(len(calls["correction_guides"]), 1)
+        self.assertEqual(len(calls["daily_records"]), 1)
+        daily_record = calls["daily_records"][0][0][1]
+        self.assertEqual(daily_record["key_lesson"], "Valid market lesson should persist.")
+        self.assertEqual(daily_record["issue_type"], "selection")
+        self.assertFalse(daily_record["execution_learning_excluded"])
+        self.assertTrue(daily_record["execution_warning"])
+
+    def test_execution_learning_excluded_does_not_write_policy_lessons(self) -> None:
+        calls: dict[str, list] = {
+            "beliefs": [],
+            "issue_patterns": [],
+            "daily_records": [],
+            "correction_guides": [],
+        }
+
+        def _fake_create(*, model, max_tokens, messages):
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        text=(
+                            '{"bull_result":"MISS","bear_result":"HIT","neutral_result":"MISS",'
+                            '"bull_why":"ok","bear_why":"ok","neutral_why":"ok",'
+                            '"best_trade":null,"worst_trade":"AAPL","worst_trade_reason":"bad fill",'
+                            '"key_lesson":"Do not learn from contaminated execution.",'
+                            '"issue_type":"execution","issue_desc":"bad execution",'
+                            '"pattern_id":"p1",'
+                            '"brain_updates":{"new_lesson":"Contaminated new lesson must not persist",'
+                            '"market_regime":"risk_off"},'
+                            '"correction_guide":{"bull_adjustments":["bad"],'
+                            '"bear_adjustments":["bad"],"tuning_rules":["bad"],"today_notes":"bad"}}'
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        no_op = lambda *args, **kwargs: None
+
+        def record_beliefs(*args, **kwargs):
+            calls["beliefs"].append((args, kwargs))
+
+        def record_issue_pattern(*args, **kwargs):
+            calls["issue_patterns"].append((args, kwargs))
+
+        def record_daily(*args, **kwargs):
+            calls["daily_records"].append((args, kwargs))
+
+        def record_correction(*args, **kwargs):
+            calls["correction_guides"].append((args, kwargs))
+
+        with patch.object(postmortem.client.messages, "create", side_effect=_fake_create), \
+             patch.object(postmortem, "credit_record", no_op), \
+             patch.object(postmortem, "save_raw_call", no_op), \
+             patch.object(postmortem.BrainDB, "generate_prompt_summary", return_value=""), \
+             patch.object(postmortem.BrainDB, "load", return_value={"markets": {"US": {"recent_days": []}}}), \
+             patch.object(postmortem.BrainDB, "update_analyst", no_op), \
+             patch.object(postmortem.BrainDB, "update_mode_performance", no_op), \
+             patch.object(postmortem.BrainDB, "update_beliefs", side_effect=record_beliefs), \
+             patch.object(postmortem.BrainDB, "update_issue_pattern", side_effect=record_issue_pattern), \
+             patch.object(postmortem.BrainDB, "add_daily_record", side_effect=record_daily), \
+             patch.object(postmortem.BrainDB, "get_recent_selection_feedback_text", return_value=""), \
+             patch.object(postmortem.BrainDB, "update_strategy_performance", no_op), \
+             patch.object(postmortem.BrainDB, "update_debate_outcome", no_op), \
+             patch.object(postmortem.BrainDB, "update_correction_guide", side_effect=record_correction):
+            postmortem.run(
+                "US",
+                "2026-05-08",
+                {
+                    "judgments": {
+                        "bull": {"stance": "MILD_BULL", "key_reason": "ok"},
+                        "bear": {"stance": "NEUTRAL", "key_reason": "ok"},
+                        "neutral": {"stance": "NEUTRAL", "key_reason": "ok"},
+                    },
+                    "consensus": {"mode": "MILD_BULL"},
+                },
+                {
+                    "market_change": 0.0,
+                    "pnl_pct": -1.0,
+                    "win": False,
+                    "execution_contaminated": True,
+                    "execution_learning_excluded": True,
+                    "execution_issues": ["broker_sync_trade"],
+                },
+                "US digest",
+                trade_log=[{"side": "sell", "ticker": "AAPL", "pnl_pct": -1.0}],
+                decision_event_log=[],
+            )
+
+        self.assertEqual(calls["beliefs"], [])
+        self.assertEqual(calls["issue_patterns"], [])
+        self.assertEqual(calls["correction_guides"], [])
+        self.assertEqual(len(calls["daily_records"]), 1)
+        daily_record = calls["daily_records"][0][0][1]
+        self.assertEqual(daily_record["key_lesson"], "")
+        self.assertEqual(daily_record["issue_type"], "")
+        self.assertTrue(daily_record["execution_learning_excluded"])
 
 
 if __name__ == "__main__":

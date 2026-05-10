@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import json
 from pathlib import Path
 import sqlite3
@@ -364,6 +364,82 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(today["pnl_summary"]["lifetime_realized"]["total_pnl_krw"], 1500.0)
         self.assertEqual(today["stop_cluster"]["daily_stop_count"], 3)
         self.assertEqual(today["stop_cluster"]["hard_block_count"], 4)
+
+    def test_summary_api_ignores_stale_previous_session_execution_warning(self) -> None:
+        stale_rec = {
+            "date": "2026-05-08",
+            "market": "US",
+            "actual_result": {
+                "execution_contaminated": False,
+                "execution_issues": ["broker_position_removed"],
+                "cumulative": 1_000_000,
+            },
+            "consensus": {"mode": "STALE", "size": 50},
+            "tickers": ["AMD", "INTC"],
+            "universe_tickers": ["AMD", "INTC", "DKNG"],
+        }
+        signal_counts = {}
+
+        def fake_signal_digest(market: str, selected_count: int = 0, universe_count: int = 0) -> dict:
+            signal_counts["market"] = market
+            signal_counts["selected_count"] = selected_count
+            signal_counts["universe_count"] = universe_count
+            return {}
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(dashboard_server, "load_records", return_value=[stale_rec]))
+            stack.enter_context(patch.object(dashboard_server, "load_today", return_value=stale_rec))
+            stack.enter_context(patch.object(dashboard_server, "_load_live_status", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_broker_realized_pnl_krw", return_value=0))
+            stack.enter_context(
+                patch.object(
+                    dashboard_server,
+                    "_current_session_realized_pnl_status",
+                    return_value={"available": True, "pnl_krw": 0, "source": "test"},
+                )
+            )
+            stack.enter_context(patch.object(dashboard_server, "_load_broker_positions", return_value=[]))
+            stack.enter_context(patch.object(dashboard_server, "_live_position_context_for_market", return_value=[]))
+            stack.enter_context(patch.object(dashboard_server, "_broker_positions_status", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_broker_snapshot_status", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_broker_snapshot", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_persist_broker_equity_snapshot"))
+            stack.enter_context(patch.object(dashboard_server, "_ticker_name_map", return_value={}))
+            stack.enter_context(
+                patch.object(
+                    dashboard_server,
+                    "_live_asset_fallback",
+                    return_value={"asset_krw": 1_000_000, "unrealized_krw": 0},
+                )
+            )
+            stack.enter_context(patch.object(dashboard_server, "_live_equity_payload", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_today_signal_digest", side_effect=fake_signal_digest))
+            stack.enter_context(patch.object(dashboard_server, "_ml_db_digest", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_adaptive_param_digest", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_count_today_entries", return_value=0))
+            stack.enter_context(
+                patch.object(
+                    dashboard_server,
+                    "_current_session_trade_turnover",
+                    return_value={"fill_count": 0, "buy_krw": 0, "sell_krw": 0, "total_krw": 0},
+                )
+            )
+            stack.enter_context(patch.object(dashboard_server, "_lifetime_realized_pnl_summary", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_session_trade_date", return_value=date(2026, 5, 9)))
+            stack.enter_context(patch.object(dashboard_server, "_session_status", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_current_risk_snapshot", return_value={}))
+            stack.enter_context(patch.object(dashboard_server, "_load_claude_control", return_value={}))
+            response = app.test_client().get("/api/summary?market=US&mode=live")
+
+        self.assertEqual(response.status_code, 200)
+        today = response.get_json()["today"]
+        self.assertEqual(today["date"], "2026-05-09")
+        self.assertFalse(today["execution_warning"])
+        self.assertFalse(today["execution_contaminated"])
+        self.assertEqual(today["execution_issues"], [])
+        self.assertEqual(today["mode"], "-")
+        self.assertEqual(signal_counts["selected_count"], 0)
+        self.assertEqual(signal_counts["universe_count"], 0)
 
     def test_stop_cluster_reset_endpoint_queues_operator_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

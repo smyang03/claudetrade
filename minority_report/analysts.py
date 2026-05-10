@@ -521,6 +521,52 @@ def _candidate_preopen_pin_hint(candidate: dict) -> str:
     return " ".join(parts)
 
 
+def _candidate_quality_hint(candidate: dict) -> str:
+    if str(os.getenv("ENABLE_KR_CANDIDATE_QUALITY_PROMPT", "false")).lower() not in {"1", "true", "yes", "on"}:
+        return ""
+    grade = str(candidate.get("candidate_quality_grade") or "").strip()
+    score = candidate.get("candidate_quality_score")
+    parts = []
+    if grade:
+        try:
+            parts.append(f"q={grade}{float(score):.0f}")
+        except Exception:
+            parts.append(f"q={grade}")
+    for key, label in (
+        ("rs_20d_vs_board", "rs20"),
+        ("rs_60d_vs_board", "rs60"),
+        ("turnover_vs_20d", "turn20"),
+        ("volume_vs_20d", "vol20"),
+    ):
+        value = candidate.get(key)
+        try:
+            parts.append(f"{label}={float(value):+.1f}" if "rs" in label else f"{label}={float(value):.1f}x")
+        except Exception:
+            pass
+    flow_bits = []
+    for key, label in (
+        ("foreign_net_qty_1d", "F1"),
+        ("institution_net_qty_1d", "I1"),
+        ("foreign_net_qty_5d", "F5"),
+        ("institution_net_qty_5d", "I5"),
+    ):
+        value = candidate.get(key)
+        try:
+            parsed = float(value)
+        except Exception:
+            continue
+        if parsed > 0:
+            flow_bits.append(label + "+")
+        elif parsed < 0:
+            flow_bits.append(label + "-")
+    if flow_bits:
+        parts.append("flow=" + "".join(flow_bits))
+    gaps = candidate.get("quality_data_gaps")
+    if isinstance(gaps, list) and gaps:
+        parts.append(f"qgap={len(gaps)}")
+    return "quality=" + ",".join(parts) if parts else ""
+
+
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
     if market == "US":
         hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "30"))
@@ -1331,6 +1377,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"category={category}" if category else "",
             f"sector={sector}" if sector else "",
             f"liq={liquidity_bucket}",
+            _candidate_quality_hint(candidate),
             _candidate_earnings_hint(candidate),
             _candidate_preopen_pin_hint(candidate),
             _candidate_post_open_hint(candidate),

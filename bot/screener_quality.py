@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from bot.bucket_classifier import annotate_candidates_with_bucket_metadata
+from bot.kr_candidate_features import QUALITY_FEATURE_KEYS
 from runtime_paths import get_runtime_path
 
 
@@ -78,6 +79,12 @@ def write_candidate_quality_log(
             status = "NOT_IN_PROMPT"
         else:
             status = "SCREENER_ONLY"
+        feature_candidate = dict(candidate or {})
+        prompt_candidate = prompt_map.get(ticker)
+        if isinstance(prompt_candidate, dict):
+            for key in QUALITY_FEATURE_KEYS:
+                if key in prompt_candidate:
+                    feature_candidate[key] = prompt_candidate.get(key)
         rows.append(
             {
                 "timestamp": ts.isoformat(timespec="seconds"),
@@ -102,6 +109,35 @@ def write_candidate_quality_log(
                 "score_vol_ratio_capped": _safe_float(candidate.get("score_vol_ratio_capped")),
                 "score_vol_ratio_log": _safe_float(candidate.get("score_vol_ratio_log")),
                 "score_turnover_weighted": _safe_float(candidate.get("score_turnover_weighted")),
+                "candidate_quality_score": _safe_float(feature_candidate.get("candidate_quality_score")),
+                "candidate_quality_grade": str(feature_candidate.get("candidate_quality_grade") or ""),
+                "candidate_quality_components": (
+                    feature_candidate.get("candidate_quality_components")
+                    if isinstance(feature_candidate.get("candidate_quality_components"), dict)
+                    else {}
+                ),
+                "candidate_quality_flags": _safe_list(feature_candidate.get("candidate_quality_flags")),
+                "quality_data_gaps": _safe_list(feature_candidate.get("quality_data_gaps")),
+                "quality_source": str(feature_candidate.get("quality_source") or ""),
+                "ret_5d_pct": _safe_float(feature_candidate.get("ret_5d_pct")),
+                "ret_20d_pct": _safe_float(feature_candidate.get("ret_20d_pct")),
+                "ret_60d_pct": _safe_float(feature_candidate.get("ret_60d_pct")),
+                "index_ret_20d_pct": _safe_float(feature_candidate.get("index_ret_20d_pct")),
+                "index_ret_60d_pct": _safe_float(feature_candidate.get("index_ret_60d_pct")),
+                "rs_20d_vs_board": _safe_float(feature_candidate.get("rs_20d_vs_board")),
+                "rs_60d_vs_board": _safe_float(feature_candidate.get("rs_60d_vs_board")),
+                "volatility_20d_pct": _safe_float(feature_candidate.get("volatility_20d_pct")),
+                "avg_turnover_20d": _safe_float(feature_candidate.get("avg_turnover_20d")),
+                "turnover_today": _safe_float(feature_candidate.get("turnover_today")),
+                "turnover_vs_20d": _safe_float(feature_candidate.get("turnover_vs_20d")),
+                "volume_vs_20d": _safe_float(feature_candidate.get("volume_vs_20d")),
+                "from_52w_high_pct": _safe_float(feature_candidate.get("from_52w_high_pct")),
+                "drawdown_20d_pct": _safe_float(feature_candidate.get("drawdown_20d_pct")),
+                "foreign_net_qty_1d": _safe_float(feature_candidate.get("foreign_net_qty_1d")),
+                "institution_net_qty_1d": _safe_float(feature_candidate.get("institution_net_qty_1d")),
+                "foreign_net_qty_5d": _safe_float(feature_candidate.get("foreign_net_qty_5d")),
+                "institution_net_qty_5d": _safe_float(feature_candidate.get("institution_net_qty_5d")),
+                "flow_window_5d_count": int(feature_candidate.get("flow_window_5d_count") or 0),
                 "forward_30m_from_bucket": None,
                 "forward_60m_from_bucket": None,
                 "forward_close_from_bucket": None,
@@ -207,6 +243,16 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(str(value or "").replace(",", ""))
     except Exception:
         return float(default)
+
+
+def _safe_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, (tuple, set)):
+        return list(value)
+    return [value]
 
 
 def _opening_rank_score(row: dict[str, Any]) -> float:

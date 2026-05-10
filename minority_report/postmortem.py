@@ -461,16 +461,22 @@ def run(market: str, date: str, today_judgment: dict,
         actual_result.get("pnl_pct", 0), actual_result.get("win", False)
     )
 
+    execution_learning_excluded = bool(
+        actual_result.get(
+            "execution_learning_excluded",
+            actual_result.get("execution_contaminated", False),
+        )
+    )
 
     bu = pm.get("brain_updates", {})
     # new_lesson 없으면 key_lesson을 fallback으로 사용
     lesson_to_save = bu.get("new_lesson") or pm.get("key_lesson")
-    if lesson_to_save and not _is_placeholder_lesson(lesson_to_save):
+    if not execution_learning_excluded and lesson_to_save and not _is_placeholder_lesson(lesson_to_save):
         BrainDB.update_beliefs(market, {"new_lesson": lesson_to_save})
-    if bu.get("market_regime") and bu["market_regime"] != "unknown":
+    if not execution_learning_excluded and bu.get("market_regime") and bu["market_regime"] != "unknown":
         BrainDB.update_beliefs(market, {"market_regime": bu["market_regime"]})
 
-    if not pm.get("_skip_issue_pattern"):
+    if not execution_learning_excluded and not pm.get("_skip_issue_pattern"):
         BrainDB.update_issue_pattern(market, {
             "matched_id":  pm.get("pattern_id"),
             "type":        pm.get("issue_type", "unknown"),
@@ -480,8 +486,8 @@ def run(market: str, date: str, today_judgment: dict,
             "insight":     "" if _is_placeholder_lesson(pm.get("key_lesson", "")) else pm.get("key_lesson", ""),
         })
 
-    policy_key_lesson = "" if pm.get("_system_error") else pm.get("key_lesson", "")
-    policy_issue_type = "" if pm.get("_system_error") else pm.get("issue_type", "")
+    policy_key_lesson = "" if (pm.get("_system_error") or execution_learning_excluded) else pm.get("key_lesson", "")
+    policy_issue_type = "" if (pm.get("_system_error") or execution_learning_excluded) else pm.get("issue_type", "")
     sell_count = int(actual_result.get("trades", len(sells)) or 0)
 
     BrainDB.add_daily_record(market, {
@@ -505,6 +511,12 @@ def run(market: str, date: str, today_judgment: dict,
         "worst_trade":       pm.get("worst_trade"),
         "worst_trade_reason": pm.get("worst_trade_reason", ""),
         "trades":            sell_count,
+        "execution_contaminated": bool(actual_result.get("execution_contaminated", False)),
+        "execution_learning_excluded": execution_learning_excluded,
+        "execution_warning": bool(actual_result.get("execution_warning", False)),
+        "execution_issues": actual_result.get("execution_issues", []),
+        "execution_issue_labels": actual_result.get("execution_issue_labels", []),
+        "execution_issue_details": actual_result.get("execution_issue_details", []),
         "selection_feedback": BrainDB.get_recent_selection_feedback_text(market, days=20, max_chars=400),
     })
 
@@ -521,7 +533,7 @@ def run(market: str, date: str, today_judgment: dict,
 
     # 당일 Claude 보정 지침 업데이트
     cg = pm.get("correction_guide", {})
-    if cg and not pm.get("_system_error"):
+    if cg and not pm.get("_system_error") and not execution_learning_excluded:
         BrainDB.update_correction_guide(market, cg)
 
     log.info(
