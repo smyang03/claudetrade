@@ -28,6 +28,7 @@ class ScreenerQualityTests(unittest.TestCase):
                         "candidate_quality_grade": "B",
                         "rs_20d_vs_board": 4.2,
                         "quality_data_gaps": ["flow_missing"],
+                        "flow_window_5d_count": "3.0",
                     },
                 ],
                 selected=["001510"],
@@ -55,6 +56,7 @@ class ScreenerQualityTests(unittest.TestCase):
             self.assertEqual(by_ticker["001510"]["candidate_quality_score"], 72.5)
             self.assertEqual(by_ticker["001510"]["rs_20d_vs_board"], 4.2)
             self.assertIn("flow_missing", by_ticker["001510"]["quality_data_gaps"])
+            self.assertEqual(by_ticker["001510"]["flow_window_5d_count"], 3)
 
     def test_opening_fresh_quality_metrics_triggers_when_top_gainers_missing(self) -> None:
         metrics = opening_fresh_quality_metrics(

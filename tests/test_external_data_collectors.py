@@ -4,8 +4,9 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from phase1_trainer.external_data_collectors import collect_ready_sources_dry_run
+from phase1_trainer.external_data_collectors import collect_ready_sources_dry_run, _truncate_error
 
 
 class FakeResponse:
@@ -132,6 +133,19 @@ class FakeSession:
         raise AssertionError(f"unexpected url: {url}")
 
 
+class ErrorDataGoKrSession(FakeSession):
+    def get(self, url: str, params: dict | None = None, timeout: int = 20) -> FakeResponse:
+        if "apis.data.go.kr" in url:
+            return FakeResponse(
+                {
+                    "response": {
+                        "header": {"resultCode": "30", "resultMsg": "SERVICE KEY IS NOT REGISTERED ERROR"}
+                    }
+                }
+            )
+        return super().get(url, params=params, timeout=timeout)
+
+
 class ExternalDataCollectorsTest(unittest.TestCase):
     def test_dry_run_normalizes_and_stores_ready_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,12 +163,13 @@ class ExternalDataCollectorsTest(unittest.TestCase):
             )
             db_path = root / "external.sqlite"
 
-            summary = collect_ready_sources_dry_run(
-                db_path=db_path,
-                env_path=env_path,
-                target_date="2026-05-10",
-                session=FakeSession(),
-            )
+            with patch.dict("os.environ", {}, clear=True):
+                summary = collect_ready_sources_dry_run(
+                    db_path=db_path,
+                    env_path=env_path,
+                    target_date="2026-05-10",
+                    session=FakeSession(),
+                )
 
             self.assertTrue(db_path.exists())
             self.assertFalse([c for c in summary["checks"] if c["status"] == "failed"])
@@ -183,6 +198,121 @@ class ExternalDataCollectorsTest(unittest.TestCase):
                 self.assertEqual(fred["value"], 3.4)
             finally:
                 conn.close()
+
+    def test_no_write_does_not_create_database(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_path = root / ".env.live"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "DART_API_KEY=fake_dart",
+                        "DATA_GO_KR_KEY=fake_data",
+                        "FRED_API_KEY=fake_fred",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            db_path = root / "external.sqlite"
+
+            with patch.dict("os.environ", {}, clear=True):
+                summary = collect_ready_sources_dry_run(
+                    db_path=db_path,
+                    env_path=env_path,
+                    target_date="2026-05-10",
+                    session=FakeSession(),
+                    write_db=False,
+                )
+
+            self.assertFalse(db_path.exists())
+            self.assertFalse(summary["write_db"])
+            self.assertEqual(summary["table_counts"], {})
+            self.assertFalse([c for c in summary["checks"] if c["status"] == "failed"])
+
+    def test_explicit_env_file_overrides_existing_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_path = root / ".env.live"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "DART_API_KEY=file_dart",
+                        "DATA_GO_KR_KEY=file_data",
+                        "FRED_API_KEY=file_fred",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "DART_API_KEY": "stale_dart",
+                    "DATA_GO_KR_KEY": "stale_data",
+                    "FRED_API_KEY": "stale_fred",
+                },
+                clear=True,
+            ):
+                collect_ready_sources_dry_run(
+                    db_path=root / "external.sqlite",
+                    env_path=env_path,
+                    target_date="2026-05-10",
+                    session=FakeSession(),
+                    write_db=False,
+                )
+                import os
+
+                self.assertEqual(os.environ["DART_API_KEY"], "file_dart")
+                self.assertEqual(os.environ["DATA_GO_KR_KEY"], "file_data")
+                self.assertEqual(os.environ["FRED_API_KEY"], "file_fred")
+
+    def test_data_go_kr_non_normal_result_is_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_path = root / ".env.live"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "DART_API_KEY=fake_dart",
+                        "DATA_GO_KR_KEY=fake_data",
+                        "FRED_API_KEY=fake_fred",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict("os.environ", {}, clear=True):
+                summary = collect_ready_sources_dry_run(
+                    db_path=root / "external.sqlite",
+                    env_path=env_path,
+                    target_date="2026-05-10",
+                    session=ErrorDataGoKrSession(),
+                    write_db=False,
+                )
+
+            failed_public = [
+                check
+                for check in summary["checks"]
+                if check["source"] == "DATA_GO_KR" and check["status"] == "failed"
+            ]
+            self.assertEqual(len(failed_public), 3)
+            self.assertTrue(all("SERVICE KEY" in check["error"] for check in failed_public))
+
+    def test_error_redaction_masks_full_query_values(self) -> None:
+        error = (
+            "url: /x?serviceKey=abc%2Bdef%3D%3D&pageNo=1 "
+            "/y?crtfc_key=dartsecret&corp_code=001 "
+            "/z?api_key=fredsecret&file_type=json"
+        )
+
+        redacted = _truncate_error(error)
+
+        self.assertIn("serviceKey=***&pageNo=1", redacted)
+        self.assertIn("crtfc_key=***&corp_code=001", redacted)
+        self.assertIn("api_key=***&file_type=json", redacted)
+        self.assertNotIn("abc", redacted)
+        self.assertNotIn("dartsecret", redacted)
+        self.assertNotIn("fredsecret", redacted)
 
 
 if __name__ == "__main__":

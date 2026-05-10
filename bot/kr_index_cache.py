@@ -45,14 +45,17 @@ def load_kr_index_history(
     cached = _read_cache(cache_path, board_key, max_age_sec=max_age_sec)
     if not cached.empty and len(cached) >= min(lookback_days, 20):
         return cached.tail(lookback_days).reset_index(drop=True)
+    stale_cached = cached
+    if stale_cached.empty and max_age_sec > 0:
+        stale_cached = _read_cache(cache_path, board_key, max_age_sec=0)
 
     fetch = fetch_fn or _fetch_yfinance_index
     try:
         frame = _normalize_frame(fetch(board_key, lookback_days))
     except Exception:
-        return cached.tail(lookback_days).reset_index(drop=True) if not cached.empty else pd.DataFrame()
+        return stale_cached.tail(lookback_days).reset_index(drop=True) if not stale_cached.empty else pd.DataFrame()
     if frame.empty:
-        return cached.tail(lookback_days).reset_index(drop=True) if not cached.empty else pd.DataFrame()
+        return stale_cached.tail(lookback_days).reset_index(drop=True) if not stale_cached.empty else pd.DataFrame()
     _write_cache(cache_path, board_key, frame)
     return frame.tail(lookback_days).reset_index(drop=True)
 

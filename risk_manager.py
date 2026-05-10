@@ -597,10 +597,8 @@ class RiskManager:
                     return False
                 return current <= breakeven_price
 
-            def _profit_floor_hit(current: float, floor_price: float, entry_price: float, triggered: bool) -> bool:
+            def _profit_floor_hit(current: float, floor_price: float, triggered: bool) -> bool:
                 if not triggered or floor_price <= 0 or current <= 0:
-                    return False
-                if entry_price > 0 and current < entry_price:
                     return False
                 return current <= floor_price
 
@@ -627,7 +625,7 @@ class RiskManager:
                 )
                 exit_meta["soft_exit_floor_price"] = soft_floor_usd
                 exit_meta["soft_exit_floor_triggered"] = bool(soft_floor_usd > 0 and cp_usd <= soft_floor_usd)
-                floor_hit = _profit_floor_hit(cp_usd, floor_usd, avg_usd, floor_triggered)
+                floor_hit = _profit_floor_hit(cp_usd, floor_usd, floor_triggered)
                 exit_meta["profit_floor_triggered"] = bool(floor_hit)
                 exit_meta["mfe_breakeven_price"] = mfe_breakeven_usd
                 mfe_hit = _mfe_breakeven_hit(cp_usd, mfe_breakeven_usd, avg_usd)
@@ -699,7 +697,7 @@ class RiskManager:
             )
             exit_meta["soft_exit_floor_price"] = soft_floor_krw
             exit_meta["soft_exit_floor_triggered"] = bool(soft_floor_krw > 0 and cp <= soft_floor_krw)
-            floor_hit = _profit_floor_hit(cp, floor_krw, mfe_entry_krw, floor_triggered)
+            floor_hit = _profit_floor_hit(cp, floor_krw, floor_triggered)
             exit_meta["profit_floor_triggered"] = bool(floor_hit)
             exit_meta["mfe_breakeven_price"] = mfe_breakeven_krw
             mfe_hit = _mfe_breakeven_hit(cp, mfe_breakeven_krw, mfe_entry_krw)

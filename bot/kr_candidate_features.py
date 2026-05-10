@@ -56,13 +56,13 @@ def build_kr_candidate_features(
     index_ohlcv: Any | None = None,
     flow: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    gaps: list[str] = []
+    gaps = _gap_list((candidate or {}).get("quality_data_gaps"))
     frame = _clean_ohlcv(ohlcv)
     if frame.empty:
         return _with_score(
             {
                 "quality_source": "kr_candidate_features:v1",
-                "quality_data_gaps": ["ohlcv_missing"],
+                "quality_data_gaps": gaps + ["ohlcv_missing"],
             }
         )
 
@@ -234,6 +234,8 @@ def rolling_flow_features(records: list[dict[str, Any]]) -> dict[str, Any]:
     clean = [dict(item or {}) for item in records if isinstance(item, dict)]
     if not clean:
         return {"flow_window_5d_count": 0}
+    if any(row.get("date") or row.get("target_date") for row in clean):
+        clean.sort(key=lambda row: str(row.get("date") or row.get("target_date") or ""))
     last5 = clean[-5:]
 
     def _sum(key: str, rows: list[dict[str, Any]]) -> float | None:
@@ -257,8 +259,20 @@ def _with_score(features: dict[str, Any]) -> dict[str, Any]:
     out["candidate_quality_components"] = components
     if flags:
         out["candidate_quality_flags"] = flags
-    out["quality_data_gaps"] = sorted(set(out.get("quality_data_gaps") or []))
+    out["quality_data_gaps"] = sorted(set(_gap_list(out.get("quality_data_gaps"))))
     return out
+
+
+def _gap_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
 
 
 def _clean_ohlcv(raw: Any) -> pd.DataFrame:

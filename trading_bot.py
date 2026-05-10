@@ -7974,12 +7974,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         quality_report = (meta or {}).get("candidate_quality_report")
         if isinstance(quality_report, dict) and quality_report:
             self._write_funnel_event("candidate_quality_report", market, quality_report)
-        self._write_candidate_audit_live(
-            market,
-            selected=selected,
-            meta=meta,
-            stages=stages,
-        )
+        audit_writer = getattr(self, "_write_candidate_audit_live", None)
+        if callable(audit_writer):
+            audit_writer(
+                market,
+                selected=selected,
+                meta=meta,
+                stages=stages,
+            )
 
     def _candidate_audit_live_enabled(self) -> bool:
         if _CandidateAuditStore is None:
@@ -8484,6 +8486,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         row = dict(candidate or {})
         if market_key != "KR" or not _env_bool("ENABLE_KR_CANDIDATE_QUALITY_SHADOW", True):
             return row
+        def _add_quality_gap(name: str) -> None:
+            raw_gaps = row.get("quality_data_gaps")
+            if isinstance(raw_gaps, str):
+                gaps = [raw_gaps]
+            elif isinstance(raw_gaps, (list, tuple, set)):
+                gaps = list(raw_gaps)
+            else:
+                gaps = []
+            gaps.append(name)
+            row["quality_data_gaps"] = sorted(set(str(item).strip() for item in gaps if str(item).strip()))
         try:
             from bot.kr_candidate_features import enrich_kr_candidate_with_features
             index_ohlcv = None
@@ -8493,9 +8505,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     from bot.kr_index_cache import load_kr_index_history
                     index_ohlcv = load_kr_index_history(row.get("market_type") or "KOSPI")
                 except Exception as index_exc:
-                    gaps = list(row.get("quality_data_gaps") or [])
-                    gaps.append("index_history_cache_error")
-                    row["quality_data_gaps"] = sorted(set(str(item) for item in gaps if item))
+                    _add_quality_gap("index_history_cache_error")
                     row["candidate_quality_index_error"] = str(index_exc)[:160]
             if _env_bool("ENABLE_KR_CANDIDATE_FLOW_SHADOW", False):
                 try:
@@ -8503,15 +8513,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     session_date = self._current_session_date_str(market_key)
                     flow = flow_for_ticker(load_flow_cache(session_date), row.get("ticker"))
                 except Exception as flow_exc:
-                    gaps = list(row.get("quality_data_gaps") or [])
-                    gaps.append("flow_cache_error")
-                    row["quality_data_gaps"] = sorted(set(str(item) for item in gaps if item))
+                    _add_quality_gap("flow_cache_error")
                     row["candidate_quality_flow_error"] = str(flow_exc)[:160]
             return enrich_kr_candidate_with_features(row, candles, index_ohlcv=index_ohlcv, flow=flow)
         except Exception as exc:
-            gaps = list(row.get("quality_data_gaps") or [])
-            gaps.append("kr_candidate_quality_error")
-            row["quality_data_gaps"] = sorted(set(str(item) for item in gaps if item))
+            _add_quality_gap("kr_candidate_quality_error")
             row["candidate_quality_error"] = str(exc)[:160]
             return row
     def _filter_candidates_by_history(self, candidates: list, market: str) -> list:

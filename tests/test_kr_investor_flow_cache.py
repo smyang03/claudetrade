@@ -79,6 +79,27 @@ class KrInvestorFlowCacheTests(unittest.TestCase):
             self.assertEqual(cache["date"], "2026-05-10")
             self.assertEqual(cache["records"], {})
 
+    def test_datetime_session_date_is_reduced_to_date_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.json"
+            seen_dates: list[str] = []
+
+            def fetch(_ticker: str, target_date: str, _token: str) -> dict:
+                seen_dates.append(target_date)
+                return {"foreign": 1}
+
+            cache = update_candidate_flow_cache(
+                ["005930"],
+                session_date=datetime(2026, 5, 10, 9, 30, 0),
+                token="token",
+                fetch_fn=fetch,
+                sleep_sec=0,
+                path=path,
+            )
+
+            self.assertEqual(cache["date"], "2026-05-10")
+            self.assertEqual(seen_dates, ["2026-05-10"])
+
     def test_rolling_flow_from_caches_orders_by_date(self) -> None:
         caches = [
             {"date": "2026-05-11", "records": {"005930": {"foreign": 3, "institution": 4}}},

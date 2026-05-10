@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,6 +51,22 @@ class KrIndexCacheTests(unittest.TestCase):
             frame = load_kr_index_history("KOSDAQ", path=Path(tmp) / "kosdaq.json", fetch_fn=fetch)
 
         self.assertTrue(frame.empty)
+
+    def test_uses_stale_cache_when_refresh_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "kospi.json"
+            load_kr_index_history("KOSPI", lookback_days=25, path=path, fetch_fn=lambda _board, _days: _index_frame(25))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["cached_at"] = 1
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            def fail(_board: str, _lookback_days: int) -> pd.DataFrame:
+                raise RuntimeError("network unavailable")
+
+            frame = load_kr_index_history("KOSPI", lookback_days=20, max_age_sec=1, path=path, fetch_fn=fail)
+
+        self.assertEqual(len(frame), 20)
+        self.assertEqual(float(frame.iloc[-1]["close"]), 124.0)
 
 
 if __name__ == "__main__":

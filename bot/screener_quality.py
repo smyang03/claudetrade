@@ -137,7 +137,7 @@ def write_candidate_quality_log(
                 "institution_net_qty_1d": _safe_float(feature_candidate.get("institution_net_qty_1d")),
                 "foreign_net_qty_5d": _safe_float(feature_candidate.get("foreign_net_qty_5d")),
                 "institution_net_qty_5d": _safe_float(feature_candidate.get("institution_net_qty_5d")),
-                "flow_window_5d_count": int(feature_candidate.get("flow_window_5d_count") or 0),
+                "flow_window_5d_count": _safe_int(feature_candidate.get("flow_window_5d_count")),
                 "forward_30m_from_bucket": None,
                 "forward_60m_from_bucket": None,
                 "forward_close_from_bucket": None,
@@ -253,6 +253,13 @@ def _safe_list(value: Any) -> list[Any]:
     if isinstance(value, (tuple, set)):
         return list(value)
     return [value]
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(str(value or "").replace(",", "")))
+    except Exception:
+        return int(default)
 
 
 def _opening_rank_score(row: dict[str, Any]) -> float:

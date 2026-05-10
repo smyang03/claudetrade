@@ -56,6 +56,15 @@ class KrCandidateFeaturesTests(unittest.TestCase):
         self.assertNotIn("ret_20d_pct", features)
         self.assertIn("candidate_quality_score", features)
 
+    def test_existing_quality_gaps_are_preserved(self) -> None:
+        features = build_kr_candidate_features(
+            {"ticker": "123456", "quality_data_gaps": ["index_history_cache_error"]},
+            _frame(10),
+        )
+
+        self.assertIn("index_history_cache_error", features["quality_data_gaps"])
+        self.assertIn("ret_20d_pct_missing", features["quality_data_gaps"])
+
     def test_enrich_preserves_candidate_fields(self) -> None:
         enriched = enrich_kr_candidate_with_features(
             {"ticker": "005930", "name": "Samsung", "price": 150.0, "volume": 1_000_000},
@@ -78,6 +87,22 @@ class KrCandidateFeaturesTests(unittest.TestCase):
         self.assertEqual(features["flow_window_5d_count"], 3)
         self.assertEqual(features["foreign_net_qty_5d"], 15)
         self.assertEqual(features["institution_net_qty_5d"], 1)
+
+    def test_rolling_flow_features_sorts_dated_records(self) -> None:
+        features = rolling_flow_features(
+            [
+                {"date": "2026-05-06", "foreign": 6, "institution": 6},
+                {"date": "2026-05-01", "foreign": 1, "institution": 1},
+                {"date": "2026-05-04", "foreign": 4, "institution": 4},
+                {"date": "2026-05-03", "foreign": 3, "institution": 3},
+                {"date": "2026-05-05", "foreign": 5, "institution": 5},
+                {"date": "2026-05-02", "foreign": 2, "institution": 2},
+            ]
+        )
+
+        self.assertEqual(features["flow_window_5d_count"], 5)
+        self.assertEqual(features["foreign_net_qty_5d"], 20)
+        self.assertEqual(features["institution_net_qty_5d"], 20)
 
 
 if __name__ == "__main__":

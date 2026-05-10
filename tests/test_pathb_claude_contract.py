@@ -94,7 +94,13 @@ def _runtime(bot: _Bot, store: EventStore) -> PathBRuntime:
 
 class PathBClaudeContractTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._pathb_env = patch.dict("os.environ", {"PATHB_KR_LIVE_ENABLED": "true"})
+        self._pathb_env = patch.dict(
+            "os.environ",
+            {
+                "PATHB_KR_LIVE_ENABLED": "true",
+                "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "false",
+            },
+        )
         self._pathb_env.start()
 
     def tearDown(self) -> None:

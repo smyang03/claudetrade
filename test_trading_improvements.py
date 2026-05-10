@@ -2118,6 +2118,9 @@ class DashboardAnalysisFeedTests(unittest.TestCase):
             )
 
             class _FakeDateTime:
+                fromisoformat = staticmethod(__import__("datetime").datetime.fromisoformat)
+                combine = staticmethod(__import__("datetime").datetime.combine)
+
                 @classmethod
                 def now(cls, tz=None):
                     return __import__("datetime").datetime(2026, 4, 22, 1, 40, 0, tzinfo=dashboard_server_module.KST)

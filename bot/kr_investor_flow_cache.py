@@ -158,6 +158,8 @@ def _unique_tickers(tickers: list[Any]) -> list[str]:
 
 
 def _date_key(value: str | date) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
     if isinstance(value, date):
         return value.isoformat()
     text = str(value or "").strip()
