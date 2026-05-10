@@ -126,6 +126,50 @@ class CandidatePoolRuntimeTests(unittest.TestCase):
         self.assertEqual(result.full_pool[0].lifecycle_state, "QUARANTINE")
         self.assertEqual(result.lifecycle_report["counts"]["QUARANTINE"], 1)
 
+    def test_quarantine_is_excluded_before_prompt_cap(self) -> None:
+        result = build_candidate_pool(
+            [
+                {
+                    "ticker": "BAD",
+                    "market": "US",
+                    "source": "preopen",
+                    "post_open_5m_return_pct": 1.2,
+                    "data_quality": "bad",
+                },
+                {"ticker": "BAD", "market": "US", "source": "opening_fresh", "data_quality": "bad"},
+                {"ticker": "GOOD", "market": "US", "source": "soft_pin", "status": "TRADE_READY"},
+            ],
+            market="US",
+            prompt_cap=1,
+        )
+
+        self.assertEqual([record.ticker for record in result.prompt_pool], ["GOOD"])
+        excluded_by_ticker = {item["ticker"]: item["reason"] for item in result.excluded_from_prompt}
+        self.assertEqual(excluded_by_ticker["BAD"], "lifecycle_quarantine")
+
+    def test_lifecycle_rank_is_used_for_prompt_selection(self) -> None:
+        result = build_candidate_pool(
+            [
+                {"ticker": "WATCHY", "market": "US", "source": "opening_fresh"},
+                {"ticker": "COREY", "market": "US", "status": "TRADE_READY"},
+            ],
+            market="US",
+            prompt_cap=1,
+        )
+
+        self.assertEqual([record.ticker for record in result.prompt_pool], ["COREY"])
+        self.assertEqual(result.prompt_pool[0].lifecycle_state, "CORE")
+
+    def test_bench_is_excluded_from_prompt_pool(self) -> None:
+        result = build_candidate_pool(
+            [{"ticker": "BENCHED", "market": "US", "source": "opening_fresh", "status": "NOT_IN_PROMPT"}],
+            market="US",
+            prompt_cap=1,
+        )
+
+        self.assertEqual(result.prompt_pool, [])
+        self.assertEqual(result.excluded_from_prompt[0]["reason"], "lifecycle_bench")
+
     def test_existing_status_maps_to_lifecycle_state(self) -> None:
         result = build_candidate_pool(
             [

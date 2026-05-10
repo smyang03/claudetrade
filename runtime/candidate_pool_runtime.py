@@ -36,6 +36,7 @@ LIFECYCLE_RANK = {
     "WATCH": 3,
     "CORE": 4,
 }
+PROMPT_ELIGIBLE_LIFECYCLE_STATES = {"CORE", "WATCH", "PROBATION"}
 
 
 @dataclass
@@ -392,6 +393,18 @@ def build_lifecycle_report(records: Iterable[CandidateRecord]) -> dict[str, Any]
     }
 
 
+def _lifecycle_prompt_rank(record: CandidateRecord) -> int:
+    state = normalize_lifecycle_state(record.lifecycle_state) or "PROBATION"
+    return LIFECYCLE_RANK.get(state, LIFECYCLE_RANK["PROBATION"])
+
+
+def _lifecycle_prompt_exclusion_reason(record: CandidateRecord) -> str:
+    state = normalize_lifecycle_state(record.lifecycle_state) or "PROBATION"
+    if state in PROMPT_ELIGIBLE_LIFECYCLE_STATES:
+        return ""
+    return f"lifecycle_{state.lower()}"
+
+
 def build_candidate_pool(
     raw_candidates: Iterable[dict[str, Any] | CandidateRecord],
     *,
@@ -417,12 +430,34 @@ def build_candidate_pool(
         for record in records
         if record not in active_records
     ]
-    active_records.sort(key=lambda item: (-item.prompt_score, min(item.source_ranks.values() or [999999]), item.ticker))
+    prompt_eligible_records: list[CandidateRecord] = []
+    lifecycle_excluded: list[dict[str, Any]] = []
+    for record in active_records:
+        lifecycle_reason = _lifecycle_prompt_exclusion_reason(record)
+        if lifecycle_reason:
+            lifecycle_excluded.append(
+                {
+                    "ticker": record.ticker,
+                    "reason": lifecycle_reason,
+                    "prompt_score": record.prompt_score,
+                    "lifecycle_state": record.lifecycle_state,
+                }
+            )
+        else:
+            prompt_eligible_records.append(record)
+    prompt_eligible_records.sort(
+        key=lambda item: (
+            -_lifecycle_prompt_rank(item),
+            -item.prompt_score,
+            min(item.source_ranks.values() or [999999]),
+            item.ticker,
+        )
+    )
     cap = max(0, int(prompt_cap or 0))
-    prompt_pool = active_records[:cap] if cap else []
-    excluded = hard_excluded + [
+    prompt_pool = prompt_eligible_records[:cap] if cap else []
+    excluded = hard_excluded + lifecycle_excluded + [
         {"ticker": record.ticker, "reason": "prompt_cap", "prompt_score": record.prompt_score}
-        for record in active_records[cap:]
+        for record in prompt_eligible_records[cap:]
     ]
     deferred_seen = sorted({source for record in records for source in record.sources if source in (deferred_sources or DEFERRED_SOURCE_TAGS)})
     return CandidatePoolResult(

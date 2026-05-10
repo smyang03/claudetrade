@@ -26,6 +26,7 @@ import os
 import sys
 import time
 import argparse
+import logging
 import requests
 import pandas as pd
 from pathlib import Path
@@ -371,27 +372,57 @@ def fetch_kr_daily(ticker: str, start_yyyymmdd: str, end_yyyymmdd: str) -> pd.Da
     return df[(df["date"] >= pd.Timestamp(start_dt)) & (df["date"] <= pd.Timestamp(end_dt))]
 
 
+def _normalize_date_window(df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> pd.DataFrame:
+    if df.empty or "date" not in df.columns:
+        return pd.DataFrame()
+    out = df.copy()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.tz_localize(None)
+    start = pd.Timestamp(start_dt)
+    end = pd.Timestamp(end_dt)
+    if start.tzinfo is not None:
+        start = start.tz_localize(None)
+    if end.tzinfo is not None:
+        end = end.tz_localize(None)
+    out = out[out["date"].notna()]
+    out = out[(out["date"] >= start) & (out["date"] <= end)]
+    return out.sort_values("date").reset_index(drop=True)
+
+
+def _has_weekday_between(start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> bool:
+    start = pd.Timestamp(start_dt).normalize()
+    end = pd.Timestamp(end_dt).normalize()
+    if start > end:
+        return False
+    return any(day.weekday() < 5 for day in pd.date_range(start, end, freq="D"))
+
+
 def fetch_kr_daily_yfinance(ticker: str, start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> pd.DataFrame:
     """yfinance 폴백 — KIS API 실패 시 사용 (KOSPI: .KS, KOSDAQ: .KQ)"""
     try:
         import yfinance as yf
     except ImportError:
         return pd.DataFrame()
+    if pd.Timestamp(start_dt) > pd.Timestamp(end_dt):
+        return pd.DataFrame()
+    yfinance_logger = logging.getLogger("yfinance")
+    old_level = yfinance_logger.level
+    yfinance_logger.setLevel(logging.CRITICAL)
     # 대부분 KOSPI 상장 — .KS 시도 후 실패 시 .KQ
-    for suffix in [".KS", ".KQ"]:
-        end_fetch = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-        df = yf.Ticker(f"{ticker}{suffix}").history(
-            start=start_dt.strftime("%Y-%m-%d"),
-            end=end_fetch,
-            auto_adjust=True,
-        )
-        if not df.empty:
-            df = df.reset_index()
-            df.columns = [c.lower() for c in df.columns]
-            if "date" in df.columns:
-                df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
-            df = df[["date", "open", "high", "low", "close", "volume"]].copy()
-            return df.sort_values("date").reset_index(drop=True)
+    try:
+        for suffix in [".KS", ".KQ"]:
+            end_fetch = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+            df = yf.Ticker(f"{ticker}{suffix}").history(
+                start=start_dt.strftime("%Y-%m-%d"),
+                end=end_fetch,
+                auto_adjust=True,
+            )
+            if not df.empty:
+                df = df.reset_index()
+                df.columns = [c.lower() for c in df.columns]
+                df = df[["date", "open", "high", "low", "close", "volume"]].copy()
+                return _normalize_date_window(df, start_dt, end_dt)
+    finally:
+        yfinance_logger.setLevel(old_level)
     return pd.DataFrame()
 
 
@@ -433,6 +464,7 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
                         df_back = pd.DataFrame()
                     if df_back.empty:
                         df_back = fetch_kr_daily_yfinance(ticker, start_dt, ex_min - timedelta(days=1))
+                    df_back = _normalize_date_window(df_back, start_dt, ex_min - timedelta(days=1))
                     if not df_back.empty:
                         fetch_parts.append(df_back)
                         print(f"         < 이전 {len(df_back)}일 추가")
@@ -440,14 +472,20 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
 
                 # > 뒤 업데이트 (매일 최신화)
                 if end_dt > ex_max:
-                    s = (ex_max + timedelta(days=1)).strftime("%Y%m%d")
+                    fwd_start = ex_max + timedelta(days=1)
+                    if not _has_weekday_between(fwd_start, end_dt):
+                        print(f"         no weekday in update window ({fwd_start.date()} ~ {end_dt.date()}) - skip")
+                        continue
+                    s = fwd_start.strftime("%Y%m%d")
                     e = end_dt.strftime("%Y%m%d")
                     try:
                         df_fwd = fetch_kr_daily(ticker, s, e)
                     except Exception:
                         df_fwd = pd.DataFrame()
+                    df_fwd = _normalize_date_window(df_fwd, fwd_start, end_dt)
                     if df_fwd.empty:
-                        df_fwd = fetch_kr_daily_yfinance(ticker, ex_max + timedelta(days=1), end_dt)
+                        df_fwd = fetch_kr_daily_yfinance(ticker, fwd_start, end_dt)
+                    df_fwd = _normalize_date_window(df_fwd, fwd_start, end_dt)
                     if not df_fwd.empty:
                         fetch_parts.append(df_fwd)
                         print(f"         > 최신 {len(df_fwd)}일 추가")
@@ -604,6 +642,9 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
 
 def _save(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Timestamp, label: str):
     """중복 제거 + 기간 필터 + CSV 저장"""
+    if df.empty or "date" not in df.columns:
+        print(f"  WARN  {label}: no price rows returned")
+        return
     df = (df
           .drop_duplicates("date")
           .sort_values("date")

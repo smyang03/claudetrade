@@ -36,7 +36,7 @@ ACTIVE_STATUSES = {
 
 TERMINAL_EVENT_BY_STATUS = {
     "FILLED": "FILLED",
-    "PARTIAL_FILLED": "FILLED",
+    "PARTIAL_FILLED": "PARTIAL_FILLED",
     "CLOSED": "CLOSED",
 }
 
@@ -179,7 +179,7 @@ def build_report(
             """
             SELECT market, runtime_mode, session_date, ticker, path_run_id, status, updated_at, plan_json
             FROM v2_path_runs
-            WHERE runtime_mode=? AND status='ORDER_UNKNOWN'
+            WHERE runtime_mode=? AND path_type='claude_price' AND status='ORDER_UNKNOWN'
             ORDER BY updated_at DESC
             LIMIT ?
             """,
@@ -189,7 +189,7 @@ def build_report(
             f"""
             SELECT market, runtime_mode, session_date, ticker, path_run_id, status, updated_at, plan_json
             FROM v2_path_runs
-            WHERE runtime_mode=? AND status IN ({','.join('?' for _ in ACTIVE_STATUSES)})
+            WHERE runtime_mode=? AND path_type='claude_price' AND status IN ({','.join('?' for _ in ACTIVE_STATUSES)})
             ORDER BY updated_at DESC
             LIMIT ?
             """,

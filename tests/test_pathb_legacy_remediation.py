@@ -58,6 +58,39 @@ class PathBLegacyRemediationTests(unittest.TestCase):
                 status="CLOSED",
                 plan={},
             )
+            store.create_path_run(
+                path_run_id="path_current_partial",
+                decision_id="dec_current_partial",
+                path_type="claude_price",
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-10",
+                ticker="035420",
+                status="PARTIAL_FILLED",
+                plan={},
+            )
+            store.create_path_run(
+                path_run_id="timing_current_unknown",
+                decision_id="dec_timing_current_unknown",
+                path_type="timing_adapter",
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-10",
+                ticker="051910",
+                status="ORDER_UNKNOWN",
+                plan={},
+            )
+            store.create_path_run(
+                path_run_id="timing_prev_active",
+                decision_id="dec_timing_prev_active",
+                path_type="timing_adapter",
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-09",
+                ticker="MSFT",
+                status="FILLED",
+                plan={},
+            )
             store.append(
                 LifecycleEvent(
                     event_type="CLAUDE_PRICE_PLAN_GATE_WARNING",
@@ -69,6 +102,19 @@ class PathBLegacyRemediationTests(unittest.TestCase):
                     prompt_version="test",
                     brain_snapshot_id="brain",
                     payload={"path_type": "claude_price"},
+                )
+            )
+            store.append(
+                LifecycleEvent(
+                    event_type="PARTIAL_FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-10",
+                    ticker="035420",
+                    decision_id="dec_current_partial",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"path_type": "claude_price", "path_run_id": "path_current_partial"},
                 )
             )
 
@@ -87,6 +133,15 @@ class PathBLegacyRemediationTests(unittest.TestCase):
             self.assertEqual(report["stale_active"]["by_status"]["ORDER_UNKNOWN"], 1)
             self.assertGreaterEqual(report["lifecycle_consistency"]["missing_events_count"], 2)
             self.assertEqual(report["lifecycle_consistency"]["events_missing_path_run_id_count"], 1)
+            order_unknown_ids = {
+                item["path_run_id"]
+                for item in report["order_unknown"]["current_session"] + report["order_unknown"]["previous_session"]
+            }
+            stale_ids = {item["path_run_id"] for item in report["stale_active"]["rows"]}
+            missing_event_ids = {item["path_run_id"] for item in report["lifecycle_consistency"]["missing_events"]}
+            self.assertNotIn("timing_current_unknown", order_unknown_ids)
+            self.assertNotIn("timing_prev_active", stale_ids)
+            self.assertNotIn("path_current_partial", missing_event_ids)
             plan = report["remediation_plan"]
             self.assertTrue(plan["dry_run_only"])
             self.assertFalse(plan["production_writes_supported"])
