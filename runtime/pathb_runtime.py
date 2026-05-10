@@ -4794,7 +4794,13 @@ class PathBRuntime:
         )
 
     def _pathb_daily_count(self, market: str) -> int:
-        count = 0
+        return len(self.daily_entry_run_ids(market))
+
+    def daily_entry_count(self, market: str) -> int:
+        return self._pathb_daily_count(market)
+
+    def daily_entry_run_ids(self, market: str) -> set[str]:
+        run_ids: set[str] = set()
         for run in self.store.path_runs_for_session(
             market=market,
             runtime_mode=self.mode,
@@ -4803,10 +4809,18 @@ class PathBRuntime:
             if str(run.get("path_type", "")) != "claude_price":
                 continue
             if str(run.get("status", "")) in {"ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED", "FILLED", "SELL_SENT", "CLOSED", "ORDER_UNKNOWN"}:
-                count += 1
-        return count
+                path_run_id = str(run.get("path_run_id") or "")
+                if path_run_id:
+                    run_ids.add(path_run_id)
+        return run_ids
 
     def _base_daily_entry_count(self, market: str) -> int:
+        try:
+            v2 = getattr(self.bot, "v2", None)
+            if v2 is not None and hasattr(v2, "daily_entry_count"):
+                return int(v2.daily_entry_count(market) or 0)
+        except Exception:
+            pass
         try:
             return int(getattr(self.bot, "_daily_entry_count", {}).get(market, 0) or 0)
         except Exception:

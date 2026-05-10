@@ -565,6 +565,100 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(result["latency_sla"]["status"], "critical")
             self.assertTrue(result["watch_trigger_shadow_summary"]["data_gap_dominant"])
 
+    def test_candidate_latest_rows_view_deduplicates_session_ticker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_old",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-08",
+                    "known_at": "2026-05-08T09:00:00",
+                    "ticker": "AAPL",
+                    "route_final_action": "WATCH",
+                }
+            )
+            store.upsert_candidate(
+                {
+                    "call_id": "call_new",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-08",
+                    "known_at": "2026-05-08T09:05:00",
+                    "ticker": "AAPL",
+                    "route_final_action": "BUY_READY",
+                }
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT call_id, route_final_action
+                    FROM audit_candidate_latest_rows
+                    WHERE runtime_mode='live' AND market='US'
+                      AND session_date='2026-05-08' AND ticker='AAPL'
+                    """
+                ).fetchall()
+            finally:
+                conn.close()
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["call_id"], "call_new")
+            self.assertEqual(rows[0]["route_final_action"], "BUY_READY")
+            self.assertEqual(
+                store.candidate_row_uniqueness(session_date="2026-05-08", market="US"),
+                {
+                    "call_level_rows": 2,
+                    "latest_session_ticker_rows": 1,
+                    "duplicate_group_count": 1,
+                },
+            )
+
+    def test_analyze_candidate_audit_includes_row_uniqueness_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "logs" / "raw_calls").mkdir(parents=True)
+            (root / "logs" / "funnel").mkdir(parents=True)
+            (root / "logs" / "screener_quality").mkdir(parents=True)
+            db_path = root / "data" / "audit" / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            for call_id, known_at in (("call_old", "2026-05-08T09:00:00"), ("call_new", "2026-05-08T09:05:00")):
+                store.upsert_candidate(
+                    {
+                        "call_id": call_id,
+                        "runtime_mode": "live",
+                        "market": "US",
+                        "session_date": "2026-05-08",
+                        "known_at": known_at,
+                        "ticker": "AAPL",
+                        "classification": "ready_no_signal",
+                    }
+                )
+
+            with patch(
+                "tools.analyze_candidate_audit.get_runtime_path",
+                side_effect=lambda *parts, **kwargs: root.joinpath(*parts),
+            ):
+                result = analyze_candidate_audit(
+                    db_path=db_path,
+                    session_date="2026-05-08",
+                    market="US",
+                    horizon_min=30,
+                )
+
+            self.assertEqual(
+                result["row_uniqueness"],
+                {
+                    "call_level_rows": 2,
+                    "latest_session_ticker_rows": 1,
+                    "duplicate_group_count": 1,
+                },
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

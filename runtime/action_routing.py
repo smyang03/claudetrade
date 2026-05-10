@@ -67,7 +67,7 @@ def route_candidate_action(
     pathb_active_order: bool = False,
     add_enabled: bool = False,
     overextended: bool = False,
-    data_quality: str = "good",
+    data_quality: str = "missing",
     planb_cancel_confidence_min: float = PLANB_CANCEL_CONFIDENCE_MIN,
     execution_context: dict[str, Any] | None = None,
 ) -> RouteDecision:
@@ -107,7 +107,14 @@ def route_candidate_action(
             overextended = ret_5m >= threshold
         except Exception:
             pass
-    data_quality = str(context.get("data_quality") or data_quality or "good")
+    raw_data_quality = context.get("data_quality")
+    data_quality_missing = bool(context.get("data_quality_missing"))
+    if raw_data_quality in (None, ""):
+        raw_data_quality = data_quality
+    data_quality = str(raw_data_quality or "missing").strip().lower()
+    if data_quality in {"", "missing", "unknown", "none", "null"}:
+        data_quality_missing = True
+        data_quality = "missing"
 
     gate_context = {
         key: context.get(key)
@@ -124,6 +131,7 @@ def route_candidate_action(
     }
     if current_price > 0:
         gate_context["current_price"] = current_price
+    gate_context["data_quality_missing"] = bool(data_quality_missing)
     if buy_zone_high > 0:
         gate_context["buy_zone_high"] = buy_zone_high
     if pathb_waiting_buy_zone_high > 0:
@@ -255,7 +263,7 @@ def route_candidate_action(
 
     if requested == "PROBE_READY":
         if pathb_waiting and current_price > 0 and pathb_waiting_buy_zone_high > 0 and current_price > pathb_waiting_buy_zone_high:
-            good_data = str(data_quality or "").lower() in {"good", "normal", "ok"}
+            good_data = (not data_quality_missing) and str(data_quality or "").lower() in {"good", "normal", "ok"}
             if confidence >= float(planb_cancel_confidence_min) and not overextended and good_data:
                 return _decision(
                     "PROBE_READY",
@@ -282,7 +290,7 @@ def route_candidate_action(
                 runtime_gate_reason="chase_above_cancel",
             )
         if pathb_waiting:
-            good_data = str(data_quality or "").lower() in {"good", "normal", "ok"}
+            good_data = (not data_quality_missing) and str(data_quality or "").lower() in {"good", "normal", "ok"}
             has_buy_zone_context = current_price > 0 and buy_zone_high > 0
             pathb_price_allows_cancel = not has_buy_zone_context or current_price > buy_zone_high
             if confidence >= float(planb_cancel_confidence_min) and not overextended and good_data and pathb_price_allows_cancel:

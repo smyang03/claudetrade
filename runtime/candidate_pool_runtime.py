@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterable
@@ -27,6 +28,14 @@ SOURCE_PENALTIES = {
 
 DEFERRED_SOURCE_TAGS = {"intraday_momentum", "late_mover"}
 GRADE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1}
+LIFECYCLE_STATES = ("CORE", "WATCH", "PROBATION", "BENCH", "QUARANTINE")
+LIFECYCLE_RANK = {
+    "QUARANTINE": 0,
+    "BENCH": 1,
+    "PROBATION": 2,
+    "WATCH": 3,
+    "CORE": 4,
+}
 
 
 @dataclass
@@ -50,6 +59,9 @@ class CandidateRecord:
     policy_tags: list[str] = field(default_factory=list)
     screen_bucket: str | None = None
     status: str = "active"
+    lifecycle_state: str = ""
+    previous_lifecycle_state: str = ""
+    lifecycle_reason: str = ""
 
     def key(self) -> tuple[str, str]:
         return (self.market.upper(), normalize_ticker(self.ticker, self.market))
@@ -75,6 +87,9 @@ class CandidateRecord:
             "policy_tags": list(self.policy_tags),
             "screen_bucket": self.screen_bucket,
             "status": self.status,
+            "lifecycle_state": self.lifecycle_state,
+            "previous_lifecycle_state": self.previous_lifecycle_state,
+            "lifecycle_reason": self.lifecycle_reason,
         }
 
 
@@ -84,6 +99,7 @@ class CandidatePoolResult:
     prompt_pool: list[CandidateRecord]
     excluded_from_prompt: list[dict[str, Any]]
     deferred_sources: list[str] = field(default_factory=list)
+    lifecycle_report: dict[str, Any] = field(default_factory=dict)
 
     def to_summary(self) -> dict[str, Any]:
         return {
@@ -91,6 +107,7 @@ class CandidatePoolResult:
             "prompt_pool_count": len(self.prompt_pool),
             "excluded_count": len(self.excluded_from_prompt),
             "deferred_sources": list(self.deferred_sources),
+            "lifecycle_report": dict(self.lifecycle_report),
         }
 
 
@@ -125,6 +142,15 @@ def _as_list(value: Any) -> list[str]:
     if isinstance(value, Iterable):
         return [str(item) for item in value if str(item or "").strip()]
     return [str(value)]
+
+
+def normalize_lifecycle_state(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    if text == "ACTIVE":
+        return "WATCH"
+    if text in {"BLOCKED", "HARD_BLOCK"}:
+        return "QUARANTINE"
+    return text if text in LIFECYCLE_STATES else ""
 
 
 def _best_grade(left: str | None, right: str | None) -> str | None:
@@ -201,6 +227,18 @@ def candidate_from_raw(raw: dict[str, Any], *, market: str, source: str | None =
         policy_tags=policy_tags,
         screen_bucket=raw.get("screen_bucket"),
         status=str(raw.get("status") or "active"),
+        lifecycle_state=normalize_lifecycle_state(
+            raw.get("candidate_lifecycle_state")
+            or raw.get("lifecycle_state")
+            or raw.get("tier_state")
+            or raw.get("trainer_tier")
+        ),
+        previous_lifecycle_state=normalize_lifecycle_state(
+            raw.get("previous_lifecycle_state")
+            or raw.get("prev_lifecycle_state")
+            or raw.get("last_lifecycle_state")
+        ),
+        lifecycle_reason=str(raw.get("lifecycle_reason") or ""),
     )
 
 
@@ -223,6 +261,12 @@ def merge_candidate(left: CandidateRecord, right: CandidateRecord) -> CandidateR
     left.screen_bucket = left.screen_bucket or right.screen_bucket
     if right.status and right.status != "active":
         left.status = right.status
+    if not left.lifecycle_state and right.lifecycle_state:
+        left.lifecycle_state = right.lifecycle_state
+    if not left.previous_lifecycle_state and right.previous_lifecycle_state:
+        left.previous_lifecycle_state = right.previous_lifecycle_state
+    if not left.lifecycle_reason and right.lifecycle_reason:
+        left.lifecycle_reason = right.lifecycle_reason
     return left
 
 
@@ -265,6 +309,89 @@ def score_candidate(record: CandidateRecord, *, deferred_sources: set[str] | Non
     return record
 
 
+def assign_lifecycle_state(record: CandidateRecord) -> CandidateRecord:
+    tags = {str(tag or "").strip().lower() for tag in record.policy_tags}
+    sources = {str(source or "").strip().lower() for source in record.sources}
+    features = record.latest_features or {}
+    status = str(record.status or "").strip().lower()
+    data_quality = str(features.get("data_quality") or "").strip().lower()
+    explicit_state = normalize_lifecycle_state(record.lifecycle_state)
+
+    if (
+        status in {"hard_block", "blocked", "quarantine"}
+        or "hard_safety" in tags
+        or "bad_data" in tags
+        or data_quality in {"bad", "missing", "stale", "invalid"}
+    ):
+        state = "QUARANTINE"
+        reason = "safety_or_data_quality"
+    elif status in {"trade_ready", "buy_ready", "probe_ready"}:
+        state = "CORE"
+        reason = "executable_status"
+    elif status in {"watch", "watch_only"}:
+        state = "WATCH"
+        reason = "watch_status"
+    elif status in {"not_in_prompt", "screener_only"}:
+        state = "BENCH"
+        reason = "not_in_prompt_status"
+    elif explicit_state:
+        state = explicit_state
+        reason = record.lifecycle_reason or "persisted_state"
+    elif status in {"bench", "inactive", "disabled"} or "day_losers" in sources:
+        state = "BENCH"
+        reason = "inactive_or_day_loser"
+    elif "overextended" in tags or str(features.get("momentum_state") or "").strip().lower() == "overextended":
+        state = "PROBATION"
+        reason = "overextended_watch"
+    elif {"hard_pin", "manual_pin"} & sources or str(record.grade or "").upper() == "A" or record.prompt_score >= 50.0:
+        state = "CORE"
+        reason = "high_confidence_source"
+    elif _preopen_is_confirmed(record) or record.prompt_score >= 20.0:
+        state = "WATCH"
+        reason = "confirmed_watch"
+    else:
+        state = "PROBATION"
+        reason = "unproven_candidate"
+
+    record.lifecycle_state = state
+    record.lifecycle_reason = record.lifecycle_reason or reason
+    return record
+
+
+def build_lifecycle_report(records: Iterable[CandidateRecord]) -> dict[str, Any]:
+    rows = list(records)
+    counts = Counter(record.lifecycle_state or "PROBATION" for record in rows)
+    promotions: list[dict[str, Any]] = []
+    demotions: list[dict[str, Any]] = []
+    unchanged = 0
+    for record in rows:
+        previous = normalize_lifecycle_state(record.previous_lifecycle_state)
+        current = normalize_lifecycle_state(record.lifecycle_state) or "PROBATION"
+        if not previous or previous == current:
+            unchanged += 1
+            continue
+        transition = {
+            "market": record.market,
+            "ticker": record.ticker,
+            "from": previous,
+            "to": current,
+            "reason": record.lifecycle_reason,
+            "known_at": record.last_seen_at or now_iso(),
+        }
+        if LIFECYCLE_RANK[current] > LIFECYCLE_RANK[previous]:
+            promotions.append(transition)
+        else:
+            demotions.append(transition)
+    return {
+        "states": list(LIFECYCLE_STATES),
+        "counts": {state: counts.get(state, 0) for state in LIFECYCLE_STATES},
+        "promotions": promotions,
+        "demotions": demotions,
+        "unchanged_or_new": unchanged,
+        "label_policy": "forward_return_fields_are_evaluation_labels_only_not_live_gate_inputs",
+    }
+
+
 def build_candidate_pool(
     raw_candidates: Iterable[dict[str, Any] | CandidateRecord],
     *,
@@ -280,7 +407,10 @@ def build_candidate_pool(
             records_by_key[key] = merge_candidate(records_by_key[key], record)
         else:
             records_by_key[key] = record
-    records = [score_candidate(record, deferred_sources=deferred_sources) for record in records_by_key.values()]
+    records = [
+        assign_lifecycle_state(score_candidate(record, deferred_sources=deferred_sources))
+        for record in records_by_key.values()
+    ]
     active_records = [record for record in records if record.status not in {"hard_block", "blocked"} and "hard_safety" not in record.policy_tags]
     hard_excluded = [
         {"ticker": record.ticker, "reason": "hard_safety", "prompt_score": record.prompt_score}
@@ -300,4 +430,5 @@ def build_candidate_pool(
         prompt_pool=prompt_pool,
         excluded_from_prompt=excluded,
         deferred_sources=deferred_seen,
+        lifecycle_report=build_lifecycle_report(records),
     )

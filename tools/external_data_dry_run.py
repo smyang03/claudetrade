@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from phase1_trainer.external_data_collectors import collect_ready_sources_dry_run
-from phase1_trainer.external_data_store import DEFAULT_DB_PATH
+from phase1_trainer.external_data_store import DEFAULT_DB_PATH, ExternalDataStore
 
 
 def _parse_args() -> argparse.Namespace:
@@ -31,6 +31,20 @@ def main() -> int:
         target_date=args.date or None,
         write_db=not args.no_write,
     )
+    db_path = Path(args.db)
+    summary["readiness"] = (
+        ExternalDataStore(db_path).readiness_summary(initialize=False)
+        if db_path.exists()
+        else {
+            "db_path": str(db_path),
+            "status": "missing_db",
+            "table_counts": {},
+            "latest_fetched_at_by_table": {},
+            "latest_api_run_at": "",
+            "total_data_rows": 0,
+            "production_ready": False,
+        }
+    )
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     else:
@@ -48,6 +62,21 @@ def main() -> int:
                 print(f"  error={check['error']}")
         if summary.get("table_counts"):
             print("table_counts=" + json.dumps(summary["table_counts"], ensure_ascii=False, sort_keys=True))
+        if summary.get("readiness"):
+            readiness = summary["readiness"]
+            print(
+                "readiness="
+                + json.dumps(
+                    {
+                        "status": readiness.get("status"),
+                        "total_data_rows": readiness.get("total_data_rows"),
+                        "production_ready": readiness.get("production_ready"),
+                        "latest_api_run_at": readiness.get("latest_api_run_at"),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
     failed = [c for c in summary["checks"] if c["status"] == "failed"]
     return 1 if failed else 0
 

@@ -118,6 +118,51 @@ class LiveGuardianTests(unittest.TestCase):
 
         self.assertEqual(finding.classification, "hard_fail")
 
+    def test_accepted_exception_warning_is_not_soft_fail(self) -> None:
+        finding = classify_preflight_check(
+            {
+                "name": "kis.balance_probe",
+                "status": "WARN",
+                "detail": "read-only balance check delegated",
+                "data": {"accepted_exception": True, "remediation_required": False},
+            }
+        )
+
+        self.assertEqual(finding.classification, "accepted_exception")
+
+    def test_guardian_counts_accepted_exceptions_separately(self) -> None:
+        preflight = {
+            "ok": True,
+            "fail_count": 0,
+            "warn_count": 1,
+            "checks": [
+                {
+                    "name": "kis.balance_probe",
+                    "status": "WARN",
+                    "detail": "read-only balance check delegated",
+                    "data": {"accepted_exception": True, "remediation_required": False},
+                }
+            ],
+            "effective_config": {"ENABLED_MARKETS": "KR"},
+        }
+        smoke = {"ok": True, "results": [{"ok": True, "market": "KR"}]}
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "tools.live_guardian.run_preflight",
+            return_value=preflight,
+        ), patch(
+            "tools.live_guardian._run_smoke",
+            return_value=smoke,
+        ), patch(
+            "tools.live_guardian._write_guardian_report",
+            return_value=(Path(tmp) / "guardian.json", Path(tmp) / "guardian.md"),
+        ):
+            report = run_guardian_once(mode="live")
+
+        self.assertEqual(report["counts"]["accepted_exception"], 1)
+        self.assertEqual(report["counts"]["soft_fail"], 0)
+        self.assertTrue(report["ok"])
+
     def test_auto_fix_attempts_missing_token_refresh_without_requiring_soft_classification(self) -> None:
         finding = classify_preflight_check(
             {

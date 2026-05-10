@@ -74,6 +74,7 @@ LIVE_CONFIG_KEYS = {
     "KR_REENTRY_COOLDOWN_MINUTES",
     "US_REENTRY_COOLDOWN_MINUTES",
     "USD_KRW_RATE",
+    "KIS_US_CREDENTIAL_FALLBACK_ACCEPTED",
 }
 
 REQUIRED_TABLE_COLUMNS = {
@@ -281,7 +282,17 @@ def _pid_lock_check(name: str, path: Path, *, expected_mode: str = "") -> CheckR
         if actual_mode and actual_mode != expected_mode:
             data["mode_mismatch"] = actual_mode
     if alive:
-        return CheckResult(name, "WARN", "pid lock is active; do not start a duplicate process", data)
+        if expected_mode and data.get("mode_mismatch"):
+            data["accepted_exception"] = False
+            data["remediation_required"] = True
+            data["operator_action"] = "verify the active process before operating or starting another process"
+            data["operational_interpretation"] = "active process exists, but lock mode differs from expected mode"
+            return CheckResult(name, "WARN", "pid lock is active with a mode mismatch; verify before operation", data)
+        data["accepted_exception"] = True
+        data["remediation_required"] = False
+        data["operator_action"] = "no action while the expected process is intentionally running"
+        data["operational_interpretation"] = "expected process appears alive; treat as healthy unless starting a duplicate"
+        return CheckResult(name, "WARN", "pid lock is active; expected process appears alive", data)
     return CheckResult(name, "WARN", "stale pid lock is present; guardian may remove it after process check", data)
 
 
@@ -528,6 +539,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     us_secret = str(effective.get("KIS_APP_SECRET_US") or "").strip()
     kr_secret = str(effective.get("KIS_APP_SECRET") or "").strip()
     is_paper_us = str(effective.get("KIS_IS_PAPER_US") or "").strip().lower()
+    fallback_accepted = _truthy(effective.get("KIS_US_CREDENTIAL_FALLBACK_ACCEPTED"))
     cred_status = "PASS"
     cred_notes = []
     if not us_account and not kr_account:
@@ -552,6 +564,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
         if kr_account and kr_app and kr_secret
         else "missing"
     )
+    accepted_exception = cred_status == "WARN" and us_credential_mode == "fallback_shared_kr" and fallback_accepted
     checks.append(
         CheckResult(
             "kis.us_credentials",
@@ -564,6 +577,16 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
                 "KIS_IS_PAPER_US": is_paper_us,
                 "credential_mode": us_credential_mode,
                 "fallback_to_kr_allowed": us_credential_mode == "fallback_shared_kr",
+                "fallback_accepted_by_policy": fallback_accepted,
+                "accepted_exception": accepted_exception,
+                "remediation_required": cred_status != "PASS" and not accepted_exception,
+                "operator_action": (
+                    "shared KR/US KIS credential fallback is explicitly accepted by policy"
+                    if accepted_exception
+                    else "set KIS_APP_KEY_US/KIS_APP_SECRET_US or KIS_US_CREDENTIAL_FALLBACK_ACCEPTED=true after policy approval"
+                    if cred_status == "WARN"
+                    else "fix missing or invalid US KIS credential configuration"
+                ),
             },
         )
     )
@@ -658,7 +681,20 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                 "db.order_unknown_unresolved",
                 "WARN" if unknown_rows else "PASS",
                 f"unresolved ORDER_UNKNOWN rows={len(unknown_rows)}" if unknown_rows else "no unresolved Path B ORDER_UNKNOWN rows",
-                {"current_session": current_unknown, "previous_session": previous_unknown},
+                {
+                    "current_session": current_unknown,
+                    "previous_session": previous_unknown,
+                    "current_session_count": len(current_unknown),
+                    "previous_session_count": len(previous_unknown),
+                    "accepted_exception": False,
+                    "remediation_required": bool(unknown_rows),
+                    "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
+                    "operator_action": (
+                        "run the PathB legacy remediation report and reconcile against broker fills/open orders"
+                        if unknown_rows
+                        else "none"
+                    ),
+                },
             )
         )
 
@@ -683,7 +719,19 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                 "db.pathb_stale_active_runs",
                 "WARN" if stale_active else "PASS",
                 f"previous-session active Path B rows={len(stale_active)}" if stale_active else "no previous-session active Path B rows",
-                {"rows": stale_active[:30], "current_sessions": current_sessions},
+                {
+                    "rows": stale_active[:30],
+                    "current_sessions": current_sessions,
+                    "stale_active_count": len(stale_active),
+                    "accepted_exception": False,
+                    "remediation_required": bool(stale_active),
+                    "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
+                    "operator_action": (
+                        "verify broker state before closing, expiring, or backfilling any prior-session active row"
+                        if stale_active
+                        else "none"
+                    ),
+                },
             )
         )
 
@@ -748,6 +796,16 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                 {
                     "missing_events": inconsistent_runs[:30],
                     "pathb_events_missing_path_run_id": pathb_events_missing_id[:30],
+                    "missing_events_count": len(inconsistent_runs),
+                    "pathb_events_missing_path_run_id_count": len(pathb_events_missing_id),
+                    "accepted_exception": False,
+                    "remediation_required": bool(inconsistent_runs or pathb_events_missing_id),
+                    "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
+                    "operator_action": (
+                        "generate an audited lifecycle backfill plan before mutating production records"
+                        if inconsistent_runs or pathb_events_missing_id
+                        else "none"
+                    ),
                 },
             )
         )
@@ -861,8 +919,14 @@ def _token_checks(mode: str) -> list[CheckResult]:
         CheckResult(
             "kis.balance_probe",
             "WARN",
-            "preflight does not call live balance APIs; verify bot startup API Health Check before live trading",
-            {"reason": "network/order side effects intentionally avoided"},
+            "default preflight avoids direct balance APIs; broker-truth snapshot and live smoke cover read-only balance checks",
+            {
+                "reason": "network/order side effects intentionally avoided in default preflight",
+                "read_only_check": "run live guardian/smoke or KIS read-only precheck before live trading",
+                "accepted_exception": True,
+                "remediation_required": False,
+                "operator_action": "none if live guardian smoke and broker-truth snapshots are passing",
+            },
         )
     )
     return checks
@@ -1088,6 +1152,13 @@ def _static_code_checks() -> list[CheckResult]:
                 "enum_markers": timing_enum_present,
                 "category": "code_marker",
                 "guardian_severity": "soft_fail",
+                "accepted_exception": False,
+                "remediation_required": not timing_runtime_present,
+                "operator_action": (
+                    "add Path A WAIT_TIMING/TIMING_EXPIRED runtime wiring evidence or explicitly disable this lifecycle state"
+                    if not timing_runtime_present
+                    else "none"
+                ),
             },
         )
     )
@@ -1217,16 +1288,33 @@ def _static_code_checks() -> list[CheckResult]:
         checks.append(CheckResult("code.us_exchange_map_coverage", "FAIL", f"cannot inspect US exchange map: {exc}"))
         checks.append(CheckResult("us.exchange_map_coverage", "FAIL", f"cannot inspect US exchange map: {exc}"))
 
+    now_kst = _now_kst()
+    weekday = now_kst.weekday()
+    weekend = weekday >= 5
+    session_detail = (
+        "today is a weekend; verify next trading session before operation"
+        if weekend
+        else "calendar API is not called by preflight; verify holidays/early-close operationally"
+    )
     session_data = {
-        "now_kst": _now_kst().isoformat(timespec="seconds"),
+        "now_kst": now_kst.isoformat(timespec="seconds"),
+        "weekday": weekday,
+        "weekend": weekend,
         "KR_session_date_guess": _session_date_guess("KR"),
         "US_session_date_guess": _session_date_guess("US"),
+        "accepted_exception": weekend,
+        "remediation_required": not weekend,
+        "operator_action": (
+            "none; weekend/non-trading-day warning is expected"
+            if weekend
+            else "verify holiday and early-close calendar before operation"
+        ),
     }
     checks.append(
         CheckResult(
             "market.session_calendar",
             "WARN",
-            "calendar API is not called by preflight; verify holidays/early-close operationally",
+            session_detail,
             session_data,
         )
     )

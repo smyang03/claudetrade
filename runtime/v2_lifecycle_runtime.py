@@ -366,17 +366,33 @@ class V2LifecycleRuntime:
             return None
 
     def daily_entry_count(self, market: str) -> int:
+        market_key = str(market or "").upper()
         count = 0
+        seen_pathb_run_ids: set[str] = set()
         for trade in getattr(getattr(self.bot, "risk", None), "trade_log", []) or []:
             if trade.get("side") != "buy":
                 continue
             ticker = str(trade.get("ticker", "") or "")
-            if ticker and self.bot._ticker_market(ticker) == market:
+            if ticker and self.bot._ticker_market(ticker) == market_key:
                 count += 1
+                path_run_id = str(trade.get("pathb_path_run_id") or trade.get("path_run_id") or "")
+                if path_run_id:
+                    seen_pathb_run_ids.add(path_run_id)
         for order in getattr(self.bot, "pending_orders", []) or []:
             ticker = str(order.get("ticker", "") or "")
-            if ticker and str(order.get("market", market) or market) == market:
+            if ticker and str(order.get("market", market_key) or market_key).upper() == market_key:
                 count += 1
+                path_run_id = str(order.get("pathb_path_run_id") or order.get("path_run_id") or "")
+                if path_run_id:
+                    seen_pathb_run_ids.add(path_run_id)
+        pathb = getattr(self.bot, "pathb", None)
+        run_ids_fn = getattr(pathb, "daily_entry_run_ids", None)
+        if callable(run_ids_fn):
+            try:
+                pathb_run_ids = {str(value) for value in run_ids_fn(market_key) if str(value or "").strip()}
+                count += len(pathb_run_ids - seen_pathb_run_ids)
+            except Exception as exc:
+                log.debug(f"[V2 safety] PathB daily entry count merge failed {market_key}: {exc}")
         return count
 
     def max_daily_entries(self, market: str | None = None) -> int | None:

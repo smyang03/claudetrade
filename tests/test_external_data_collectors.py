@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from phase1_trainer.external_data_collectors import collect_ready_sources_dry_run, _truncate_error
+from phase1_trainer.external_data_store import ExternalDataStore
 
 
 class FakeResponse:
@@ -147,6 +148,48 @@ class ErrorDataGoKrSession(FakeSession):
 
 
 class ExternalDataCollectorsTest(unittest.TestCase):
+    def test_external_data_readiness_empty_db_is_not_production_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ExternalDataStore(Path(tmp) / "external.sqlite")
+            summary = store.readiness_summary(initialize=True)
+
+            self.assertEqual(summary["status"], "empty")
+            self.assertFalse(summary["production_ready"])
+            self.assertEqual(summary["total_data_rows"], 0)
+            self.assertEqual(summary["table_counts"]["public_stock_quotes"], 0)
+
+    def test_external_data_readiness_populated_db_reports_latest_fetch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ExternalDataStore(Path(tmp) / "external.sqlite")
+            store.init_schema()
+            store.upsert_public_stock_quotes(
+                [
+                    {
+                        "base_date": "20260508",
+                        "stock_code": "005930",
+                        "market": "KOSPI",
+                        "item_name": "Samsung Electronics",
+                        "close": 70500,
+                        "fetched_at": "2026-05-10T13:00:00+09:00",
+                    }
+                ]
+            )
+            store.record_run(
+                source="data_go_kr",
+                endpoint="stock_quotes",
+                status="ok",
+                row_count=1,
+                fetched_at="2026-05-10T13:00:05+09:00",
+            )
+
+            summary = store.readiness_summary()
+
+            self.assertEqual(summary["status"], "ready")
+            self.assertTrue(summary["production_ready"])
+            self.assertEqual(summary["total_data_rows"], 1)
+            self.assertEqual(summary["latest_fetched_at_by_table"]["public_stock_quotes"], "2026-05-10T13:00:00+09:00")
+            self.assertEqual(summary["latest_api_run_at"], "2026-05-10T13:00:05+09:00")
+
     def test_dry_run_normalizes_and_stores_ready_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

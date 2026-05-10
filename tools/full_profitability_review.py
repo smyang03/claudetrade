@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import sqlite3
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,6 +14,10 @@ from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from runtime.candidate_pool_runtime import build_candidate_pool
 
 
 @dataclass
@@ -393,6 +398,7 @@ def screener_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "phase_counts": dict(phase_counts.most_common()),
         "prompt_counts": dict(prompt_counts.most_common()),
         "latest_status_counts": dict(latest_status.most_common()),
+        "lifecycle_report": screener_lifecycle_report(latest),
         "latest_high_score_not_in_prompt": [
             {
                 "market": row.get("market"),
@@ -407,6 +413,50 @@ def screener_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
             for row in not_prompt_high_score[:20]
         ],
     }
+
+
+def screener_lifecycle_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "known_at_policy": "promotion_demotion_uses_logged_state_only_forward_labels_are_evaluation_labels",
+        "by_market": {},
+    }
+    for market in ("KR", "US"):
+        raw_candidates = []
+        for row in rows:
+            if str(row.get("market") or "").upper() != market:
+                continue
+            raw = dict(row)
+            raw["source"] = raw.get("source") or raw.get("phase") or "screener_quality"
+            raw["source_score"] = raw.get("source_score", raw.get("score_current", raw.get("score", 0)))
+            raw["policy_tags"] = _listish(raw.get("policy_tags")) + _listish(raw.get("risk_tags"))
+            if not raw.get("data_quality"):
+                excluded = str(raw.get("excluded_reason") or "").lower()
+                raw["data_quality"] = "bad" if "bad" in excluded or "stale" in excluded else "good"
+            raw_candidates.append(raw)
+        result = build_candidate_pool(raw_candidates, market=market, prompt_cap=0)
+        report["by_market"][market] = result.lifecycle_report
+    return report
+
+
+def _listish(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item or "").strip()]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed if str(item or "").strip()]
+        except Exception:
+            pass
+        return [text]
+    if isinstance(value, Iterable):
+        return [str(item) for item in value if str(item or "").strip()]
+    return [str(value)]
 
 
 def action_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -728,6 +778,21 @@ def to_markdown(payload: dict[str, Any]) -> str:
         lines.append(f"### {title}")
         for key, value in counts.items():
             lines.append(f"- {key}: {value}")
+
+    lifecycle = payload["screener_quality"].get("lifecycle_report") or {}
+    lines.append("")
+    lines.append("## Candidate Lifecycle")
+    lines.append(f"- known_at_policy: {lifecycle.get('known_at_policy', '')}")
+    for market, report in (lifecycle.get("by_market") or {}).items():
+        lines.append("")
+        lines.append(f"### {market}")
+        counts = report.get("counts") or {}
+        lines.append("| State | Count |")
+        lines.append("|---|---:|")
+        for state in report.get("states") or []:
+            lines.append(f"| {state} | {counts.get(state, 0)} |")
+        transitions = list(report.get("promotions") or []) + list(report.get("demotions") or [])
+        lines.extend(list_table("Lifecycle Transitions", transitions[:20], header=True))
 
     lines.append("")
     lines.append("## Action Routing")

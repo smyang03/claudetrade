@@ -93,6 +93,55 @@ class CandidatePoolRuntimeTests(unittest.TestCase):
 
         self.assertLessEqual(result.full_pool[0].prompt_score, 100)
 
+    def test_lifecycle_report_tracks_promotion_without_forward_label_gate(self) -> None:
+        result = build_candidate_pool(
+            [
+                {
+                    "ticker": "WATCHME",
+                    "market": "US",
+                    "source": "preopen",
+                    "post_open_5m_return_pct": 1.2,
+                    "previous_lifecycle_state": "PROBATION",
+                    "forward_1d": -99.0,
+                }
+            ],
+            market="US",
+            prompt_cap=1,
+        )
+
+        record = result.full_pool[0]
+        self.assertEqual(record.lifecycle_state, "WATCH")
+        self.assertEqual(result.lifecycle_report["counts"]["WATCH"], 1)
+        self.assertEqual(result.lifecycle_report["promotions"][0]["from"], "PROBATION")
+        self.assertEqual(result.lifecycle_report["promotions"][0]["to"], "WATCH")
+        self.assertIn("forward_return_fields", result.lifecycle_report["label_policy"])
+
+    def test_bad_data_candidate_is_quarantined(self) -> None:
+        result = build_candidate_pool(
+            [{"ticker": "BAD", "market": "US", "source": "opening_fresh", "data_quality": "bad"}],
+            market="US",
+            prompt_cap=1,
+        )
+
+        self.assertEqual(result.full_pool[0].lifecycle_state, "QUARANTINE")
+        self.assertEqual(result.lifecycle_report["counts"]["QUARANTINE"], 1)
+
+    def test_existing_status_maps_to_lifecycle_state(self) -> None:
+        result = build_candidate_pool(
+            [
+                {"ticker": "READY", "market": "US", "status": "TRADE_READY"},
+                {"ticker": "WATCH", "market": "US", "status": "WATCH"},
+                {"ticker": "BENCH", "market": "US", "status": "NOT_IN_PROMPT"},
+            ],
+            market="US",
+            prompt_cap=0,
+        )
+
+        states = {record.ticker: record.lifecycle_state for record in result.full_pool}
+        self.assertEqual(states["READY"], "CORE")
+        self.assertEqual(states["WATCH"], "WATCH")
+        self.assertEqual(states["BENCH"], "BENCH")
+
 
 if __name__ == "__main__":
     unittest.main()

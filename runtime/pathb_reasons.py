@@ -4,6 +4,9 @@ from __future__ import annotations
 PATHB_DECISION_EXIT_REASON_MAP = {
     "CLOSED_LOSS_CAP": "loss_cap",
     "CLOSED_HARD_STOP": "hard_stop",
+    "CLOSED_PROFIT_FLOOR": "profit_floor",
+    "CLOSED_SOFT_EXIT_FLOOR": "soft_exit_floor_price",
+    "CLOSED_TRAILING_STOP": "trail_stop",
     "CLOSED_CLAUDE_PRICE_STOP": "claude_price_stop",
     "CLOSED_CLAUDE_PRICE_TARGET": "target",
     "CLOSED_CLAUDE_PRICE_PRE_CLOSE": "pre_close",

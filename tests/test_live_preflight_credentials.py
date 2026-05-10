@@ -20,6 +20,7 @@ def _base_config(effective: dict[str, str]) -> dict:
         "CLAUDE_SELECTION_MAX_TOKENS": "6000",
         "CLAUDE_SELECTION_RETRY_MAX_TOKENS": "3500",
         "KIS_IS_PAPER_US": "false",
+        "KIS_US_CREDENTIAL_FALLBACK_ACCEPTED": "false",
     }
     merged = {**defaults, **effective}
     return {
@@ -53,6 +54,26 @@ class LivePreflightCredentialModeTests(unittest.TestCase):
         self.assertEqual(check.status, "WARN")
         self.assertEqual(check.data["credential_mode"], "fallback_shared_kr")
         self.assertTrue(check.data["fallback_to_kr_allowed"])
+        self.assertFalse(check.data["accepted_exception"])
+        self.assertTrue(check.data["remediation_required"])
+
+    def test_us_credentials_can_mark_shared_fallback_as_accepted_exception(self) -> None:
+        check = _credential_check(
+            {
+                "KIS_ACCOUNT_NO": "11111111-01",
+                "KIS_APP_KEY": "kr-key",
+                "KIS_APP_SECRET": "kr-secret",
+                "KIS_ACCOUNT_NO_US": "",
+                "KIS_APP_KEY_US": "",
+                "KIS_APP_SECRET_US": "",
+                "KIS_US_CREDENTIAL_FALLBACK_ACCEPTED": "true",
+            }
+        )
+
+        self.assertEqual(check.status, "WARN")
+        self.assertEqual(check.data["credential_mode"], "fallback_shared_kr")
+        self.assertTrue(check.data["accepted_exception"])
+        self.assertFalse(check.data["remediation_required"])
 
     def test_us_credentials_reports_separate_us(self) -> None:
         check = _credential_check(
@@ -69,6 +90,7 @@ class LivePreflightCredentialModeTests(unittest.TestCase):
         self.assertEqual(check.status, "PASS")
         self.assertEqual(check.data["credential_mode"], "separate_us")
         self.assertFalse(check.data["fallback_to_kr_allowed"])
+        self.assertFalse(check.data["remediation_required"])
 
 
 if __name__ == "__main__":

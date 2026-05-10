@@ -287,8 +287,20 @@ def save(brain: dict):
         brain = _normalize_brain(brain)
         brain["meta"]["last_updated"] = date.today().isoformat()
         brain["meta"]["version"] += 1
-        with open(BRAIN_PATH, "w", encoding="utf-8") as f:
-            json.dump(brain, f, ensure_ascii=False, indent=2)
+        BRAIN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = BRAIN_PATH.with_name(f".{BRAIN_PATH.name}.{os.getpid()}.tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(brain, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, BRAIN_PATH)
+        finally:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
 
 
 # 분석가 성과 업데이트

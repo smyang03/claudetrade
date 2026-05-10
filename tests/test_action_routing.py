@@ -75,6 +75,20 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.route, "PlanA.buy")
         self.assertTrue(decision.cancel_pathb)
 
+    def test_buy_ready_missing_data_does_not_cancel_pathb(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "AAPL", "action": "BUY_READY", "confidence": 0.95},
+            market="US",
+            pathb_waiting=True,
+            overextended=False,
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertFalse(decision.cancel_pathb)
+        self.assertEqual(decision.reason, "pathb_waiting_kept_bad_data")
+        self.assertEqual(decision.runtime_gate_reason, "data_quality")
+        self.assertTrue(decision.runtime_gate["data_quality_missing"])
+
     def test_buy_ready_overextended_demotes_to_probe(self) -> None:
         decision = route_candidate_action(
             {"ticker": "AMD", "action": "BUY_READY", "confidence": 0.86},
@@ -196,6 +210,22 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.final_action, "PROBE_READY")
         self.assertEqual(decision.reason, "probe_ready_cancels_pathb_above_zone")
         self.assertTrue(decision.cancel_pathb)
+
+    def test_probe_ready_missing_data_does_not_cancel_pathb_above_zone(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "AAPL", "action": "PROBE_READY", "confidence": 0.8},
+            market="US",
+            pathb_waiting=True,
+            execution_context={
+                "current_price": 105.0,
+                "pathb_waiting_buy_zone_high": 101.0,
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "probe_blocked_above_pathb_zone")
+        self.assertFalse(decision.cancel_pathb)
+        self.assertTrue(decision.runtime_gate["data_quality_missing"])
 
     def test_watch_negative_context_suspends_pathb_shadow(self) -> None:
         decision = route_candidate_action(

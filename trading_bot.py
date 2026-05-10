@@ -3841,7 +3841,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "vwap_proxy": vwap_proxy,
             "volume_acceleration": volume_acceleration,
             "spread_bps": spread_bps,
-            "data_quality": str(data_quality_raw or "good"),
+            "data_quality": str(data_quality_raw if data_quality_raw not in (None, "") else "missing"),
             "data_quality_missing": data_quality_raw in (None, ""),
             "current_price": current_price,
             "buy_zone_high": _positive_or_none(target.get("buy_zone_high")),

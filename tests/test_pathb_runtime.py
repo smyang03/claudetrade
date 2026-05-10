@@ -56,6 +56,12 @@ class _Risk:
 class _V2:
     brain_snapshot_ids = {"KR": "brain_kr"}
 
+    def daily_entry_count(self, market: str) -> int:
+        return 0
+
+    def max_daily_entries(self, market: str | None = None) -> int | None:
+        return None
+
 
 class _Bot:
     def __init__(self) -> None:
@@ -1064,6 +1070,42 @@ class PathBRuntimeTests(unittest.TestCase):
             signal = runtime._submit_sell.call_args.args[2]
             self.assertEqual(signal.reason, "loss_cap")
             self.assertEqual(signal.close_reason, "CLOSED_LOSS_CAP")
+
+    def test_submit_buy_uses_combined_daily_entry_cap_from_v2(self) -> None:
+        class _CappedV2(_V2):
+            def daily_entry_count(self, market: str) -> int:
+                return 1
+
+            def max_daily_entries(self, market: str | None = None) -> int | None:
+                return 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.v2 = _CappedV2()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_daily_cap",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=95,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            signal = EntrySignal(True, "buy_zone_hit", price=100, limit_price=100, path_run_id=plan.path_run_id)
+
+            ok = runtime._submit_buy(plan, signal)
+
+            self.assertFalse(ok)
+            run = store.find_path_run(plan.path_run_id)
+            self.assertEqual(run["status"], "CANCELLED")
+            self.assertEqual((run.get("plan") or {}).get("cancel_reason"), "MAX_DAILY_ENTRIES")
+            self.assertEqual(bot.pending_orders, [])
 
     def test_order_unknown_local_pathb_holding_recovers_to_filled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -129,6 +129,64 @@ def _where_clause(*, session_date: str, market: str, runtime_mode: str) -> tuple
     return " AND ".join(where), params
 
 
+def _row_uniqueness_summary(
+    conn: sqlite3.Connection,
+    *,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+) -> dict[str, int]:
+    where = ["runtime_mode=?"]
+    params: list[Any] = [str(runtime_mode or "live").lower()]
+    if session_date:
+        where.append("session_date=?")
+        params.append(session_date)
+    if market:
+        where.append("market=?")
+        params.append(str(market).upper())
+    where_sql = " AND ".join(where)
+    call_level_rows = int(
+        conn.execute(
+            f"SELECT COUNT(*) FROM audit_candidate_rows WHERE {where_sql}",
+            params,
+        ).fetchone()[0]
+    )
+    latest_session_ticker_rows = int(
+        conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM (
+                SELECT runtime_mode, market, session_date, ticker
+                FROM audit_candidate_rows
+                WHERE {where_sql}
+                GROUP BY runtime_mode, market, session_date, ticker
+            )
+            """,
+            params,
+        ).fetchone()[0]
+    )
+    duplicate_group_count = int(
+        conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM (
+                SELECT runtime_mode, market, session_date, ticker
+                FROM audit_candidate_rows
+                WHERE {where_sql}
+                GROUP BY runtime_mode, market, session_date, ticker
+                HAVING COUNT(*) > 1
+            )
+            """,
+            params,
+        ).fetchone()[0]
+    )
+    return {
+        "call_level_rows": call_level_rows,
+        "latest_session_ticker_rows": latest_session_ticker_rows,
+        "duplicate_group_count": duplicate_group_count,
+    }
+
+
 def _load_outcome_rows(
     conn: sqlite3.Connection,
     *,
@@ -836,6 +894,12 @@ def analyze_candidate_audit(
             market=market,
             runtime_mode=runtime_mode,
         )
+        row_uniqueness = _row_uniqueness_summary(
+            conn,
+            session_date=session_date,
+            market=market,
+            runtime_mode=runtime_mode,
+        )
     finally:
         conn.close()
 
@@ -854,6 +918,7 @@ def analyze_candidate_audit(
         "runtime_mode": str(runtime_mode or "live").lower(),
         "horizon_min": int(horizon_min),
         "candidate_rows": len(rows),
+        "row_uniqueness": row_uniqueness,
         "freshness": freshness,
         "outcome_coverage": coverage,
         "buckets": buckets,

@@ -8,6 +8,13 @@ from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = ROOT / "data" / "external_market_data.sqlite"
+DATA_TABLES = [
+    "dart_disclosures",
+    "public_krx_listed",
+    "public_stock_quotes",
+    "public_securities_products",
+    "fred_observations",
+]
 
 
 def _json(value: Any) -> str:
@@ -308,16 +315,58 @@ class ExternalDataStore:
         return count
 
     def table_counts(self) -> dict[str, int]:
-        tables = [
-            "external_api_runs",
-            "dart_disclosures",
-            "public_krx_listed",
-            "public_stock_quotes",
-            "public_securities_products",
-            "fred_observations",
-        ]
+        tables = ["external_api_runs", *DATA_TABLES]
         with self.connect() as conn:
             return {
                 table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
                 for table in tables
             }
+
+    def readiness_summary(self, *, initialize: bool = False) -> dict[str, Any]:
+        if not self.path.exists() and not initialize:
+            return {
+                "db_path": str(self.path),
+                "status": "missing_db",
+                "table_counts": {},
+                "latest_fetched_at_by_table": {},
+                "latest_api_run_at": "",
+                "total_data_rows": 0,
+                "production_ready": False,
+            }
+        if initialize:
+            self.init_schema()
+        with self.connect() as conn:
+            existing = {
+                str(row["name"])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+                )
+            }
+            counts: dict[str, int] = {}
+            latest_by_table: dict[str, str] = {}
+            for table in ["external_api_runs", *DATA_TABLES]:
+                if table not in existing:
+                    counts[table] = 0
+                    if table in DATA_TABLES:
+                        latest_by_table[table] = ""
+                    continue
+                counts[table] = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                if table in DATA_TABLES:
+                    row = conn.execute(f"SELECT MAX(fetched_at) AS latest_at FROM {table}").fetchone()
+                    latest_by_table[table] = str(row["latest_at"] or "") if row else ""
+            latest_api_row = (
+                conn.execute("SELECT MAX(fetched_at) AS latest_at FROM external_api_runs").fetchone()
+                if "external_api_runs" in existing
+                else None
+            )
+        total_data_rows = sum(counts.get(table, 0) for table in DATA_TABLES)
+        production_ready = total_data_rows > 0
+        return {
+            "db_path": str(self.path),
+            "status": "ready" if production_ready else "empty",
+            "table_counts": counts,
+            "latest_fetched_at_by_table": latest_by_table,
+            "latest_api_run_at": str(latest_api_row["latest_at"] or "") if latest_api_row else "",
+            "total_data_rows": total_data_rows,
+            "production_ready": production_ready,
+        }

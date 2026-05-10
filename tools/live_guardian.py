@@ -124,12 +124,17 @@ def classify_preflight_check(
             return GuardianFinding(name, status, "auto_fixable", detail, data)
         if bool(data.get("alive")) and name == "runtime.bot_pid_lock" and start_bot:
             return GuardianFinding(name, status, "hard_fail", "active bot PID blocks duplicate start", data)
+        if bool(data.get("accepted_exception")):
+            return GuardianFinding(name, status, "accepted_exception", detail, data)
         return GuardianFinding(name, status, "soft_fail", detail, data)
 
     if name == "db.order_unknown_unresolved":
         current = data.get("current_session") if isinstance(data.get("current_session"), list) else []
         classification = "hard_fail" if current else "soft_fail"
         return GuardianFinding(name, status, classification, detail, data)
+
+    if bool(data.get("accepted_exception")):
+        return GuardianFinding(name, status, "accepted_exception", detail, data)
 
     if name.startswith("broker_truth."):
         if status != "PASS":
@@ -314,6 +319,7 @@ def run_guardian_once(
 
     hard_fail = [finding for finding in findings if finding.classification == "hard_fail"]
     soft_fail = [finding for finding in findings if finding.classification == "soft_fail"]
+    accepted_exception = [finding for finding in findings if finding.classification == "accepted_exception"]
     auto_fixable = [finding for finding in findings if finding.classification == "auto_fixable"]
     action_fail = [action for action in actions if action.status == "FAIL"]
     allow_start = not hard_fail and not action_fail
@@ -344,6 +350,7 @@ def run_guardian_once(
         "counts": {
             "hard_fail": len(hard_fail),
             "soft_fail": len(soft_fail),
+            "accepted_exception": len(accepted_exception),
             "auto_fixable": len(auto_fixable),
             "actions": len(actions),
             "action_fail": len(action_fail),
@@ -378,6 +385,7 @@ def _write_guardian_report(report: dict[str, Any]) -> tuple[Path, Path]:
         f"- enabled_markets: {', '.join(report.get('enabled_markets') or [])}",
         f"- hard_fail: {report['counts']['hard_fail']}",
         f"- soft_fail: {report['counts']['soft_fail']}",
+        f"- accepted_exception: {report['counts'].get('accepted_exception', 0)}",
         f"- auto_fixable: {report['counts']['auto_fixable']}",
         f"- actions: {report['counts']['actions']}",
         "",

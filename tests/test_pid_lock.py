@@ -80,6 +80,24 @@ class BotPidLockTests(unittest.TestCase):
             self.assertTrue(check.data["auto_fix"])
             self.assertEqual(check.data["category"], "runtime_pid_lock")
 
+    def test_preflight_pid_check_interprets_expected_active_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "state" / "live_trading_bot.pid"
+            pid_file.parent.mkdir(parents=True, exist_ok=True)
+            pid_file.write_text(json.dumps({"pid": os.getpid(), "mode": "live"}), encoding="utf-8")
+
+            with patch("tools.live_preflight._pid_alive", return_value=True):
+                check = _pid_lock_check("runtime.bot_pid_lock", pid_file, expected_mode="live")
+
+            self.assertEqual(check.status, "WARN")
+            self.assertFalse(check.data["auto_fix"])
+            self.assertEqual(
+                check.data["operational_interpretation"],
+                "expected process appears alive; treat as healthy unless starting a duplicate",
+            )
+            self.assertTrue(check.data["accepted_exception"])
+            self.assertFalse(check.data["remediation_required"])
+
     def test_preflight_state_checks_use_configured_runtime_path(self) -> None:
         with tempfile.TemporaryDirectory() as runtime_tmp, tempfile.TemporaryDirectory() as repo_tmp:
             runtime_root = Path(runtime_tmp)

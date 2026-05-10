@@ -55,6 +55,8 @@ class SafetyGate:
             "qty": int(ctx.qty or 0),
             "order_cost_krw": float(ctx.order_cost_krw or 0.0),
             "cash_krw": float(ctx.cash_krw or 0.0),
+            "daily_entry_count": int(ctx.daily_entry_count or 0),
+            "max_daily_entries": int(ctx.max_daily_entries) if ctx.max_daily_entries is not None else None,
             "daily_pnl_pct": float(ctx.daily_pnl_pct or 0.0),
             "daily_pnl_basis": str(ctx.daily_pnl_basis or "realized"),
         }

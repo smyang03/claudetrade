@@ -330,6 +330,7 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         bot.pathb = _DummyPathB({"path_run_id": "run_1", "status": "ORDER_SENT"})
         raw_meta = {
             "watchlist": ["AAPL"],
+            "_post_open_features_by_ticker": {"AAPL": {"ticker": "AAPL", "market": "US", "data_quality": "good"}},
             "candidate_actions": [{"ticker": "AAPL", "action": "BUY_READY", "confidence": 0.95}],
         }
 
@@ -403,6 +404,7 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         bot.pathb = _DummyPathB({"path_run_id": "run_1", "status": "WAITING"})
         raw_meta = {
             "watchlist": ["AAPL"],
+            "_post_open_features_by_ticker": {"AAPL": {"ticker": "AAPL", "market": "US", "data_quality": "good"}},
             "candidate_actions": [{"ticker": "AAPL", "action": "BUY_READY", "confidence": 0.95}],
         }
 

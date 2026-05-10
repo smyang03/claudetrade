@@ -28,6 +28,17 @@ class ExitLifecycleTests(unittest.TestCase):
         self.assertFalse(decision.claude_override_allowed)
         self.assertIn("system_guard_precedes_claude", decision.warnings)
 
+    def test_mfe_breakeven_cannot_be_overridden_by_claude_hold(self) -> None:
+        decision = decide_exit_lifecycle(
+            {"ticker": "AAPL"},
+            exit_candidate={"ticker": "AAPL", "reason": "mfe_breakeven"},
+            claude_vote="HOLD",
+        )
+
+        self.assertEqual(decision.final_action, "SELL")
+        self.assertFalse(decision.claude_override_allowed)
+        self.assertIn("system_guard_precedes_claude", decision.warnings)
+
     def test_claude_sell_can_exit_without_system_guard(self) -> None:
         decision = decide_exit_lifecycle({"ticker": "AAPL"}, claude_vote="SELL")
 

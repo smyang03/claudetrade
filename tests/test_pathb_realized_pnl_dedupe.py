@@ -63,6 +63,8 @@ class PathBRealizedPnlDedupeTests(unittest.TestCase):
         self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_HARD_STOP"), "hard_stop")
         self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_CLAUDE_PRICE_STOP"), "claude_price_stop")
         self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_MFE_BREAKEVEN"), "mfe_breakeven")
+        self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_PROFIT_FLOOR"), "profit_floor")
+        self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_TRAILING_STOP"), "trail_stop")
         self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_TIMEOUT"), "closed_timeout")
         self.assertEqual(normalize_pathb_decision_exit_reason(""), "pathb_closed")
 

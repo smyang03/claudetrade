@@ -173,6 +173,22 @@ class CandidateAuditStore:
 
                 CREATE INDEX IF NOT EXISTS idx_audit_candidate_outcomes_key
                     ON audit_candidate_outcomes(candidate_key, horizon_min);
+
+                CREATE VIEW IF NOT EXISTS audit_candidate_latest_rows AS
+                    SELECT *
+                    FROM (
+                        SELECT
+                            r.*,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY r.runtime_mode, r.market, r.session_date, r.ticker
+                                ORDER BY
+                                    COALESCE(NULLIF(r.known_at, ''), r.updated_at, r.created_at) DESC,
+                                    r.updated_at DESC,
+                                    r.candidate_key DESC
+                            ) AS latest_rank
+                        FROM audit_candidate_rows r
+                    )
+                    WHERE latest_rank = 1;
                 """
             )
             conn.commit()
@@ -393,6 +409,61 @@ class CandidateAuditStore:
             conn.commit()
         finally:
             conn.close()
+
+    def candidate_row_uniqueness(
+        self,
+        *,
+        session_date: str = "",
+        market: str = "",
+        runtime_mode: str = "live",
+    ) -> dict[str, int]:
+        mode = str(runtime_mode or "live").lower()
+        market_key = str(market or "").upper()
+        where = ["runtime_mode=?"]
+        params: list[Any] = [mode]
+        if session_date:
+            where.append("session_date=?")
+            params.append(session_date)
+        if market_key:
+            where.append("market=?")
+            params.append(market_key)
+        where_sql = " AND ".join(where)
+        conn = self.connect()
+        try:
+            call_level_rows = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM audit_candidate_rows WHERE {where_sql}",
+                    params,
+                ).fetchone()[0]
+            )
+            latest_rows = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM audit_candidate_latest_rows WHERE {where_sql}",
+                    params,
+                ).fetchone()[0]
+            )
+            duplicate_groups = int(
+                conn.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM (
+                        SELECT runtime_mode, market, session_date, ticker
+                        FROM audit_candidate_rows
+                        WHERE {where_sql}
+                        GROUP BY runtime_mode, market, session_date, ticker
+                        HAVING COUNT(*) > 1
+                    )
+                    """,
+                    params,
+                ).fetchone()[0]
+            )
+        finally:
+            conn.close()
+        return {
+            "call_level_rows": call_level_rows,
+            "latest_session_ticker_rows": latest_rows,
+            "duplicate_group_count": duplicate_groups,
+        }
 
     def update_execution_by_ticker(
         self,

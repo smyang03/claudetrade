@@ -59,6 +59,31 @@ class EntryRiskControlTests(unittest.TestCase):
             self.assertEqual(runtime.max_daily_entries("US"), 2)
             self.assertIsNone(runtime.max_daily_entries("JP"))
 
+    def test_v2_daily_entry_count_merges_patha_and_pathb_without_double_count(self) -> None:
+        class _PathB:
+            def daily_entry_run_ids(self, market: str) -> set[str]:
+                self.seen_market = market
+                return {"run_pending", "run_orphan"} if market == "KR" else set()
+
+        runtime = V2LifecycleRuntime.__new__(V2LifecycleRuntime)
+        runtime.bot = SimpleNamespace(
+            risk=SimpleNamespace(
+                trade_log=[
+                    {"side": "buy", "ticker": "005930"},
+                    {"side": "buy", "ticker": "AAPL"},
+                ]
+            ),
+            pending_orders=[
+                {"market": "KR", "ticker": "078150", "pathb_path_run_id": "run_pending"},
+                {"market": "US", "ticker": "MSFT"},
+            ],
+            pathb=_PathB(),
+            _ticker_market=lambda ticker: "US" if str(ticker).isalpha() else "KR",
+        )
+
+        self.assertEqual(runtime.daily_entry_count("KR"), 3)
+        self.assertEqual(runtime.daily_entry_count("US"), 2)
+
     def test_market_risk_shadow_keeps_market_scoped_snapshot(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         bot.risk = SimpleNamespace(
