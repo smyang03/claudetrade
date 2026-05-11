@@ -108,6 +108,7 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             self.assertIn("watch_trigger_shadow_summary", data)
             self.assertIn("trainer_summary", data)
             self.assertEqual(data["strategy_mismatch"]["mismatch_count"], 1)
+            self.assertFalse(data["trainer_summary"]["available"])
 
     def test_candidate_audit_api_exposes_trainer_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,6 +170,7 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             self.assertEqual(summary.status_code, 200)
             summary_data = summary.get_json()
             self.assertTrue(summary_data["trainer_summary"]["available"])
+            self.assertEqual(summary_data["trainer_summary"]["rows"], 2)
             self.assertEqual(summary_data["trainer_summary"]["final_prompt_rows"], 1)
             self.assertEqual(summary_data["trainer_summary"]["excluded_rows"], 1)
             self.assertIn(

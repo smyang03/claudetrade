@@ -6287,6 +6287,31 @@ def _candidate_audit_optional_expr(
     return f"{fallback} AS {out_name}"
 
 
+def _candidate_audit_trainer_presence_clause(columns: set[str], *, table_alias: str = "") -> str:
+    prefix = f"{table_alias}." if table_alias else ""
+    numeric_columns = {
+        "raw_rank",
+        "trainer_score_rank",
+        "trainer_prompt_score",
+        "trainer_plan_a_score",
+        "trainer_pathb_wait_score",
+        "trainer_risk_score",
+    }
+    text_columns = {
+        "prompt_excluded_reason",
+        "trainer_candidate_state",
+        "candidate_pool_version",
+        "prompt_pool_version",
+    }
+    parts = [f"{prefix}{column} IS NOT NULL" for column in sorted(numeric_columns) if column in columns]
+    parts.extend(
+        f"COALESCE({prefix}{column}, '') != ''"
+        for column in sorted(text_columns)
+        if column in columns
+    )
+    return " OR ".join(parts)
+
+
 def _candidate_audit_trainer_summary(conn: sqlite3.Connection, params: tuple[str, str, str]) -> dict[str, Any]:
     columns = _candidate_audit_columns(conn)
     trainer_columns = {
@@ -6298,11 +6323,17 @@ def _candidate_audit_trainer_summary(conn: sqlite3.Connection, params: tuple[str
         "trainer_plan_a_score",
         "trainer_pathb_wait_score",
         "trainer_risk_score",
+        "trainer_score_components_json",
         "trainer_candidate_state",
+        "source_tags_json",
+        "data_quality_flags_json",
         "candidate_pool_version",
         "prompt_pool_version",
     }
     if not columns.intersection(trainer_columns):
+        return {"available": False}
+    trainer_presence = _candidate_audit_trainer_presence_clause(columns)
+    if not trainer_presence:
         return {"available": False}
 
     pieces = ["COUNT(*) AS rows"]
@@ -6331,11 +6362,14 @@ def _candidate_audit_trainer_summary(conn: sqlite3.Connection, params: tuple[str
                 SELECT {', '.join(pieces)}
                 FROM audit_candidate_rows
                 WHERE session_date=? AND market=? AND runtime_mode=?
+                  AND ({trainer_presence})
                 """,
                 params,
             ).fetchone()
             or {}
         )
+        if int(totals.get("rows") or 0) <= 0:
+            return {"available": False, "rows": 0}
         totals["available"] = True
         totals.setdefault("final_prompt_rows", None)
         totals.setdefault("excluded_rows", None)
@@ -6366,6 +6400,7 @@ def _candidate_audit_trainer_summary(conn: sqlite3.Connection, params: tuple[str
                     SELECT {', '.join(state_pieces)}
                     FROM audit_candidate_rows
                     WHERE session_date=? AND market=? AND runtime_mode=?
+                      AND ({trainer_presence})
                     GROUP BY COALESCE(NULLIF(trainer_candidate_state,''), 'unknown')
                     ORDER BY rows DESC, state ASC
                     """,
@@ -6378,10 +6413,11 @@ def _candidate_audit_trainer_summary(conn: sqlite3.Connection, params: tuple[str
             excluded_reasons = [
                 dict(row)
                 for row in conn.execute(
-                    """
+                    f"""
                     SELECT prompt_excluded_reason AS reason, COUNT(*) AS rows
                     FROM audit_candidate_rows
                     WHERE session_date=? AND market=? AND runtime_mode=?
+                      AND ({trainer_presence})
                       AND COALESCE(prompt_excluded_reason, '') != ''
                     GROUP BY prompt_excluded_reason
                     ORDER BY rows DESC, reason ASC
@@ -6396,10 +6432,11 @@ def _candidate_audit_trainer_summary(conn: sqlite3.Connection, params: tuple[str
             prompt_pool_versions = [
                 dict(row)
                 for row in conn.execute(
-                    """
+                    f"""
                     SELECT COALESCE(NULLIF(prompt_pool_version,''), '-') AS version, COUNT(*) AS rows
                     FROM audit_candidate_rows
                     WHERE session_date=? AND market=? AND runtime_mode=?
+                      AND ({trainer_presence})
                     GROUP BY COALESCE(NULLIF(prompt_pool_version,''), '-')
                     ORDER BY rows DESC, version ASC
                     LIMIT 6

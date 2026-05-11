@@ -33,7 +33,7 @@ class SelectionCompactSchemaTests(unittest.TestCase):
                     "rc": "OR_PULLBACK_CONFIRMED",
                     "blk": [],
                     "inv": "break_OR_low",
-                    "pt": {"ref": 218.76, "lo": 216.5, "hi": 219.5, "tgt": 226.0, "stp": 213.5, "d": 1, "cf": 0.72},
+                    "pt": {"ref": 218.76, "lo": 216.5, "hi": 219.5, "tgt": 226.0, "stp": 213.5, "days": 1, "conf": 0.72},
                 },
                 {
                     "t": "QCOM",
@@ -46,7 +46,7 @@ class SelectionCompactSchemaTests(unittest.TestCase):
                     "rc": "GAP_PULLBACK_CONFIRMED",
                     "blk": [],
                     "inv": "break_gap_base",
-                    "pt": {"ref": 238.72, "lo": 235.0, "hi": 239.5, "tgt": 250.0, "stp": 229.0, "d": 1, "cf": 0.64},
+                    "pt": {"ref": 238.72, "lo": 235.0, "hi": 239.5, "tgt": 250.0, "stp": 229.0, "days": 1, "conf": 0.64},
                 },
                 {
                     "t": "SMCI",
@@ -84,6 +84,168 @@ class SelectionCompactSchemaTests(unittest.TestCase):
         self.assertFalse(meta["_candidate_actions_missing_contract"])
         self.assertEqual(meta["_selection_raw_schema"], "compact")
 
+    def test_compact_text_hold_direction_and_confirmation_fallback_keep_ready(self) -> None:
+        candidates = [
+            {"ticker": "RKLB", "price": 119.32},
+            {"ticker": "APLD", "price": 46.54},
+        ]
+        meta = normalize_selection_result(
+            {
+                "wl": ["RKLB", "APLD"],
+                "tr": ["RKLB", "APLD"],
+                "ca": [
+                    {
+                        "t": "RKLB",
+                        "a": "BUY_READY",
+                        "s": "gap_pullback",
+                        "c": 0.72,
+                        "fr": "at_high",
+                        "mat": "STRONG",
+                        "ceil": "BUY_READY",
+                        "rc": "TRADE_READY",
+                        "blk": [],
+                        "inv": "",
+                        "pt": {
+                            "ref": 119.32,
+                            "lo": 117.5,
+                            "hi": 122.0,
+                            "tgt": 128.0,
+                            "stp": 114.0,
+                            "d": "long",
+                            "cf": "pullback_entry_near_high",
+                        },
+                    },
+                    {
+                        "t": "APLD",
+                        "a": "BUY_READY",
+                        "s": "gap_pullback",
+                        "c": 0.68,
+                        "fr": "at_high",
+                        "mat": "STRONG",
+                        "ceil": "BUY_READY",
+                        "rc": "TRADE_READY",
+                        "blk": [],
+                        "inv": "",
+                        "pt": {
+                            "ref": 46.54,
+                            "lo": 45.5,
+                            "hi": 48.0,
+                            "tgt": 51.0,
+                            "stp": 43.5,
+                            "d": "long",
+                            "cf": "pullback_entry_near_high",
+                        },
+                    },
+                ],
+            },
+            candidates,
+            "US",
+            reference_prices=reference_prices_from_candidates(candidates, "US"),
+            stop_reason="end_turn",
+        )
+
+        self.assertEqual(meta["trade_ready"], ["RKLB", "APLD"])
+        self.assertEqual(meta["candidate_actions"][0]["action"], "BUY_READY")
+        self.assertEqual(meta["price_targets"]["RKLB"]["hold_days"], 1)
+        self.assertEqual(meta["price_targets"]["RKLB"]["confidence"], 0.72)
+        warnings = meta["_compact_validation"]["warnings"]
+        self.assertTrue(any("price_target_hold_days_non_numeric" in item for item in warnings))
+        self.assertTrue(any("price_target_confidence_filled_from_action" in item for item in warnings))
+        self.assertFalse(any("missing_price_targets" in item for item in warnings))
+
+    def test_compact_missing_core_price_levels_still_demotes_ready(self) -> None:
+        meta = normalize_selection_result(
+            {
+                "wl": ["NVDA"],
+                "tr": ["NVDA"],
+                "ca": [
+                    {
+                        "t": "NVDA",
+                        "a": "BUY_READY",
+                        "s": "momentum",
+                        "c": 0.8,
+                        "fr": "FRESH",
+                        "mat": "CONFIRMED",
+                        "ceil": "BUY_READY",
+                        "rc": "MOMENTUM_READY",
+                        "blk": [],
+                        "inv": "break_vwap",
+                        "pt": {"ref": 218.76, "d": "long", "cf": "confirmed"},
+                    }
+                ],
+            },
+            self._candidates(),
+            "US",
+            reference_prices={"NVDA": 218.76},
+            stop_reason="end_turn",
+        )
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["candidate_actions"][0]["action"], "WATCH")
+        warnings = meta["_compact_validation"]["warnings"]
+        self.assertTrue(any("missing_price_targets:sell_target,stop_loss" in item for item in warnings))
+
+    def test_compact_ready_with_internal_contradictions_is_demoted(self) -> None:
+        base_pt = {"ref": 218.76, "lo": 216.0, "hi": 219.0, "tgt": 226.0, "stp": 213.0, "days": 1, "conf": 0.7}
+        meta = normalize_selection_result(
+            {
+                "wl": ["NVDA", "QCOM", "SMCI"],
+                "tr": ["NVDA", "QCOM", "SMCI"],
+                "ca": [
+                    {
+                        "t": "NVDA",
+                        "a": "BUY_READY",
+                        "s": "momentum",
+                        "c": "high",
+                        "fr": "FRESH",
+                        "mat": "CONFIRMED",
+                        "ceil": "BUY_READY",
+                        "rc": "MOMENTUM_READY",
+                        "blk": [],
+                        "inv": "break_vwap",
+                        "pt": base_pt,
+                    },
+                    {
+                        "t": "QCOM",
+                        "a": "BUY_READY",
+                        "s": "momentum",
+                        "c": 0.7,
+                        "fr": "FRESH",
+                        "mat": "CONFIRMED",
+                        "ceil": "WATCH",
+                        "rc": "MOMENTUM_READY",
+                        "blk": [],
+                        "inv": "break_vwap",
+                        "pt": {**base_pt, "ref": 238.72, "lo": 235.0, "hi": 239.0, "tgt": 250.0, "stp": 229.0},
+                    },
+                    {
+                        "t": "SMCI",
+                        "a": "PROBE_READY",
+                        "s": "gap_pullback",
+                        "c": 0.6,
+                        "fr": "FRESH",
+                        "mat": "CONFIRMED",
+                        "ceil": "PROBE_READY",
+                        "rc": "GAP_PULLBACK_READY",
+                        "blk": ["data_missing"],
+                        "inv": "break_base",
+                        "pt": {**base_pt, "ref": 48.25, "lo": 47.0, "hi": 49.0, "tgt": 52.0, "stp": 45.0},
+                    },
+                ],
+            },
+            self._candidates(),
+            "US",
+            reference_prices=reference_prices_from_candidates(self._candidates(), "US"),
+            stop_reason="end_turn",
+        )
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual([item["action"] for item in meta["candidate_actions"]], ["WATCH", "WATCH", "WATCH"])
+        warnings = meta["_compact_validation"]["warnings"]
+        self.assertTrue(any("ready_confidence_missing_demoted" in item for item in warnings))
+        self.assertTrue(any("ready_exceeds_action_ceiling_demoted" in item for item in warnings))
+        self.assertTrue(any("ready_with_blockers_demoted" in item for item in warnings))
+
     def test_pullback_wait_keeps_price_targets_without_trade_ready(self) -> None:
         meta = normalize_selection_result(
             {
@@ -101,7 +263,7 @@ class SelectionCompactSchemaTests(unittest.TestCase):
                         "rc": "WAIT_FOR_PULLBACK",
                         "blk": ["above_zone"],
                         "inv": "break_vwap",
-                        "pt": {"ref": 218.76, "lo": 216.0, "hi": 218.5, "tgt": 224.0, "stp": 212.5, "d": 1, "cf": 0.62},
+                        "pt": {"ref": 218.76, "lo": 216.0, "hi": 218.5, "tgt": 224.0, "stp": 212.5, "days": 1, "conf": 0.62},
                     }
                 ],
             },
@@ -145,7 +307,7 @@ class SelectionCompactSchemaTests(unittest.TestCase):
                         "rc": "MOMENTUM_READY",
                         "blk": [],
                         "inv": "break_vwap",
-                        "pt": {"ref": 999.0, "lo": 216.0, "hi": 219.0, "tgt": 226.0, "stp": 213.0, "d": 1, "cf": 0.8},
+                        "pt": {"ref": 999.0, "lo": 216.0, "hi": 219.0, "tgt": 226.0, "stp": 213.0, "days": 1, "conf": 0.8},
                     }
                 ],
             },
@@ -176,7 +338,7 @@ class SelectionCompactSchemaTests(unittest.TestCase):
                         "rc": "MOMENTUM_READY",
                         "blk": [],
                         "inv": "break_vwap",
-                        "pt": {"ref": 218.76, "lo": 216.0, "hi": 219.0, "tgt": 226.0, "stp": 213.0, "d": 1, "cf": 0.8},
+                        "pt": {"ref": 218.76, "lo": 216.0, "hi": 219.0, "tgt": 226.0, "stp": 213.0, "days": 1, "conf": 0.8},
                     }
                 ],
             },
@@ -194,6 +356,8 @@ class SelectionCompactSchemaTests(unittest.TestCase):
         contract = compact_output_contract(watch_max=15, trade_max=5)
         self.assertIn("Use keys only: wl,tr,ca", contract)
         self.assertIn("Do not include reasons", contract)
+        self.assertIn("pt.days must be numeric hold_days", contract)
+        self.assertIn("pt.conf must be numeric confidence", contract)
         self.assertNotIn('"candidate_actions"', contract)
 
 

@@ -134,6 +134,47 @@ def _action_map(actions: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _candidate_row_value(row: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def _trainer_audit_fields(
+    row: dict[str, Any],
+    meta: dict[str, Any],
+    *,
+    included: bool,
+    excluded_reason: str = "",
+) -> dict[str, Any]:
+    components = row.get("trainer_score_components")
+    if not isinstance(components, dict):
+        components = row.get("trainer_score_components_json") if isinstance(row.get("trainer_score_components_json"), dict) else {}
+    return {
+        "final_prompt_included": bool(included),
+        "raw_rank": row.get("raw_rank"),
+        "trainer_score_rank": row.get("trainer_score_rank"),
+        "prompt_excluded_reason": excluded_reason or row.get("prompt_excluded_reason") or "",
+        "trainer_prompt_score": row.get("trainer_prompt_score"),
+        "trainer_plan_a_score": row.get("trainer_plan_a_score"),
+        "trainer_pathb_wait_score": row.get("trainer_pathb_wait_score"),
+        "trainer_risk_score": row.get("trainer_risk_score"),
+        "trainer_score_components_json": components,
+        "trainer_candidate_state": row.get("trainer_candidate_state"),
+        "source_tags_json": row.get("source_tags") or [],
+        "data_quality_flags_json": row.get("data_quality_flags") or row.get("quality_data_gaps") or [],
+        "candidate_pool_version": row.get("candidate_pool_version") or meta.get("_candidate_quality_trainer_version", ""),
+        "prompt_pool_version": row.get("prompt_pool_version") or meta.get("_prompt_pool_version", ""),
+        "candidate_source": row.get("candidate_source") or row.get("source") or "",
+        "candidate_age_min": row.get("candidate_age_min"),
+        "price_change_since_first_seen_pct": row.get("price_change_since_first_seen_pct"),
+        "freshness_verdict": row.get("freshness_verdict"),
+        "trainer_tier": row.get("trainer_tier"),
+    }
+
+
 def _parse_prompt_candidates(prompt: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     in_block = False
@@ -166,7 +207,7 @@ def _parse_prompt_candidates(prompt: str) -> list[dict[str, Any]]:
                 "turnover": _first_match_float(r"\bturn=([0-9,.]+)", text),
                 "market_type": _first_match_text(r"\bboard=([A-Za-z0-9_]+)", text),
                 "liquidity_bucket": _first_match_text(r"\bliq=([A-Za-z0-9_-]+)", text),
-                "primary_bucket": _first_match_text(r"\bfit=([A-Za-z0-9_-]+)", text),
+                "primary_bucket": _first_match_text(r"\b(?:fit|category)=([A-Za-z0-9_-]+)", text),
                 "payload": {
                     "prompt_line": line,
                     "from_high_tag": _first_match_text(r"from_high=[^()]*\(([^)]+)\)", text),
@@ -274,6 +315,16 @@ def _backfill_raw_calls(
         watch_set = _as_ticker_set(parsed.get("watchlist"))
         ready_set = _as_ticker_set(parsed.get("trade_ready"))
         actions = _action_map(parsed.get("candidate_actions"))
+        prompt_pool_rows = [
+            dict(row or {})
+            for row in list(parsed.get("_final_prompt_pool") or [])
+            if isinstance(row, dict) and str(row.get("ticker") or "").strip()
+        ]
+        prompt_pool_by_ticker = {
+            str(row.get("ticker") or "").strip().upper(): row
+            for row in prompt_pool_rows
+        }
+        prompt_tickers = {str(candidate.get("ticker") or "").strip().upper() for candidate in prompt_candidates}
         store.upsert_call(
             {
                 "call_id": call_id,
@@ -296,6 +347,7 @@ def _backfill_raw_calls(
         )
         for rank, candidate in enumerate(prompt_candidates, start=1):
             ticker = str(candidate.get("ticker") or "").upper()
+            trainer_row = prompt_pool_by_ticker.get(ticker, {})
             action = actions.get(ticker, {})
             action_name = str(action.get("action") or action.get("decision") or "").strip().upper()
             if not action_name:
@@ -315,7 +367,7 @@ def _backfill_raw_calls(
                     "known_at": called_at,
                     "ticker": ticker,
                     "source_file": str(path.relative_to(root)),
-                    "prompt_rank": rank,
+                    "prompt_rank": trainer_row.get("prompt_rank") or rank,
                     "in_prompt": True,
                     "price": candidate.get("price"),
                     "change_pct": candidate.get("change_pct"),
@@ -332,9 +384,49 @@ def _backfill_raw_calls(
                     "recommended_strategy": _value_for_ticker(parsed.get("recommended_strategy"), ticker) or "",
                     "risk_tags": _value_for_ticker(parsed.get("risk_tags"), ticker) or [],
                     "max_position_pct": _value_for_ticker(parsed.get("max_position_pct"), ticker),
+                    **(_trainer_audit_fields(trainer_row, parsed, included=True) if trainer_row else {}),
                     "payload": {
                         "prompt": candidate.get("payload") or {},
                         "candidate_action": action,
+                    },
+                }
+            )
+        for item in list(parsed.get("_excluded_from_prompt") or []):
+            if not isinstance(item, dict):
+                continue
+            row = dict(item.get("candidate") or item)
+            ticker = str(row.get("ticker") or item.get("ticker") or "").strip().upper()
+            if not ticker or ticker in prompt_tickers:
+                continue
+            excluded_reason = str(item.get("prompt_excluded_reason") or item.get("reason") or "not_in_prompt")
+            store.upsert_candidate(
+                {
+                    "call_id": call_id,
+                    "runtime_mode": runtime_mode,
+                    "market": market,
+                    "session_date": session_date,
+                    "known_at": called_at,
+                    "ticker": ticker,
+                    "source_file": str(path.relative_to(root)),
+                    "prompt_rank": None,
+                    "in_prompt": False,
+                    "screener_seen": True,
+                    "input_to_claude_reported": False,
+                    "name": _candidate_row_value(row, "name", default=""),
+                    "price": _candidate_row_value(row, "price", "current_price"),
+                    "change_pct": _candidate_row_value(row, "change_pct", "change_rate"),
+                    "volume_ratio": _candidate_row_value(row, "volume_ratio", "vol_ratio"),
+                    "turnover": _candidate_row_value(row, "turnover"),
+                    "market_type": _candidate_row_value(row, "market_type", default=""),
+                    "liquidity_bucket": _candidate_row_value(row, "liquidity_bucket", default=""),
+                    "primary_bucket": _candidate_row_value(row, "primary_bucket", default=""),
+                    "secondary_buckets": list(row.get("secondary_buckets") or []),
+                    "classification": "not_in_prompt",
+                    **_trainer_audit_fields(row, parsed, included=False, excluded_reason=excluded_reason),
+                    "payload": {
+                        "selection_stage": "trainer_prompt_pool_excluded",
+                        "prompt_pool_audit": True,
+                        "excluded_reason": excluded_reason,
                     },
                 }
             )

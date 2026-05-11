@@ -354,8 +354,8 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                 "prompt": "\n".join(
                     [
                         "Candidates:",
-                        "AAPL chg=+1.0% p=100 vol=1.2x turn=50 board=NASDAQ liq=high fit=opening_range_pullback",
-                        "MSFT chg=+0.5% p=200 vol=1.1x turn=40 board=NASDAQ liq=high fit=gap_pullback",
+                        "AAPL chg=+1.0% p=100 vol=1.2x turn=50 board=NASDAQ liq=high category=opening_range_pullback",
+                        "MSFT chg=+0.5% p=200 vol=1.1x turn=40 board=NASDAQ liq=high category=gap_pullback",
                         "Market context:",
                     ]
                 ),
@@ -384,6 +384,54 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                         ],
                         "price_targets": {"AAPL": {"buy_zone_low": 99, "buy_zone_high": 101}},
                         "_selection_raw_schema": "compact",
+                        "_candidate_quality_trainer_version": "trainer_quality_v1",
+                        "_prompt_pool_version": "trainer_prompt_pool_v1",
+                        "_final_prompt_pool": [
+                            {
+                                "ticker": "AAPL",
+                                "prompt_rank": 1,
+                                "final_prompt_included": True,
+                                "raw_rank": 2,
+                                "trainer_score_rank": 1,
+                                "trainer_prompt_score": 82.0,
+                                "trainer_plan_a_score": 67.0,
+                                "trainer_pathb_wait_score": 88.0,
+                                "trainer_risk_score": 24.0,
+                                "trainer_candidate_state": "PLAN_A",
+                                "trainer_score_components": {"version": "trainer_quality_v1"},
+                                "source_tags": ["US:momentum_now"],
+                                "candidate_pool_version": "trainer_quality_v1",
+                                "prompt_pool_version": "trainer_prompt_pool_v1",
+                            },
+                            {
+                                "ticker": "MSFT",
+                                "prompt_rank": 2,
+                                "final_prompt_included": True,
+                                "raw_rank": 1,
+                                "trainer_score_rank": 2,
+                                "trainer_prompt_score": 56.0,
+                                "trainer_risk_score": 31.0,
+                                "trainer_candidate_state": "PLAN_B",
+                                "candidate_pool_version": "trainer_quality_v1",
+                                "prompt_pool_version": "trainer_prompt_pool_v1",
+                            },
+                        ],
+                        "_excluded_from_prompt": [
+                            {
+                                "ticker": "WEAK",
+                                "reason": "trainer_quarantine",
+                                "candidate": {
+                                    "ticker": "WEAK",
+                                    "raw_rank": 40,
+                                    "trainer_score_rank": 40,
+                                    "trainer_prompt_score": 12.0,
+                                    "trainer_risk_score": 95.0,
+                                    "trainer_candidate_state": "QUARANTINE",
+                                    "candidate_pool_version": "trainer_quality_v1",
+                                    "prompt_pool_version": "trainer_prompt_pool_v1",
+                                },
+                            }
+                        ],
                     },
                 },
                 "extra": {"compact_schema_enabled": True, "prompt_contract": "selection_compact.v1"},
@@ -406,10 +454,20 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             try:
                 rows = conn.execute(
                     """
-                    SELECT ticker, claude_action, claude_watchlist, claude_trade_ready, recommended_strategy
+                    SELECT ticker, claude_action, claude_watchlist, claude_trade_ready, recommended_strategy, primary_bucket
                     FROM audit_candidate_rows
                     WHERE call_id='compact_call_1'
+                      AND in_prompt=1
                     ORDER BY prompt_rank
+                    """
+                ).fetchall()
+                trainer_rows = conn.execute(
+                    """
+                    SELECT ticker, final_prompt_included, raw_rank, trainer_score_rank,
+                           trainer_prompt_score, trainer_candidate_state, prompt_excluded_reason
+                    FROM audit_candidate_rows
+                    WHERE call_id='compact_call_1'
+                    ORDER BY COALESCE(prompt_rank, 999), ticker
                     """
                 ).fetchall()
             finally:
@@ -420,9 +478,20 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(rows[0]["claude_action"], "BUY_READY")
             self.assertEqual(rows[0]["claude_trade_ready"], 1)
             self.assertEqual(rows[0]["recommended_strategy"], "opening_range_pullback")
+            self.assertEqual(rows[0]["primary_bucket"], "opening_range_pullback")
             self.assertEqual(rows[1]["claude_action"], "WATCH")
             self.assertEqual(rows[1]["claude_watchlist"], 1)
             self.assertEqual(rows[1]["recommended_strategy"], "gap_pullback")
+            self.assertEqual(rows[1]["primary_bucket"], "gap_pullback")
+            by_ticker = {row["ticker"]: row for row in trainer_rows}
+            self.assertEqual(by_ticker["AAPL"]["final_prompt_included"], 1)
+            self.assertEqual(by_ticker["AAPL"]["raw_rank"], 2)
+            self.assertEqual(by_ticker["AAPL"]["trainer_score_rank"], 1)
+            self.assertEqual(by_ticker["AAPL"]["trainer_prompt_score"], 82.0)
+            self.assertEqual(by_ticker["AAPL"]["trainer_candidate_state"], "PLAN_A")
+            self.assertEqual(by_ticker["WEAK"]["final_prompt_included"], 0)
+            self.assertEqual(by_ticker["WEAK"]["prompt_excluded_reason"], "trainer_quarantine")
+            self.assertEqual(by_ticker["WEAK"]["trainer_candidate_state"], "QUARANTINE")
 
     def test_outcome_labeler_uses_existing_horizon_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

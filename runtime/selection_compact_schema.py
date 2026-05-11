@@ -15,12 +15,15 @@ PRICE_TARGET_KEY_MAP = {
     "hi": "buy_zone_high",
     "tgt": "sell_target",
     "stp": "stop_loss",
+    "days": "hold_days",
     "d": "hold_days",
+    "conf": "confidence",
     "cf": "confidence",
 }
 REQUIRED_PRICE_TARGET_KEYS = ("buy_zone_low", "buy_zone_high", "sell_target", "stop_loss", "hold_days", "confidence")
 ALLOWED_TOP_KEYS = {"wl", "tr", "ca"}
 ALLOWED_ACTION_KEYS = {"t", "a", "s", "c", "fr", "mat", "ceil", "rc", "blk", "inv", "pt"}
+ALLOWED_PT_KEYS = {"ref", "lo", "hi", "tgt", "stp", "days", "conf", "d", "cf"}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -109,10 +112,17 @@ Use keys only: wl,tr,ca.
 wl=max {int(watch_max)} tickers. tr=max {int(trade_max)} tickers.
 ca exactly one item per wl ticker, same order.
 ca item keys only: t,a,s,c,fr,mat,ceil,rc,blk,inv,pt.
+Field meanings:
+t=ticker, a=action, s=strategy, c=numeric confidence 0.0-1.0.
+fr=freshness label, mat=setup maturity label, ceil=max action allowed by evidence.
+rc=short reason code, blk=array of blockers, inv=short invalidation condition.
 Allowed actions: BUY_READY, PROBE_READY, PULLBACK_WAIT, WATCH, AVOID.
 pt only for BUY_READY/PROBE_READY/PULLBACK_WAIT.
 WATCH/AVOID omit pt.
-pt keys only: ref,lo,hi,tgt,stp,d,cf.
+pt keys only: ref,lo,hi,tgt,stp,days,conf.
+pt.days must be numeric hold_days, not direction text.
+pt.conf must be numeric confidence 0.0-1.0, not a reason or confirmation phrase.
+Legacy d/cf are parser-compatible aliases only; do not output d/cf.
 ref must equal supplied p= price when available.
 tr may contain only BUY_READY or PROBE_READY tickers.
 Do not include reasons, veto, risk_tags, allocation, budgets, sizing, long strings, candidate_actions, price_targets, recommended_strategy, or extra keys.
@@ -161,17 +171,37 @@ def _to_int(value: Any) -> int | None:
     return int(parsed)
 
 
-def _compact_price_targets(raw: Any, reference_price: float | None, warnings: list[str]) -> dict[str, Any]:
+def _compact_price_targets(
+    raw: Any,
+    reference_price: float | None,
+    warnings: list[str],
+    *,
+    action_confidence: float | None = None,
+    default_hold_days: int = 1,
+) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
     target: dict[str, Any] = {}
+    extra_keys = sorted(str(key) for key in raw.keys() if str(key) not in ALLOWED_PT_KEYS)
+    if extra_keys:
+        warnings.append("price_target_extra_keys")
     for short_key, full_key in PRICE_TARGET_KEY_MAP.items():
         if short_key not in raw:
             continue
+        if full_key in target:
+            continue
         if full_key == "hold_days":
             parsed_int = _to_int(raw.get(short_key))
-            if parsed_int is not None:
+            if parsed_int is not None and parsed_int > 0:
                 target[full_key] = parsed_int
+            else:
+                warnings.append("price_target_hold_days_non_numeric")
+        elif full_key == "confidence":
+            parsed = _to_float(raw.get(short_key))
+            if parsed is not None:
+                target[full_key] = parsed
+            else:
+                warnings.append("price_target_confidence_non_numeric")
         else:
             parsed = _to_float(raw.get(short_key))
             if parsed is not None:
@@ -186,11 +216,21 @@ def _compact_price_targets(raw: Any, reference_price: float | None, warnings: li
             warnings.append("reference_price_corrected_to_input")
     if "confidence" in target:
         target["confidence"] = max(0.0, min(1.0, float(target["confidence"])))
+    elif action_confidence is not None:
+        target["confidence"] = max(0.0, min(1.0, float(action_confidence)))
+        warnings.append("price_target_confidence_filled_from_action")
     buy_low = _to_float(target.get("buy_zone_low"))
     buy_high = _to_float(target.get("buy_zone_high"))
     sell_target = _to_float(target.get("sell_target"))
     stop_loss = _to_float(target.get("stop_loss"))
     reference = _to_float(target.get("reference_price"))
+    if (
+        "hold_days" not in target
+        and any(value is not None for value in (buy_low, buy_high, sell_target, stop_loss, reference))
+        and default_hold_days > 0
+    ):
+        target["hold_days"] = int(default_hold_days)
+        warnings.append("price_target_hold_days_filled_default")
     if buy_low and stop_loss and buy_low > stop_loss:
         risk = buy_low - stop_loss
         target.setdefault("risk_pct", round((risk / buy_low) * 100.0, 4))
@@ -304,8 +344,14 @@ def canonicalize_compact_selection(
         reason_code = str(raw_item.get("rc") or action or "WATCH").strip()[:80]
         if reason_code:
             reasons[ticker] = reason_code
+        confidence = _bounded_confidence(raw_item.get("c"))
         reference_price = refs.get(ticker)
-        target = _compact_price_targets(raw_item.get("pt"), reference_price, item_warnings)
+        target = _compact_price_targets(
+            raw_item.get("pt"),
+            reference_price,
+            item_warnings,
+            action_confidence=confidence,
+        )
         if action in ACTIONABLE_ACTIONS:
             missing_target_keys = [key for key in REQUIRED_PRICE_TARGET_KEYS if key not in target]
             if missing_target_keys:
@@ -319,11 +365,23 @@ def canonicalize_compact_selection(
             item_warnings.append("compact_contract_failed_demoted")
             action = "WATCH"
             target = {}
-        confidence = _bounded_confidence(raw_item.get("c"))
-        size_intent = "normal" if action == "BUY_READY" else ("probe" if action == "PROBE_READY" else "none")
         freshness = str(raw_item.get("fr") or "UNKNOWN").strip().upper() or "UNKNOWN"
         maturity = str(raw_item.get("mat") or "WEAK").strip().upper() or "WEAK"
         ceiling = str(raw_item.get("ceil") or action).strip().upper() or action
+        blocking_factors = _list_str(raw_item.get("blk"), 4)
+        if action in READY_ACTIONS and confidence <= 0:
+            item_warnings.append("ready_confidence_missing_demoted")
+            action = "WATCH"
+            target = {}
+        if action in READY_ACTIONS and ceiling not in READY_ACTIONS:
+            item_warnings.append("ready_exceeds_action_ceiling_demoted")
+            action = "WATCH"
+            target = {}
+        if action in READY_ACTIONS and blocking_factors:
+            item_warnings.append("ready_with_blockers_demoted")
+            action = "WATCH"
+            target = {}
+        size_intent = "normal" if action == "BUY_READY" else ("probe" if action == "PROBE_READY" else "none")
         why_not_watch = ""
         if action in READY_ACTIONS:
             why_not_watch = ":".join(part for part in (reason_code, freshness, maturity) if part)
@@ -352,7 +410,7 @@ def canonicalize_compact_selection(
                 "setup_maturity": maturity,
                 "why_not_watch": why_not_watch,
                 "action_ceiling_ack": ceiling,
-                "blocking_factors": _list_str(raw_item.get("blk"), 4),
+                "blocking_factors": blocking_factors,
                 "soft_gate_overrides": [],
                 "required_confirmations": [],
                 "entry_type": strategy or action.lower(),
