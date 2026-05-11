@@ -23,6 +23,7 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
         self.assertIn(b"candidate-audit-freshness", response.data)
         self.assertIn(b"candidate-audit-missed", response.data)
         self.assertIn(b"candidate-audit-watch-trigger", response.data)
+        self.assertIn(b"candidate-audit-trainer", response.data)
         self.assertIn(b"/candidate-audit", response.data)
 
     def test_candidate_audit_page_honors_market_and_mode_query_params(self) -> None:
@@ -105,7 +106,82 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             self.assertIn("routing_delta", data)
             self.assertIn("latency_sla", data)
             self.assertIn("watch_trigger_shadow_summary", data)
+            self.assertIn("trainer_summary", data)
             self.assertEqual(data["strategy_mismatch"]["mismatch_count"], 1)
+
+    def test_candidate_audit_api_exposes_trainer_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_trainer",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-12",
+                    "known_at": "2026-05-12T22:30:00+09:00",
+                    "ticker": "NVTS",
+                    "prompt_rank": 1,
+                    "in_prompt": True,
+                    "final_prompt_included": True,
+                    "raw_rank": 4,
+                    "trainer_score_rank": 1,
+                    "trainer_prompt_score": 82.5,
+                    "trainer_plan_a_score": 68.0,
+                    "trainer_pathb_wait_score": 74.0,
+                    "trainer_risk_score": 24.5,
+                    "trainer_candidate_state": "PLAN_A",
+                    "prompt_pool_version": "trainer_prompt_pool_v1",
+                    "classification": "watch_only",
+                }
+            )
+            store.upsert_candidate(
+                {
+                    "call_id": "call_trainer",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-12",
+                    "known_at": "2026-05-12T22:30:00+09:00",
+                    "ticker": "WEAK",
+                    "in_prompt": False,
+                    "final_prompt_included": False,
+                    "raw_rank": 40,
+                    "trainer_score_rank": 40,
+                    "trainer_prompt_score": 18.0,
+                    "trainer_risk_score": 88.0,
+                    "trainer_candidate_state": "QUARANTINE",
+                    "prompt_excluded_reason": "trainer_quarantine",
+                    "prompt_pool_version": "trainer_prompt_pool_v1",
+                    "classification": "not_in_prompt",
+                }
+            )
+
+            import dashboard.dashboard_server as dashboard_server
+
+            with patch.object(dashboard_server, "_candidate_audit_db_path", return_value=db_path):
+                summary = dashboard_server.app.test_client().get(
+                    "/api/candidate-audit/summary?market=US&date=2026-05-12&mode=live"
+                )
+                rows = dashboard_server.app.test_client().get(
+                    "/api/candidate-audit/rows?market=US&date=2026-05-12&mode=live"
+                )
+
+            self.assertEqual(summary.status_code, 200)
+            summary_data = summary.get_json()
+            self.assertTrue(summary_data["trainer_summary"]["available"])
+            self.assertEqual(summary_data["trainer_summary"]["final_prompt_rows"], 1)
+            self.assertEqual(summary_data["trainer_summary"]["excluded_rows"], 1)
+            self.assertIn(
+                "PLAN_A",
+                {row["state"] for row in summary_data["trainer_summary"]["states"]},
+            )
+
+            self.assertEqual(rows.status_code, 200)
+            rows_data = rows.get_json()
+            by_ticker = {row["ticker"]: row for row in rows_data["rows"]}
+            self.assertEqual(by_ticker["NVTS"]["trainer_candidate_state"], "PLAN_A")
+            self.assertEqual(by_ticker["NVTS"]["trainer_score_rank"], 1)
+            self.assertEqual(by_ticker["WEAK"]["prompt_excluded_reason"], "trainer_quarantine")
 
     def test_candidate_audit_summary_missing_db_is_non_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

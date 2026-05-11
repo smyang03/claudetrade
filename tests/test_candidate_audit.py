@@ -14,6 +14,57 @@ from tools.update_candidate_audit_outcomes import update_candidate_audit_outcome
 
 
 class CandidateAuditBackfillTests(unittest.TestCase):
+    def test_candidate_audit_additive_trainer_columns_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_trainer_1",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-12",
+                    "known_at": "2026-05-12T22:30:00+09:00",
+                    "ticker": "NVDA",
+                    "in_prompt": True,
+                    "final_prompt_included": True,
+                    "raw_rank": 7,
+                    "trainer_score_rank": 1,
+                    "trainer_prompt_score": 86.0,
+                    "trainer_plan_a_score": 70.0,
+                    "trainer_pathb_wait_score": 91.0,
+                    "trainer_risk_score": 28.0,
+                    "trainer_candidate_state": "PLAN_A",
+                    "trainer_score_components_json": {"version": "trainer_quality_v1"},
+                    "source_tags_json": ["US:momentum_now", "US:high"],
+                    "candidate_pool_version": "trainer_quality_v1",
+                    "prompt_pool_version": "trainer_prompt_pool_v1",
+                }
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT final_prompt_included, raw_rank, trainer_score_rank,
+                           trainer_prompt_score, trainer_candidate_state,
+                           trainer_score_components_json, source_tags_json
+                    FROM audit_candidate_rows
+                    WHERE ticker='NVDA'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+            self.assertEqual(row["final_prompt_included"], 1)
+            self.assertEqual(row["raw_rank"], 7)
+            self.assertEqual(row["trainer_score_rank"], 1)
+            self.assertEqual(row["trainer_prompt_score"], 86.0)
+            self.assertEqual(row["trainer_candidate_state"], "PLAN_A")
+            self.assertIn("trainer_quality_v1", row["trainer_score_components_json"])
+            self.assertIn("momentum_now", row["source_tags_json"])
+
     def test_watch_trigger_funnel_summary_counts_shadow_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

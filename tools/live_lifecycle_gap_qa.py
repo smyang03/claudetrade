@@ -107,11 +107,15 @@ def load_v2_lifecycle_events(
                 payload = json.loads(row["payload_json"] or "{}")
             except json.JSONDecodeError:
                 payload = {}
+            payload_order_no = str(payload.get("order_no") or payload.get("broker_order_no") or "").strip()
+            execution_id = str(row["execution_id"] or "").strip()
             rows.append(
                 {
                     "event_type": row["event_type"],
                     "ticker": _norm_ticker(market_key, row["ticker"]),
-                    "order_no": str(row["execution_id"] or payload.get("order_no") or "").strip(),
+                    "order_no": payload_order_no or execution_id,
+                    "broker_order_no": payload_order_no,
+                    "execution_id": execution_id,
                     "occurred_at": row["occurred_at"],
                     "source": str(db_path),
                 }

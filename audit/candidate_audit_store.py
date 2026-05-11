@@ -78,6 +78,20 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "tuning_feedback_applied": "INTEGER",
     "config_hash": "TEXT",
     "feature_flags_json": "TEXT",
+    "final_prompt_included": "INTEGER",
+    "raw_rank": "INTEGER",
+    "trainer_score_rank": "INTEGER",
+    "prompt_excluded_reason": "TEXT",
+    "trainer_prompt_score": "REAL",
+    "trainer_plan_a_score": "REAL",
+    "trainer_pathb_wait_score": "REAL",
+    "trainer_risk_score": "REAL",
+    "trainer_score_components_json": "TEXT",
+    "trainer_candidate_state": "TEXT",
+    "source_tags_json": "TEXT",
+    "data_quality_flags_json": "TEXT",
+    "candidate_pool_version": "TEXT",
+    "prompt_pool_version": "TEXT",
 }
 
 
@@ -108,6 +122,7 @@ def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
         "claude_override_allowed",
         "bypass_advisor",
         "tuning_feedback_applied",
+        "final_prompt_included",
     }:
         if value is None:
             return None

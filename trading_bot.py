@@ -8866,6 +8866,49 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         strategy_map = self._candidate_audit_ticker_map((meta or {}).get("recommended_strategy"), market_key)
         max_position_map = self._candidate_audit_ticker_map((meta or {}).get("max_position_pct"), market_key)
         tuning_feedback = dict((meta or {}).get("tuning_feedback") or {})
+        prompt_rows = [
+            dict(row or {})
+            for row in list((meta or {}).get("_final_prompt_pool") or [])
+            if isinstance(row, dict) and str((row or {}).get("ticker") or "").strip()
+        ]
+        prompt_by_ticker = {
+            self._selection_ticker_key(market_key, row.get("ticker")): row
+            for row in prompt_rows
+        }
+        excluded_rows = list((meta or {}).get("_excluded_from_prompt") or [])
+
+        def _candidate_row_value(row: dict, *keys: str, default=None):
+            for key in keys:
+                value = row.get(key)
+                if value not in (None, ""):
+                    return value
+            return default
+
+        def _trainer_audit_fields(row: dict, *, included: bool, excluded_reason: str = "") -> dict:
+            components = row.get("trainer_score_components")
+            if not isinstance(components, dict):
+                components = row.get("trainer_score_components_json") if isinstance(row.get("trainer_score_components_json"), dict) else {}
+            return {
+                "final_prompt_included": bool(included),
+                "raw_rank": row.get("raw_rank"),
+                "trainer_score_rank": row.get("trainer_score_rank"),
+                "prompt_excluded_reason": excluded_reason or row.get("prompt_excluded_reason") or "",
+                "trainer_prompt_score": row.get("trainer_prompt_score"),
+                "trainer_plan_a_score": row.get("trainer_plan_a_score"),
+                "trainer_pathb_wait_score": row.get("trainer_pathb_wait_score"),
+                "trainer_risk_score": row.get("trainer_risk_score"),
+                "trainer_score_components_json": components,
+                "trainer_candidate_state": row.get("trainer_candidate_state"),
+                "source_tags_json": row.get("source_tags") or [],
+                "data_quality_flags_json": row.get("data_quality_flags") or row.get("quality_data_gaps") or [],
+                "candidate_pool_version": row.get("candidate_pool_version") or (meta or {}).get("_candidate_quality_trainer_version", ""),
+                "prompt_pool_version": row.get("prompt_pool_version") or (meta or {}).get("_prompt_pool_version", ""),
+                "candidate_source": row.get("candidate_source") or row.get("source") or "",
+                "candidate_age_min": row.get("candidate_age_min"),
+                "price_change_since_first_seen_pct": row.get("price_change_since_first_seen_pct"),
+                "freshness_verdict": row.get("freshness_verdict"),
+                "trainer_tier": row.get("trainer_tier"),
+            }
         try:
             store.upsert_call(
                 {
@@ -8895,6 +8938,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 key = self._selection_ticker_key(market_key, ticker)
                 action = action_by_ticker.get(key, {})
                 route = route_by_ticker.get(key, {})
+                prompt_row = prompt_by_ticker.get(key, {})
                 runtime_gate = dict(route.get("runtime_gate") or {})
                 soft_validation = dict(runtime_gate.get("soft_gate_override_validation") or {})
                 risk_tags = risk_tag_map.get(key, [])
@@ -8910,10 +8954,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "known_at": known_at,
                         "ticker": key,
                         "source_file": "trading_bot.selection_meta",
-                        "prompt_rank": rank,
+                        "prompt_rank": prompt_row.get("prompt_rank") or rank,
                         "in_prompt": True,
                         "screener_seen": True,
                         "input_to_claude_reported": True,
+                        "name": _candidate_row_value(prompt_row, "name", default=""),
+                        "price": _candidate_row_value(prompt_row, "price", "current_price"),
+                        "change_pct": _candidate_row_value(prompt_row, "change_pct", "change_rate"),
+                        "volume_ratio": _candidate_row_value(prompt_row, "volume_ratio", "vol_ratio"),
+                        "turnover": _candidate_row_value(prompt_row, "turnover"),
+                        "market_type": _candidate_row_value(prompt_row, "market_type", default=""),
+                        "liquidity_bucket": _candidate_row_value(prompt_row, "liquidity_bucket", default=""),
+                        "primary_bucket": _candidate_row_value(prompt_row, "primary_bucket", default=""),
+                        "secondary_buckets": list(prompt_row.get("secondary_buckets") or []),
                         "claude_action": str(action.get("action") or ""),
                         "claude_reason": str(action.get("reason") or reason_map.get(key) or ""),
                         "claude_veto_reason": str(veto_map.get(key) or ""),
@@ -8949,6 +9002,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "soft_gates": list(runtime_gate.get("soft_gates") or []),
                         "tuning_rule_version": str(tuning_feedback.get("rule_version") or ""),
                         "tuning_feedback_applied": bool((meta or {}).get("tuning_feedback_applied", False)),
+                        **_trainer_audit_fields(prompt_row, included=True),
                         "payload": {
                             "confirmation_state": route.get("confirmation_state") or runtime_gate.get("kr_confirmation_state", ""),
                             "confirmation_reason": route.get("confirmation_reason") or runtime_gate.get("kr_confirmation_reason", ""),
@@ -8957,6 +9011,84 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "evidence_tickers": list((meta or {}).get("evidence_tickers") or []),
                             "tuning_feedback": tuning_feedback,
                             "selection_stage": "live_selection_meta",
+                        },
+                    }
+                )
+            watch_keys = {
+                self._selection_ticker_key(market_key, ticker)
+                for ticker in watchlist
+            }
+            for row in prompt_rows:
+                key = self._selection_ticker_key(market_key, row.get("ticker"))
+                if not key or key in watch_keys:
+                    continue
+                store.upsert_candidate(
+                    {
+                        "call_id": call_id,
+                        "runtime_mode": getattr(self, "_mode", "live"),
+                        "market": market_key,
+                        "session_date": session_date,
+                        "known_at": known_at,
+                        "ticker": key,
+                        "source_file": "trading_bot.prompt_pool",
+                        "prompt_rank": row.get("prompt_rank"),
+                        "in_prompt": True,
+                        "screener_seen": True,
+                        "input_to_claude_reported": True,
+                        "name": _candidate_row_value(row, "name", default=""),
+                        "price": _candidate_row_value(row, "price", "current_price"),
+                        "change_pct": _candidate_row_value(row, "change_pct", "change_rate"),
+                        "volume_ratio": _candidate_row_value(row, "volume_ratio", "vol_ratio"),
+                        "turnover": _candidate_row_value(row, "turnover"),
+                        "market_type": _candidate_row_value(row, "market_type", default=""),
+                        "liquidity_bucket": _candidate_row_value(row, "liquidity_bucket", default=""),
+                        "primary_bucket": _candidate_row_value(row, "primary_bucket", default=""),
+                        "secondary_buckets": list(row.get("secondary_buckets") or []),
+                        "classification": "in_prompt_not_selected",
+                        **_trainer_audit_fields(row, included=True),
+                        "payload": {
+                            "selection_stage": "trainer_prompt_pool",
+                            "prompt_pool_audit": True,
+                        },
+                    }
+                )
+            prompt_keys = set(prompt_by_ticker.keys())
+            for item in excluded_rows:
+                if not isinstance(item, dict):
+                    continue
+                row = dict(item.get("candidate") or item)
+                key = self._selection_ticker_key(market_key, row.get("ticker") or item.get("ticker"))
+                if not key or key in watch_keys or key in prompt_keys:
+                    continue
+                excluded_reason = str(item.get("prompt_excluded_reason") or item.get("reason") or "not_in_prompt")
+                store.upsert_candidate(
+                    {
+                        "call_id": call_id,
+                        "runtime_mode": getattr(self, "_mode", "live"),
+                        "market": market_key,
+                        "session_date": session_date,
+                        "known_at": known_at,
+                        "ticker": key,
+                        "source_file": "trading_bot.prompt_pool_excluded",
+                        "prompt_rank": None,
+                        "in_prompt": False,
+                        "screener_seen": True,
+                        "input_to_claude_reported": False,
+                        "name": _candidate_row_value(row, "name", default=""),
+                        "price": _candidate_row_value(row, "price", "current_price"),
+                        "change_pct": _candidate_row_value(row, "change_pct", "change_rate"),
+                        "volume_ratio": _candidate_row_value(row, "volume_ratio", "vol_ratio"),
+                        "turnover": _candidate_row_value(row, "turnover"),
+                        "market_type": _candidate_row_value(row, "market_type", default=""),
+                        "liquidity_bucket": _candidate_row_value(row, "liquidity_bucket", default=""),
+                        "primary_bucket": _candidate_row_value(row, "primary_bucket", default=""),
+                        "secondary_buckets": list(row.get("secondary_buckets") or []),
+                        "classification": "not_in_prompt",
+                        **_trainer_audit_fields(row, included=False, excluded_reason=excluded_reason),
+                        "payload": {
+                            "selection_stage": "trainer_prompt_pool_excluded",
+                            "prompt_pool_audit": True,
+                            "excluded_reason": excluded_reason,
                         },
                     }
                 )

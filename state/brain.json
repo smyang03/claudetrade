@@ -1,6 +1,6 @@
 {
   "meta": {
-    "version": 3121,
+    "version": 3122,
     "created": "2026-03-19",
     "last_updated": "2026-05-12",
     "trained_days_kr": 35,
@@ -4751,13 +4751,13 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "240min_tune": {
-          "count": 16,
+          "count": 17,
           "correct": 2,
-          "rate": 0.125,
-          "insight": "Below-average precision (12% over 16 trials); use with caution. (Context: 지수 -0.41% + 30분 기울기 -0.18%p 하락 지속, breadth advance_ratio -14%p 악화(adv/dec 36/37 )",
-          "last_seen": "2026-05-08",
+          "rate": 0.118,
+          "insight": "지수 +0.18% 유지·breadth 52/25(advance_ratio ~67%)로 아침 73%에서 소폭 하락했으나 GC/DC 소멸·RSI OB 해소는 과열 완화 신호이며 30분 기울기 -0.08%p 하락세는 미약한 수준으로 MODERATE_BULL thesis 훼손 임계 미달; NVDA SL(325,307) 근접(현재 324,433) 주의하나 포지션 전반 손익 긍정적이고 경고 없음으로 MAINTAIN 유지",
+          "last_seen": "2026-05-12",
           "adjusted": 2,
-          "adjusted_rate": 0.125,
+          "adjusted_rate": 0.118,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "270min_tune": {

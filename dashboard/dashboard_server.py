@@ -6273,6 +6273,149 @@ def _candidate_audit_columns(conn: sqlite3.Connection) -> set[str]:
         return set()
 
 
+def _candidate_audit_optional_expr(
+    columns: set[str],
+    column: str,
+    *,
+    alias: Optional[str] = None,
+    table_alias: str = "r",
+    fallback: str = "NULL",
+) -> str:
+    out_name = alias or column
+    if column in columns:
+        return f"{table_alias}.{column} AS {out_name}"
+    return f"{fallback} AS {out_name}"
+
+
+def _candidate_audit_trainer_summary(conn: sqlite3.Connection, params: tuple[str, str, str]) -> dict[str, Any]:
+    columns = _candidate_audit_columns(conn)
+    trainer_columns = {
+        "final_prompt_included",
+        "raw_rank",
+        "trainer_score_rank",
+        "prompt_excluded_reason",
+        "trainer_prompt_score",
+        "trainer_plan_a_score",
+        "trainer_pathb_wait_score",
+        "trainer_risk_score",
+        "trainer_candidate_state",
+        "candidate_pool_version",
+        "prompt_pool_version",
+    }
+    if not columns.intersection(trainer_columns):
+        return {"available": False}
+
+    pieces = ["COUNT(*) AS rows"]
+    if "final_prompt_included" in columns:
+        pieces.append("COALESCE(SUM(CASE WHEN final_prompt_included=1 THEN 1 ELSE 0 END), 0) AS final_prompt_rows")
+    if "prompt_excluded_reason" in columns:
+        pieces.append(
+            "COALESCE(SUM(CASE WHEN COALESCE(prompt_excluded_reason,'')!='' THEN 1 ELSE 0 END), 0) AS excluded_rows"
+        )
+    if "trainer_prompt_score" in columns:
+        pieces.append("ROUND(AVG(CASE WHEN trainer_prompt_score IS NOT NULL THEN trainer_prompt_score END), 2) AS avg_prompt_score")
+        pieces.append("ROUND(MAX(trainer_prompt_score), 2) AS max_prompt_score")
+    if "trainer_plan_a_score" in columns:
+        pieces.append("ROUND(AVG(CASE WHEN trainer_plan_a_score IS NOT NULL THEN trainer_plan_a_score END), 2) AS avg_plan_a_score")
+    if "trainer_pathb_wait_score" in columns:
+        pieces.append(
+            "ROUND(AVG(CASE WHEN trainer_pathb_wait_score IS NOT NULL THEN trainer_pathb_wait_score END), 2) AS avg_pathb_wait_score"
+        )
+    if "trainer_risk_score" in columns:
+        pieces.append("ROUND(AVG(CASE WHEN trainer_risk_score IS NOT NULL THEN trainer_risk_score END), 2) AS avg_risk_score")
+
+    try:
+        totals = dict(
+            conn.execute(
+                f"""
+                SELECT {', '.join(pieces)}
+                FROM audit_candidate_rows
+                WHERE session_date=? AND market=? AND runtime_mode=?
+                """,
+                params,
+            ).fetchone()
+            or {}
+        )
+        totals["available"] = True
+        totals.setdefault("final_prompt_rows", None)
+        totals.setdefault("excluded_rows", None)
+        totals.setdefault("avg_prompt_score", None)
+        totals.setdefault("max_prompt_score", None)
+        totals.setdefault("avg_plan_a_score", None)
+        totals.setdefault("avg_pathb_wait_score", None)
+        totals.setdefault("avg_risk_score", None)
+
+        states: list[dict[str, Any]] = []
+        if "trainer_candidate_state" in columns:
+            state_pieces = [
+                "COALESCE(NULLIF(trainer_candidate_state,''), 'unknown') AS state",
+                "COUNT(*) AS rows",
+            ]
+            if "final_prompt_included" in columns:
+                state_pieces.append(
+                    "COALESCE(SUM(CASE WHEN final_prompt_included=1 THEN 1 ELSE 0 END), 0) AS final_prompt_rows"
+                )
+            if "trainer_prompt_score" in columns:
+                state_pieces.append("ROUND(AVG(trainer_prompt_score), 2) AS avg_prompt_score")
+            if "trainer_risk_score" in columns:
+                state_pieces.append("ROUND(AVG(trainer_risk_score), 2) AS avg_risk_score")
+            states = [
+                dict(row)
+                for row in conn.execute(
+                    f"""
+                    SELECT {', '.join(state_pieces)}
+                    FROM audit_candidate_rows
+                    WHERE session_date=? AND market=? AND runtime_mode=?
+                    GROUP BY COALESCE(NULLIF(trainer_candidate_state,''), 'unknown')
+                    ORDER BY rows DESC, state ASC
+                    """,
+                    params,
+                )
+            ]
+
+        excluded_reasons: list[dict[str, Any]] = []
+        if "prompt_excluded_reason" in columns:
+            excluded_reasons = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT prompt_excluded_reason AS reason, COUNT(*) AS rows
+                    FROM audit_candidate_rows
+                    WHERE session_date=? AND market=? AND runtime_mode=?
+                      AND COALESCE(prompt_excluded_reason, '') != ''
+                    GROUP BY prompt_excluded_reason
+                    ORDER BY rows DESC, reason ASC
+                    LIMIT 12
+                    """,
+                    params,
+                )
+            ]
+
+        prompt_pool_versions: list[dict[str, Any]] = []
+        if "prompt_pool_version" in columns:
+            prompt_pool_versions = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT COALESCE(NULLIF(prompt_pool_version,''), '-') AS version, COUNT(*) AS rows
+                    FROM audit_candidate_rows
+                    WHERE session_date=? AND market=? AND runtime_mode=?
+                    GROUP BY COALESCE(NULLIF(prompt_pool_version,''), '-')
+                    ORDER BY rows DESC, version ASC
+                    LIMIT 6
+                    """,
+                    params,
+                )
+            ]
+
+        totals["states"] = states
+        totals["excluded_reasons"] = excluded_reasons
+        totals["prompt_pool_versions"] = prompt_pool_versions
+        return totals
+    except Exception as exc:
+        return {"available": False, "error": str(exc)}
+
+
 def _candidate_audit_contract_summary(conn: sqlite3.Connection, params: tuple[str, str, str]) -> dict[str, Any]:
     columns = _candidate_audit_columns(conn)
     wanted = {
@@ -6347,6 +6490,7 @@ def api_candidate_audit_summary():
             "routing_delta": {},
             "latency_sla": {},
             "watch_trigger_shadow_summary": {},
+            "trainer_summary": {"available": False},
         })
     params = (session_date, market, mode)
     try:
@@ -6437,6 +6581,7 @@ def api_candidate_audit_summary():
             latency_sla = {}
             watch_trigger_shadow_summary = {}
         contract_summary = _candidate_audit_contract_summary(conn, params)
+        trainer_summary = _candidate_audit_trainer_summary(conn, params)
         return jsonify({
             "ok": True,
             "exists": True,
@@ -6462,6 +6607,7 @@ def api_candidate_audit_summary():
             "latency_sla": latency_sla,
             "watch_trigger_shadow_summary": watch_trigger_shadow_summary,
             "contract_summary": contract_summary,
+            "trainer_summary": trainer_summary,
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
@@ -6508,6 +6654,20 @@ def api_candidate_audit_rows():
         outcome_horizon = 60
     params.append(limit)
     try:
+        columns = _candidate_audit_columns(conn)
+        trainer_select = [
+            _candidate_audit_optional_expr(columns, "final_prompt_included"),
+            _candidate_audit_optional_expr(columns, "raw_rank"),
+            _candidate_audit_optional_expr(columns, "trainer_score_rank"),
+            _candidate_audit_optional_expr(columns, "prompt_excluded_reason"),
+            _candidate_audit_optional_expr(columns, "trainer_prompt_score"),
+            _candidate_audit_optional_expr(columns, "trainer_plan_a_score"),
+            _candidate_audit_optional_expr(columns, "trainer_pathb_wait_score"),
+            _candidate_audit_optional_expr(columns, "trainer_risk_score"),
+            _candidate_audit_optional_expr(columns, "trainer_candidate_state"),
+            _candidate_audit_optional_expr(columns, "candidate_pool_version"),
+            _candidate_audit_optional_expr(columns, "prompt_pool_version"),
+        ]
         query_params = [outcome_horizon, *params]
         rows = [
             dict(row)
@@ -6520,6 +6680,7 @@ def api_candidate_audit_rows():
                        r.route_reason, r.route_runtime_gate_reason,
                        r.buy_signal_count, r.filled_count, r.pnl_pct, r.exit_reason,
                        r.close_reason, r.classification,
+                       {', '.join(trainer_select)},
                        o.status AS outcome_status,
                        o.return_pct AS outcome_return_pct,
                        o.max_runup_pct AS outcome_max_runup_pct,
@@ -12416,6 +12577,11 @@ PAGE_CANDIDATE_AUDIT_HTML = """
   </section>
 
   <section class="section">
+    <div class="section-title">후보 품질 트레이너</div>
+    <div id="candidate-audit-trainer" class="table-wrap"><div class="muted">로딩 중...</div></div>
+  </section>
+
+  <section class="section">
     <div class="section-title">분류별 사후 성과</div>
     <div id="candidate-audit-buckets" class="table-wrap"><div class="muted">로딩 중...</div></div>
   </section>
@@ -12485,6 +12651,15 @@ function auditStatusPill(status) {
   const cls = ['ok', 'ready'].includes(s) ? 'good' : (['stale', 'critical', 'immature'].includes(s) ? 'bad' : 'warn');
   return `<span class="audit-pill ${cls}">${auditLabel(s)}</span>`;
 }
+function auditScore(v, digits = 1) {
+  const n = auditNum(v);
+  return n === null ? '-' : n.toFixed(digits);
+}
+function auditTrainerStatePill(state) {
+  const s = String(state || '-');
+  const cls = ['PLAN_A'].includes(s) ? 'good' : (['QUARANTINE', 'BENCH'].includes(s) ? 'bad' : 'warn');
+  return `<span class="audit-pill ${cls}">${auditLabel(s)}</span>`;
+}
 function auditParams() {
   const params = new URLSearchParams();
   params.set('market', MARKET);
@@ -12516,6 +12691,7 @@ function renderCandidateAuditMissing(data) {
   document.getElementById('candidate-audit-latency').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-missed').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-routing-delta').innerHTML = '<div class="muted">데이터 없음</div>';
+  document.getElementById('candidate-audit-trainer').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-watch-trigger').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-rows').innerHTML = '<div class="muted">데이터 없음</div>';
 }
@@ -12555,6 +12731,7 @@ function renderCandidateAuditSummary(data) {
   renderCandidateAuditLatency(data.latency_sla || {});
   renderCandidateAuditMissed(data.missed_winners || []);
   renderCandidateAuditRoutingDelta(data.routing_delta || {});
+  renderCandidateAuditTrainer(data.trainer_summary || {});
   renderCandidateAuditWatchTrigger(data.watch_trigger_shadow_summary || {});
   renderCandidateAuditBuckets(data.outcome_buckets || []);
   renderCandidateAuditRouteShadow(data.route_shadow_summary || {});
@@ -12649,6 +12826,39 @@ function renderCandidateAuditRoutingDelta(summary) {
       <tr><td>route reasons</td><td class="audit-reason">${auditLabel(reasonRows.map(k => `${k}:${reasons[k]}`).join(', '))}</td></tr>
     </tbody>
   </table>`;
+}
+function renderCandidateAuditTrainer(summary) {
+  const el = document.getElementById('candidate-audit-trainer');
+  if (!summary || !summary.available) {
+    el.innerHTML = `<div class="muted">${auditLabel((summary && summary.error) || 'trainer audit 데이터 없음')}</div>`;
+    return;
+  }
+  const states = summary.states || [];
+  const excluded = summary.excluded_reasons || [];
+  const versions = (summary.prompt_pool_versions || []).map(row => `${row.version}:${row.rows}`).join(', ');
+  const head = `<div class="audit-note" style="margin-bottom:8px">
+    rows ${auditInt(summary.rows)} · prompt 포함 ${auditInt(summary.final_prompt_rows)} · 제외 ${auditInt(summary.excluded_rows)}
+    · 평균 Q ${auditScore(summary.avg_prompt_score)} · PlanA ${auditScore(summary.avg_plan_a_score)} · PlanB ${auditScore(summary.avg_pathb_wait_score)} · risk ${auditScore(summary.avg_risk_score)}
+    ${versions ? ` · ${auditLabel(versions)}` : ''}
+  </div>`;
+  const stateTable = states.length ? `<table class="audit-compact-table">
+    <thead><tr><th>상태</th><th>rows</th><th>prompt 포함</th><th>Q 평균</th><th>risk 평균</th></tr></thead>
+    <tbody>${states.map(row => `<tr>
+      <td>${auditTrainerStatePill(row.state)}</td>
+      <td>${auditInt(row.rows)}</td>
+      <td>${auditInt(row.final_prompt_rows)}</td>
+      <td>${auditScore(row.avg_prompt_score)}</td>
+      <td>${auditScore(row.avg_risk_score)}</td>
+    </tr>`).join('')}</tbody>
+  </table>` : '<div class="muted">state 집계 없음</div>';
+  const reasonTable = excluded.length ? `<table class="audit-compact-table" style="margin-top:10px">
+    <thead><tr><th>제외 사유</th><th>rows</th></tr></thead>
+    <tbody>${excluded.map(row => `<tr>
+      <td class="audit-reason">${auditLabel(row.reason)}</td>
+      <td>${auditInt(row.rows)}</td>
+    </tr>`).join('')}</tbody>
+  </table>` : '';
+  el.innerHTML = head + stateTable + reasonTable;
 }
 function renderCandidateAuditWatchTrigger(summary) {
   const el = document.getElementById('candidate-audit-watch-trigger');
@@ -12765,7 +12975,7 @@ function renderCandidateAuditRows(data) {
   }
   el.innerHTML = `<table class="audit-compact-table">
     <thead><tr>
-      <th>시간</th><th>종목</th><th>분류</th><th>rank</th><th>Claude</th><th>Route</th>
+      <th>시간</th><th>종목</th><th>분류</th><th>prompt</th><th>trainer</th><th>Claude</th><th>Route</th>
       <th>가격</th><th>등락</th><th>체결</th><th>실현</th><th>사후수익</th><th>MFE</th><th>MAE</th><th>outcome</th><th>사유</th>
     </tr></thead>
     <tbody>${rows.map(row => {
@@ -12773,12 +12983,23 @@ function renderCandidateAuditRows(data) {
       const ret = auditNum(row.outcome_return_pct);
       const mfe = auditNum(row.outcome_max_runup_pct);
       const mae = auditNum(row.outcome_max_drawdown_pct);
-      const reason = row.route_reason || row.route_runtime_gate_reason || row.claude_reason || '';
+      const reason = row.prompt_excluded_reason || row.route_reason || row.route_runtime_gate_reason || row.claude_reason || '';
+      const included = Number(row.final_prompt_included ?? row.in_prompt ?? 0) === 1;
+      const promptRank = row.prompt_rank ?? '-';
+      const rawRank = row.raw_rank ?? '-';
+      const scoreRank = row.trainer_score_rank ?? '-';
+      const trainer = row.trainer_candidate_state || row.trainer_prompt_score != null || row.trainer_risk_score != null
+        ? `${auditTrainerStatePill(row.trainer_candidate_state)}<div class="audit-note">Q ${auditScore(row.trainer_prompt_score)} · A ${auditScore(row.trainer_plan_a_score)} · B ${auditScore(row.trainer_pathb_wait_score)} · R ${auditScore(row.trainer_risk_score)}</div>`
+        : '-';
       return `<tr>
         <td>${auditLabel(auditShortTime(row.known_at))}</td>
         <td>${auditLabel(row.ticker)}</td>
         <td>${auditLabel(row.classification)}</td>
-        <td>${auditLabel(row.prompt_rank ?? '-')}</td>
+        <td>
+          <span class="audit-pill ${included ? 'good' : 'warn'}">${included ? 'IN' : 'OUT'}</span>
+          <div class="audit-note">raw ${auditLabel(rawRank)} · score ${auditLabel(scoreRank)} · prompt ${auditLabel(promptRank)}</div>
+        </td>
+        <td>${trainer}</td>
         <td>${auditLabel(row.claude_action)}</td>
         <td>${auditLabel(row.route_final_action)}</td>
         <td>${auditLabel(row.price)}</td>

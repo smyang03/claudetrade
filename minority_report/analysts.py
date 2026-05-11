@@ -681,6 +681,38 @@ def _candidate_quality_hint(candidate: dict) -> str:
     return "quality=" + ",".join(parts) if parts else ""
 
 
+def _candidate_trainer_hint(candidate: dict) -> str:
+    if not _env_bool_flag("CANDIDATE_QUALITY_TRAINER_PROMPT_HINT_ENABLED", True):
+        return ""
+    state = str(candidate.get("trainer_candidate_state") or "").strip().upper()
+    score = candidate.get("trainer_prompt_score")
+    risk = candidate.get("trainer_risk_score")
+    plan_a = candidate.get("trainer_plan_a_score")
+    pathb = candidate.get("trainer_pathb_wait_score")
+    if not state and score in (None, "") and risk in (None, ""):
+        return ""
+    parts = []
+    if state:
+        parts.append(state)
+    try:
+        parts.append(f"q={float(score):.0f}")
+    except Exception:
+        pass
+    try:
+        parts.append(f"pa={float(plan_a):.0f}")
+    except Exception:
+        pass
+    try:
+        parts.append(f"pb={float(pathb):.0f}")
+    except Exception:
+        pass
+    try:
+        parts.append(f"risk={float(risk):.0f}")
+    except Exception:
+        pass
+    return "trainer=" + ",".join(parts) if parts else ""
+
+
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
     if market == "US":
         hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "30"))
@@ -786,6 +818,86 @@ def _curate_selection_candidates(candidates: list[dict], market: str, prompt_cap
                 break
 
     return chosen[:prompt_cap]
+
+
+def _trainer_prompt_pool_enabled() -> bool:
+    return _env_bool_flag("CANDIDATE_QUALITY_TRAINER_ENABLED", False)
+
+
+def _trainer_prompt_reorder_enabled() -> bool:
+    return _env_bool_flag("CANDIDATE_PROMPT_POOL_REORDER_ENABLED", False)
+
+
+def _trainer_prompt_target(market: str, fallback: int) -> int:
+    market_key = str(market or "").upper()
+    return _env_int_bound(
+        f"CANDIDATE_PROMPT_POOL_TARGET_{market_key}",
+        _env_int_bound(f"{market_key}_PROMPT_POOL_CAP", fallback, 1, 100),
+        1,
+        100,
+    )
+
+
+def _trainer_prompt_hard_cap(market: str, fallback: int) -> int:
+    market_key = str(market or "").upper()
+    return _env_int_bound(
+        f"CANDIDATE_PROMPT_POOL_HARD_CAP_{market_key}",
+        max(fallback, _env_int_bound(f"{market_key}_PROMPT_POOL_CAP", fallback, 1, 100)),
+        1,
+        100,
+    )
+
+
+def _build_selection_prompt_pool(candidates: list[dict], market: str, prompt_cap: int) -> tuple[list[dict], dict]:
+    if not _trainer_prompt_pool_enabled():
+        prompt_candidates = _curate_selection_candidates(candidates, market, prompt_cap)
+        return prompt_candidates, {
+            "enabled": False,
+            "prompt_pool_count": len(prompt_candidates),
+            "full_pool_count": len(candidates or []),
+            "excluded_from_prompt": [],
+            "version": "legacy_curate_selection_candidates",
+        }
+    try:
+        from runtime.candidate_prompt_pool import build_trainer_prompt_pool
+
+        target = _trainer_prompt_target(market, prompt_cap)
+        hard_cap = _trainer_prompt_hard_cap(market, max(prompt_cap, target))
+        result = build_trainer_prompt_pool(
+            list(candidates or []),
+            market=market,
+            target=target,
+            hard_cap=hard_cap,
+            reorder_enabled=_trainer_prompt_reorder_enabled(),
+        )
+        prompt_candidates = [dict(row or {}) for row in result.get("prompt_pool") or []]
+        if not prompt_candidates:
+            prompt_candidates = _curate_selection_candidates(candidates, market, prompt_cap)
+        return prompt_candidates, {
+            "enabled": True,
+            "version": result.get("version", ""),
+            "score_version": result.get("score_version", ""),
+            "target": result.get("target"),
+            "hard_cap": result.get("hard_cap"),
+            "full_pool_count": len(result.get("full_pool") or []),
+            "scored_pool_count": len(result.get("scored_pool") or []),
+            "prompt_pool_count": len(prompt_candidates),
+            "excluded_from_prompt": list(result.get("excluded_from_prompt") or []),
+            "metrics": dict(result.get("metrics") or {}),
+            "prompt_pool": prompt_candidates,
+            "scored_pool": list(result.get("scored_pool") or []),
+        }
+    except Exception as exc:
+        log.warning(f"[ticker-selection] trainer prompt pool failed {market}: {exc}")
+        prompt_candidates = _curate_selection_candidates(candidates, market, prompt_cap)
+        return prompt_candidates, {
+            "enabled": False,
+            "error": str(exc),
+            "prompt_pool_count": len(prompt_candidates),
+            "full_pool_count": len(candidates or []),
+            "excluded_from_prompt": [{"reason": "trainer_prompt_pool_error", "detail": str(exc)}],
+            "version": "legacy_after_trainer_error",
+        }
 
 
 def _safe_watch_fallback(candidates: list[dict], market: str) -> list[str]:
@@ -1440,9 +1552,16 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
 
     limits = selection_limits(market)
     prompt_cap = _selection_candidate_cap(market, limits["watch_max"], limits["trade_max"])
-    prompt_candidates = _curate_selection_candidates(candidates, market, prompt_cap)
+    prompt_candidates, prompt_pool_meta = _build_selection_prompt_pool(candidates, market, prompt_cap)
     if len(candidates) > len(prompt_candidates):
         log.info(f"[ticker-selection] {market} prompt candidates trimmed: {len(candidates)} -> {len(prompt_candidates)}")
+    if prompt_pool_meta.get("enabled"):
+        log.info(
+            f"[ticker-selection] {market} trainer_prompt_pool "
+            f"full={prompt_pool_meta.get('full_pool_count')} "
+            f"prompt={prompt_pool_meta.get('prompt_pool_count')} "
+            f"excluded={len(prompt_pool_meta.get('excluded_from_prompt') or [])}"
+        )
 
     ranked_turnovers = _annotate_candidate_prompt_features(prompt_candidates)
     cand_lines = []
@@ -1492,6 +1611,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"category={category}" if category else "",
             f"sector={sector}" if sector else "",
             f"liq={liquidity_bucket}",
+            _candidate_trainer_hint(candidate),
             _candidate_quality_hint(candidate),
             _candidate_earnings_hint(candidate),
             _candidate_preopen_pin_hint(candidate),
@@ -1760,6 +1880,23 @@ Rules:
         prompt_candidates,
         market,
     )
+
+    def _attach_prompt_pool_meta(meta: dict) -> dict:
+        enriched = dict(meta or {})
+        enriched["_candidate_quality_trainer_enabled"] = bool(prompt_pool_meta.get("enabled"))
+        enriched["_candidate_quality_trainer_version"] = str(prompt_pool_meta.get("score_version") or "")
+        enriched["_prompt_pool_version"] = str(prompt_pool_meta.get("version") or "")
+        enriched["_full_pool_count"] = int(prompt_pool_meta.get("full_pool_count") or len(candidates or []))
+        enriched["_scored_pool_count"] = int(prompt_pool_meta.get("scored_pool_count") or enriched["_full_pool_count"])
+        enriched["_prompt_pool_count"] = int(prompt_pool_meta.get("prompt_pool_count") or len(prompt_candidates))
+        enriched["_prompt_pool_target"] = prompt_pool_meta.get("target")
+        enriched["_prompt_pool_hard_cap"] = prompt_pool_meta.get("hard_cap")
+        enriched["_prompt_pool_metrics"] = dict(prompt_pool_meta.get("metrics") or {})
+        enriched["_final_prompt_pool"] = list(prompt_pool_meta.get("prompt_pool") or prompt_candidates or [])
+        enriched["_excluded_from_prompt"] = list(prompt_pool_meta.get("excluded_from_prompt") or [])
+        return enriched
+
+    fallback_meta = _attach_prompt_pool_meta(fallback_meta)
     fallback = fallback_meta["watchlist"]
 
     US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
@@ -1837,6 +1974,7 @@ Rules:
             reference_prices=selection_reference_prices,
             source_prompt_id="selection_rank_v3+compact_v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
         )
+        selection_meta = _attach_prompt_pool_meta(selection_meta)
         if evidence_items:
             selection_meta["evidence_version"] = "selection_evidence.v1"
             selection_meta["evidence_tickers"] = [str(item.get("ticker") or "") for item in evidence_items]
@@ -1935,6 +2073,7 @@ Rules:
                 except Exception as retry_exc:
                     log.warning(f"[ticker-selection] {market} lightweight retry failed: {retry_exc}")
         selection_meta.setdefault("active_lessons", active_lesson_meta)
+        selection_meta = _attach_prompt_pool_meta(selection_meta)
         if evidence_items:
             selection_meta.setdefault("evidence_version", "selection_evidence.v1")
             selection_meta.setdefault("evidence_tickers", [str(item.get("ticker") or "") for item in evidence_items])

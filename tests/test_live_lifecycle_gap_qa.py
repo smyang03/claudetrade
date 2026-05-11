@@ -108,6 +108,68 @@ class LiveLifecycleGapQATests(unittest.TestCase):
 
         self.assertEqual(report["gap_count"], 0)
 
+    def test_matches_lifecycle_event_by_payload_broker_order_no_before_execution_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entry_dir = root / "logs" / "entry_timing"
+            entry_dir.mkdir(parents=True)
+            (entry_dir / "live_20260511_KR.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event": "order_sent",
+                        "market": "KR",
+                        "ticker": "012610",
+                        "occurred_at": "2026-05-11T12:37:17+09:00",
+                        "state": {"order_no": "0029831000", "ticker": "012610"},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            db_dir = root / "data"
+            db_dir.mkdir(parents=True)
+            conn = sqlite3.connect(db_dir / "v2_event_store.db")
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE lifecycle_events (
+                        event_type TEXT,
+                        market TEXT,
+                        runtime_mode TEXT,
+                        session_date TEXT,
+                        ticker TEXT,
+                        execution_id TEXT,
+                        occurred_at TEXT,
+                        payload_json TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO lifecycle_events
+                    (event_type, market, runtime_mode, session_date, ticker, execution_id, occurred_at, payload_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "ORDER_SENT",
+                        "KR",
+                        "live",
+                        "2026-05-11",
+                        "012610",
+                        "exec_internal_012610_1",
+                        "2026-05-11T03:37:17+00:00",
+                        json.dumps({"order_no": "0029831000"}, ensure_ascii=False),
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            report = find_lifecycle_gaps(root=root, session_date="2026-05-11", market="KR")
+
+        self.assertEqual(report["gap_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
