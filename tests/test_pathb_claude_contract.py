@@ -97,6 +97,7 @@ class PathBClaudeContractTests(unittest.TestCase):
         self._pathb_env = patch.dict(
             "os.environ",
             {
+                "CANDIDATE_ACTIONS_V2_ENABLED": "false",
                 "PATHB_KR_LIVE_ENABLED": "true",
                 "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "false",
             },

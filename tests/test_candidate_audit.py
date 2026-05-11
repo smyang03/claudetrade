@@ -283,6 +283,96 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(classes["222222"], "watch_only")
             self.assertEqual(classes["333333"], "not_in_prompt")
 
+    def test_backfill_reads_compact_raw_call_normalized_meta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "logs" / "raw_calls").mkdir(parents=True)
+            (root / "logs" / "screener_quality").mkdir(parents=True)
+            (root / "logs" / "funnel").mkdir(parents=True)
+            (root / "data").mkdir(parents=True, exist_ok=True)
+            db_path = root / "data" / "audit" / "candidate_audit.db"
+            raw_call = {
+                "timestamp": "2026-05-12T09:05:00",
+                "date": "2026-05-12",
+                "market": "US",
+                "label": "select_tickers",
+                "call_id": "compact_call_1",
+                "model": "test-model",
+                "prompt_version": "selection_rank_v3+compact_v1",
+                "tokens": {"input": 100, "output": 80},
+                "prompt": "\n".join(
+                    [
+                        "Candidates:",
+                        "AAPL chg=+1.0% p=100 vol=1.2x turn=50 board=NASDAQ liq=high fit=opening_range_pullback",
+                        "MSFT chg=+0.5% p=200 vol=1.1x turn=40 board=NASDAQ liq=high fit=gap_pullback",
+                        "Market context:",
+                    ]
+                ),
+                "parsed": {
+                    "wl": ["AAPL", "MSFT"],
+                    "tr": ["AAPL"],
+                    "ca": [{"t": "AAPL", "a": "BUY_READY"}, {"t": "MSFT", "a": "WATCH"}],
+                    "_normalized": {
+                        "watchlist": ["AAPL", "MSFT"],
+                        "trade_ready": ["AAPL"],
+                        "reasons": {"AAPL": "OR_PULLBACK_CONFIRMED", "MSFT": "WATCH_ONLY"},
+                        "recommended_strategy": {"AAPL": "opening_range_pullback", "MSFT": "gap_pullback"},
+                        "candidate_actions": [
+                            {
+                                "ticker": "AAPL",
+                                "action": "BUY_READY",
+                                "strategy": "opening_range_pullback",
+                                "reason": "OR_PULLBACK_CONFIRMED",
+                            },
+                            {
+                                "ticker": "MSFT",
+                                "action": "WATCH",
+                                "strategy": "gap_pullback",
+                                "reason": "WATCH_ONLY",
+                            },
+                        ],
+                        "price_targets": {"AAPL": {"buy_zone_low": 99, "buy_zone_high": 101}},
+                        "_selection_raw_schema": "compact",
+                    },
+                },
+                "extra": {"compact_schema_enabled": True, "prompt_contract": "selection_compact.v1"},
+            }
+            (root / "logs" / "raw_calls" / "20260512_US_select_tickers_090500_compact.json").write_text(
+                json.dumps(raw_call, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            backfill_candidate_audit(
+                root=root,
+                db_path=db_path,
+                session_date="2026-05-12",
+                market="US",
+                runtime_mode="live",
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT ticker, claude_action, claude_watchlist, claude_trade_ready, recommended_strategy
+                    FROM audit_candidate_rows
+                    WHERE call_id='compact_call_1'
+                    ORDER BY prompt_rank
+                    """
+                ).fetchall()
+            finally:
+                conn.close()
+
+            self.assertEqual(len(rows), 2)
+            self.assertEqual([row["ticker"] for row in rows], ["AAPL", "MSFT"])
+            self.assertEqual(rows[0]["claude_action"], "BUY_READY")
+            self.assertEqual(rows[0]["claude_trade_ready"], 1)
+            self.assertEqual(rows[0]["recommended_strategy"], "opening_range_pullback")
+            self.assertEqual(rows[1]["claude_action"], "WATCH")
+            self.assertEqual(rows[1]["claude_watchlist"], 1)
+            self.assertEqual(rows[1]["recommended_strategy"], "gap_pullback")
+
     def test_outcome_labeler_uses_existing_horizon_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"

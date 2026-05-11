@@ -16,10 +16,14 @@ from runtime.rate_limiter import V2RateLimiter
 class V2Phase2Tests(unittest.TestCase):
     def test_fixed_sizer_uses_configured_kr_and_us_not_atr(self) -> None:
         sizer = FixedSizer(DEFAULT_V2_CONFIG)
-        self.assertEqual(sizer.size(market="KR", price_krw=25_000, cash_krw=1_000_000).qty, 4)
+        kr = sizer.size(market="KR", price_krw=25_000, cash_krw=1_000_000)
+        expected_kr_budget = min(float(DEFAULT_V2_CONFIG.kr_fixed_order_krw), 1_000_000.0)
+        self.assertEqual(kr.budget_krw, expected_kr_budget)
+        self.assertEqual(kr.qty, int(expected_kr_budget // 25_000))
         us = sizer.size(market="US", price_krw=35_000, usd_krw=1_400, cash_krw=1_000_000)
-        self.assertEqual(us.budget_krw, 70_000)
-        self.assertEqual(us.qty, 2)
+        expected_us_budget = float(DEFAULT_V2_CONFIG.us_fixed_order_krw or DEFAULT_V2_CONFIG.us_fixed_order_usd * 1_400)
+        self.assertEqual(us.budget_krw, expected_us_budget)
+        self.assertEqual(us.qty, int(expected_us_budget // 35_000))
 
         krw_target = FixedSizer(V2Config(us_fixed_order_krw=100_000, us_min_order_krw=100_000))
         us_dynamic = krw_target.size(market="US", price_krw=35_000, usd_krw=1_350, cash_krw=1_000_000)

@@ -436,6 +436,13 @@ def _path_b_selection_snapshot(
     price_targets = meta.get("price_targets") if isinstance(meta.get("price_targets"), dict) else {}
     reasons = meta.get("reasons") if isinstance(meta.get("reasons"), dict) else {}
     recommended = meta.get("recommended_strategy") if isinstance(meta.get("recommended_strategy"), dict) else {}
+    adaptive = meta.get("_adaptive_live_condition") if isinstance(meta.get("_adaptive_live_condition"), dict) else {}
+    adaptive_decisions = adaptive.get("decisions") if isinstance(adaptive.get("decisions"), dict) else {}
+    live_evidence = meta.get("_live_evidence") if isinstance(meta.get("_live_evidence"), dict) else {}
+    live_evidence_packs = live_evidence.get("packs") if isinstance(live_evidence.get("packs"), dict) else {}
+    compact_validation = meta.get("_compact_validation") if isinstance(meta.get("_compact_validation"), dict) else {}
+    candidate_actions = meta.get("candidate_actions") if isinstance(meta.get("candidate_actions"), list) else []
+    missing_strategy_count = sum(1 for ticker in watchlist if not _selection_lookup(recommended, ticker, market_key))
 
     run_by_ticker = {str(run.get("ticker", "") or "").upper() if market_key == "US" else str(run.get("ticker", "") or ""): run for run in pathb_runs}
     missing_applied = [ticker for ticker in applied_trade_ready if not _selection_lookup(price_targets, ticker, market_key)]
@@ -463,6 +470,10 @@ def _path_b_selection_snapshot(
         no_plan_reasons.append("NO_PATH_RUN_REGISTERED")
     elif not applied_trade_ready:
         no_plan_reasons.append("NO_TRADE_READY")
+    if meta.get("_candidate_actions_missing_contract"):
+        no_plan_reasons.append("CANDIDATE_ACTIONS_MISSING_CONTRACT")
+    if str(meta.get("_fallback_mode") or "") in {"selection_truncated", "selection_parse_failed"}:
+        no_plan_reasons.append(str(meta.get("_fallback_mode")).upper())
 
     ordered = _unique_list(list(applied_trade_ready) + list(filtered_tickers) + list(raw_trade_ready) + list(watchlist))
     watch_rows: list[dict[str, Any]] = []
@@ -471,6 +482,9 @@ def _path_b_selection_snapshot(
         target = _selection_lookup(price_targets, ticker, market_key) or {}
         run = run_by_ticker.get(ticker.upper() if market_key == "US" else ticker)
         filtered_reason = _selection_lookup(runtime_filtered, ticker, market_key)
+        adaptive_decision = _selection_lookup(adaptive_decisions, ticker, market_key) or {}
+        evidence_pack = _selection_lookup(live_evidence_packs, ticker, market_key) or {}
+        evidence_trace = evidence_pack.get("decision_trace") if isinstance(evidence_pack.get("decision_trace"), dict) else {}
         if run:
             state = str(run.get("status") or "REGISTERED")
         elif ticker in applied_trade_ready and target:
@@ -503,6 +517,22 @@ def _path_b_selection_snapshot(
                 "confidence": target.get("confidence", "") if isinstance(target, dict) else "",
                 "entry_rationale": target.get("entry_rationale", "") if isinstance(target, dict) else "",
                 "exit_rationale": target.get("exit_rationale", "") if isinstance(target, dict) else "",
+                "adaptive_action": adaptive_decision.get("action", "") if isinstance(adaptive_decision, dict) else "",
+                "adaptive_score": adaptive_decision.get("score", "") if isinstance(adaptive_decision, dict) else "",
+                "adaptive_size_intent": adaptive_decision.get("size_intent", "") if isinstance(adaptive_decision, dict) else "",
+                "adaptive_suggested_claude_action": adaptive_decision.get("suggested_claude_action", "") if isinstance(adaptive_decision, dict) else "",
+                "adaptive_suggested_size_intent": adaptive_decision.get("suggested_size_intent", "") if isinstance(adaptive_decision, dict) else "",
+                "adaptive_claude_reask": bool(adaptive_decision.get("claude_reask")) if isinstance(adaptive_decision, dict) else False,
+                "adaptive_non_executable": bool(adaptive_decision.get("non_executable")) if isinstance(adaptive_decision, dict) else False,
+                "adaptive_action_ceiling": adaptive_decision.get("action_ceiling", "") if isinstance(adaptive_decision, dict) else "",
+                "adaptive_reasons": adaptive_decision.get("reason_codes", []) if isinstance(adaptive_decision, dict) else [],
+                "adaptive_blockers": adaptive_decision.get("blockers", []) if isinstance(adaptive_decision, dict) else [],
+                "live_evidence_state": evidence_pack.get("data_state", "") if isinstance(evidence_pack, dict) else "",
+                "live_evidence_quality": evidence_pack.get("data_quality", "") if isinstance(evidence_pack, dict) else "",
+                "live_evidence_missing_fields": evidence_pack.get("missing_fields", []) if isinstance(evidence_pack, dict) else [],
+                "live_evidence_action_ceiling": evidence_pack.get("action_ceiling", "") if isinstance(evidence_pack, dict) else "",
+                "execution_state": evidence_trace.get("execution_state", "") if isinstance(evidence_trace, dict) else "",
+                "execution_block_reason": evidence_trace.get("block_reason", "") if isinstance(evidence_trace, dict) else "",
             }
         )
 
@@ -519,6 +549,21 @@ def _path_b_selection_snapshot(
             "runtime_filtered": len(runtime_filtered),
             "price_targets": len(price_targets),
             "registered_plans": len(pathb_runs),
+            "candidate_actions": len(candidate_actions),
+            "missing_strategy": missing_strategy_count,
+            "compact_validation_errors": len(compact_validation.get("errors") or []) if isinstance(compact_validation, dict) else 0,
+            "compact_validation_warnings": len(compact_validation.get("warnings") or []) if isinstance(compact_validation, dict) else 0,
+            "adaptive_reask_claude_shadow": len(adaptive.get("reask_claude_shadow") or []),
+            "adaptive_suggested_probe_ready_shadow": len(adaptive.get("suggested_probe_ready_shadow") or []),
+            "adaptive_suggested_micro_probe_shadow": len(adaptive.get("suggested_micro_probe_shadow") or []),
+            "adaptive_probe_ready_shadow": len(adaptive.get("probe_ready_shadow") or []),
+            "adaptive_micro_probe_shadow": len(adaptive.get("micro_probe_shadow") or []),
+            "live_evidence_missing": ((live_evidence.get("counts") or {}).get("data_state") or {}).get("missing", 0)
+            if isinstance(live_evidence.get("counts"), dict) else 0,
+            "live_evidence_partial": ((live_evidence.get("counts") or {}).get("data_state") or {}).get("partial", 0)
+            if isinstance(live_evidence.get("counts"), dict) else 0,
+            "live_evidence_confirmed": ((live_evidence.get("counts") or {}).get("data_state") or {}).get("confirmed", 0)
+            if isinstance(live_evidence.get("counts"), dict) else 0,
         },
         "watchlist": watchlist,
         "raw_trade_ready": raw_trade_ready,
@@ -527,6 +572,14 @@ def _path_b_selection_snapshot(
         "missing_price_targets": missing_applied,
         "missing_price_targets_raw": missing_raw,
         "no_plan_reasons": _unique_list(no_plan_reasons),
+        "selection_raw_schema": str(meta.get("_selection_raw_schema") or ""),
+        "selection_schema_version": str(meta.get("_selection_schema_version") or ""),
+        "selection_stop_reason": str(meta.get("_selection_stop_reason") or ""),
+        "candidate_actions_source": str(meta.get("_candidate_actions_source") or ""),
+        "candidate_actions_missing_contract": bool(meta.get("_candidate_actions_missing_contract")),
+        "compact_validation": compact_validation,
+        "adaptive_live_condition": adaptive,
+        "live_evidence": {key: value for key, value in live_evidence.items() if key != "packs"},
         "watch_rows": watch_rows,
     }
 
@@ -1077,6 +1130,7 @@ def _path_performance_comparison(events: list[dict[str, Any]], pathb_runs: list[
         )
 
     path_b_rows: list[dict[str, Any]] = []
+    counted_path_run_ids: set[str] = set()
     for run in pathb_runs:
         if str(run.get("status", "")) != "CLOSED":
             continue
@@ -1084,11 +1138,39 @@ def _path_performance_comparison(events: list[dict[str, Any]], pathb_runs: list[
         close_reason = str(plan.get("close_reason") or "")
         if close_reason == "CLOSED_BROKER_SYNC":
             continue
+        path_run_id = str(run.get("path_run_id", "") or "").strip()
+        if path_run_id:
+            counted_path_run_ids.add(path_run_id)
         path_b_rows.append(
             {
                 "ticker": run.get("ticker", ""),
                 "pnl_pct": _to_float(plan.get("pnl_pct")),
                 "pnl_value": _path_b_realized_value(run),
+            }
+        )
+    for event in events:
+        if event.get("event_type") != "CLOSED":
+            continue
+        payload = event.get("payload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        close_reason = str(payload.get("close_reason") or event.get("reason_code") or "")
+        if close_reason == "CLOSED_BROKER_SYNC":
+            continue
+        path_run_id = str(payload.get("path_run_id") or payload.get("pathb_path_run_id") or "").strip()
+        path_type = str(payload.get("path_type") or "").strip()
+        buy_path = str(payload.get("buy_path") or payload.get("entry_route") or "").strip()
+        if path_type != "claude_price" and buy_path != "path_b":
+            continue
+        if path_run_id and path_run_id in counted_path_run_ids:
+            continue
+        if path_run_id:
+            counted_path_run_ids.add(path_run_id)
+        path_b_rows.append(
+            {
+                "ticker": event.get("ticker", ""),
+                "pnl_pct": _to_float(payload.get("pnl_pct")),
+                "pnl_value": _to_float(payload.get("pnl_krw") or payload.get("realized_pnl_value")),
             }
         )
 

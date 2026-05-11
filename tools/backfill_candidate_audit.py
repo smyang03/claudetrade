@@ -141,6 +141,9 @@ def _parse_prompt_candidates(prompt: str) -> list[dict[str, Any]]:
         if "후보 종목:" in line:
             in_block = True
             continue
+        if line.strip().lower() == "candidates:":
+            in_block = True
+            continue
         if not in_block:
             continue
         match = re.match(r"\s*(?:\d+\.\s*)?([0-9A-Z][0-9A-Z.\-]{0,9})\s+(.*)$", line)
@@ -261,7 +264,9 @@ def _backfill_raw_calls(
     for path in _raw_select_files(root, session_date, market):
         data = _read_json(path)
         called_at = str(data.get("timestamp") or "")
-        parsed = data.get("parsed") if isinstance(data.get("parsed"), dict) else {}
+        parsed_raw = data.get("parsed") if isinstance(data.get("parsed"), dict) else {}
+        parsed_normalized = parsed_raw.get("_normalized") if isinstance(parsed_raw.get("_normalized"), dict) else None
+        parsed = parsed_normalized if isinstance(parsed_normalized, dict) else parsed_raw
         tokens = data.get("tokens") if isinstance(data.get("tokens"), dict) else {}
         prompt_candidates = _parse_prompt_candidates(str(data.get("prompt") or ""))
         call_id = str(data.get("call_id") or path.stem)

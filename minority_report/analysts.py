@@ -23,6 +23,11 @@ from minority_report.prompt_contracts import (
     SIZING_DECISION_CONTRACT,
 )
 from runtime.candidate_actions import candidate_action_prompt_contract
+from runtime.selection_compact_schema import (
+    compact_output_contract,
+    compact_schema_enabled,
+    reference_prices_from_candidates,
+)
 
 log          = get_minority_logger()
 analysis_log = get_analysis_logger()
@@ -270,6 +275,34 @@ def _extract_json_legacy_dead(text: str) -> dict:
                 "key_reason": reason_m.group(1) if reason_m else "응답 잘림",
             }
     raise ValueError(f"JSON 추출 실패: {text[:200]}")
+
+
+def _extract_json_strict(text: str) -> dict:
+    """Extract JSON without partial recovery for machine-contract responses."""
+
+    def _clean(s: str) -> str:
+        s = re.sub(r",(\s*[}\]])", r"\1", s)
+        s = re.sub(r"\bNaN\b", '"NaN"', s)
+        s = re.sub(r"\bInfinity\b", "999", s)
+        s = re.sub(r"\b-Infinity\b", "-999", s)
+        s = s.replace("\u201c", '"').replace("\u201d", '"')
+        s = s.replace("\u2018", "'").replace("\u2019", "'")
+        s = s.replace("\uff1a", ":")
+        s = s.replace("\r\n", "\n").replace("\r", "\n")
+        s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", s)
+        return s.strip()
+
+    raw = str(text or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
+    if fenced:
+        raw = fenced.group(1)
+    else:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError(f"strict_json_not_found:{raw[:80]}")
+        raw = raw[start:end + 1]
+    return json.loads(_clean(raw))
 ALLOWED_STANCES = set(STANCES.split("|"))
 ALLOWED_STRATEGIES = {"모멘텀", "평균회귀", "갭풀백", "갭+눌림", "갭눌림", "변동성돌파", "관망"}
 _LAST_SELECTION_META: dict = {}
@@ -1583,8 +1616,13 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         not preopen_watch
         and str(os.getenv("ENABLE_CLAUDE_CANDIDATE_ACTIONS", "false")).lower() in {"1", "true", "yes", "on"}
     )
+    compact_selection_enabled = (
+        not preopen_watch
+        and compact_schema_enabled(False)
+    )
+    selection_reference_prices = reference_prices_from_candidates(prompt_candidates, market)
     candidate_action_section = candidate_action_prompt_contract(
-        enabled=candidate_action_shadow_enabled or candidate_action_live_enabled,
+        enabled=(candidate_action_shadow_enabled or candidate_action_live_enabled) and not compact_selection_enabled,
     )
     candidate_actions_example = (
         ',\n  "candidate_actions":[{"ticker":"code1","schema_version":"candidate_actions.v2",'
@@ -1676,6 +1714,42 @@ execution_phase: {execution_phase or 'unspecified'}
   }}{candidate_actions_example}
 }}"""
 
+    if compact_selection_enabled:
+        compact_watch_max = min(
+            watch_max,
+            _env_int_bound("CLAUDE_SELECTION_COMPACT_WATCH_MAX", min(15, watch_max), 1, max(1, watch_max)),
+        )
+        compact_trade_max = min(
+            trade_max,
+            _env_int_bound("CLAUDE_SELECTION_COMPACT_TRADE_READY_MAX", min(5, trade_max), 0, max(0, trade_max)),
+        )
+        prompt = f"""{phase_instruction}
+execution_phase: {execution_phase or 'unspecified'}
+market: {market}
+mode: {consensus_mode}
+
+Candidates:
+{cand_text}
+{evidence_section}
+
+Market context:
+{digest_prompt[:220]}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}{tuning_feedback_section}
+{COMMON_DECISION_CONTRACT}
+{HARD_SOFT_RULE_CONTRACT}
+{compact_output_contract(watch_max=compact_watch_max, trade_max=compact_trade_max)}
+
+Rules:
+{phase_rule_block}
+- Choose only from supplied candidates.
+- Use live execution context and exec= hints as constraints.
+- Strong names with poor execution hints should remain WATCH.
+- Use recent selection feedback to calibrate trade_ready aggressiveness.
+- Recent feedback and tuning feedback are calibration only, not permission to chase.
+- ca[].s must be a concrete setup strategy such as momentum, gap_pullback, mean_reversion, opening_range_pullback, volatility_breakout, or continuation.
+- ca[].rc, ca[].blk, and ca[].inv must be short machine codes.
+- Do not output human explanations.
+"""
+
     fallback_meta = normalize_selection_result(
         {
             "watchlist": _safe_watch_fallback(prompt_candidates, market),
@@ -1694,19 +1768,21 @@ execution_phase: {execution_phase or 'unspecified'}
     import time as _time
     last_err = None
     resp = None
+    selection_max_tokens = 0
     for _attempt in range(3):
         try:
             throttle = throttle_state(label="select_tickers")
             if not bool(throttle.get("allowed", True)):
                 raise RuntimeError(f"claude_budget_throttle:{throttle.get('tier')}")
             compressed_output = _env_bool_flag("SELECTION_OUTPUT_COMPRESSION_ENABLED", False)
+            selection_max_tokens = (
+                _env_int_bound("CLAUDE_SELECTION_COMPRESSED_MAX_TOKENS", 2200, 700, 4000)
+                if compressed_output or throttle.get("tier") == "warn"
+                else _env_int_bound("CLAUDE_SELECTION_MAX_TOKENS", 3200, 1024, 6000)
+            )
             resp = client.messages.create(
                 model=MODEL,
-                max_tokens=(
-                    _env_int_bound("CLAUDE_SELECTION_COMPRESSED_MAX_TOKENS", 2200, 700, 4000)
-                    if compressed_output or throttle.get("tier") == "warn"
-                    else _env_int_bound("CLAUDE_SELECTION_MAX_TOKENS", 3200, 1024, 6000)
-                ),
+                max_tokens=selection_max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
             last_err = None
@@ -1725,8 +1801,42 @@ execution_phase: {execution_phase or 'unspecified'}
         if last_err is not None:
             raise last_err
         raw = resp.content[0].text.strip()
-        result = _extract_json(raw)
-        selection_meta = normalize_selection_result(result, prompt_candidates, market)
+        stop_reason = str(getattr(resp, "stop_reason", "") or "")
+        parse_error = False
+        parse_stage = "strict_compact" if compact_selection_enabled else "legacy"
+        if compact_selection_enabled and stop_reason == "max_tokens":
+            result = {
+                "wl": _safe_watch_fallback(prompt_candidates, market),
+                "tr": [],
+                "ca": [],
+                "_fallback_mode": "selection_truncated",
+            }
+            parse_error = True
+            parse_stage = "compact_truncated"
+        else:
+            try:
+                result = _extract_json_strict(raw) if compact_selection_enabled else _extract_json(raw)
+            except Exception as parse_exc:
+                if compact_selection_enabled:
+                    log.warning(f"[ticker-selection] {market} compact parse failed: {parse_exc}")
+                    result = {
+                        "wl": _safe_watch_fallback(prompt_candidates, market),
+                        "tr": [],
+                        "ca": [],
+                        "_fallback_mode": "selection_parse_failed",
+                    }
+                    parse_error = True
+                    parse_stage = "compact_parse_failed"
+                else:
+                    raise
+        selection_meta = normalize_selection_result(
+            result,
+            prompt_candidates,
+            market,
+            stop_reason=stop_reason,
+            reference_prices=selection_reference_prices,
+            source_prompt_id="selection_rank_v3+compact_v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
+        )
         if evidence_items:
             selection_meta["evidence_version"] = "selection_evidence.v1"
             selection_meta["evidence_tickers"] = [str(item.get("ticker") or "") for item in evidence_items]
@@ -1743,16 +1853,23 @@ execution_phase: {execution_phase or 'unspecified'}
             output_tokens=resp.usage.output_tokens,
             market=market,
             model=MODEL,
-                    prompt_version="selection_rank_v3+execution_plan_v1",
-                    extra={
-                        "active_lessons": active_lesson_meta,
-                        "evidence_version": "selection_evidence.v1" if evidence_items else "",
-                        "evidence_tickers": [str(item.get("ticker") or "") for item in evidence_items],
-                        "tuning_feedback_rule_version": tuning_feedback_meta.get("rule_version", ""),
-                        "tuning_feedback_applied": bool(tuning_feedback_meta),
-                    },
-                )
-        if result.get("_fallback_mode") == "selection_partial":
+            parse_error=parse_error,
+            parse_stage=parse_stage,
+            prompt_version="selection_rank_v3+compact_v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
+            extra={
+                "active_lessons": active_lesson_meta,
+                "evidence_version": "selection_evidence.v1" if evidence_items else "",
+                "evidence_tickers": [str(item.get("ticker") or "") for item in evidence_items],
+                "tuning_feedback_rule_version": tuning_feedback_meta.get("rule_version", ""),
+                "tuning_feedback_applied": bool(tuning_feedback_meta),
+                "stop_reason": stop_reason,
+                "max_tokens": selection_max_tokens,
+                "compact_schema_enabled": bool(compact_selection_enabled),
+                "selection_reference_prices": selection_reference_prices,
+                "prompt_contract": "selection_compact.v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
+            },
+        )
+        if result.get("_fallback_mode") == "selection_partial" and not compact_selection_enabled:
             retry_candidates = _pick_selection_retry_candidates(prompt_candidates, result, market)
             if retry_candidates:
                 retry_active_lessons = build_active_lesson_context(market, retry=True)

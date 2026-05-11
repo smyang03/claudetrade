@@ -9,6 +9,12 @@ from __future__ import annotations
 import os
 from typing import Iterable
 
+from runtime.selection_compact_schema import (
+    canonicalize_compact_selection,
+    is_compact_selection_response,
+    reference_prices_from_candidates,
+)
+
 
 KR_DEFAULT_EXCLUDED_TICKERS = {
     # Derivative/ETF products observed in live failures or repeated selection.
@@ -185,6 +191,8 @@ def _candidate_actions_v2_requested(parsed: dict) -> bool:
     raw_env = os.getenv("CANDIDATE_ACTIONS_V2_ENABLED", "")
     if raw_env.strip().lower() in {"1", "true", "yes", "y", "on"}:
         return True
+    if is_compact_selection_response(parsed):
+        return True
     actions = parsed.get("candidate_actions") if isinstance(parsed, dict) else None
     if not isinstance(actions, list):
         return False
@@ -195,14 +203,44 @@ def _candidate_actions_v2_requested(parsed: dict) -> bool:
     )
 
 
-def normalize_selection_result(parsed: dict, candidates: list[dict], market: str) -> dict:
+def normalize_selection_result(
+    parsed: dict,
+    candidates: list[dict],
+    market: str,
+    *,
+    stop_reason: str = "",
+    reference_prices: dict[str, float] | None = None,
+    source_prompt_id: str = "",
+) -> dict:
     """Normalize Claude output into WATCH and TRADE_READY lists.
 
     Backward compatible with the legacy {"tickers": [...]} response.
     If Claude explicitly returns "trade_ready": [], order permission remains empty.
     """
+    parsed = parsed or {}
     market = market.upper()
     limits = selection_limits(market)
+    if is_compact_selection_response(parsed):
+        compact_watch_max_raw = os.getenv("CLAUDE_SELECTION_COMPACT_WATCH_MAX", "")
+        compact_trade_max_raw = os.getenv("CLAUDE_SELECTION_COMPACT_TRADE_READY_MAX", "")
+        try:
+            compact_watch_max = min(limits["watch_max"], int(float(compact_watch_max_raw))) if compact_watch_max_raw else min(limits["watch_max"], 15)
+        except Exception:
+            compact_watch_max = min(limits["watch_max"], 15)
+        try:
+            compact_trade_max = min(limits["trade_max"], int(float(compact_trade_max_raw))) if compact_trade_max_raw else min(limits["trade_max"], 5)
+        except Exception:
+            compact_trade_max = min(limits["trade_max"], 5)
+        return canonicalize_compact_selection(
+            parsed,
+            candidates or [],
+            market,
+            reference_prices=reference_prices or reference_prices_from_candidates(candidates or [], market),
+            stop_reason=stop_reason,
+            source_prompt_id=source_prompt_id,
+            watch_max=compact_watch_max,
+            trade_max=compact_trade_max,
+        )
     valid_order = [
         normalize_ticker(c.get("ticker", ""), market)
         for c in candidates or []
@@ -265,8 +303,11 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
     if not max_position_pct and max_order_cap_pct:
         max_position_pct = dict(max_order_cap_pct)
     raw_price_targets = parsed.get("price_targets", {}) if isinstance(parsed.get("price_targets"), dict) else {}
+    candidate_actions_present = "candidate_actions" in parsed and isinstance(parsed.get("candidate_actions"), list)
     raw_candidate_actions = parsed.get("candidate_actions", [])
     candidate_actions = raw_candidate_actions if isinstance(raw_candidate_actions, list) else []
+    candidate_actions_missing_contract = bool(v2_requested and not candidate_actions_present)
+    candidate_actions_empty = bool(candidate_actions_present and not candidate_actions)
     price_targets = {}
     trade_ready_set = set(trade_ready)
     for key, value in raw_price_targets.items():
@@ -308,4 +349,10 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
         "_fallback_mode": str(parsed.get("_fallback_mode", "") or ""),
         "_candidate_actions_v2_requested": bool(v2_requested),
         "_legacy_auto_ready_promoted": bool(legacy_auto_ready_promoted),
+        "_selection_raw_schema": "legacy",
+        "_selection_stop_reason": str(stop_reason or ""),
+        "_candidate_actions_present": bool(candidate_actions_present),
+        "_candidate_actions_empty": bool(candidate_actions_empty),
+        "_candidate_actions_missing_contract": bool(candidate_actions_missing_contract),
+        "_candidate_actions_source": "candidate_actions_v1" if candidate_actions_present else "",
     }

@@ -155,9 +155,11 @@ from runtime.gate_evaluation import (
     unconfirmed_soft_cap,
 )
 from runtime.candidate_actions import action_counts, candidate_actions_from_response
+from runtime.adaptive_live_condition import attach_adaptive_live_condition_shadow
 from runtime.action_routing import route_candidate_action
 from runtime.candidate_pool_runtime import build_candidate_pool
 from runtime.exit_lifecycle import DEFAULT_LIVE_BYPASS_REASONS, decide_exit_lifecycle, exit_lifecycle_bypass_allowed
+from runtime.live_evidence_pack import attach_live_evidence_summary, build_live_evidence_pack
 from runtime.post_open_features import (
     DEFAULT_OVEREXTENDED_5M_PCT,
     OVEREXTENDED_5M_PCT_BY_MARKET,
@@ -3367,14 +3369,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         }
 
     def _normalize_candidate_actions_for_meta(self, market: str, meta: dict) -> tuple[list[dict], str]:
-        payload = {"candidate_actions": meta.get("candidate_actions")} if isinstance(meta.get("candidate_actions"), list) else meta
+        has_actions_field = isinstance((meta or {}).get("candidate_actions"), list)
+        actions_present = bool((meta or {}).get("_candidate_actions_present", has_actions_field))
+        missing_contract = bool((meta or {}).get("_candidate_actions_missing_contract"))
+        if missing_contract and not actions_present:
+            return [], "candidate_actions_missing_contract"
+        payload = {"candidate_actions": meta.get("candidate_actions")} if has_actions_field and actions_present else meta
         actions = candidate_actions_from_response(
             payload,
             market=market,
             created_at=datetime.now(KST).replace(tzinfo=None).isoformat(timespec="seconds"),
             source_prompt_id=str(meta.get("prompt_id") or ""),
         )
-        source = "candidate_actions_v1" if isinstance(meta.get("candidate_actions"), list) else "legacy_selection_shadow"
+        source = str((meta or {}).get("_candidate_actions_source") or "")
+        if not source:
+            source = "candidate_actions_v1" if has_actions_field and actions_present else "legacy_selection_shadow"
         return actions, source
 
     def _candidate_action_expired(self, action: dict) -> bool:
@@ -4031,9 +4040,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 risk_tags.append("stale_candidate")
             if gate_info.get("block_reason"):
                 risk_tags.append(str(gate_info.get("block_reason")))
+            live_pack = build_live_evidence_pack(
+                market=market_key,
+                ticker=key,
+                candidate=candidate,
+                features=features,
+                timing=timing,
+                gate_info=gate_info,
+            )
             evidence[key] = {
                 "ticker": key,
                 "evidence_version": "selection_evidence.v1",
+                "live_evidence": live_pack,
+                "data_state": live_pack.get("data_state"),
+                "missing_fields": live_pack.get("missing_fields"),
+                "action_ceiling": live_pack.get("action_ceiling"),
+                "decision_trace": live_pack.get("decision_trace"),
                 "data_quality": str(features.get("data_quality") or "partial"),
                 "positive_evidence": {
                     "change_pct": candidate.get("change_rate", candidate.get("change_pct")),
@@ -5783,6 +5805,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         last_post_open = (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key)
         if isinstance(last_post_open, dict) and last_post_open and not meta.get("_post_open_features_by_ticker"):
             meta["_post_open_features_by_ticker"] = dict(last_post_open)
+        meta = attach_adaptive_live_condition_shadow(
+            market=market,
+            selection_meta=meta,
+            consensus_mode=mode,
+            market_context={"consensus_mode": mode},
+            enabled=self._runtime_bool("ADAPTIVE_LIVE_CONDITION_SHADOW_ENABLED", True),
+        )
         meta = self._apply_candidate_action_live_routes(market, meta)
         meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
         allow_missing_price_targets = meta.get("_trade_ready_without_price_targets_allowed") or []
@@ -5791,6 +5820,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             meta,
             allow_missing_price_targets=allow_missing_price_targets,
         )
+        if self._runtime_bool("LIVE_EVIDENCE_PACK_SHADOW_ENABLED", True):
+            meta = attach_live_evidence_summary(
+                market=market,
+                selection_meta=meta,
+                max_items=int(self._runtime_float("LIVE_EVIDENCE_PACK_MAX_ITEMS", 30)),
+            )
         if not str(meta.get("selection_snapshot_ts") or "").strip():
             meta["selection_snapshot_ts"] = datetime.now(KST).isoformat(timespec="seconds")
         stages = {
@@ -8674,6 +8709,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "price_target_coverage": coverage,
             "candidate_action_routes": list((meta or {}).get("_candidate_action_routes") or []),
             "pathb_wait_tickers": list((meta or {}).get("_pathb_wait_tickers") or []),
+            "live_evidence": {
+                key: value
+                for key, value in ((meta or {}).get("_live_evidence") or {}).items()
+                if key != "packs"
+            },
             "selection_stages": stages,
         }
         self._write_funnel_event("candidate_funnel_snapshot", market, payload)

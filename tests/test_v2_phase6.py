@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from decision.registry import DecisionRegistry
+from interface import v2_ops_summary
 from interface.v2_ops_summary import V2_DASHBOARD_TABS, V2_TELEGRAM_COMMANDS, build_v2_ops_summary
 from interface.v2_telegram import handle_v2_command
 from lifecycle.event_store import EventStore
@@ -164,6 +166,88 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(summary["path_b_live"]["path_comparison"]["path_a"]["avg_pnl_pct"], 1.25)
         self.assertEqual(summary["path_b_live"]["path_comparison"]["path_b"]["avg_pnl_pct"], 3.73)
         self.assertEqual(summary["lifecycle"]["event_counts"]["ORDER_UNKNOWN"], 1)
+
+    def test_ops_summary_counts_carried_pathb_close_in_today_comparison(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            store.append(
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-11",
+                    ticker="TEVA",
+                    decision_id="dec_20260430_US_TEVA",
+                    execution_id="sell_1",
+                    position_id="pos_US_TEVA",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_phase6",
+                    reason_code="CLOSED_USER_MANUAL",
+                    payload={
+                        "close_reason": "CLOSED_USER_MANUAL",
+                        "entry_route": "path_b",
+                        "path_run_id": "path_20260430_US_TEVA_claude_price_23c822da",
+                        "path_type": "claude_price",
+                        "pnl_krw": 1764.2989,
+                        "pnl_pct": 1.6836,
+                    },
+                )
+            )
+
+            summary = build_v2_ops_summary(
+                store=store,
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-11",
+            )
+
+        comparison = summary["path_b_live"]["path_comparison"]
+        self.assertEqual(comparison["path_a"]["closed"], 0)
+        self.assertEqual(comparison["path_b"]["closed"], 1)
+        self.assertEqual(comparison["path_b"]["avg_pnl_pct"], 1.6836)
+        self.assertEqual(comparison["path_b"]["realized_pnl_value"], 1764.2989)
+
+    def test_pathb_selection_summary_exposes_compact_validation_state(self):
+        selection_meta = {
+            "watchlist": ["AAPL", "MSFT"],
+            "trade_ready": [],
+            "recommended_strategy": {"AAPL": "opening_range_pullback"},
+            "candidate_actions": [{"ticker": "AAPL", "action": "WATCH"}],
+            "_selection_raw_schema": "compact",
+            "_selection_schema_version": "selection_compact.v1",
+            "_selection_stop_reason": "max_tokens",
+            "_candidate_actions_source": "compact_candidate_actions_v1",
+            "_candidate_actions_missing_contract": True,
+            "_fallback_mode": "selection_truncated",
+            "_compact_validation": {
+                "errors": ["candidate_actions_coverage_incomplete", "stop_reason_max_tokens"],
+                "warnings": ["MSFT:missing_strategy"],
+            },
+        }
+
+        with patch.object(
+            v2_ops_summary,
+            "_load_judgment_record",
+            return_value={"selection_meta": selection_meta, "universe_tickers": ["AAPL", "MSFT"]},
+        ):
+            selection = v2_ops_summary._path_b_selection_snapshot(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-12",
+                pathb_runs=[],
+                config={"enabled": True},
+                control={"enabled": True},
+            )
+
+        self.assertEqual(selection["selection_raw_schema"], "compact")
+        self.assertEqual(selection["selection_schema_version"], "selection_compact.v1")
+        self.assertEqual(selection["selection_stop_reason"], "max_tokens")
+        self.assertTrue(selection["candidate_actions_missing_contract"])
+        self.assertEqual(selection["counts"]["candidate_actions"], 1)
+        self.assertEqual(selection["counts"]["missing_strategy"], 1)
+        self.assertEqual(selection["counts"]["compact_validation_errors"], 2)
+        self.assertIn("CANDIDATE_ACTIONS_MISSING_CONTRACT", selection["no_plan_reasons"])
+        self.assertIn("SELECTION_TRUNCATED", selection["no_plan_reasons"])
 
     def test_telegram_v2_halt_resume_and_health(self):
         bot = _Bot()

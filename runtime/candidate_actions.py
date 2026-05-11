@@ -77,6 +77,7 @@ class CandidateAction:
     action: str
     confidence: float = 0.0
     size_intent: str = "none"
+    strategy: str = ""
     reason: str = ""
     invalidation_condition: str = ""
     price_targets: dict[str, Any] = field(default_factory=dict)
@@ -106,6 +107,7 @@ class CandidateAction:
             "action": self.action,
             "confidence": self.confidence,
             "size_intent": self.size_intent,
+            "strategy": self.strategy,
             "reason": self.reason,
             "invalidation_condition": self.invalidation_condition,
             "price_targets": self.price_targets,
@@ -224,15 +226,15 @@ def normalize_candidate_action(
 ) -> dict[str, Any]:
     created = _parse_dt(created_at)
     created_text = created.isoformat(timespec="seconds")
-    ticker = str(raw.get("ticker") or "").strip()
-    schema_version = str(raw.get("schema_version") or "candidate_actions.v1").strip() or "candidate_actions.v1"
+    ticker = str(raw.get("ticker") or raw.get("t") or "").strip()
+    schema_version = str(raw.get("schema_version") or ("candidate_actions.v2" if "t" in raw or "a" in raw else "candidate_actions.v1")).strip() or "candidate_actions.v1"
     is_v2 = schema_version == "candidate_actions.v2"
-    action = str(raw.get("action") or "WATCH").strip().upper()
+    action = str(raw.get("action") or raw.get("a") or "WATCH").strip().upper()
     warnings: list[str] = []
     if action not in CLAUDE_ACTIONS:
         warnings.append(f"invalid_action:{action or 'EMPTY'}")
         action = "WATCH"
-    _raw_conf = raw.get("confidence")
+    _raw_conf = raw.get("confidence", raw.get("c"))
     try:
         confidence_raw = float(_raw_conf or 0.0)
         if not math.isfinite(confidence_raw):
@@ -241,12 +243,33 @@ def normalize_candidate_action(
     except (TypeError, ValueError, OverflowError):
         confidence = 0.0
         warnings.append(f"invalid_confidence:{_raw_conf!r}")
-    price_targets = raw.get("price_targets") if isinstance(raw.get("price_targets"), dict) else {}
+    raw_price_targets = raw.get("price_targets") if isinstance(raw.get("price_targets"), dict) else raw.get("pt")
+    if isinstance(raw_price_targets, dict) and any(key in raw_price_targets for key in ("ref", "lo", "hi", "tgt", "stp", "d", "cf")):
+        price_targets = {}
+        key_map = {
+            "ref": "reference_price",
+            "lo": "buy_zone_low",
+            "hi": "buy_zone_high",
+            "tgt": "sell_target",
+            "stp": "stop_loss",
+            "d": "hold_days",
+            "cf": "confidence",
+        }
+        for short_key, full_key in key_map.items():
+            if short_key in raw_price_targets:
+                price_targets[full_key] = raw_price_targets.get(short_key)
+    else:
+        price_targets = raw_price_targets if isinstance(raw_price_targets, dict) else {}
     if action == "WATCH" and price_targets:
         warnings.append("watch_price_targets_ignored")
         price_targets = {}
+    reason_code = str(raw.get("reason_code") or raw.get("rc") or "").strip()
+    freshness = str(raw.get("freshness_verdict") or raw.get("fr") or "").strip()
+    maturity = str(raw.get("setup_maturity") or raw.get("mat") or "").strip()
     why_not_watch = str(raw.get("why_not_watch") or "").strip()
-    action_ceiling_ack = str(raw.get("action_ceiling_ack") or raw.get("action_ceiling") or "").strip().upper()
+    if is_v2 and action in {"BUY_READY", "PROBE_READY"} and not why_not_watch:
+        why_not_watch = ":".join(part for part in (reason_code, freshness, maturity) if part)
+    action_ceiling_ack = str(raw.get("action_ceiling_ack") or raw.get("action_ceiling") or raw.get("ceil") or "").strip().upper()
     if is_v2 and not action_ceiling_ack:
         action_ceiling_ack = action
         warnings.append("v2_missing_action_ceiling_ack_defaulted")
@@ -279,23 +302,24 @@ def normalize_candidate_action(
         market=str(market or raw.get("market") or "").upper(),
         action=action,
         confidence=confidence,
-        size_intent=str(raw.get("size_intent") or ("normal" if action == "BUY_READY" else "none")),
-        reason=str(raw.get("reason") or ""),
-        invalidation_condition=str(raw.get("invalidation_condition") or ""),
+        size_intent=str(raw.get("size_intent") or ("normal" if action == "BUY_READY" else ("probe" if action == "PROBE_READY" else "none"))),
+        strategy=str(raw.get("strategy") or raw.get("s") or ""),
+        reason=str(raw.get("reason") or reason_code or ""),
+        invalidation_condition=str(raw.get("invalidation_condition") or raw.get("inv") or ""),
         price_targets=dict(price_targets),
         created_at=created_text,
         expires_at=expires_at,
         source_prompt_id=source_prompt_id,
         schema_version=schema_version,
         legacy_schema=False,
-        reason_code=str(raw.get("reason_code") or ""),
+        reason_code=reason_code,
         risk_tags=_list_str(raw.get("risk_tags"), 8),
-        entry_type=str(raw.get("entry_type") or ""),
-        freshness_verdict=str(raw.get("freshness_verdict") or ""),
-        setup_maturity=str(raw.get("setup_maturity") or ""),
+        entry_type=str(raw.get("entry_type") or raw.get("s") or ""),
+        freshness_verdict=freshness,
+        setup_maturity=maturity,
         why_not_watch=why_not_watch,
         action_ceiling_ack=action_ceiling_ack,
-        blocking_factors=_list_str(raw.get("blocking_factors"), 8),
+        blocking_factors=_list_str(raw.get("blocking_factors", raw.get("blk")), 8),
         soft_gate_overrides=_list_str(raw.get("soft_gate_overrides"), 8),
         required_confirmations=_list_str(raw.get("required_confirmations"), 8),
         max_entry_price=_float_nonneg(raw.get("max_entry_price")),

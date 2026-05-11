@@ -178,6 +178,72 @@ class ClaudeCandidateActionsTests(unittest.TestCase):
         self.assertTrue(any("invalid_confidence" in w for w in by_ticker["AMD"].get("warnings", [])))
         self.assertTrue(any("invalid_confidence" in w for w in by_ticker["NVDA"].get("warnings", [])))
 
+    def test_compact_action_keys_preserve_strategy_and_v2_ready_state(self) -> None:
+        actions = candidate_actions_from_response(
+            {
+                "candidate_actions": [
+                    {
+                        "t": "NVDA",
+                        "a": "BUY_READY",
+                        "s": "opening_range_pullback",
+                        "c": 0.73,
+                        "fr": "FRESH",
+                        "mat": "CONFIRMED",
+                        "ceil": "BUY_READY",
+                        "rc": "OR_PULLBACK_CONFIRMED",
+                        "blk": [],
+                        "inv": "break_OR_low",
+                        "pt": {
+                            "ref": 218.76,
+                            "lo": 216.5,
+                            "hi": 219.5,
+                            "tgt": 226.0,
+                            "stp": 213.5,
+                            "d": 1,
+                            "cf": 0.73,
+                        },
+                    }
+                ]
+            },
+            market="US",
+            created_at="2026-05-12T09:05:00",
+            source_prompt_id="selection_compact.v1",
+        )
+
+        self.assertEqual(actions[0]["schema_version"], "candidate_actions.v2")
+        self.assertEqual(actions[0]["action"], "BUY_READY")
+        self.assertEqual(actions[0]["strategy"], "opening_range_pullback")
+        self.assertEqual(actions[0]["size_intent"], "normal")
+        self.assertEqual(actions[0]["why_not_watch"], "OR_PULLBACK_CONFIRMED:FRESH:CONFIRMED")
+        self.assertEqual(actions[0]["price_targets"]["reference_price"], 218.76)
+        self.assertNotIn("v2_missing_why_not_watch_demoted", actions[0]["warnings"])
+
+    def test_compact_probe_defaults_to_probe_size(self) -> None:
+        actions = candidate_actions_from_response(
+            {
+                "candidate_actions": [
+                    {
+                        "t": "QCOM",
+                        "a": "PROBE_READY",
+                        "s": "gap_pullback",
+                        "c": 0.61,
+                        "fr": "FRESH",
+                        "mat": "EARLY",
+                        "ceil": "PROBE_READY",
+                        "rc": "EARLY_CONFIRMATION",
+                        "inv": "fails_vwap",
+                        "pt": {"ref": 190, "lo": 188, "hi": 191, "tgt": 197, "stp": 184, "d": 1, "cf": 0.61},
+                    }
+                ]
+            },
+            market="US",
+            created_at="2026-05-12T09:05:00",
+        )
+
+        self.assertEqual(actions[0]["action"], "PROBE_READY")
+        self.assertEqual(actions[0]["size_intent"], "probe")
+        self.assertEqual(actions[0]["strategy"], "gap_pullback")
+
 
 if __name__ == "__main__":
     unittest.main()

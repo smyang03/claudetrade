@@ -4055,6 +4055,20 @@ def _format_hhmm(value: str) -> str:
     return m.group(1) if m else "--:--"
 
 
+def _format_mmdd_hhmm(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "--:--"
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%m-%d %H:%M")
+    except Exception:
+        pass
+    m = re.search(r"(\d{4})[-/]?(\d{2})[-/]?(\d{2}).*?(\d{2}:\d{2})", text)
+    if m:
+        return f"{m.group(2)}-{m.group(3)} {m.group(4)}"
+    return _format_hhmm(text)
+
+
 def _session_status(market: str) -> dict:
     now = datetime.now(KST)
     cur = now.time()
@@ -7263,7 +7277,9 @@ def api_tickers_today():
             "skip_reasons":    skip_reasons_ko,   # 오늘 누적 미체결 사유
             "pinned_position":  t not in tickers and (t in live_pos_map or t in broker_map or t in pending_map),
             "selection_price":  float(first_seen.get("price", 0) or 0),
+            "selection_price_at": first_seen.get("ts", ""),
             "selection_price_ts": _format_hhmm(first_seen.get("ts", "")),
+            "selection_price_label": _format_mmdd_hhmm(first_seen.get("ts", "")),
             "selection_price_event": first_seen.get("event", ""),
         })
     # 선택되지 않은 후보 목록 (축약)
@@ -8714,11 +8730,17 @@ async function loadMonitorTickers() {
       const selectionReturn = t.selection_return_pct === null || typeof t.selection_return_pct === 'undefined'
         ? null
         : Number(t.selection_return_pct || 0);
+      const selectionTime = t.selection_price_ts && t.selection_price_ts !== '--:--'
+        ? t.selection_price_ts
+        : '';
       const priceText = displayPrice > 0
         ? (MARKET === 'KR' ? Math.round(displayPrice).toLocaleString() + '원' : '$' + displayPrice.toFixed(2))
         : '--';
-      const selectionText = selectionPrice > 0 && Number.isFinite(selectionReturn)
-        ? `선정 ${selectionReturn >= 0 ? '+' : ''}${selectionReturn.toFixed(1)}%`
+      const selectionBits = [];
+      if (selectionTime) selectionBits.push(selectionTime);
+      if (Number.isFinite(selectionReturn)) selectionBits.push(`${selectionReturn >= 0 ? '+' : ''}${selectionReturn.toFixed(1)}%`);
+      const selectionText = selectionPrice > 0 && selectionBits.length
+        ? `선정 ${selectionBits.join(' · ')}`
         : '';
       const pickStatus = t.selection_status_ko ? ` · ${t.selection_status_ko}` : '';
       const statusText = Number(t.sig_count || 0) > 0 ? `신호 ${t.sig_count}` : `${evLabel}${pickStatus}`;
@@ -8796,6 +8818,9 @@ async function loadMonitorTickers() {
     const selectionReturn = t.selection_return_pct === null || typeof t.selection_return_pct === 'undefined'
       ? null
       : Number(t.selection_return_pct || 0);
+    const selectionTime = t.selection_price_label && t.selection_price_label !== '--:--'
+      ? t.selection_price_label
+      : ((t.selection_price_ts && t.selection_price_ts !== '--:--') ? t.selection_price_ts : '');
     let pendingExplain = '';
     const reasons = t.skip_reasons || [];
     const shownPriceStr = displayPrice > 0
@@ -8824,16 +8849,24 @@ async function loadMonitorTickers() {
       : '';
     const priceMetaBits = [];
     const fmtCardPrice = v => MARKET === 'KR' ? fmt.asset(v) : '$' + Number(v).toFixed(2);
+    let currentShownInSelection = false;
     if (selectionPrice > 0) {
-      const selectedParts = [`선정가 ${fmtCardPrice(selectionPrice)}`];
-      if (displayPrice > 0) selectedParts.push(`현재가 ${fmtCardPrice(displayPrice)}`);
+      const selectedParts = [];
+      if (selectionTime) selectedParts.push(`선정 ${selectionTime}`);
+      selectedParts.push(`선정가 ${fmtCardPrice(selectionPrice)}`);
+      if (displayPrice > 0) {
+        selectedParts.push(`현재가 ${fmtCardPrice(displayPrice)}`);
+        currentShownInSelection = true;
+      }
       if (Number.isFinite(selectionReturn)) {
         selectedParts.push(`선정후 ${selectionReturn >= 0 ? '+' : ''}${selectionReturn.toFixed(2)}%`);
       }
       priceMetaBits.push(selectedParts.join(' · '));
     }
     if (avgPrice > 0) priceMetaBits.push(`매수가 ${MARKET === 'KR' ? fmt.asset(avgPrice) : '$' + avgPrice.toFixed(2)}`);
-    if (currentPrice > 0) priceMetaBits.push(`현재가 ${MARKET === 'KR' ? fmt.asset(currentPrice) : '$' + currentPrice.toFixed(2)}`);
+    if (currentPrice > 0 && (!currentShownInSelection || Math.abs(currentPrice - displayPrice) > 0.0001)) {
+      priceMetaBits.push(`현재가 ${MARKET === 'KR' ? fmt.asset(currentPrice) : '$' + currentPrice.toFixed(2)}`);
+    }
     const priceMetaHtml = priceMetaBits.length
       ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${priceMetaBits.join(' · ')}</div>`
       : '';
@@ -10576,10 +10609,13 @@ async function loadClaudeNarrative() {
   });
 
   (tickers.tickers || []).slice(0, 5).forEach(t => {
+    const selectionTime = t.selection_price_label && t.selection_price_label !== '--:--'
+      ? t.selection_price_label
+      : ((t.selection_price_ts && t.selection_price_ts !== '--:--') ? t.selection_price_ts : '');
     rows.push(timelineRow(
       'pick',
       `${t.display_ticker || t.ticker} 선택`,
-      `${t.select_reason || '선택 이유 없음'}${t.last_event_ko ? `<br>현재 상태: ${t.last_event_ko}` : (t.last_event ? `<br>현재 상태: ${koEvent(t.last_event)}` : '')}`,
+      `${selectionTime ? `선정 ${selectionTime}<br>` : ''}${t.select_reason || '선택 이유 없음'}${t.last_event_ko ? `<br>현재 상태: ${t.last_event_ko}` : (t.last_event ? `<br>현재 상태: ${koEvent(t.last_event)}` : '')}`,
       tickers.mode || ''
     ));
   });
@@ -11272,7 +11308,7 @@ function renderBrokerTruthCard(mkt, bt) {
     </div>`;
 }
 async function loadPathB() {
-  const market = (window.MARKET || localStorage.getItem('market') || 'KR');
+  const market = (typeof MARKET !== 'undefined' ? MARKET : '') || localStorage.getItem('market') || 'KR';
   const mode = localStorage.getItem('runtime_mode') || 'live';
   MODE = mode;
   const modeBtn = document.getElementById('btn-' + mode);
@@ -11308,10 +11344,24 @@ async function loadPathB() {
   const sc = sel.counts || {};
   const noPlan = (sel.no_plan_reasons || []).map(koPathBSelectionReason).filter(Boolean);
   const missing = (sel.missing_price_targets || []).join(', ');
+  const compactBits = [];
+  if (sel.selection_raw_schema) compactBits.push(`응답 ${pathbEscapeHtml(sel.selection_raw_schema)}`);
+  if (sel.selection_schema_version) compactBits.push(`계약 ${pathbEscapeHtml(sel.selection_schema_version)}`);
+  if (sel.selection_stop_reason) compactBits.push(`stop ${pathbEscapeHtml(sel.selection_stop_reason)}`);
+  if (sel.candidate_actions_source) compactBits.push(`actions ${pathbEscapeHtml(sel.candidate_actions_source)}`);
+  if (sel.candidate_actions_missing_contract) compactBits.push('candidate_actions 누락');
+  if (Number(sc.candidate_actions || 0) || Number(sc.missing_strategy || 0)) {
+    compactBits.push(`actions ${Number(sc.candidate_actions || 0)}개`);
+    compactBits.push(`전략누락 ${Number(sc.missing_strategy || 0)}개`);
+  }
+  if (Number(sc.compact_validation_errors || 0) || Number(sc.compact_validation_warnings || 0)) {
+    compactBits.push(`compact 오류 ${Number(sc.compact_validation_errors || 0)} / 경고 ${Number(sc.compact_validation_warnings || 0)}`);
+  }
   document.getElementById('pathb-flow').innerHTML =
     `Claude 입력 후보 ${sc.universe || 0}개 | Claude 관찰 ${sc.watchlist || 0}개 | 원래 매수 후보 ${sc.raw_trade_ready || 0}개 | 실제 적용 매수 후보 ${sc.applied_trade_ready || 0}개 | 가격목표 ${sc.price_targets || 0}개 | 생성된 B플랜 ${sc.registered_plans || 0}개`
     + `<br>상태: ${(noPlan.length ? noPlan.join(' / ') : '정상')}`
     + (missing ? `<br>가격목표 누락: ${missing}` : '')
+    + (compactBits.length ? `<br>${compactBits.join(' | ')}` : '')
     + (sel.fallback_mode ? `<br>Claude 응답 복구 모드: ${koFallbackMode(sel.fallback_mode)}` : '');
   renderEntryTiming(d.entry_timing || {});
   renderBucketMonitor(d.bucket_monitor || {});

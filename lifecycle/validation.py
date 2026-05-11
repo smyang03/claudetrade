@@ -103,6 +103,7 @@ class V2PhaseValidator:
                 result.checks.append(f"file:{rel}")
 
         try:
+            from config.v2 import DEFAULT_V2_CONFIG
             from runtime.risk_factory import create_risk_manager
             from runtime.risk_profile import build_risk_profile
             from runtime.v2_lifecycle_runtime import V2LifecycleRuntime, v2_close_reason
@@ -112,16 +113,24 @@ class V2PhaseValidator:
             result.fail("IMPORT_FAILED", f"Phase 5 module import failed: {exc}")
             return result
 
-        kr_live = build_risk_profile("KR", "live", usd_krw=1400)
-        us_paper = build_risk_profile("US", "paper", usd_krw=1400)
-        if kr_live.fixed_order_krw != 100_000 or kr_live.max_positions != 3:
+        kr_live = build_risk_profile("KR", "live", usd_krw=1400, config=DEFAULT_V2_CONFIG)
+        us_paper = build_risk_profile("US", "paper", usd_krw=1400, config=DEFAULT_V2_CONFIG)
+        if (
+            kr_live.fixed_order_krw != DEFAULT_V2_CONFIG.kr_fixed_order_krw
+            or kr_live.max_positions != DEFAULT_V2_CONFIG.kr_max_positions
+        ):
             result.fail("KR_RISK_PROFILE", f"Unexpected KR risk profile: {kr_live}")
-        if us_paper.fixed_order_krw != 70_000 or us_paper.min_order_krw != 42_000:
+        expected_us_fixed = DEFAULT_V2_CONFIG.us_fixed_order_krw or DEFAULT_V2_CONFIG.us_fixed_order_usd * 1_400
+        expected_us_min = DEFAULT_V2_CONFIG.us_min_order_krw or DEFAULT_V2_CONFIG.us_min_order_usd * 1_400
+        if us_paper.fixed_order_krw != expected_us_fixed or us_paper.min_order_krw != expected_us_min:
             result.fail("US_RISK_PROFILE", f"Unexpected US risk profile: {us_paper}")
         result.checks.append("risk_profile:kr_us_live_paper")
 
         manager = create_risk_manager(kr_live, init_cash_krw=1_000_000)
-        if getattr(manager, "market", "") != "KR" or float(getattr(manager, "max_order_krw", 0) or 0) != 100_000:
+        if (
+            getattr(manager, "market", "") != "KR"
+            or float(getattr(manager, "max_order_krw", 0) or 0) != kr_live.fixed_order_krw
+        ):
             result.fail("RISK_MANAGER_FACTORY", "RiskManager factory did not apply V2 KR profile")
         if not getattr(manager, "v2_risk_profile", None):
             result.fail("RISK_MANAGER_PROFILE", "RiskManager is missing attached V2 profile")
@@ -499,10 +508,14 @@ class V2PhaseValidator:
 
         sizer = FixedSizer(DEFAULT_V2_CONFIG)
         kr_size = sizer.size(market="KR", price_krw=25_000, cash_krw=1_000_000)
-        if kr_size.qty != 4 or kr_size.order_cost_krw != 100_000:
+        expected_kr_budget = min(float(DEFAULT_V2_CONFIG.kr_fixed_order_krw), 1_000_000.0)
+        if kr_size.budget_krw != expected_kr_budget or kr_size.order_cost_krw != kr_size.qty * 25_000:
             result.fail("FIXED_SIZING_KR", f"Unexpected KR fixed sizing: {kr_size}")
         us_size = sizer.size(market="US", price_krw=35_000, usd_krw=1_400, cash_krw=1_000_000)
-        if us_size.qty != 2 or us_size.order_cost_krw != 70_000:
+        expected_us_budget = float(
+            DEFAULT_V2_CONFIG.us_fixed_order_krw or DEFAULT_V2_CONFIG.us_fixed_order_usd * 1_400
+        )
+        if us_size.budget_krw != expected_us_budget or us_size.order_cost_krw != us_size.qty * 35_000:
             result.fail("FIXED_SIZING_US", f"Unexpected US fixed sizing: {us_size}")
         result.checks.append("fixed_sizing:kr_us")
 
@@ -512,8 +525,8 @@ class V2PhaseValidator:
             runtime_mode="live",
             ticker="005930",
             price_krw=25_000,
-            qty=4,
-            order_cost_krw=100_000,
+            qty=kr_size.qty,
+            order_cost_krw=kr_size.order_cost_krw,
             cash_krw=1_000_000,
             min_order_krw=50_000,
             market_open=True,

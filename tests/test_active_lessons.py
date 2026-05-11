@@ -150,6 +150,7 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
                  "ACTIVE_LESSONS_ENABLED": "true",
                  "ACTIVE_LESSONS_SHADOW": "false",
                  "ACTIVE_LESSONS_ALLOW_LEGACY_BRAIN": "false",
+                 "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
              }, clear=False), \
              patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
              patch.object(analysts_module, "_extract_json", side_effect=parsed), \

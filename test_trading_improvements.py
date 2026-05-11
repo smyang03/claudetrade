@@ -1,4 +1,5 @@
 ﻿import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -3165,7 +3166,8 @@ class AnalystSelectionPromptTests(unittest.TestCase):
                 "entry_blackout_now": True,
             },
         ]
-        with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
+        with patch.dict(os.environ, {"CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false"}, clear=False), \
+             patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
              patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
              patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None):
             tickers, reasons = analysts_module.select_tickers(
@@ -3284,7 +3286,8 @@ class UniverseManagerTests(unittest.TestCase):
             {"ticker": "AAPL", "name": "Apple", "price": 90.0, "volume": 900, "change_rate": 0.8},
             {"ticker": "MSFT", "name": "Microsoft", "price": 80.0, "volume": 800, "change_rate": 0.7},
         ]
-        with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
+        with patch.dict(os.environ, {"CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false"}, clear=False), \
+             patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
              patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
              patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None):
             tickers, _ = analysts_module.select_tickers(
@@ -3430,7 +3433,8 @@ class UniverseManagerTests(unittest.TestCase):
             {"ticker": "MSFT", "name": "Microsoft", "price": 80.0, "volume": 800, "change_rate": 0.7},
             {"ticker": "TSLA", "name": "Tesla", "price": 70.0, "volume": 700, "change_rate": 0.6},
         ]
-        with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
+        with patch.dict(os.environ, {"CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false"}, clear=False), \
+             patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
              patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
              patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None):
             tickers, reasons = analysts_module.select_tickers(

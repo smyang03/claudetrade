@@ -12,6 +12,7 @@ from minority_report import analysts
 from audit.candidate_audit_store import CandidateAuditStore
 from bot.candidate_policy import normalize_selection_result
 from runtime.action_routing import route_candidate_action
+from runtime.adaptive_live_condition import build_adaptive_live_condition
 from runtime.candidate_actions import candidate_actions_from_response
 from runtime.exit_lifecycle import decide_exit_lifecycle, exit_lifecycle_bypass_allowed
 from trading_bot import TradingBot
@@ -309,6 +310,163 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         self.assertEqual(meta["rule_version"], "kr_selection_feedback.v1")
         self.assertEqual(meta["similar_past_failures"][0]["pattern"], "late_chase_after_watch")
         self.assertIn("lesson_1", meta["active_lesson_ids"])
+
+    def test_adaptive_live_condition_requests_claude_rejudgment_for_early_probe_shadow(self) -> None:
+        result = build_adaptive_live_condition(
+            market="US",
+            consensus_mode="MODERATE_BULL",
+            selection_meta={
+                "watchlist": ["AAOI", "CRCL"],
+                "_post_open_features_by_ticker": {
+                    "AAOI": {
+                        "ret_3m_pct": 3.36,
+                        "ret_5m_pct": 0.0,
+                        "ret_10m_pct": -0.78,
+                        "opening_range_break": True,
+                        "pullback_from_high_pct": -1.88,
+                        "momentum_state": "early_probe_only",
+                        "data_quality": "first_observed",
+                    },
+                    "CRCL": {
+                        "ret_3m_pct": 0.9,
+                        "ret_5m_pct": 0.9,
+                        "ret_10m_pct": 4.13,
+                        "opening_range_break": True,
+                        "pullback_from_high_pct": -1.59,
+                        "momentum_state": "early_probe_only",
+                        "data_quality": "first_observed",
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(result["decisions"]["AAOI"]["action"], "REASK_CLAUDE")
+        self.assertEqual(result["decisions"]["AAOI"]["suggested_claude_action"], "PROBE_READY")
+        self.assertTrue(result["decisions"]["AAOI"]["non_executable"])
+        self.assertFalse(result["decisions"]["AAOI"]["local_promotion_allowed"])
+        self.assertEqual(result["decisions"]["CRCL"]["action"], "REASK_CLAUDE")
+        self.assertEqual(set(result["reask_claude_shadow"]), {"AAOI", "CRCL"})
+        self.assertEqual(set(result["suggested_probe_ready_shadow"]), {"AAOI", "CRCL"})
+        self.assertEqual(result["probe_ready_shadow"], [])
+        self.assertTrue(result["shadow_only"])
+
+    def test_adaptive_live_condition_late_mover_reasks_with_micro_probe_suggestion(self) -> None:
+        result = build_adaptive_live_condition(
+            market="US",
+            consensus_mode="MODERATE_BULL",
+            selection_meta={
+                "watchlist": ["NVTS"],
+                "_post_open_features_by_ticker": {
+                    "NVTS": {
+                        "ret_30m_pct": 16.29,
+                        "opening_range_break": True,
+                        "pullback_from_high_pct": -1.8,
+                        "from_open_high_pct": 25.6,
+                        "momentum_state": "late_mover",
+                        "data_quality": "first_observed",
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(result["decisions"]["NVTS"]["action"], "REASK_CLAUDE")
+        self.assertEqual(result["decisions"]["NVTS"]["suggested_claude_action"], "MICRO_PROBE")
+        self.assertEqual(result["decisions"]["NVTS"]["action_ceiling"], "MICRO_PROBE")
+        self.assertEqual(result["reask_claude_shadow"], ["NVTS"])
+        self.assertEqual(result["suggested_micro_probe_shadow"], ["NVTS"])
+        self.assertEqual(result["micro_probe_shadow"], [])
+
+    def test_adaptive_live_condition_blocks_fade_and_risk_off(self) -> None:
+        fade_result = build_adaptive_live_condition(
+            market="US",
+            consensus_mode="MODERATE_BULL",
+            selection_meta={
+                "watchlist": ["APLD"],
+                "_post_open_features_by_ticker": {
+                    "APLD": {
+                        "ret_3m_pct": 5.0,
+                        "opening_range_break": True,
+                        "pullback_from_high_pct": -1.0,
+                        "momentum_state": "fade",
+                        "data_quality": "first_observed",
+                    }
+                },
+            },
+        )
+        risk_off_result = build_adaptive_live_condition(
+            market="US",
+            consensus_mode="DEFENSIVE",
+            selection_meta={
+                "watchlist": ["CRCL"],
+                "_post_open_features_by_ticker": {
+                    "CRCL": {
+                        "ret_3m_pct": 0.9,
+                        "ret_5m_pct": 0.9,
+                        "ret_10m_pct": 4.1,
+                        "opening_range_break": True,
+                        "pullback_from_high_pct": -1.5,
+                        "momentum_state": "early_probe_only",
+                        "data_quality": "first_observed",
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(fade_result["decisions"]["APLD"]["action"], "WATCH")
+        self.assertIn("fade", fade_result["decisions"]["APLD"]["blockers"])
+        self.assertEqual(risk_off_result["decisions"]["CRCL"]["action"], "WATCH")
+        self.assertIn("risk_off_regime", risk_off_result["decisions"]["CRCL"]["blockers"])
+
+    def test_route_layer_does_not_promote_watch_or_avoid_with_strong_evidence(self) -> None:
+        strong_context = {
+            "current_price": 183.0,
+            "ret_3m_pct": 3.0,
+            "ret_5m_pct": 1.0,
+            "opening_range_break": True,
+            "vwap_reclaim": True,
+            "volume_ratio_open": 4.0,
+            "data_quality": "good",
+        }
+
+        watch_decision = route_candidate_action(
+            {"ticker": "AAOI", "action": "WATCH", "confidence": 0.99},
+            market="US",
+            execution_context=strong_context,
+        )
+        avoid_decision = route_candidate_action(
+            {"ticker": "AAOI", "action": "AVOID", "confidence": 0.99},
+            market="US",
+            execution_context=strong_context,
+        )
+
+        self.assertEqual(watch_decision.final_action, "WATCH")
+        self.assertIsNone(watch_decision.route)
+        self.assertEqual(avoid_decision.final_action, "WATCH")
+        self.assertIsNone(avoid_decision.route)
+
+    def test_route_layer_treats_reask_claude_as_non_executable(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "AAOI",
+                "action": "REASK_CLAUDE",
+                "suggested_claude_action": "PROBE_READY",
+                "confidence": 0.99,
+            },
+            market="US",
+            execution_context={
+                "current_price": 183.0,
+                "ret_3m_pct": 3.0,
+                "ret_5m_pct": 1.0,
+                "opening_range_break": True,
+                "vwap_reclaim": True,
+                "volume_ratio_open": 4.0,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertIsNone(decision.route)
+        self.assertEqual(decision.reason, "watch")
 
 
 if __name__ == "__main__":

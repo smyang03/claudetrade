@@ -51,7 +51,11 @@ class PathBSafetyTests(unittest.TestCase):
 
     def test_blocks_daily_limit_confidence_and_base_gate(self) -> None:
         self.assertEqual(
-            PathBSafetyGate().evaluate(_ctx(), plan=_plan(), pathb_daily_count=1).reason_code,
+            PathBSafetyGate(V2Config(pathb_max_daily_entries=1)).evaluate(
+                _ctx(),
+                plan=_plan(),
+                pathb_daily_count=1,
+            ).reason_code,
             "PATHB_MAX_DAILY_ENTRIES",
         )
         self.assertEqual(
