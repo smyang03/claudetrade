@@ -144,6 +144,62 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertTrue(meta["_candidate_quality_trainer_enabled"])
         self.assertEqual(meta["_prompt_pool_count"], 2)
 
+    def test_select_tickers_does_not_legacy_fallback_when_all_candidates_quarantined(self) -> None:
+        from minority_report import analysts
+
+        captured: dict[str, str] = {}
+
+        def fake_create(**kwargs):
+            captured["prompt"] = kwargs["messages"][0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":[],"trade_ready":[],"reasons":{},"veto":{}}')],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+        env = {
+            "CANDIDATE_QUALITY_TRAINER_ENABLED": "true",
+            "CANDIDATE_PROMPT_POOL_REORDER_ENABLED": "true",
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW": "false",
+        }
+        candidates = [
+            {
+                "ticker": "BAD1",
+                "market": "US",
+                "data_quality": "bad",
+                "status": "blocked",
+                "hard_safety": True,
+                "primary_bucket": "momentum_now",
+            },
+            {
+                "ticker": "BAD2",
+                "market": "US",
+                "data_quality": "bad",
+                "status": "blocked",
+                "hard_safety": True,
+                "primary_bucket": "momentum_now",
+            },
+        ]
+
+        with patch.dict("os.environ", env, clear=False), patch.object(analysts.client.messages, "create", side_effect=fake_create):
+            selected, reasons = analysts.select_tickers("US", "digest", "NEUTRAL", candidates)
+
+        self.assertEqual(selected, [])
+        self.assertEqual(reasons, {})
+        self.assertNotIn("BAD1", captured["prompt"])
+        self.assertNotIn("BAD2", captured["prompt"])
+        meta = analysts.get_last_selection_meta()
+        self.assertTrue(meta["_candidate_quality_trainer_enabled"])
+        self.assertEqual(meta["_prompt_pool_count"], 0)
+        self.assertTrue(meta["_safe_empty_prompt_pool"])
+        self.assertEqual(meta["_prompt_pool_empty_reason"], "all_candidates_quarantined")
+        self.assertTrue(meta["_trainer_all_quarantined"])
+        excluded = {row["ticker"]: row["reason"] for row in meta["_excluded_from_prompt"]}
+        self.assertEqual(excluded["BAD1"], "trainer_quarantine")
+        self.assertEqual(excluded["BAD2"], "trainer_quarantine")
+
 
 if __name__ == "__main__":
     unittest.main()

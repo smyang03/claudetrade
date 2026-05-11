@@ -871,8 +871,12 @@ def _build_selection_prompt_pool(candidates: list[dict], market: str, prompt_cap
             reorder_enabled=_trainer_prompt_reorder_enabled(),
         )
         prompt_candidates = [dict(row or {}) for row in result.get("prompt_pool") or []]
-        if not prompt_candidates:
-            prompt_candidates = _curate_selection_candidates(candidates, market, prompt_cap)
+        scored_pool = list(result.get("scored_pool") or [])
+        all_quarantined = (
+            bool(scored_pool)
+            and not prompt_candidates
+            and all(str((row or {}).get("trainer_candidate_state") or "").upper() == "QUARANTINE" for row in scored_pool)
+        )
         return prompt_candidates, {
             "enabled": True,
             "version": result.get("version", ""),
@@ -880,12 +884,15 @@ def _build_selection_prompt_pool(candidates: list[dict], market: str, prompt_cap
             "target": result.get("target"),
             "hard_cap": result.get("hard_cap"),
             "full_pool_count": len(result.get("full_pool") or []),
-            "scored_pool_count": len(result.get("scored_pool") or []),
+            "scored_pool_count": len(scored_pool),
             "prompt_pool_count": len(prompt_candidates),
             "excluded_from_prompt": list(result.get("excluded_from_prompt") or []),
             "metrics": dict(result.get("metrics") or {}),
             "prompt_pool": prompt_candidates,
-            "scored_pool": list(result.get("scored_pool") or []),
+            "scored_pool": scored_pool,
+            "safe_empty_prompt_pool": bool(all_quarantined),
+            "prompt_pool_empty_reason": "all_candidates_quarantined" if all_quarantined else "",
+            "trainer_all_quarantined": bool(all_quarantined),
         }
     except Exception as exc:
         log.warning(f"[ticker-selection] trainer prompt pool failed {market}: {exc}")
@@ -1894,6 +1901,9 @@ Rules:
         enriched["_prompt_pool_metrics"] = dict(prompt_pool_meta.get("metrics") or {})
         enriched["_final_prompt_pool"] = list(prompt_pool_meta.get("prompt_pool") or prompt_candidates or [])
         enriched["_excluded_from_prompt"] = list(prompt_pool_meta.get("excluded_from_prompt") or [])
+        enriched["_safe_empty_prompt_pool"] = bool(prompt_pool_meta.get("safe_empty_prompt_pool"))
+        enriched["_prompt_pool_empty_reason"] = str(prompt_pool_meta.get("prompt_pool_empty_reason") or "")
+        enriched["_trainer_all_quarantined"] = bool(prompt_pool_meta.get("trainer_all_quarantined"))
         return enriched
 
     fallback_meta = _attach_prompt_pool_meta(fallback_meta)
