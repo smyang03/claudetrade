@@ -475,21 +475,21 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
                     fwd_start = ex_max + timedelta(days=1)
                     if not _has_weekday_between(fwd_start, end_dt):
                         print(f"         no weekday in update window ({fwd_start.date()} ~ {end_dt.date()}) - skip")
-                        continue
-                    s = fwd_start.strftime("%Y%m%d")
-                    e = end_dt.strftime("%Y%m%d")
-                    try:
-                        df_fwd = fetch_kr_daily(ticker, s, e)
-                    except Exception:
-                        df_fwd = pd.DataFrame()
-                    df_fwd = _normalize_date_window(df_fwd, fwd_start, end_dt)
-                    if df_fwd.empty:
-                        df_fwd = fetch_kr_daily_yfinance(ticker, fwd_start, end_dt)
-                    df_fwd = _normalize_date_window(df_fwd, fwd_start, end_dt)
-                    if not df_fwd.empty:
-                        fetch_parts.append(df_fwd)
-                        print(f"         > 최신 {len(df_fwd)}일 추가")
-                    time.sleep(0.5)
+                    else:
+                        s = fwd_start.strftime("%Y%m%d")
+                        e = end_dt.strftime("%Y%m%d")
+                        try:
+                            df_fwd = fetch_kr_daily(ticker, s, e)
+                        except Exception:
+                            df_fwd = pd.DataFrame()
+                        df_fwd = _normalize_date_window(df_fwd, fwd_start, end_dt)
+                        if df_fwd.empty:
+                            df_fwd = fetch_kr_daily_yfinance(ticker, fwd_start, end_dt)
+                        df_fwd = _normalize_date_window(df_fwd, fwd_start, end_dt)
+                        if not df_fwd.empty:
+                            fetch_parts.append(df_fwd)
+                            print(f"         > 최신 {len(df_fwd)}일 추가")
+                        time.sleep(0.5)
 
                 if not fetch_parts:
                     print(f"         이미 최신 상태 - 스킵")

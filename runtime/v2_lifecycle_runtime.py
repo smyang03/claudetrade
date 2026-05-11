@@ -217,7 +217,69 @@ class V2LifecycleRuntime:
         meta_ids = (meta or {}).get("v2_decision_ids") or {}
         if lookup in meta_ids:
             return str(meta_ids[lookup])
+        if self.enabled and self.registry is not None:
+            try:
+                existing = self.registry.store.find_decision(
+                    market=market,
+                    runtime_mode=self.bot._mode,
+                    session_date=self.bot._current_session_date_str(market),
+                    ticker=lookup,
+                )
+            except Exception:
+                existing = None
+            if existing:
+                decision_id = str(existing.get("decision_id") or "")
+                if decision_id:
+                    self.decision_ids.setdefault(market, {})[lookup] = decision_id
+                    try:
+                        meta.setdefault("v2_decision_ids", {})[lookup] = decision_id
+                    except Exception:
+                        pass
+                    return decision_id
         return ""
+
+    def ensure_decision_id(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        strategy_hint: str = "",
+        timing_style: str = "momentum_timing",
+        payload: dict | None = None,
+    ) -> str:
+        if not self.enabled or self.registry is None:
+            return ""
+        market_key = str(market or "").upper()
+        ticker_key = str(ticker or "").strip().upper() if market_key == "US" else str(ticker or "").strip()
+        existing = self.decision_id_for_ticker(market_key, ticker_key)
+        if existing:
+            return existing
+        data = dict(payload or {})
+        data.setdefault("registration_source", "execution_lifecycle_fallback")
+        try:
+            decision_id = self.registry.register_trade_ready(
+                market=market_key,
+                runtime_mode=self.bot._mode,
+                session_date=self.bot._current_session_date_str(market_key),
+                ticker=ticker_key,
+                prompt_version=self.prompt_version(),
+                brain_snapshot_id=self.brain_snapshot_id(market_key),
+                strategy_hint=strategy_hint,
+                timing_style=timing_style,
+                payload=data,
+                reuse_existing=True,
+            )
+        except Exception as exc:
+            log.warning(f"[V2 lifecycle] fallback decision register failed {market_key} {ticker_key}: {exc}")
+            return ""
+        if decision_id:
+            self.decision_ids.setdefault(market_key, {})[ticker_key] = decision_id
+            try:
+                meta = getattr(self.bot, "selection_meta", {}).setdefault(market_key, {})
+                meta.setdefault("v2_decision_ids", {})[ticker_key] = decision_id
+            except Exception:
+                pass
+        return str(decision_id or "")
 
     def record_event(
         self,
@@ -234,6 +296,37 @@ class V2LifecycleRuntime:
         if not self.enabled or self.registry is None:
             return
         resolved_decision_id = decision_id or self.decision_id_for_ticker(market, ticker)
+        if not resolved_decision_id and str(event_type or "").upper() in {
+            "ORDER_SENT",
+            "ORDER_ACKED",
+            "PARTIAL_FILLED",
+            "FILLED",
+        }:
+            data = dict(payload or {})
+            strategy_hint = str(
+                data.get("strategy_hint")
+                or data.get("strategy")
+                or data.get("strategy_used")
+                or data.get("source_strategy")
+                or ""
+            )
+            is_path_b = bool(
+                str(data.get("path_run_id") or data.get("pathb_path_run_id") or "").strip()
+                or str(data.get("path_type") or "").strip() == "claude_price"
+            )
+            fallback_payload = {
+                **data,
+                "recovered_from_event": str(event_type or "").upper(),
+            }
+            if not is_path_b:
+                fallback_payload["path_a_lifecycle_evidence"] = True
+            resolved_decision_id = self.ensure_decision_id(
+                market,
+                ticker,
+                strategy_hint=strategy_hint,
+                timing_style=str(data.get("timing_style") or "momentum_timing"),
+                payload=fallback_payload,
+            )
         if not resolved_decision_id:
             return
         try:

@@ -11,6 +11,17 @@ from lifecycle.models import LifecycleEventType
 from lifecycle.quality import evaluate_decision_quality, live_clean_learning_allowed
 from lifecycle.validation import V2PhaseValidator
 from review.daily_review import DailyReviewWriter
+from runtime.v2_lifecycle_runtime import V2LifecycleRuntime
+
+
+class _DummyLifecycleBot:
+    _mode = "live"
+
+    def __init__(self) -> None:
+        self.selection_meta = {"KR": {}}
+
+    def _current_session_date_str(self, market: str) -> str:
+        return "2026-05-11"
 
 
 class V2Phase1Tests(unittest.TestCase):
@@ -70,6 +81,77 @@ class V2Phase1Tests(unittest.TestCase):
             event_types = [event["event_type"] for event in store.events_for_decision(decision_id)]
             self.assertIn("SAFETY_PASSED", event_types)
             self.assertIn("TIMING_EXPIRED", event_types)
+
+    def test_runtime_recovers_decision_id_for_executed_path_a_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = V2LifecycleRuntime.__new__(V2LifecycleRuntime)
+            runtime.bot = _DummyLifecycleBot()
+            runtime.enabled = True
+            runtime.registry = DecisionRegistry(store)
+            runtime.decision_ids = {"KR": {}}
+            runtime.brain_snapshot_ids = {"KR": "brain_test"}
+            runtime.brain_snapshot_store = None
+
+            runtime.record_event(
+                "ORDER_SENT",
+                "KR",
+                "067170",
+                execution_id="buy-1",
+                payload={"strategy": "momentum", "entry_route": "plan_a", "qty": 47},
+            )
+            decision = store.find_decision(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-11",
+                ticker="067170",
+            )
+            self.assertIsNotNone(decision)
+            decision_id = str(decision["decision_id"])
+
+            runtime.record_event(
+                "CLOSED",
+                "KR",
+                "067170",
+                execution_id="sell-1",
+                position_id="pos_KR_067170_buy-1",
+                reason_code="CLOSED_PROFIT_FLOOR",
+                payload={"raw_reason": "profit_floor", "qty": 47},
+            )
+
+            event_types = [event["event_type"] for event in store.events_for_decision(decision_id)]
+            self.assertEqual(event_types, ["CLAUDE_TRADE_READY", "ORDER_SENT", "CLOSED"])
+            self.assertEqual(runtime.decision_id_for_ticker("KR", "067170"), decision_id)
+
+    def test_runtime_does_not_create_decision_from_close_only_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = V2LifecycleRuntime.__new__(V2LifecycleRuntime)
+            runtime.bot = _DummyLifecycleBot()
+            runtime.enabled = True
+            runtime.registry = DecisionRegistry(store)
+            runtime.decision_ids = {"KR": {}}
+            runtime.brain_snapshot_ids = {"KR": "brain_test"}
+            runtime.brain_snapshot_store = None
+
+            runtime.record_event(
+                "CLOSED",
+                "KR",
+                "067170",
+                execution_id="sell-orphan",
+                position_id="pos_KR_067170_legacy",
+                reason_code="CLOSED_PROFIT_FLOOR",
+                payload={"raw_reason": "profit_floor", "qty": 47},
+            )
+
+            decision = store.find_decision(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-11",
+                ticker="067170",
+            )
+            self.assertIsNone(decision)
+            self.assertEqual(store.count_events(), 0)
 
     def test_quality_rules_block_dirty_and_paper_learning(self) -> None:
         dirty = evaluate_decision_quality(

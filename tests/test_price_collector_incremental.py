@@ -82,6 +82,48 @@ class PriceCollectorIncrementalTests(unittest.TestCase):
             kis.assert_not_called()
             yf.assert_not_called()
 
+    def test_kr_incremental_saves_backfill_before_weekend_forward_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            price_dir = root / "price"
+            kr_dir = price_dir / "kr"
+            kr_dir.mkdir(parents=True)
+            path = kr_dir / "kr_417200.csv"
+            path.write_text(
+                "date,open,high,low,close,volume\n"
+                "2026-05-08,100,101,99,100,1000\n",
+                encoding="utf-8",
+            )
+            backfill = pd.DataFrame(
+                [
+                    {
+                        "date": pd.Timestamp("2026-05-07"),
+                        "open": 90,
+                        "high": 91,
+                        "low": 89,
+                        "close": 90,
+                        "volume": 900,
+                    }
+                ]
+            )
+            kis = Mock(return_value=backfill)
+            yf = Mock(return_value=pd.DataFrame())
+
+            with patch.object(price_collector, "PRICE_DIR", price_dir), \
+                 patch.object(price_collector, "KR_TICKERS", {"417200": "417200"}), \
+                 patch.object(price_collector, "fetch_kr_daily", kis), \
+                 patch.object(price_collector, "fetch_kr_daily_yfinance", yf), \
+                 patch.object(price_collector.time, "sleep", lambda *_: None):
+                price_collector.collect_kr_incremental(
+                    pd.Timestamp("2026-05-07"),
+                    pd.Timestamp("2026-05-10"),
+                )
+
+            saved = pd.read_csv(path)
+            self.assertEqual(saved["date"].astype(str).tolist(), ["2026-05-07", "2026-05-08"])
+            self.assertEqual(kis.call_count, 1)
+            yf.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

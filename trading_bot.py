@@ -4224,10 +4224,58 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         key = self._selection_ticker_key(market_key, ticker)
         if key in set((getattr(self, "_v2_same_day_stop_tickers", {}) or {}).get(market_key, set()) or set()):
             return {"enabled": True, "allowed": False, "reason": "same_day_stopped", "final_action": "WATCH"}
-        try:
-            current = float(current_price or 0.0)
-        except Exception:
-            current = 0.0
+
+        def _num(value: Any) -> Optional[float]:
+            try:
+                if value in (None, ""):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        def _positive(value: Any) -> Optional[float]:
+            parsed = _num(value)
+            return parsed if parsed is not None and parsed > 0 else None
+
+        def _pct_from_base(base_price: Any, current: float) -> Optional[float]:
+            base = _positive(base_price)
+            if base is None or current <= 0:
+                return None
+            try:
+                return round(((float(current) / float(base)) - 1.0) * 100.0, 4)
+            except Exception:
+                return None
+
+        def _age_from_ts(raw_value: Any, now_dt: datetime) -> Optional[float]:
+            parsed = self._parse_kst_datetime(raw_value)
+            if parsed is None:
+                return None
+            try:
+                return round(max(0.0, (now_dt - parsed).total_seconds() / 60.0), 4)
+            except Exception:
+                return None
+
+        def _resolve_current_price(initial: Any) -> tuple[float, str]:
+            initial_price = _positive(initial)
+            if initial_price is not None:
+                return float(initial_price), "argument"
+            for cache_name in ("price_cache_raw", "price_cache"):
+                cache = getattr(self, cache_name, {}) or {}
+                for raw_key in (key, str(ticker or "").strip()):
+                    cached = _positive(cache.get(raw_key))
+                    if cached is not None:
+                        return float(cached), cache_name
+            try:
+                price_info = get_price(key, self._token_for_market(market_key), market=market_key)
+                fetched = _positive((price_info or {}).get("price"))
+                if fetched is not None:
+                    return float(fetched), "get_price"
+            except Exception:
+                pass
+            return 0.0, ""
+
+        signal_payload = dict(signal_payload or {})
+        current, current_source = _resolve_current_price(current_price)
         try:
             max_px = float(max_entry_price or 0.0)
         except Exception:
@@ -4245,19 +4293,55 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         timing = self._candidate_entry_timing_context(market_key, key, meta=meta)
         snapshot = dict(timing.get("entry_timing_snapshot") or {})
 
-        def _num(value: Any) -> Optional[float]:
-            try:
-                if value in (None, ""):
-                    return None
-                return float(value)
-            except Exception:
-                return None
-
         age_min = _num(timing.get("candidate_age_min"))
+        age_source = str(timing.get("candidate_age_source") or "")
+        now_dt = datetime.now(KST)
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=KST)
+        else:
+            now_dt = now_dt.astimezone(KST)
+        if age_min is None:
+            for source, value in (
+                ("signal_entry_elapsed_min", signal_payload.get("entry_elapsed_min")),
+                ("snapshot_candidate_to_order_delay_min", snapshot.get("candidate_to_order_delay_min")),
+                ("snapshot_candidate_detected_at", snapshot.get("candidate_detected_at")),
+                ("signal_candidate_detected_at", signal_payload.get("candidate_detected_at")),
+                ("signal_first_seen_at", signal_payload.get("first_seen_at")),
+                ("signal_detected_at", signal_payload.get("detected_at")),
+                ("signal_created_at", signal_payload.get("created_at")),
+                ("selection_snapshot_ts", meta.get("selection_snapshot_ts") or meta.get("_selection_snapshot_ts")),
+                ("meta_known_at", meta.get("known_at")),
+            ):
+                if source.endswith("_min"):
+                    resolved_age = _num(value)
+                else:
+                    resolved_age = _age_from_ts(value, now_dt)
+                if resolved_age is not None:
+                    age_min = resolved_age
+                    age_source = source
+                    break
         delay_min = _num(snapshot.get("candidate_to_order_delay_min"))
         chase_pct = _num(snapshot.get("price_change_candidate_to_order_pct"))
+        chase_source = "entry_timing_snapshot" if chase_pct is not None else ""
         if chase_pct is None:
             chase_pct = _num((signal_payload or {}).get("price_change_since_first_seen_pct"))
+            if chase_pct is not None:
+                chase_source = "signal_price_change_since_first_seen_pct"
+        target = self._selection_price_target_for_ticker(market_key, meta.get("price_targets") or {}, key)
+        if chase_pct is None:
+            for source, base_price in (
+                ("snapshot_candidate_price_at_detected", snapshot.get("candidate_price_at_detected")),
+                ("signal_candidate_price_at_detected", signal_payload.get("candidate_price_at_detected")),
+                ("signal_first_seen_price", signal_payload.get("first_seen_price")),
+                ("snapshot_price_at_first_signal", snapshot.get("price_at_first_signal")),
+                ("signal_price_at_first_signal", signal_payload.get("price_at_first_signal")),
+                ("target_reference_price", target.get("reference_price")),
+            ):
+                resolved_chase = _pct_from_base(base_price, current)
+                if resolved_chase is not None:
+                    chase_pct = resolved_chase
+                    chase_source = source
+                    break
         features = {}
         raw_features = ((getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {}).get(key)
         if hasattr(raw_features, "to_dict"):
@@ -4285,9 +4369,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "reason": "order_time_late_entry_allowed",
             "ticker": key,
             "strategy": strategy,
+            "current_price": current,
+            "current_price_source": current_source,
             "candidate_age_min": age_min,
+            "candidate_age_source": age_source,
             "candidate_to_order_delay_min": delay_min,
             "price_change_candidate_to_order_pct": chase_pct,
+            "price_change_source": chase_source,
             "fresh_confirmed": fresh_confirmed,
             "ret_3m_pct": ret_3m,
             "ret_5m_pct": ret_5m,
@@ -4295,8 +4383,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "vwap_distance_pct": vwap_distance,
             "volume_ratio_open": volume_ratio,
         }
+        if current <= 0:
+            state.update({"allowed": False, "reason": "kr_late_entry_current_price_missing", "final_action": "WATCH"})
+            return state
         if age_min is None or chase_pct is None:
-            state.update({"allowed": False, "reason": "kr_late_entry_order_time_data_missing", "final_action": "WATCH"})
+            missing = []
+            if age_min is None:
+                missing.append("candidate_age_min")
+            if chase_pct is None:
+                missing.append("price_change_candidate_to_order_pct")
+            state.update({
+                "allowed": True,
+                "reason": "order_time_late_entry_metrics_unresolved_allow",
+                "warnings": ["kr_late_entry_metrics_missing"],
+                "metrics_missing": missing,
+            })
             return state
         if age_min >= 120.0 and chase_pct >= 5.0 and not fresh_confirmed:
             state.update({"allowed": False, "reason": "kr_late_chase_order_time_block", "final_action": "WATCH"})
@@ -4373,22 +4474,49 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 price_targets,
                 route_state,
             )
-            if self._runtime_bool("SOFT_GATE_OVERRIDE_VALIDATION_ENABLED", False):
-                execution_context["soft_gate_override_validation_enabled"] = True
-                risk_tags = list(action_for_route.get("risk_tags") or [])
-                if action_for_route.get("freshness_verdict") in {"STALE", "LATE_CHASE"}:
-                    risk_tags.append("late_chase")
-                if risk_tags:
-                    execution_context["soft_gates"] = list(dict.fromkeys(str(tag) for tag in risk_tags))
-            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY"}:
-                execution_context.update(
-                    self._kr_confirmation_gate_state(market_key, key, execution_context)
-                )
             gate_info = self._candidate_runtime_gate_info(
                 market_key,
                 key,
                 candidate=action_for_route,
             )
+            soft_gate_validation_enabled = self._runtime_bool("SOFT_GATE_OVERRIDE_VALIDATION_ENABLED", False)
+
+            def _merge_soft_gates(*values: Any) -> None:
+                gates = list(execution_context.get("soft_gates") or [])
+                for value in values:
+                    if isinstance(value, (list, tuple, set)):
+                        gates.extend(value)
+                    elif value not in (None, ""):
+                        gates.append(value)
+                gates = list(dict.fromkeys(str(tag) for tag in gates if str(tag or "").strip()))
+                if gates:
+                    execution_context["soft_gates"] = gates
+
+            if soft_gate_validation_enabled:
+                execution_context["soft_gate_override_validation_enabled"] = True
+                risk_tags = list(action_for_route.get("risk_tags") or [])
+                if action_for_route.get("freshness_verdict") in {"STALE", "LATE_CHASE"}:
+                    risk_tags.append("late_chase")
+                if gate_info.get("stale"):
+                    risk_tags.extend(["stale_candidate", "late_chase"])
+                    execution_context["action_ceiling"] = "WATCH"
+                    risk_tags.append("action_ceiling_watch")
+                if gate_info.get("ready_degraded"):
+                    risk_tags.append("ready_degraded")
+                if str(gate_info.get("health_state") or "").upper() == "WATCH_WEAK":
+                    risk_tags.append("watch_weak")
+                    execution_context["action_ceiling"] = "WATCH"
+                    risk_tags.append("action_ceiling_watch")
+                if gate_info.get("block_reason"):
+                    risk_tags.append(str(gate_info.get("block_reason")))
+                if gate_info.get("blocked"):
+                    execution_context["action_ceiling"] = "WATCH"
+                    risk_tags.append("action_ceiling_watch")
+                _merge_soft_gates(risk_tags)
+            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY"}:
+                execution_context.update(
+                    self._kr_confirmation_gate_state(market_key, key, execution_context)
+                )
             kr_late_gate: dict[str, Any] = {}
             if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY"}:
                 kr_late_gate = self._kr_late_entry_gate_state(
@@ -4399,6 +4527,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     gate_info,
                 )
                 execution_context["kr_late_entry_gate"] = kr_late_gate
+                if soft_gate_validation_enabled:
+                    kr_late_reason = str(kr_late_gate.get("reason") or "")
+                    kr_late_final = str(kr_late_gate.get("final_action") or "").upper()
+                    if kr_late_final == "WATCH" or kr_late_gate.get("allowed") is False:
+                        execution_context["action_ceiling"] = "WATCH"
+                        _merge_soft_gates("action_ceiling_watch", kr_late_reason)
                 if str(kr_late_gate.get("final_action") or "").upper() == "PROBE_READY":
                     action_for_route["action"] = "PROBE_READY"
                     execution_context["kr_late_entry_demoted_to"] = "PROBE_READY"
@@ -4624,6 +4758,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         return self.v2.register_trade_ready(market, meta) if getattr(self, "v2", None) is not None else {}
     def _v2_decision_id_for_ticker(self, market: str, ticker: str) -> str:
         return self.v2.decision_id_for_ticker(market, ticker) if getattr(self, "v2", None) is not None else ""
+    def _v2_ensure_execution_decision_id(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        strategy_hint: str = "",
+        timing_style: str = "momentum_timing",
+        payload: Optional[dict] = None,
+    ) -> str:
+        v2_runtime = getattr(self, "v2", None)
+        if v2_runtime is not None and hasattr(v2_runtime, "ensure_decision_id"):
+            return v2_runtime.ensure_decision_id(
+                market,
+                ticker,
+                strategy_hint=strategy_hint,
+                timing_style=timing_style,
+                payload=payload or {},
+            )
+        return ""
     def _v2_record_lifecycle_event(
         self,
         event_type: str,
@@ -18759,6 +18912,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if _isdb_id and _s_strat == "opening_range_pullback":
                         isdb.update_trade(_isdb_id)
                     _v2_decision_id = self._v2_decision_id_for_ticker(market, _s_tk)
+                    if not _v2_decision_id:
+                        _v2_decision_id = self._v2_ensure_execution_decision_id(
+                            market,
+                            _s_tk,
+                            strategy_hint=_s_strat,
+                            payload={
+                                "registration_source": "path_a_order_sent",
+                                "selected_reason": _s_sr or "",
+                                "entry_priority_score": float(_s_ep),
+                                "strategy": _s_strat,
+                                "path_a_lifecycle_evidence": True,
+                            },
+                        )
                     _v2_execution_id = str(result.get("order_no", "") or f"exec_{market}_{_s_tk}_{int(time.time())}")
                     _route_payload = self._entry_route_payload(
                         market,

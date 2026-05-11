@@ -729,6 +729,49 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["confirmation_state"], "CONFIRMED")
         self.assertEqual(route["confirmation_reason"], "")
 
+    def test_soft_gate_validation_uses_local_stale_when_claude_omits_risk_tags(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"SOFT_GATE_OVERRIDE_VALIDATION_ENABLED": True})
+        bot._candidate_health_tracker = lambda market: _HealthTracker(
+            {
+                "005930": {
+                    "ticker": "005930",
+                    "health_state": "STABLE_READY",
+                    "ready_count": 1,
+                    "last_seen_at": "2000-01-01T00:00:00",
+                }
+            }
+        )
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "risk_tags": [],
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70500,
+                    "ret_3m_pct": -0.2,
+                    "ret_5m_pct": -0.3,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["reason"], "soft_gate_override_failed")
+        self.assertIn("stale_candidate", route["runtime_gate"]["soft_gates"])
+        self.assertIn("late_chase", route["runtime_gate"]["soft_gates"])
+
     def test_kr_late_entry_gate_blocks_stale_buy_ready(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update({"KR_LATE_ENTRY_GATE_ENABLED": True})

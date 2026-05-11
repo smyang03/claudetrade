@@ -254,6 +254,44 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         self.assertFalse(gate["allowed"])
         self.assertEqual(gate["reason"], "max_entry_price_exceeded")
 
+    def test_order_time_late_entry_gate_allows_missing_preorder_metrics_with_warning(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.runtime_config = _RuntimeConfig({"KR_LATE_ENTRY_EXEC_GATE_ENABLED": True})
+        bot.selection_meta = {"KR": {}}
+        bot._v2_same_day_stop_tickers = {"KR": set()}
+        bot._last_post_open_features_by_ticker = {"KR": {}}
+        bot._candidate_entry_timing_context = lambda *args, **kwargs: {
+            "candidate_age_min": 20.0,
+            "entry_timing_snapshot": {},
+        }
+
+        gate = TradingBot._kr_late_entry_order_time_gate(bot, "018880", current_price=5730.0)
+
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(gate["reason"], "order_time_late_entry_metrics_unresolved_allow")
+        self.assertEqual(gate["metrics_missing"], ["price_change_candidate_to_order_pct"])
+        self.assertIn("kr_late_entry_metrics_missing", gate["warnings"])
+
+    def test_order_time_late_entry_gate_derives_chase_from_detected_price(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.runtime_config = _RuntimeConfig({"KR_LATE_ENTRY_EXEC_GATE_ENABLED": True})
+        bot.selection_meta = {"KR": {}}
+        bot._v2_same_day_stop_tickers = {"KR": set()}
+        bot._last_post_open_features_by_ticker = {"KR": {}}
+        bot._candidate_entry_timing_context = lambda *args, **kwargs: {
+            "candidate_age_min": 130.0,
+            "entry_timing_snapshot": {
+                "candidate_price_at_detected": 100.0,
+            },
+        }
+
+        gate = TradingBot._kr_late_entry_order_time_gate(bot, "018880", current_price=106.0)
+
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["reason"], "kr_late_chase_order_time_block")
+        self.assertEqual(gate["price_change_candidate_to_order_pct"], 6.0)
+        self.assertEqual(gate["price_change_source"], "snapshot_candidate_price_at_detected")
+
     def test_tuning_feedback_contract_is_structured_and_bounded(self) -> None:
         with patch.dict(os.environ, {"TUNING_FEEDBACK_CONTRACT_ENABLED": "true"}, clear=False):
             section, meta = analysts._build_tuning_feedback_contract(
