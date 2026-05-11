@@ -275,6 +275,27 @@ class CandidateTrainerReplacementTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertLess(gate["incoming_score"], gate["outgoing_score"] + gate["delta"])
 
+    def test_kr_replacement_delta_gate_is_enabled_with_stricter_defaults(self) -> None:
+        bot = _bot_with_health(
+            {
+                "005930": {"health_state": "STABLE_READY", "ready_count": 1, "mfe_pct": 3.0, "mae_pct": 0.0},
+                "000660": {"health_state": "OBSERVE"},
+            }
+        )
+
+        ok, gate = TradingBot._candidate_replacement_delta_ok(
+            bot,
+            "KR",
+            "005930",
+            "000660",
+            {"000660": {"ticker": "000660"}},
+        )
+
+        self.assertFalse(ok)
+        self.assertTrue(gate["enabled"])
+        self.assertEqual(gate["min_score"], 5.5)
+        self.assertEqual(gate["delta"], 1.25)
+
     def test_pick_partial_replace_in_accepts_stronger_incoming(self) -> None:
         bot = _bot_with_health(
             {

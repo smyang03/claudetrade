@@ -3850,6 +3850,245 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "cancel_if_open_above": _positive_or_none(target.get("cancel_if_open_above")),
         }
 
+    @staticmethod
+    def _parse_kst_datetime(value: Any) -> Optional[datetime]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=KST)
+        return parsed.astimezone(KST)
+
+    def _market_open_elapsed_min(self, market: str, now_dt: Optional[datetime] = None) -> Optional[float]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        current = now_dt or datetime.now(KST)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=KST)
+        else:
+            current = current.astimezone(KST)
+        try:
+            regular_open = self._market_regular_open_dt(market_key, now_dt=current)
+            if regular_open.tzinfo is None:
+                regular_open = regular_open.replace(tzinfo=KST)
+            else:
+                regular_open = regular_open.astimezone(KST)
+            return (current - regular_open).total_seconds() / 60.0
+        except Exception:
+            return None
+
+    def _candidate_entry_timing_context(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        action: Optional[dict] = None,
+        meta: Optional[dict] = None,
+        now_dt: Optional[datetime] = None,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        current = now_dt or datetime.now(KST)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=KST)
+        else:
+            current = current.astimezone(KST)
+
+        action_map = action or {}
+        meta_map = meta or {}
+        route_source = str(
+            meta_map.get("_entry_route_source")
+            or action_map.get("route_source")
+            or action_map.get("source")
+            or ""
+        ).strip()
+        action_source = str(meta_map.get("_candidate_actions_source") or "").strip()
+        candidate_source = ""
+        detected_at: Optional[datetime] = None
+        detected_raw = ""
+        age_source = ""
+        snapshot: dict[str, Any] = {}
+        tracker = getattr(self, "entry_timing", None)
+        if tracker is not None and hasattr(tracker, "snapshot"):
+            try:
+                snapshot = dict(
+                    tracker.snapshot(
+                        market_key,
+                        key,
+                        self._current_session_date_str(market_key),
+                    )
+                    or {}
+                )
+            except Exception:
+                snapshot = {}
+        if snapshot:
+            candidate_source = str(snapshot.get("candidate_source") or "").strip()
+            detected_raw = str(snapshot.get("candidate_detected_at") or "").strip()
+            detected_at = self._parse_kst_datetime(detected_raw)
+            if detected_at is not None:
+                age_source = "entry_timing"
+        if candidate_source and (not route_source or route_source in {"candidate_actions_v1", "legacy_selection_shadow"}):
+            route_source = candidate_source
+        if not route_source:
+            route_source = action_source
+
+        if detected_at is None:
+            fallbacks = [
+                ("action_first_seen_at", action_map.get("first_seen_at")),
+                ("action_detected_at", action_map.get("detected_at")),
+                ("action_created_at", action_map.get("created_at")),
+                ("selection_snapshot_ts", meta_map.get("selection_snapshot_ts")),
+                ("meta_known_at", meta_map.get("known_at")),
+            ]
+            for label, raw_value in fallbacks:
+                parsed = self._parse_kst_datetime(raw_value)
+                if parsed is None:
+                    continue
+                detected_at = parsed
+                detected_raw = str(raw_value or "").strip()
+                age_source = label
+                break
+
+        age_min: Optional[float] = None
+        if detected_at is not None:
+            try:
+                age_min = max(0.0, (current - detected_at).total_seconds() / 60.0)
+            except Exception:
+                age_min = None
+        return {
+            "candidate_detected_at": detected_raw,
+            "candidate_age_min": round(age_min, 4) if age_min is not None else None,
+            "candidate_age_source": age_source,
+            "candidate_source": candidate_source,
+            "route_source": route_source,
+            "entry_timing_snapshot": snapshot,
+        }
+
+    def _kr_late_entry_gate_state(
+        self,
+        ticker: str,
+        action: dict,
+        execution_context: dict,
+        meta: dict,
+        gate_info: dict,
+        *,
+        now_dt: Optional[datetime] = None,
+    ) -> dict:
+        if not self._runtime_bool("KR_LATE_ENTRY_GATE_ENABLED", True):
+            return {"enabled": False, "allowed": True}
+        requested = str((action or {}).get("action") or "").strip().upper()
+        if requested not in {"BUY_READY", "PROBE_READY"}:
+            return {"enabled": True, "allowed": True, "reason": "not_entry_action"}
+        current = now_dt or datetime.now(KST)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=KST)
+        else:
+            current = current.astimezone(KST)
+        elapsed_min = self._market_open_elapsed_min("KR", current)
+        timing = self._candidate_entry_timing_context(
+            "KR",
+            ticker,
+            action=action,
+            meta=meta,
+            now_dt=current,
+        )
+        full_buy_end = self._runtime_float("KR_LATE_ENTRY_FULL_BUY_END_MIN", 90.0)
+        probe_end = self._runtime_float("KR_LATE_ENTRY_PROBE_END_MIN", 270.0)
+        fresh_max_age = self._runtime_float("KR_FRESH_INTRADAY_MAX_AGE_MIN", 15.0)
+        min_ret_3m = self._runtime_float("KR_LATE_ENTRY_FRESH_MIN_RET_3M_PCT", 0.0)
+        min_ret_5m = self._runtime_float("KR_LATE_ENTRY_FRESH_MIN_RET_5M_PCT", 0.0)
+        require_momentum = self._runtime_bool("KR_LATE_ENTRY_REQUIRE_FRESH_MOMENTUM", False)
+
+        route_source = str(timing.get("route_source") or "").strip().lower()
+        age_source = str(timing.get("candidate_age_source") or "").strip()
+        age_min = timing.get("candidate_age_min")
+        late_replacement = any(
+            token in route_source
+            for token in (
+                "partial_reselect",
+                "inline_replacement",
+                "replacement",
+                "recovery",
+                "analyst_reinvoke",
+            )
+        )
+        trusted_fresh_source = age_source in {"entry_timing", "action_first_seen_at", "action_detected_at"} or any(
+            token in route_source
+            for token in (
+                "fresh",
+                "new_intraday",
+                "intraday_new",
+                "manual_rescreen",
+                "session_reuse_rescreen",
+                "tuning_rescreen",
+            )
+        )
+        fresh_by_age = bool(
+            age_min is not None
+            and float(age_min) <= max(0.0, fresh_max_age)
+            and trusted_fresh_source
+            and not late_replacement
+        )
+
+        ret_3m = execution_context.get("ret_3m_pct")
+        ret_5m = execution_context.get("ret_5m_pct")
+
+        def _ret_ok(value: Any, threshold: float) -> bool:
+            if value in (None, ""):
+                return not require_momentum
+            try:
+                return float(value) >= float(threshold)
+            except Exception:
+                return not require_momentum
+
+        momentum_ok = bool(_ret_ok(ret_3m, min_ret_3m) and _ret_ok(ret_5m, min_ret_5m))
+        trainer_tier = str((gate_info or {}).get("trainer_tier") or "").strip().upper()
+        state = {
+            "enabled": True,
+            "allowed": True,
+            "requested_action": requested,
+            "elapsed_min": round(elapsed_min, 4) if elapsed_min is not None else None,
+            "full_buy_end_min": full_buy_end,
+            "probe_end_min": probe_end,
+            "fresh_max_age_min": fresh_max_age,
+            "fresh_intraday": fresh_by_age,
+            "late_replacement": late_replacement,
+            "momentum_ok": momentum_ok,
+            "ret_3m_pct": ret_3m,
+            "ret_5m_pct": ret_5m,
+            "trainer_tier": trainer_tier,
+            **timing,
+        }
+        if elapsed_min is None or elapsed_min < 0:
+            state["reason"] = "outside_regular_session"
+            return state
+        if elapsed_min <= full_buy_end:
+            state["reason"] = "early_session_full_entry_window"
+            return state
+        if late_replacement:
+            state.update({"allowed": False, "final_action": "WATCH", "reason": "kr_late_replacement_watch_only"})
+            return state
+        if elapsed_min > probe_end:
+            state.update({"allowed": False, "final_action": "WATCH", "reason": "kr_late_entry_closed"})
+            return state
+        if not fresh_by_age:
+            state.update({"allowed": False, "final_action": "WATCH", "reason": "kr_stale_late_entry_watch_only"})
+            return state
+        if not momentum_ok:
+            state.update({"allowed": False, "final_action": "WATCH", "reason": "kr_fresh_intraday_not_confirmed"})
+            return state
+        if trainer_tier in {"BENCH", "QUARANTINE"}:
+            state.update({"allowed": False, "final_action": "WATCH", "reason": "kr_late_trainer_tier_watch_only"})
+            return state
+        if requested == "BUY_READY":
+            state.update({"final_action": "PROBE_READY", "reason": "kr_late_fresh_buy_demoted_to_probe"})
+            return state
+        state["reason"] = "kr_late_fresh_probe_allowed"
+        return state
+
     def _apply_candidate_action_live_routes(self, market: str, meta: dict) -> dict:
         normalized_meta = dict(meta or {})
         actions = list(normalized_meta.get("candidate_actions") or [])
@@ -3926,6 +4165,55 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 key,
                 candidate=action_for_route,
             )
+            kr_late_gate: dict[str, Any] = {}
+            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY"}:
+                kr_late_gate = self._kr_late_entry_gate_state(
+                    key,
+                    action_for_route,
+                    execution_context,
+                    normalized_meta,
+                    gate_info,
+                )
+                execution_context["kr_late_entry_gate"] = kr_late_gate
+                if str(kr_late_gate.get("final_action") or "").upper() == "PROBE_READY":
+                    action_for_route["action"] = "PROBE_READY"
+                    execution_context["kr_late_entry_demoted_to"] = "PROBE_READY"
+                    execution_context["kr_late_entry_reason"] = str(kr_late_gate.get("reason") or "")
+                elif kr_late_gate.get("allowed") is False:
+                    requested_action = str((action or {}).get("action") or "")
+                    reason = str(kr_late_gate.get("reason") or "kr_late_entry_watch_only")
+                    route_payload = {
+                        "ticker": key,
+                        "market": market_key,
+                        "final_action": "WATCH",
+                        "route": None,
+                        "reason": reason,
+                        "blocker": reason,
+                        "requested_action": requested_action,
+                        "claude_action": requested_action,
+                        "pathb_status": route_state.get("status", ""),
+                        "runtime_gate": execution_context,
+                        "health_state": gate_info.get("health_state", ""),
+                        "ready_degraded": bool(gate_info.get("ready_degraded")),
+                        "stale": bool(gate_info.get("stale")),
+                        "trainer_tier": gate_info.get("trainer_tier", ""),
+                        "cohort_key": gate_info.get("cohort_key", ""),
+                        "cohort_reliability": gate_info.get("cohort_reliability", 0.0),
+                        "kr_late_entry_gate": kr_late_gate,
+                        "action_created_at": str(action_for_route.get("created_at") or ""),
+                        "action_expires_at": str(action_for_route.get("expires_at") or ""),
+                        "routed_at": datetime.now(KST).isoformat(timespec="seconds"),
+                        "warnings": [reason],
+                    }
+                    action_routes.append(route_payload)
+                    self._write_candidate_action_gate_event(
+                        market_key,
+                        key,
+                        action_for_route,
+                        route_payload,
+                        gate_info,
+                    )
+                    continue
             if gate_info.get("blocked"):
                 requested_action = str((action or {}).get("action") or "")
                 route_payload = {
@@ -3980,6 +4268,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             route_payload["trainer_tier"] = gate_info.get("trainer_tier", "")
             route_payload["cohort_key"] = gate_info.get("cohort_key", "")
             route_payload["cohort_reliability"] = gate_info.get("cohort_reliability", 0.0)
+            if kr_late_gate:
+                route_payload["kr_late_entry_gate"] = kr_late_gate
+                reason = str(kr_late_gate.get("reason") or "")
+                if reason:
+                    warnings = list(route_payload.get("warnings") or [])
+                    if reason not in warnings:
+                        warnings.append(reason)
+                    route_payload["warnings"] = warnings
+                if str(kr_late_gate.get("final_action") or "").upper() == "PROBE_READY":
+                    route_payload["original_action"] = str((action or {}).get("action") or "")
+                    route_payload["demoted_to"] = "PROBE_READY"
+                    route_payload["runtime_gate_reason"] = reason
             if decision.cancel_pathb and route_state.get("waiting"):
                 pathb = getattr(self, "pathb", None)
                 if pathb is not None and hasattr(pathb, "cancel_waiting_for_ticker"):
@@ -4498,6 +4798,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.debug(f"[stop cluster alert failed] {market_key} {reason_key}: {exc}")
 
+    def _kr_recovery_micro_gate(self, now_dt: Optional[datetime] = None) -> dict:
+        if not self._runtime_bool("KR_RECOVERY_MICRO_ENABLED", False):
+            return {"allowed": False, "reason": "kr_recovery_micro_disabled"}
+        elapsed_min = self._market_open_elapsed_min("KR", now_dt)
+        end_min = self._runtime_float("KR_RECOVERY_MICRO_END_MIN", 90.0)
+        state = {
+            "allowed": True,
+            "reason": "kr_recovery_micro_allowed",
+            "elapsed_min": round(elapsed_min, 4) if elapsed_min is not None else None,
+            "end_min": end_min,
+        }
+        if elapsed_min is not None and elapsed_min > end_min:
+            state.update({"allowed": False, "reason": "kr_recovery_micro_late_session"})
+        return state
+
     def _new_buy_block_state(self, market: str, ticker: str = "", strategy: str = "") -> dict:
         market_key = str(market or "").upper()
         raw_ticker = str(ticker or "").strip()
@@ -4533,6 +4848,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 and cluster_reason == "STOP_CLUSTER_FIRST_STOP_COOLDOWN"
                 and cluster_scope == "market"
             )
+            if recovery_micro_first_stop_exempt and market_key == "KR":
+                kr_recovery_gate = self._kr_recovery_micro_gate()
+                details["kr_recovery_micro_gate"] = kr_recovery_gate
+                if not bool(kr_recovery_gate.get("allowed")):
+                    recovery_micro_first_stop_exempt = False
             if recovery_micro_first_stop_exempt:
                 details.update(
                     {
@@ -5048,7 +5368,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             tmp.replace(path)
         except Exception as exc:
             log.debug(f"[candidate trainer] snapshot failed {market_key} {phase}: {exc}")
-    def _apply_selection_meta(self, market: str, selected: list[str], mode: str = "") -> dict:
+    def _apply_selection_meta(
+        self,
+        market: str,
+        selected: list[str],
+        mode: str = "",
+        source: str = "",
+    ) -> dict:
         """Persist Claude WATCH/TRADE_READY split while keeping legacy tickers intact."""
         raw_meta = dict(get_last_selection_meta() or {})
         meta = dict(raw_meta)
@@ -5066,6 +5392,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "risk_budget_pct": {},
                 "size_reason": {},
             }
+        route_source = str(source or "").strip()
+        if route_source and not str(meta.get("_entry_route_source") or "").strip():
+            meta["_entry_route_source"] = route_source
         mode = str(mode or (self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
         candidate_actions, candidate_actions_source = self._normalize_candidate_actions_for_meta(market, meta)
         meta["candidate_actions"] = candidate_actions
@@ -5758,17 +6087,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         in_key = self._selection_ticker_key(market_key, incoming)
         out_score = self._candidate_trainer_score(market_key, outgoing, {})
         in_score = self._candidate_trainer_score(market_key, in_key, candidate_map.get(in_key, {}) or candidate_map.get(incoming, {}) or {})
+        default_gate_enabled = market_key in {"KR", "US"}
+        default_min_score = 5.5 if market_key == "KR" else 4.0
+        default_delta = 1.25 if market_key == "KR" else 0.75
         gate_enabled = self._runtime_bool(
             f"{market_key}_TRAINER_REPLACEMENT_DELTA_GATE_ENABLED",
-            self._runtime_bool("TRAINER_REPLACEMENT_DELTA_GATE_ENABLED", market_key == "US"),
+            self._runtime_bool("TRAINER_REPLACEMENT_DELTA_GATE_ENABLED", default_gate_enabled),
         )
         min_score = self._runtime_float(
             f"{market_key}_TRAINER_REPLACEMENT_MIN_IN_SCORE",
-            self._runtime_float("TRAINER_REPLACEMENT_MIN_IN_SCORE", 4.0),
+            self._runtime_float("TRAINER_REPLACEMENT_MIN_IN_SCORE", default_min_score),
         )
         delta = self._runtime_float(
             f"{market_key}_TRAINER_REPLACEMENT_DELTA",
-            self._runtime_float("TRAINER_REPLACEMENT_DELTA", 0.75),
+            self._runtime_float("TRAINER_REPLACEMENT_DELTA", default_delta),
         )
         ok = True if not gate_enabled else bool(in_score >= min_score and in_score >= out_score + delta)
         return ok, {
@@ -5781,6 +6113,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "enabled": gate_enabled,
             "passed": ok,
         }
+
+    def _kr_partial_replacement_watch_only(self, market: str, now_dt: Optional[datetime] = None) -> bool:
+        if str(market or "").upper() != "KR":
+            return False
+        if not self._runtime_bool("KR_PARTIAL_REPLACEMENT_WATCH_ONLY_ENABLED", True):
+            return False
+        elapsed_min = self._market_open_elapsed_min("KR", now_dt)
+        if elapsed_min is None:
+            return False
+        cutoff_min = self._runtime_float("KR_PARTIAL_REPLACEMENT_WATCH_ONLY_AFTER_MIN", 90.0)
+        return bool(elapsed_min >= cutoff_min)
 
     def _pick_partial_replace_in(
         self,
@@ -6270,6 +6613,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return {"allowed": False, "reason": "live_disabled"}
         if market_key not in getattr(self, "recovery_micro_allowed_markets", {"KR", "US"}):
             return {"allowed": False, "reason": "market_not_allowed"}
+        if market_key == "KR":
+            kr_recovery_gate = self._kr_recovery_micro_gate()
+            if not bool(kr_recovery_gate.get("allowed")):
+                return {
+                    "allowed": False,
+                    "reason": str(kr_recovery_gate.get("reason") or "kr_recovery_micro_disabled"),
+                    "kr_recovery_micro_gate": kr_recovery_gate,
+                }
         allowed_modes = getattr(self, "recovery_micro_allowed_modes", set())
         if allowed_modes and str(mode or "").upper() not in allowed_modes:
             return {"allowed": False, "reason": "mode_not_allowed"}
@@ -8326,7 +8677,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                execution_phase=self._current_judgment_phase(target_market))
             if not selected:
                 raise RuntimeError("최종 선택 종목이 없습니다.")
-            sel_meta = self._apply_selection_meta(target_market, selected, mode=mode)
+            sel_meta = self._apply_selection_meta(target_market, selected, mode=mode, source="manual_rescreen")
             self._record_candidate_quality(
                 target_market,
                 "manual_rescreen",
@@ -13761,7 +14112,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     secondary_change_pct=self._get_secondary_change_pct(market, digest),
                     execution_phase=_JUDGMENT_PHASE_PREOPEN,
                 )
-                sel_meta = self._apply_selection_meta(market, selected, mode="PREOPEN_WATCH")
+                sel_meta = self._apply_selection_meta(market, selected, mode="PREOPEN_WATCH", source=_JUDGMENT_PHASE_PREOPEN)
                 sel_meta = self._force_preopen_watch_only(market, sel_meta)
                 self._record_preopen_rank_diff(
                     market,
@@ -14107,7 +14458,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     market_change_pct=self._get_market_change_pct(market, digest),
                                                     secondary_change_pct=self._get_secondary_change_pct(market, digest),
                                                     execution_phase=self._current_judgment_phase(market))
-            sel_meta = self._apply_selection_meta(market, selected, mode=consensus.get("mode", ""))
+            sel_meta = self._apply_selection_meta(market, selected, mode=consensus.get("mode", ""), source="session_open")
             self._record_preopen_rank_diff(
                 market,
                 selected,
@@ -14238,7 +14589,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                market_change_pct=self._get_market_change_pct(market),
                                                                secondary_change_pct=self._get_secondary_change_pct(market),
                                                                execution_phase=self._current_judgment_phase(market))
-                fresh_meta = self._apply_selection_meta(market, fresh_selected, mode=consensus.get("mode", ""))
+                fresh_meta = self._apply_selection_meta(
+                    market,
+                    fresh_selected,
+                    mode=consensus.get("mode", ""),
+                    source="session_reuse_rescreen",
+                )
                 self._record_preopen_rank_diff(
                     market,
                     fresh_selected,
@@ -18401,7 +18757,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                     market_change_pct=self._get_market_change_pct(market),
                                                                     secondary_change_pct=self._get_secondary_change_pct(market),
                                                                     execution_phase=self._current_judgment_phase(market))
-                        tune_meta = self._apply_selection_meta(market, tune_tickers, mode=new_mode)
+                        tune_meta = self._apply_selection_meta(
+                            market,
+                            tune_tickers,
+                            mode=new_mode,
+                            source="tuning_rescreen",
+                        )
                         self.today_tickers[market] = tune_tickers
                         self._entry_timing_mark_candidates(market, tune_tickers, "tuning_rescreen")
                         self.today_ticker_reasons[market] = tune_reasons or {}
@@ -18746,17 +19107,42 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     market_change_pct=self._get_market_change_pct(market),
                                                     secondary_change_pct=self._get_secondary_change_pct(market),
                                                     execution_phase=self._current_judgment_phase(market))
-        new_meta = get_last_selection_meta() or {}
+        new_meta = dict(get_last_selection_meta() or {})
+        new_meta.setdefault("watchlist", list(new_selected or []))
+        new_meta["_entry_route_source"] = "partial_reselect"
+        candidate_actions, candidate_actions_source = self._normalize_candidate_actions_for_meta(market, new_meta)
+        new_meta["candidate_actions"] = candidate_actions
+        new_meta["_candidate_actions_source"] = candidate_actions_source
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        last_post_open = (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key)
+        if isinstance(last_post_open, dict) and last_post_open and not new_meta.get("_post_open_features_by_ticker"):
+            new_meta["_post_open_features_by_ticker"] = dict(last_post_open)
+        new_meta = self._apply_candidate_action_live_routes(market, new_meta)
+        new_meta = self._normalize_selection_meta_runtime(market, new_meta, new_selected, mode=mode)
+        allow_missing_price_targets = new_meta.get("_trade_ready_without_price_targets_allowed") or []
+        new_meta = self._enforce_trade_ready_price_targets(
+            market,
+            new_meta,
+            allow_missing_price_targets=allow_missing_price_targets,
+        )
         candidate_trade_ready = self._selection_replace_candidates(new_meta, new_selected)
         candidate_map = {
             (str(c.get("ticker", "")).upper() if market == "US" else str(c.get("ticker", ""))): c
             for c in new_cands
             if c.get("ticker")
         }
+        kr_watch_only_replacement = self._kr_partial_replacement_watch_only(market)
+        replacement_pool = [t for t in candidate_trade_ready if t not in set(current_tickers)]
+        if kr_watch_only_replacement:
+            replacement_pool = [
+                t
+                for t in list(dict.fromkeys(replacement_pool + list(new_meta.get("watchlist") or new_selected or [])))
+                if t not in set(current_tickers)
+            ]
         replace_in = self._pick_partial_replace_in(
             market,
             replace_out,
-            [t for t in candidate_trade_ready if t not in set(current_tickers)],
+            replacement_pool,
             new_meta,
             candidate_map,
             n_replace,
@@ -18783,7 +19169,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             t for t in self.trade_ready_tickers.get(market, [])
             if t in final and t not in set(effective_replace_out)
         ]
-        final_ready = list(dict.fromkeys(current_ready + [t for t in replace_in if t in final]))
+        if kr_watch_only_replacement:
+            final_ready = list(dict.fromkeys(current_ready))
+        else:
+            final_ready = list(dict.fromkeys(current_ready + [t for t in replace_in if t in final]))
         existing_meta = self.selection_meta.get(market) or {}
         merged_price_targets = self._merge_selection_price_targets(
             market,
@@ -18804,6 +19193,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         }
         final_meta = self._normalize_selection_meta_runtime(market, final_meta, final, mode=mode)
         final_meta = self._enforce_trade_ready_price_targets(market, final_meta)
+        if kr_watch_only_replacement:
+            filtered = dict(final_meta.get("_runtime_filtered_trade_ready") or {})
+            for ticker in replace_in:
+                if ticker not in final_ready:
+                    filtered[ticker] = "kr_partial_replacement_watch_only"
+            final_meta["_runtime_filtered_trade_ready"] = filtered
+            final_meta["_kr_partial_replacement_watch_only"] = True
         self.selection_meta[market] = final_meta
         self.trade_ready_tickers[market] = list(final_meta.get("trade_ready") or [])
         self.today_ticker_reasons[market] = final_meta["reasons"]
@@ -18998,6 +19394,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             market,
                             new_tickers,
                             mode=new_consensus.get("mode", ""),
+                            source="analyst_reinvoke",
                         )
                         self.today_tickers[market] = new_tickers
                         self._entry_timing_mark_candidates(market, new_tickers, "analyst_reinvoke")

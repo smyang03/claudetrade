@@ -368,6 +368,27 @@ class NewBuyGateTests(unittest.TestCase):
         self.assertEqual(state["reason"], "STOP_CLUSTER_FIRST_STOP_COOLDOWN")
         self.assertEqual(state["scope"], "market")
 
+    def test_first_stop_cluster_cooldown_blocks_kr_recovery_micro_by_default(self) -> None:
+        bot = self._bot()
+        bot._daily_sl_count = {"KR": 1}
+        bot._daily_sl_last_at = {"KR": datetime(2026, 4, 29, 9, 55, tzinfo=market_utils.KST)}
+        bot._v2_same_day_stop_tickers = {"KR": {"000660"}}
+
+        with self._with_now(10, 0), patch.object(trading_bot, "datetime", _FrozenDateTime), patch.dict(
+            os.environ,
+            {
+                "STOP_CLUSTER_FIRST_FREEZE_MINUTES": "30",
+                "STOP_CLUSTER_HARD_BLOCK_COUNT": "2",
+                "STOP_CLUSTER_DISASTER_BLOCK_COUNT": "3",
+                "KR_RECOVERY_MICRO_ENABLED": "",
+            },
+        ), patch.dict(market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "RECOVERY_MICRO")
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "STOP_CLUSTER_FIRST_STOP_COOLDOWN")
+        self.assertEqual(state["details"]["kr_recovery_micro_gate"]["reason"], "kr_recovery_micro_disabled")
+
     def test_first_stop_cluster_cooldown_allows_recovery_micro(self) -> None:
         bot = self._bot()
         bot._daily_sl_count = {"KR": 1}
@@ -380,6 +401,7 @@ class NewBuyGateTests(unittest.TestCase):
                 "STOP_CLUSTER_FIRST_FREEZE_MINUTES": "30",
                 "STOP_CLUSTER_HARD_BLOCK_COUNT": "2",
                 "STOP_CLUSTER_DISASTER_BLOCK_COUNT": "3",
+                "KR_RECOVERY_MICRO_ENABLED": "true",
             },
         ), patch.dict(market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}):
             state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "RECOVERY_MICRO")
@@ -499,6 +521,38 @@ class StopClusterDedupeTests(unittest.TestCase):
 
 
 class RecoveryMicroTests(unittest.TestCase):
+    def test_kr_recovery_micro_adjustment_disabled_by_default(self) -> None:
+        bot = object.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot.enable_recovery_micro = True
+        bot.recovery_micro_paper_only = False
+        bot.recovery_micro_allowed_markets = {"KR", "US"}
+        bot.recovery_micro_allowed_modes = {"MODERATE_BULL"}
+        bot.recovery_micro_min_entry_priority = 0.70
+        bot.recovery_micro_max_daily_trades = 1
+        bot.recovery_micro_max_open_positions = 1
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 45.0
+
+        with patch.dict(os.environ, {"KR_RECOVERY_MICRO_ENABLED": ""}, clear=False):
+            result = trading_bot.TradingBot._recovery_micro_adjustment(
+                bot,
+                market="KR",
+                ticker="005930",
+                mode="MODERATE_BULL",
+                source_strategy="momentum",
+                entry_priority_score=0.72,
+                qty=10,
+                risk_price_krw=70_000,
+                original_order_cost_krw=700_000,
+                available_budget_krw=500_000,
+                cash_krw=500_000,
+                daily_stop_count=1,
+                realized_daily_pnl_pct=-0.5,
+            )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "kr_recovery_micro_disabled")
+
     def test_recovery_micro_caps_size_after_first_stop(self) -> None:
         bot = object.__new__(trading_bot.TradingBot)
         bot.is_paper = False

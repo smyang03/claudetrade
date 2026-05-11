@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from audit.candidate_audit_store import CandidateAuditStore
-from trading_bot import TradingBot, _mode_family
+from trading_bot import KST, TradingBot, _mode_family
 
 
 class _RuntimeConfig:
@@ -75,6 +76,7 @@ def _make_bot() -> TradingBot:
             "PROBE_SIZE_RATIO": 0.30,
             "ADD_SIZE_RATIO": 0.30,
             "PLANB_CANCEL_CONFIDENCE_MIN": 0.75,
+            "KR_LATE_ENTRY_GATE_ENABLED": False,
         }
     )
     bot.selection_meta = {"US": {}, "KR": {}}
@@ -726,6 +728,200 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["final_action"], "BUY_READY")
         self.assertEqual(route["confirmation_state"], "CONFIRMED")
         self.assertEqual(route["confirmation_reason"], "")
+
+    def test_kr_late_entry_gate_blocks_stale_buy_ready(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"KR_LATE_ENTRY_GATE_ENABLED": True})
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 150.0
+        raw_meta = {
+            "watchlist": ["005930"],
+            "_entry_route_source": "session_open",
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["reason"], "kr_stale_late_entry_watch_only")
+        self.assertEqual(route["kr_late_entry_gate"]["elapsed_min"], 150.0)
+        self.assertFalse(route["kr_late_entry_gate"]["fresh_intraday"])
+
+    def test_kr_late_entry_gate_demotes_fresh_buy_to_probe(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"KR_LATE_ENTRY_GATE_ENABLED": True})
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 120.0
+        raw_meta = {
+            "watchlist": ["005930"],
+            "_entry_route_source": "fresh_intraday",
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": 0.1,
+                    "ret_5m_pct": 0.2,
+                    "data_quality": "good",
+                }
+            },
+            "selection_snapshot_ts": datetime.now(KST).isoformat(timespec="seconds"),
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], ["005930"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "PROBE_READY")
+        self.assertEqual(route["demoted_to"], "PROBE_READY")
+        self.assertEqual(meta["allocation_intent"]["005930"], "probe")
+        self.assertEqual(route["kr_late_entry_gate"]["reason"], "kr_late_fresh_buy_demoted_to_probe")
+        self.assertTrue(route["kr_late_entry_gate"]["fresh_intraday"])
+
+    def test_kr_late_entry_gate_treats_manual_rescreen_as_fresh_probe(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"KR_LATE_ENTRY_GATE_ENABLED": True})
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 120.0
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(
+                bot,
+                "KR",
+                ["005930"],
+                mode="BALANCED",
+                source="manual_rescreen",
+            )
+
+        self.assertEqual(meta["trade_ready"], ["005930"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "PROBE_READY")
+        self.assertEqual(route["kr_late_entry_gate"]["route_source"], "manual_rescreen")
+        self.assertEqual(route["kr_late_entry_gate"]["reason"], "kr_late_fresh_buy_demoted_to_probe")
+
+    def test_kr_late_entry_gate_keeps_analyst_reinvoke_watch_only_after_cutoff(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"KR_LATE_ENTRY_GATE_ENABLED": True})
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 120.0
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(
+                bot,
+                "KR",
+                ["005930"],
+                mode="BALANCED",
+                source="analyst_reinvoke",
+            )
+
+        self.assertEqual(meta["trade_ready"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["reason"], "kr_late_replacement_watch_only")
+        self.assertTrue(route["kr_late_entry_gate"]["late_replacement"])
+
+    def test_kr_partial_replacement_is_watch_only_after_cutoff(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"KR_PARTIAL_REPLACEMENT_WATCH_ONLY_ENABLED": True})
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 120.0
+
+        self.assertTrue(TradingBot._kr_partial_replacement_watch_only(bot, "KR"))
+
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 45.0
+        self.assertFalse(TradingBot._kr_partial_replacement_watch_only(bot, "KR"))
+        self.assertFalse(TradingBot._kr_partial_replacement_watch_only(bot, "US"))
+
+    def test_kr_partial_reselect_replaces_watchlist_without_trade_ready_after_cutoff(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_LATE_ENTRY_GATE_ENABLED": True,
+                "KR_PARTIAL_REPLACEMENT_WATCH_ONLY_ENABLED": True,
+            }
+        )
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 120.0
+        bot.today_tickers = {"KR": ["001", "002", "003"]}
+        bot.trade_ready_tickers = {"KR": ["001"], "US": []}
+        bot.selection_meta["KR"] = {
+            "watchlist": ["001", "002", "003"],
+            "trade_ready": ["001"],
+            "price_targets": {"001": {"reference_price": 100.0}},
+            "recommended_strategy": {"001": "momentum"},
+        }
+        bot.today_ticker_reasons = {"KR": {"001": "keep", "002": "old", "003": "old"}}
+        bot.today_judgment = {
+            "market": "KR",
+            "tickers": ["001", "002", "003"],
+            "consensus": {"mode": "BALANCED"},
+            "digest_prompt": "",
+        }
+        bot._partial_reselect_last = {}
+        bot._ticker_exclude_log = {"KR": []}
+        bot._tsdb_selection_ids = {"KR": {}}
+        bot.price_cache_raw = {}
+        bot._last_post_open_features_by_ticker = {"KR": {}}
+        states = {
+            "001": {"health_state": "STABLE_READY", "ready_count": 1},
+            "002": {"health_state": "WATCH_WEAK", "ready_count": 0},
+            "003": {"health_state": "WATCH_WEAK", "ready_count": 0},
+            "010": {"health_state": "STRONG_READY", "ready_count": 1},
+            "020": {"health_state": "STRONG_READY", "ready_count": 1},
+        }
+        bot._candidate_health_tracker = lambda market: _HealthTracker(states)
+        scores = {"001": 0.0, "002": 5.0, "003": 4.0}
+        bot._partial_replace_score = lambda market, ticker, protected=None: scores.get(ticker, 0.0)
+        bot._screen_market_candidates = lambda market, mode: [
+            {"ticker": "010", "entry_priority_score": 2.0},
+            {"ticker": "020", "entry_priority_score": 2.0},
+        ]
+        bot._filter_candidates_by_history = lambda candidates, market: list(candidates)
+        bot._annotate_selection_execution_features = lambda market, candidates, mode: list(candidates)
+        bot._build_intraday_context = lambda market: ""
+        bot._load_lesson_candidate_summary = lambda market: ""
+        bot._get_market_change_pct = lambda market: 0.0
+        bot._get_secondary_change_pct = lambda market: 0.0
+        bot._current_judgment_phase = lambda market: "intraday_live"
+        bot._persist_live_judgment = lambda market: None
+        bot._update_candidate_health = lambda *args, **kwargs: None
+        bot._run_param_review = lambda *args, **kwargs: None
+
+        selection_meta = {
+            "watchlist": ["010", "020"],
+            "trade_ready": ["010", "020"],
+            "candidate_actions": [
+                {"ticker": "010", "action": "BUY_READY", "confidence": 0.9},
+                {"ticker": "020", "action": "BUY_READY", "confidence": 0.9},
+            ],
+            "recommended_strategy": {"010": "momentum", "020": "momentum"},
+            "price_targets": {"010": {"reference_price": 100.0}, "020": {"reference_price": 100.0}},
+        }
+
+        with patch("trading_bot.select_tickers", return_value=(["010", "020"], {"010": "new", "020": "new"})), patch(
+            "trading_bot.get_last_selection_meta",
+            return_value=selection_meta,
+        ), patch("trading_bot.tsdb.insert_batch", return_value={"010": 11, "020": 12}), patch(
+            "trading_bot.watchlist_change_alert"
+        ):
+            TradingBot._partial_reselect(bot, "KR")
+
+        self.assertEqual(bot.today_tickers["KR"], ["001", "010", "020"])
+        self.assertEqual(bot.trade_ready_tickers["KR"], ["001"])
+        self.assertTrue(bot.selection_meta["KR"]["_kr_partial_replacement_watch_only"])
+        self.assertEqual(
+            bot.selection_meta["KR"]["_runtime_filtered_trade_ready"]["010"],
+            "kr_partial_replacement_watch_only",
+        )
+        self.assertEqual(
+            bot.selection_meta["KR"]["_runtime_filtered_trade_ready"]["020"],
+            "kr_partial_replacement_watch_only",
+        )
 
     def test_candidate_audit_live_write_records_routes(self) -> None:
         bot = _make_bot()
