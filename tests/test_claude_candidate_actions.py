@@ -121,7 +121,28 @@ class ClaudeCandidateActionsTests(unittest.TestCase):
 
         self.assertIn("candidate_actions", contract)
         self.assertIn("must not output HARD_BLOCK", contract)
+        self.assertIn("Every v2 candidate_action", contract)
         self.assertIn("hold_days", contract)
+
+    def test_v2_watch_defaults_missing_action_ceiling_ack_for_audit(self) -> None:
+        actions = candidate_actions_from_response(
+            {
+                "candidate_actions": [
+                    {
+                        "ticker": "018880",
+                        "schema_version": "candidate_actions.v2",
+                        "action": "WATCH",
+                        "reason_code": "STALE_LATE_CHASE",
+                    }
+                ]
+            },
+            market="KR",
+            created_at="2026-05-11T10:00:00",
+        )
+
+        self.assertEqual(actions[0]["action"], "WATCH")
+        self.assertEqual(actions[0]["action_ceiling_ack"], "WATCH")
+        self.assertIn("v2_missing_action_ceiling_ack_defaulted", actions[0]["contract_warnings"])
 
     def test_string_confidence_is_downgraded_to_zero_and_cycle_continues(self) -> None:
         actions = candidate_actions_from_response(

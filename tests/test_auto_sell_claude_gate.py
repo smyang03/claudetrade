@@ -228,6 +228,176 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         advisor.assert_not_called()
         precheck.assert_called_once()
 
+    def test_pre_close_force_sell_bypasses_existing_cooldown(self) -> None:
+        bot = _plan_a_bot()
+        future = (datetime.now().astimezone() + timedelta(minutes=20)).isoformat(timespec="seconds")
+        cand = {
+            "ticker": "012610",
+            "entry": 5900.0,
+            "current_price": 5880.0,
+            "display_current_price": 5880.0,
+            "qty": 25,
+            "strategy": "RECOVERY_MICRO",
+            "recovery_micro": True,
+            "recovery_micro_no_carry": True,
+            "exit_price": 5880.0,
+            "reason": "pre_close",
+            "auto_sell_review_cooldown_until": future,
+        }
+
+        with patch(
+            "minority_report.hold_advisor.ask",
+            return_value={"action": "HOLD", "confidence": 0.7, "reason": "wait"},
+        ) as advisor:
+            review = bot._run_auto_sell_review_gate(cand, "KR", "pre_close", current_native=5770.0)
+
+        self.assertTrue(review["allowed"])
+        advisor.assert_called_once()
+        self.assertEqual(cand["auto_sell_review_action"], "SELL")
+        self.assertIn("system_force_sell_after_review:pre_close", cand["auto_sell_review_detail"])
+
+    def test_recovery_micro_force_time_stop_bypasses_existing_cooldown(self) -> None:
+        bot = _plan_a_bot()
+        future = (datetime.now().astimezone() + timedelta(minutes=20)).isoformat(timespec="seconds")
+        cand = {
+            "ticker": "012610",
+            "entry": 5900.0,
+            "current_price": 5880.0,
+            "display_current_price": 5880.0,
+            "qty": 25,
+            "strategy": "RECOVERY_MICRO",
+            "recovery_micro": True,
+            "recovery_micro_no_carry": True,
+            "recovery_micro_exit_trigger": "recovery_micro_force_time_stop",
+            "exit_price": 5880.0,
+            "reason": "recovery_micro_time_stop",
+            "auto_sell_review_cooldown_until": future,
+        }
+
+        with patch(
+            "minority_report.hold_advisor.ask",
+            return_value={"action": "HOLD", "confidence": 0.7, "reason": "wait"},
+        ) as advisor:
+            review = bot._run_auto_sell_review_gate(cand, "KR", "recovery_micro_time_stop", current_native=5770.0)
+
+        self.assertTrue(review["allowed"])
+        advisor.assert_called_once()
+        self.assertEqual(cand["auto_sell_review_action"], "SELL")
+        self.assertIn("recovery_micro_force_time_stop", cand["auto_sell_review_detail"])
+
+    def test_recovery_micro_time_stop_forces_sell_when_latest_price_breaks_stop_or_hard_loss(self) -> None:
+        bot = _plan_a_bot()
+        past = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat(timespec="seconds")
+        stop_cand = {
+            "ticker": "012610",
+            "entry": 5900.0,
+            "current_price": 5880.0,
+            "qty": 25,
+            "strategy": "RECOVERY_MICRO",
+            "recovery_micro_no_carry": True,
+            "sl": 5811.5,
+            "exit_price": 5880.0,
+            "reason": "recovery_micro_time_stop",
+        }
+        hard_loss_cand = {
+            **stop_cand,
+            "sl": 0.0,
+            "recovery_micro_hard_loss_pct": 1.5,
+        }
+        due_cand = {
+            **stop_cand,
+            "sl": 0.0,
+            "recovery_micro_force_exit_at": past,
+        }
+
+        stop_force, stop_detail = bot._auto_sell_review_force_sell_required(
+            stop_cand,
+            "KR",
+            "recovery_micro_time_stop",
+            current_native=5770.0,
+        )
+        hard_force, hard_detail = bot._auto_sell_review_force_sell_required(
+            hard_loss_cand,
+            "KR",
+            "recovery_micro_time_stop",
+            current_native=5800.0,
+        )
+        due_force, due_detail = bot._auto_sell_review_force_sell_required(
+            due_cand,
+            "KR",
+            "recovery_micro_time_stop",
+            current_native=5880.0,
+        )
+
+        self.assertTrue(stop_force)
+        self.assertIn("recovery_micro_stop_price", stop_detail)
+        self.assertTrue(hard_force)
+        self.assertIn("recovery_micro_hard_loss", hard_detail)
+        self.assertTrue(due_force)
+        self.assertIn("recovery_micro_force_exit_at_due", due_detail)
+
+    def test_kr_auto_sell_review_uses_latest_native_price_context(self) -> None:
+        bot = _plan_a_bot()
+        cand = {
+            "ticker": "012610",
+            "entry": 5900.0,
+            "current_price": 5880.0,
+            "display_current_price": 5880.0,
+            "qty": 25,
+            "strategy": "RECOVERY_MICRO",
+            "exit_price": 5880.0,
+            "reason": "tp_check",
+        }
+
+        with patch(
+            "minority_report.hold_advisor.ask",
+            return_value={"action": "HOLD", "confidence": 0.7, "reason": "wait"},
+        ) as advisor:
+            review = bot._run_auto_sell_review_gate(cand, "KR", "tp_check", current_native=5770.0)
+
+        self.assertFalse(review["allowed"])
+        advisor_pos = advisor.call_args.args[0]
+        self.assertEqual(advisor_pos["current_price"], 5770.0)
+        self.assertEqual(advisor_pos["display_current_price"], 5770.0)
+        self.assertEqual(advisor_pos["exit_price"], 5770.0)
+
+    def test_ordinary_auto_sell_review_reason_still_respects_cooldown(self) -> None:
+        bot = _plan_a_bot()
+        future = (datetime.now().astimezone() + timedelta(minutes=20)).isoformat(timespec="seconds")
+        cand = {
+            **bot.risk.positions[0],
+            "exit_price": 106.0,
+            "reason": "tp_check",
+            "auto_sell_review_cooldown_until": future,
+        }
+
+        with patch("minority_report.hold_advisor.ask") as advisor:
+            review = bot._run_auto_sell_review_gate(cand, "US", "tp_check", current_native=106.0)
+
+        self.assertFalse(review["allowed"])
+        advisor.assert_not_called()
+        self.assertEqual(cand["auto_sell_review_action"], "HOLD")
+        self.assertIn("auto_sell_review_cooldown", cand["auto_sell_review_detail"])
+
+    def test_duplicate_cooldown_log_and_lifecycle_events_are_suppressed(self) -> None:
+        bot = _plan_a_bot()
+        future = (datetime.now().astimezone() + timedelta(minutes=20)).isoformat(timespec="seconds")
+        payload = {
+            "ticker": "012610",
+            "candidate_reason": "recovery_micro_time_stop",
+            "reason": "recovery_micro_time_stop",
+            "final_action": "SELL",
+        }
+        position = {
+            "auto_sell_review_reason": "recovery_micro_time_stop",
+            "auto_sell_review_cooldown_until": future,
+        }
+
+        self.assertTrue(bot._should_log_auto_sell_cooldown("KR", "012610", "recovery_micro_time_stop", future))
+        self.assertFalse(bot._should_log_auto_sell_cooldown("KR", "012610", "recovery_micro_time_stop", future))
+        self.assertTrue(bot._should_write_exit_lifecycle_event("KR", position, payload))
+        self.assertFalse(bot._should_write_exit_lifecycle_event("KR", position, payload))
+
     def test_auto_sell_review_decision_record_includes_action_detail(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         bot.today_judgment = {"consensus": {"mode": "MODERATE_BULL"}}

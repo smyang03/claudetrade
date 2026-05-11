@@ -7,6 +7,9 @@ from typing import Any
 PLANB_CANCEL_CONFIDENCE_MIN = 0.75
 
 
+ENTRY_ACTIONS = {"PROBE_READY", "BUY_READY", "ADD_READY"}
+
+
 @dataclass
 class RouteDecision:
     ticker: str
@@ -52,6 +55,87 @@ def has_pullback_target(price_targets: dict[str, Any] | None) -> bool:
     # wait run that fails later.
     required = ("buy_zone_low", "buy_zone_high", "sell_target", "stop_loss", "hold_days", "confidence")
     return all(targets.get(key) not in (None, "") for key in required)
+
+
+def _boolish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _num_or_none(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Validate Claude soft-gate overrides against supplied evidence.
+
+    This intentionally does not create hard blocks by itself; callers choose
+    whether to demote. The contract is evidence-backed overrides only.
+    """
+    overrides = action.get("soft_gate_overrides")
+    if not isinstance(overrides, list):
+        overrides = []
+    soft_gates = context.get("soft_gates")
+    if not isinstance(soft_gates, list):
+        soft_gates = []
+    gates = [str(g).strip().lower() for g in [*soft_gates, *overrides] if str(g or "").strip()]
+    gates = list(dict.fromkeys(gates))
+    if not gates:
+        return {"required": False, "validated": True, "reason": "no_soft_gate_override", "gates": []}
+
+    ret_3m = _num_or_none(context.get("ret_3m_pct"))
+    ret_5m = _num_or_none(context.get("ret_5m_pct"))
+    current_price = _num_or_none(context.get("current_price"))
+    vwap = _num_or_none(context.get("vwap") or context.get("vwap_proxy"))
+    max_entry_price = _num_or_none(action.get("max_entry_price") or context.get("max_entry_price"))
+    volume = _num_or_none(
+        context.get("volume_ratio_open")
+        or context.get("volume_acceleration")
+        or context.get("volume_accel")
+    )
+    min_volume = _num_or_none(context.get("soft_gate_min_volume_ratio_open") or context.get("soft_gate_min_volume_acceleration"))
+    if min_volume is None:
+        min_volume = 0.0
+    opening_break = _boolish(context.get("opening_range_break")) or (
+        current_price is not None
+        and _num_or_none(context.get("opening_range_high")) is not None
+        and current_price >= float(_num_or_none(context.get("opening_range_high")) or 0.0)
+    )
+    vwap_ok = _boolish(context.get("vwap_reclaim")) or (
+        current_price is not None and vwap is not None and current_price >= vwap
+    )
+    price_ok = not (current_price is not None and max_entry_price is not None and max_entry_price > 0 and current_price > max_entry_price)
+    momentum_ok = ret_3m is not None and ret_5m is not None and ret_3m > 0 and ret_5m > 0
+    volume_ok = volume is not None and volume >= float(min_volume or 0.0)
+    confirmation_ok = bool(opening_break or vwap_ok or volume_ok)
+    validated = bool(momentum_ok and confirmation_ok and price_ok)
+    failed_checks: list[str] = []
+    if not momentum_ok:
+        failed_checks.append("fresh_momentum_missing")
+    if not confirmation_ok:
+        failed_checks.append("or_vwap_volume_confirmation_missing")
+    if not price_ok:
+        failed_checks.append("max_entry_price_exceeded")
+    return {
+        "required": True,
+        "validated": validated,
+        "reason": "soft_gate_override_validated" if validated else "soft_gate_override_failed",
+        "gates": gates,
+        "checks": {
+            "momentum_ok": momentum_ok,
+            "opening_range_break": bool(opening_break),
+            "vwap_ok": bool(vwap_ok),
+            "volume_ok": bool(volume_ok),
+            "price_ok": bool(price_ok),
+        },
+        "failed_checks": failed_checks,
+    }
 
 
 def route_candidate_action(
@@ -150,6 +234,13 @@ def route_candidate_action(
         "vwap",
         "vwap_proxy",
         "volume_acceleration",
+        "volume_ratio_open",
+        "opening_range_break",
+        "vwap_reclaim",
+        "max_entry_price",
+        "soft_gates",
+        "soft_gate_override_validation_enabled",
+        "soft_gate_min_volume_ratio_open",
         "spread_bps",
         "kr_confirmation_gate_active",
         "kr_confirmation_gate_enabled",
@@ -228,6 +319,21 @@ def route_candidate_action(
 
     if gate_final_action == "HARD_BLOCK" or gate_blocker:
         return _decision("HARD_BLOCK", reason=gate_blocker or "hard_safety")
+
+    if (
+        requested in {"PROBE_READY", "BUY_READY"}
+        and bool(context.get("soft_gate_override_validation_enabled"))
+    ):
+        validation = validate_soft_gate_override(action or {}, context)
+        gate_context["soft_gate_override_validation"] = validation
+        if validation.get("required") and not validation.get("validated"):
+            return _decision(
+                "WATCH",
+                reason=str(validation.get("reason") or "soft_gate_override_failed"),
+                warnings=["soft_gate_override_failed"],
+                demoted_to="WATCH",
+                runtime_gate_reason=str(validation.get("reason") or "soft_gate_override_failed"),
+            )
 
     if active_order_route:
         return _decision(

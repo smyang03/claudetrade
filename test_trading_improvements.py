@@ -1491,14 +1491,15 @@ class TradingBotGateTests(unittest.TestCase):
             "333333": {"ticker": "333333", "category": "earnings", "sector": "autos", "from_high_bucket": "pullback", "liquidity_bucket": "low"},
         }
 
-        picked = bot._pick_partial_replace_in(
-            "KR",
-            ["005930", "000660"],
-            ["111111", "222222", "333333"],
-            candidate_meta,
-            candidate_map,
-            2,
-        )
+        with patch.dict("os.environ", {"KR_TRAINER_REPLACEMENT_DELTA_GATE_ENABLED": "false"}):
+            picked = bot._pick_partial_replace_in(
+                "KR",
+                ["005930", "000660"],
+                ["111111", "222222", "333333"],
+                candidate_meta,
+                candidate_map,
+                2,
+            )
 
         self.assertEqual(picked, ["111111", "222222"])
 
@@ -3100,7 +3101,7 @@ class AnalystSelectionPromptTests(unittest.TestCase):
             self.skipTest(f"analysts import unavailable: {exc}")
 
         tsdb.insert_batch(
-            date="2026-04-21",
+            date=date.today().isoformat(),
             market="KR",
             source_type="initial",
             selected=["005930", "000660"],

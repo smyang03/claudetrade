@@ -181,6 +181,20 @@ def _normalized_dict(values, market: str) -> dict:
     return {normalize_ticker(k, market): v for k, v in values.items()}
 
 
+def _candidate_actions_v2_requested(parsed: dict) -> bool:
+    raw_env = os.getenv("CANDIDATE_ACTIONS_V2_ENABLED", "")
+    if raw_env.strip().lower() in {"1", "true", "yes", "y", "on"}:
+        return True
+    actions = parsed.get("candidate_actions") if isinstance(parsed, dict) else None
+    if not isinstance(actions, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and str(item.get("schema_version") or "").strip() == "candidate_actions.v2"
+        for item in actions
+    )
+
+
 def normalize_selection_result(parsed: dict, candidates: list[dict], market: str) -> dict:
     """Normalize Claude output into WATCH and TRADE_READY lists.
 
@@ -197,6 +211,7 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
     valid_order = list(dict.fromkeys(valid_order))
 
     parse_recovered = bool(parsed.get("_parse_recovered"))
+    v2_requested = _candidate_actions_v2_requested(parsed)
     legacy_tickers = _valid_list(parsed.get("tickers"), valid_order, market, limits["watch_max"])
     watchlist = _valid_list(parsed.get("watchlist"), valid_order, market, limits["watch_max"])
     if not watchlist:
@@ -207,13 +222,17 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
         else:
             watchlist = []
 
+    legacy_auto_ready_promoted = False
     if parse_recovered:
         trade_ready = []
     elif "trade_ready" in parsed:
         trade_ready = _valid_list(parsed.get("trade_ready"), valid_order, market, limits["trade_max"])
+    elif v2_requested:
+        trade_ready = []
     else:
         # Legacy output had one list only; preserve order but cap order permission.
         trade_ready = watchlist[: limits["trade_max"]]
+        legacy_auto_ready_promoted = bool(trade_ready)
 
     if not watchlist and trade_ready:
         watchlist = list(trade_ready)
@@ -287,4 +306,6 @@ def normalize_selection_result(parsed: dict, candidates: list[dict], market: str
         },
         "_parse_recovered": parse_recovered,
         "_fallback_mode": str(parsed.get("_fallback_mode", "") or ""),
+        "_candidate_actions_v2_requested": bool(v2_requested),
+        "_legacy_auto_ready_promoted": bool(legacy_auto_ready_promoted),
     }

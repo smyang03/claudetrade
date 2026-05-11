@@ -11,7 +11,7 @@ import anthropic
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_analysis_logger, get_judgment_logger, get_minority_logger
-from credit_tracker import record as credit_record
+from credit_tracker import record as credit_record, throttle_state
 from minority_report.raw_call_logger import save as save_raw_call
 from minority_report.active_lessons import build_active_lesson_context
 from bot.candidate_policy import normalize_selection_result, selection_limits
@@ -41,6 +41,87 @@ def _env_int_bound(name: str, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         value = default
     return max(minimum, min(maximum, value))
+
+
+def _env_bool_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _build_tuning_feedback_contract(
+    market: str,
+    evidence_items: list[dict],
+    active_lesson_meta: dict,
+) -> tuple[str, dict]:
+    if not _env_bool_flag("TUNING_FEEDBACK_CONTRACT_ENABLED", True):
+        return "", {}
+    market_key = str(market or "").upper()
+    known_at = time.strftime("%Y-%m-%dT%H:%M:%S+09:00", time.localtime())
+    max_failures = _env_int_bound("TUNING_FEEDBACK_MAX_SIMILAR_FAILURES", 3, 0, 3)
+    tags: set[str] = set()
+    for item in evidence_items or []:
+        negative = item.get("negative_evidence") if isinstance(item.get("negative_evidence"), dict) else {}
+        risk_control = item.get("risk_control_view") if isinstance(item.get("risk_control_view"), dict) else {}
+        for raw in list(negative.get("risk_tags") or []) + list(risk_control.get("soft_gates") or []):
+            tag = str(raw or "").strip().lower()
+            if tag:
+                tags.add(tag)
+        if str(risk_control.get("action_ceiling") or "").upper() == "WATCH":
+            tags.add("action_ceiling_watch")
+
+    similar_failures: list[dict] = []
+    if tags & {"late_chase", "stale_candidate", "action_ceiling_watch"}:
+        similar_failures.append(
+            {
+                "pattern": "late_chase_after_watch",
+                "features": "candidate_age/chase_pct elevated or action_ceiling=WATCH",
+                "lesson": "do not BUY_READY without fresh ret_3m/ret_5m plus OR/VWAP/volume confirmation",
+            }
+        )
+    if tags & {"fade", "pb_high", "gap_pullback", "or_missing", "at_high", "deep_pullback"}:
+        similar_failures.append(
+            {
+                "pattern": "weak_rebound_after_pullback",
+                "features": "fade/pullback/high-zone context present",
+                "lesson": "use WATCH or PROBE_READY until setup maturity is CONFIRMED",
+            }
+        )
+    lesson_ids = [str(item) for item in list((active_lesson_meta or {}).get("ids") or [])[:5]]
+    feedback = {
+        "rule_version": f"{market_key.lower()}_selection_feedback.v1",
+        "known_at": known_at,
+        "market": market_key,
+        "usage_contract": {
+            "allowed": [
+                "calibrate soft gate threshold suggestions",
+                "inject up to three similar failure lessons",
+                "explain why WATCH is safer when live evidence is incomplete",
+            ],
+            "forbidden": [
+                "promote BUY_READY solely from historical missed opportunities",
+                "broadly loosen late_chase/fade/or_missing without live confirmation",
+                "override QUARANTINE/BENCH or hard facts",
+            ],
+        },
+        "threshold_suggestions": {
+            "late_chase_max_age_min": _env_int_bound("KR_LATE_ENTRY_FULL_BUY_END_MIN", 90, 30, 240),
+            "late_chase_max_price_change_pct": float(os.getenv("KR_LATE_ENTRY_MAX_CHASE_PCT", "5.0") or 5.0),
+            "fresh_override_requires": ["ret_3m_pct", "ret_5m_pct", "opening_range_break_or_vwap_or_volume"],
+        },
+        "similar_past_failures": similar_failures[:max_failures],
+        "active_lesson_ids": lesson_ids,
+    }
+    if not feedback["similar_past_failures"] and not lesson_ids:
+        feedback["usage_contract"]["allowed"].append("no active failure lesson; keep current live evidence primary")
+    max_chars = _env_int_bound("TUNING_FEEDBACK_MAX_CHARS", 1100, 300, 2400)
+    section = (
+        "\nTuning feedback contract (historical calibration only; live evidence remains primary):\n"
+        + json.dumps(feedback, ensure_ascii=False, separators=(",", ":"))[:max_chars]
+        + "\n"
+    )
+    return section, feedback
 
 STANCES = "AGGRESSIVE|MODERATE_BULL|MILD_BULL|CAUTIOUS|NEUTRAL|MILD_BEAR|CAUTIOUS_BEAR|DEFENSIVE|HALT"
 _SELECTION_RECOVERY_FIELDS = (
@@ -1281,7 +1362,8 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                    lesson_context: str = "",
                    market_change_pct: Optional[float] = None,
                    secondary_change_pct: Optional[float] = None,
-                   execution_phase: str = "") -> list:
+                   execution_phase: str = "",
+                   evidence_by_ticker: Optional[dict] = None) -> list:
     """Claude가 WATCH와 TRADE_READY를 분리 선택한다."""
     global _LAST_SELECTION_META
     if not candidates:
@@ -1392,6 +1474,27 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         cand_lines.append(" ".join([part for part in parts if part]))
 
     cand_text = "\n".join(cand_lines)
+    evidence_map = evidence_by_ticker if isinstance(evidence_by_ticker, dict) else {}
+    evidence_items: list[dict] = []
+    if evidence_map:
+        for candidate in prompt_candidates:
+            ticker = str(candidate.get("ticker", "") or "").strip()
+            if not ticker:
+                continue
+            keys = [ticker, ticker.upper()]
+            evidence = next((evidence_map.get(k) for k in keys if isinstance(evidence_map.get(k), dict)), None)
+            if not evidence:
+                continue
+            evidence_items.append(dict(evidence))
+            if len(evidence_items) >= int(os.getenv("SELECTION_FULL_EVIDENCE_MAX", "8")):
+                break
+    evidence_section = ""
+    if evidence_items:
+        evidence_section = (
+            "\nRuntime evidence pack (use as facts; soft-gate override must match these values):\n"
+            + json.dumps(evidence_items, ensure_ascii=False, separators=(",", ":"))[: int(os.getenv("SELECTION_EVIDENCE_MAX_CHARS", "3500"))]
+            + "\n"
+        )
     n_cands = len([c for c in prompt_candidates if c.get("ticker")])
     watch_max = min(limits["watch_max"], n_cands)
     trade_max = min(limits["trade_max"], n_cands)
@@ -1467,6 +1570,11 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         if active_lesson_section
         else (f"\n{lesson_context[:500]}\n" if lesson_context else "")
     )
+    tuning_feedback_section, tuning_feedback_meta = _build_tuning_feedback_contract(
+        market,
+        evidence_items,
+        active_lesson_meta,
+    )
     candidate_action_shadow_enabled = (
         not preopen_watch
         and str(os.getenv("ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW", "false")).lower() in {"1", "true", "yes", "on"}
@@ -1479,10 +1587,13 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         enabled=candidate_action_shadow_enabled or candidate_action_live_enabled,
     )
     candidate_actions_example = (
-        ',\n  "candidate_actions":[{"ticker":"code1","action":"PROBE_READY","confidence":0.64,'
-        '"size_intent":"probe","reason":"early strength with risk control",'
-        '"invalidation_condition":"breaks opening range low","price_targets":{"buy_zone_low":73000,'
-        '"buy_zone_high":73500,"sell_target":76000,"stop_loss":71000},"valid_until":"2026-05-06T09:10:00"}]'
+        ',\n  "candidate_actions":[{"ticker":"code1","schema_version":"candidate_actions.v2",'
+        '"action":"PROBE_READY","confidence":0.64,"freshness_verdict":"FRESH",'
+        '"setup_maturity":"CONFIRMED","why_not_watch":"fresh confirmation exists",'
+        '"action_ceiling_ack":"PROBE_READY","reason_code":"FRESH_CONTINUATION_PROBE",'
+        '"soft_gate_overrides":[],"invalidation_condition":"breaks opening range low",'
+        '"price_targets":{"buy_zone_low":73000,"buy_zone_high":73500,"sell_target":76000,'
+        '"stop_loss":71000},"valid_until":"2026-05-06T09:10:00"}]'
         if candidate_action_section else ""
     )
 
@@ -1492,9 +1603,10 @@ execution_phase: {execution_phase or 'unspecified'}
 합의 모드: {consensus_mode}
 후보 종목:
 {cand_text}
+{evidence_section}
 
 시장 컨텍스트:
-{digest_prompt[:220]}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}
+{digest_prompt[:220]}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}{tuning_feedback_section}
 {COMMON_DECISION_CONTRACT}
 {SELECTION_EXECUTION_PHASE_CONTRACT}
 {SIZING_DECISION_CONTRACT}
@@ -1514,6 +1626,7 @@ execution_phase: {execution_phase or 'unspecified'}
 - Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.
 - Use recent selection feedback to calibrate trade_ready aggressiveness.
 - Recent selection feedback is historical only. Do not promote a ticker to trade_ready solely because it moved after watch_only earlier in the same session.
+- Tuning feedback is a calibration contract only. It may tighten soft gates or add similar-failure cautions, but it cannot create BUY_READY without current live evidence.
 - recent selection feedback을 반영해 missed watch_only가 높은 그룹은 명확한 veto 없이 watch_only로만 두지 마세요.
 - weak trade_ready가 높은 그룹은 더 강한 RS, 유동성, 장중 품질이 있을 때만 trade_ready로 올리세요.
 - reasons와 veto는 짧게 쓰세요.
@@ -1583,9 +1696,17 @@ execution_phase: {execution_phase or 'unspecified'}
     resp = None
     for _attempt in range(3):
         try:
+            throttle = throttle_state(label="select_tickers")
+            if not bool(throttle.get("allowed", True)):
+                raise RuntimeError(f"claude_budget_throttle:{throttle.get('tier')}")
+            compressed_output = _env_bool_flag("SELECTION_OUTPUT_COMPRESSION_ENABLED", False)
             resp = client.messages.create(
                 model=MODEL,
-                max_tokens=_env_int_bound("CLAUDE_SELECTION_MAX_TOKENS", 3200, 1024, 6000),
+                max_tokens=(
+                    _env_int_bound("CLAUDE_SELECTION_COMPRESSED_MAX_TOKENS", 2200, 700, 4000)
+                    if compressed_output or throttle.get("tier") == "warn"
+                    else _env_int_bound("CLAUDE_SELECTION_MAX_TOKENS", 3200, 1024, 6000)
+                ),
                 messages=[{"role": "user", "content": prompt}],
             )
             last_err = None
@@ -1606,6 +1727,12 @@ execution_phase: {execution_phase or 'unspecified'}
         raw = resp.content[0].text.strip()
         result = _extract_json(raw)
         selection_meta = normalize_selection_result(result, prompt_candidates, market)
+        if evidence_items:
+            selection_meta["evidence_version"] = "selection_evidence.v1"
+            selection_meta["evidence_tickers"] = [str(item.get("ticker") or "") for item in evidence_items]
+        if tuning_feedback_meta:
+            selection_meta["tuning_feedback"] = dict(tuning_feedback_meta)
+            selection_meta["tuning_feedback_applied"] = True
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers", model=MODEL)
         save_raw_call(
             label="select_tickers",
@@ -1616,9 +1743,15 @@ execution_phase: {execution_phase or 'unspecified'}
             output_tokens=resp.usage.output_tokens,
             market=market,
             model=MODEL,
-            prompt_version="selection_rank_v3+execution_plan_v1",
-            extra={"active_lessons": active_lesson_meta},
-        )
+                    prompt_version="selection_rank_v3+execution_plan_v1",
+                    extra={
+                        "active_lessons": active_lesson_meta,
+                        "evidence_version": "selection_evidence.v1" if evidence_items else "",
+                        "evidence_tickers": [str(item.get("ticker") or "") for item in evidence_items],
+                        "tuning_feedback_rule_version": tuning_feedback_meta.get("rule_version", ""),
+                        "tuning_feedback_applied": bool(tuning_feedback_meta),
+                    },
+                )
         if result.get("_fallback_mode") == "selection_partial":
             retry_candidates = _pick_selection_retry_candidates(prompt_candidates, result, market)
             if retry_candidates:
@@ -1685,6 +1818,12 @@ execution_phase: {execution_phase or 'unspecified'}
                 except Exception as retry_exc:
                     log.warning(f"[ticker-selection] {market} lightweight retry failed: {retry_exc}")
         selection_meta.setdefault("active_lessons", active_lesson_meta)
+        if evidence_items:
+            selection_meta.setdefault("evidence_version", "selection_evidence.v1")
+            selection_meta.setdefault("evidence_tickers", [str(item.get("ticker") or "") for item in evidence_items])
+        if tuning_feedback_meta:
+            selection_meta.setdefault("tuning_feedback", dict(tuning_feedback_meta))
+            selection_meta.setdefault("tuning_feedback_applied", True)
         if preopen_watch:
             selection_meta = _force_watch_only_selection_meta(selection_meta, phase="preopen_watch")
         tickers = selection_meta["watchlist"]

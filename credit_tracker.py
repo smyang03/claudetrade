@@ -12,6 +12,7 @@ import json
 import os
 from datetime import date, datetime
 from pathlib import Path
+from typing import Optional
 
 from runtime_paths import get_runtime_path
 
@@ -78,6 +79,16 @@ def _calc_cost_for_model(input_tokens: int, output_tokens: int, model: str = "")
             + output_tokens / 1_000_000 * output_per_m)
 
 
+def _float_env(name: str, default: Optional[float] = None) -> Optional[float]:
+    raw = os.getenv(name, "")
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return float(str(raw).replace(",", ""))
+    except Exception:
+        return default
+
+
 def _add_usage(bucket: dict, input_tokens: int, output_tokens: int, cost: float) -> None:
     bucket["input_tokens"] = int(bucket.get("input_tokens", 0) or 0) + int(input_tokens)
     bucket["output_tokens"] = int(bucket.get("output_tokens", 0) or 0) + int(output_tokens)
@@ -126,6 +137,60 @@ def record(input_tokens: int, output_tokens: int, label: str = "", model: str = 
     data["sessions"] = data["sessions"][-100:]
 
     _save(data)
+
+
+def throttle_state(*, label: str = "", hard_exit: bool = False, estimated_cost_usd: float = 0.0) -> dict:
+    """Return Claude budget throttle state without mutating usage.
+
+    Hard risk/system-exit paths can pass hard_exit=True and remain allowed.
+    Optional call sites can use tier to degrade or skip work.
+    """
+    if str(os.getenv("CLAUDE_BUDGET_THROTTLE_ENABLED", "false")).strip().lower() not in {"1", "true", "yes", "y", "on"}:
+        return {"enabled": False, "allowed": True, "tier": "off", "label": label}
+    data = _load()
+    today = date.today().isoformat()
+    td = data.get("daily", {}).get(today, {"cost_usd": 0.0})
+    today_cost = float(td.get("cost_usd", 0.0) or 0.0) + max(0.0, float(estimated_cost_usd or 0.0))
+    warn = _float_env("CLAUDE_DAILY_WARN_USD")
+    hard = _float_env("CLAUDE_DAILY_BUDGET_USD")
+    exempt_hard_exit = str(os.getenv("CLAUDE_BUDGET_HARD_EXIT_EXEMPT", "true")).strip().lower() in {"1", "true", "yes", "y", "on"}
+    if hard_exit and exempt_hard_exit:
+        return {
+            "enabled": True,
+            "allowed": True,
+            "tier": "hard_exit_exempt",
+            "label": label,
+            "today_cost_usd": round(today_cost, 6),
+            "daily_budget_usd": hard,
+        }
+    if hard is not None and today_cost >= hard:
+        return {
+            "enabled": True,
+            "allowed": False,
+            "tier": "hard_cap",
+            "label": label,
+            "today_cost_usd": round(today_cost, 6),
+            "daily_budget_usd": hard,
+        }
+    if warn is not None and today_cost >= warn:
+        return {
+            "enabled": True,
+            "allowed": True,
+            "tier": "warn",
+            "label": label,
+            "today_cost_usd": round(today_cost, 6),
+            "daily_budget_usd": hard,
+            "daily_warn_usd": warn,
+        }
+    return {
+        "enabled": True,
+        "allowed": True,
+        "tier": "normal",
+        "label": label,
+        "today_cost_usd": round(today_cost, 6),
+        "daily_budget_usd": hard,
+        "daily_warn_usd": warn,
+    }
 
 
 def summary(usd_krw: float = None) -> dict:

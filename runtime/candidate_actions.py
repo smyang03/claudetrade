@@ -28,12 +28,18 @@ DEFAULT_TTL_MINUTES = {
 def candidate_action_prompt_contract(*, enabled: bool = True) -> str:
     if not enabled:
         return ""
-    return """Candidate action shadow schema:
+    return """Candidate action contract schema:
 - Keep the legacy watchlist/trade_ready fields exactly as requested.
 - Also return candidate_actions for every watchlist ticker.
+- Use schema_version="candidate_actions.v2" when the prompt includes evidence/action ceilings.
 - Claude may only use these actions: WATCH, PROBE_READY, BUY_READY, ADD_READY, PULLBACK_WAIT, AVOID.
 - Claude must not output HARD_BLOCK. Hard safety blocks are system-owned.
 - PROBE_READY means small initial entry only; BUY_READY means normal entry; PULLBACK_WAIT requires price_targets.
+- Every v2 candidate_action, including WATCH, must include action_ceiling_ack.
+- WATCH/PULLBACK_WAIT/AVOID must include reason_code and blocking_factors when evidence blocks immediate execution.
+- BUY_READY/PROBE_READY must include why_not_watch, freshness_verdict, setup_maturity, and action_ceiling_ack.
+- If local evidence says action_ceiling=WATCH, Claude may override only with soft_gate_overrides backed by actual input evidence.
+- valid_until is required for v2 BUY_READY/PROBE_READY unless runtime TTL should be shorter.
 - For PULLBACK_WAIT, price_targets must include buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence.
 - ADD_READY is valid only for an already-held position.
 - Include invalidation_condition for every non-WATCH action.
@@ -44,10 +50,19 @@ candidate_actions example:
 [
   {
     "ticker":"code1",
+    "schema_version":"candidate_actions.v2",
     "action":"PROBE_READY",
     "confidence":0.64,
+    "entry_type":"confirmed_continuation",
+    "freshness_verdict":"FRESH",
+    "setup_maturity":"CONFIRMED",
+    "why_not_watch":"fresh VWAP reclaim with positive 3m/5m returns",
+    "action_ceiling_ack":"PROBE_READY",
+    "soft_gate_overrides":[],
+    "required_confirmations":[],
     "size_intent":"probe",
-    "reason":"early strength but extended spread",
+    "reason_code":"FRESH_CONTINUATION_PROBE",
+    "reason":"early strength with risk control",
     "invalidation_condition":"breaks opening range low",
     "price_targets":{"buy_zone_low":100,"buy_zone_high":102,"sell_target":108,"stop_loss":97,"hold_days":1,"confidence":0.64},
     "valid_until":"2026-05-06T09:10:00"
@@ -70,6 +85,18 @@ class CandidateAction:
     source_prompt_id: str = ""
     schema_version: str = "candidate_actions.v1"
     legacy_schema: bool = False
+    reason_code: str = ""
+    risk_tags: list[str] = field(default_factory=list)
+    entry_type: str = ""
+    freshness_verdict: str = ""
+    setup_maturity: str = ""
+    why_not_watch: str = ""
+    action_ceiling_ack: str = ""
+    blocking_factors: list[str] = field(default_factory=list)
+    soft_gate_overrides: list[str] = field(default_factory=list)
+    required_confirmations: list[str] = field(default_factory=list)
+    max_entry_price: float = 0.0
+    max_chase_pct: float = 0.0
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -87,6 +114,19 @@ class CandidateAction:
             "source_prompt_id": self.source_prompt_id,
             "schema_version": self.schema_version,
             "legacy_schema": self.legacy_schema,
+            "reason_code": self.reason_code,
+            "risk_tags": list(self.risk_tags),
+            "entry_type": self.entry_type,
+            "freshness_verdict": self.freshness_verdict,
+            "setup_maturity": self.setup_maturity,
+            "why_not_watch": self.why_not_watch,
+            "action_ceiling_ack": self.action_ceiling_ack,
+            "blocking_factors": list(self.blocking_factors),
+            "soft_gate_overrides": list(self.soft_gate_overrides),
+            "required_confirmations": list(self.required_confirmations),
+            "max_entry_price": self.max_entry_price,
+            "max_chase_pct": self.max_chase_pct,
+            "contract_warnings": list(self.warnings),
             "warnings": list(self.warnings),
         }
 
@@ -185,6 +225,8 @@ def normalize_candidate_action(
     created = _parse_dt(created_at)
     created_text = created.isoformat(timespec="seconds")
     ticker = str(raw.get("ticker") or "").strip()
+    schema_version = str(raw.get("schema_version") or "candidate_actions.v1").strip() or "candidate_actions.v1"
+    is_v2 = schema_version == "candidate_actions.v2"
     action = str(raw.get("action") or "WATCH").strip().upper()
     warnings: list[str] = []
     if action not in CLAUDE_ACTIONS:
@@ -200,8 +242,38 @@ def normalize_candidate_action(
         confidence = 0.0
         warnings.append(f"invalid_confidence:{_raw_conf!r}")
     price_targets = raw.get("price_targets") if isinstance(raw.get("price_targets"), dict) else {}
+    if action == "WATCH" and price_targets:
+        warnings.append("watch_price_targets_ignored")
+        price_targets = {}
+    why_not_watch = str(raw.get("why_not_watch") or "").strip()
+    action_ceiling_ack = str(raw.get("action_ceiling_ack") or raw.get("action_ceiling") or "").strip().upper()
+    if is_v2 and not action_ceiling_ack:
+        action_ceiling_ack = action
+        warnings.append("v2_missing_action_ceiling_ack_defaulted")
+    if is_v2 and action in {"BUY_READY", "PROBE_READY"}:
+        if not why_not_watch:
+            warnings.append("v2_missing_why_not_watch_demoted")
+            action = "WATCH"
+            price_targets = {}
     expires_at, expiry_warnings = _min_expiry(created, action, raw.get("valid_until") or raw.get("expires_at"))
     warnings.extend(expiry_warnings)
+
+    def _list_str(value: Any, limit: int = 8) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value[:limit]]
+        if value in (None, ""):
+            return []
+        return [str(value)]
+
+    def _float_nonneg(value: Any) -> float:
+        try:
+            parsed = float(value or 0.0)
+            if not math.isfinite(parsed):
+                return 0.0
+            return max(0.0, parsed)
+        except Exception:
+            return 0.0
+
     item = CandidateAction(
         ticker=ticker,
         market=str(market or raw.get("market") or "").upper(),
@@ -214,7 +286,20 @@ def normalize_candidate_action(
         created_at=created_text,
         expires_at=expires_at,
         source_prompt_id=source_prompt_id,
+        schema_version=schema_version,
         legacy_schema=False,
+        reason_code=str(raw.get("reason_code") or ""),
+        risk_tags=_list_str(raw.get("risk_tags"), 8),
+        entry_type=str(raw.get("entry_type") or ""),
+        freshness_verdict=str(raw.get("freshness_verdict") or ""),
+        setup_maturity=str(raw.get("setup_maturity") or ""),
+        why_not_watch=why_not_watch,
+        action_ceiling_ack=action_ceiling_ack,
+        blocking_factors=_list_str(raw.get("blocking_factors"), 8),
+        soft_gate_overrides=_list_str(raw.get("soft_gate_overrides"), 8),
+        required_confirmations=_list_str(raw.get("required_confirmations"), 8),
+        max_entry_price=_float_nonneg(raw.get("max_entry_price")),
+        max_chase_pct=_float_nonneg(raw.get("max_chase_pct")),
         warnings=warnings,
     )
     return item.to_dict()

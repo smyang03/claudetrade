@@ -6252,6 +6252,51 @@ def _candidate_audit_outcome_status(conn: sqlite3.Connection, params: tuple[str,
     ]
 
 
+def _candidate_audit_columns(conn: sqlite3.Connection) -> set[str]:
+    try:
+        return {str(row[1]) for row in conn.execute("PRAGMA table_info(audit_candidate_rows)").fetchall()}
+    except Exception:
+        return set()
+
+
+def _candidate_audit_contract_summary(conn: sqlite3.Connection, params: tuple[str, str, str]) -> dict[str, Any]:
+    columns = _candidate_audit_columns(conn)
+    wanted = {
+        "legacy_auto_ready_promoted",
+        "override_validated",
+        "bypass_advisor",
+        "profit_sla_review_latency_sec",
+        "review_latency_sec",
+        "metadata_contract_violation",
+        "exit_owner",
+    }
+    if not columns.intersection(wanted):
+        return {"available": False}
+    pieces = ["COUNT(*) AS rows"]
+    if "legacy_auto_ready_promoted" in columns:
+        pieces.append("COALESCE(SUM(legacy_auto_ready_promoted), 0) AS legacy_auto_ready_promoted")
+    if "override_validated" in columns:
+        pieces.append("COALESCE(SUM(CASE WHEN override_validated=0 THEN 1 ELSE 0 END), 0) AS soft_gate_override_failed")
+        pieces.append("COALESCE(SUM(CASE WHEN override_validated=1 THEN 1 ELSE 0 END), 0) AS soft_gate_override_validated")
+    if "bypass_advisor" in columns:
+        pieces.append("COALESCE(SUM(bypass_advisor), 0) AS system_sell_bypass")
+    if "review_latency_sec" in columns:
+        pieces.append("ROUND(AVG(CASE WHEN review_latency_sec IS NOT NULL THEN review_latency_sec END), 4) AS avg_review_latency_sec")
+    if "metadata_contract_violation" in columns:
+        pieces.append("COALESCE(SUM(CASE WHEN COALESCE(metadata_contract_violation,'')!='' THEN 1 ELSE 0 END), 0) AS metadata_contract_violation")
+    sql = f"""
+        SELECT {', '.join(pieces)}
+        FROM audit_candidate_rows
+        WHERE session_date=? AND market=? AND runtime_mode=?
+    """
+    try:
+        row = dict(conn.execute(sql, params).fetchone() or {})
+        row["available"] = True
+        return row
+    except Exception as exc:
+        return {"available": False, "error": str(exc)}
+
+
 @app.route("/api/candidate-audit/summary")
 def api_candidate_audit_summary():
     mode = _request_mode()
@@ -6377,6 +6422,7 @@ def api_candidate_audit_summary():
             routing_delta = {}
             latency_sla = {}
             watch_trigger_shadow_summary = {}
+        contract_summary = _candidate_audit_contract_summary(conn, params)
         return jsonify({
             "ok": True,
             "exists": True,
@@ -6401,6 +6447,7 @@ def api_candidate_audit_summary():
             "routing_delta": routing_delta,
             "latency_sla": latency_sla,
             "watch_trigger_shadow_summary": watch_trigger_shadow_summary,
+            "contract_summary": contract_summary,
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500

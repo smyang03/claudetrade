@@ -1,16 +1,16 @@
 {
   "meta": {
-    "version": 3099,
+    "version": 3110,
     "created": "2026-03-19",
     "last_updated": "2026-05-11",
-    "trained_days_kr": 34,
+    "trained_days_kr": 35,
     "trained_days_us": 37,
     "description": "Claude 마이너리티 리포트 판단 메모리",
     "brain_quality_cleaned_at": "2026-05-01T03:54:10+00:00"
   },
   "markets": {
     "KR": {
-      "trained_days": 32,
+      "trained_days": 33,
       "training_period": {
         "phase1": "2024-10-01 ~ 2024-12-31 (하락장 50일)",
         "phase2": "2025-01-01 ~ 2025-05-31 (반등/횡보 50일)",
@@ -19,14 +19,14 @@
       "current_regime": "unknown",
       "analyst_performance": {
         "bull": {
-          "total": 32,
-          "hit": 13,
+          "total": 33,
+          "hit": 14,
           "miss": 19,
-          "rate": 0.406,
+          "rate": 0.424,
           "recent_7d": {
             "total": 7,
-            "hit": 5,
-            "rate": 0.714
+            "hit": 4,
+            "rate": 0.571
           },
           "recent_30d": {
             "total": 30,
@@ -36,10 +36,10 @@
           "trend": "improving"
         },
         "bear": {
-          "total": 32,
-          "hit": 14,
+          "total": 33,
+          "hit": 15,
           "miss": 18,
-          "rate": 0.438,
+          "rate": 0.455,
           "recent_7d": {
             "total": 7,
             "hit": 5,
@@ -53,10 +53,10 @@
           "trend": "improving"
         },
         "neutral": {
-          "total": 32,
-          "hit": 10,
+          "total": 33,
+          "hit": 11,
           "miss": 22,
-          "rate": 0.312,
+          "rate": 0.333,
           "recent_7d": {
             "total": 7,
             "hit": 5,
@@ -77,8 +77,8 @@
           "win_rate": 0.0
         },
         "MODERATE_BULL": {
-          "count": 4,
-          "avg_pnl": -0.4053,
+          "count": 5,
+          "avg_pnl": -0.3816,
           "win_rate": 0.0
         },
         "CAUTIOUS": {
@@ -119,9 +119,9 @@
       },
       "strategy_performance": {
         "momentum": {
-          "count": 76,
-          "win_rate": 0.237,
-          "avg_pnl": -2.1676
+          "count": 77,
+          "win_rate": 0.234,
+          "avg_pnl": -2.1547
         },
         "mean_reversion": {
           "count": 0,
@@ -694,23 +694,23 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "30min_tune": {
-          "count": 64,
+          "count": 65,
           "correct": 6,
-          "rate": 0.094,
-          "insight": "Historically low precision (9% over 64 trials); treat as weak context only. Note: low rate may partly reflect prior volume data quality issues (corrected). (Context: 지수 +0.11%로 소폭 강세이나 30분 기울기 N/A, breadth 데이터 미수집(adv/dec=0/0)으로 아침 CAUTIOUS 판단 대비)",
+          "rate": 0.092,
+          "insight": "Historically low precision (9% over 65 trials); treat as weak context only. Note: low rate may partly reflect prior volume data quality issues (corrected). (Context: 지수 개장 대비 +4.54% 강세 유지, breadth advance_ratio +12%p 개선(41/16)·vol_spike 54개 확산으로 )",
           "last_seen": "2026-05-11",
           "adjusted": 6,
-          "adjusted_rate": 0.094,
+          "adjusted_rate": 0.092,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
-          "count": 52,
+          "count": 53,
           "correct": 9,
-          "rate": 0.173,
-          "insight": "지수 +4.11% / 30분 기울기 +4.01%p 상승 지속, breadth advance_ratio +15%p(43/17) 및 vol_spike 42종으로 아침 MILD_BULL thesis 강화 확인 — momentum wait 5분 단축·KR ATR cap 소폭 완화로 강세 모멘텀 포착 효율 제고, RKLB +14.1% 및 GOOGL·NVDA +4%대 보유 포지션 양호",
+          "rate": 0.17,
+          "insight": "지수 개장 대비 +4.22% 강세 유지, breadth advance_ratio +8%p 개선(39/20)으로 아침 thesis 유지되나 30분 기울기 -0.33%p 하락+blackout=yes(잔여 15분) 진입 불가 구간으로 조정 실익 없음",
           "last_seen": "2026-05-11",
           "adjusted": 9,
-          "adjusted_rate": 0.173,
+          "adjusted_rate": 0.17,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "120min_tune": {
@@ -1585,6 +1585,35 @@
           "worst_trade_reason": "",
           "trades": 4,
           "selection_feedback": "- 최근 20일 selected=706 trade_ready=108 watch_only=598 traded=24\n- trade_ready 3d: hit_rate=43.1% avg_fwd=+7.8% avg_runup=+19.2% avg_dd=-6.9% (n=72)\n- watch_only 3d: avg_fwd=-2.4% avg_runup=+11.4% avg_dd=-9.7% (n=416)\n- missed watch_only: runup>=5.0% 248건 (59.6%)\n- weak trade_ready: forward_3d<=0 41건 (56.9%)\n- by board: KOSPI selected=283 miss_watch=54.7%(n=139) weak_TR=62.9%(n=62) watch_runup=+14.1"
+        },
+        {
+          "date": "2026-05-11",
+          "mode": "MODERATE_BULL",
+          "pnl_pct": -0.2869215454304016,
+          "market_change": 5.25,
+          "win": false,
+          "bull_result": "HIT",
+          "bear_result": "HIT",
+          "neutral_result": "HIT",
+          "bull_stance": "MODERATE_BULL",
+          "bear_stance": "MODERATE_BULL",
+          "neutral_stance": "MODERATE_BULL",
+          "bull_reason": "코스피 1d +5.25%/5d +19.59% 강한 지수 모멘텀, breadth 상승 57%(17/30), GC 20개 vs DC 10개 2:1 우위, 거래량 급증/폭증 29개로 시장 전반 상승 확산 확인—067170·011000·012200 등 폭증 종목이 모멘텀 뒷받침하나 RSI 과매수 10개 누적과 VKOSPI 결측에 따른 data_quality 불확실성으로 STRONG_BULL 미달",
+          "bear_reason": "코스피 1d +5.25%/5d +19.59% 강한 모멘텀 + breadth 57% 상승(17/30) + GC 20개 vs DC 10개 우위 + 거래량 폭증 11개 동반으로 시장 전반 상승 확산 확인되나, USD/KRW 1d +1.4% KRW 약세 위험 신호 + VKOSPI 결측(불확실성) + RSI 과매수 10개 집중으로 과도한 공격성 자제 유지",
+          "neutral_reason": "breadth 57%(17/30) + GC/DC 2:1(20/10) + 코스피 5d +19.59% 강한 모멘텀이 상승 우위를 확인하나, VKOSPI 결측·외국인/기관 수급 N/A·USD/KRW 1d +1.4% KRW 약세·RSI 과매수 10개가 단기 리스크를 상존시켜 MODERATE_BULL 유지",
+          "key_lesson": "",
+          "issue_type": "",
+          "best_trade": null,
+          "worst_trade": null,
+          "worst_trade_reason": "",
+          "trades": 2,
+          "execution_contaminated": false,
+          "execution_learning_excluded": false,
+          "execution_warning": false,
+          "execution_issues": [],
+          "execution_issue_labels": [],
+          "execution_issue_details": [],
+          "selection_feedback": "- 최근 20일 selected=509 trade_ready=112 watch_only=397 traded=24\n- trade_ready 3d: hit_rate=42.9% avg_fwd=+6.3% avg_runup=+17.9% avg_dd=-7.4% (n=84)\n- watch_only 3d: avg_fwd=+4.6% avg_runup=+16.1% avg_dd=-5.9% (n=247)\n- missed watch_only: runup>=5.0% 162건 (65.6%)\n- weak trade_ready: forward_3d<=0 48건 (57.1%)\n- by board: KOSPI selected=301 miss_watch=56.8%(n=169) weak_TR=60.0%(n=65) watch_runup=+14.0"
         }
       ],
       "debate_history": [
@@ -2306,41 +2335,41 @@
           "date": "2026-05-11",
           "r1": {
             "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.62,
-              "key_reason": "코스피 5d +12.06%의 강한 주간 상승 추세 속 breadth 57% 상승·GC 17/DC 11·거래량 폭증 5종 확인되나, 1d +0.1"
+              "stance": "MODERATE_BULL",
+              "confidence": 0.78,
+              "key_reason": "코스피 1d +5.25%/5d +19.59%의 강한 모멘텀과 breadth 상승 57%(17/30), GC/DC 20/10, 거래량 급증/폭증 "
             },
             "bear": {
-              "stance": "CAUTIOUS",
-              "confidence": 0.62,
-              "key_reason": "코스피 1d +0.11% 약세 흐름 속 상승 57% 유지되나, VKOSPI 결측으로 변동성 방향 불확실; USD/KRW 1d +0.5% 약세(K"
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "코스피 1d +5.25% / 5d +19.59% 강한 상승 추세, breadth 57% 상승(17/30), GC 20개 vs DC 10개 우위,"
             },
             "neutral": {
-              "stance": "MILD_BULL",
-              "confidence": 0.62,
-              "key_reason": "Breadth 16/12 상승(57%) + GC 17/DC 11으로 기술적 긍정 우위이나, 코스피 1d +0.11% 약세 + 5d +12.06%"
+              "stance": "MODERATE_BULL",
+              "confidence": 0.68,
+              "key_reason": "코스피 1d +5.25% / 5d +19.59% 강한 주간 상승세 + breadth 상승 57%(17/11) + GC 20개 vs DC 10개("
             }
           },
           "r2": {
             "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.62,
-              "key_reason": "Breadth 57% 상승·GC 17/DC 11·거래량 폭증 5종으로 기술적 긍정 우위 유지되나, KIS live index 불가·VKOSPI "
+              "stance": "MODERATE_BULL",
+              "confidence": 0.75,
+              "key_reason": "코스피 1d +5.25%/5d +19.59% 강한 지수 모멘텀, breadth 상승 57%(17/30), GC 20개 vs DC 10개 2:1 "
             },
             "bear": {
-              "stance": "CAUTIOUS",
-              "confidence": 0.6,
-              "key_reason": "USD/KRW 1d +0.5% KRW 약세 위험 신호 1개 + VKOSPI 결측(불확실성) + KIS 라이브 지수 불가로 현재 시장 방향 미확인"
+              "stance": "MODERATE_BULL",
+              "confidence": 0.7,
+              "key_reason": "코스피 1d +5.25%/5d +19.59% 강한 모멘텀 + breadth 57% 상승(17/30) + GC 20개 vs DC 10개 우위 + "
             },
             "neutral": {
-              "stance": "MILD_BULL",
-              "confidence": 0.6,
-              "key_reason": "Breadth 16/12(57% 상승)·GC 17/DC 11 기술적 우위 유지되나, KIS live index 불가·VKOSPI 결측·5d +1"
+              "stance": "MODERATE_BULL",
+              "confidence": 0.68,
+              "key_reason": "breadth 57%(17/30) + GC/DC 2:1(20/10) + 코스피 5d +19.59% 강한 모멘텀이 상승 우위를 확인하나, VKOS"
             }
           },
           "changes": [],
           "consensus_shifted": false,
-          "outcome": null
+          "outcome": "wrong"
         }
       ],
       "execution_patterns": {

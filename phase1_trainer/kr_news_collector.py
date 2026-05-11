@@ -26,13 +26,22 @@ import requests
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_collector_logger, log_retry, log_call, ProgressLogger
 
 load_dotenv()
+
+_LIVE_ENV_PATH = Path(__file__).parent.parent / ".env.live"
+if _LIVE_ENV_PATH.exists():
+    _live_env_values = dotenv_values(_LIVE_ENV_PATH)
+    for _env_key in ("DART_API_KEY", "BIGKINDS_KEY"):
+        if not os.getenv(_env_key):
+            _env_value = _live_env_values.get(_env_key)
+            if _env_value:
+                os.environ[_env_key] = _env_value
 
 log = get_collector_logger()
 

@@ -4,6 +4,7 @@ python-dotenv
 pandas
 numpy
 beautifulsoup4
+lxml
 websocket-client
 schedule
 flask

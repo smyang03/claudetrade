@@ -32,6 +32,89 @@ def candidate_key(*, session_date: str, market: str, call_id: str, ticker: str) 
     return "cand_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
+EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
+    "evidence_version": "TEXT",
+    "schema_version": "TEXT",
+    "candidate_age_min": "REAL",
+    "candidate_source": "TEXT",
+    "first_seen_price": "REAL",
+    "first_ready_at": "TEXT",
+    "first_ready_price": "REAL",
+    "was_trade_ready_before": "INTEGER",
+    "price_change_since_first_seen_pct": "REAL",
+    "price_change_since_first_ready_pct": "REAL",
+    "ready_attempt_count": "INTEGER",
+    "freshness_verdict": "TEXT",
+    "entry_type": "TEXT",
+    "setup_maturity": "TEXT",
+    "lifecycle_state": "TEXT",
+    "lifecycle_rank": "INTEGER",
+    "trainer_tier": "TEXT",
+    "quarantine_reason": "TEXT",
+    "cohort_reliability": "REAL",
+    "action_ceiling": "TEXT",
+    "action_ceiling_ack": "TEXT",
+    "legacy_auto_ready_promoted": "INTEGER",
+    "soft_gate_overrides": "TEXT",
+    "override_validated": "INTEGER",
+    "override_validation_reason": "TEXT",
+    "why_not_watch": "TEXT",
+    "max_entry_price": "REAL",
+    "max_chase_pct": "REAL",
+    "hard_blocks": "TEXT",
+    "soft_gates": "TEXT",
+    "exit_lifecycle_final_action": "TEXT",
+    "claude_override_allowed": "INTEGER",
+    "exit_owner": "TEXT",
+    "bypass_advisor": "INTEGER",
+    "metadata_contract_violation": "TEXT",
+    "recovery_micro_invariant_restored": "TEXT",
+    "max_entry_price_exceeded": "INTEGER",
+    "sla_triggered_at": "TEXT",
+    "review_called_at": "TEXT",
+    "review_latency_sec": "REAL",
+    "last_review_age_sec": "REAL",
+    "tuning_rule_version": "TEXT",
+    "tuning_feedback_applied": "INTEGER",
+    "config_hash": "TEXT",
+    "feature_flags_json": "TEXT",
+}
+
+
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {
+        str(row[1])
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    for name, column_type in columns.items():
+        if name in existing:
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}")
+
+
+def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
+    value = row.get(column)
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    if value is None and isinstance(payload, dict):
+        value = payload.get(column)
+    if column.endswith("_json") or column in {"soft_gate_overrides", "hard_blocks", "soft_gates"}:
+        if isinstance(value, str):
+            return value
+        return _json(value or [])
+    if column in {
+        "was_trade_ready_before",
+        "legacy_auto_ready_promoted",
+        "override_validated",
+        "claude_override_allowed",
+        "bypass_advisor",
+        "tuning_feedback_applied",
+    }:
+        if value is None:
+            return None
+        return _int_bool(value)
+    return value
+
+
 class CandidateAuditStore:
     """SQLite store for candidate-level audit data.
 
@@ -191,6 +274,7 @@ class CandidateAuditStore:
                     WHERE latest_rank = 1;
                 """
             )
+            _ensure_columns(conn, "audit_candidate_rows", EXTRA_CANDIDATE_COLUMNS)
             conn.commit()
         finally:
             conn.close()
@@ -406,6 +490,18 @@ class CandidateAuditStore:
                     now,
                 ),
             )
+            extra_updates = {}
+            for column in EXTRA_CANDIDATE_COLUMNS:
+                value = _candidate_extra_value(column, row)
+                if value is not None:
+                    extra_updates[column] = value
+            if extra_updates:
+                extra_updates["updated_at"] = now
+                set_clause = ", ".join(f"{column}=?" for column in extra_updates)
+                conn.execute(
+                    f"UPDATE audit_candidate_rows SET {set_clause} WHERE candidate_key=?",
+                    [*extra_updates.values(), key],
+                )
             conn.commit()
         finally:
             conn.close()
