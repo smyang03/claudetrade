@@ -60,6 +60,7 @@ class CandidateHealthTracker:
         watchlist: list[Any],
         trade_ready: list[Any],
         price_by_ticker: dict[str, Any] | None = None,
+        ready_failure_reasons: dict[str, list[str]] | None = None,
         phase: str = "",
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
@@ -84,6 +85,17 @@ class CandidateHealthTracker:
                 touched.append(ticker)
                 seen_in_event.add(ticker)
             self._touch_ready(ticker, prices.get(ticker, 0.0), ts, phase)
+            if ticker not in touched:
+                touched.append(ticker)
+
+        for raw_ticker, reasons in (ready_failure_reasons or {}).items():
+            ticker = normalize_ticker(self.market, raw_ticker)
+            if not ticker:
+                continue
+            if ticker not in seen_in_event:
+                self._touch_seen(ticker, prices.get(ticker, 0.0), ts, phase, status="WATCH")
+                seen_in_event.add(ticker)
+            self._touch_ready_failure(ticker, reasons, ts, phase)
             if ticker not in touched:
                 touched.append(ticker)
 
@@ -213,6 +225,10 @@ class CandidateHealthTracker:
                 "mfe_pct": 0.0,
                 "mae_pct": 0.0,
                 "recovered_first_ready": False,
+                "failed_ready_count": 0,
+                "stale_cycle_count": 0,
+                "failed_ready_reasons": [],
+                "last_failed_ready_at": "",
                 "last_status": "",
             }
             tickers[ticker] = rec
@@ -241,6 +257,23 @@ class CandidateHealthTracker:
         rec["last_status"] = "TRADE_READY"
         rec["last_phase"] = str(phase or "")
         self._update_price_metrics(rec, price)
+
+    def _touch_ready_failure(self, ticker: str, reasons: list[str] | None, ts: str, phase: str) -> None:
+        rec = self._record(ticker)
+        cleaned = [
+            str(reason or "").strip()
+            for reason in (reasons or [])
+            if str(reason or "").strip()
+        ]
+        if not cleaned:
+            cleaned = ["ready_route_failed"]
+        rec["failed_ready_count"] = int(rec.get("failed_ready_count") or 0) + 1
+        rec["stale_cycle_count"] = int(rec.get("stale_cycle_count") or 0) + 1
+        rec["failed_ready_reasons"] = list(dict.fromkeys(list(rec.get("failed_ready_reasons") or []) + cleaned))[-12:]
+        rec["last_failed_ready_at"] = ts
+        rec["last_seen_at"] = ts
+        rec["last_status"] = "READY_FAILED"
+        rec["last_phase"] = str(phase or "")
 
     def _update_price_metrics(self, rec: dict[str, Any], price: float) -> None:
         if price <= 0:

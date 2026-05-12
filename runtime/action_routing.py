@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -72,6 +73,26 @@ def _num_or_none(value: Any) -> float | None:
         return None
 
 
+def _context_or_env_float(context: dict[str, Any], key: str, default: float, *, market: str = "") -> float:
+    for raw_key in (
+        key,
+        f"{key}_{str(market or '').upper()}",
+    ):
+        value = context.get(raw_key)
+        if value not in (None, ""):
+            parsed = _num_or_none(value)
+            return float(default if parsed is None else parsed)
+    for env_key in (
+        f"{key}_{str(market or '').upper()}",
+        key,
+    ):
+        raw = os.getenv(env_key)
+        if raw not in (None, ""):
+            parsed = _num_or_none(raw)
+            return float(default if parsed is None else parsed)
+    return float(default)
+
+
 def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     """Validate Claude soft-gate overrides against supplied evidence.
 
@@ -91,6 +112,14 @@ def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any])
 
     ret_3m = _num_or_none(context.get("ret_3m_pct"))
     ret_5m = _num_or_none(context.get("ret_5m_pct"))
+    market_key = str(context.get("market") or (action or {}).get("market") or "").upper()
+    elapsed_min = _num_or_none(context.get("market_open_elapsed_min"))
+    ret3_only_grace_min = _context_or_env_float(
+        context,
+        "SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN",
+        5.0,
+        market=market_key,
+    )
     current_price = _num_or_none(context.get("current_price"))
     vwap = _num_or_none(context.get("vwap") or context.get("vwap_proxy"))
     max_entry_price = _num_or_none(action.get("max_entry_price") or context.get("max_entry_price"))
@@ -111,7 +140,18 @@ def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any])
         current_price is not None and vwap is not None and current_price >= vwap
     )
     price_ok = not (current_price is not None and max_entry_price is not None and max_entry_price > 0 and current_price > max_entry_price)
-    momentum_ok = ret_3m is not None and ret_5m is not None and ret_3m > 0 and ret_5m > 0
+    ret3_only_grace_used = bool(
+        ret_3m is not None
+        and ret_5m is None
+        and ret_3m > 0
+        and elapsed_min is not None
+        and ret3_only_grace_min > 0
+        and elapsed_min <= ret3_only_grace_min
+    )
+    momentum_ok = bool(
+        (ret_3m is not None and ret_5m is not None and ret_3m > 0 and ret_5m > 0)
+        or ret3_only_grace_used
+    )
     volume_ok = volume is not None and volume >= float(min_volume or 0.0)
     confirmation_ok = bool(opening_break or vwap_ok or volume_ok)
     validated = bool(momentum_ok and confirmation_ok and price_ok)
@@ -133,6 +173,7 @@ def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any])
             "vwap_ok": bool(vwap_ok),
             "volume_ok": bool(volume_ok),
             "price_ok": bool(price_ok),
+            "ret3_only_grace_used": ret3_only_grace_used,
         },
         "failed_checks": failed_checks,
     }
@@ -158,6 +199,7 @@ def route_candidate_action(
     ticker = str((action or {}).get("ticker") or "")
     market_text = str(market or (action or {}).get("market") or "").upper()
     requested = str((action or {}).get("action") or "WATCH")
+    original_requested = requested
     confidence = float((action or {}).get("confidence") or 0.0)
     price_targets = dict((action or {}).get("price_targets") or {})
     context = dict(execution_context or {})
@@ -241,6 +283,16 @@ def route_candidate_action(
         "soft_gates",
         "soft_gate_override_validation_enabled",
         "soft_gate_min_volume_ratio_open",
+        "SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN",
+        "SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN_KR",
+        "SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN_US",
+        "market_open_elapsed_min",
+        "evidence_pack_ceiling_enabled",
+        "evidence_data_state",
+        "evidence_missing_fields",
+        "evidence_action_ceiling",
+        "evidence_partial_grace_active",
+        "evidence_pack",
         "spread_bps",
         "kr_confirmation_gate_active",
         "kr_confirmation_gate_enabled",
@@ -254,6 +306,8 @@ def route_candidate_action(
             gate_context[key] = context.get(key)
 
     default_warnings: list[str] = []
+    evidence_demoted_to = ""
+    evidence_runtime_reason = ""
 
     def _decision(
         final_action: str,
@@ -277,9 +331,13 @@ def route_candidate_action(
             final_action,
             route=route,
             reason=reason,
-            original_action=requested,
-            demoted_to=demoted_to,
-            runtime_gate_reason=runtime_gate_reason,
+            original_action=original_requested,
+            demoted_to=demoted_to or (
+                evidence_demoted_to if evidence_demoted_to and final_action == evidence_demoted_to else ""
+            ),
+            runtime_gate_reason=runtime_gate_reason or (
+                evidence_runtime_reason if evidence_demoted_to and final_action == evidence_demoted_to else ""
+            ),
             runtime_gate=gate_payload,
             cancel_pathb=cancel_pathb,
             suspend_pathb=suspend_pathb,
@@ -320,6 +378,42 @@ def route_candidate_action(
     if gate_final_action == "HARD_BLOCK" or gate_blocker:
         return _decision("HARD_BLOCK", reason=gate_blocker or "hard_safety")
 
+    if active_order_route:
+        return _decision(
+            "WATCH",
+            reason=f"active_order_lock:{active_order_route}",
+            warnings=["route_locked_by_active_order"],
+        )
+
+    if pathb_active_order and requested in {"PROBE_READY", "BUY_READY", "ADD_READY"}:
+        return _decision(
+            "WATCH",
+            reason="pathb_active_order_blocks_plana",
+            warnings=["same_ticker_route_lock"],
+        )
+
+    if bool(context.get("evidence_pack_ceiling_enabled")) and requested in {"PROBE_READY", "BUY_READY"}:
+        evidence_ceiling = str(context.get("evidence_action_ceiling") or "").strip().upper()
+        evidence_state = str(context.get("evidence_data_state") or "").strip().lower()
+        gate_context["evidence_ceiling_applied"] = False
+        if evidence_state == "missing" or evidence_ceiling in {"WATCH", "WAIT_CONFIRMATION"}:
+            gate_context["evidence_ceiling_applied"] = True
+            return _decision(
+                "WATCH",
+                reason="evidence_ceiling_watch",
+                warnings=["evidence_ceiling_applied"],
+                demoted_to="WATCH",
+                runtime_gate_reason="evidence_action_ceiling",
+            )
+        if requested == "BUY_READY" and evidence_state == "partial" and bool(context.get("evidence_partial_grace_active")):
+            gate_context["evidence_ceiling_grace"] = "partial_grace"
+        elif requested == "BUY_READY" and (evidence_state == "partial" or evidence_ceiling == "PROBE_READY"):
+            requested = "PROBE_READY"
+            evidence_demoted_to = "PROBE_READY"
+            evidence_runtime_reason = "evidence_action_ceiling"
+            gate_context["evidence_ceiling_applied"] = True
+            default_warnings.append("evidence_ceiling_applied")
+
     if (
         requested in {"PROBE_READY", "BUY_READY"}
         and bool(context.get("soft_gate_override_validation_enabled"))
@@ -334,20 +428,6 @@ def route_candidate_action(
                 demoted_to="WATCH",
                 runtime_gate_reason=str(validation.get("reason") or "soft_gate_override_failed"),
             )
-
-    if active_order_route:
-        return _decision(
-            "WATCH",
-            reason=f"active_order_lock:{active_order_route}",
-            warnings=["route_locked_by_active_order"],
-        )
-
-    if pathb_active_order and requested in {"PROBE_READY", "BUY_READY", "ADD_READY"}:
-        return _decision(
-            "WATCH",
-            reason="pathb_active_order_blocks_plana",
-            warnings=["same_ticker_route_lock"],
-        )
 
     if (
         market_text == "KR"

@@ -784,6 +784,10 @@ class PathBRuntime:
             log.warning(f"[PathB paper-only] {market} live Claude Price registration skipped")
             return []
         if str(meta.get("_pathb_registration_scope") or "") == "candidate_actions_wait_only":
+            # Policy note: PULLBACK_WAIT is not PathA trade_ready, but the current
+            # PathB live policy treats Claude's buy-zone plan as executable when
+            # price enters the zone. Keep this behavior for now; revisit if PathB
+            # live entries should require explicit BUY_READY/PROBE_READY instead.
             trade_ready = list(meta.get("_pathb_wait_tickers") or [])
             price_targets = meta.get("_pathb_price_targets") or {}
         else:
@@ -960,6 +964,8 @@ class PathBRuntime:
                     plan.path_run_id,
                 )
                 continue
+            # See register_from_selection_meta policy note: a waiting Claude price
+            # plan may originate from PULLBACK_WAIT rather than PathA trade_ready.
             self._audit_pathb_zone_hit(plan, signal)
             self._submit_buy(plan, signal)
         if kr_blocked_tickers:

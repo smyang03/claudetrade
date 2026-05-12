@@ -52,7 +52,13 @@ def compact_limits(*, watch_default: int, trade_default: int) -> tuple[int, int]
 
 
 def is_compact_selection_response(parsed: Any) -> bool:
-    return isinstance(parsed, dict) and any(key in parsed for key in ("wl", "tr", "ca"))
+    if not isinstance(parsed, dict):
+        return False
+    if not isinstance(parsed.get("wl"), list):
+        return False
+    if "tr" in parsed and not isinstance(parsed.get("tr"), list):
+        return False
+    return True
 
 
 def normalize_ticker(ticker: Any, market: str) -> str:
@@ -328,6 +334,7 @@ def canonicalize_compact_selection(
     fatal_contract = bool(errors or stop_reason == "max_tokens")
     if stop_reason == "max_tokens":
         errors.append("stop_reason_max_tokens")
+    partial_contract_recovery_watch_only = bool(fatal_contract and watchlist)
 
     for ticker in watchlist:
         raw_item = actions_by_ticker.get(ticker) or {"t": ticker, "a": "WATCH", "s": "", "c": 0.0, "rc": "MISSING_ACTION"}
@@ -484,5 +491,6 @@ def canonicalize_compact_selection(
         "_candidate_actions_present": isinstance((parsed or {}).get("ca"), list),
         "_candidate_actions_empty": isinstance((parsed or {}).get("ca"), list) and not bool((parsed or {}).get("ca")),
         "_candidate_actions_missing_contract": bool(errors),
+        "_partial_contract_recovery_watch_only": partial_contract_recovery_watch_only,
         "_compact_validation": validation,
     }

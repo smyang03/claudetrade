@@ -270,23 +270,51 @@ def _risk_status_label(value: float) -> str:
 
 def send(text: str, parse_mode: str = "HTML") -> bool:
     if not TOKEN or not CHAT_ID:
-        log.debug(f"[텔레그램 비활성] {text[:80]}")
+        log.debug(f"[telegram disabled] {text[:80]}")
         return False
+
+    def _payload(mode: Optional[str]) -> dict:
+        payload = {"chat_id": CHAT_ID, "text": text}
+        if mode:
+            payload["parse_mode"] = mode
+        return payload
+
+    def _response_detail(exc: Exception) -> str:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", "")
+        body = str(getattr(response, "text", "") or "")[:300]
+        return f"status={status} body={mask_secrets(body)} len={len(text)} parse_mode={parse_mode or 'plain'}"
+
+    def _post(mode: Optional[str]):
+        resp = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json=_payload(mode),
+            timeout=20,
+        )
+        resp.raise_for_status()
+        return resp
+
+    fallback_tried = False
     for attempt in range(2):
         try:
-            resp = requests.post(
-                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                json={"chat_id": CHAT_ID, "text": text, "parse_mode": parse_mode},
-                timeout=20,
-            )
-            resp.raise_for_status()
+            _post(parse_mode)
             return True
         except Exception as e:
+            response = getattr(e, "response", None)
+            status = getattr(response, "status_code", None)
+            if status == 400 and parse_mode and not fallback_tried:
+                fallback_tried = True
+                try:
+                    _post(None)
+                    log.warning(f"telegram HTML 400 plain fallback recovered: {_response_detail(e)}")
+                    return True
+                except Exception as fallback_exc:
+                    log.warning(f"telegram plain fallback failed: {_response_detail(fallback_exc)}")
             if attempt == 0:
-                log.debug(f"텔레그램 전송 재시도: {mask_secrets(e)}")
+                log.debug(f"telegram send retry: {mask_secrets(e)} {_response_detail(e)}")
                 time.sleep(3)
             else:
-                log.error(f"텔레그램 전송 실패: {mask_secrets(e)}")
+                log.error(f"telegram send failed: {mask_secrets(e)} {_response_detail(e)}")
     return False
 
 

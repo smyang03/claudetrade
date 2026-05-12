@@ -538,6 +538,56 @@ class PostmortemPromptContractTests(unittest.TestCase):
         self.assertFalse(daily_record["execution_learning_excluded"])
         self.assertTrue(daily_record["execution_warning"])
 
+    def test_parse_failed_postmortem_writes_daily_record_without_policy_learning(self) -> None:
+        calls: dict[str, list] = {"daily_records": [], "beliefs": [], "issue_patterns": []}
+
+        def _fake_create(*, model, max_tokens, messages):
+            return SimpleNamespace(
+                content=[SimpleNamespace(text="not-json")],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        no_op = lambda *args, **kwargs: None
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(postmortem.client.messages, "create", side_effect=_fake_create))
+            stack.enter_context(patch.object(postmortem, "credit_record", no_op))
+            stack.enter_context(patch.object(postmortem, "save_raw_call", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "generate_prompt_summary", return_value=""))
+            stack.enter_context(patch.object(postmortem.BrainDB, "load", return_value={"markets": {"US": {"recent_days": []}}}))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_analyst", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_mode_performance", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_beliefs", side_effect=lambda *a, **k: calls["beliefs"].append((a, k))))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_issue_pattern", side_effect=lambda *a, **k: calls["issue_patterns"].append((a, k))))
+            stack.enter_context(patch.object(postmortem.BrainDB, "add_daily_record", side_effect=lambda *a, **k: calls["daily_records"].append((a, k))))
+            stack.enter_context(patch.object(postmortem.BrainDB, "get_recent_selection_feedback_text", return_value=""))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_strategy_performance", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_debate_outcome", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_correction_guide", no_op))
+            postmortem.run(
+                "US",
+                "2026-05-10",
+                {
+                    "judgments": {
+                        "bull": {"stance": "MILD_BULL", "key_reason": "ok"},
+                        "bear": {"stance": "NEUTRAL", "key_reason": "ok"},
+                        "neutral": {"stance": "NEUTRAL", "key_reason": "ok"},
+                    },
+                    "consensus": {"mode": "MILD_BULL"},
+                },
+                {"market_change": 0.0, "pnl_pct": 0.1, "win": True},
+                "US digest",
+                trade_log=[{"side": "sell", "ticker": "AAPL", "pnl_pct": 0.1}],
+                decision_event_log=[],
+            )
+
+        self.assertEqual(calls["beliefs"], [])
+        self.assertEqual(calls["issue_patterns"], [])
+        self.assertEqual(len(calls["daily_records"]), 1)
+        daily_record = calls["daily_records"][0][0][1]
+        self.assertIn("Postmortem JSON parse failed", daily_record["key_lesson"])
+        self.assertEqual(daily_record["issue_type"], "postmortem_parse_error")
+
     def test_execution_learning_excluded_does_not_write_policy_lessons(self) -> None:
         calls: dict[str, list] = {
             "analysts": [],

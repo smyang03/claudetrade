@@ -39,21 +39,128 @@ def _is_placeholder_lesson(text: str) -> bool:
 
 
 def _extract_json(text: str) -> dict:
-    """Claude 응답에서 JSON 추출 시 방어적으로 파싱한다."""
-    # trailing comma 제거 (LLM이 자주 만드는 오류)
-    def _fix(s: str) -> str:
-        return re.sub(r",(\s*[}\]])", r"\1", s)
+    """Extract and lightly repair JSON from an LLM response."""
 
-    # 1) ```json ... ``` 또는 ``` ... ``` 블록 (탐욕적 매칭으로 중첩 {} 포함)
-    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
-    if m:
-        return json.loads(_fix(m.group(1)))
-    # 2) { ... } 직접 추출 — 첫 번째 { 부터 마지막 } 까지
-    start = text.find("{")
-    end   = text.rfind("}")
+    def _fix(s: str) -> str:
+        return re.sub(r",(\s*[}\]])", r"\1", s.strip())
+
+    def _close_balanced(s: str) -> str:
+        stack = []
+        in_string = False
+        escaped = False
+        for ch in s:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch in "{[":
+                stack.append(ch)
+            elif ch in "}]":
+                if stack:
+                    stack.pop()
+        repaired = s
+        if in_string:
+            repaired += '"'
+        while stack:
+            opener = stack.pop()
+            repaired += "}" if opener == "{" else "]"
+        return _fix(repaired)
+
+    def _loads(candidate: str) -> dict:
+        fixed = _fix(candidate)
+        try:
+            return json.loads(fixed)
+        except Exception:
+            return json.loads(_close_balanced(fixed))
+
+    candidates = []
+    for m in re.finditer(r"```(?:json)?\s*(.*?)\s*```", text or "", re.DOTALL):
+        block = (m.group(1) or "").strip()
+        if "{" in block:
+            candidates.append(block)
+    start = (text or "").find("{")
+    end = (text or "").rfind("}")
     if start != -1 and end != -1 and end > start:
-        return json.loads(_fix(text[start:end + 1]))
-    raise ValueError(f"JSON 추출 실패: {text[:200]}")
+        candidates.append(text[start:end + 1])
+    elif start != -1:
+        candidates.append(text[start:])
+
+    last_error = None
+    for candidate in candidates:
+        try:
+            return _loads(candidate)
+        except Exception as exc:
+            last_error = exc
+    raise ValueError(f"JSON extract failed: {str(last_error or '')[:160]} | {(text or '')[:200]}")
+
+
+def _fallback_trade_label(trade):
+    if not trade:
+        return None
+    ticker = str(trade.get("ticker", "-") or "-")
+    strategy = str(trade.get("strategy", "-") or "-")
+    try:
+        pnl_pct = float(trade.get("pnl_pct", 0) or 0)
+    except Exception:
+        pnl_pct = 0.0
+    try:
+        pnl = float(trade.get("pnl", trade.get("pnl_krw", 0)) or 0)
+    except Exception:
+        pnl = 0.0
+    return f"{ticker} {pnl_pct:+.2f}% ({pnl:+,.0f} KRW) ({strategy})"
+
+
+def _build_fallback_postmortem(
+    *,
+    code_bull: str,
+    code_bear: str,
+    code_neutral: str,
+    sells: list,
+    actual_result: dict,
+    error: Exception,
+) -> dict:
+    best = max(sells, key=lambda t: t.get("pnl_pct", t.get("pnl", 0)), default=None)
+    worst = min(sells, key=lambda t: t.get("pnl_pct", t.get("pnl", 0)), default=None)
+    sell_count = int(actual_result.get("trades", len(sells)) or 0)
+    pnl_krw = float(actual_result.get("pnl_krw", 0) or 0)
+    issue_type = "postmortem_parse_error"
+    if actual_result.get("execution_contaminated"):
+        issue_type = "execution_contaminated_postmortem_parse_error"
+    return {
+        "bull_result": code_bull,
+        "bear_result": code_bear,
+        "neutral_result": code_neutral,
+        "bull_why": "Code-scored fallback after postmortem parse failure.",
+        "bear_why": "Code-scored fallback after postmortem parse failure.",
+        "neutral_why": "Code-scored fallback after postmortem parse failure.",
+        "key_lesson": (
+            f"Postmortem JSON parse failed; verified {sell_count} closed trades and "
+            f"{pnl_krw:+,.0f} KRW realized PnL from code-level records."
+        ),
+        "best_trade": _fallback_trade_label(best),
+        "worst_trade": _fallback_trade_label(worst),
+        "worst_trade_reason": (
+            f"Code fallback selected the lowest realized sell PnL; reason={str((worst or {}).get('reason', '') or '-')}"
+            if worst else ""
+        ),
+        "issue_type": issue_type,
+        "issue_desc": f"LLM postmortem JSON parse failed; raw response saved. error={str(error)[:120]}",
+        "pattern_id": None,
+        "_system_error": True,
+        "_skip_issue_pattern": True,
+        "_system_error_detail": str(error)[:160],
+        "brain_updates": {"bull_reliability_change": "stable",
+                          "bear_reliability_change": "stable",
+                          "new_lesson": None, "market_regime": "unknown"},
+        "correction_guide": {"bull_adjustments": [], "bear_adjustments": [],
+                             "tuning_rules": [], "today_notes": "postmortem_parse_fallback"},
+    }
 
 
 def _market_system_label(market: str) -> str:
@@ -397,7 +504,7 @@ def run(market: str, date: str, today_judgment: dict,
         )
         try:
             pm = _extract_json(raw)
-        except Exception:
+        except Exception as parse_exc:
             save_raw_call(
                 label="postmortem",
                 prompt=prompt, raw_response=raw, parsed={},
@@ -409,7 +516,7 @@ def run(market: str, date: str, today_judgment: dict,
                 parse_error=True,
                 parse_stage="parse_failed",
                 duration_ms=duration_ms,
-                extra={"_raw_only": True},
+                extra={"_raw_only": True, "repair_error": str(parse_exc)[:300]},
             )
             raise
         save_raw_call(
@@ -450,6 +557,15 @@ def run(market: str, date: str, today_judgment: dict,
                                  "tuning_rules": [], "today_notes": ""},
         }
 
+        pm = _build_fallback_postmortem(
+            code_bull=code_bull,
+            code_bear=code_bear,
+            code_neutral=code_neutral,
+            sells=sells,
+            actual_result=actual_result,
+            error=e,
+        )
+
     execution_learning_excluded = bool(
         actual_result.get(
             "execution_learning_excluded",
@@ -472,12 +588,12 @@ def run(market: str, date: str, today_judgment: dict,
     bu = pm.get("brain_updates", {})
     # new_lesson 없으면 key_lesson을 fallback으로 사용
     lesson_to_save = bu.get("new_lesson") or pm.get("key_lesson")
-    if not execution_learning_excluded and lesson_to_save and not _is_placeholder_lesson(lesson_to_save):
+    if not execution_learning_excluded and not pm.get("_system_error") and lesson_to_save and not _is_placeholder_lesson(lesson_to_save):
         BrainDB.update_beliefs(market, {"new_lesson": lesson_to_save})
-    if not execution_learning_excluded and bu.get("market_regime") and bu["market_regime"] != "unknown":
+    if not execution_learning_excluded and not pm.get("_system_error") and bu.get("market_regime") and bu["market_regime"] != "unknown":
         BrainDB.update_beliefs(market, {"market_regime": bu["market_regime"]})
 
-    if not execution_learning_excluded and not pm.get("_skip_issue_pattern"):
+    if not execution_learning_excluded and not pm.get("_system_error") and not pm.get("_skip_issue_pattern"):
         BrainDB.update_issue_pattern(market, {
             "matched_id":  pm.get("pattern_id"),
             "type":        pm.get("issue_type", "unknown"),
@@ -487,8 +603,11 @@ def run(market: str, date: str, today_judgment: dict,
             "insight":     "" if _is_placeholder_lesson(pm.get("key_lesson", "")) else pm.get("key_lesson", ""),
         })
 
-    policy_key_lesson = "" if (pm.get("_system_error") or execution_learning_excluded) else pm.get("key_lesson", "")
-    policy_issue_type = "" if (pm.get("_system_error") or execution_learning_excluded) else pm.get("issue_type", "")
+    fallback_note = pm.get("key_lesson", "") if pm.get("_system_error") else ""
+    daily_key_lesson = "" if execution_learning_excluded else pm.get("key_lesson", "")
+    daily_issue_type = "" if execution_learning_excluded else pm.get("issue_type", "")
+    if execution_learning_excluded and pm.get("_system_error") and pm.get("issue_type"):
+        daily_issue_type = pm.get("issue_type", "")
     sell_count = int(actual_result.get("trades", len(sells)) or 0)
 
     BrainDB.add_daily_record(market, {
@@ -506,8 +625,9 @@ def run(market: str, date: str, today_judgment: dict,
         "bull_reason":       judgments.get("bull", {}).get("key_reason", ""),
         "bear_reason":       judgments.get("bear", {}).get("key_reason", ""),
         "neutral_reason":    judgments.get("neutral", {}).get("key_reason", ""),
-        "key_lesson":        policy_key_lesson,
-        "issue_type":        policy_issue_type,
+        "key_lesson":        daily_key_lesson,
+        "issue_type":        daily_issue_type,
+        "postmortem_fallback_note": fallback_note,
         "best_trade":        pm.get("best_trade"),
         "worst_trade":       pm.get("worst_trade"),
         "worst_trade_reason": pm.get("worst_trade_reason", ""),

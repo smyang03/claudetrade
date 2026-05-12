@@ -79,6 +79,10 @@ def init() -> None:
                 signal_at            TEXT,
                 traded               INTEGER DEFAULT 0,
                 traded_at            TEXT,
+                execution_source_type TEXT,
+                execution_decision_id TEXT,
+                execution_strategy    TEXT,
+                execution_reason      TEXT,
                 pnl_pct              REAL,
                 exit_reason          TEXT,
                 forward_1d           REAL,
@@ -129,6 +133,14 @@ def init() -> None:
             conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN max_runup_5d REAL")
         if "max_drawdown_5d" not in existing:
             conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN max_drawdown_5d REAL")
+        if "execution_source_type" not in existing:
+            conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN execution_source_type TEXT")
+        if "execution_decision_id" not in existing:
+            conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN execution_decision_id TEXT")
+        if "execution_strategy" not in existing:
+            conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN execution_strategy TEXT")
+        if "execution_reason" not in existing:
+            conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN execution_reason TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tslog_date_market "
             "ON ticker_selection_log(date, market)"
@@ -300,15 +312,150 @@ def update_signal(
         )
 
 
-def update_traded(row_id: int, traded_at: str) -> None:
+def update_traded(
+    row_id: int,
+    traded_at: str,
+    *,
+    execution_source_type: str = "",
+    execution_decision_id: str = "",
+    execution_strategy: str = "",
+    execution_reason: str = "",
+    allow_watch_execution: bool = False,
+) -> bool:
     """매수 주문 접수 성공 시 traded=1 업데이트"""
     if not row_id:
-        return
+        return False
     with _conn() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id, source_type, trade_ready FROM ticker_selection_log WHERE id=?",
+            (row_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        is_preopen_watch = str(row["source_type"] or "") == "preopen_watch"
+        is_watch_only = int(row["trade_ready"] or 0) == 0
+        if is_preopen_watch and is_watch_only and not allow_watch_execution:
+            return False
         conn.execute(
-            "UPDATE ticker_selection_log SET traded=1, traded_at=? WHERE id=?",
-            (traded_at, row_id),
+            """
+            UPDATE ticker_selection_log
+            SET traded=1,
+                traded_at=?,
+                execution_source_type=COALESCE(NULLIF(?, ''), execution_source_type),
+                execution_decision_id=COALESCE(NULLIF(?, ''), execution_decision_id),
+                execution_strategy=COALESCE(NULLIF(?, ''), execution_strategy),
+                execution_reason=COALESCE(NULLIF(?, ''), execution_reason)
+            WHERE id=?
+            """,
+            (
+                traded_at,
+                execution_source_type,
+                execution_decision_id,
+                execution_strategy,
+                execution_reason,
+                row_id,
+            ),
         )
+        return True
+
+
+def insert_execution_row_from_selection(
+    row_id: int,
+    traded_at: str,
+    *,
+    source_type: str = "signal_entry",
+    execution_source_type: str = "",
+    execution_decision_id: str = "",
+    execution_strategy: str = "",
+    execution_reason: str = "",
+) -> int:
+    """watch-only 선택 행을 오염시키지 않고 별도 실행 행을 만든다."""
+    if not row_id:
+        return 0
+    copy_columns = [
+        "bot_mode",
+        "date",
+        "market",
+        "ticker",
+        "consensus_mode",
+        "selection_rank",
+        "watchlist_rank",
+        "source_type",
+        "selection_batch_id",
+        "selected_reason",
+        "veto_reason",
+        "selected_reason_tag",
+        "selected_at",
+        "change_pct",
+        "vol_ratio",
+        "gap_pct",
+        "from_high_pct",
+        "above_ma60",
+        "market_type",
+        "category",
+        "sector",
+        "liquidity_bucket",
+        "from_high_bucket",
+        "trade_ready",
+        "risk_tags",
+        "recommended_strategy",
+        "max_position_pct",
+        "signal_fired",
+        "strategy_name",
+        "entry_priority_score",
+        "blocked_reason",
+        "signal_at",
+        "traded",
+        "traded_at",
+        "execution_source_type",
+        "execution_decision_id",
+        "execution_strategy",
+        "execution_reason",
+        "forward_1d",
+        "forward_3d",
+        "forward_5d",
+        "max_runup_3d",
+        "max_drawdown_3d",
+        "max_runup_5d",
+        "max_drawdown_5d",
+    ]
+    with _conn() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM ticker_selection_log WHERE id=?", (row_id,)).fetchone()
+        if row is None:
+            return 0
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(ticker_selection_log)").fetchall()}
+        source = dict(row)
+        values = {column: source.get(column) for column in copy_columns if column in existing}
+        exec_source = execution_source_type or source_type
+        values.update(
+            {
+                "source_type": source_type or exec_source,
+                "selection_batch_id": f"{source.get('selection_batch_id') or ''}:execution",
+                "trade_ready": 1,
+                "signal_fired": 1,
+                "strategy_name": execution_strategy or source.get("strategy_name"),
+                "blocked_reason": execution_reason or source.get("blocked_reason"),
+                "signal_at": source.get("signal_at") or traded_at,
+                "traded": 1,
+                "traded_at": traded_at,
+                "execution_source_type": exec_source,
+                "execution_decision_id": execution_decision_id,
+                "execution_strategy": execution_strategy or source.get("strategy_name"),
+                "execution_reason": execution_reason,
+            }
+        )
+        insert_columns = [column for column in copy_columns if column in values and column in existing]
+        placeholders = ",".join("?" for _ in insert_columns)
+        row_id_new = conn.execute(
+            f"""
+            INSERT INTO ticker_selection_log ({", ".join(insert_columns)})
+            VALUES ({placeholders})
+            """,
+            [values[column] for column in insert_columns],
+        ).lastrowid
+        return int(row_id_new or 0)
 
 
 def update_pnl(market: str, ticker: str, pnl_pct: float, exit_reason: str) -> None:
@@ -986,4 +1133,3 @@ def format_recent_selection_feedback(
     if strategy_lines:
         lines.append(strategy_lines)
     return "\n".join(lines)
-

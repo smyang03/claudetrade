@@ -90,8 +90,20 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "trainer_candidate_state": "TEXT",
     "source_tags_json": "TEXT",
     "data_quality_flags_json": "TEXT",
+    "stale_cycle": "INTEGER",
+    "stale_cycle_count": "INTEGER",
+    "repeated_failed_ready_count": "INTEGER",
+    "no_fill_cycle_count": "INTEGER",
+    "failed_ready_reasons_json": "TEXT",
     "candidate_pool_version": "TEXT",
     "prompt_pool_version": "TEXT",
+    "execution_link_source": "TEXT",
+    "execution_decision_id": "TEXT",
+    "execution_event_id": "INTEGER",
+    "evidence_data_state": "TEXT",
+    "evidence_missing_fields_json": "TEXT",
+    "evidence_action_ceiling": "TEXT",
+    "evidence_ceiling_applied": "INTEGER",
 }
 
 
@@ -123,6 +135,8 @@ def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
         "bypass_advisor",
         "tuning_feedback_applied",
         "final_prompt_included",
+        "stale_cycle",
+        "evidence_ceiling_applied",
     }:
         if value is None:
             return None
@@ -400,124 +414,124 @@ class CandidateAuditStore:
         )
         conn = self.connect()
         try:
-            conn.execute(
-                """
-                INSERT INTO audit_candidate_rows (
-                    candidate_key, call_id, runtime_mode, market, session_date,
-                    known_at, ticker, source_file, prompt_rank, in_prompt,
-                    screener_seen, input_to_claude_reported, name, price,
-                    change_pct, volume_ratio, turnover, market_type,
-                    liquidity_bucket, primary_bucket, secondary_buckets_json,
-                    claude_action, claude_reason, claude_veto_reason,
-                    claude_watchlist, claude_trade_ready, recommended_strategy,
-                    risk_tags_json, max_position_pct, route_original_action,
-                    route_final_action, route_route, route_reason, route_demoted_to,
-                    route_runtime_gate_reason, route_overextended, route_cancel_pathb,
-                    route_suspend_pathb, route_warnings_json, classification,
-                    payload_json, created_at, updated_at
-                )
-                VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?
-                )
-                ON CONFLICT(candidate_key) DO UPDATE SET
-                    known_at=COALESCE(NULLIF(excluded.known_at, ''), audit_candidate_rows.known_at),
-                    source_file=COALESCE(NULLIF(excluded.source_file, ''), audit_candidate_rows.source_file),
-                    prompt_rank=COALESCE(excluded.prompt_rank, audit_candidate_rows.prompt_rank),
-                    in_prompt=MAX(audit_candidate_rows.in_prompt, excluded.in_prompt),
-                    screener_seen=MAX(audit_candidate_rows.screener_seen, excluded.screener_seen),
-                    input_to_claude_reported=MAX(audit_candidate_rows.input_to_claude_reported, excluded.input_to_claude_reported),
-                    name=COALESCE(NULLIF(excluded.name, ''), audit_candidate_rows.name),
-                    price=COALESCE(excluded.price, audit_candidate_rows.price),
-                    change_pct=COALESCE(excluded.change_pct, audit_candidate_rows.change_pct),
-                    volume_ratio=COALESCE(excluded.volume_ratio, audit_candidate_rows.volume_ratio),
-                    turnover=COALESCE(excluded.turnover, audit_candidate_rows.turnover),
-                    market_type=COALESCE(NULLIF(excluded.market_type, ''), audit_candidate_rows.market_type),
-                    liquidity_bucket=COALESCE(NULLIF(excluded.liquidity_bucket, ''), audit_candidate_rows.liquidity_bucket),
-                    primary_bucket=COALESCE(NULLIF(excluded.primary_bucket, ''), audit_candidate_rows.primary_bucket),
-                    secondary_buckets_json=CASE WHEN excluded.secondary_buckets_json!='[]' THEN excluded.secondary_buckets_json ELSE audit_candidate_rows.secondary_buckets_json END,
-                    claude_action=COALESCE(NULLIF(excluded.claude_action, ''), audit_candidate_rows.claude_action),
-                    claude_reason=COALESCE(NULLIF(excluded.claude_reason, ''), audit_candidate_rows.claude_reason),
-                    claude_veto_reason=COALESCE(NULLIF(excluded.claude_veto_reason, ''), audit_candidate_rows.claude_veto_reason),
-                    claude_watchlist=MAX(audit_candidate_rows.claude_watchlist, excluded.claude_watchlist),
-                    claude_trade_ready=MAX(audit_candidate_rows.claude_trade_ready, excluded.claude_trade_ready),
-                    recommended_strategy=COALESCE(NULLIF(excluded.recommended_strategy, ''), audit_candidate_rows.recommended_strategy),
-                    risk_tags_json=CASE WHEN excluded.risk_tags_json!='[]' THEN excluded.risk_tags_json ELSE audit_candidate_rows.risk_tags_json END,
-                    max_position_pct=COALESCE(excluded.max_position_pct, audit_candidate_rows.max_position_pct),
-                    route_original_action=COALESCE(NULLIF(excluded.route_original_action, ''), audit_candidate_rows.route_original_action),
-                    route_final_action=COALESCE(NULLIF(excluded.route_final_action, ''), audit_candidate_rows.route_final_action),
-                    route_route=COALESCE(NULLIF(excluded.route_route, ''), audit_candidate_rows.route_route),
-                    route_reason=COALESCE(NULLIF(excluded.route_reason, ''), audit_candidate_rows.route_reason),
-                    route_demoted_to=COALESCE(NULLIF(excluded.route_demoted_to, ''), audit_candidate_rows.route_demoted_to),
-                    route_runtime_gate_reason=COALESCE(NULLIF(excluded.route_runtime_gate_reason, ''), audit_candidate_rows.route_runtime_gate_reason),
-                    route_overextended=MAX(audit_candidate_rows.route_overextended, excluded.route_overextended),
-                    route_cancel_pathb=MAX(audit_candidate_rows.route_cancel_pathb, excluded.route_cancel_pathb),
-                    route_suspend_pathb=MAX(audit_candidate_rows.route_suspend_pathb, excluded.route_suspend_pathb),
-                    route_warnings_json=CASE WHEN excluded.route_warnings_json!='[]' THEN excluded.route_warnings_json ELSE audit_candidate_rows.route_warnings_json END,
-                    classification=COALESCE(NULLIF(excluded.classification, ''), audit_candidate_rows.classification),
-                    payload_json=excluded.payload_json,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    key,
-                    call_id,
-                    runtime_mode,
-                    market,
-                    session_date,
-                    row.get("known_at", ""),
-                    ticker,
-                    row.get("source_file", ""),
-                    row.get("prompt_rank"),
-                    _int_bool(row.get("in_prompt")),
-                    _int_bool(row.get("screener_seen")),
-                    _int_bool(row.get("input_to_claude_reported")),
-                    row.get("name", ""),
-                    row.get("price"),
-                    row.get("change_pct"),
-                    row.get("volume_ratio"),
-                    row.get("turnover"),
-                    row.get("market_type", ""),
-                    row.get("liquidity_bucket", ""),
-                    row.get("primary_bucket", ""),
-                    _json(row.get("secondary_buckets") or []),
-                    row.get("claude_action", ""),
-                    row.get("claude_reason", ""),
-                    row.get("claude_veto_reason", ""),
-                    _int_bool(row.get("claude_watchlist")),
-                    _int_bool(row.get("claude_trade_ready")),
-                    row.get("recommended_strategy", ""),
-                    _json(row.get("risk_tags") or []),
-                    row.get("max_position_pct"),
-                    row.get("route_original_action", ""),
-                    row.get("route_final_action", ""),
-                    row.get("route_route", ""),
-                    row.get("route_reason", ""),
-                    row.get("route_demoted_to", ""),
-                    row.get("route_runtime_gate_reason", ""),
-                    _int_bool(row.get("route_overextended")),
-                    _int_bool(row.get("route_cancel_pathb")),
-                    _int_bool(row.get("route_suspend_pathb")),
-                    _json(row.get("route_warnings") or []),
-                    row.get("classification", ""),
-                    _json(row.get("payload") or {}),
-                    now,
-                    now,
-                ),
-            )
-            extra_updates = {}
-            for column in EXTRA_CANDIDATE_COLUMNS:
-                value = _candidate_extra_value(column, row)
-                if value is not None:
-                    extra_updates[column] = value
-            if extra_updates:
-                extra_updates["updated_at"] = now
-                set_clause = ", ".join(f"{column}=?" for column in extra_updates)
+            with conn:
                 conn.execute(
-                    f"UPDATE audit_candidate_rows SET {set_clause} WHERE candidate_key=?",
-                    [*extra_updates.values(), key],
+                    """
+                    INSERT INTO audit_candidate_rows (
+                        candidate_key, call_id, runtime_mode, market, session_date,
+                        known_at, ticker, source_file, prompt_rank, in_prompt,
+                        screener_seen, input_to_claude_reported, name, price,
+                        change_pct, volume_ratio, turnover, market_type,
+                        liquidity_bucket, primary_bucket, secondary_buckets_json,
+                        claude_action, claude_reason, claude_veto_reason,
+                        claude_watchlist, claude_trade_ready, recommended_strategy,
+                        risk_tags_json, max_position_pct, route_original_action,
+                        route_final_action, route_route, route_reason, route_demoted_to,
+                        route_runtime_gate_reason, route_overextended, route_cancel_pathb,
+                        route_suspend_pathb, route_warnings_json, classification,
+                        payload_json, created_at, updated_at
+                    )
+                    VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?
+                    )
+                    ON CONFLICT(candidate_key) DO UPDATE SET
+                        known_at=COALESCE(NULLIF(excluded.known_at, ''), audit_candidate_rows.known_at),
+                        source_file=COALESCE(NULLIF(excluded.source_file, ''), audit_candidate_rows.source_file),
+                        prompt_rank=COALESCE(excluded.prompt_rank, audit_candidate_rows.prompt_rank),
+                        in_prompt=MAX(audit_candidate_rows.in_prompt, excluded.in_prompt),
+                        screener_seen=MAX(audit_candidate_rows.screener_seen, excluded.screener_seen),
+                        input_to_claude_reported=MAX(audit_candidate_rows.input_to_claude_reported, excluded.input_to_claude_reported),
+                        name=COALESCE(NULLIF(excluded.name, ''), audit_candidate_rows.name),
+                        price=COALESCE(excluded.price, audit_candidate_rows.price),
+                        change_pct=COALESCE(excluded.change_pct, audit_candidate_rows.change_pct),
+                        volume_ratio=COALESCE(excluded.volume_ratio, audit_candidate_rows.volume_ratio),
+                        turnover=COALESCE(excluded.turnover, audit_candidate_rows.turnover),
+                        market_type=COALESCE(NULLIF(excluded.market_type, ''), audit_candidate_rows.market_type),
+                        liquidity_bucket=COALESCE(NULLIF(excluded.liquidity_bucket, ''), audit_candidate_rows.liquidity_bucket),
+                        primary_bucket=COALESCE(NULLIF(excluded.primary_bucket, ''), audit_candidate_rows.primary_bucket),
+                        secondary_buckets_json=CASE WHEN excluded.secondary_buckets_json!='[]' THEN excluded.secondary_buckets_json ELSE audit_candidate_rows.secondary_buckets_json END,
+                        claude_action=COALESCE(NULLIF(excluded.claude_action, ''), audit_candidate_rows.claude_action),
+                        claude_reason=COALESCE(NULLIF(excluded.claude_reason, ''), audit_candidate_rows.claude_reason),
+                        claude_veto_reason=COALESCE(NULLIF(excluded.claude_veto_reason, ''), audit_candidate_rows.claude_veto_reason),
+                        claude_watchlist=MAX(audit_candidate_rows.claude_watchlist, excluded.claude_watchlist),
+                        claude_trade_ready=MAX(audit_candidate_rows.claude_trade_ready, excluded.claude_trade_ready),
+                        recommended_strategy=COALESCE(NULLIF(excluded.recommended_strategy, ''), audit_candidate_rows.recommended_strategy),
+                        risk_tags_json=CASE WHEN excluded.risk_tags_json!='[]' THEN excluded.risk_tags_json ELSE audit_candidate_rows.risk_tags_json END,
+                        max_position_pct=COALESCE(excluded.max_position_pct, audit_candidate_rows.max_position_pct),
+                        route_original_action=COALESCE(NULLIF(excluded.route_original_action, ''), audit_candidate_rows.route_original_action),
+                        route_final_action=COALESCE(NULLIF(excluded.route_final_action, ''), audit_candidate_rows.route_final_action),
+                        route_route=COALESCE(NULLIF(excluded.route_route, ''), audit_candidate_rows.route_route),
+                        route_reason=COALESCE(NULLIF(excluded.route_reason, ''), audit_candidate_rows.route_reason),
+                        route_demoted_to=COALESCE(NULLIF(excluded.route_demoted_to, ''), audit_candidate_rows.route_demoted_to),
+                        route_runtime_gate_reason=COALESCE(NULLIF(excluded.route_runtime_gate_reason, ''), audit_candidate_rows.route_runtime_gate_reason),
+                        route_overextended=MAX(audit_candidate_rows.route_overextended, excluded.route_overextended),
+                        route_cancel_pathb=MAX(audit_candidate_rows.route_cancel_pathb, excluded.route_cancel_pathb),
+                        route_suspend_pathb=MAX(audit_candidate_rows.route_suspend_pathb, excluded.route_suspend_pathb),
+                        route_warnings_json=CASE WHEN excluded.route_warnings_json!='[]' THEN excluded.route_warnings_json ELSE audit_candidate_rows.route_warnings_json END,
+                        classification=COALESCE(NULLIF(excluded.classification, ''), audit_candidate_rows.classification),
+                        payload_json=excluded.payload_json,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        key,
+                        call_id,
+                        runtime_mode,
+                        market,
+                        session_date,
+                        row.get("known_at", ""),
+                        ticker,
+                        row.get("source_file", ""),
+                        row.get("prompt_rank"),
+                        _int_bool(row.get("in_prompt")),
+                        _int_bool(row.get("screener_seen")),
+                        _int_bool(row.get("input_to_claude_reported")),
+                        row.get("name", ""),
+                        row.get("price"),
+                        row.get("change_pct"),
+                        row.get("volume_ratio"),
+                        row.get("turnover"),
+                        row.get("market_type", ""),
+                        row.get("liquidity_bucket", ""),
+                        row.get("primary_bucket", ""),
+                        _json(row.get("secondary_buckets") or []),
+                        row.get("claude_action", ""),
+                        row.get("claude_reason", ""),
+                        row.get("claude_veto_reason", ""),
+                        _int_bool(row.get("claude_watchlist")),
+                        _int_bool(row.get("claude_trade_ready")),
+                        row.get("recommended_strategy", ""),
+                        _json(row.get("risk_tags") or []),
+                        row.get("max_position_pct"),
+                        row.get("route_original_action", ""),
+                        row.get("route_final_action", ""),
+                        row.get("route_route", ""),
+                        row.get("route_reason", ""),
+                        row.get("route_demoted_to", ""),
+                        row.get("route_runtime_gate_reason", ""),
+                        _int_bool(row.get("route_overextended")),
+                        _int_bool(row.get("route_cancel_pathb")),
+                        _int_bool(row.get("route_suspend_pathb")),
+                        _json(row.get("route_warnings") or []),
+                        row.get("classification", ""),
+                        _json(row.get("payload") or {}),
+                        now,
+                        now,
+                    ),
                 )
-            conn.commit()
+                extra_updates = {}
+                for column in EXTRA_CANDIDATE_COLUMNS:
+                    value = _candidate_extra_value(column, row)
+                    if value is not None:
+                        extra_updates[column] = value
+                if extra_updates:
+                    extra_updates["updated_at"] = now
+                    set_clause = ", ".join(f"{column}=?" for column in extra_updates)
+                    conn.execute(
+                        f"UPDATE audit_candidate_rows SET {set_clause} WHERE candidate_key=?",
+                        [*extra_updates.values(), key],
+                    )
         finally:
             conn.close()
 
@@ -584,6 +598,7 @@ class CandidateAuditStore:
         runtime_mode: str,
         ticker: str,
         values: dict[str, Any],
+        latest_only: bool = False,
     ) -> int:
         allowed = {
             "decision_count",
@@ -604,6 +619,9 @@ class CandidateAuditStore:
             "path_run_count",
             "intraday_signal_count",
             "intraday_traded_count",
+            "execution_link_source",
+            "execution_decision_id",
+            "execution_event_id",
         }
         updates = {k: v for k, v in values.items() if k in allowed and v is not None}
         if not updates:
@@ -618,14 +636,33 @@ class CandidateAuditStore:
         ]
         conn = self.connect()
         try:
-            cur = conn.execute(
-                f"""
-                UPDATE audit_candidate_rows
-                SET {set_clause}
-                WHERE session_date=? AND market=? AND runtime_mode=? AND ticker=?
-                """,
-                params,
-            )
+            if latest_only:
+                cur = conn.execute(
+                    f"""
+                    UPDATE audit_candidate_rows
+                    SET {set_clause}
+                    WHERE candidate_key=(
+                        SELECT candidate_key
+                        FROM audit_candidate_rows
+                        WHERE session_date=? AND market=? AND runtime_mode=? AND ticker=?
+                        ORDER BY
+                            COALESCE(NULLIF(known_at, ''), updated_at, created_at) DESC,
+                            updated_at DESC,
+                            candidate_key DESC
+                        LIMIT 1
+                    )
+                    """,
+                    params,
+                )
+            else:
+                cur = conn.execute(
+                    f"""
+                    UPDATE audit_candidate_rows
+                    SET {set_clause}
+                    WHERE session_date=? AND market=? AND runtime_mode=? AND ticker=?
+                    """,
+                    params,
+                )
             conn.commit()
             return int(cur.rowcount or 0)
         finally:

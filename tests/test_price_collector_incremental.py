@@ -124,6 +124,49 @@ class PriceCollectorIncrementalTests(unittest.TestCase):
             self.assertEqual(kis.call_count, 1)
             yf.assert_not_called()
 
+    def test_csv_gap_audit_uses_trading_calendar_and_counts_duplicates(self) -> None:
+        rows = pd.DataFrame(
+            [
+                {"date": "2026-05-07", "close": 100.0},
+                {"date": "2026-05-07", "close": 101.0},
+                {"date": "2026-05-11", "close": 102.0},
+            ]
+        )
+        expected = [
+            pd.Timestamp("2026-05-07"),
+            pd.Timestamp("2026-05-08"),
+            pd.Timestamp("2026-05-11"),
+        ]
+
+        with patch.object(price_collector, "_expected_trading_days", return_value=(expected, "test_calendar")):
+            audit = price_collector._audit_csv_date_gaps(rows, "KR")
+
+        self.assertEqual(audit["duplicate_dates"], 1)
+        self.assertEqual([day.strftime("%Y-%m-%d") for day in audit["gaps"]], ["2026-05-08"])
+        self.assertEqual(audit["calendar_source"], "test_calendar")
+
+    def test_save_removes_duplicate_dates_and_sorts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "prices.csv"
+            rows = pd.DataFrame(
+                [
+                    {"date": "2026-05-11", "open": 101, "high": 102, "low": 100, "close": 101, "volume": 10},
+                    {"date": "2026-05-08", "open": 99, "high": 100, "low": 98, "close": 99, "volume": 9},
+                    {"date": "2026-05-08", "open": 98, "high": 99, "low": 97, "close": 98, "volume": 8},
+                ]
+            )
+
+            price_collector._save(
+                path,
+                rows,
+                pd.Timestamp("2026-05-08"),
+                pd.Timestamp("2026-05-11"),
+                "TEST",
+            )
+
+            saved = pd.read_csv(path)
+            self.assertEqual(saved["date"].astype(str).tolist(), ["2026-05-08", "2026-05-11"])
+
 
 if __name__ == "__main__":
     unittest.main()

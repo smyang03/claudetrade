@@ -160,7 +160,7 @@ def build_live_evidence_pack(
     if hard_blocks or momentum_state == "fade":
         action_ceiling = "WATCH"
     elif data_state == "missing":
-        action_ceiling = "WAIT_CONFIRMATION"
+        action_ceiling = "WATCH"
     elif data_state == "partial" or data_quality in {"first_observed", "unknown", "missing"}:
         action_ceiling = "PROBE_READY"
 

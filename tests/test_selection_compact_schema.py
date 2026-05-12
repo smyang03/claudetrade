@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from bot.candidate_policy import normalize_selection_result
+from runtime.selection_compact_schema import is_compact_selection_response
 from runtime.selection_compact_schema import (
     compact_output_contract,
     reference_prices_from_candidates,
@@ -290,6 +291,19 @@ class SelectionCompactSchemaTests(unittest.TestCase):
         self.assertTrue(meta["_candidate_actions_missing_contract"])
         self.assertIn("candidate_actions_empty", meta["_compact_validation"]["errors"])
 
+    def test_compact_absent_candidate_actions_blocks_trade_ready(self) -> None:
+        meta = normalize_selection_result(
+            {"wl": ["NVDA", "QCOM"], "tr": ["NVDA"]},
+            self._candidates(),
+            "US",
+            stop_reason="end_turn",
+        )
+
+        self.assertEqual(meta["watchlist"][:2], ["NVDA", "QCOM"])
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertTrue(meta["_candidate_actions_missing_contract"])
+        self.assertIn("candidate_actions_missing", meta["_compact_validation"]["errors"])
+
     def test_compact_reference_price_is_corrected_from_input(self) -> None:
         meta = normalize_selection_result(
             {
@@ -351,6 +365,13 @@ class SelectionCompactSchemaTests(unittest.TestCase):
         self.assertEqual(meta["_fallback_mode"], "selection_truncated")
         self.assertIn("stop_reason_max_tokens", meta["_compact_validation"]["errors"])
         self.assertEqual(meta["price_targets"], {})
+        self.assertTrue(meta["_partial_contract_recovery_watch_only"])
+
+    def test_compact_detection_routes_missing_or_invalid_ca_to_contract_validation(self) -> None:
+        self.assertTrue(is_compact_selection_response({"wl": ["NVDA"], "tr": ["NVDA"]}))
+        self.assertTrue(is_compact_selection_response({"wl": ["NVDA"], "tr": [], "ca": "not-list"}))
+        self.assertFalse(is_compact_selection_response({"watchlist": ["NVDA"], "ca": []}))
+        self.assertTrue(is_compact_selection_response({"wl": ["NVDA"], "tr": [], "ca": []}))
 
     def test_compact_prompt_contract_does_not_request_legacy_fields(self) -> None:
         contract = compact_output_contract(watch_max=15, trade_max=5)

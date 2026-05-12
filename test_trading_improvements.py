@@ -3715,8 +3715,8 @@ class PostmortemSelectionFeedbackTests(unittest.TestCase):
         self.assertTrue(pm["_skip_issue_pattern"])
         self.assertEqual(captured["issue_pattern_calls"], 0)
         self.assertEqual(captured["correction_guide_calls"], 0)
-        self.assertEqual(captured["daily_record"][1]["key_lesson"], "")
-        self.assertEqual(captured["daily_record"][1]["issue_type"], "")
+        self.assertIn("Postmortem JSON parse failed", captured["daily_record"][1]["key_lesson"])
+        self.assertEqual(captured["daily_record"][1]["issue_type"], "postmortem_parse_error")
 
 
 if __name__ == "__main__":

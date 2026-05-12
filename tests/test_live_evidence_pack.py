@@ -66,6 +66,18 @@ class LiveEvidencePackTests(unittest.TestCase):
         self.assertFalse(pack["risk_control_view"]["system_may_promote"])
         self.assertTrue(pack["risk_control_view"]["reask_claude_required_for_promotion"])
 
+    def test_missing_pack_caps_to_watch(self) -> None:
+        pack = build_live_evidence_pack(
+            market="KR",
+            ticker="004710",
+            features={"current_price": 14140},
+            action={"ticker": "004710", "action": "BUY_READY"},
+        )
+
+        self.assertEqual(pack["data_state"], "missing")
+        self.assertEqual(pack["action_ceiling"], "WATCH")
+        self.assertIn("data_missing", pack["negative_evidence"])
+
     def test_attach_summary_adds_counts_and_packs(self) -> None:
         meta = attach_live_evidence_summary(
             market="KR",

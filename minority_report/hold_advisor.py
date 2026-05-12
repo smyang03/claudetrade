@@ -59,6 +59,13 @@ HOLD_DECISION_STAGES = {
     "MANUAL_REVIEW",
 }
 
+HOLD_MODES = {
+    "target_extension",
+    "profit_pullback",
+    "stop_recovery",
+    "loss_deferral",
+}
+
 STAGE_DEFAULT_POLICIES = {
     "TP_REVIEW": "SELL unless a trend-continuation exception justifies trailing.",
     "PRE_SESSION": "HOLD unless overnight or pre-session risk is broken.",
@@ -91,10 +98,16 @@ def _stage_policy(decision_stage: str, default_policy: Optional[str] = None) -> 
     return str(default_policy or STAGE_DEFAULT_POLICIES.get(decision_stage, STAGE_DEFAULT_POLICIES["MANUAL_REVIEW"]))
 
 
+def _normalize_hold_mode(value: object) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in HOLD_MODES else ""
+
+
 def _fallback_vote(reason: str, decision_stage: str = "TP_REVIEW", default_policy: str = "") -> dict:
     stage = _normalize_stage(decision_stage)
     return {
         "action": "HOLD",
+        "hold_mode": "",
         "confidence": 0.0,
         "trail_pct": 0.03,
         "sell_urgency": "wait",
@@ -122,6 +135,7 @@ def _coerce_vote(result: dict, decision_stage: str = "TP_REVIEW", default_policy
     action = str((result or {}).get("action", "HOLD") or "HOLD").strip().upper()
     if action not in {"HOLD", "SELL"}:
         action = "HOLD"
+    hold_mode = _normalize_hold_mode((result or {}).get("hold_mode"))
     try:
         confidence = float((result or {}).get("confidence", 0.0) or 0.0)
     except Exception:
@@ -179,6 +193,7 @@ def _coerce_vote(result: dict, decision_stage: str = "TP_REVIEW", default_policy
         next_review_min = 30
     return {
         "action": action,
+        "hold_mode": hold_mode if action == "HOLD" else "",
         "confidence": max(0.0, min(1.0, confidence)),
         "trail_pct": max(0.02, min(0.05, trail_pct)),
         "sell_urgency": sell_urgency,
@@ -345,6 +360,10 @@ Decision stage:
 - Catastrophic exits such as daily loss halt, broker mismatch, operator kill, and emergency close override HOLD.
 - Reviewable exits such as loss_cap, stop_loss, trail_stop, and profit_floor should be re-judged from the current thesis and risk/reward.
 - HOLD is valid only when the thesis is still intact, risk is bounded, and protective_stop / invalid_if / next_review_min are explicit.
+- If action is HOLD during AUTO_SELL_REVIEW, set hold_mode to one of:
+  target_extension, profit_pullback, stop_recovery, loss_deferral.
+- Prefer target_extension for take-profit target extension, profit_pullback for profitable trail/profit-floor pullbacks,
+  stop_recovery for stop/loss-cap recovery attempts, and loss_deferral only for weak loss-side deferrals.
 
 Perspective focus:
 {PERSONA_FOCUS.get(analyst_type, "")}
@@ -354,6 +373,7 @@ Perspective focus:
 JSON으로만 응답:
 {{
   "action": "HOLD" or "SELL",
+  "hold_mode": "target_extension|profit_pullback|stop_recovery|loss_deferral",
   "confidence": 0.0~1.0,
   "sell_urgency": "now|next_open|wait",
   "trail_pct": 0.03,
@@ -433,6 +453,7 @@ def ask(
         log.warning(f"[hold_advisor] {ticker} entry=0 → 호출 차단 (진입가 미확정), HOLD 반환")
         return {
             "action": "HOLD",
+            "hold_mode": "",
             "trail_pct": 0.03,
             "votes": {},
             "confidence": 0.0,
@@ -523,7 +544,10 @@ def ask(
     next_review_min = min((int(v.get("next_review_min", 30) or 30) for v in votes.values()), default=30)
     reason = ""
     invalid_if = ""
+    hold_mode = ""
     for vote in action_voters:
+        if action == "HOLD" and not hold_mode and vote.get("hold_mode"):
+            hold_mode = _normalize_hold_mode(vote.get("hold_mode"))
         if not reason and vote.get("reason"):
             reason = str(vote.get("reason", ""))[:500]
         if not invalid_if and vote.get("invalid_if"):
@@ -539,6 +563,7 @@ def ask(
 
     return {
         "action": action,
+        "hold_mode": hold_mode if action == "HOLD" else "",
         "trail_pct": round(trail_pct, 3),
         "votes": votes,
         "confidence": round(confidence, 4),

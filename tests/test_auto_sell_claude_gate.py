@@ -169,7 +169,7 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         self.assertFalse(ok)
         precheck.assert_called_once()
         self.assertEqual(cand["auto_sell_review_action"], "SELL")
-        self.assertIn("system_force_sell_after_review", cand["auto_sell_review_detail"])
+        self.assertIn("system_force_sell_pre_cache", cand["auto_sell_review_detail"])
 
     def test_plan_a_take_profit_hold_blocks_broker_precheck(self) -> None:
         bot = _plan_a_bot()
@@ -252,9 +252,9 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             review = bot._run_auto_sell_review_gate(cand, "KR", "pre_close", current_native=5770.0)
 
         self.assertTrue(review["allowed"])
-        advisor.assert_called_once()
+        advisor.assert_not_called()
         self.assertEqual(cand["auto_sell_review_action"], "SELL")
-        self.assertIn("system_force_sell_after_review:pre_close", cand["auto_sell_review_detail"])
+        self.assertIn("system_force_sell_pre_cache:pre_close", cand["auto_sell_review_detail"])
 
     def test_recovery_micro_force_time_stop_bypasses_existing_cooldown(self) -> None:
         bot = _plan_a_bot()
@@ -281,7 +281,7 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             review = bot._run_auto_sell_review_gate(cand, "KR", "recovery_micro_time_stop", current_native=5770.0)
 
         self.assertTrue(review["allowed"])
-        advisor.assert_called_once()
+        advisor.assert_not_called()
         self.assertEqual(cand["auto_sell_review_action"], "SELL")
         self.assertIn("recovery_micro_force_time_stop", cand["auto_sell_review_detail"])
 
@@ -378,6 +378,203 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         advisor.assert_not_called()
         self.assertEqual(cand["auto_sell_review_action"], "HOLD")
         self.assertIn("auto_sell_review_cooldown", cand["auto_sell_review_detail"])
+
+    def test_soft_cache_hit_does_not_block_force_sell_pre_cache(self) -> None:
+        bot = _plan_a_bot()
+        bot._hold_advisor_soft_cache_get = Mock(side_effect=AssertionError("cache should not be read"))  # type: ignore[method-assign]
+        cand = {
+            "ticker": "012610",
+            "entry": 5900.0,
+            "current_price": 5880.0,
+            "qty": 25,
+            "exit_price": 5880.0,
+            "reason": "pre_close",
+        }
+
+        with patch.dict(os.environ, {"HOLD_ADVISOR_SOFT_CACHE_ENABLED": "true"}, clear=False), patch(
+            "minority_report.hold_advisor.ask"
+        ) as advisor:
+            review = bot._run_auto_sell_review_gate(cand, "KR", "pre_close", current_native=5770.0)
+
+        self.assertTrue(review["allowed"])
+        advisor.assert_not_called()
+        bot._hold_advisor_soft_cache_get.assert_not_called()  # type: ignore[attr-defined]
+        self.assertEqual(cand["auto_sell_review_action"], "SELL")
+        self.assertIn("system_force_sell_pre_cache:pre_close", cand["auto_sell_review_detail"])
+
+    def test_soft_cache_hit_rechecks_force_sell_before_return(self) -> None:
+        bot = _plan_a_bot()
+        bot._current_session_date_str = lambda market: "2026-05-12"  # type: ignore[method-assign]
+        bot._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+        cand = {
+            "ticker": "012610",
+            "entry": 5900.0,
+            "current_price": 5900.0,
+            "exit_price": 5900.0,
+            "qty": 25,
+            "entry_time": "2026-05-12T09:10:00+09:00",
+            "reason": "trail_stop",
+        }
+        payload = {
+            "auto_sell_review_reason": "trail_stop",
+            "auto_sell_review_action": "HOLD",
+            "auto_sell_review_detail": "cached hold",
+            "auto_sell_review_confidence": 0.7,
+            "auto_sell_review_fallback": False,
+        }
+
+        with patch.dict(os.environ, {"HOLD_ADVISOR_SOFT_CACHE_ENABLED": "true"}, clear=False):
+            bot._hold_advisor_soft_cache_put(
+                cand,
+                "KR",
+                "trail_stop",
+                5900.0,
+                payload,
+                {"action": "HOLD", "next_review_min": 10},
+            )
+            calls = {"count": 0}
+
+            def force_sell(*args, **kwargs):
+                calls["count"] += 1
+                return (False, "") if calls["count"] == 1 else (True, "forced_for_test")
+
+            bot._auto_sell_review_force_sell_required = Mock(side_effect=force_sell)  # type: ignore[method-assign]
+            with patch("minority_report.hold_advisor.ask") as advisor:
+                review = bot._run_auto_sell_review_gate(cand, "KR", "trail_stop", current_native=5900.0)
+
+        self.assertTrue(review["allowed"])
+        advisor.assert_not_called()
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(cand["auto_sell_review_action"], "SELL")
+        self.assertTrue(cand["hold_advisor_cache_bypassed"])
+        self.assertIn("system_force_sell_after_cache_hit:forced_for_test", cand["auto_sell_review_detail"])
+
+    def test_soft_cache_key_is_position_scoped_for_same_ticker_reentry(self) -> None:
+        bot = _plan_a_bot()
+        bot._current_session_date_str = lambda market: "2026-05-12"  # type: ignore[method-assign]
+        bot._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+        first = {
+            "ticker": "QCOM",
+            "entry": 100.0,
+            "current_price": 105.0,
+            "exit_price": 105.0,
+            "entry_time": "2026-05-12T09:30:00+09:00",
+            "reason": "profit_floor",
+        }
+        second = {
+            **first,
+            "entry_time": "2026-05-12T10:30:00+09:00",
+        }
+        payload = {
+            "auto_sell_review_reason": "profit_floor",
+            "auto_sell_review_action": "HOLD",
+            "auto_sell_review_detail": "first entry hold",
+            "auto_sell_review_confidence": 0.8,
+            "auto_sell_review_fallback": False,
+        }
+
+        with patch.dict(os.environ, {"HOLD_ADVISOR_SOFT_CACHE_ENABLED": "true"}, clear=False):
+            bot._hold_advisor_soft_cache_put(
+                first,
+                "US",
+                "profit_floor",
+                105.0,
+                payload,
+                {"action": "HOLD", "next_review_min": 10},
+            )
+            self.assertIsNotNone(bot._hold_advisor_soft_cache_get(first, "US", "profit_floor", 105.0))
+            self.assertIsNone(bot._hold_advisor_soft_cache_get(second, "US", "profit_floor", 105.0))
+
+    def test_soft_cache_bypasses_near_close(self) -> None:
+        bot = _plan_a_bot()
+        bot._current_session_date_str = lambda market: "2026-05-12"  # type: ignore[method-assign]
+        bot._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+        cand = {
+            "ticker": "QCOM",
+            "entry": 100.0,
+            "current_price": 105.0,
+            "exit_price": 105.0,
+            "entry_time": "2026-05-12T09:30:00+09:00",
+            "reason": "profit_floor",
+        }
+        payload = {
+            "auto_sell_review_reason": "profit_floor",
+            "auto_sell_review_action": "HOLD",
+            "auto_sell_review_detail": "cached hold",
+            "auto_sell_review_confidence": 0.8,
+            "auto_sell_review_fallback": False,
+        }
+
+        with patch.dict(os.environ, {"HOLD_ADVISOR_SOFT_CACHE_ENABLED": "true"}, clear=False):
+            bot._hold_advisor_soft_cache_put(
+                cand,
+                "US",
+                "profit_floor",
+                105.0,
+                payload,
+                {"action": "HOLD", "next_review_min": 10},
+            )
+            bot._minutes_to_close = lambda market: 5.0  # type: ignore[method-assign]
+            with patch(
+                "minority_report.hold_advisor.ask",
+                return_value={"action": "HOLD", "confidence": 0.7, "reason": "fresh near-close review"},
+            ) as advisor:
+                review = bot._run_auto_sell_review_gate(cand, "US", "profit_floor", current_native=105.0)
+
+        self.assertFalse(review["allowed"])
+        advisor.assert_called_once()
+        self.assertNotIn("hold_advisor_cache_hit", review)
+        self.assertEqual(cand["auto_sell_review_detail"], "fresh near-close review")
+
+    def test_recovery_micro_hard_loss_forces_sell_for_soft_exit_reasons(self) -> None:
+        bot = _plan_a_bot()
+        hard_loss_cand = {
+            "ticker": "012610",
+            "entry": 5900.0,
+            "current_price": 5880.0,
+            "exit_price": 5880.0,
+            "recovery_micro_hard_loss_pct": 1.5,
+        }
+        stop_cand = {
+            "ticker": "012610",
+            "entry": 5900.0,
+            "current_price": 5880.0,
+            "exit_price": 5880.0,
+            "recovery_micro": True,
+            "sl": 5811.5,
+        }
+        normal_cand = {
+            "ticker": "QCOM",
+            "entry": 100.0,
+            "current_price": 95.0,
+            "exit_price": 95.0,
+        }
+
+        hard_force, hard_detail = bot._auto_sell_review_force_sell_required(
+            hard_loss_cand,
+            "KR",
+            "trail_stop",
+            current_native=5800.0,
+        )
+        stop_force, stop_detail = bot._auto_sell_review_force_sell_required(
+            stop_cand,
+            "KR",
+            "profit_floor",
+            current_native=5800.0,
+        )
+        normal_force, normal_detail = bot._auto_sell_review_force_sell_required(
+            normal_cand,
+            "US",
+            "trail_stop",
+            current_native=95.0,
+        )
+
+        self.assertTrue(hard_force)
+        self.assertIn("recovery_micro_hard_loss", hard_detail)
+        self.assertTrue(stop_force)
+        self.assertIn("recovery_micro_stop_price", stop_detail)
+        self.assertFalse(normal_force)
+        self.assertEqual(normal_detail, "")
 
     def test_duplicate_cooldown_log_and_lifecycle_events_are_suppressed(self) -> None:
         bot = _plan_a_bot()

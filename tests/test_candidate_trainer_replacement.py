@@ -424,9 +424,10 @@ class CandidateTrainerReplacementTests(unittest.TestCase):
             path = Path("candidate_health.json")
             session_date = "2026-05-07"
 
-            def update_selection(self, *, watchlist, trade_ready, price_by_ticker, phase, now):
+            def update_selection(self, *, watchlist, trade_ready, price_by_ticker, ready_failure_reasons=None, phase, now):
                 captured["watchlist"] = list(watchlist)
                 captured["trade_ready"] = list(trade_ready)
+                captured["ready_failure_reasons"] = dict(ready_failure_reasons or {})
                 return [{"ticker": "NVDA", "health_state": "STABLE_READY"}]
 
             def state_counts(self, states):
@@ -461,6 +462,56 @@ class CandidateTrainerReplacementTests(unittest.TestCase):
             )
 
         self.assertEqual(captured["trade_ready"], ["NVDA"])
+
+    def test_update_candidate_health_counts_ready_route_failures_for_stale_cycle(self) -> None:
+        bot = _bot_with_health({})
+        captured: dict[str, object] = {}
+
+        class _CaptureTracker:
+            path = Path("candidate_health.json")
+            session_date = "2026-05-07"
+
+            def update_selection(self, *, watchlist, trade_ready, price_by_ticker, ready_failure_reasons=None, phase, now):
+                captured["ready_failure_reasons"] = dict(ready_failure_reasons or {})
+                return [{"ticker": "NVDA", "health_state": "OBSERVE"}]
+
+            def state_counts(self, states):
+                return {"OBSERVE": 1}
+
+            def interesting_states(self, states):
+                return []
+
+        bot._candidate_health_tracker = lambda market: _CaptureTracker()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "CANDIDATE_COHORT_RELIABILITY_ENABLED": "false",
+                "CANDIDATE_TRAINER_STATE_ENABLED": "false",
+            },
+            clear=False,
+        ):
+            TradingBot._update_candidate_health(
+                bot,
+                "US",
+                "unit",
+                ["NVDA"],
+                {
+                    "watchlist": ["NVDA"],
+                    "trade_ready": [],
+                    "_candidate_action_routes": [
+                        {
+                            "ticker": "NVDA",
+                            "requested_action": "BUY_READY",
+                            "final_action": "WATCH",
+                            "reason": "soft_gate_override_failed",
+                        }
+                    ],
+                },
+                [],
+            )
+
+        self.assertEqual(captured["ready_failure_reasons"], {"NVDA": ["soft_gate_override_failed"]})
 
 
 if __name__ == "__main__":

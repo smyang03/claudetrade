@@ -85,6 +85,112 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         self.assertEqual(decision.final_action, "WATCH")
         self.assertEqual(decision.runtime_gate_reason, "soft_gate_override_failed")
 
+    def test_soft_gate_override_allows_ret3_only_inside_opening_grace(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "018880",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "soft_gate_overrides": ["late_chase"],
+            },
+            market="KR",
+            execution_context={
+                "market": "KR",
+                "soft_gate_override_validation_enabled": True,
+                "soft_gates": ["late_chase"],
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": None,
+                "market_open_elapsed_min": 3.0,
+                "SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN": 5.0,
+                "opening_range_break": True,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "BUY_READY")
+        validation = decision.runtime_gate["soft_gate_override_validation"]
+        self.assertTrue(validation["checks"]["ret3_only_grace_used"])
+
+    def test_soft_gate_override_rejects_ret3_only_outside_opening_grace(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "018880",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "soft_gate_overrides": ["late_chase"],
+            },
+            market="KR",
+            execution_context={
+                "market": "KR",
+                "soft_gate_override_validation_enabled": True,
+                "soft_gates": ["late_chase"],
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": None,
+                "market_open_elapsed_min": 8.0,
+                "SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN": 5.0,
+                "opening_range_break": True,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertFalse(decision.runtime_gate["soft_gate_override_validation"]["checks"]["ret3_only_grace_used"])
+
+    def test_evidence_ceiling_runs_before_soft_gate_override(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "018880",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "soft_gate_overrides": ["late_chase"],
+            },
+            market="KR",
+            execution_context={
+                "market": "KR",
+                "evidence_pack_ceiling_enabled": True,
+                "evidence_data_state": "missing",
+                "evidence_action_ceiling": "WATCH",
+                "soft_gate_override_validation_enabled": True,
+                "soft_gates": ["late_chase"],
+                "ret_3m_pct": 1.0,
+                "ret_5m_pct": 1.0,
+                "opening_range_break": True,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.runtime_gate_reason, "evidence_action_ceiling")
+        self.assertNotIn("soft_gate_override_validation", decision.runtime_gate)
+
+    def test_partial_evidence_demotes_buy_to_probe_then_validates_soft_override(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "018880",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "soft_gate_overrides": ["late_chase"],
+            },
+            market="KR",
+            execution_context={
+                "market": "KR",
+                "evidence_pack_ceiling_enabled": True,
+                "evidence_data_state": "partial",
+                "evidence_action_ceiling": "PROBE_READY",
+                "soft_gate_override_validation_enabled": True,
+                "soft_gates": ["late_chase"],
+                "ret_3m_pct": 1.0,
+                "ret_5m_pct": 1.0,
+                "opening_range_break": True,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "PROBE_READY")
+        self.assertEqual(decision.demoted_to, "PROBE_READY")
+        self.assertEqual(decision.runtime_gate_reason, "evidence_action_ceiling")
+        self.assertTrue(decision.runtime_gate["soft_gate_override_validation"]["validated"])
+
     def test_recovery_micro_loss_cap_maps_to_hard_loss_bypass(self) -> None:
         decision = decide_exit_lifecycle(
             {"ticker": "012610", "recovery_micro_no_carry": True},
@@ -99,6 +205,71 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         self.assertEqual(decision.reason, "hard_loss")
         self.assertFalse(decision.claude_override_allowed)
         self.assertTrue(exit_lifecycle_bypass_allowed(decision.to_dict()))
+
+    def test_exit_lifecycle_live_allowlist_ignores_unknown_env_reasons(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.runtime_config = _RuntimeConfig(
+            {
+                "EXIT_LIFECYCLE_ALLOWLIST_LIVE_ENABLED": True,
+                "EXIT_LIFECYCLE_LIVE_REASONS": "hard_loss,unknown_force_exit,trail_exit",
+            }
+        )
+
+        allowlist = TradingBot._exit_lifecycle_live_allowlist(bot)
+
+        self.assertIn("hard_loss", allowlist)
+        self.assertIn("trail_exit", allowlist)
+        self.assertNotIn("unknown_force_exit", allowlist)
+
+    def test_adaptive_live_condition_thresholds_are_market_configurable(self) -> None:
+        meta = {
+            "watchlist": ["005930"],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": 0.9,
+                    "ret_5m_pct": 0.1,
+                    "opening_range_break": True,
+                    "volume_ratio_open": 2.0,
+                    "vwap_distance_pct": 0.1,
+                    "momentum_state": "early_strength",
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        base = build_adaptive_live_condition(market="KR", selection_meta=meta, consensus_mode="AGGRESSIVE")
+        with patch.dict(os.environ, {"ADAPTIVE_LIVE_R3_MIN_KR": "1.5"}, clear=False):
+            stricter = build_adaptive_live_condition(market="KR", selection_meta=meta, consensus_mode="AGGRESSIVE")
+
+        self.assertEqual(base["decisions"]["005930"]["suggested_claude_action"], "PROBE_READY")
+        self.assertEqual(stricter["decisions"]["005930"]["suggested_claude_action"], "")
+        self.assertEqual(stricter["thresholds"]["r3_min"], 1.5)
+
+    def test_hold_advisor_soft_cache_uses_ttl_and_move_thresholds(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.runtime_config = _RuntimeConfig(
+            {
+                "HOLD_ADVISOR_SOFT_CACHE_ENABLED": True,
+                "HOLD_ADVISOR_SOFT_CACHE_TTL_SEC": 60,
+                "HOLD_ADVISOR_SOFT_CACHE_PRICE_MOVE_MAX_PCT": 0.2,
+                "HOLD_ADVISOR_SOFT_CACHE_PNL_MOVE_MAX_PCT": 0.15,
+            }
+        )
+        cand = {"ticker": "005930", "entry": 100.0}
+        payload = {"auto_sell_review_action": "HOLD", "reason": "hold"}
+        advice = {"next_review_min": 15}
+
+        TradingBot._hold_advisor_soft_cache_put(bot, cand, "KR", "profit_floor", 100.0, payload, advice)
+        key = ("KR", "005930", "profit_floor")
+
+        self.assertLessEqual(bot._hold_advisor_soft_cache[key]["ttl_sec"], 60)
+        self.assertEqual(
+            TradingBot._hold_advisor_soft_cache_get(bot, cand, "KR", "profit_floor", 100.1),
+            payload,
+        )
+        self.assertIsNone(TradingBot._hold_advisor_soft_cache_get(bot, cand, "KR", "profit_floor", 100.3))
+        self.assertGreaterEqual(bot._hold_advisor_soft_cache_stats["invalidated"], 1)
 
     def test_candidate_audit_store_migrates_v2_columns(self) -> None:
         path = Path(tempfile.gettempdir()) / f"candidate_audit_rework_{os.getpid()}.db"
@@ -467,6 +638,53 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         self.assertEqual(decision.final_action, "WATCH")
         self.assertIsNone(decision.route)
         self.assertEqual(decision.reason, "watch")
+
+    def test_session_runtime_safety_summary_attaches_ops_metrics_and_alerts(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.is_paper = False
+        bot.runtime_config = _RuntimeConfig({
+            "DECISION_ID_FALLBACK_ALERT_RATE": 0.2,
+            "DECISION_ID_FALLBACK_ALERT_MIN_COUNT": 1,
+            "EXIT_BYPASS_ALERT_RATE": 0.3,
+        })
+        bot.selection_meta = {
+            "KR": {
+                "trade_ready": ["005930", "000660", "035420", "012610"],
+                "_decision_id_fallback_count": 1,
+                "_decision_id_fallback_tickers": ["012610"],
+                "_decision_id_fallback_sources": ["execution_lifecycle_fallback"],
+            }
+        }
+        bot._hold_advisor_soft_cache_stats = {"hit": 1, "miss": 2, "expired": 0, "invalidated": 1}
+        bot._exit_lifecycle_bypass_stats = {
+            "KR": {"attempts": 2, "bypass_count": 1, "reason_counts": {"hard_loss": 1}}
+        }
+        lifecycle_report = {
+            "session_date": "2026-05-12",
+            "market": "KR",
+            "runtime_mode": "live",
+            "gap_count": 1,
+            "severity_counts": {"HIGH": 1},
+            "gaps": [{"ticker": "012610", "event_type": "FILLED", "severity": "HIGH"}],
+        }
+
+        summary = bot._build_session_runtime_safety_summary(
+            "KR",
+            "2026-05-12",
+            lifecycle_gap_report=lifecycle_report,
+        )
+        ops = bot._attach_runtime_safety_to_ops_snapshot({"metrics": {}, "triggers": {}}, summary)
+
+        self.assertEqual(summary["decision_id_fallback"]["ratio_pct"], 25.0)
+        self.assertEqual(summary["hold_advisor_soft_cache"]["requests"], 4)
+        self.assertEqual(summary["exit_lifecycle_bypass"]["ratio_pct"], 50.0)
+        self.assertTrue(ops["triggers"]["decision_id_fallback_seen"])
+        self.assertTrue(ops["triggers"]["lifecycle_high_gap_seen"])
+        self.assertTrue(ops["triggers"]["low_hold_advisor_cache_hit_rate"])
+        self.assertTrue(ops["triggers"]["high_exit_lifecycle_bypass_ratio"])
+        with patch("trading_bot.system_alert") as alert:
+            bot._emit_session_runtime_safety_alerts("KR", summary)
+        self.assertEqual(alert.call_count, 2)
 
 
 if __name__ == "__main__":

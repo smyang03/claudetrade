@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 
@@ -24,6 +25,21 @@ def _num(value: Any) -> float | None:
 
 def _bool_true(value: Any) -> bool:
     return bool(value is True or str(value).strip().lower() in {"1", "true", "yes", "on"})
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        raw = os.getenv(name)
+        if raw in (None, ""):
+            return float(default)
+        return float(str(raw).replace(",", ""))
+    except Exception:
+        return float(default)
+
+
+def _threshold(market: str, name: str, default: float) -> float:
+    market_key = str(market or "").upper()
+    return _env_float(f"ADAPTIVE_LIVE_{name}_{market_key}", _env_float(f"ADAPTIVE_LIVE_{name}", default))
 
 
 def _ticker_key(market: str, ticker: Any) -> str:
@@ -118,6 +134,17 @@ def build_adaptive_live_condition(
     suggested_probe_ready_shadow: list[str] = []
     suggested_micro_probe_shadow: list[str] = []
     watch_shadow: list[str] = []
+    thresholds = {
+        "r3_min": _threshold(market_key, "R3_MIN", 0.8),
+        "r5_min": _threshold(market_key, "R5_MIN", 0.0),
+        "r10_min": _threshold(market_key, "R10_MIN", 3.0),
+        "r30_min": _threshold(market_key, "R30_MIN", 8.0),
+        "pullback_min": _threshold(market_key, "PULLBACK_MIN", -3.0),
+        "late_pullback_min": _threshold(market_key, "LATE_PULLBACK_MIN", -2.5),
+        "mixed_r3_min": _threshold(market_key, "MIXED_R3_MIN", 1.2),
+        "mixed_r5_min": _threshold(market_key, "MIXED_R5_MIN", 0.2),
+        "mixed_pullback_min": _threshold(market_key, "MIXED_PULLBACK_MIN", -2.0),
+    }
 
     for ticker in watchlist:
         key = _ticker_key(market_key, ticker)
@@ -194,27 +221,27 @@ def build_adaptive_live_condition(
             regime == "risk_on"
             and momentum_state not in {"fade", "late_mover"}
             and opening_break
-            and (pullback is None or pullback >= -3.0)
+            and (pullback is None or pullback >= thresholds["pullback_min"])
             and (
-                (r3 is not None and r3 >= 0.8 and (r5 is None or r5 >= 0.0))
-                or (r10 is not None and r10 >= 3.0)
+                (r3 is not None and r3 >= thresholds["r3_min"] and (r5 is None or r5 >= thresholds["r5_min"]))
+                or (r10 is not None and r10 >= thresholds["r10_min"])
             )
         )
         late_micro_ok = (
             regime == "risk_on"
             and momentum_state == "late_mover"
             and opening_break
-            and (pullback is None or pullback >= -2.5)
+            and (pullback is None or pullback >= thresholds["late_pullback_min"])
             and (from_high is None or from_high < 30.0)
-            and (r30 is not None and r30 >= 8.0)
+            and (r30 is not None and r30 >= thresholds["r30_min"])
         )
         mixed_probe_ok = (
             regime == "mixed"
             and momentum_state not in {"fade", "late_mover"}
             and opening_break
-            and (pullback is None or pullback >= -2.0)
-            and r3 is not None and r3 >= 1.2
-            and r5 is not None and r5 >= 0.2
+            and (pullback is None or pullback >= thresholds["mixed_pullback_min"])
+            and r3 is not None and r3 >= thresholds["mixed_r3_min"]
+            and r5 is not None and r5 >= thresholds["mixed_r5_min"]
         )
 
         if early_probe_ok or mixed_probe_ok:
@@ -258,6 +285,7 @@ def build_adaptive_live_condition(
             "non_executable": True,
             "execution_owner": "claude",
             "local_promotion_allowed": False,
+            "thresholds": dict(thresholds),
             "score": round(score, 3),
             "market_regime": regime,
             "action_ceiling": action_ceiling,
@@ -285,6 +313,7 @@ def build_adaptive_live_condition(
         "non_executable": True,
         "execution_owner": "claude",
         "local_promotion_allowed": False,
+        "thresholds": dict(thresholds),
         "decisions": decisions,
         "reask_claude_shadow": reask_claude_shadow,
         "suggested_probe_ready_shadow": suggested_probe_ready_shadow,

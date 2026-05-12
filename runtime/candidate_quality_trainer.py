@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any
 
@@ -44,6 +45,49 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return float(str(value).replace(",", ""))
     except Exception:
         return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        raw = os.getenv(name)
+        if raw in (None, ""):
+            return float(default)
+        return float(str(raw).replace(",", ""))
+    except Exception:
+        return float(default)
+
+
+def _trainer_weight(name: str, default: float) -> float:
+    return _env_float(f"CANDIDATE_TRAINER_{name}", default)
+
+
+def _trainer_env_float(primary: str, default: float, *fallback_names: str) -> float:
+    for name in (primary, *fallback_names):
+        raw = os.getenv(name)
+        if raw not in (None, ""):
+            return _env_float(name, default)
+    return float(default)
+
+
+def _trainer_threshold_config() -> dict[str, float]:
+    return {
+        "plan_a_score_min": _trainer_env_float("TRAINER_PLAN_A_SCORE_MIN", 62.0),
+        "plan_a_risk_max": _trainer_env_float("TRAINER_PLAN_A_RISK_MAX", 35.0),
+        "plan_b_score_min": _trainer_env_float("TRAINER_PLAN_B_SCORE_MIN", 55.0),
+        "plan_b_risk_max": _trainer_env_float("TRAINER_PLAN_B_RISK_MAX", 70.0),
+        "watch_score_min": _trainer_env_float("TRAINER_WATCH_SCORE_MIN", 45.0),
+        "watch_risk_max": _trainer_env_float("TRAINER_WATCH_RISK_MAX", 80.0),
+        "kr_weak_immediate_bucket_penalty": _trainer_env_float(
+            "TRAINER_KR_WEAK_IMMEDIATE_BUCKET_PENALTY",
+            -8.0,
+            "CANDIDATE_TRAINER_KR_WEAK_IMMEDIATE_BUCKET_PENALTY",
+        ),
+        "kr_weak_immediate_bucket_risk": _trainer_env_float(
+            "TRAINER_KR_WEAK_IMMEDIATE_BUCKET_RISK",
+            8.0,
+            "CANDIDATE_TRAINER_KR_WEAK_IMMEDIATE_BUCKET_RISK",
+        ),
+    }
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -164,78 +208,84 @@ def score_candidate_for_trainer(
     freshness = _lower(_first_present(row, "freshness_verdict", default=""))
     status = _lower(_first_present(row, "status", default=""))
     policy_tags = " ".join(str(item).lower() for item in (row.get("policy_tags") or row.get("risk_tags") or []))
+    stale_cycle_count = int(_as_float(_first_present(row, "stale_cycle_count", "repeated_failed_ready_count"), 0.0))
+    stale_cycle_threshold = max(1, int(_env_float("TRAINER_STALE_CYCLE_THRESHOLD", 3.0)))
+    stale_cycle = bool(row.get("stale_cycle")) or stale_cycle_count >= stale_cycle_threshold
 
     components: dict[str, float] = {"base": 50.0}
     risk_components: dict[str, float] = {"base_risk": 20.0}
+    trainer_config = _trainer_threshold_config()
 
     if market_key == "KR":
         if "KOSDAQ" in market_type:
-            components["kr_kosdaq_prior"] = 12.0
+            components["kr_kosdaq_prior"] = _trainer_weight("KR_KOSDAQ_PRIOR", 12.0)
         elif "KOSPI" in market_type:
-            components["kr_kospi_penalty"] = -10.0
-            risk_components["kr_kospi_risk"] = 5.0
+            components["kr_kospi_penalty"] = _trainer_weight("KR_KOSPI_PENALTY", -10.0)
+            risk_components["kr_kospi_risk"] = _trainer_weight("KR_KOSPI_RISK", 5.0)
         if cb in {"0~3", "3~7"}:
-            components["kr_early_change_bin"] = 10.0
+            components["kr_early_change_bin"] = _trainer_weight("KR_EARLY_CHANGE_BIN", 10.0)
         elif cb == "7~15":
-            components["kr_late_change_penalty"] = -5.0
-            risk_components["kr_late_change_risk"] = 8.0
+            components["kr_late_change_penalty"] = _trainer_weight("KR_LATE_CHANGE_PENALTY", -5.0)
+            risk_components["kr_late_change_risk"] = _trainer_weight("KR_LATE_CHANGE_RISK", 8.0)
         elif cb == "15+":
-            components["kr_chase_change_penalty"] = -12.0
-            risk_components["kr_chase_change_risk"] = 15.0
+            components["kr_chase_change_penalty"] = _trainer_weight("KR_CHASE_CHANGE_PENALTY", -12.0)
+            risk_components["kr_chase_change_risk"] = _trainer_weight("KR_CHASE_CHANGE_RISK", 15.0)
         if primary_bucket in {"liquidity_leader", "unclassified"}:
-            components["kr_supported_bucket"] = 5.0
+            components["kr_supported_bucket"] = _trainer_weight("KR_SUPPORTED_BUCKET", 5.0)
         if primary_bucket in {"momentum", "momentum_now", "gap_pullback", "opening_range_pullback"}:
-            components["kr_weak_immediate_bucket"] = -8.0
-            risk_components["kr_weak_immediate_bucket_risk"] = 8.0
+            components["kr_weak_immediate_bucket"] = trainer_config["kr_weak_immediate_bucket_penalty"]
+            risk_components["kr_weak_immediate_bucket_risk"] = trainer_config["kr_weak_immediate_bucket_risk"]
         if liquidity == "mid":
-            components["kr_mid_liquidity"] = 4.0
+            components["kr_mid_liquidity"] = _trainer_weight("KR_MID_LIQUIDITY", 4.0)
         elif liquidity == "high":
-            components["kr_high_liquidity_chase_penalty"] = -2.0
+            components["kr_high_liquidity_chase_penalty"] = _trainer_weight("KR_HIGH_LIQUIDITY_CHASE_PENALTY", -2.0)
     else:
         if liquidity == "high":
-            components["us_high_liquidity"] = 14.0
+            components["us_high_liquidity"] = _trainer_weight("US_HIGH_LIQUIDITY", 14.0)
         elif liquidity == "mid":
-            components["us_mid_liquidity_penalty"] = -8.0
-            risk_components["us_mid_liquidity_risk"] = 4.0
+            components["us_mid_liquidity_penalty"] = _trainer_weight("US_MID_LIQUIDITY_PENALTY", -8.0)
+            risk_components["us_mid_liquidity_risk"] = _trainer_weight("US_MID_LIQUIDITY_RISK", 4.0)
         if primary_bucket in {"momentum_now", "opening_range_pullback"}:
-            components["us_preferred_bucket"] = 12.0
+            components["us_preferred_bucket"] = _trainer_weight("US_PREFERRED_BUCKET", 12.0)
         elif primary_bucket == "gap_pullback":
-            components["us_gap_pullback_watch"] = 4.0
+            components["us_gap_pullback_watch"] = _trainer_weight("US_GAP_PULLBACK_WATCH", 4.0)
         elif primary_bucket in {"unclassified", "unknown", ""}:
-            components["us_unclassified_penalty"] = -8.0
+            components["us_unclassified_penalty"] = _trainer_weight("US_UNCLASSIFIED_PENALTY", -8.0)
         if cb in {"3~7", "7~15"}:
-            components["us_preferred_change_bin"] = 10.0
+            components["us_preferred_change_bin"] = _trainer_weight("US_PREFERRED_CHANGE_BIN", 10.0)
         elif cb in {"0~3", "15+"}:
-            components["us_poor_change_bin"] = -6.0
-            risk_components["us_poor_change_risk"] = 6.0
+            components["us_poor_change_bin"] = _trainer_weight("US_POOR_CHANGE_BIN_PENALTY", -6.0)
+            risk_components["us_poor_change_risk"] = _trainer_weight("US_POOR_CHANGE_RISK", 6.0)
 
     if age_min > 120:
-        components["stale_age_penalty"] = -10.0
-        risk_components["stale_age_risk"] = 10.0
+        components["stale_age_penalty"] = _trainer_weight("STALE_AGE_PENALTY", -10.0)
+        risk_components["stale_age_risk"] = _trainer_weight("STALE_AGE_RISK", 10.0)
     elif age_min > 60:
-        components["aging_candidate_penalty"] = -5.0
-        risk_components["aging_candidate_risk"] = 5.0
+        components["aging_candidate_penalty"] = _trainer_weight("AGING_CANDIDATE_PENALTY", -5.0)
+        risk_components["aging_candidate_risk"] = _trainer_weight("AGING_CANDIDATE_RISK", 5.0)
     if chase_pct > 8.0:
-        components["chase_penalty"] = -10.0
-        risk_components["chase_risk"] = 10.0
+        components["chase_penalty"] = _trainer_weight("CHASE_PENALTY", -10.0)
+        risk_components["chase_risk"] = _trainer_weight("CHASE_RISK", 10.0)
     elif chase_pct > 4.0:
-        components["mild_chase_penalty"] = -5.0
-        risk_components["mild_chase_risk"] = 5.0
+        components["mild_chase_penalty"] = _trainer_weight("MILD_CHASE_PENALTY", -5.0)
+        risk_components["mild_chase_risk"] = _trainer_weight("MILD_CHASE_RISK", 5.0)
     if fhb in {"at_high", "near_high"}:
-        risk_components["high_zone_risk"] = 6.0
+        risk_components["high_zone_risk"] = _trainer_weight("HIGH_ZONE_RISK", 6.0)
         if cb == "15+":
-            components["high_zone_chase_penalty"] = -5.0
+            components["high_zone_chase_penalty"] = _trainer_weight("HIGH_ZONE_CHASE_PENALTY", -5.0)
     if trainer_tier in {"BENCH", "QUARANTINE"}:
-        components["trainer_tier_penalty"] = -20.0
-        risk_components["trainer_tier_risk"] = 20.0
+        components["trainer_tier_penalty"] = _trainer_weight("TRAINER_TIER_PENALTY", -20.0)
+        risk_components["trainer_tier_risk"] = _trainer_weight("TRAINER_TIER_RISK", 20.0)
     if freshness in {"stale", "old"}:
-        components["freshness_penalty"] = -12.0
-        risk_components["freshness_risk"] = 12.0
+        components["freshness_penalty"] = _trainer_weight("FRESHNESS_PENALTY", -12.0)
+        risk_components["freshness_risk"] = _trainer_weight("FRESHNESS_RISK", 12.0)
     if _data_quality_bad(row):
-        components["data_quality_penalty"] = -40.0
-        risk_components["data_quality_risk"] = 40.0
+        components["data_quality_penalty"] = _trainer_weight("DATA_QUALITY_PENALTY", -40.0)
+        risk_components["data_quality_risk"] = _trainer_weight("DATA_QUALITY_RISK", 40.0)
+    if stale_cycle:
+        components["stale_cycle_penalty"] = _env_float("TRAINER_STALE_CYCLE_PENALTY", -8.0)
     if status in {"trade_ready", "buy_ready", "probe_ready"}:
-        components["runtime_ready_bonus"] = 8.0
+        components["runtime_ready_bonus"] = _trainer_weight("RUNTIME_READY_BONUS", 8.0)
 
     prompt_score = _clamp(sum(components.values()))
     risk_score = _clamp(sum(risk_components.values()))
@@ -287,6 +337,7 @@ def score_candidate_for_trainer(
                 "confirmation": round(confirmation, 4),
                 "wait_bonus": round(wait_bonus, 4),
                 "future_fields_ignored": future_fields_present,
+                "config": {key: round(value, 4) for key, value in trainer_config.items()},
             },
             "source_tags": _source_tags(row, market=market_key, cb=cb, fhb=fhb),
             "candidate_pool_version": TRAINER_SCORE_VERSION,
@@ -305,11 +356,11 @@ def classify_trainer_scores(
 ) -> str:
     if hard_quarantine:
         return "QUARANTINE"
-    if plan_a_score >= 62.0 and risk_score <= 35.0:
+    config = _trainer_threshold_config()
+    if plan_a_score >= config["plan_a_score_min"] and risk_score <= config["plan_a_risk_max"]:
         return "PLAN_A"
-    if pathb_wait_score >= 55.0 and risk_score <= 70.0:
+    if pathb_wait_score >= config["plan_b_score_min"] and risk_score <= config["plan_b_risk_max"]:
         return "PLAN_B"
-    if prompt_score >= 45.0 and risk_score <= 80.0:
+    if prompt_score >= config["watch_score_min"] and risk_score <= config["watch_risk_max"]:
         return "WATCH"
     return "BENCH"
-

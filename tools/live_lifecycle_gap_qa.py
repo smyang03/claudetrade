@@ -133,6 +133,15 @@ def _key(row: dict[str, Any], market: str) -> tuple[str, str, str]:
     )
 
 
+def _gap_severity(event_type: Any) -> tuple[str, str]:
+    event = str(event_type or "").strip().upper()
+    if event in {"FILLED", "CLOSED"}:
+        return "HIGH", "filled_or_closed_event_missing_in_v2_lifecycle"
+    if event == "ORDER_SENT":
+        return "MEDIUM", "order_sent_event_missing_in_v2_lifecycle"
+    return "LOW", "metadata_event_missing_in_v2_lifecycle"
+
+
 def find_lifecycle_gaps(
     *,
     root: Path = ROOT,
@@ -168,8 +177,14 @@ def find_lifecycle_gaps(
                 "order_no": row.get("order_no"),
                 "occurred_at": row.get("occurred_at"),
                 "reason": "entry_timing_missing_in_v2_lifecycle",
+                "severity": _gap_severity(row.get("event_type"))[0],
+                "impact": _gap_severity(row.get("event_type"))[1],
             }
         )
+    severity_counts: dict[str, int] = {}
+    for gap in gaps:
+        severity = str(gap.get("severity") or "LOW")
+        severity_counts[severity] = severity_counts.get(severity, 0) + 1
     return {
         "session_date": session_date,
         "market": market_key,
@@ -177,6 +192,7 @@ def find_lifecycle_gaps(
         "entry_timing_events": len(timing_rows),
         "v2_lifecycle_events": len(lifecycle_rows),
         "gap_count": len(gaps),
+        "severity_counts": severity_counts,
         "gaps": gaps,
     }
 

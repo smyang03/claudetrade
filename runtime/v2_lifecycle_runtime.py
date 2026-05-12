@@ -277,6 +277,16 @@ class V2LifecycleRuntime:
             try:
                 meta = getattr(self.bot, "selection_meta", {}).setdefault(market_key, {})
                 meta.setdefault("v2_decision_ids", {})[ticker_key] = decision_id
+                meta["_decision_id_fallback_count"] = int(meta.get("_decision_id_fallback_count") or 0) + 1
+                tickers = list(meta.get("_decision_id_fallback_tickers") or [])
+                if ticker_key not in tickers:
+                    tickers.append(ticker_key)
+                meta["_decision_id_fallback_tickers"] = tickers
+                sources = list(meta.get("_decision_id_fallback_sources") or [])
+                source = str(data.get("registration_source") or "execution_lifecycle_fallback")
+                if source not in sources:
+                    sources.append(source)
+                meta["_decision_id_fallback_sources"] = sources
             except Exception:
                 pass
         return str(decision_id or "")

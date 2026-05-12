@@ -101,6 +101,12 @@ from kis_api import (
 )
 from indicators import calc_all
 from execution.order_failure import broker_reject_reason, is_permanent_order_failure
+from execution.claude_price_adapter import (
+    round_down_to_cent,
+    round_down_to_kr_tick,
+    round_up_to_cent,
+    round_up_to_kr_tick,
+)
 from risk_manager import RiskManager, HARD_RULES
 from telegram_reporter import (
     send,
@@ -158,7 +164,12 @@ from runtime.candidate_actions import action_counts, candidate_actions_from_resp
 from runtime.adaptive_live_condition import attach_adaptive_live_condition_shadow
 from runtime.action_routing import route_candidate_action
 from runtime.candidate_pool_runtime import build_candidate_pool
-from runtime.exit_lifecycle import DEFAULT_LIVE_BYPASS_REASONS, decide_exit_lifecycle, exit_lifecycle_bypass_allowed
+from runtime.exit_lifecycle import (
+    DEFAULT_LIVE_BYPASS_REASONS,
+    EXPANDABLE_LIVE_BYPASS_REASONS,
+    decide_exit_lifecycle,
+    exit_lifecycle_bypass_allowed,
+)
 from runtime.live_evidence_pack import attach_live_evidence_summary, build_live_evidence_pack
 from runtime.post_open_features import (
     DEFAULT_OVEREXTENDED_5M_PCT,
@@ -426,6 +437,40 @@ _RESCREEN_SCHEDULE_TICK_MIN = int(os.getenv("RESCREEN_SCHEDULE_TICK_MIN", "30"))
 _TASK_SLOW_WARN_SEC = float(os.getenv("TASK_SLOW_WARN_SEC", "240"))  # 작업 지연 경고 임계값 (4분)
 _LIVE_STATUS_MIN_INTERVAL = float(os.getenv("LIVE_STATUS_MIN_INTERVAL_SEC", "10"))  # live_status 최소 쓰기 간격
 # VIX 구간별 포지션 사이즈 승수 (US 전용)
+def _is_retryable_atomic_write_error(exc: Exception) -> bool:
+    return isinstance(exc, PermissionError) or getattr(exc, "winerror", None) == 5
+
+
+def _atomic_json_dump_with_retry(
+    path: Path,
+    payload: dict,
+    *,
+    indent=2,
+    default=str,
+    attempts: int = 3,
+    delay_sec: float = 0.05,
+) -> None:
+    """Retry transient Windows file-lock failures and keep a last-good sidecar."""
+    attempts = max(1, int(attempts or 1))
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            _atomic_json_dump(path, payload, indent=indent, default=default)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if not _is_retryable_atomic_write_error(exc) or attempt >= attempts - 1:
+                break
+            time.sleep(max(0.0, float(delay_sec or 0.0)) * (2 ** attempt))
+    try:
+        fallback = path.with_name(f"{path.name}.last_good")
+        _atomic_json_dump(fallback, payload, indent=indent, default=default)
+    except Exception as fallback_exc:
+        log.warning(f"live_status last_good write failed: {fallback_exc}")
+    if last_exc is not None:
+        raise last_exc
+
+
 _MIN_EFFECTIVE_ORDER_KRW = float(os.getenv("MIN_EFFECTIVE_ORDER_KRW", "30000"))
 _MIN_EFFECTIVE_ORDER_USD = float(os.getenv("MIN_EFFECTIVE_ORDER_USD", "30"))
 _MICRO_PROBE_STRATEGY = "MICRO_PROBE"
@@ -750,6 +795,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             env_file=_dotenv_path,
             start_config_path=os.getenv("V2_START_CONFIG_PATH", "config/v2_start_config.json"),
         )
+        try:
+            self.risk.runtime_config = self.runtime_config
+            for _risk_manager in (getattr(self, "risk_by_market", {}) or {}).values():
+                _risk_manager.runtime_config = self.runtime_config
+        except Exception:
+            pass
         self._funnel_jsonl_enabled = self.runtime_config.get_bool("ENABLE_LIVE_FUNNEL_JSONL", True)
         self._runtime_config_snapshot_path = ""
         if self.runtime_config.get_bool("ENABLE_EFFECTIVE_CONFIG_SNAPSHOT", True):
@@ -1931,6 +1982,219 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "weak_continuation_pnl": metrics["continuation_average_pnl"]["breached"],
             },
         }
+
+    def _build_session_runtime_safety_summary(
+        self,
+        market: str,
+        session_date: str,
+        *,
+        lifecycle_gap_report: Optional[dict] = None,
+    ) -> dict:
+        market_key = str(market or "").upper()
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        fallback_count = int(meta.get("_decision_id_fallback_count") or 0)
+        fallback_tickers = [
+            str(t)
+            for t in list(meta.get("_decision_id_fallback_tickers") or [])
+            if str(t or "").strip()
+        ]
+        selection_scope = max(
+            fallback_count,
+            len(list(meta.get("trade_ready") or [])),
+            len(list((meta.get("v2_decision_ids") or {}).keys())) if isinstance(meta.get("v2_decision_ids"), dict) else 0,
+        )
+        fallback_ratio = round((fallback_count / selection_scope) * 100.0, 1) if selection_scope else 0.0
+
+        cache_stats = dict(getattr(self, "_hold_advisor_soft_cache_stats", {}) or {})
+        cache_hit = int(cache_stats.get("hit") or 0)
+        cache_miss = int(cache_stats.get("miss") or 0)
+        cache_expired = int(cache_stats.get("expired") or 0)
+        cache_invalidated = int(cache_stats.get("invalidated") or 0)
+        cache_requests = cache_hit + cache_miss + cache_expired + cache_invalidated
+        cache_stats.update(
+            {
+                "hit": cache_hit,
+                "miss": cache_miss,
+                "expired": cache_expired,
+                "invalidated": cache_invalidated,
+                "requests": cache_requests,
+                "hit_rate_pct": round((cache_hit / cache_requests) * 100.0, 1) if cache_requests else None,
+            }
+        )
+        bypass_all = dict(getattr(self, "_exit_lifecycle_bypass_stats", {}) or {})
+        bypass_stats = dict(bypass_all.get(market_key) or {})
+        bypass_attempts = int(bypass_stats.get("attempts") or 0)
+        bypass_count = int(bypass_stats.get("bypass_count") or 0)
+        bypass_stats.update(
+            {
+                "attempts": bypass_attempts,
+                "bypass_count": bypass_count,
+                "ratio_pct": round((bypass_count / bypass_attempts) * 100.0, 1) if bypass_attempts else 0.0,
+                "reason_counts": dict(bypass_stats.get("reason_counts") or {}),
+            }
+        )
+
+        if lifecycle_gap_report is None:
+            try:
+                from tools.live_lifecycle_gap_qa import find_lifecycle_gaps
+
+                lifecycle_gap_report = find_lifecycle_gaps(
+                    root=Path(__file__).resolve().parent,
+                    session_date=session_date,
+                    market=market_key,
+                    runtime_mode=str(getattr(self, "_mode", "live") or "live"),
+                )
+            except Exception as exc:
+                lifecycle_gap_report = {
+                    "session_date": session_date,
+                    "market": market_key,
+                    "runtime_mode": str(getattr(self, "_mode", "live") or "live"),
+                    "gap_count": 0,
+                    "severity_counts": {},
+                    "gaps": [],
+                    "error": str(exc),
+                }
+
+        return {
+            "decision_id_fallback": {
+                "count": fallback_count,
+                "tickers": fallback_tickers,
+                "sources": list(meta.get("_decision_id_fallback_sources") or []),
+                "scope_count": selection_scope,
+                "ratio_pct": fallback_ratio,
+            },
+            "hold_advisor_soft_cache": cache_stats,
+            "exit_lifecycle_bypass": bypass_stats,
+            "lifecycle_gap_qa": dict(lifecycle_gap_report or {}),
+        }
+
+    def _attach_runtime_safety_to_ops_snapshot(self, ops_review_snapshot: dict, runtime_safety: dict) -> dict:
+        snapshot = dict(ops_review_snapshot or {})
+        snapshot["runtime_safety"] = dict(runtime_safety or {})
+        metrics = dict(snapshot.get("metrics") or {})
+        triggers = dict(snapshot.get("triggers") or {})
+
+        fallback = dict((runtime_safety or {}).get("decision_id_fallback") or {})
+        fallback_count = int(fallback.get("count") or 0)
+        fallback_scope = int(fallback.get("scope_count") or 0)
+        metrics["decision_id_fallback_count"] = {
+            "value": fallback_count,
+            "threshold": 1,
+            "sample": fallback_scope,
+            "min_sample": 1,
+            "breached": fallback_count > 0,
+        }
+        triggers["decision_id_fallback_seen"] = fallback_count > 0
+
+        gaps = dict((runtime_safety or {}).get("lifecycle_gap_qa") or {})
+        severity_counts = dict(gaps.get("severity_counts") or {})
+        high_gap_count = int(severity_counts.get("HIGH") or 0)
+        metrics["lifecycle_high_gap_count"] = {
+            "value": high_gap_count,
+            "threshold": 1,
+            "sample": int(gaps.get("gap_count") or 0),
+            "min_sample": 1,
+            "breached": high_gap_count > 0,
+        }
+        triggers["lifecycle_high_gap_seen"] = high_gap_count > 0
+
+        cache = dict((runtime_safety or {}).get("hold_advisor_soft_cache") or {})
+        hit_rate = cache.get("hit_rate_pct")
+        cache_requests = int(cache.get("requests") or 0)
+        metrics["hold_advisor_cache_hit_rate"] = {
+            "value": hit_rate,
+            "threshold": 40.0,
+            "sample": cache_requests,
+            "min_sample": 1,
+            "breached": hit_rate is not None and cache_requests > 0 and float(hit_rate) < 40.0,
+        }
+        triggers["low_hold_advisor_cache_hit_rate"] = bool(metrics["hold_advisor_cache_hit_rate"]["breached"])
+
+        bypass = dict((runtime_safety or {}).get("exit_lifecycle_bypass") or {})
+        bypass_ratio = float(bypass.get("ratio_pct") or 0.0)
+        bypass_attempts = int(bypass.get("attempts") or 0)
+        bypass_count = int(bypass.get("bypass_count") or 0)
+        metrics["exit_lifecycle_bypass_ratio"] = {
+            "value": bypass_ratio,
+            "threshold": 30.0,
+            "sample": bypass_attempts,
+            "min_sample": 1,
+            "breached": bypass_count > 0 and bypass_ratio >= 30.0,
+        }
+        triggers["high_exit_lifecycle_bypass_ratio"] = bool(metrics["exit_lifecycle_bypass_ratio"]["breached"])
+
+        snapshot["metrics"] = metrics
+        snapshot["triggers"] = triggers
+        return snapshot
+
+    def _emit_session_runtime_safety_alerts(self, market: str, runtime_safety: dict) -> None:
+        fallback = dict((runtime_safety or {}).get("decision_id_fallback") or {})
+        fallback_ratio = float(fallback.get("ratio_pct") or 0.0)
+        fallback_count = int(fallback.get("count") or 0)
+        fallback_threshold_pct = self._runtime_float("DECISION_ID_FALLBACK_ALERT_RATE", 0.2) * 100.0
+        fallback_min_count = max(1, int(self._runtime_float("DECISION_ID_FALLBACK_ALERT_MIN_COUNT", 1.0)))
+        if fallback_count >= fallback_min_count and fallback_ratio >= fallback_threshold_pct:
+            log.warning(
+                f"[runtime safety {market}] decision_id fallback ratio "
+                f"{fallback_ratio:.1f}% count={fallback_count} tickers={fallback.get('tickers', [])}"
+            )
+            try:
+                system_alert(
+                    f"{market} decision_id fallback",
+                    [
+                        f"fallback_count={fallback_count}",
+                        f"fallback_ratio={fallback_ratio:.1f}%",
+                        f"tickers={', '.join(list(fallback.get('tickers') or [])[:8])}",
+                    ],
+                )
+            except Exception:
+                pass
+
+        cache = dict((runtime_safety or {}).get("hold_advisor_soft_cache") or {})
+        cache_requests = int(cache.get("requests") or 0)
+        cache_hit_rate = cache.get("hit_rate_pct")
+        if cache_requests and cache_hit_rate is not None and float(cache_hit_rate) < 40.0:
+            log.warning(
+                f"[runtime safety {market}] low hold_advisor cache hit rate "
+                f"{float(cache_hit_rate):.1f}% stats={cache}"
+            )
+
+        bypass = dict((runtime_safety or {}).get("exit_lifecycle_bypass") or {})
+        bypass_count = int(bypass.get("bypass_count") or 0)
+        bypass_attempts = int(bypass.get("attempts") or 0)
+        bypass_ratio = float(bypass.get("ratio_pct") or 0.0)
+        bypass_threshold_pct = self._runtime_float("EXIT_BYPASS_ALERT_RATE", 0.3) * 100.0
+        if bypass_count > 0 and bypass_attempts > 0 and bypass_ratio >= bypass_threshold_pct:
+            log.warning(
+                f"[runtime safety {market}] high exit lifecycle bypass ratio "
+                f"{bypass_ratio:.1f}% stats={bypass}"
+            )
+
+        gap_report = dict((runtime_safety or {}).get("lifecycle_gap_qa") or {})
+        severity_counts = dict(gap_report.get("severity_counts") or {})
+        high_count = int(severity_counts.get("HIGH") or 0)
+        if high_count > 0:
+            gaps = list(gap_report.get("gaps") or [])
+            tickers = []
+            for gap in gaps:
+                if str(gap.get("severity") or "").upper() == "HIGH":
+                    tickers.append(str(gap.get("ticker") or ""))
+            log.warning(
+                f"[runtime safety {market}] lifecycle HIGH gaps={high_count} "
+                f"tickers={tickers[:10]}"
+            )
+            try:
+                system_alert(
+                    f"{market} lifecycle gap QA",
+                    [
+                        f"high_gap_count={high_count}",
+                        f"gap_count={int(gap_report.get('gap_count') or 0)}",
+                        f"tickers={', '.join([t for t in tickers[:8] if t])}",
+                    ],
+                )
+            except Exception:
+                pass
+
     def _build_lesson_candidates(self, market: str, ops_review_snapshot: dict) -> list[dict]:
         metrics = dict(ops_review_snapshot.get("metrics") or {})
         candidates: list[dict] = []
@@ -3276,6 +3540,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "risk_market": market_key,
                 "risk_instance_id": "",
             }
+        trade_events = list(getattr(manager, "trade_log", []) or [])
+        entry_count = sum(1 for evt in trade_events if str((evt or {}).get("side", "") or "").lower() == "buy")
+        closed_count = sum(1 for evt in trade_events if str((evt or {}).get("side", "") or "").lower() == "sell")
         return {
             "enabled": True,
             "risk_source": str(getattr(manager, "risk_source", "market_shadow") or "market_shadow"),
@@ -3285,7 +3552,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "daily_pnl_krw": round(float(getattr(manager, "daily_pnl", 0.0) or 0.0), 0),
             "session_start_equity_krw": round(float(getattr(manager, "session_start_equity", 0.0) or 0.0), 0),
             "position_count": len(list(getattr(manager, "positions", []) or [])),
-            "trade_count": len(list(getattr(manager, "trade_log", []) or [])),
+            "trade_count": len(trade_events),
+            "event_count": len(trade_events),
+            "entry_count": entry_count,
+            "closed_count": closed_count,
             "halted": bool(getattr(manager, "halted", False)),
             "halt_reason": str(getattr(manager, "halt_reason", "") or ""),
             "write_path": "shadow_only",
@@ -3513,6 +3783,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return "same_day_stopped"
         if state in {"FAILED_READY", "WEAKENING_READY"} or self._candidate_health_ready_degraded(health):
             return "health_failure"
+        if self._candidate_stale_cycle_info(market_key, key, health).get("stale_cycle"):
+            return "stale_cycle"
         if self._candidate_health_is_stale(market_key, health):
             return "stale"
         if state == "WATCH_WEAK":
@@ -3539,6 +3811,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         health_state = str(health.get("health_state") or "OBSERVE")
         ready_degraded = self._candidate_health_ready_degraded(health)
         stale = self._candidate_health_is_stale(market_key, health, now=now)
+        stale_cycle_info = self._candidate_stale_cycle_info(market_key, key, health)
         stopped = set((getattr(self, "_v2_same_day_stop_tickers", {}) or {}).get(market_key, set()) or set())
         try:
             trainer_tier = self._candidate_trainer_tier(market_key, key, candidate=candidate)
@@ -3575,6 +3848,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "ready_degraded": bool(ready_degraded),
             "stale": bool(stale),
             "stale_age_min": self._candidate_stale_age_min(market_key, health, now=now),
+            "stale_cycle": bool(stale_cycle_info.get("stale_cycle")),
+            "stale_cycle_count": stale_cycle_info.get("stale_cycle_count", 0),
+            "repeated_failed_ready_count": stale_cycle_info.get("repeated_failed_ready_count", 0),
+            "no_fill_cycle_count": stale_cycle_info.get("no_fill_cycle_count", 0),
+            "failed_ready_reasons": list(stale_cycle_info.get("failed_ready_reasons") or []),
             "trainer_tier": trainer_tier,
             "cohort_key": cohort_key,
             "cohort_reliability": reliability,
@@ -3597,6 +3875,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         blocker = str((route_payload or {}).get("blocker") or "")
         passed = bool(final_action and final_action != "HARD_BLOCK" and not blocker)
         reason = str((route_payload or {}).get("reason") or (gate_info or {}).get("block_reason") or "")
+        kr_late_gate = dict((route_payload or {}).get("kr_late_entry_gate") or {})
         try:
             self._write_funnel_event(
                 "gate_evaluation",
@@ -3625,6 +3904,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "ready_degraded": bool((gate_info or {}).get("ready_degraded")),
                     "stale": bool((gate_info or {}).get("stale")),
                     "stale_age_min": (gate_info or {}).get("stale_age_min"),
+                    "stale_cycle": bool((gate_info or {}).get("stale_cycle")),
+                    "stale_cycle_count": (gate_info or {}).get("stale_cycle_count", 0),
+                    "repeated_failed_ready_count": (gate_info or {}).get("repeated_failed_ready_count", 0),
+                    "no_fill_cycle_count": (gate_info or {}).get("no_fill_cycle_count", 0),
                     "trainer_tier": (gate_info or {}).get("trainer_tier", ""),
                     "cohort_key": (gate_info or {}).get("cohort_key", ""),
                     "cohort_reliability": (gate_info or {}).get("cohort_reliability", 0.0),
@@ -3633,6 +3916,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         except Exception:
             pass
+        if market_key == "KR" and kr_late_gate and (final_action.upper() == "WATCH" or kr_late_gate.get("allowed") is False):
+            try:
+                analysis_log.info(
+                    f"[kr_late_entry_gate] {key} final={final_action} reason={reason}",
+                    extra={"extra": {
+                        "event": "kr_late_entry_gate_watch",
+                        "market": market_key,
+                        "ticker": key,
+                        "final_action": final_action,
+                        "reason": reason,
+                        "late_replacement": bool(kr_late_gate.get("late_replacement")),
+                        "elapsed_min": kr_late_gate.get("elapsed_min"),
+                        "requested_action": str((route_payload or {}).get("requested_action") or (action or {}).get("action") or ""),
+                    }},
+                )
+            except Exception:
+                pass
 
     def _candidate_action_size_cap_pct(self, action: dict) -> Optional[int]:
         raw_intent = str((action or {}).get("size_intent") or "").strip().lower()
@@ -3848,7 +4148,35 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             or (action or {}).get("data_quality")
             or (meta or {}).get("data_quality")
         )
-        return {
+        elapsed_min = self._market_open_elapsed_min(market_key)
+        live_features = dict(features)
+        if current_price is not None:
+            live_features["current_price"] = current_price
+        if ret_3m is not None:
+            live_features["ret_3m_pct"] = ret_3m
+        if ret_5m is not None:
+            live_features["ret_5m_pct"] = ret_5m
+        if ret_10m is not None:
+            live_features["ret_10m_pct"] = ret_10m
+        if ret_30m is not None:
+            live_features["ret_30m_pct"] = ret_30m
+        if opening_range_break not in (None, ""):
+            live_features["opening_range_break"] = opening_range_break
+        if vwap is not None and "vwap" not in live_features:
+            live_features["vwap"] = vwap
+        if volume_ratio_open is not None:
+            live_features["volume_ratio_open"] = volume_ratio_open
+        if momentum_state:
+            live_features["momentum_state"] = momentum_state
+        if data_quality_raw not in (None, ""):
+            live_features["data_quality"] = data_quality_raw
+        live_pack = build_live_evidence_pack(
+            market=market_key,
+            ticker=key,
+            features=live_features,
+            action=action or {},
+        )
+        context = {
             "market": market_key,
             "ticker": key,
             "momentum_state": momentum_state or "unknown",
@@ -3875,7 +4203,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "pathb_waiting_buy_zone_low": _positive_or_none((route_state or {}).get("buy_zone_low")),
             "pathb_waiting_buy_zone_high": _positive_or_none((route_state or {}).get("buy_zone_high")),
             "cancel_if_open_above": _positive_or_none(target.get("cancel_if_open_above")),
+            "market_open_elapsed_min": elapsed_min,
+            "evidence_data_state": live_pack.get("data_state"),
+            "evidence_missing_fields": list(live_pack.get("missing_fields") or []),
+            "evidence_action_ceiling": live_pack.get("action_ceiling"),
+            "evidence_pack": live_pack,
         }
+        return context
 
     @staticmethod
     def _parse_kst_datetime(value: Any) -> Optional[datetime]:
@@ -4094,6 +4428,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "health_state": gate_info.get("health_state", ""),
                     "lifecycle_state": gate_info.get("health_state", ""),
                     "lifecycle_rank": (gate_info.get("health") or {}).get("ready_count"),
+                    "stale_cycle": bool(gate_info.get("stale_cycle")),
+                    "stale_cycle_count": gate_info.get("stale_cycle_count", 0),
+                    "repeated_failed_ready_count": gate_info.get("repeated_failed_ready_count", 0),
+                    "no_fill_cycle_count": gate_info.get("no_fill_cycle_count", 0),
                     "trainer_tier": gate_info.get("trainer_tier", ""),
                     "quarantine_reason": gate_info.get("block_reason", ""),
                     "cohort_key": gate_info.get("cohort_key", ""),
@@ -4496,6 +4834,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 price_targets,
                 route_state,
             )
+            execution_context["SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN"] = self._runtime_float(
+                f"SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN_{market_key}",
+                self._runtime_float("SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN", 5.0),
+            )
+            execution_context["evidence_pack_ceiling_enabled"] = self._runtime_bool(
+                "EVIDENCE_PACK_CEILING_ENABLED",
+                False,
+            )
+            partial_grace_min = self._runtime_float("EVIDENCE_PACK_PARTIAL_GRACE_MIN", 15.0)
+            elapsed_for_evidence = execution_context.get("market_open_elapsed_min")
+            try:
+                execution_context["evidence_partial_grace_active"] = (
+                    str(execution_context.get("evidence_data_state") or "").lower() == "partial"
+                    and elapsed_for_evidence is not None
+                    and float(elapsed_for_evidence) <= float(partial_grace_min)
+                )
+            except Exception:
+                execution_context["evidence_partial_grace_active"] = False
             gate_info = self._candidate_runtime_gate_info(
                 market_key,
                 key,
@@ -4576,6 +4932,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "health_state": gate_info.get("health_state", ""),
                         "ready_degraded": bool(gate_info.get("ready_degraded")),
                         "stale": bool(gate_info.get("stale")),
+                        "stale_cycle": bool(gate_info.get("stale_cycle")),
+                        "stale_cycle_count": gate_info.get("stale_cycle_count", 0),
+                        "repeated_failed_ready_count": gate_info.get("repeated_failed_ready_count", 0),
                         "trainer_tier": gate_info.get("trainer_tier", ""),
                         "cohort_key": gate_info.get("cohort_key", ""),
                         "cohort_reliability": gate_info.get("cohort_reliability", 0.0),
@@ -4610,6 +4969,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "health_state": gate_info.get("health_state", ""),
                     "ready_degraded": bool(gate_info.get("ready_degraded")),
                     "stale": bool(gate_info.get("stale")),
+                    "stale_cycle": bool(gate_info.get("stale_cycle")),
+                    "stale_cycle_count": gate_info.get("stale_cycle_count", 0),
+                    "repeated_failed_ready_count": gate_info.get("repeated_failed_ready_count", 0),
                     "trainer_tier": gate_info.get("trainer_tier", ""),
                     "cohort_key": gate_info.get("cohort_key", ""),
                     "cohort_reliability": gate_info.get("cohort_reliability", 0.0),
@@ -4645,6 +5007,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             route_payload["health_state"] = gate_info.get("health_state", "")
             route_payload["ready_degraded"] = bool(gate_info.get("ready_degraded"))
             route_payload["stale"] = bool(gate_info.get("stale"))
+            route_payload["stale_cycle"] = bool(gate_info.get("stale_cycle"))
+            route_payload["stale_cycle_count"] = gate_info.get("stale_cycle_count", 0)
+            route_payload["repeated_failed_ready_count"] = gate_info.get("repeated_failed_ready_count", 0)
             route_payload["trainer_tier"] = gate_info.get("trainer_tier", "")
             route_payload["cohort_key"] = gate_info.get("cohort_key", "")
             route_payload["cohort_reliability"] = gate_info.get("cohort_reliability", 0.0)
@@ -5546,10 +5911,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if routed_ready:
                 trade_ready = list(dict.fromkeys(trade_ready + routed_ready))
             price_map = self._candidate_health_price_map(market_key, candidates)
+            ready_failures = self._candidate_ready_failure_reasons(market_key, selection_meta)
             states = tracker.update_selection(
                 watchlist=watchlist,
                 trade_ready=trade_ready,
                 price_by_ticker=price_map,
+                ready_failure_reasons=ready_failures,
                 phase=phase,
                 now=datetime.now(KST),
             )
@@ -5722,6 +6089,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     health = self._candidate_health_tracker(market_key).state_for(ticker)
                 except Exception:
                     health = {"ticker": ticker, "health_state": "OBSERVE"}
+                stale_cycle_info = self._candidate_stale_cycle_info(market_key, ticker, health)
                 tier = self._candidate_trainer_tier(
                     market_key,
                     ticker,
@@ -5750,6 +6118,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "last_seen_at": health.get("last_seen_at", ""),
                     "last_status": health.get("last_status", ""),
                     "stale": self._candidate_health_is_stale(market_key, health),
+                    "stale_cycle": bool(stale_cycle_info.get("stale_cycle")),
+                    "stale_cycle_count": int(stale_cycle_info.get("stale_cycle_count") or 0),
+                    "repeated_failed_ready_count": int(stale_cycle_info.get("repeated_failed_ready_count") or 0),
+                    "no_fill_cycle_count": int(stale_cycle_info.get("no_fill_cycle_count") or 0),
+                    "failed_ready_reasons": list(stale_cycle_info.get("failed_ready_reasons") or []),
                 }
             payload = {
                 "market": market_key,
@@ -7286,8 +7659,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         ml_decision_id = -1
         try:
+            _traded_at = datetime.now(KST).isoformat()
             tsdb.update_signal(tsdb_id, _MICRO_PROBE_STRATEGY, entry_priority_score, signal_at)
-            tsdb.update_traded(tsdb_id, datetime.now(KST).isoformat())
+            _updated_tsdb_trade = tsdb.update_traded(
+                tsdb_id,
+                _traded_at,
+                execution_source_type="micro_probe",
+                execution_strategy=_MICRO_PROBE_STRATEGY,
+                execution_reason=probe_meta.get("reason", "order_size_too_small_probe"),
+            )
+            if not _updated_tsdb_trade:
+                tsdb.insert_execution_row_from_selection(
+                    tsdb_id,
+                    _traded_at,
+                    source_type="micro_probe",
+                    execution_source_type="micro_probe",
+                    execution_strategy=_MICRO_PROBE_STRATEGY,
+                    execution_reason=probe_meta.get("reason", "order_size_too_small_probe"),
+                )
         except Exception:
             pass
         if isdb_id and source_strategy == "opening_range_pullback":
@@ -7410,6 +7799,77 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         mae_pct = self._candidate_health_num((health or {}).get("mae_pct"), 0.0)
         current_ready = self._candidate_health_optional_num((health or {}).get("current_vs_first_ready_pct"))
         return current_ready is not None and current_ready <= -2.0 and mae_pct <= -2.0
+
+    def _trainer_stale_cycle_threshold(self) -> int:
+        return max(1, int(self._runtime_float("TRAINER_STALE_CYCLE_THRESHOLD", 3.0)))
+
+    def _candidate_no_fill_cycle_count(self, market: str, ticker: str) -> int:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        normalized = self._selection_ticker_key(market_key, ticker)
+        if market_key == "KR":
+            threshold = max(1.0, float(_KR_NO_SIGNAL_SWAP_MIN or 1))
+            no_signal = self._candidate_health_num(
+                getattr(self, "_ticker_no_signal_minutes", {}).get(normalized, 0.0),
+                0.0,
+            )
+        else:
+            threshold = max(1.0, float(_US_NO_SIGNAL_SWAP_CYCLES or 1))
+            no_signal = self._candidate_health_num(
+                getattr(self, "_ticker_no_signal_cycles", {}).get(normalized, 0.0),
+                0.0,
+            )
+        return max(0, int(no_signal // threshold))
+
+    def _candidate_stale_cycle_info(
+        self,
+        market: str,
+        ticker: str,
+        health: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        if health is None:
+            try:
+                health = self._candidate_health_tracker(market_key).state_for(key)
+            except Exception:
+                health = {}
+        repeated_failed = int(self._candidate_health_num((health or {}).get("failed_ready_count"), 0.0))
+        ready_count = int(self._candidate_health_num((health or {}).get("ready_count"), 0.0))
+        stored_stale_cycles = int(self._candidate_health_num((health or {}).get("stale_cycle_count"), repeated_failed))
+        no_fill_cycles = self._candidate_no_fill_cycle_count(market_key, key) if ready_count > 0 or repeated_failed > 0 else 0
+        count = max(stored_stale_cycles, repeated_failed) + no_fill_cycles
+        threshold = self._trainer_stale_cycle_threshold()
+        return {
+            "stale_cycle": bool(count >= threshold),
+            "stale_cycle_count": count,
+            "stale_cycle_threshold": threshold,
+            "repeated_failed_ready_count": repeated_failed,
+            "no_fill_cycle_count": no_fill_cycles,
+            "failed_ready_reasons": list((health or {}).get("failed_ready_reasons") or []),
+        }
+
+    def _candidate_ready_failure_reasons(self, market: str, selection_meta: dict) -> dict[str, list[str]]:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        failures: dict[str, list[str]] = {}
+        ready_actions = {"BUY_READY", "PROBE_READY", "ADD_READY"}
+        failure_final_actions = {"WATCH", "HARD_BLOCK", "BLOCK", "REJECT"}
+        for route in list((selection_meta or {}).get("_candidate_action_routes") or []):
+            if not isinstance(route, dict):
+                continue
+            key = self._selection_ticker_key(market_key, route.get("ticker"))
+            if not key:
+                continue
+            requested = str(route.get("requested_action") or route.get("original_action") or route.get("claude_action") or "").upper()
+            final_action = str(route.get("final_action") or "").upper()
+            reason = str(route.get("reason") or route.get("runtime_gate_reason") or route.get("blocker") or "ready_route_failed")
+            warnings = {str(item or "") for item in list(route.get("warnings") or [])}
+            if requested in ready_actions and (
+                final_action in failure_final_actions
+                or reason == "soft_gate_override_failed"
+                or "soft_gate_override_failed" in warnings
+            ):
+                failures.setdefault(key, []).append(reason)
+        return failures
 
     def _partial_replace_score(self, market: str, ticker: str, protected: Optional[set] = None) -> float:
         normalized = str(ticker).upper() if market == "US" else str(ticker)
@@ -7803,6 +8263,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             row.setdefault("session_phase", phase.get("phase"))
             row.setdefault("minutes_to_close", phase.get("minutes_to_close"))
             row.setdefault("entry_blackout_now", phase.get("entry_blackout"))
+            try:
+                health = self._candidate_health_tracker(market_key).state_for(ticker)
+                stale_cycle_info = self._candidate_stale_cycle_info(market_key, ticker, health)
+                row.setdefault("candidate_health_state", health.get("health_state", "OBSERVE"))
+                row.setdefault("ready_attempt_count", int(self._candidate_health_num(health.get("ready_count"), 0.0)))
+                row.setdefault("stale_cycle", bool(stale_cycle_info.get("stale_cycle")))
+                row.setdefault("stale_cycle_count", int(stale_cycle_info.get("stale_cycle_count") or 0))
+                row.setdefault("repeated_failed_ready_count", int(stale_cycle_info.get("repeated_failed_ready_count") or 0))
+                row.setdefault("no_fill_cycle_count", int(stale_cycle_info.get("no_fill_cycle_count") or 0))
+                row.setdefault("failed_ready_reasons", list(stale_cycle_info.get("failed_ready_reasons") or []))
+            except Exception:
+                pass
             try:
                 technicals = ((self.today_judgment.get("digest_raw", {}) or {}).get("technicals") or {})
                 tech = technicals.get(ticker) or technicals.get(str(candidate.get("ticker", "") or "").strip()) or {}
@@ -8909,6 +9381,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "freshness_verdict": row.get("freshness_verdict"),
                 "trainer_tier": row.get("trainer_tier"),
             }
+
+        def _stale_cycle_audit_fields(ticker_key: str, row: dict | None = None) -> dict:
+            source = dict(row or {})
+            try:
+                health = self._candidate_health_tracker(market_key).state_for(ticker_key)
+            except Exception:
+                health = {}
+            info = self._candidate_stale_cycle_info(market_key, ticker_key, health)
+            return {
+                "stale_cycle": bool(source.get("stale_cycle", info.get("stale_cycle"))),
+                "stale_cycle_count": source.get("stale_cycle_count", info.get("stale_cycle_count", 0)),
+                "repeated_failed_ready_count": source.get(
+                    "repeated_failed_ready_count",
+                    info.get("repeated_failed_ready_count", 0),
+                ),
+                "no_fill_cycle_count": source.get("no_fill_cycle_count", info.get("no_fill_cycle_count", 0)),
+                "failed_ready_reasons_json": source.get(
+                    "failed_ready_reasons",
+                    info.get("failed_ready_reasons", []),
+                ),
+            }
         try:
             store.upsert_call(
                 {
@@ -8991,6 +9484,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "entry_type": str(action.get("entry_type") or ""),
                         "setup_maturity": str(action.get("setup_maturity") or ""),
                         "action_ceiling": str(runtime_gate.get("action_ceiling") or ""),
+                        "evidence_data_state": str(runtime_gate.get("evidence_data_state") or ""),
+                        "evidence_missing_fields_json": list(runtime_gate.get("evidence_missing_fields") or []),
+                        "evidence_action_ceiling": str(runtime_gate.get("evidence_action_ceiling") or ""),
+                        "evidence_ceiling_applied": bool(runtime_gate.get("evidence_ceiling_applied")),
                         "action_ceiling_ack": str(action.get("action_ceiling_ack") or ""),
                         "legacy_auto_ready_promoted": bool((meta or {}).get("_legacy_auto_ready_promoted", False)),
                         "soft_gate_overrides": soft_gate_overrides,
@@ -9003,6 +9500,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "tuning_rule_version": str(tuning_feedback.get("rule_version") or ""),
                         "tuning_feedback_applied": bool((meta or {}).get("tuning_feedback_applied", False)),
                         **_trainer_audit_fields(prompt_row, included=True),
+                        **_stale_cycle_audit_fields(key, prompt_row),
                         "payload": {
                             "confirmation_state": route.get("confirmation_state") or runtime_gate.get("kr_confirmation_state", ""),
                             "confirmation_reason": route.get("confirmation_reason") or runtime_gate.get("kr_confirmation_reason", ""),
@@ -9046,6 +9544,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "secondary_buckets": list(row.get("secondary_buckets") or []),
                         "classification": "in_prompt_not_selected",
                         **_trainer_audit_fields(row, included=True),
+                        **_stale_cycle_audit_fields(key, row),
                         "payload": {
                             "selection_stage": "trainer_prompt_pool",
                             "prompt_pool_audit": True,
@@ -9085,6 +9584,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "secondary_buckets": list(row.get("secondary_buckets") or []),
                         "classification": "not_in_prompt",
                         **_trainer_audit_fields(row, included=False, excluded_reason=excluded_reason),
+                        **_stale_cycle_audit_fields(key, row),
                         "payload": {
                             "selection_stage": "trainer_prompt_pool_excluded",
                             "prompt_pool_audit": True,
@@ -10592,6 +11092,38 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if self._has_broker_sync_risk(market):
             return False
         return True
+
+    def _trade_has_invalid_position_geometry(self, trade: dict) -> bool:
+        row = trade or {}
+
+        def _first_positive(*keys: str) -> Optional[float]:
+            for key in keys:
+                value = self._positive_float_or_none(row.get(key))
+                if value is not None:
+                    return value
+            return None
+
+        target = _first_positive(
+            "tp_price",
+            "target_price",
+            "selection_reference_target",
+            "pathb_reference_target",
+            "take_profit",
+            "tp",
+        )
+        stop = _first_positive(
+            "effective_stop_price",
+            "strategy_stop_price",
+            "selection_reference_stop",
+            "pathb_reference_stop",
+            "stop_loss",
+            "sl",
+        )
+        if target is not None and stop is not None and stop >= target:
+            return True
+        detail = str(row.get("auto_sell_review_detail") or row.get("detail") or "").upper()
+        return "TP(" in detail and "< SL" in detail
+
     @staticmethod
     def _execution_issue_detail(issue: str) -> dict:
         key = str(issue or "").strip()
@@ -10601,6 +11133,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "issue": key,
                 "label": f"매도 실패({reason})",
                 "severity": "trade_affecting",
+                "learning_excluded": True,
+            }
+        if key == "invalid_position_geometry":
+            return {
+                "issue": key,
+                "label": "invalid position TP/SL geometry",
+                "severity": "data_integrity",
                 "learning_excluded": True,
             }
         mapping = {
@@ -10643,6 +11182,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 reasons.add("broker_sync_exit")
         if any(str(t.get("strategy", "") or "") == "broker_sync" for t in session_trades):
             reasons.add("broker_sync_trade")
+        if any(self._trade_has_invalid_position_geometry(t) for t in session_trades):
+            reasons.add("invalid_position_geometry")
         if any(o.get("market") == market for o in self.pending_orders):
             reasons.add("pending_orders_remain")
         details = [self._execution_issue_detail(reason) for reason in sorted(reasons)]
@@ -10796,20 +11337,121 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
             total += (current - basis) * qty
         return float(total)
+
+    @staticmethod
+    def _trade_order_no(trade: dict) -> str:
+        trade = trade or {}
+        return str(
+            trade.get("order_no")
+            or trade.get("pending_sell_order_no")
+            or trade.get("broker_order_no")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _canonical_trade_side(trade: dict) -> str:
+        row = trade or {}
+        raw = str(row.get("side") or "").strip().lower()
+        if not raw and str(row.get("type") or "").strip().lower() in {"closed", "close", "exit"}:
+            raw = "sell"
+        aliases = {
+            "buy": "buy",
+            "b": "buy",
+            "entry": "buy",
+            "long_entry": "buy",
+            "매수": "buy",
+            "sell": "sell",
+            "s": "sell",
+            "exit": "sell",
+            "close": "sell",
+            "long_exit": "sell",
+            "매도": "sell",
+        }
+        return aliases.get(raw, "unknown")
+
+    def _canonical_trade_identity_keys(
+        self,
+        trade: dict,
+        market: str,
+        session_date: Optional[str] = None,
+    ) -> set[str]:
+        row = trade or {}
+        market_key = str(market or row.get("market") or "").upper()
+        if market_key not in {"KR", "US"}:
+            ticker_for_market = str(row.get("ticker", "") or "")
+            market_key = self._ticker_market(ticker_for_market) if ticker_for_market else "KR"
+        session_key = str(
+            row.get("session_date")
+            or session_date
+            or row.get("date")
+            or str(row.get("timestamp", "") or "")[:10]
+            or ""
+        )
+        ticker = str(row.get("ticker", "") or "").strip().upper()
+        def _safe_float(value) -> float:
+            try:
+                return float(str(value or 0).replace(",", ""))
+            except Exception:
+                return 0.0
+
+        qty = int(_safe_float(row.get("qty", 0)))
+        reason = str(row.get("reason") or row.get("exit_reason") or row.get("auto_sell_review_reason") or "")
+        reason_key = normalize_pathb_decision_exit_reason(reason)
+        pnl = _safe_float(row.get("pnl_krw", row.get("pnl", 0)))
+        price = _safe_float(
+            row.get("exit_price")
+            or row.get("exit_price_krw")
+            or row.get("price")
+            or row.get("price_krw")
+            or 0.0
+        )
+        side_key = self._canonical_trade_side(row)
+        keys: set[str] = set()
+        order_no = self._trade_order_no(row)
+        if order_no:
+            keys.add(f"order:{market_key}:{side_key}:{order_no}:{session_key}")
+        path_run_id = str(row.get("pathb_path_run_id") or row.get("path_run_id") or "").strip()
+        if path_run_id:
+            keys.add(f"path:{market_key}:{side_key}:{path_run_id}:{reason_key}:{session_key}")
+        if ticker and qty:
+            keys.add(
+                "fingerprint:"
+                f"{market_key}:{side_key}:{ticker}:{qty}:{round(price, 4)}:{round(pnl, 4)}:{reason_key}:{session_key}"
+            )
+        return keys
+
+    def _canonicalize_session_trades(self, trades: list, market: str, session_date: Optional[str] = None) -> list:
+        result: list[dict] = []
+        key_to_index: dict[str, int] = {}
+        for raw in trades or []:
+            if not isinstance(raw, dict):
+                continue
+            trade = dict(raw)
+            keys = self._canonical_trade_identity_keys(trade, market, session_date)
+            existing_index = next((key_to_index[key] for key in keys if key in key_to_index), None)
+            if existing_index is None:
+                idx = len(result)
+                result.append(trade)
+                for key in keys:
+                    key_to_index[key] = idx
+                continue
+            existing = dict(result[existing_index])
+            incoming_order_no = self._trade_order_no(trade)
+            if incoming_order_no and not self._trade_order_no(existing):
+                existing["order_no"] = incoming_order_no
+            for field, value in trade.items():
+                if existing.get(field) in (None, "", 0, 0.0) and value not in (None, ""):
+                    existing[field] = value
+            result[existing_index] = existing
+            for key in keys:
+                key_to_index.setdefault(key, existing_index)
+        return result
+
     def _market_realized_pnl_krw(self, market: str) -> float:
         market_key = str(market or "").upper()
         session_date = self._current_session_date_str(market_key)
         realized = 0.0
         seen = set()
-        def _realized_key(ticker: str, qty: int, pnl: float, reason: str, order_no: str = "", path_run_id: str = "") -> str:
-            reason_key = normalize_pathb_decision_exit_reason(reason)
-            order_key = str(order_no or "").strip()
-            if order_key:
-                return f"order:{market_key}:{order_key}:{session_date}"
-            path_key = str(path_run_id or "").strip()
-            if path_key:
-                return f"path:{market_key}:{path_key}:{reason_key}:{session_date}"
-            return f"{ticker}:{int(qty or 0)}:{round(float(pnl or 0), 4)}:{reason_key}:{session_date}"
         for evt in list(getattr(self.risk, "all_trade_log", []) or []):
             if str(evt.get("side", "") or "").lower() != "sell":
                 continue
@@ -10820,17 +11462,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             evt_session = str(evt.get("session_date") or evt.get("date") or "")
             if evt_session != session_date:
                 continue
-            key = _realized_key(
-                evt_ticker,
-                int(evt.get("qty", 0) or 0),
-                float(evt.get("pnl", evt.get("pnl_krw", 0)) or 0),
-                str(evt.get("reason", "") or ""),
-                str(evt.get("order_no", "") or ""),
-                str(evt.get("pathb_path_run_id", evt.get("path_run_id", "")) or ""),
-            )
-            if key in seen:
+            keys = self._canonical_trade_identity_keys(evt, market_key, session_date)
+            if keys and seen.intersection(keys):
                 continue
-            seen.add(key)
+            seen.update(keys)
             realized += float(evt.get("pnl", evt.get("pnl_krw", 0)) or 0)
         try:
             if DECISIONS_FILE.exists():
@@ -10844,17 +11479,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     rec_session = str(rec.get("session_date") or str(rec.get("timestamp", "") or "")[:10] or "")
                     if rec_session != session_date:
                         continue
-                    key = _realized_key(
-                        str(rec.get("ticker", "") or ""),
-                        int(rec.get("qty", 0) or 0),
-                        float(rec.get("pnl_krw", 0) or 0),
-                        str(rec.get("exit_reason", "") or ""),
-                        str(rec.get("order_no", "") or ""),
-                        str(rec.get("pathb_path_run_id", rec.get("path_run_id", "")) or ""),
-                    )
-                    if key in seen:
+                    keys = self._canonical_trade_identity_keys(rec, market_key, session_date)
+                    if keys and seen.intersection(keys):
                         continue
-                    seen.add(key)
+                    seen.update(keys)
                     realized += float(rec.get("pnl_krw", 0) or 0)
         except Exception as exc:
             log.debug(f"[market realized pnl] {market_key} decisions scan failed: {exc}")
@@ -11783,7 +12411,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             reason = trade.get("reason", "") or ""
             strategy = trade.get("strategy", "") or ""
             trade_date = trade.get("date", date.today().isoformat())
-            key = (trade_date, side, ticker.upper(), strategy, qty, price, pnl, pnl_pct, reason)
+            order_no = self._trade_order_no(trade)
+            path_run_id = str(trade.get("pathb_path_run_id", trade.get("path_run_id", "")) or "").strip()
+            reason_key = normalize_pathb_decision_exit_reason(reason)
+            key = (
+                order_no or path_run_id or "fingerprint",
+                trade_date,
+                side,
+                ticker.upper(),
+                strategy,
+                qty,
+                price,
+                pnl,
+                pnl_pct,
+                reason_key,
+            )
             if key in seen:
                 continue
             seen.add(key)
@@ -11798,8 +12440,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,
                 "reason": reason,
+                "order_no": order_no,
             })
-        return filtered
+        try:
+            session_date = self._current_session_date_str(market)
+        except Exception:
+            session_date = date.today().isoformat()
+        return self._canonicalize_session_trades(filtered, market, session_date)
     def _reset_us_order_cache(self):
         self._us_order_supported.clear()
         self._us_order_blocked.clear()
@@ -11992,7 +12639,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         raw = str(self._runtime_value("EXIT_LIFECYCLE_LIVE_REASONS", "") or "").strip()
         if not raw:
             return set(DEFAULT_LIVE_BYPASS_REASONS)
-        return {part.strip() for part in raw.split(",") if part.strip()}
+        requested = {part.strip() for part in raw.split(",") if part.strip()}
+        allowed_universe = set(DEFAULT_LIVE_BYPASS_REASONS) | set(EXPANDABLE_LIVE_BYPASS_REASONS)
+        ignored = sorted(requested - allowed_universe)
+        if ignored:
+            log.warning(f"[exit lifecycle bypass] ignoring unsupported live bypass reasons: {ignored}")
+        return requested & allowed_universe
 
     def _should_bypass_auto_sell_review_for_lifecycle(self, cand: dict, market: str, reason: str) -> bool:
         if not self._exit_lifecycle_live_bypass_enabled():
@@ -12006,6 +12658,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if str(lifecycle.get("candidate_reason") or reason or ""):
             lifecycle.setdefault("candidate_reason", str(reason or ""))
         return exit_lifecycle_bypass_allowed(lifecycle, allowlist=self._exit_lifecycle_live_allowlist())
+
+    def _record_exit_lifecycle_bypass_attempt(self, market: str, reason: str, bypassed: bool) -> None:
+        market_key = str(market or "").upper()
+        stats = getattr(self, "_exit_lifecycle_bypass_stats", None)
+        if not isinstance(stats, dict):
+            stats = {}
+            self._exit_lifecycle_bypass_stats = stats
+        row = stats.setdefault(market_key, {"attempts": 0, "bypass_count": 0, "reason_counts": {}})
+        row["attempts"] = int(row.get("attempts") or 0) + 1
+        if bypassed:
+            row["bypass_count"] = int(row.get("bypass_count") or 0) + 1
+            reason_key = str(reason or "unknown").strip() or "unknown"
+            reasons = dict(row.get("reason_counts") or {})
+            reasons[reason_key] = int(reasons.get(reason_key) or 0) + 1
+            row["reason_counts"] = reasons
 
     def _should_write_exit_lifecycle_event(self, market: str, position: dict, payload: dict) -> bool:
         reason = str(payload.get("candidate_reason") or payload.get("reason") or "").strip()
@@ -13000,7 +13667,360 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     @staticmethod
     def _auto_sell_review_required(reason: str) -> bool:
-        return str(reason or "").strip().lower() not in {"manual_sell", "mfe_breakeven"}
+        return str(reason or "").strip().lower() not in {
+            "manual_sell",
+            "mfe_breakeven",
+            "policy_protective_stop",
+            "policy_hard_stop",
+            "policy_recheck_limit_sell",
+            "policy_revised_target",
+        }
+
+    def _plan_a_hold_policy_mode(self, market: str = "") -> str:
+        market_key = str(market or "").upper()
+        raw = ""
+        if market_key in {"KR", "US"}:
+            raw = str(self._runtime_value(f"{market_key}_PLANA_HOLD_POLICY_MODE", "") or "").strip().lower()
+        if not raw:
+            raw = str(self._runtime_value("PLANA_HOLD_POLICY_MODE", "shadow") or "shadow").strip().lower()
+        return raw if raw in {"off", "shadow", "enforce"} else "shadow"
+
+    @staticmethod
+    def _plan_a_policy_int(value: object, default: int = 0) -> int:
+        try:
+            return int(float(value or default))
+        except Exception:
+            return int(default)
+
+    @staticmethod
+    def _plan_a_policy_float(value: object, default: float = 0.0) -> float:
+        try:
+            if isinstance(value, str):
+                value = value.replace(",", "").replace("$", "").strip()
+            return float(value or default)
+        except Exception:
+            return float(default)
+
+    def _plan_a_round_policy_price(self, price: object, market: str, *, direction: str) -> float:
+        value = self._plan_a_policy_float(price)
+        if value <= 0:
+            return 0.0
+        if str(market or "").upper() == "KR":
+            return round_up_to_kr_tick(value) if direction == "up" else round_down_to_kr_tick(value)
+        return round_up_to_cent(value) if direction == "up" else round_down_to_cent(value)
+
+    def _plan_a_policy_valid_minutes(self, advice: dict) -> int:
+        raw = self._plan_a_policy_int((advice or {}).get("valid_for_min"))
+        if raw <= 0:
+            raw = self._plan_a_policy_int((advice or {}).get("next_review_min"))
+        if raw <= 0:
+            raw = self._plan_a_policy_int(self._runtime_value("PLANA_HOLD_POLICY_DEFAULT_VALID_MINUTES", 5), 5)
+        min_v = max(1, self._plan_a_policy_int(self._runtime_value("PLANA_HOLD_POLICY_MIN_VALID_MINUTES", 1), 1))
+        max_v = max(min_v, self._plan_a_policy_int(self._runtime_value("PLANA_HOLD_POLICY_MAX_VALID_MINUTES", 30), 30))
+        return max(min_v, min(max_v, raw))
+
+    def _plan_a_policy_max_rechecks(self, advice: dict) -> int:
+        env_max = max(0, min(8, self._plan_a_policy_int(self._runtime_value("PLANA_HOLD_POLICY_MAX_RECHECKS", 2), 2)))
+        claude_max = self._plan_a_policy_int((advice or {}).get("max_rechecks"))
+        if claude_max > 0:
+            return max(0, min(env_max, claude_max))
+        return env_max
+
+    def _plan_a_native_stop_value(self, value: object, market: str, current_native: float) -> float:
+        stop = self._plan_a_policy_float(value)
+        if stop <= 0:
+            return 0.0
+        if str(market or "").upper() == "US" and stop > 1000 and float(getattr(self, "usd_krw_rate", 0) or 0) > 0:
+            stop = stop / float(self.usd_krw_rate)
+        if current_native > 0 and stop >= current_native:
+            return 0.0
+        return stop
+
+    def _plan_a_existing_stop(self, pos: dict, cand: dict, market: str, current_native: float) -> float:
+        values: list[float] = []
+        for key in (
+            "effective_stop_price",
+            "strategy_stop_price",
+            "profit_floor_price",
+            "soft_exit_floor_price",
+            "loss_cap_price",
+            "pathb_reference_stop",
+            "selection_reference_stop",
+        ):
+            values.append(self._plan_a_native_stop_value(cand.get(key) or pos.get(key), market, current_native))
+        if str(market or "").upper() == "US":
+            values.append(self._plan_a_native_stop_value(pos.get("trail_sl_usd"), market, current_native))
+        values.append(self._plan_a_native_stop_value(pos.get("trail_sl"), market, current_native))
+        values.append(self._plan_a_native_stop_value(pos.get("sl"), market, current_native))
+        return max((v for v in values if v > 0), default=0.0)
+
+    def _plan_a_policy_peak_price(self, pos: dict, current_native: float, market: str) -> float:
+        for key in ("high_price", "peak_price", "position_peak_price"):
+            value = self._plan_a_policy_float(pos.get(key))
+            if value > 0:
+                if str(market or "").upper() == "US" and value > 1000 and float(getattr(self, "usd_krw_rate", 0) or 0) > 0:
+                    value = value / float(self.usd_krw_rate)
+                return max(value, current_native)
+        peak_pct = self._plan_a_policy_float(pos.get("peak_pnl_pct") or pos.get("position_mfe_pct"))
+        entry_native = self._native_position_price(pos, market, current=False)
+        if entry_native > 0 and peak_pct > 0:
+            return max(current_native, entry_native * (1.0 + peak_pct / 100.0))
+        return current_native
+
+    @staticmethod
+    def _plan_a_policy_dt(value: object) -> Optional[datetime]:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=KST)
+        return parsed.astimezone(KST)
+
+    def _plan_a_existing_policy_valid(self, policy: dict, now: datetime) -> bool:
+        if not isinstance(policy, dict) or not policy:
+            return False
+        if str(policy.get("status") or "").strip().lower() != "active":
+            return False
+        valid_until = self._plan_a_policy_dt(policy.get("valid_until"))
+        return valid_until is None or now < valid_until
+
+    def _plan_a_policy_recreate_block_reason(self, pos: dict, current_native: float, now: datetime) -> str:
+        block_until = self._plan_a_policy_dt((pos or {}).get("auto_sell_policy_recreate_block_until"))
+        if block_until is None or now >= block_until:
+            return ""
+        min_move_pct = self._runtime_float("PLANA_HOLD_POLICY_RECREATE_MIN_PRICE_MOVE_PCT", 0.5)
+        if min_move_pct <= 0:
+            return ""
+        last_price = self._plan_a_policy_float((pos or {}).get("auto_sell_policy_last_created_price"))
+        current = float(current_native or 0.0)
+        if last_price > 0 and current > 0:
+            move_pct = abs(current / last_price - 1.0) * 100.0
+            if move_pct >= min_move_pct:
+                return ""
+        return "policy_recreate_cooldown"
+
+    def _plan_a_keep_existing_policy_after_invalid_recheck(
+        self,
+        pos: dict,
+        cand: dict,
+        reject_reason: str,
+        now: datetime,
+    ) -> dict:
+        existing = dict(pos.get("auto_sell_policy") or cand.get("auto_sell_policy") or {})
+        if not self._plan_a_existing_policy_valid(existing, now):
+            if existing:
+                existing["status"] = "expired"
+                existing["expired_at"] = now.isoformat(timespec="seconds")
+                pos["auto_sell_policy"] = existing
+                cand["auto_sell_policy"] = existing
+            return {
+                "auto_sell_policy_mode": str(existing.get("mode") or ""),
+                "auto_sell_policy_status": "expired",
+                "auto_sell_policy_reject_reason": reject_reason,
+                "auto_sell_policy_force_sell": True,
+            }
+        max_rechecks = self._plan_a_policy_int(existing.get("max_rechecks"), self._plan_a_policy_max_rechecks({}))
+        next_count = self._plan_a_policy_int(existing.get("recheck_count")) + 1
+        existing["recheck_count"] = min(max_rechecks, next_count) if max_rechecks >= 0 else next_count
+        existing["last_recheck_at"] = now.isoformat(timespec="seconds")
+        existing["last_recheck_reason"] = reject_reason
+        pos["auto_sell_policy"] = existing
+        pos["auto_sell_policy_last_recheck_at"] = existing["last_recheck_at"]
+        cand["auto_sell_policy"] = existing
+        return {
+            "auto_sell_policy_mode": str(existing.get("mode") or ""),
+            "auto_sell_policy_status": str(existing.get("status") or "active"),
+            "auto_sell_policy_reject_reason": reject_reason,
+            "auto_sell_policy_recheck_count": int(existing.get("recheck_count", 0) or 0),
+        }
+
+    def _plan_a_auto_sell_policy_from_advice(
+        self,
+        pos: dict,
+        cand: dict,
+        advice: dict,
+        current_native: float,
+        market: str,
+    ) -> tuple[dict, str]:
+        if str((advice or {}).get("action", "HOLD") or "HOLD").upper() != "HOLD":
+            return {}, ""
+        hold_mode = str((advice or {}).get("hold_mode", "") or "").strip().lower()
+        if not hold_mode:
+            return {}, "hold_mode_missing"
+        if hold_mode not in {"target_extension", "profit_pullback", "stop_recovery", "loss_deferral"}:
+            return {}, "invalid_hold_mode"
+        if hold_mode == "loss_deferral":
+            return {}, "loss_deferral_not_enforceable"
+        market_key = str(market or "").upper()
+        current = float(current_native or self._native_position_price({**pos, **cand}, market_key, current=True) or 0)
+        entry = float(self._native_position_price(pos, market_key, current=False) or 0)
+        if current <= 0 or entry <= 0:
+            return {}, "invalid_current_or_entry"
+
+        now = datetime.now(KST)
+        valid_for_min = self._plan_a_policy_valid_minutes(advice)
+        next_review_min = max(1, min(60, self._plan_a_policy_int((advice or {}).get("next_review_min"), valid_for_min)))
+        reask_after_min = self._plan_a_policy_int((advice or {}).get("reask_after_min"), next_review_min)
+        reask_after_min = max(1, min(valid_for_min, reask_after_min))
+        previous = dict(pos.get("auto_sell_policy") or cand.get("auto_sell_policy") or {})
+        is_recheck = str(cand.get("reason") or "").strip().lower() == "policy_recheck"
+        previous_count = self._plan_a_policy_int(previous.get("recheck_count")) if is_recheck else -1
+        recheck_count = max(0, previous_count + 1) if is_recheck else 0
+        max_rechecks = self._plan_a_policy_max_rechecks(advice)
+        existing_stop = self._plan_a_existing_stop(pos, cand, market_key, current)
+        currency = "USD" if market_key == "US" else "KRW"
+        original_target = self._plan_a_policy_float(cand.get("tp") or pos.get("tp"))
+        if market_key == "US" and original_target > 1000 and float(getattr(self, "usd_krw_rate", 0) or 0) > 0:
+            original_target = original_target / float(self.usd_krw_rate)
+
+        base = {
+            "version": 1,
+            "status": "active",
+            "source": "hold_advisor",
+            "mode": hold_mode,
+            "created_at": now.isoformat(timespec="seconds"),
+            "valid_until": (now + timedelta(minutes=valid_for_min)).isoformat(timespec="seconds"),
+            "valid_for_min": valid_for_min,
+            "reask_after_at": (now + timedelta(minutes=reask_after_min)).isoformat(timespec="seconds"),
+            "reask_after_min": reask_after_min,
+            "signal_reason": str(cand.get("reason") or ""),
+            "policy_currency": currency,
+            "created_price": current,
+            "peak_price": self._plan_a_policy_peak_price(pos, current, market_key),
+            "entry_price": entry,
+            "original_stop_loss": existing_stop,
+            "original_take_profit": original_target,
+            "confidence": self._plan_a_policy_float((advice or {}).get("confidence")),
+            "reason": str((advice or {}).get("reason", "") or "")[:500],
+            "invalid_if": str((advice or {}).get("invalid_if", "") or "")[:240],
+            "recheck_count": recheck_count,
+            "max_rechecks": max_rechecks,
+            "last_recheck_at": now.isoformat(timespec="seconds") if is_recheck else "",
+            "last_recheck_reason": str(cand.get("reason") or "") if is_recheck else "",
+            "next_review_min": next_review_min,
+        }
+
+        if hold_mode in {"target_extension", "profit_pullback"}:
+            protective_stop = self._plan_a_round_policy_price((advice or {}).get("protective_stop"), market_key, direction="down")
+            if protective_stop <= 0:
+                return {}, "protective_stop_missing"
+            if protective_stop >= current:
+                return {}, "protective_stop_not_below_current"
+            if existing_stop > 0 and protective_stop < existing_stop:
+                return {}, "protective_stop_looser_than_existing_stop"
+            require_floor = self._runtime_bool("PLANA_HOLD_POLICY_REQUIRE_PROFIT_FLOOR", True)
+            if require_floor and current > entry and protective_stop < entry:
+                return {}, "protective_stop_below_entry_for_profit_hold"
+            revised_target = self._plan_a_round_policy_price((advice or {}).get("revised_sell_target"), market_key, direction="up")
+            if hold_mode == "target_extension" and revised_target <= current:
+                return {}, "revised_target_not_above_current"
+            if revised_target > 0 and revised_target <= current:
+                return {}, "revised_target_not_above_current"
+            return {
+                **base,
+                "revised_sell_target": revised_target,
+                "protective_stop": protective_stop,
+                "hard_stop": 0.0,
+                "recover_above": 0.0,
+                "recovery_watch_min": 0,
+                "reask_drawdown_from_peak_pct": max(
+                    0.0,
+                    min(10.0, self._plan_a_policy_float((advice or {}).get("reask_drawdown_from_peak_pct"))),
+                ),
+                "reask_if_price_above": self._plan_a_round_policy_price(
+                    (advice or {}).get("reask_if_price_above"), market_key, direction="up"
+                ),
+            }, ""
+
+        hard_stop = self._plan_a_round_policy_price(
+            (advice or {}).get("hard_stop") or (advice or {}).get("protective_stop"),
+            market_key,
+            direction="down",
+        )
+        if hard_stop <= 0:
+            return {}, "hard_stop_missing"
+        if hard_stop >= current:
+            return {}, "hard_stop_not_below_current"
+        gap_cap = self._plan_a_policy_float(
+            self._runtime_value(f"PLANA_HOLD_POLICY_HARD_GAP_CAP_{market_key}", self._runtime_value("PLANA_HOLD_POLICY_HARD_GAP_CAP", 0.01 if market_key == "KR" else 0.015)),
+            0.01 if market_key == "KR" else 0.015,
+        )
+        if existing_stop > 0 and hard_stop < existing_stop * (1.0 - max(0.0, gap_cap)):
+            return {}, "hard_stop_gap_too_wide"
+        recover_above = self._plan_a_round_policy_price((advice or {}).get("recover_above"), market_key, direction="up")
+        if recover_above <= current:
+            return {}, "recover_above_not_above_current"
+        return {
+            **base,
+            "revised_sell_target": 0.0,
+            "protective_stop": 0.0,
+            "hard_stop": hard_stop,
+            "recover_above": recover_above,
+            "recovery_watch_min": max(1, min(30, self._plan_a_policy_int((advice or {}).get("recovery_watch_min"), next_review_min))),
+            "reask_drawdown_from_peak_pct": 0.0,
+            "reask_if_price_above": 0.0,
+        }, ""
+
+    def _apply_plan_a_hold_policy(
+        self,
+        cand: dict,
+        market: str,
+        advice: dict,
+        current_native: float,
+    ) -> dict:
+        mode = self._plan_a_hold_policy_mode(market)
+        if mode == "off":
+            return {"auto_sell_policy_mode": "off"}
+        pos = self._find_live_position_for_candidate(cand, market)
+        if not pos:
+            return {"auto_sell_policy_reject_reason": "position_not_found"}
+        now = datetime.now(KST)
+        is_recheck = str(cand.get("reason") or "").strip().lower() == "policy_recheck"
+        if not is_recheck:
+            block_reason = self._plan_a_policy_recreate_block_reason(pos, current_native, now)
+            if block_reason:
+                pos["auto_sell_policy_reject_reason"] = block_reason
+                pos["auto_sell_policy_last_reject_reason"] = block_reason
+                cand["auto_sell_policy_reject_reason"] = block_reason
+                return {
+                    "auto_sell_policy_mode": mode,
+                    "auto_sell_policy_status": "rejected",
+                    "auto_sell_policy_reject_reason": block_reason,
+                }
+        policy, reject_reason = self._plan_a_auto_sell_policy_from_advice(pos, cand, advice, current_native, market)
+        if policy:
+            block_min = self._plan_a_policy_int(self._runtime_value("PLANA_HOLD_POLICY_RECREATE_COOLDOWN_MINUTES", 3), 3)
+            pos["auto_sell_policy"] = policy
+            pos["auto_sell_policy_last_created_at"] = policy["created_at"]
+            pos["auto_sell_policy_last_created_price"] = float(policy.get("created_price", 0) or 0)
+            pos["auto_sell_policy_recreate_block_until"] = (
+                now + timedelta(minutes=max(0, block_min))
+            ).isoformat(timespec="seconds")
+            pos["auto_sell_policy_last_recheck_at"] = policy.get("last_recheck_at", "")
+            pos["auto_sell_policy_last_reject_reason"] = ""
+            cand["auto_sell_policy"] = policy
+            return {
+                "auto_sell_policy_mode": str(policy.get("mode") or ""),
+                "auto_sell_policy_status": str(policy.get("status") or ""),
+                "auto_sell_policy_reject_reason": "",
+                "auto_sell_policy_recheck_count": int(policy.get("recheck_count", 0) or 0),
+            }
+        if reject_reason:
+            pos["auto_sell_policy_reject_reason"] = reject_reason
+            pos["auto_sell_policy_last_reject_reason"] = reject_reason
+            cand["auto_sell_policy_reject_reason"] = reject_reason
+            if is_recheck:
+                return self._plan_a_keep_existing_policy_after_invalid_recheck(pos, cand, reject_reason, now)
+            return {
+                "auto_sell_policy_mode": mode,
+                "auto_sell_policy_status": "rejected",
+                "auto_sell_policy_reject_reason": reject_reason,
+            }
+        return {"auto_sell_policy_mode": mode}
 
     @staticmethod
     def _auto_sell_review_default_policy(reason: str) -> str:
@@ -13064,25 +14084,48 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     ) -> str:
         if reason_key == "pre_close":
             return "pre_close"
-        if reason_key != "recovery_micro_time_stop":
-            return ""
-        if not bool(cand.get("recovery_micro_no_carry", False)):
+        soft_exit_reasons = {"recovery_micro_time_stop", "trail_stop", "profit_floor", "soft_exit_floor_price"}
+        if reason_key not in soft_exit_reasons:
             return ""
 
-        trigger = str(cand.get("recovery_micro_exit_trigger") or "").strip()
-        if trigger == "recovery_micro_force_time_stop":
-            return "recovery_micro_force_time_stop"
+        if reason_key == "recovery_micro_time_stop" and bool(cand.get("recovery_micro_no_carry", False)):
+            trigger = str(cand.get("recovery_micro_exit_trigger") or "").strip()
+            if trigger == "recovery_micro_force_time_stop":
+                return "recovery_micro_force_time_stop"
 
-        force_exit_at = str(cand.get("recovery_micro_force_exit_at") or "").strip()
-        if force_exit_at:
-            try:
-                force_dt = datetime.fromisoformat(force_exit_at.replace("Z", "+00:00"))
-                if force_dt.tzinfo is None:
-                    force_dt = force_dt.replace(tzinfo=KST)
-                if datetime.now(KST) >= force_dt.astimezone(KST):
-                    return "recovery_micro_force_exit_at_due"
-            except Exception:
-                pass
+            force_exit_at = str(cand.get("recovery_micro_force_exit_at") or "").strip()
+            if force_exit_at:
+                try:
+                    force_dt = datetime.fromisoformat(force_exit_at.replace("Z", "+00:00"))
+                    if force_dt.tzinfo is None:
+                        force_dt = force_dt.replace(tzinfo=KST)
+                    if datetime.now(KST) >= force_dt.astimezone(KST):
+                        return "recovery_micro_force_exit_at_due"
+                except Exception:
+                    pass
+
+        return self._recovery_micro_hard_guard_detail(
+            cand,
+            market,
+            current_native=current_native,
+        )
+
+    def _recovery_micro_hard_guard_detail(
+        self,
+        cand: dict,
+        market: str,
+        *,
+        current_native: float = 0.0,
+    ) -> str:
+        recovery_metadata_present = (
+            bool(cand.get("recovery_micro"))
+            or bool(cand.get("recovery_micro_no_carry"))
+            or str(cand.get("recovery_micro_hard_loss_pct") or "").strip() != ""
+            or str(cand.get("recovery_micro_force_exit_at") or "").strip() != ""
+            or str(cand.get("recovery_micro_exit_trigger") or "").strip() != ""
+        )
+        if not recovery_metadata_present:
+            return ""
 
         current = self._float_or_zero(current_native or cand.get("exit_price") or cand.get("current_price"))
         stop_price = self._float_or_zero(
@@ -13156,6 +14199,75 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False, ""
         return False, ""
 
+    def _auto_sell_review_force_sell_result(
+        self,
+        cand: dict,
+        market: str,
+        reason_key: str,
+        *,
+        current_native: float = 0.0,
+        now_iso: str = "",
+        force_detail: str = "",
+        detail_prefix: str = "system_force_sell",
+        cache_bypassed: bool = False,
+    ) -> dict:
+        ticker = str(cand.get("ticker", "") or "")
+        detail = f"{detail_prefix}:{force_detail}" if force_detail else detail_prefix
+        advice = {
+            "action": "SELL",
+            "confidence": 0.0,
+            "reason": detail,
+            "fallback": False,
+            "decision_stage": "AUTO_SELL_REVIEW",
+            "system_force_sell": True,
+        }
+        payload = {
+            "auto_sell_reviewed_at": now_iso or datetime.now(KST).isoformat(timespec="seconds"),
+            "auto_sell_review_reason": reason_key,
+            "auto_sell_review_action": "SELL",
+            "auto_sell_review_detail": detail,
+            "auto_sell_review_confidence": 0.0,
+            "auto_sell_review_fallback": False,
+        }
+        if cache_bypassed:
+            payload["hold_advisor_cache_bypassed"] = True
+            payload["hold_advisor_cache_bypass_reason"] = force_detail or detail_prefix
+        for pos in list(getattr(getattr(self, "risk", None), "positions", []) or []):
+            if pos.get("ticker") != ticker:
+                continue
+            pos.update(payload)
+            pos["hold_advice"] = advice
+            break
+        cand.update(payload)
+        cand["auto_sell_review_advice"] = advice
+        try:
+            self._record_decision_event(
+                market,
+                "auto_sell_review",
+                ticker,
+                strategy=cand.get("strategy", ""),
+                qty=int(cand.get("qty", 0) or 0),
+                price_native=float(current_native or 0),
+                price_krw=float(cand.get("exit_price", 0) or 0),
+                reason=reason_key,
+                detail=detail,
+                auto_sell_review_action="SELL",
+                auto_sell_review_confidence=0.0,
+                auto_sell_review_fallback=False,
+            )
+        except Exception:
+            pass
+        try:
+            self._write_funnel_event(
+                "hold_advisor_cache_force_bypass" if cache_bypassed else "auto_sell_review_force_sell_bypass",
+                market,
+                {"ticker": ticker, "reason": reason_key, "detail": force_detail or detail_prefix},
+            )
+        except Exception:
+            pass
+        log.info(f"[auto sell review SELL force] {market} {ticker} reason={reason_key} detail={detail}")
+        return {"allowed": True, "advice": advice, **payload}
+
     def _should_log_auto_sell_cooldown(self, market: str, ticker: str, reason: str, cooldown_detail: str) -> bool:
         key = (
             str(market or "").upper(),
@@ -13187,6 +14299,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 minutes = 5
         return max(1, min(60, minutes))
 
+    def _hold_advisor_soft_cache_near_close(self, market: str) -> bool:
+        threshold = self._runtime_float("HOLD_ADVISOR_SOFT_CACHE_NEAR_CLOSE_BYPASS_MIN", 15.0)
+        if threshold <= 0:
+            return False
+        market_key = str(market or "").upper()
+        if market_key not in {"KR", "US"}:
+            return True
+        try:
+            return float(self._minutes_to_close(market_key)) <= threshold
+        except Exception:
+            return True
+
+    def _hold_advisor_soft_cache_key(self, cand: dict, market: str, reason: str) -> tuple:
+        market_key = str(market or "").upper()
+        ticker_key = str(cand.get("ticker", "") or "").upper()
+        reason_key = str(reason or "").strip().lower()
+        try:
+            session_date = str(self._current_session_date_str(market_key) or "")
+        except Exception:
+            session_date = ""
+        if not session_date:
+            session_date = str(cand.get("entry_session_date") or cand.get("session_date") or "").strip()
+        position_identity = ""
+        for field in ("position_id", "entry_time", "created_at", "_fill_ts", "entry_session_date", "session_date"):
+            raw = cand.get(field)
+            if raw is None:
+                continue
+            value = str(raw).strip()
+            if value:
+                position_identity = value
+                break
+        if not position_identity:
+            position_identity = "unknown_position"
+        return (market_key, ticker_key, reason_key, session_date, position_identity)
+
     def _hold_advisor_soft_cache_allowed(self, cand: dict, reason: str) -> bool:
         if not self._runtime_bool("HOLD_ADVISOR_SOFT_CACHE_ENABLED", False):
             return False
@@ -13205,28 +14352,52 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _hold_advisor_soft_cache_get(self, cand: dict, market: str, reason: str, current_native: float) -> Optional[dict]:
         if not self._hold_advisor_soft_cache_allowed(cand, reason):
             return None
+        stats = getattr(self, "_hold_advisor_soft_cache_stats", None)
+        if not isinstance(stats, dict):
+            stats = {"hit": 0, "miss": 0, "expired": 0, "invalidated": 0}
+            self._hold_advisor_soft_cache_stats = stats
+        if self._hold_advisor_soft_cache_near_close(market):
+            stats["bypassed"] = int(stats.get("bypassed", 0) or 0) + 1
+            try:
+                self._write_funnel_event(
+                    "hold_advisor_cache_near_close_bypass",
+                    market,
+                    {"ticker": cand.get("ticker", ""), "reason": reason},
+                )
+            except Exception:
+                pass
+            return None
         cache = getattr(self, "_hold_advisor_soft_cache", None)
         if not isinstance(cache, dict):
+            stats["miss"] = int(stats.get("miss", 0) or 0) + 1
             return None
-        key = (str(market or "").upper(), str(cand.get("ticker", "") or "").upper(), str(reason or "").strip().lower())
+        key = self._hold_advisor_soft_cache_key(cand, market, reason)
         item = cache.get(key)
         if not isinstance(item, dict):
+            stats["miss"] = int(stats.get("miss", 0) or 0) + 1
             return None
         try:
             expires_at = datetime.fromisoformat(str(item.get("expires_at") or "").replace("Z", "+00:00"))
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=KST)
             if datetime.now(KST) >= expires_at.astimezone(KST):
+                stats["expired"] = int(stats.get("expired", 0) or 0) + 1
                 return None
         except Exception:
+            stats["expired"] = int(stats.get("expired", 0) or 0) + 1
             return None
         prev_price = self._float_or_zero(item.get("current_native"))
         prev_pnl = self._float_or_zero(item.get("pnl_pct"))
         pnl = self._review_position_pnl_pct(cand, market, current_native=current_native)
-        if prev_price > 0 and current_native > 0 and abs(current_native / prev_price - 1.0) * 100.0 >= 0.3:
+        price_move_max = self._runtime_float("HOLD_ADVISOR_SOFT_CACHE_PRICE_MOVE_MAX_PCT", 0.2)
+        pnl_move_max = self._runtime_float("HOLD_ADVISOR_SOFT_CACHE_PNL_MOVE_MAX_PCT", 0.15)
+        if prev_price > 0 and current_native > 0 and abs(current_native / prev_price - 1.0) * 100.0 >= price_move_max:
+            stats["invalidated"] = int(stats.get("invalidated", 0) or 0) + 1
             return None
-        if abs(pnl - prev_pnl) >= 0.2:
+        if abs(pnl - prev_pnl) >= pnl_move_max:
+            stats["invalidated"] = int(stats.get("invalidated", 0) or 0) + 1
             return None
+        stats["hit"] = int(stats.get("hit", 0) or 0) + 1
         return dict(item.get("payload") or {})
 
     def _hold_advisor_soft_cache_put(
@@ -13240,19 +14411,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     ) -> None:
         if not self._hold_advisor_soft_cache_allowed(cand, reason):
             return
+        if self._hold_advisor_soft_cache_near_close(market):
+            try:
+                self._write_funnel_event(
+                    "hold_advisor_cache_near_close_bypass",
+                    market,
+                    {"ticker": cand.get("ticker", ""), "reason": reason, "store": False},
+                )
+            except Exception:
+                pass
+            return
         if str((payload or {}).get("auto_sell_review_action") or "").upper() != "HOLD":
             return
         cache = getattr(self, "_hold_advisor_soft_cache", None)
         if not isinstance(cache, dict):
             cache = {}
             self._hold_advisor_soft_cache = cache
-        key = (str(market or "").upper(), str(cand.get("ticker", "") or "").upper(), str(reason or "").strip().lower())
-        ttl = max(1, min(15, self._auto_sell_review_next_review_minutes(advice)))
+        key = self._hold_advisor_soft_cache_key(cand, market, reason)
+        advice_ttl_sec = max(60, self._auto_sell_review_next_review_minutes(advice) * 60)
+        config_ttl_sec = max(1, int(self._runtime_float("HOLD_ADVISOR_SOFT_CACHE_TTL_SEC", 900.0)))
+        ttl_sec = min(advice_ttl_sec, config_ttl_sec)
         cache[key] = {
-            "expires_at": (datetime.now(KST) + timedelta(minutes=ttl)).isoformat(timespec="seconds"),
+            "expires_at": (datetime.now(KST) + timedelta(seconds=ttl_sec)).isoformat(timespec="seconds"),
             "current_native": float(current_native or 0.0),
             "pnl_pct": self._review_position_pnl_pct(cand, market, current_native=current_native),
             "payload": dict(payload or {}),
+            "ttl_sec": ttl_sec,
         }
 
     def _run_auto_sell_review_gate(
@@ -13272,8 +14456,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return {"allowed": True, "bypassed": True, "reason": "manual_or_operator_sell"}
 
         now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        force_sell, force_detail = self._auto_sell_review_force_sell_required(
+            cand,
+            market,
+            reason_key,
+            current_native=current_native,
+        )
+        if force_sell:
+            return self._auto_sell_review_force_sell_result(
+                cand,
+                market,
+                reason_key,
+                current_native=current_native,
+                now_iso=now_iso,
+                force_detail=force_detail,
+                detail_prefix="system_force_sell_pre_cache",
+            )
         cached = self._hold_advisor_soft_cache_get(cand, market, reason_key, current_native)
         if cached:
+            force_sell, force_detail = self._auto_sell_review_force_sell_required(
+                cand,
+                market,
+                reason_key,
+                current_native=current_native,
+            )
+            if force_sell:
+                return self._auto_sell_review_force_sell_result(
+                    cand,
+                    market,
+                    reason_key,
+                    current_native=current_native,
+                    now_iso=now_iso,
+                    force_detail=force_detail,
+                    detail_prefix="system_force_sell_after_cache_hit",
+                    cache_bypassed=True,
+                )
             payload = {
                 **cached,
                 "auto_sell_reviewed_at": now_iso,
@@ -13383,8 +14600,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "auto_sell_review_fallback": fallback,
         }
         if action != "SELL":
-            cooldown_until = datetime.now(KST) + timedelta(minutes=self._auto_sell_review_next_review_minutes(advice))
-            payload["auto_sell_review_cooldown_until"] = cooldown_until.isoformat(timespec="seconds")
+            policy_payload = self._apply_plan_a_hold_policy(cand, market, advice if isinstance(advice, dict) else {}, current_native)
+            payload.update(policy_payload)
+            if policy_payload.get("auto_sell_policy_force_sell"):
+                action = "SELL"
+                payload["auto_sell_review_action"] = "SELL"
+                payload["auto_sell_review_detail"] = (
+                    (detail + " | " if detail else "")
+                    + "plan_a_policy_invalid_recheck_expired"
+                )
+            else:
+                cooldown_until = datetime.now(KST) + timedelta(minutes=self._auto_sell_review_next_review_minutes(advice))
+                payload["auto_sell_review_cooldown_until"] = cooldown_until.isoformat(timespec="seconds")
         for pos in list(getattr(self.risk, "positions", []) or []):
             if pos.get("ticker") != ticker:
                 continue
@@ -13684,6 +14911,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if exit_price_krw <= 0:
             return None
         exit_meta = {
+            "order_no": order_no,
             "pending_sell_order_no": order_no,
             "pending_sell_resolution": resolution,
             "pending_sell_broker_status": resolution,
@@ -13776,8 +15004,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return None
         _closed_key = ticker.upper() if market_key == "US" else ticker
         self._session_closed_tickers.setdefault(market_key, set()).add(_closed_key)
-        if reason in ("loss_cap", "stop_loss", "hard_stop") or (
-            reason == "trail_stop" and float(ex.get("pnl_pct", 0) or 0) <= 0
+        if reason in ("loss_cap", "stop_loss", "hard_stop", "policy_hard_stop") or (
+            reason in ("trail_stop", "policy_protective_stop", "policy_recheck_limit_sell")
+            and float(ex.get("pnl_pct", 0) or 0) <= 0
         ):
             self._selection_meta_mark_runtime_filtered(
                 market_key,
@@ -13789,7 +15018,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         event_exit_meta = {
             key: value
             for key, value in exit_meta.items()
-            if key not in {"broker_fill_source", "broker_fill_confirmed", "broker_filled_qty"}
+            if key not in {"order_no", "broker_fill_source", "broker_fill_confirmed", "broker_filled_qty"}
         }
         self._record_decision_event(
             market_key,
@@ -13818,7 +15047,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             pass
         try:
             pnl_pct = float(ex.get("pnl_pct", 0) or 0)
-            if reason in ("loss_cap", "stop_loss") or (reason == "trail_stop" and pnl_pct <= 0):
+            if reason in ("loss_cap", "stop_loss", "policy_hard_stop") or (
+                reason in ("trail_stop", "policy_protective_stop", "policy_recheck_limit_sell")
+                and pnl_pct <= 0
+            ):
                 self._note_stop_loss_event(
                     market_key,
                     _closed_key,
@@ -14013,9 +15245,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             pnl_pct = float(rec.get("pnl_pct") or rec.get("return_pct") or 0.0)
         except (TypeError, ValueError):
             pnl_pct = 0.0
-        if reason in {"loss_cap", "stop_loss", "hard_stop", "daily_loss_stop"}:
+        if reason in {"loss_cap", "stop_loss", "hard_stop", "daily_loss_stop", "policy_hard_stop"}:
             return True
-        return reason == "trail_stop" and pnl_pct <= 0.0
+        if reason in {"trail_stop", "policy_protective_stop", "policy_recheck_limit_sell"}:
+            return pnl_pct <= 0.0
+        return False
 
     def _closed_decision_is_pathb_ticker_only_stop(self, rec: dict, market: str) -> bool:
         if not _env_bool("STOP_CLUSTER_PATHB_TICKER_ONLY_ENABLED", True):
@@ -14209,7 +15443,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if self._has_pending_sell_confirmation(cand["ticker"], market):
             log.warning(f"sell skipped [{cand['ticker']}]: previous sell order is pending broker fill confirmation")
             return False
-        if self._should_bypass_auto_sell_review_for_lifecycle(cand, market, reason):
+        _exit_bypass = self._should_bypass_auto_sell_review_for_lifecycle(cand, market, reason)
+        self._record_exit_lifecycle_bypass_attempt(market, reason, _exit_bypass)
+        if _exit_bypass:
             cand["auto_sell_review_action"] = "SELL"
             cand["auto_sell_review_detail"] = "exit_lifecycle_allowlist_bypass"
             cand["bypass_advisor"] = True
@@ -14396,11 +15632,39 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "recovery_micro_force_time_stop_min_pnl_pct",
             "recovery_micro_preclose_minutes",
             "exit_owner",
+            "auto_sell_policy",
+            "auto_sell_policy_mode",
+            "auto_sell_policy_status",
+            "auto_sell_policy_source",
+            "auto_sell_policy_signal_reason",
+            "auto_sell_policy_recheck_count",
+            "auto_sell_policy_recheck_reason",
+            "auto_sell_policy_created_at",
+            "auto_sell_policy_valid_until",
+            "auto_sell_policy_peak_price",
+            "auto_sell_policy_created_price",
+            "auto_sell_policy_protective_stop",
+            "auto_sell_policy_hard_stop",
+            "auto_sell_policy_recover_above",
+            "auto_sell_policy_revised_sell_target",
+            "auto_sell_policy_exit_reason",
+            "policy_currency",
+            "policy_exit_reason",
         )
         exit_meta = {key: cand[key] for key in audit_keys if key in cand}
         if reason == "mfe_breakeven":
             exit_meta.setdefault("exit_owner", "mfe_breakeven_policy")
-        elif reason in ("loss_cap", "profit_floor", "stop_loss", "trail_stop", "soft_exit_floor_price"):
+        elif reason in (
+            "loss_cap",
+            "profit_floor",
+            "stop_loss",
+            "trail_stop",
+            "soft_exit_floor_price",
+            "policy_protective_stop",
+            "policy_hard_stop",
+            "policy_recheck_limit_sell",
+            "policy_revised_target",
+        ):
             exit_meta.setdefault("exit_owner", "system_hard_rule")
         ex = self.risk.close_position(cand["ticker"], cand["exit_price"], reason, exit_meta=exit_meta)
         if not ex:
@@ -14417,7 +15681,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.debug(f"[sell proceeds ledger] record failed {market} {cand.get('ticker')}: {exc}")
         # Stop cluster: first stop cools down and shrinks size; second stop blocks new entries.
         _stop_pnl_pct = float(ex.get("pnl_pct", 0) or 0)
-        if reason in ("loss_cap", "stop_loss") or (reason == "trail_stop" and _stop_pnl_pct <= 0):
+        if reason in ("loss_cap", "stop_loss", "policy_hard_stop") or (
+            reason in ("trail_stop", "policy_protective_stop", "policy_recheck_limit_sell")
+            and _stop_pnl_pct <= 0
+        ):
             _sl_mkt = market
             _stop_key = ex["ticker"].upper() if market == "US" else ex["ticker"]
             self._note_stop_loss_event(
@@ -14439,7 +15706,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _fst_mult = float(os.getenv("STOP_CLUSTER_FIRST_STOP_SIZE_MULT", "0.5"))
                 log.info(f"[당일 손절 {_sl_mkt}] {_sl_cnt}회 — 이후 size x {_fst_mult}")
         # ML DB: 거래 결과 기록
-        if reason in ("loss_cap", "stop_loss") or (reason == "trail_stop" and _stop_pnl_pct <= 0):
+        if reason in ("loss_cap", "stop_loss", "policy_hard_stop") or (
+            reason in ("trail_stop", "policy_protective_stop", "policy_recheck_limit_sell")
+            and _stop_pnl_pct <= 0
+        ):
             self._selection_meta_mark_runtime_filtered(
                 market,
                 ex["ticker"].upper() if market == "US" else ex["ticker"],
@@ -19076,13 +20346,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 )
                         except Exception:
                             pass
-                    try:
-                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at)
-                        tsdb.update_traded(_tsdb_id, datetime.now(KST).isoformat())
-                    except Exception:
-                        pass
-                    if _isdb_id and _s_strat == "opening_range_pullback":
-                        isdb.update_trade(_isdb_id)
                     _v2_decision_id = self._v2_decision_id_for_ticker(market, _s_tk)
                     if not _v2_decision_id:
                         _v2_decision_id = self._v2_ensure_execution_decision_id(
@@ -19097,6 +20360,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 "path_a_lifecycle_evidence": True,
                             },
                         )
+                    try:
+                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at)
+                        _traded_at = datetime.now(KST).isoformat()
+                        _updated_tsdb_trade = tsdb.update_traded(
+                            _tsdb_id,
+                            _traded_at,
+                            execution_source_type="signal_entry",
+                            execution_decision_id=_v2_decision_id,
+                            execution_strategy=_s_strat,
+                            execution_reason="order_sent",
+                        )
+                        if not _updated_tsdb_trade:
+                            _new_tsdb_id = tsdb.insert_execution_row_from_selection(
+                                _tsdb_id,
+                                _traded_at,
+                                source_type="signal_entry",
+                                execution_source_type="signal_entry",
+                                execution_decision_id=_v2_decision_id,
+                                execution_strategy=_s_strat,
+                                execution_reason="order_sent",
+                            )
+                            if _new_tsdb_id:
+                                _tsdb_id = _new_tsdb_id
+                    except Exception:
+                        pass
+                    if _isdb_id and _s_strat == "opening_range_pullback":
+                        isdb.update_trade(_isdb_id)
                     _v2_execution_id = str(result.get("order_no", "") or f"exec_{market}_{_s_tk}_{int(time.time())}")
                     _route_payload = self._entry_route_payload(
                         market,
@@ -20732,7 +22022,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "US": round(float(self._market_realized_pnl_krw("US") or 0.0), 0),
             }
             path = get_runtime_path("state", f"{self._mode}_live_status_{market}.json")
-            _atomic_json_dump(path, {
+            _atomic_json_dump_with_retry(path, {
                     "market":         market,
                     "updated_at":     datetime.now(KST).strftime("%H:%M:%S"),
                     "trading_date":   self._current_session_date_str(market),
@@ -20813,7 +22103,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "session_active": False,
                 }
             )
-            _atomic_json_dump(path, payload, indent=None, default=str)
+            _atomic_json_dump_with_retry(path, payload, indent=None, default=str)
         except Exception as e:
             log.warning(f"live_status inactive mark failed [{market}]: {e}")
 
@@ -21037,17 +22327,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.warning(f"[장후 포지션 리뷰 오류] {market}: {_pse}")
         session_trades = self._filter_trades_for_market(self.risk.trade_log, market)
         # order_no 기준 중복 제거 (재시작 등으로 trade_log에 동일 체결이 2회 기록되는 케이스)
-        _seen_orders: set = set()
-        _deduped: list = []
-        for t in session_trades:
-            key = t.get("order_no") or id(t)
-            if key not in _seen_orders:
-                _seen_orders.add(key)
-                _deduped.append(t)
+        _initial_trade_count = len(session_trades)
+        session_trades = self._canonicalize_session_trades(session_trades, market, today)
+        _seen_orders: set = {self._trade_order_no(t) for t in session_trades if self._trade_order_no(t)}
         # decisions.jsonl 폴백 먼저
         # 재시작 등으로 trade_log가 비어 있는 경우 당일 closed 거래를 보조 소스로 추가해 매매 저장 누락을 방지한다.
-        log.info(f"[{market}] trade_log dedupe: {len(session_trades)} -> {len(_deduped)}")
-        session_trades = _deduped
+        log.info(f"[{market}] trade_log dedupe: {_initial_trade_count} -> {len(session_trades)}")
         # decisions.jsonl 폴백 먼저
         # 재시작 등으로 trade_log가 비어 있는 경우 당일 closed 거래를 보조 소스로 추가해 매매 저장 누락을 방지한다.
         try:
@@ -21094,7 +22379,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     })
             if _dec_trades:
                 log.info(f"[{market}] decisions.jsonl 폴백 {len(_dec_trades)}건 머지 (trade_log 누락 보완)")
-                session_trades = session_trades + _dec_trades
+                _before_merge_count = len(session_trades) + len(_dec_trades)
+                session_trades = self._canonicalize_session_trades(session_trades + _dec_trades, market, today)
+                log.info(f"[{market}] canonical trade merge: {_before_merge_count} -> {len(session_trades)}")
         except Exception as _dm_e:
             log.warning(f"[{market}] decisions.jsonl 머지 실패: {_dm_e}")
         _sell_log = [t for t in session_trades if t.get("side") == "sell"]
@@ -21141,6 +22428,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 actual.get("market_change"),
             )
         self.today_judgment["judgment_eval"] = judgment_eval
+        runtime_safety_summary = self._build_session_runtime_safety_summary(market, today)
         ops_review_snapshot = self._build_ops_review_snapshot(
             market,
             current_record={
@@ -21150,7 +22438,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "actual_result": actual,
             },
         )
+        ops_review_snapshot = self._attach_runtime_safety_to_ops_snapshot(
+            ops_review_snapshot,
+            runtime_safety_summary,
+        )
         self.today_judgment["ops_review_snapshot"] = ops_review_snapshot
+        self.today_judgment["runtime_safety_summary"] = runtime_safety_summary
+        self._emit_session_runtime_safety_alerts(market, runtime_safety_summary)
         lesson_candidates = self._persist_lesson_candidates(market, ops_review_snapshot)
         self._persist_live_judgment(market)
         _ops_metrics = ops_review_snapshot.get("metrics", {})
@@ -21178,6 +22472,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "consensus": self.today_judgment.get("consensus", {}),
                 "judgment_eval": judgment_eval,
                 "ops_review_snapshot": ops_review_snapshot,
+                "runtime_safety_summary": runtime_safety_summary,
         # ── 파인튜닝/프롬프트 개선을 위한 완전한 training record 저장 ──────────
                 "trades": session_trades,
             }},
@@ -21191,6 +22486,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "execution_health": execution_health,
             "judgment_eval": judgment_eval,
             "ops_review_snapshot": ops_review_snapshot,
+            "runtime_safety_summary": runtime_safety_summary,
             "postmortem":     pm,
             "trades":         session_trades,
             "decision_events": [e for e in self.decision_event_log if e.get("market") == market],

@@ -45,6 +45,16 @@ def _env_float(name: str, default: float = 0.0) -> float:
     except Exception:
         return float(default)
 
+
+def _env_int(name: str, default: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return int(default)
+    try:
+        return int(float(str(raw).replace(",", "")))
+    except Exception:
+        return int(default)
+
 # 수수료율 (근사값)
 # KR 매수: 0.015%, KR 매도: 0.015% + 증권거래세 0.18% = 0.195%
 # US 매수/매도: 0.015%
@@ -61,6 +71,8 @@ AUTO_PROFIT_TRAILING_ENABLED = os.getenv("AUTO_PROFIT_TRAILING_ENABLED", "true")
 )
 AUTO_TRAIL_TRIGGER_PCT = float(os.getenv("AUTO_TRAIL_TRIGGER_PCT", "3.0"))
 AUTO_TRAIL_PCT = float(os.getenv("AUTO_TRAIL_PCT", "0.04"))
+AUTO_TRAIL_PCT_KR = float(os.getenv("AUTO_TRAIL_PCT_KR", os.getenv("AUTO_TRAIL_PCT", "0.02")))
+AUTO_TRAIL_PCT_US = float(os.getenv("AUTO_TRAIL_PCT_US", os.getenv("AUTO_TRAIL_PCT", "0.04")))
 AUTO_BREAKEVEN_BUFFER_PCT = float(os.getenv("AUTO_BREAKEVEN_BUFFER_PCT", "0.002"))
 POSITION_SESSION_LOSS_CAP_PCT = float(os.getenv("POSITION_SESSION_LOSS_CAP_PCT", "0.5"))
 PROFIT_FLOOR_ENABLED = os.getenv("PROFIT_FLOOR_ENABLED", "true").lower() in (
@@ -71,6 +83,11 @@ PROFIT_FLOOR_ENABLED = os.getenv("PROFIT_FLOOR_ENABLED", "true").lower() in (
 )
 PROFIT_FLOOR_TRIGGER_PCT = float(os.getenv("PROFIT_FLOOR_TRIGGER_PCT", "2.0"))
 PROFIT_FLOOR_EXIT_PCT = float(os.getenv("PROFIT_FLOOR_EXIT_PCT", "0.5"))
+
+
+def _auto_trail_pct_for_market(market: str) -> float:
+    market_key = str(market or "").upper()
+    return AUTO_TRAIL_PCT_US if market_key == "US" else AUTO_TRAIL_PCT_KR
 
 HARD_RULES = {
     "max_daily_loss_pct":   float(os.getenv("MAX_DAILY_LOSS_PCT",   "-3.0")),   # 일일 최대 손실 (%)
@@ -327,7 +344,7 @@ class RiskManager:
                 and not protected
                 and pos["current_price"] > 0
             ):
-                trail_pct = max(0.005, min(0.08, AUTO_TRAIL_PCT))
+                trail_pct = max(0.005, min(0.08, _auto_trail_pct_for_market("US" if is_us else self.market)))
                 breakeven_sl = _entry * (1 + AUTO_BREAKEVEN_BUFFER_PCT)
                 trail_sl = pos["current_price"] * (1 - trail_pct)
                 pos["trailing"] = True
@@ -570,10 +587,259 @@ class RiskManager:
             or str(pos.get("path_type", "") or "") == "claude_price"
         )
 
+    @staticmethod
+    def _parse_plan_a_policy_dt(value: object) -> datetime | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=KST)
+        return parsed.astimezone(KST)
+
+    @staticmethod
+    def _plan_a_policy_float(value: object, default: float = 0.0) -> float:
+        try:
+            if isinstance(value, str):
+                value = value.replace(",", "").replace("$", "").strip()
+            return float(value or default)
+        except Exception:
+            return float(default)
+
+    @staticmethod
+    def _plan_a_policy_int(value: object, default: int = 0) -> int:
+        try:
+            return int(float(value or default))
+        except Exception:
+            return int(default)
+
+    @staticmethod
+    def _pending_sell_active(pos: dict) -> bool:
+        if bool(pos.get("sell_confirmation_pending")):
+            return True
+        status = str(pos.get("pending_sell_status") or "").strip().lower()
+        active_statuses = {
+            "pending",
+            "submitted",
+            "accepted",
+            "confirming",
+            "sent",
+            "open",
+            "working",
+            "fill_pending",
+            "filled_pending",
+        }
+        final_statuses = {"", "closed", "filled", "rejected", "cancelled", "canceled", "failed", "expired", "cleared"}
+        if status in active_statuses:
+            return True
+        return bool(pos.get("pending_sell_order_no")) and status not in final_statuses
+
+    def _plan_a_runtime_value(self, key: str, default: object = "") -> object:
+        runtime_cfg = getattr(self, "runtime_config", None)
+        if runtime_cfg is not None and hasattr(runtime_cfg, "get"):
+            return runtime_cfg.get(key, default)
+        return os.getenv(key, default)
+
+    def _plan_a_policy_mode(self, market: str = "") -> str:
+        market_key = str(market or self.market or "").upper()
+        raw = ""
+        if market_key in {"KR", "US"}:
+            raw = str(self._plan_a_runtime_value(f"{market_key}_PLANA_HOLD_POLICY_MODE", "") or "").strip().lower()
+        if not raw:
+            raw = str(self._plan_a_runtime_value("PLANA_HOLD_POLICY_MODE", "shadow") or "shadow").strip().lower()
+        return raw if raw in {"off", "shadow", "enforce"} else "shadow"
+
+    def _plan_a_policy_enforce_enabled(self, market: str = "") -> bool:
+        raw = self._plan_a_policy_mode(market)
+        return str(raw or "shadow").strip().lower() == "enforce"
+
+    def _plan_a_policy_max_rechecks(self, policy: dict) -> int:
+        policy_max = self._plan_a_policy_int((policy or {}).get("max_rechecks"), -1)
+        if policy_max >= 0:
+            return policy_max
+        raw_max = self._plan_a_runtime_value("PLANA_HOLD_POLICY_MAX_RECHECKS", 2)
+        return max(0, min(8, self._plan_a_policy_int(raw_max, 2)))
+
+    def _plan_a_policy_recheck_reason(self, policy: dict, current_native: float, now: datetime) -> str:
+        reask_at = self._parse_plan_a_policy_dt((policy or {}).get("reask_after_at"))
+        if reask_at is not None and now >= reask_at:
+            return "reask_after_due"
+        reask_above = self._plan_a_policy_float((policy or {}).get("reask_if_price_above"))
+        if reask_above > 0 and current_native >= reask_above:
+            return "reask_if_price_above"
+        drawdown_pct = self._plan_a_policy_float((policy or {}).get("reask_drawdown_from_peak_pct"))
+        peak = self._plan_a_policy_float((policy or {}).get("peak_price"))
+        if drawdown_pct > 0 and peak > 0 and current_native <= peak * (1.0 - drawdown_pct / 100.0):
+            return "drawdown_from_peak"
+        return ""
+
+    def _plan_a_policy_candidate_meta(
+        self,
+        policy: dict,
+        *,
+        reason: str,
+        effective_stop_price: float = 0.0,
+        recheck_reason: str = "",
+    ) -> dict:
+        return {
+            "auto_sell_policy": dict(policy or {}),
+            "auto_sell_policy_mode": str((policy or {}).get("mode") or ""),
+            "auto_sell_policy_status": str((policy or {}).get("status") or ""),
+            "auto_sell_policy_source": str((policy or {}).get("source") or ""),
+            "auto_sell_policy_signal_reason": str((policy or {}).get("signal_reason") or ""),
+            "auto_sell_policy_recheck_count": self._plan_a_policy_int((policy or {}).get("recheck_count")),
+            "auto_sell_policy_recheck_reason": recheck_reason,
+            "auto_sell_policy_created_at": str((policy or {}).get("created_at") or ""),
+            "auto_sell_policy_valid_until": str((policy or {}).get("valid_until") or ""),
+            "auto_sell_policy_peak_price": self._plan_a_policy_float((policy or {}).get("peak_price")),
+            "auto_sell_policy_created_price": self._plan_a_policy_float((policy or {}).get("created_price")),
+            "auto_sell_policy_protective_stop": self._plan_a_policy_float((policy or {}).get("protective_stop")),
+            "auto_sell_policy_hard_stop": self._plan_a_policy_float((policy or {}).get("hard_stop")),
+            "auto_sell_policy_recover_above": self._plan_a_policy_float((policy or {}).get("recover_above")),
+            "auto_sell_policy_revised_sell_target": self._plan_a_policy_float((policy or {}).get("revised_sell_target")),
+            "auto_sell_policy_exit_reason": reason,
+            "policy_currency": str((policy or {}).get("policy_currency") or ""),
+            "effective_stop_price": float(effective_stop_price or 0.0),
+            "exit_owner": "plan_a_hold_policy",
+            "policy_exit_reason": reason,
+        }
+
+    def _evaluate_plan_a_auto_sell_policy(self, pos: dict, current_native: float, market: str = "") -> dict:
+        if not self._plan_a_policy_enforce_enabled(market):
+            return {"action": "proceed"}
+        policy = pos.get("auto_sell_policy")
+        if not isinstance(policy, dict) or not policy:
+            return {"action": "proceed"}
+        if str(policy.get("status") or "").strip().lower() != "active":
+            return {"action": "proceed"}
+        mode = str(policy.get("mode") or "").strip().lower()
+        if mode not in {"target_extension", "profit_pullback", "stop_recovery"}:
+            return {"action": "proceed"}
+        if current_native <= 0:
+            return {"action": "proceed"}
+
+        now = datetime.now(KST)
+        valid_until = self._parse_plan_a_policy_dt(policy.get("valid_until"))
+        if valid_until is not None and now >= valid_until:
+            policy["status"] = "expired"
+            policy["expired_at"] = now.isoformat(timespec="seconds")
+            pos["auto_sell_policy"] = policy
+            return {"action": "proceed", "expired": True}
+
+        peak = self._plan_a_policy_float(policy.get("peak_price"))
+        if current_native > peak:
+            policy["peak_price"] = current_native
+            pos["auto_sell_policy"] = policy
+
+        if mode in {"target_extension", "profit_pullback"}:
+            protective_stop = self._plan_a_policy_float(policy.get("protective_stop"))
+            revised_target = self._plan_a_policy_float(policy.get("revised_sell_target"))
+            if protective_stop > 0 and current_native <= protective_stop:
+                return {
+                    "action": "sell",
+                    "reason": "policy_protective_stop",
+                    "effective_stop_price": protective_stop,
+                    "policy": policy,
+                }
+            if revised_target > 0 and current_native >= revised_target:
+                return {
+                    "action": "sell",
+                    "reason": "policy_revised_target",
+                    "effective_stop_price": revised_target,
+                    "policy": policy,
+                }
+            recheck_reason = self._plan_a_policy_recheck_reason(policy, current_native, now)
+            if recheck_reason:
+                recheck_count = self._plan_a_policy_int(policy.get("recheck_count"))
+                if recheck_count >= self._plan_a_policy_max_rechecks(policy):
+                    return {
+                        "action": "sell",
+                        "reason": "policy_recheck_limit_sell",
+                        "effective_stop_price": current_native,
+                        "policy": policy,
+                        "recheck_reason": recheck_reason,
+                    }
+                policy["last_recheck_signal_at"] = now.isoformat(timespec="seconds")
+                policy["last_recheck_reason"] = recheck_reason
+                pos["auto_sell_policy"] = policy
+                return {
+                    "action": "recheck",
+                    "reason": "policy_recheck",
+                    "effective_stop_price": protective_stop,
+                    "policy": policy,
+                    "recheck_reason": recheck_reason,
+                }
+            return {"action": "skip", "policy": policy}
+
+        hard_stop = self._plan_a_policy_float(policy.get("hard_stop"))
+        recover_above = self._plan_a_policy_float(policy.get("recover_above"))
+        if hard_stop > 0 and current_native <= hard_stop:
+            return {
+                "action": "sell",
+                "reason": "policy_hard_stop",
+                "effective_stop_price": hard_stop,
+                "policy": policy,
+            }
+        if recover_above > 0 and current_native >= recover_above:
+            policy["status"] = "recovered"
+            policy["recovered_at"] = now.isoformat(timespec="seconds")
+            policy["recovered_price"] = current_native
+            pos["auto_sell_policy"] = policy
+            return {"action": "proceed", "recovered": True}
+        recheck_reason = self._plan_a_policy_recheck_reason(policy, current_native, now)
+        if recheck_reason:
+            recheck_count = self._plan_a_policy_int(policy.get("recheck_count"))
+            if recheck_count >= self._plan_a_policy_max_rechecks(policy):
+                return {
+                    "action": "sell",
+                    "reason": "policy_recheck_limit_sell",
+                    "effective_stop_price": current_native,
+                    "policy": policy,
+                    "recheck_reason": recheck_reason,
+                }
+            policy["last_recheck_signal_at"] = now.isoformat(timespec="seconds")
+            policy["last_recheck_reason"] = recheck_reason
+            pos["auto_sell_policy"] = policy
+            return {
+                "action": "recheck",
+                "reason": "policy_recheck",
+                "effective_stop_price": hard_stop,
+                "policy": policy,
+                "recheck_reason": recheck_reason,
+            }
+        return {"action": "skip", "policy": policy}
+
+    def _append_policy_exit_candidate(
+        self,
+        candidates: list,
+        pos: dict,
+        *,
+        exit_price: float,
+        decision: dict,
+        base_meta: dict,
+    ) -> None:
+        reason = str(decision.get("reason") or "")
+        policy = dict(decision.get("policy") or pos.get("auto_sell_policy") or {})
+        meta = {
+            **(base_meta or {}),
+            **self._plan_a_policy_candidate_meta(
+                policy,
+                reason=reason,
+                effective_stop_price=self._plan_a_policy_float(decision.get("effective_stop_price")),
+                recheck_reason=str(decision.get("recheck_reason") or ""),
+            ),
+        }
+        candidates.append({**pos, "exit_price": exit_price, "reason": reason, **meta})
+
     def get_exit_candidates(self):
         candidates = []
         for pos in self.positions:
             if pos.get("pathb_closing"):
+                continue
+            if self._pending_sell_active(pos):
                 continue
             if self._is_pathb_managed_position(pos):
                 continue
@@ -639,14 +905,36 @@ class RiskManager:
                     exit_meta["recovery_micro_exit_trigger"] = recovery_trigger
                     if reason == "loss_cap":
                         exit_meta["effective_stop_price"] = cp_usd
-                elif protected:
+                    candidates.append({**pos, "exit_price": cp, "reason": reason, **exit_meta})
+                    continue
+                if loss_cap_usd > 0 and cp_usd <= loss_cap_usd:
+                    exit_meta["effective_stop_price"] = loss_cap_usd
+                    candidates.append({**pos, "exit_price": cp, "reason": "loss_cap", **exit_meta})
+                    continue
+                if mfe_hit:
+                    exit_meta["effective_stop_price"] = mfe_breakeven_usd
+                    candidates.append({**pos, "exit_price": cp, "reason": "mfe_breakeven", **exit_meta})
+                    continue
+
+                policy_decision = self._evaluate_plan_a_auto_sell_policy(pos, cp_usd, "US")
+                policy_action = str(policy_decision.get("action") or "proceed")
+                if policy_action in {"sell", "recheck"}:
+                    self._append_policy_exit_candidate(
+                        candidates,
+                        pos,
+                        exit_price=cp,
+                        decision=policy_decision,
+                        base_meta=exit_meta,
+                    )
+                    continue
+                if policy_action == "skip":
+                    continue
+
+                if protected:
                     reason, effective_stop = self._stop_reason(cp_usd, sl_usd, loss_cap_usd, "stop_loss")
                     exit_meta["effective_stop_price"] = effective_stop
                     if not reason and soft_floor_usd > 0 and cp_usd <= soft_floor_usd:
                         reason = "soft_exit_floor_price"
-                    elif not reason and mfe_hit:
-                        reason = "mfe_breakeven"
-                        exit_meta["effective_stop_price"] = mfe_breakeven_usd
                 elif pos.get("trailing"):
                     trail_sl_usd = float(pos.get("trail_sl_usd") or 0)
                     reason, effective_stop = self._stop_reason(cp_usd, trail_sl_usd, loss_cap_usd, "trail_stop")
@@ -654,9 +942,6 @@ class RiskManager:
                     exit_meta["effective_stop_price"] = effective_stop
                     if soft_floor_usd > 0 and cp_usd <= soft_floor_usd and reason in (None, "trail_stop"):
                         reason = "soft_exit_floor_price"
-                    if not reason and mfe_hit:
-                        reason = "mfe_breakeven"
-                        exit_meta["effective_stop_price"] = mfe_breakeven_usd
                     if not reason and floor_hit:
                         reason = "profit_floor"
                 else:
@@ -666,9 +951,6 @@ class RiskManager:
                         pass
                     elif soft_floor_usd > 0 and cp_usd <= soft_floor_usd:
                         reason = "soft_exit_floor_price"
-                    elif mfe_hit:
-                        reason = "mfe_breakeven"
-                        exit_meta["effective_stop_price"] = mfe_breakeven_usd
                     elif floor_hit:
                         reason = "profit_floor"
                     elif cp_usd >= tp_usd and not pos.get("tp_triggered"):
@@ -710,14 +992,36 @@ class RiskManager:
                 exit_meta["recovery_micro_exit_trigger"] = recovery_trigger
                 if reason == "loss_cap":
                     exit_meta["effective_stop_price"] = cp
-            elif protected:
+                candidates.append({**pos, "exit_price": cp, "reason": reason, **exit_meta})
+                continue
+            if loss_cap_krw > 0 and cp <= loss_cap_krw:
+                exit_meta["effective_stop_price"] = loss_cap_krw
+                candidates.append({**pos, "exit_price": cp, "reason": "loss_cap", **exit_meta})
+                continue
+            if mfe_hit:
+                exit_meta["effective_stop_price"] = mfe_breakeven_krw
+                candidates.append({**pos, "exit_price": cp, "reason": "mfe_breakeven", **exit_meta})
+                continue
+
+            policy_decision = self._evaluate_plan_a_auto_sell_policy(pos, cp, "KR")
+            policy_action = str(policy_decision.get("action") or "proceed")
+            if policy_action in {"sell", "recheck"}:
+                self._append_policy_exit_candidate(
+                    candidates,
+                    pos,
+                    exit_price=cp,
+                    decision=policy_decision,
+                    base_meta=exit_meta,
+                )
+                continue
+            if policy_action == "skip":
+                continue
+
+            if protected:
                 reason, effective_stop = self._stop_reason(cp, base_stop, loss_cap_krw, "stop_loss")
                 exit_meta["effective_stop_price"] = effective_stop
                 if not reason and soft_floor_krw > 0 and cp <= soft_floor_krw:
                     reason = "soft_exit_floor_price"
-                elif not reason and mfe_hit:
-                    reason = "mfe_breakeven"
-                    exit_meta["effective_stop_price"] = mfe_breakeven_krw
             elif pos.get("trailing"):
                 trail_stop = float(pos.get("trail_sl") or 0)
                 reason, effective_stop = self._stop_reason(cp, trail_stop, loss_cap_krw, "trail_stop")
@@ -725,9 +1029,6 @@ class RiskManager:
                 exit_meta["effective_stop_price"] = effective_stop
                 if soft_floor_krw > 0 and cp <= soft_floor_krw and reason in (None, "trail_stop"):
                     reason = "soft_exit_floor_price"
-                if not reason and mfe_hit:
-                    reason = "mfe_breakeven"
-                    exit_meta["effective_stop_price"] = mfe_breakeven_krw
                 if not reason and floor_hit:
                     reason = "profit_floor"
             else:
@@ -737,9 +1038,6 @@ class RiskManager:
                     pass
                 elif soft_floor_krw > 0 and cp <= soft_floor_krw:
                     reason = "soft_exit_floor_price"
-                elif mfe_hit:
-                    reason = "mfe_breakeven"
-                    exit_meta["effective_stop_price"] = mfe_breakeven_krw
                 elif floor_hit:
                     reason = "profit_floor"
                 elif cp >= pos["tp"] and not pos.get("tp_triggered"):
@@ -812,6 +1110,7 @@ class RiskManager:
                 "pnl_krw": pnl,
                 "pnl_pct": pnl_pct,
                 "reason": reason,
+                "order_no": str((exit_meta or {}).get("order_no") or (exit_meta or {}).get("pending_sell_order_no") or ""),
                 "partial_close": remaining_qty > 0,
                 **(exit_meta or {}),
             }
@@ -838,6 +1137,7 @@ class RiskManager:
                 "pnl": pnl,
                 "pnl_krw": pnl,
                 "pnl_pct": pnl_pct,
+                "order_no": str((exit_meta or {}).get("order_no") or (exit_meta or {}).get("pending_sell_order_no") or ""),
                 "partial_close": remaining_qty > 0,
                 "remaining_qty": remaining_qty,
                 **(exit_meta or {}),
@@ -877,6 +1177,7 @@ class RiskManager:
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,
                 "reason": reason,
+                "order_no": str((exit_meta or {}).get("order_no") or (exit_meta or {}).get("pending_sell_order_no") or ""),
                 **(exit_meta or {}),
             }
             evt = {
@@ -901,6 +1202,7 @@ class RiskManager:
                 "reason": reason,
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,
+                "order_no": str((exit_meta or {}).get("order_no") or (exit_meta or {}).get("pending_sell_order_no") or ""),
                 **(exit_meta or {}),
             }
             self.trade_log.append(evt)
@@ -938,6 +1240,24 @@ class RiskManager:
                     "recovery_micro_force_time_stop_min_pnl_pct",
                     "recovery_micro_preclose_minutes",
                     "exit_owner",
+                    "auto_sell_policy",
+                    "auto_sell_policy_mode",
+                    "auto_sell_policy_status",
+                    "auto_sell_policy_source",
+                    "auto_sell_policy_signal_reason",
+                    "auto_sell_policy_recheck_count",
+                    "auto_sell_policy_recheck_reason",
+                    "auto_sell_policy_created_at",
+                    "auto_sell_policy_valid_until",
+                    "auto_sell_policy_peak_price",
+                    "auto_sell_policy_created_price",
+                    "auto_sell_policy_protective_stop",
+                    "auto_sell_policy_hard_stop",
+                    "auto_sell_policy_recover_above",
+                    "auto_sell_policy_revised_sell_target",
+                    "auto_sell_policy_exit_reason",
+                    "policy_currency",
+                    "policy_exit_reason",
                 )
                 if key in cand
             }

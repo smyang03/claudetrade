@@ -55,14 +55,41 @@ def _agent_event_store_enabled() -> bool:
     }
 
 
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except Exception:
+        return str(left) == str(right)
+
+
+def _resolve_agent_event_store_path(raw: str) -> Path:
+    if not raw:
+        return get_runtime_path("data", "audit", "agent_call_events.db")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = get_runtime_path(raw, make_parents=True)
+    return path
+
+
+def _pytest_default_agent_event_store_blocked(path: Path, raw: str) -> bool:
+    if not os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    default_path = get_runtime_path("data", "audit", "agent_call_events.db")
+    return not raw or _same_path(path, default_path)
+
+
 def _agent_event_store() -> Optional[AgentCallEventStore]:
     global _AGENT_EVENT_STORE
     if not _agent_event_store_enabled():
         return None
     raw = str(os.getenv("AGENT_CALL_EVENT_DB_PATH", "") or "").strip()
-    path = Path(raw) if raw else get_runtime_path("data", "audit", "agent_call_events.db")
-    if raw and not path.is_absolute():
-        path = get_runtime_path(raw, make_parents=True)
+    path = _resolve_agent_event_store_path(raw)
+    if _pytest_default_agent_event_store_blocked(path, raw):
+        log.warning(
+            "[raw_call_logger] agent event store disabled during pytest unless "
+            "AGENT_CALL_EVENT_DB_PATH points to an explicit non-production DB"
+        )
+        return None
     if _AGENT_EVENT_STORE is not None and _AGENT_EVENT_STORE.path == path:
         return _AGENT_EVENT_STORE
     try:

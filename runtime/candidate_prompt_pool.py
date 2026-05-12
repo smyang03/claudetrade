@@ -82,12 +82,14 @@ def build_trainer_prompt_pool(
     *,
     market: str,
     target: int = 30,
-    hard_cap: int = 36,
+    hard_cap: int | None = None,
     reorder_enabled: bool = True,
 ) -> dict[str, Any]:
     market_key = "US" if str(market or "").upper() == "US" else "KR"
     target_count = max(0, int(target or 0))
-    cap = max(target_count, int(hard_cap or target_count or 0))
+    default_hard_cap = 28 if market_key == "KR" else 24
+    configured_hard_cap = int(hard_cap if hard_cap is not None else default_hard_cap)
+    cap = configured_hard_cap if configured_hard_cap > 0 else target_count
     if cap <= 0:
         cap = target_count
 
@@ -131,12 +133,14 @@ def build_trainer_prompt_pool(
         ticker = str(row.get("ticker") or "")
         if ticker in prompt_keys:
             continue
-        reason = _excluded_reason(row, cap_excluded=(row in eligible[cap:]))
+        cap_excluded = row in eligible[cap:]
+        reason = _excluded_reason(row, cap_excluded=cap_excluded)
+        prompt_excluded_reason = "hard_cap_cutoff" if cap_excluded else reason
         excluded.append(
             {
                 "ticker": ticker,
                 "reason": reason,
-                "prompt_excluded_reason": reason,
+                "prompt_excluded_reason": prompt_excluded_reason,
                 "raw_rank": row.get("raw_rank"),
                 "trainer_score_rank": ordered.index(row) + 1,
                 "trainer_prompt_score": row.get("trainer_prompt_score"),
@@ -170,4 +174,3 @@ def build_trainer_prompt_pool(
             "reorder_enabled": bool(reorder_enabled),
         },
     }
-

@@ -31,12 +31,15 @@ class LossCapProfitFloorTests(unittest.TestCase):
     def setUp(self) -> None:
         self._old_single_loss = risk_module.HARD_RULES["max_single_loss_pct"]
         self._old_session_cap = risk_module.POSITION_SESSION_LOSS_CAP_PCT
+        self._old_auto_trail_pct_kr = risk_module.AUTO_TRAIL_PCT_KR
         risk_module.HARD_RULES["max_single_loss_pct"] = -3.0
         risk_module.POSITION_SESSION_LOSS_CAP_PCT = 0.5
+        risk_module.AUTO_TRAIL_PCT_KR = 0.02
 
     def tearDown(self) -> None:
         risk_module.HARD_RULES["max_single_loss_pct"] = self._old_single_loss
         risk_module.POSITION_SESSION_LOSS_CAP_PCT = self._old_session_cap
+        risk_module.AUTO_TRAIL_PCT_KR = self._old_auto_trail_pct_kr
 
     def test_kr_loss_cap_overlays_wide_strategy_stop(self) -> None:
         risk = RiskManager(init_cash=1_000_000)
@@ -78,6 +81,19 @@ class LossCapProfitFloorTests(unittest.TestCase):
         candidates = risk.get_exit_candidates()
 
         self.assertEqual(candidates, [])
+
+    def test_kr_auto_trailing_uses_tighter_market_default(self) -> None:
+        risk = RiskManager(init_cash=1_000_000, market="KR")
+        risk.reset_daily_state(override_base=1_000_000)
+        opened = risk.open_position("010170", price=29_600.0, qty=6, strategy="momentum", tp_pct=0.06, sl_pct=0.03)
+        self.assertTrue(opened)
+
+        pos = risk.positions[0]
+        risk.update_prices({"010170": 30_500.0})
+
+        self.assertTrue(pos["trailing"])
+        self.assertAlmostEqual(pos["trail_pct"], risk_module.AUTO_TRAIL_PCT_KR)
+        self.assertAlmostEqual(pos["trail_sl"], 30_500.0 * (1 - risk_module.AUTO_TRAIL_PCT_KR))
 
     def test_max_hold_no_longer_creates_exit_candidate(self) -> None:
         risk = RiskManager(init_cash=1_000_000)

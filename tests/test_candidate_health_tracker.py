@@ -116,6 +116,39 @@ class CandidateHealthTrackerTests(unittest.TestCase):
         self.assertEqual(tracker.state_for("417200")["health_state"], "WATCH_STRENGTHENING")
         self.assertEqual(tracker.state_for("098460")["health_state"], "WATCH_WEAK")
 
+    def test_ready_failure_counts_stale_cycle_but_repeated_watch_does_not(self) -> None:
+        tracker, _ = self._tracker()
+        base = datetime(2026, 4, 29, 9, 0)
+        tracker.update_selection(
+            watchlist=["058430"],
+            trade_ready=[],
+            price_by_ticker={"058430": 10000},
+            now=base,
+        )
+        tracker.update_selection(
+            watchlist=["058430"],
+            trade_ready=[],
+            price_by_ticker={"058430": 10020},
+            now=base + timedelta(minutes=5),
+        )
+
+        watch_state = tracker.state_for("058430")
+        self.assertEqual(int(watch_state.get("stale_cycle_count") or 0), 0)
+
+        tracker.update_selection(
+            watchlist=["058430"],
+            trade_ready=[],
+            price_by_ticker={"058430": 10020},
+            ready_failure_reasons={"058430": ["ready_route_blocked"]},
+            now=base + timedelta(minutes=10),
+        )
+
+        failed_state = tracker.state_for("058430")
+        self.assertEqual(failed_state["failed_ready_count"], 1)
+        self.assertEqual(failed_state["stale_cycle_count"], 1)
+        self.assertEqual(failed_state["last_status"], "READY_FAILED")
+        self.assertIn("ready_route_blocked", failed_state["failed_ready_reasons"])
+
     def test_compact_session_date(self) -> None:
         self.assertEqual(compact_session_date("2026-04-29"), "20260429")
 

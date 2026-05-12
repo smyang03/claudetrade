@@ -32,6 +32,11 @@ DEFAULT_LIVE_BYPASS_REASONS = {
     "daily_loss_stop",
 }
 
+EXPANDABLE_LIVE_BYPASS_REASONS = {
+    "trail_exit",
+    "sla_exit",
+}
+
 
 def reason_family(reason: str, exit_candidate: dict[str, Any] | None = None, position: dict[str, Any] | None = None) -> str:
     reason_key = str(reason or "").strip()

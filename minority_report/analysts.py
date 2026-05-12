@@ -195,88 +195,6 @@ def _recover_partial_selection_json(s: str) -> dict:
     return recovered
 
 
-def _extract_json_legacy_dead(text: str) -> dict:
-    """Claude 응답에서 JSON 추출 — 형식 무관하게 견고하게 파싱"""
-    def _fix(s: str) -> str:
-        # trailing comma
-        s = re.sub(r",(\s*[}\]])", r"\1", s)
-        # JSON 비표준 수치 리터럴 (nan, inf)
-        s = re.sub(r'\bNaN\b',       '"NaN"',  s)
-        s = re.sub(r'\bInfinity\b',  '999',    s)
-        s = re.sub(r'\b-Infinity\b', '-999',   s)
-        s = re.sub(r'\bnan\b',       '0',      s)
-        s = re.sub(r'\binf\b',       '999',    s)
-        s = re.sub(r'\b-inf\b',      '-999',   s)
-        # 전각 따옴표/콜론 → ASCII
-        s = s.replace('\u201c', '"').replace('\u201d', '"')
-        s = s.replace('\u2018', "'").replace('\u2019', "'")
-        s = s.replace('\uff1a', ':')
-        # string value 내 literal 개행·탭 제거 (키-값 구분자 오파싱 방지)
-        s = re.sub(r'(?<=":)(\s*"[^"]*?)\n([^"]*?")', lambda m: m.group(0).replace('\n', ' '), s)
-        s = s.replace('\r\n', ' ').replace('\r', ' ')
-        # 제어문자 제거 (null바이트 등)
-        s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', s)
-        return s
-
-    def _try_parse(s: str) -> dict:
-        try:
-            return json.loads(_fix(s))
-        except json.JSONDecodeError:
-            pass
-        recovered = _recover_partial_selection_json(s)
-        if recovered:
-            log.warning(
-                "[_extract_json] JSON 파싱 실패 — partial 복구: "
-                f"watch={recovered.get('watchlist', [])[:20]} "
-                f"trade={recovered.get('trade_ready', [])[:12]} "
-                f"reasons={len(recovered.get('reasons', {}))}개"
-            )
-            return recovered
-        # tickers 배열 추출
-        reasons_start = s.find('"reasons"')
-        tickers_section = s[:reasons_start] if reasons_start != -1 else s
-        tickers = list(dict.fromkeys(re.findall(r'"([A-Z0-9]{2,10})"', tickers_section)))
-        # reasons 개별 key:value 쌍 regex 추출 시도
-        reasons = {}
-        if reasons_start != -1:
-            reasons_section = s[reasons_start:]
-            pairs = re.findall(r'"([A-Z0-9]{2,10})"\s*:\s*"([^"]{1,60})"', reasons_section)
-            reasons = {k: v for k, v in pairs}
-        if tickers:
-            log.warning(f"[_extract_json] JSON 파싱 실패 — regex 복구: tickers={tickers[:20]} reasons={len(reasons)}개")
-            return {
-                "tickers": tickers[:20],
-                "reasons": reasons,
-                "_parse_recovered": True,
-                "_fallback_mode": "ticker_regex",
-            }
-        raise ValueError("tickers 추출 불가")
-
-    # 1차: 닫힌 ```json ... ``` 블록
-    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
-    if m:
-        return _try_parse(m.group(1))
-    # 2차: { ... } 정상 추출
-    start = text.find("{")
-    end   = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return _try_parse(text[start:end + 1])
-    # 3차: 응답이 max_tokens로 잘린 경우 — 열린 { 뒤 내용으로 필드 regex 복구
-    if start != -1:
-        partial = text[start:]
-        stance_m = re.search(r'"stance"\s*:\s*"([A-Z_]+)"', partial)
-        conf_m   = re.search(r'"confidence"\s*:\s*([0-9.]+)', partial)
-        reason_m = re.search(r'"key_reason"\s*:\s*"([^"]{1,200})"', partial)
-        if stance_m:
-            log.warning(f"[_extract_json] 잘린 응답 regex 복구: stance={stance_m.group(1)}")
-            return {
-                "stance":     stance_m.group(1),
-                "confidence": float(conf_m.group(1)) if conf_m else 0.5,
-                "key_reason": reason_m.group(1) if reason_m else "응답 잘림",
-            }
-    raise ValueError(f"JSON 추출 실패: {text[:200]}")
-
-
 def _extract_json_strict(text: str) -> dict:
     """Extract JSON without partial recovery for machine-contract responses."""
 
@@ -710,15 +628,21 @@ def _candidate_trainer_hint(candidate: dict) -> str:
         parts.append(f"risk={float(risk):.0f}")
     except Exception:
         pass
+    try:
+        failed_ready_count = int(float(candidate.get("repeated_failed_ready_count") or candidate.get("stale_cycle_count") or 0))
+        if failed_ready_count > 0:
+            parts.append(f"repeated_failed_ready_count={failed_ready_count}")
+    except Exception:
+        pass
     return "trainer=" + ",".join(parts) if parts else ""
 
 
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
     if market == "US":
-        hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "30"))
+        hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "24"))
         watch_margin = 4
     else:
-        hard_cap = int(os.getenv("KR_SELECTION_PROMPT_CAP", "30"))
+        hard_cap = int(os.getenv("KR_SELECTION_PROMPT_CAP", "28"))
         watch_margin = 8
     target = max(trade_max + 8, min(watch_max + watch_margin, hard_cap))
     return max(trade_max, min(target, hard_cap))
@@ -840,9 +764,10 @@ def _trainer_prompt_target(market: str, fallback: int) -> int:
 
 def _trainer_prompt_hard_cap(market: str, fallback: int) -> int:
     market_key = str(market or "").upper()
+    policy_default = 24 if market_key == "US" else 28
     return _env_int_bound(
         f"CANDIDATE_PROMPT_POOL_HARD_CAP_{market_key}",
-        max(fallback, _env_int_bound(f"{market_key}_PROMPT_POOL_CAP", fallback, 1, 100)),
+        _env_int_bound(f"{market_key}_PROMPT_POOL_CAP", policy_default, 1, 100),
         1,
         100,
     )

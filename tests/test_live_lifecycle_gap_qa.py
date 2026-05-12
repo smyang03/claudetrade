@@ -56,6 +56,8 @@ class LiveLifecycleGapQATests(unittest.TestCase):
         self.assertEqual(report["gap_count"], 1)
         self.assertEqual(report["gaps"][0]["ticker"], "012610")
         self.assertEqual(report["gaps"][0]["event_type"], "ORDER_SENT")
+        self.assertEqual(report["gaps"][0]["severity"], "MEDIUM")
+        self.assertEqual(report["severity_counts"], {"MEDIUM": 1})
 
     def test_matching_lifecycle_event_has_no_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -137,3 +137,26 @@ def test_trading_bot_execution_health_excludes_broker_sync_trade() -> None:
     assert health["learning_excluded"] is True
     assert health["warning"] is False
     assert "broker_sync_trade" in health["reasons"]
+
+
+def test_trading_bot_execution_health_classifies_invalid_position_geometry() -> None:
+    bot = TradingBot.__new__(TradingBot)
+    bot._execution_flags = {"KR": set()}
+    bot.decision_event_log = []
+    bot.pending_orders = []
+
+    health = TradingBot._build_execution_health(
+        bot,
+        "KR",
+        [
+            {
+                "strategy": "broker_sync",
+                "ticker": "018880",
+                "tp_price": 5904,
+                "effective_stop_price": 5988,
+            }
+        ],
+    )
+
+    assert "invalid_position_geometry" in health["reasons"]
+    assert health["learning_excluded"] is True

@@ -396,6 +396,56 @@ def _has_weekday_between(start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> bool:
     return any(day.weekday() < 5 for day in pd.date_range(start, end, freq="D"))
 
 
+def _expected_trading_days(market: str, start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> tuple[list[pd.Timestamp], str]:
+    start = pd.Timestamp(start_dt).normalize()
+    end = pd.Timestamp(end_dt).normalize()
+    if start > end:
+        return [], "empty"
+    market_key = str(market or "").upper()
+    try:
+        import exchange_calendars as ec
+
+        calendar = ec.get_calendar("XKRX" if market_key == "KR" else "XNYS")
+        sessions = calendar.sessions_in_range(start, end)
+        return [pd.Timestamp(day).tz_localize(None).normalize() for day in sessions], "exchange_calendars"
+    except Exception:
+        return [pd.Timestamp(day).normalize() for day in pd.date_range(start, end, freq="D") if day.weekday() < 5], "weekday_fallback"
+
+
+def _audit_csv_date_gaps(df: pd.DataFrame, market: str) -> dict:
+    if df.empty or "date" not in df.columns:
+        return {"calendar_source": "none", "gaps": [], "duplicate_dates": 0}
+    dates = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None).dropna().dt.normalize()
+    if dates.empty:
+        return {"calendar_source": "none", "gaps": [], "duplicate_dates": 0}
+    duplicate_dates = int(dates.duplicated().sum())
+    expected, source = _expected_trading_days(market, dates.min(), dates.max())
+    present = set(pd.Timestamp(day).normalize() for day in dates)
+    gaps = [day for day in expected if day not in present]
+    return {
+        "calendar_source": source,
+        "gaps": gaps,
+        "duplicate_dates": duplicate_dates,
+        "warning_only": source == "weekday_fallback",
+    }
+
+
+def _gap_ranges(gaps: list[pd.Timestamp]) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    if not gaps:
+        return []
+    ordered = sorted(pd.Timestamp(day).normalize() for day in gaps)
+    ranges: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    start = prev = ordered[0]
+    for day in ordered[1:]:
+        if (day - prev).days <= 3:
+            prev = day
+            continue
+        ranges.append((start, prev))
+        start = prev = day
+    ranges.append((start, prev))
+    return ranges
+
+
 def fetch_kr_daily_yfinance(ticker: str, start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> pd.DataFrame:
     """yfinance 폴백 — KIS API 실패 시 사용 (KOSPI: .KS, KOSDAQ: .KQ)"""
     try:
@@ -453,6 +503,26 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
                 existing = pd.read_csv(path, parse_dates=["date"]).sort_values("date")
                 ex_min, ex_max = existing["date"].min(), existing["date"].max()
                 print(f"  [{ticker}] 기존: {ex_min.date()} ~ {ex_max.date()} ({len(existing)}일)")
+                gap_audit = _audit_csv_date_gaps(existing, "KR")
+                if gap_audit["duplicate_dates"]:
+                    print(f"         WARN duplicate date rows: {gap_audit['duplicate_dates']}")
+                for gap_start, gap_end in _gap_ranges(gap_audit["gaps"]):
+                    try:
+                        df_gap = fetch_kr_daily(ticker, gap_start.strftime("%Y%m%d"), gap_end.strftime("%Y%m%d"))
+                    except Exception:
+                        df_gap = pd.DataFrame()
+                    df_gap = _normalize_date_window(df_gap, gap_start, gap_end)
+                    if df_gap.empty:
+                        df_gap = fetch_kr_daily_yfinance(ticker, gap_start, gap_end)
+                    df_gap = _normalize_date_window(df_gap, gap_start, gap_end)
+                    if not df_gap.empty:
+                        fetch_parts.append(df_gap)
+                        print(f"         gap {gap_start.date()} ~ {gap_end.date()} {len(df_gap)} rows added")
+                    else:
+                        print(
+                            f"         WARN gap fetch failed {gap_start.date()} ~ {gap_end.date()} "
+                            f"calendar={gap_audit['calendar_source']}"
+                        )
 
                 # < 앞 확장 (예: 500일 > 800일로 늘릴 때)
                 if start_dt < ex_min:
@@ -616,6 +686,23 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
             if path.exists():
                 existing = pd.read_csv(path, parse_dates=["date"]).sort_values("date")
                 ex_min, ex_max = existing["date"].min(), existing["date"].max()
+                gap_audit = _audit_csv_date_gaps(existing, "US")
+                gap_ranges = _gap_ranges(gap_audit["gaps"])
+                if gap_audit["duplicate_dates"]:
+                    print(f"  [{ticker}] WARN duplicate date rows: {gap_audit['duplicate_dates']}")
+                if gap_ranges:
+                    print(f"  [{ticker}] internal gap detected ({len(gap_ranges)} ranges, calendar={gap_audit['calendar_source']})")
+                    gap_parts = []
+                    for gap_start, gap_end in gap_ranges:
+                        df_gap = fetch_us_daily_yfinance(ticker, gap_start, gap_end)
+                        df_gap = _normalize_date_window(df_gap, gap_start, gap_end)
+                        if not df_gap.empty:
+                            gap_parts.append(df_gap)
+                    if gap_parts:
+                        combined = pd.concat([existing] + gap_parts)
+                        _save(path, combined, start_dt, end_dt, f"{name}({ticker})")
+                        continue
+                    print(f"  WARN  {name}({ticker}) internal gap fetch failed")
                 already_fresh  = ex_max >= today_ts - timedelta(days=4)
                 already_covers = ex_min <= start_dt + timedelta(days=5)
                 if already_fresh and already_covers:
@@ -645,6 +732,9 @@ def _save(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Times
     if df.empty or "date" not in df.columns:
         print(f"  WARN  {label}: no price rows returned")
         return
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
+    df = df[df["date"].notna()]
     df = (df
           .drop_duplicates("date")
           .sort_values("date")

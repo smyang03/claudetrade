@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from audit import candidate_audit_store as audit_store_module
 from audit.candidate_audit_store import CandidateAuditStore, candidate_key
 from tools.analyze_candidate_audit import analyze_candidate_audit, classify_strategy_match, watch_trigger_funnel_summary
 from tools.backfill_candidate_audit import backfill_candidate_audit
@@ -37,6 +38,11 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                     "trainer_candidate_state": "PLAN_A",
                     "trainer_score_components_json": {"version": "trainer_quality_v1"},
                     "source_tags_json": ["US:momentum_now", "US:high"],
+                    "stale_cycle": True,
+                    "stale_cycle_count": 3,
+                    "repeated_failed_ready_count": 2,
+                    "no_fill_cycle_count": 1,
+                    "failed_ready_reasons_json": ["soft_gate_override_failed"],
                     "candidate_pool_version": "trainer_quality_v1",
                     "prompt_pool_version": "trainer_prompt_pool_v1",
                 }
@@ -49,7 +55,10 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                     """
                     SELECT final_prompt_included, raw_rank, trainer_score_rank,
                            trainer_prompt_score, trainer_candidate_state,
-                           trainer_score_components_json, source_tags_json
+                           trainer_score_components_json, source_tags_json,
+                           stale_cycle, stale_cycle_count,
+                           repeated_failed_ready_count, no_fill_cycle_count,
+                           failed_ready_reasons_json
                     FROM audit_candidate_rows
                     WHERE ticker='NVDA'
                     """
@@ -64,6 +73,39 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(row["trainer_candidate_state"], "PLAN_A")
             self.assertIn("trainer_quality_v1", row["trainer_score_components_json"])
             self.assertIn("momentum_now", row["source_tags_json"])
+            self.assertEqual(row["stale_cycle"], 1)
+            self.assertEqual(row["stale_cycle_count"], 3)
+            self.assertEqual(row["repeated_failed_ready_count"], 2)
+            self.assertEqual(row["no_fill_cycle_count"], 1)
+            self.assertIn("soft_gate_override_failed", row["failed_ready_reasons_json"])
+
+    def test_upsert_candidate_rolls_back_base_row_when_extra_update_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            row = {
+                "call_id": "call_rollback",
+                "runtime_mode": "live",
+                "market": "KR",
+                "session_date": "2026-05-12",
+                "ticker": "005930",
+            }
+
+            with patch.object(audit_store_module, "EXTRA_CANDIDATE_COLUMNS", ("missing_extra_column",)), \
+                 patch.object(audit_store_module, "_candidate_extra_value", return_value="boom"):
+                with self.assertRaises(sqlite3.OperationalError):
+                    store.upsert_candidate(row)
+
+            conn = sqlite3.connect(db_path)
+            try:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM audit_candidate_rows WHERE candidate_key=?",
+                    [candidate_key(session_date="2026-05-12", market="KR", call_id="call_rollback", ticker="005930")],
+                ).fetchone()[0]
+            finally:
+                conn.close()
+
+        self.assertEqual(count, 0)
 
     def test_watch_trigger_funnel_summary_counts_shadow_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -827,6 +869,61 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                     "duplicate_group_count": 1,
                 },
             )
+
+    def test_update_execution_by_ticker_can_target_latest_row_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            for call_id, known_at in (("call_old", "2026-05-08T09:00:00"), ("call_new", "2026-05-08T09:05:00")):
+                store.upsert_candidate(
+                    {
+                        "call_id": call_id,
+                        "runtime_mode": "live",
+                        "market": "US",
+                        "session_date": "2026-05-08",
+                        "known_at": known_at,
+                        "ticker": "AAPL",
+                    }
+                )
+
+            updated = store.update_execution_by_ticker(
+                session_date="2026-05-08",
+                market="US",
+                runtime_mode="live",
+                ticker="AAPL",
+                values={
+                    "filled_count": 1,
+                    "execution_link_source": "v2_event_store.lifecycle_events",
+                    "execution_decision_id": "decision_new",
+                    "execution_event_id": 42,
+                },
+                latest_only=True,
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT call_id, filled_count, execution_link_source,
+                           execution_decision_id, execution_event_id
+                    FROM audit_candidate_rows
+                    WHERE ticker='AAPL'
+                    ORDER BY known_at
+                    """
+                ).fetchall()
+            finally:
+                conn.close()
+
+            self.assertEqual(updated, 1)
+            self.assertEqual(rows[0]["call_id"], "call_old")
+            self.assertEqual(rows[0]["filled_count"], 0)
+            self.assertIsNone(rows[0]["execution_decision_id"])
+            self.assertEqual(rows[1]["call_id"], "call_new")
+            self.assertEqual(rows[1]["filled_count"], 1)
+            self.assertEqual(rows[1]["execution_link_source"], "v2_event_store.lifecycle_events")
+            self.assertEqual(rows[1]["execution_decision_id"], "decision_new")
+            self.assertEqual(rows[1]["execution_event_id"], 42)
 
     def test_analyze_candidate_audit_includes_row_uniqueness_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

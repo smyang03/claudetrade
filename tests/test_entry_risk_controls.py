@@ -84,6 +84,45 @@ class EntryRiskControlTests(unittest.TestCase):
         self.assertEqual(runtime.daily_entry_count("KR"), 3)
         self.assertEqual(runtime.daily_entry_count("US"), 2)
 
+    def test_v2_ensure_decision_id_records_fallback_metrics_in_selection_meta(self) -> None:
+        class _Store:
+            def find_decision(self, **kwargs):
+                return None
+
+        class _Registry:
+            store = _Store()
+
+            def register_trade_ready(self, **kwargs):
+                self.kwargs = kwargs
+                return "decision_012610"
+
+        bot = SimpleNamespace(
+            _mode="live",
+            selection_meta={"KR": {}},
+            _current_session_date_str=lambda market: "2026-05-12",
+        )
+        runtime = V2LifecycleRuntime.__new__(V2LifecycleRuntime)
+        runtime.bot = bot
+        runtime.enabled = True
+        runtime.registry = _Registry()
+        runtime.decision_ids = {"KR": {}, "US": {}}
+        runtime.brain_snapshot_ids = {"KR": "brain_kr", "US": ""}
+        runtime.brain_snapshot_store = None
+
+        decision_id = runtime.ensure_decision_id(
+            "KR",
+            "012610",
+            strategy_hint="momentum",
+            payload={"registration_source": "execution_lifecycle_fallback"},
+        )
+
+        self.assertEqual(decision_id, "decision_012610")
+        meta = bot.selection_meta["KR"]
+        self.assertEqual(meta["_decision_id_fallback_count"], 1)
+        self.assertEqual(meta["_decision_id_fallback_tickers"], ["012610"])
+        self.assertEqual(meta["_decision_id_fallback_sources"], ["execution_lifecycle_fallback"])
+        self.assertEqual(meta["v2_decision_ids"]["012610"], "decision_012610")
+
     def test_market_risk_shadow_keeps_market_scoped_snapshot(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         bot.risk = SimpleNamespace(
@@ -125,6 +164,9 @@ class EntryRiskControlTests(unittest.TestCase):
         self.assertEqual(us_status["position_count"], 1)
         self.assertEqual(kr_status["daily_pnl_krw"], -10000)
         self.assertEqual(us_status["daily_pnl_krw"], 5000)
+        self.assertEqual(kr_status["event_count"], 1)
+        self.assertEqual(kr_status["entry_count"], 1)
+        self.assertEqual(kr_status["closed_count"], 0)
 
     def test_us_broker_sync_quarantine_blocks_degraded_safety_context(self) -> None:
         with patch.dict(os.environ, {"US_BROKER_SYNC_QUARANTINE_ENABLED": "true"}, clear=False):

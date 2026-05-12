@@ -857,7 +857,33 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
         run = reopened.find_path_run("preflight_path")
         ok = bool(run and run["status"] == "FILLED" and run["plan"].get("buy_zone_low") == 52000 and run["plan"].get("filled_qty") == 1)
         checks.append(CheckResult("db.roundtrip_temp", "PASS" if ok else "FAIL", "temp DB decision/event/path_run round trip"))
+    checks.extend(_agent_call_event_store_contamination_checks(mode))
     return checks
+
+
+def _agent_call_event_store_contamination_checks(mode: str) -> list[CheckResult]:
+    try:
+        from tools.clean_agent_call_event_store import scan_agent_call_event_store
+
+        summary = scan_agent_call_event_store(get_runtime_path("data", "audit", "agent_call_events.db"))
+        matched = int(summary.get("matched_event_count") or 0)
+        if matched:
+            status = "FAIL" if str(mode or "").lower() == "live" else "WARN"
+            detail = f"test-contaminated agent_call_events rows={matched}"
+        else:
+            status = "PASS"
+            detail = "agent_call_events has no known test contamination signatures"
+        summary["remediation_tool"] = "python tools/clean_agent_call_event_store.py --json"
+        summary["apply_command"] = "python tools/clean_agent_call_event_store.py --apply --json"
+        return [CheckResult("db.agent_call_event_store_contamination", status, detail, summary)]
+    except Exception as exc:
+        return [
+            CheckResult(
+                "db.agent_call_event_store_contamination",
+                "WARN",
+                f"agent_call_events contamination check failed: {exc}",
+            )
+        ]
 
 
 def _token_checks(mode: str) -> list[CheckResult]:

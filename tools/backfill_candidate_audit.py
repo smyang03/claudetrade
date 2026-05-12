@@ -595,6 +595,7 @@ def _backfill_decisions(
         filled_rows = [r for r in items if int(r.get("filled") or 0) == 1]
         pnl_rows = [r for r in items if r.get("pnl_pct") is not None]
         last_pnl = pnl_rows[-1] if pnl_rows else {}
+        linked_row = last_pnl or (filled_rows[-1] if filled_rows else (buy_rows[-1] if buy_rows else items[-1]))
         values = {
             "decision_count": len(items),
             "buy_signal_count": len(buy_rows),
@@ -608,6 +609,8 @@ def _backfill_decisions(
             "pnl_pct": last_pnl.get("pnl_pct") if last_pnl else None,
             "exit_reason": last_pnl.get("exit_reason") if last_pnl else "",
             "strategy_used": last_pnl.get("strategy_used") if last_pnl else (items[-1].get("strategy_used") if items else ""),
+            "execution_link_source": "decisions_db",
+            "execution_decision_id": str(linked_row.get("id") or ""),
         }
         updated = store.update_execution_by_ticker(
             session_date=session_date,
@@ -615,6 +618,7 @@ def _backfill_decisions(
             runtime_mode=runtime_mode,
             ticker=ticker,
             values=values,
+            latest_only=True,
         )
         if updated == 0:
             first = items[0]
@@ -649,6 +653,7 @@ def _backfill_decisions(
                 runtime_mode=runtime_mode,
                 ticker=ticker,
                 values=values,
+                latest_only=True,
             )
 
 
@@ -772,6 +777,7 @@ def _backfill_lifecycle(
         fill_events = [e for e in items if str(e.get("event_type") or "").upper() == "FILLED"]
         last = items[-1] if items else {}
         close = close_events[-1] if close_events else {}
+        linked_event = close or (fill_events[-1] if fill_events else last)
         first_fill_payload: dict[str, Any] = {}
         if fill_events:
             try:
@@ -789,6 +795,9 @@ def _backfill_lifecycle(
             "last_lifecycle_event": last.get("event_type", ""),
             "close_reason": close.get("reason_code", ""),
             "path_run_count": path_counts.get(ticker, 0),
+            "execution_link_source": "v2_event_store.lifecycle_events",
+            "execution_decision_id": str(linked_event.get("decision_id") or ""),
+            "execution_event_id": linked_event.get("event_id"),
         }
         if fill_events:
             values.update(
@@ -812,6 +821,7 @@ def _backfill_lifecycle(
             runtime_mode=runtime_mode,
             ticker=ticker,
             values=values,
+            latest_only=True,
         )
         if updated == 0:
             _ensure_source_candidate(
@@ -838,6 +848,7 @@ def _backfill_lifecycle(
                 runtime_mode=runtime_mode,
                 ticker=ticker,
                 values=values,
+                latest_only=True,
             )
 
 
@@ -945,6 +956,7 @@ def _backfill_intraday(
                 "intraday_signal_count": int(row.get("signals") or 0),
                 "intraday_traded_count": int(row.get("traded") or 0),
             },
+            latest_only=True,
         )
         if updated == 0:
             _ensure_source_candidate(
@@ -973,6 +985,7 @@ def _backfill_intraday(
                     "intraday_signal_count": int(row.get("signals") or 0),
                     "intraday_traded_count": int(row.get("traded") or 0),
                 },
+                latest_only=True,
             )
 
 
