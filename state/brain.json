@@ -1,8 +1,8 @@
 {
   "meta": {
-    "version": 3236,
+    "version": 3243,
     "created": "2026-03-19",
-    "last_updated": "2026-05-12",
+    "last_updated": "2026-05-13",
     "trained_days_kr": 36,
     "trained_days_us": 38,
     "description": "Claude 마이너리티 리포트 판단 메모리",
@@ -4277,9 +4277,9 @@
           "avg_pnl": 2.2046
         },
         "gap_pullback": {
-          "count": 31,
-          "win_rate": 0.548,
-          "avg_pnl": 0.1755
+          "count": 32,
+          "win_rate": 0.562,
+          "avg_pnl": 0.4151
         },
         "mean_reversion": {
           "count": 1,
@@ -4922,23 +4922,23 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "30min_tune": {
-          "count": 94,
-          "correct": 8,
-          "rate": 0.085,
-          "insight": "지수 +0.19% 소폭 강세, 30분 기울기 N/A(첫 샘플)로 방향 확인 불가하나 breadth universe 확대(30→76) 후 advance_ratio 63%(48/76)로 중립 우위 유지, GC/DC·RSI 신호 미집계 상태이며 RKLB +24.6% TP 근접·NVDA SL 근접 등 포지션 리스크 관리 우선으로 CAUTIOUS 모드 MAINTAIN",
+          "count": 95,
+          "correct": 9,
+          "rate": 0.095,
+          "insight": "Historically low precision (10% over 95 trials); treat as weak context only. (Context: 개장 30분 breadth가 universe 확장 후 adv/dec=37/38로 역전(-31%p), GC/DC 전량 소멸, vol_spike 0)",
           "last_seen": "2026-05-12",
-          "adjusted": 8,
-          "adjusted_rate": 0.085,
+          "adjusted": 9,
+          "adjusted_rate": 0.095,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
-          "count": 63,
-          "correct": 4,
-          "rate": 0.063,
-          "insight": "Historically low precision (6% over 63 trials); treat as weak context only. (Context: 지수 +0.14%로 아침 MODERATE_BULL 방향 유지 중이며, breadth universe 확대(30→75) 후 advance_rati)",
+          "count": 64,
+          "correct": 5,
+          "rate": 0.078,
+          "insight": "Historically low precision (8% over 64 trials); treat as weak context only. (Context: breadth advance_ratio 80%→46%(-34%p), advancers 24→36(+12) 대비 decliners 5→42(+37)",
           "last_seen": "2026-05-12",
-          "adjusted": 4,
-          "adjusted_rate": 0.063,
+          "adjusted": 5,
+          "adjusted_rate": 0.078,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "90min_tune": {
@@ -7098,34 +7098,34 @@
             "bull": {
               "stance": "MODERATE_BULL",
               "confidence": 0.72,
-              "key_reason": "breadth 80% 상승(24/5/1), GC 22개 vs DC 8개, 거래량 급증 15개+폭증 1개로 모멘텀 확산 확인; NVTS +24.4"
+              "key_reason": "breadth 80% 상승(24/5/1), GC 22/DC 8, 52주 고점근접 11개로 시장 확산 양호하나, 인트라데이 S&P500 -0.49"
             },
             "bear": {
               "stance": "MODERATE_BULL",
-              "confidence": 0.72,
-              "key_reason": "Breadth 80% 상승(24/5), GC/DC 22/8, XLK +1.34% 주도, VIX 18.8 안정적이나 intraday SPY -0."
+              "confidence": 0.68,
+              "key_reason": "Breadth strong (80% up, 22 GC/8 DC) with tech leadership (XLK +1.34%, XLE +2.64%"
             },
             "neutral": {
               "stance": "MILD_BULL",
               "confidence": 0.62,
-              "key_reason": "Breadth 80% 상승(24/5)·GC 22개·거래량 급증 15개로 강한 기술적 모멘텀이나, 현재 S&P500 -0.36%·VIX +1.85"
+              "key_reason": "Breadth 80% 상승(24/5), GC 22개 vs DC 8개(2.75:1), 거래량 급증 15개 vs 폭증 1개로 강한 상승 편향 보이나"
             }
           },
           "r2": {
             "bull": {
               "stance": "MODERATE_BULL",
               "confidence": 0.7,
-              "key_reason": "Breadth 80% 상승(24/5), GC 22개 vs DC 8개, 거래량 급증 15개+폭증 1개로 모멘텀 확산 명확; NVTS +24.45%"
+              "key_reason": "Breadth 80% 상승(24/5), GC 22/DC 8, 52주 고점근접 11개로 시장 확산 구조 유지 — NVDA +1.97%(97% 위치"
             },
             "bear": {
               "stance": "MODERATE_BULL",
-              "confidence": 0.68,
-              "key_reason": "Breadth 80% 상승(24/5), GC 22/DC 8, 거래량 급증 15개로 기술적 모멘텀 양호; VIX 18.72(+1.85%) 안정권 "
+              "confidence": 0.65,
+              "key_reason": "Breadth 80% 상승(GC 22/DC 8)으로 시장 구조는 건강하나, 인트라데이 S&P500 -0.49%/NASDAQ -0.79% 실시간 "
             },
             "neutral": {
               "stance": "MILD_BULL",
               "confidence": 0.62,
-              "key_reason": "Breadth 80% 상승(24/5)·GC 22개·거래량 급증 15개로 기술적 모멘텀 우세하나, 인트라데이 S&P500 -0.36%·VIX +1"
+              "key_reason": "Breadth 80% 상승(GC 22/DC 8, 2.75:1)으로 구조적 강세 유지되나, 인트라데이 S&P500 -0.49%/NASDAQ -0."
             }
           },
           "changes": [],
@@ -8003,20 +8003,12 @@
     }
   },
   "hold_advisor_performance": {
-    "total": 122,
+    "total": 123,
     "hold_count": 18,
     "hold_success": 2,
-    "sell_count": 104,
+    "sell_count": 105,
     "hold_avg_extra_pnl": -11.603,
     "recent": [
-      {
-        "date": "2026-05-05",
-        "market": "US",
-        "ticker": "CELC",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -0.1107
-      },
       {
         "date": "2026-05-05",
         "market": "US",
@@ -8168,6 +8160,14 @@
         "decision": "SELL",
         "success": false,
         "extra_pnl_pct": -13.6236
+      },
+      {
+        "date": "2026-05-12",
+        "market": "US",
+        "ticker": "NVDA",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 7.8434
       }
     ]
   },

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -123,6 +124,68 @@ class PriceCollectorIncrementalTests(unittest.TestCase):
             self.assertEqual(saved["date"].astype(str).tolist(), ["2026-05-07", "2026-05-08"])
             self.assertEqual(kis.call_count, 1)
             yf.assert_not_called()
+
+    def test_us_incremental_continues_forward_refresh_after_gap_fill(self) -> None:
+        class FakeDate:
+            @staticmethod
+            def today():
+                return date(2026, 5, 20)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            price_dir = root / "price"
+            us_dir = price_dir / "us"
+            us_dir.mkdir(parents=True)
+            path = us_dir / "us_AAPL.csv"
+            path.write_text(
+                "date,open,high,low,close,volume\n"
+                "2026-05-01,100,101,99,100,1000\n"
+                "2026-05-06,105,106,104,105,1000\n",
+                encoding="utf-8",
+            )
+            gap_df = pd.DataFrame(
+                [
+                    {
+                        "date": pd.Timestamp("2026-05-08"),
+                        "open": 108,
+                        "high": 109,
+                        "low": 107,
+                        "close": 108,
+                        "volume": 1000,
+                    }
+                ]
+            )
+            forward_df = pd.DataFrame(
+                [
+                    {
+                        "date": pd.Timestamp("2026-05-20"),
+                        "open": 120,
+                        "high": 121,
+                        "low": 119,
+                        "close": 120,
+                        "volume": 1000,
+                    }
+                ]
+            )
+            fetch = Mock(side_effect=[gap_df, forward_df])
+            gap_audit = {"gaps": [pd.Timestamp("2026-05-08")], "duplicate_dates": 0, "calendar_source": "test"}
+
+            with patch.object(price_collector, "PRICE_DIR", price_dir), \
+                 patch.object(price_collector, "US_TICKERS", {"AAPL": "Apple"}), \
+                 patch.object(price_collector, "fetch_us_daily_yfinance", fetch), \
+                 patch.object(price_collector, "_audit_csv_date_gaps", return_value=gap_audit), \
+                 patch.object(price_collector, "_gap_ranges", return_value=[(pd.Timestamp("2026-05-08"), pd.Timestamp("2026-05-08"))]), \
+                 patch.object(price_collector, "date", FakeDate), \
+                 patch.object(price_collector.time, "sleep", lambda *_: None):
+                price_collector.collect_us_incremental(
+                    pd.Timestamp("2026-05-01"),
+                    pd.Timestamp("2026-05-20"),
+                )
+
+            self.assertEqual(fetch.call_count, 2)
+            saved = pd.read_csv(path)
+            self.assertIn("2026-05-08", saved["date"].astype(str).tolist())
+            self.assertIn("2026-05-20", saved["date"].astype(str).tolist())
 
     def test_csv_gap_audit_uses_trading_calendar_and_counts_duplicates(self) -> None:
         rows = pd.DataFrame(

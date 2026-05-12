@@ -33,6 +33,7 @@ from runtime.pathb_reasons import (
     ORDER_UNKNOWN_SOFT_TIMEOUT_SEC_DEFAULT,
     normalize_pathb_decision_exit_reason,
 )
+from runtime.sizing_contract import calculate_order_quantity
 from runtime_paths import get_runtime_path
 from telegram_reporter import buy_order_alert, send as tg_send
 
@@ -171,6 +172,11 @@ class PathBRuntime:
             "operator_enabled": control.enabled,
             "emergency_disabled": control.emergency_disabled or bool(self.config.pathb_emergency_disable),
             "fixed_order_krw": int(self.config.pathb_fixed_order_krw),
+            "allow_one_share_over_budget": bool(self.config.pathb_allow_one_share_over_budget),
+            "one_share_over_budget_max_krw": int(self.config.pathb_one_share_over_budget_max_krw),
+            "one_share_over_budget_max_account_pct": float(
+                self.config.pathb_one_share_over_budget_max_account_pct
+            ),
             "max_positions": int(self.config.pathb_max_positions),
             "max_daily_entries": int(self.config.pathb_max_daily_entries),
             "min_confidence": float(self.config.pathb_min_confidence),
@@ -4986,17 +4992,44 @@ class PathBRuntime:
         price = float(price_krw or 0)
         if price <= 0:
             return 0
-        budget = min(float(self.config.pathb_fixed_order_krw), max(0.0, float(cash_krw or 0)))
+        cash = max(0.0, float(cash_krw or 0))
+        budget = float(self.config.pathb_fixed_order_krw)
         min_order = self._pathb_min_order_krw(market)
-        qty = int(budget // price) if budget > 0 else 0
-        if min_order > 0 and qty * price < min_order:
-            min_qty = int(math.ceil(min_order / price))
-            min_cost = min_qty * price
-            if min_cost <= budget and min_cost <= float(cash_krw or 0):
-                qty = min_qty
-            else:
-                qty = 0
-        return max(0, qty)
+        decision = calculate_order_quantity(
+            price=price,
+            base_budget=budget,
+            hard_budget_cap=budget,
+            cash_available=cash,
+            min_order=min_order,
+            size_intent="normal",
+            allow_one_share_over_budget=bool(self.config.pathb_allow_one_share_over_budget),
+            one_share_max_account_pct=float(self.config.pathb_one_share_over_budget_max_account_pct),
+            total_equity=self._pathb_total_equity_krw(market, fallback_cash_krw=cash),
+        )
+        if "one_share_over_budget_allowed" in decision.warnings:
+            max_notional = float(self.config.pathb_one_share_over_budget_max_krw or 0)
+            if max_notional > 0 and float(decision.notional or 0) > max_notional:
+                return 0
+        return max(0, int(decision.qty or 0))
+
+    def _pathb_total_equity_krw(self, market: str, *, fallback_cash_krw: float) -> float:
+        try:
+            getter = getattr(self.bot, "_market_equity_reference_context", None)
+            if callable(getter):
+                ctx = getter(str(market or "").upper())
+                total = float((ctx or {}).get("total_krw", 0) or 0)
+                if total > 0:
+                    return total
+        except Exception:
+            pass
+        try:
+            risk = getattr(self.bot, "risk", None)
+            total = float(getattr(risk, "session_start_equity", 0) or 0)
+            if total > 0:
+                return total
+        except Exception:
+            pass
+        return max(float(fallback_cash_krw or 0), 1.0)
 
     def _usd_krw(self) -> float:
         return float(getattr(self.bot, "usd_krw_rate", 0) or 1350)

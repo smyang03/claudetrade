@@ -256,12 +256,14 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
                 "HOLD_ADVISOR_SOFT_CACHE_PNL_MOVE_MAX_PCT": 0.15,
             }
         )
-        cand = {"ticker": "005930", "entry": 100.0}
+        bot._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+        bot._current_session_date_str = lambda market: "2026-05-12"  # type: ignore[method-assign]
+        cand = {"ticker": "005930", "entry": 100.0, "entry_session_date": "2026-05-12"}
         payload = {"auto_sell_review_action": "HOLD", "reason": "hold"}
         advice = {"next_review_min": 15}
 
         TradingBot._hold_advisor_soft_cache_put(bot, cand, "KR", "profit_floor", 100.0, payload, advice)
-        key = ("KR", "005930", "profit_floor")
+        key = TradingBot._hold_advisor_soft_cache_key(bot, cand, "KR", "profit_floor")
 
         self.assertLessEqual(bot._hold_advisor_soft_cache[key]["ttl_sec"], 60)
         self.assertEqual(

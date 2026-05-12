@@ -632,7 +632,18 @@ class RiskManager:
             "fill_pending",
             "filled_pending",
         }
-        final_statuses = {"", "closed", "filled", "rejected", "cancelled", "canceled", "failed", "expired", "cleared"}
+        final_statuses = {
+            "",
+            "closed",
+            "filled",
+            "rejected",
+            "cancelled",
+            "canceled",
+            "failed",
+            "expired",
+            "cleared",
+            "resolved",
+        }
         if status in active_statuses:
             return True
         return bool(pos.get("pending_sell_order_no")) and status not in final_statuses

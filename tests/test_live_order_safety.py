@@ -47,7 +47,39 @@ class LiveOrderSafetyTests(unittest.TestCase):
 
     def test_pathb_qty_does_not_exceed_fixed_budget_for_high_price(self) -> None:
         runtime = PathBRuntime.__new__(PathBRuntime)
-        runtime.config = V2Config(pathb_fixed_order_krw=100_000, kr_min_order_krw=100_000)
+        runtime.config = V2Config(
+            pathb_fixed_order_krw=100_000,
+            kr_min_order_krw=100_000,
+            pathb_allow_one_share_over_budget=False,
+        )
+
+        qty = runtime._pathb_qty("KR", 287_000, cash_krw=2_700_000)
+
+        self.assertEqual(qty, 0)
+
+    def test_pathb_qty_allows_one_share_over_budget_within_cap(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.config = V2Config(
+            pathb_fixed_order_krw=200_000,
+            kr_min_order_krw=100_000,
+            pathb_allow_one_share_over_budget=True,
+            pathb_one_share_over_budget_max_krw=500_000,
+            pathb_one_share_over_budget_max_account_pct=30.0,
+        )
+
+        qty = runtime._pathb_qty("KR", 287_000, cash_krw=2_700_000)
+
+        self.assertEqual(qty, 1)
+
+    def test_pathb_qty_blocks_one_share_over_budget_above_exception_cap(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.config = V2Config(
+            pathb_fixed_order_krw=200_000,
+            kr_min_order_krw=100_000,
+            pathb_allow_one_share_over_budget=True,
+            pathb_one_share_over_budget_max_krw=250_000,
+            pathb_one_share_over_budget_max_account_pct=30.0,
+        )
 
         qty = runtime._pathb_qty("KR", 287_000, cash_krw=2_700_000)
 

@@ -701,8 +701,10 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
                     if gap_parts:
                         combined = pd.concat([existing] + gap_parts)
                         _save(path, combined, start_dt, end_dt, f"{name}({ticker})")
-                        continue
-                    print(f"  WARN  {name}({ticker}) internal gap fetch failed")
+                        existing = pd.read_csv(path, parse_dates=["date"]).sort_values("date")
+                        ex_min, ex_max = existing["date"].min(), existing["date"].max()
+                    else:
+                        print(f"  WARN  {name}({ticker}) internal gap fetch failed")
                 already_fresh  = ex_max >= today_ts - timedelta(days=4)
                 already_covers = ex_min <= start_dt + timedelta(days=5)
                 if already_fresh and already_covers:

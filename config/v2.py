@@ -110,6 +110,9 @@ class V2Config:
     pathb_enabled: bool = True
     pathb_telegram_control_enabled: bool = True
     pathb_fixed_order_krw: int = 100_000
+    pathb_allow_one_share_over_budget: bool = True
+    pathb_one_share_over_budget_max_krw: int = 500_000
+    pathb_one_share_over_budget_max_account_pct: float = 30.0
     pathb_max_positions: int = 1
     pathb_max_daily_entries: int = 1
     pathb_min_confidence: float = 0.5
@@ -177,6 +180,16 @@ class V2Config:
                 "PATHB_TELEGRAM_CONTROL_ENABLED", cls.pathb_telegram_control_enabled
             ),
             pathb_fixed_order_krw=_int_env("PATHB_FIXED_ORDER_KRW", cls.pathb_fixed_order_krw),
+            pathb_allow_one_share_over_budget=_bool_env(
+                "PATHB_ALLOW_ONE_SHARE_OVER_BUDGET", cls.pathb_allow_one_share_over_budget
+            ),
+            pathb_one_share_over_budget_max_krw=_int_env(
+                "PATHB_ONE_SHARE_OVER_BUDGET_MAX_KRW", cls.pathb_one_share_over_budget_max_krw
+            ),
+            pathb_one_share_over_budget_max_account_pct=_float_env(
+                "PATHB_ONE_SHARE_OVER_BUDGET_MAX_ACCOUNT_PCT",
+                cls.pathb_one_share_over_budget_max_account_pct,
+            ),
             pathb_max_positions=_int_env("PATHB_MAX_POSITIONS", cls.pathb_max_positions),
             pathb_max_daily_entries=_int_env("PATHB_MAX_DAILY_ENTRIES", cls.pathb_max_daily_entries),
             pathb_min_confidence=_float_env("PATHB_MIN_CONFIDENCE", cls.pathb_min_confidence),

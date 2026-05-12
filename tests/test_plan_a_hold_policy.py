@@ -218,6 +218,21 @@ class PlanAHoldPolicyRiskTests(unittest.TestCase):
 
         self.assertEqual(candidates, [])
 
+    def test_resolved_pending_sell_allows_future_exit_candidates(self) -> None:
+        risk = RiskManager(init_cash=1_000_000, market="KR")
+        risk.reset_daily_state(override_base=1_000_000)
+        risk.positions = [
+            _kr_position(
+                current_price=99.4,
+                pending_sell_status="resolved",
+                pending_sell_order_no="hist-123",
+            )
+        ]
+
+        candidates = risk.get_exit_candidates()
+
+        self.assertEqual(candidates[0]["reason"], "trail_stop")
+
     def test_policy_recheck_limit_creates_sell_without_review(self) -> None:
         risk = RiskManager(init_cash=1_000_000, market="KR")
         risk.reset_daily_state(override_base=1_000_000)
