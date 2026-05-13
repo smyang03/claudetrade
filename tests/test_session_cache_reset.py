@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from trading_bot import TradingBot
 
@@ -35,6 +36,54 @@ class SessionCacheResetTests(unittest.TestCase):
         self.assertIn("US:MSFT", bot._post_open_price_history)
         self.assertIn("US:MSFT", bot._post_open_anchor)
         self.assertIn("US:MSFT", bot._post_open_feature_last_emit)
+
+    def test_reset_session_live_caches_clears_intraday_minute_cache_scope(self) -> None:
+        class _Cache:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def clear(self, **kwargs) -> None:
+                self.calls.append(kwargs)
+
+        bot = TradingBot.__new__(TradingBot)
+        bot._intraday_high = {}
+        bot._intraday_low = {}
+        bot._or_high = {}
+        bot._or_low = {}
+        bot._or_formed = {}
+        bot._post_open_price_history = {}
+        bot._post_open_anchor = {}
+        bot._post_open_feature_last_emit = {}
+        bot._intraday_minute_cache = _Cache()
+        bot._current_session_date_str = lambda market: "2026-05-13"
+
+        TradingBot._reset_session_live_caches(bot, "US", ["aapl"])
+
+        self.assertEqual(bot._intraday_minute_cache.calls[0]["market"], "US")
+        self.assertEqual(bot._intraday_minute_cache.calls[0]["tickers"], ["aapl"])
+        self.assertEqual(bot._intraday_minute_cache.calls[0]["session_date"], "2026-05-13")
+
+    def test_reset_session_live_caches_logs_cache_clear_failure(self) -> None:
+        class _Cache:
+            def clear(self, **kwargs) -> None:
+                raise RuntimeError("clear failed")
+
+        bot = TradingBot.__new__(TradingBot)
+        bot._intraday_high = {}
+        bot._intraday_low = {}
+        bot._or_high = {}
+        bot._or_low = {}
+        bot._or_formed = {}
+        bot._post_open_price_history = {}
+        bot._post_open_anchor = {}
+        bot._post_open_feature_last_emit = {}
+        bot._intraday_minute_cache = _Cache()
+        bot._current_session_date_str = lambda market: "2026-05-13"
+
+        with patch("trading_bot.log.warning") as mocked_warning:
+            TradingBot._reset_session_live_caches(bot, "KR", ["005930"])
+
+        self.assertTrue(any("intraday minute cache clear" in str(call) for call in mocked_warning.call_args_list))
 
 
 if __name__ == "__main__":

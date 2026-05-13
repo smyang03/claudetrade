@@ -79,6 +79,7 @@ _BALANCE_CACHE = {}
 _PRICE_CACHE = {}
 _INDEX_CACHE = {}
 _OHLCV_CACHE = {}
+_INTRADAY_CACHE = {}
 _CACHE_LOG_TS = {}
 _KIS_HTTP_LOCK = threading.Lock()
 _KIS_LAST_CALL_TS = 0.0
@@ -822,6 +823,299 @@ def _get_price_kr_yf(ticker: str) -> dict:
             "price": 0, "change": 0, "change_rate": 0.0,
             "volume": 0, "open": 0, "high": 0, "low": 0,
         }
+
+
+def _parse_intraday_dt(value, default=None) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    text = str(value or "").strip()
+    if not text:
+        return default
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        return default
+
+
+def _intraday_provider_for_market(market: str, provider: str = "") -> str:
+    market_key = _normalize_market(market)
+    raw = str(provider or "").strip().lower()
+    if raw in {"", "auto"}:
+        raw = str(os.getenv(f"INTRADAY_EVIDENCE_PROVIDER_{market_key}", "") or "").strip().lower()
+    if not raw:
+        return "kis" if market_key == "KR" else "disabled"
+    return raw
+
+
+def _intraday_empty_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume", "source"])
+
+
+def _intraday_filter_frame(df: pd.DataFrame, *, start_at=None, end_at=None, source: str = "") -> pd.DataFrame:
+    if df is None or df.empty:
+        return _intraday_empty_frame()
+    work = df.copy()
+    if "ts" not in work.columns:
+        return _intraday_empty_frame()
+    work["ts"] = pd.to_datetime(work["ts"], errors="coerce")
+    for col in ("open", "high", "low", "close", "volume"):
+        if col in work.columns:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+    work = work.dropna(subset=["ts", "open", "high", "low", "close"])
+    start_dt = _parse_intraday_dt(start_at)
+    end_dt = _parse_intraday_dt(end_at)
+    if start_dt is not None:
+        work = work[work["ts"] >= pd.Timestamp(start_dt)]
+    if end_dt is not None:
+        work = work[work["ts"] <= pd.Timestamp(end_dt)]
+    if work.empty:
+        return _intraday_empty_frame()
+    work["source"] = source or work.get("source", "")
+    return work[["ts", "open", "high", "low", "close", "volume", "source"]].drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
+
+
+def _intraday_ohlcv_kr_kis(
+    ticker: str,
+    token: str,
+    *,
+    session_date: str,
+    start_at=None,
+    end_at=None,
+) -> pd.DataFrame:
+    """KR 당일 1분봉 조회.
+
+    KIS 공개 샘플 기준:
+    - path: /uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice
+    - tr_id: FHKST03010200
+
+    실제 rate limit은 구현/운영 전 KIS Developers 최신 문서로 재확인해야 한다.
+    기본 호출 정책은 보수적으로 순차 호출에서 사용된다.
+    """
+    ticker_key = str(ticker or "").strip().zfill(6)
+    if not ticker_key:
+        return _intraday_empty_frame()
+    session_text = str(session_date or datetime.now().date().isoformat())[:10]
+    start_dt = _parse_intraday_dt(start_at) or datetime.fromisoformat(f"{session_text}T09:00:00")
+    end_dt = _parse_intraday_dt(end_at) or datetime.now()
+    end_hms = end_dt.strftime("%H%M%S")
+    max_pages = max(1, int(os.getenv("KR_INTRADAY_KIS_MAX_PAGES", "16")))
+    rows_all: list[dict] = []
+    seen_times: set[str] = set()
+
+    for _ in range(max_pages):
+        resp = _kis_get(
+            f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
+            headers=_headers(token, "FHKST03010200", market="KR"),
+            params={
+                "FID_ETC_CLS_CODE": "",
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": ticker_key,
+                "FID_INPUT_HOUR_1": end_hms,
+                "FID_PW_DATA_INCU_YN": "N",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        rows = data.get("output2") or data.get("output") or []
+        if not rows:
+            break
+        parsed_times: list[datetime] = []
+        for item in rows:
+            date_raw = str(item.get("stck_bsop_date") or session_text.replace("-", ""))
+            time_raw = str(item.get("stck_cntg_hour") or "").zfill(6)
+            ts = _parse_intraday_dt(f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:8]}T{time_raw[:2]}:{time_raw[2:4]}:{time_raw[4:6]}")
+            if ts is None:
+                continue
+            key = ts.isoformat(timespec="seconds")
+            if key in seen_times:
+                continue
+            seen_times.add(key)
+            parsed_times.append(ts)
+            rows_all.append(
+                {
+                    "ts": ts,
+                    "open": _to_float(item.get("stck_oprc")),
+                    "high": _to_float(item.get("stck_hgpr")),
+                    "low": _to_float(item.get("stck_lwpr")),
+                    "close": _to_float(item.get("stck_prpr")),
+                    "volume": _to_float(item.get("cntg_vol")),
+                    "source": "kis",
+                }
+            )
+        if not parsed_times:
+            break
+        earliest = min(parsed_times)
+        if earliest <= start_dt:
+            break
+        next_end = earliest - timedelta(minutes=1)
+        next_hms = next_end.strftime("%H%M%S")
+        if next_hms == end_hms:
+            break
+        end_hms = next_hms
+        time.sleep(float(os.getenv("KR_INTRADAY_KIS_PAGE_SLEEP_SEC", "0.05")))
+
+    if not rows_all:
+        return _intraday_empty_frame()
+    return _intraday_filter_frame(pd.DataFrame(rows_all), start_at=start_dt, end_at=end_dt, source="kis")
+
+
+def _intraday_ohlcv_us_yf(
+    ticker: str,
+    *,
+    session_date: str,
+    start_at=None,
+    end_at=None,
+    include_extended: bool = False,
+) -> pd.DataFrame:
+    try:
+        import yfinance as yf
+        from zoneinfo import ZoneInfo
+    except ImportError as exc:
+        raise RuntimeError("yfinance 미설치: pip install yfinance") from exc
+    start_dt = _parse_intraday_dt(start_at) or (datetime.now() - timedelta(days=1))
+    end_dt = _parse_intraday_dt(end_at) or datetime.now()
+    symbol = str(ticker or "").strip().upper()
+    df = yf.Ticker(symbol).history(
+        start=(start_dt - timedelta(days=1)).strftime("%Y-%m-%d"),
+        end=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d"),
+        interval="1m",
+        prepost=bool(include_extended),
+        auto_adjust=True,
+    )
+    if df is None or df.empty:
+        return _intraday_empty_frame()
+    frame = df.reset_index()
+    frame.columns = [str(col).lower() for col in frame.columns]
+    ts_col = "datetime" if "datetime" in frame.columns else ("date" if "date" in frame.columns else frame.columns[0])
+    ts = pd.to_datetime(frame[ts_col], errors="coerce")
+    try:
+        if getattr(ts.dt, "tz", None) is not None:
+            ts = ts.dt.tz_convert("Asia/Seoul").dt.tz_localize(None)
+        else:
+            ts = ts.dt.tz_localize(ZoneInfo("America/New_York")).dt.tz_convert("Asia/Seoul").dt.tz_localize(None)
+    except Exception:
+        ts = pd.to_datetime(frame[ts_col], errors="coerce").dt.tz_localize(None)
+    out = pd.DataFrame(
+        {
+            "ts": ts,
+            "open": frame.get("open"),
+            "high": frame.get("high"),
+            "low": frame.get("low"),
+            "close": frame.get("close"),
+            "volume": frame.get("volume", 0),
+            "source": "yfinance_intraday",
+        }
+    )
+    return _intraday_filter_frame(out, start_at=start_dt, end_at=end_dt, source="yfinance_intraday")
+
+
+def _intraday_ohlcv_us_finnhub(
+    ticker: str,
+    *,
+    start_at=None,
+    end_at=None,
+) -> pd.DataFrame:
+    if not FINNHUB_KEY:
+        raise RuntimeError("FINNHUB_API_KEY 없음")
+    start_dt = _parse_intraday_dt(start_at) or (datetime.now() - timedelta(hours=8))
+    end_dt = _parse_intraday_dt(end_at) or datetime.now()
+    resp = requests.get(
+        "https://finnhub.io/api/v1/stock/candle",
+        params={
+            "symbol": str(ticker or "").strip().upper(),
+            "resolution": "1",
+            "from": int(start_dt.timestamp()),
+            "to": int(end_dt.timestamp()),
+            "token": FINNHUB_KEY,
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("s") != "ok":
+        raise RuntimeError(f"Finnhub candle status={data.get('s')}")
+    from zoneinfo import ZoneInfo
+
+    ts = pd.to_datetime(data.get("t", []), unit="s", utc=True).tz_convert("Asia/Seoul").tz_localize(None)
+    out = pd.DataFrame(
+        {
+            "ts": ts,
+            "open": data.get("o", []),
+            "high": data.get("h", []),
+            "low": data.get("l", []),
+            "close": data.get("c", []),
+            "volume": data.get("v", []),
+            "source": "finnhub_intraday",
+        }
+    )
+    return _intraday_filter_frame(out, start_at=start_dt, end_at=end_dt, source="finnhub_intraday")
+
+
+def get_intraday_candles(
+    ticker: str,
+    token: Optional[str] = None,
+    market: str = "KR",
+    *,
+    session_date: Optional[str] = None,
+    start_at=None,
+    end_at=None,
+    interval: str = "1m",
+    provider: str = "",
+) -> pd.DataFrame:
+    market_key = _normalize_market(market)
+    if str(interval or "1m").lower() not in {"1m", "1min", "1"}:
+        raise ValueError(f"unsupported intraday interval: {interval}")
+    session_text = str(session_date or datetime.now().date().isoformat())[:10]
+    provider_key = _intraday_provider_for_market(market_key, provider)
+    if provider_key in {"disabled", "none", "off", "false"}:
+        raise RuntimeError(f"{market_key} intraday provider disabled")
+    ticker_key = str(ticker or "").strip().upper() if market_key == "US" else str(ticker or "").strip().zfill(6)
+    cache_key = (
+        "INTRADAY",
+        market_key,
+        provider_key,
+        ticker_key,
+        session_text,
+        str(start_at or "")[:19],
+        str(end_at or "")[:19],
+    )
+    cached = _cache_get(_INTRADAY_CACHE, cache_key)
+    if cached is not None:
+        return cached.copy()
+
+    if market_key == "KR":
+        if provider_key != "kis":
+            raise RuntimeError(f"unsupported KR intraday provider: {provider_key}")
+        df = _retry_kis(
+            f"KR intraday ohlcv [{ticker_key}]",
+            lambda: _intraday_ohlcv_kr_kis(
+                ticker_key,
+                token or get_access_token(market="KR"),
+                session_date=session_text,
+                start_at=start_at,
+                end_at=end_at,
+            ),
+            retries=2,
+            delay_sec=float(os.getenv("KR_INTRADAY_KIS_RETRY_AFTER_SEC", "1.0")),
+        )
+    elif provider_key == "yfinance":
+        include_extended = str(os.getenv("US_INTRADAY_INCLUDE_EXTENDED", "false")).strip().lower() in {"1", "true", "yes", "y", "on"}
+        df = _intraday_ohlcv_us_yf(
+            ticker_key,
+            session_date=session_text,
+            start_at=start_at,
+            end_at=end_at,
+            include_extended=include_extended,
+        )
+    elif provider_key == "finnhub":
+        df = _intraday_ohlcv_us_finnhub(ticker_key, start_at=start_at, end_at=end_at)
+    elif provider_key == "kis":
+        raise RuntimeError("KIS US intraday candle provider not verified; set INTRADAY_EVIDENCE_PROVIDER_US=yfinance/finnhub after policy approval")
+    else:
+        raise RuntimeError(f"unsupported {market_key} intraday provider: {provider_key}")
+
+    return _cache_set(_INTRADAY_CACHE, cache_key, df.copy())
 
 
 def is_trading_halted(ticker: str, token) -> bool:

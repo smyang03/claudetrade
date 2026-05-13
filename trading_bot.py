@@ -171,6 +171,8 @@ from runtime.exit_lifecycle import (
     exit_lifecycle_bypass_allowed,
 )
 from runtime.live_evidence_pack import attach_live_evidence_summary, build_live_evidence_pack
+from runtime.intraday_features import classify_intraday_feature_quality
+from runtime.intraday_minute_cache import IntradayMinuteCache
 from runtime.post_open_features import (
     DEFAULT_OVEREXTENDED_5M_PCT,
     OVEREXTENDED_5M_PCT_BY_MARKET,
@@ -930,6 +932,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._post_open_anchor: dict[str, dict] = {}
         self._post_open_feature_last_emit: dict[str, float] = {}
         self._last_post_open_features_by_ticker: dict[str, dict[str, dict]] = {"KR": {}, "US": {}}
+        self._intraday_minute_cache = IntradayMinuteCache()
         # OR(opening range) state used by KR OR pullback entry.
         self._or_high: dict[str, float] = {}
         self._or_low: dict[str, float] = {}
@@ -8217,6 +8220,234 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"to_close={phase['minutes_to_close']:.0f}m blackout={'yes' if phase['entry_blackout'] else 'no'} | "
             f"active_strategies={','.join(active)} | gates={self._runtime_gate_state_text(market)}"
         )
+    def _post_open_feature_quality_rank(self, features: dict) -> int:
+        quality = str((features or {}).get("data_quality") or "").strip().lower()
+        if quality in {"minute_complete", "confirmed", "good"}:
+            return 4
+        if quality in {"minute_partial", "partial"}:
+            return 2
+        if quality in {"first_observed"}:
+            return 1
+        return 0
+    def _post_open_feature_known_at(self, features: dict) -> Optional[datetime]:
+        text = str((features or {}).get("known_at") or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            return None
+    def _post_open_feature_should_replace(self, old: dict, new: dict) -> bool:
+        if not isinstance(new, dict) or not new:
+            return False
+        if not isinstance(old, dict) or not old:
+            return True
+        new_rank = self._post_open_feature_quality_rank(new)
+        old_rank = self._post_open_feature_quality_rank(old)
+        if new_rank <= 0 and old_rank > 0:
+            return False
+        new_dt = self._post_open_feature_known_at(new)
+        old_dt = self._post_open_feature_known_at(old)
+        if new_dt and old_dt and new_dt > old_dt:
+            return True
+        if new_rank > old_rank:
+            return True
+        return False
+    def _merge_last_post_open_features(self, market: str, incoming: dict[str, dict]) -> dict[str, dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        store = getattr(self, "_last_post_open_features_by_ticker", None)
+        if not isinstance(store, dict):
+            store = {"KR": {}, "US": {}}
+        current = dict(store.get(market_key) or {})
+        for raw_key, raw_features in (incoming or {}).items():
+            key = self._selection_ticker_key(market_key, raw_key)
+            if not key or not isinstance(raw_features, dict):
+                continue
+            existing = current.get(key) or current.get(raw_key) or {}
+            if self._post_open_feature_should_replace(existing, raw_features):
+                current[key] = dict(raw_features)
+        store[market_key] = current
+        self._last_post_open_features_by_ticker = store
+        return current
+    def _apply_post_open_features_to_row(self, row: dict, features: dict) -> None:
+        if not isinstance(features, dict) or not features:
+            return
+        row["post_open_features"] = dict(features)
+        row["post_open_momentum_state"] = features.get("momentum_state")
+        row["post_open_ret_3m_pct"] = features.get("ret_3m_pct")
+        row["post_open_ret_5m_pct"] = features.get("ret_5m_pct")
+        row["post_open_ret_10m_pct"] = features.get("ret_10m_pct")
+        row["post_open_ret_30m_pct"] = features.get("ret_30m_pct")
+        row["post_open_pullback_from_high_pct"] = features.get("pullback_from_high_pct")
+    def _intraday_avg_daily_volume_map(self, market: str, candidates: list[dict]) -> dict[str, float]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        out: dict[str, float] = {}
+        for candidate in candidates or []:
+            ticker = self._selection_ticker_key(market_key, (candidate or {}).get("ticker"))
+            if not ticker:
+                continue
+            avg = self._positive_float_or_none(
+                (candidate or {}).get("avg_daily_volume")
+                or (candidate or {}).get("averageVolume")
+                or (candidate or {}).get("avgVolume")
+                or (candidate or {}).get("volumeAverage")
+                or (candidate or {}).get("avg_volume_20d")
+            )
+            if avg is None:
+                volume = self._positive_float_or_none((candidate or {}).get("volume"))
+                vol_ratio = self._positive_float_or_none(
+                    (candidate or {}).get("vol_ratio")
+                    or (candidate or {}).get("volume_ratio")
+                )
+                if volume and vol_ratio:
+                    avg = volume / vol_ratio
+            if avg:
+                out[ticker] = float(avg)
+        return out
+    def _intraday_candidate_volume_ratio_map(self, market: str, candidates: list[dict]) -> dict[str, float]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        out: dict[str, float] = {}
+        for candidate in candidates or []:
+            ticker = self._selection_ticker_key(market_key, (candidate or {}).get("ticker"))
+            ratio = self._positive_float_or_none(
+                (candidate or {}).get("vol_ratio")
+                or (candidate or {}).get("volume_ratio")
+            )
+            if ticker and ratio:
+                out[ticker] = float(ratio)
+        return out
+    def _ensure_intraday_minute_cache(self) -> IntradayMinuteCache:
+        cache = getattr(self, "_intraday_minute_cache", None)
+        if not isinstance(cache, IntradayMinuteCache):
+            cache = IntradayMinuteCache()
+            self._intraday_minute_cache = cache
+        return cache
+    def _prefetch_selection_intraday_evidence(self, market: str, candidates: list[dict], *, phase: dict) -> dict[str, dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not self._runtime_bool("INTRADAY_EVIDENCE_ENABLED", False):
+            return {}
+        markets_raw = str(self._runtime_value("INTRADAY_EVIDENCE_MARKETS", "KR,US") or "KR,US")
+        enabled_markets = {item.strip().upper() for item in markets_raw.split(",") if item.strip()}
+        if market_key not in enabled_markets:
+            return {}
+        provider_default = "kis" if market_key == "KR" else "disabled"
+        provider = str(self._runtime_value(f"INTRADAY_EVIDENCE_PROVIDER_{market_key}", provider_default) or provider_default).strip().lower()
+        max_tickers = max(1, int(self._runtime_float("INTRADAY_EVIDENCE_MAX_TICKERS", 30)))
+        tickers = []
+        for candidate in candidates or []:
+            ticker = self._selection_ticker_key(market_key, (candidate or {}).get("ticker"))
+            if ticker and ticker not in tickers:
+                tickers.append(ticker)
+            if len(tickers) >= max_tickers:
+                break
+        if not tickers:
+            return {}
+        if provider in {"disabled", "none", "off", "false"}:
+            self._write_funnel_event(
+                "selection_intraday_evidence_coverage",
+                market_key,
+                {
+                    "phase": (phase or {}).get("phase"),
+                    "provider": provider,
+                    "candidate_count": len(candidates or []),
+                    "requested": len(tickers),
+                    "fetched": 0,
+                    "complete": 0,
+                    "partial": 0,
+                    "missing": len(tickers),
+                    "complete_ratio": 0.0,
+                    "errors_sample": ["provider_disabled"],
+                },
+            )
+            return {}
+        try:
+            session_date = self._current_session_date_str(market_key)
+            regular_open = self._market_regular_open_dt(market_key, session_date=session_date).astimezone(KST).replace(tzinfo=None)
+        except Exception as exc:
+            log.warning(f"[intraday evidence] {market_key} session/open resolve failed; fail-closed: {exc}")
+            self._write_funnel_event(
+                "selection_intraday_evidence_coverage",
+                market_key,
+                {
+                    "phase": (phase or {}).get("phase"),
+                    "provider": provider,
+                    "candidate_count": len(candidates or []),
+                    "requested": len(tickers),
+                    "fetched": 0,
+                    "complete": 0,
+                    "partial": 0,
+                    "missing": len(tickers),
+                    "complete_ratio": 0.0,
+                    "errors_sample": [f"session_open_resolve_failed:{str(exc)[:160]}"],
+                },
+            )
+            return {}
+        known = datetime.now(KST).replace(tzinfo=None)
+        cache = self._ensure_intraday_minute_cache()
+        cache.provider_name = provider
+        cache.ttl_sec = max(1.0, self._runtime_float("INTRADAY_EVIDENCE_CACHE_TTL_SEC", 30.0))
+        cache.timeout_sec = max(1.0, self._runtime_float("INTRADAY_EVIDENCE_PREFETCH_TIMEOUT_SEC", 8.0))
+        if market_key == "KR":
+            cache.max_workers = max(1, int(self._runtime_float("KR_INTRADAY_KIS_MAX_WORKERS", 1)))
+            cache.min_call_interval_sec = max(0.0, self._runtime_float("KR_INTRADAY_KIS_MIN_CALL_INTERVAL_SEC", 0.25))
+        else:
+            cache.max_workers = max(1, int(self._runtime_float("US_INTRADAY_MAX_WORKERS", 1)))
+            cache.min_call_interval_sec = max(0.0, self._runtime_float("US_INTRADAY_MIN_CALL_INTERVAL_SEC", 0.0))
+        try:
+            token = self._token_for_market(market_key)
+        except Exception:
+            token = None
+        result = cache.get_many(
+            market=market_key,
+            tickers=tickers,
+            session_date=session_date,
+            token=token,
+            regular_open=regular_open.isoformat(timespec="seconds"),
+            known_at=known.isoformat(timespec="seconds"),
+            avg_daily_volume_by_ticker=self._intraday_avg_daily_volume_map(market_key, candidates),
+            opening_range_min=10 if market_key == "KR" else 15,
+            provider_name=provider,
+        )
+        ratio_fallback = self._intraday_candidate_volume_ratio_map(market_key, candidates)
+        features_by_ticker = dict(result.get("features_by_ticker") or {})
+        for ticker, features in list(features_by_ticker.items()):
+            if not isinstance(features, dict):
+                continue
+            if features.get("volume_ratio_open") in (None, "") and ratio_fallback.get(ticker):
+                features["volume_ratio_open"] = ratio_fallback[ticker]
+                features["data_quality"], features["missing_fields"] = classify_intraday_feature_quality(features)
+        requested = int(result.get("requested") or len(tickers))
+        complete = sum(1 for item in features_by_ticker.values() if str((item or {}).get("data_quality")) == "minute_complete")
+        partial = sum(1 for item in features_by_ticker.values() if str((item or {}).get("data_quality")) == "minute_partial")
+        missing = max(0, requested - complete - partial)
+        complete_ratio = (complete / requested) if requested else 0.0
+        self._write_funnel_event(
+            "selection_intraday_evidence_coverage",
+            market_key,
+            {
+                "phase": (phase or {}).get("phase"),
+                "provider": provider,
+                "candidate_count": len(candidates or []),
+                "requested": requested,
+                "fetched": len(features_by_ticker),
+                "complete": complete,
+                "partial": partial,
+                "missing": missing,
+                "complete_ratio": round(float(complete_ratio), 4),
+                "used_cache": int(result.get("used_cache") or 0),
+                "errors_sample": [
+                    f"{ticker}:{error}" for ticker, error in list((result.get("errors_by_ticker") or {}).items())[:5]
+                ],
+            },
+        )
+        threshold = self._runtime_float(f"{market_key}_INTRADAY_EVIDENCE_MIN_COMPLETE_RATIO", 0.6 if market_key == "KR" else 0.5)
+        if requested and complete_ratio < threshold:
+            log.warning(
+                f"[intraday evidence coverage] {market_key} complete_ratio={complete_ratio:.2f} "
+                f"< threshold={threshold:.2f} provider={provider} requested={requested}"
+            )
+        self._merge_last_post_open_features(market_key, features_by_ticker)
+        return features_by_ticker
     def _annotate_selection_execution_features(self, market: str, candidates: list, mode: str = "") -> list:
         market_key = "US" if str(market).upper() == "US" else "KR"
         if not candidates:
@@ -8253,13 +8484,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 return "high", atr_pct
             return "extreme", atr_pct
         enriched_rows = []
-        post_open_features_by_ticker: dict[str, dict] = {}
+        post_open_features_by_ticker: dict[str, dict] = dict(
+            self._prefetch_selection_intraday_evidence(market_key, candidates, phase=phase)
+        )
+        candidate_keys = [
+            self._selection_ticker_key(market_key, (candidate or {}).get("ticker"))
+            for candidate in candidates or []
+            if (candidate or {}).get("ticker")
+        ]
+        try:
+            session_date_for_features = self._current_session_date_str(market_key)
+        except Exception:
+            session_date_for_features = datetime.now(KST).date().isoformat()
+        existing_feature_store = dict((getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {})
+        for key in list(dict.fromkeys(candidate_keys)):
+            existing_feature = existing_feature_store.get(key)
+            if not isinstance(existing_feature, dict):
+                continue
+            if str(existing_feature.get("known_at") or "")[:10] == session_date_for_features:
+                post_open_features_by_ticker.setdefault(key, dict(existing_feature))
+            else:
+                existing_feature_store.pop(key, None)
+        if existing_feature_store != ((getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {}):
+            store = getattr(self, "_last_post_open_features_by_ticker", None)
+            if isinstance(store, dict):
+                store[market_key] = existing_feature_store
         for candidate in candidates:
             row = dict(candidate or {})
             ticker = str(row.get("ticker", "") or "").strip().upper()
             if not ticker:
                 enriched_rows.append(row)
                 continue
+            selection_key = self._selection_ticker_key(market_key, ticker)
+            prefetched_post_open = post_open_features_by_ticker.get(selection_key)
+            if prefetched_post_open:
+                self._apply_post_open_features_to_row(row, prefetched_post_open)
             row.setdefault("session_phase", phase.get("phase"))
             row.setdefault("minutes_to_close", phase.get("minutes_to_close"))
             row.setdefault("entry_blackout_now", phase.get("entry_blackout"))
@@ -8403,22 +8662,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(ticker)),
                                 data_quality=str(anchor.get("anchor_source") or "partial"),
                             ).to_dict()
-                            row["post_open_features"] = po_snapshot
-                            row["post_open_momentum_state"] = po_snapshot.get("momentum_state")
-                            row["post_open_ret_3m_pct"] = po_snapshot.get("ret_3m_pct")
-                            row["post_open_ret_5m_pct"] = po_snapshot.get("ret_5m_pct")
-                            row["post_open_ret_10m_pct"] = po_snapshot.get("ret_10m_pct")
-                            row["post_open_ret_30m_pct"] = po_snapshot.get("ret_30m_pct")
-                            row["post_open_pullback_from_high_pct"] = po_snapshot.get("pullback_from_high_pct")
-                            post_open_features_by_ticker[self._selection_ticker_key(market_key, ticker)] = dict(po_snapshot)
+                            existing_po = post_open_features_by_ticker.get(selection_key) or {}
+                            if self._post_open_feature_should_replace(existing_po, po_snapshot):
+                                post_open_features_by_ticker[selection_key] = dict(po_snapshot)
+                                self._apply_post_open_features_to_row(row, po_snapshot)
+                            elif existing_po:
+                                self._apply_post_open_features_to_row(row, existing_po)
             except Exception:
                 pass
             enriched_rows.append(row)
         store = getattr(self, "_last_post_open_features_by_ticker", None)
         if not isinstance(store, dict):
             store = {"KR": {}, "US": {}}
-        store[market_key] = dict(post_open_features_by_ticker)
-        self._last_post_open_features_by_ticker = store
+        self._merge_last_post_open_features(market_key, post_open_features_by_ticker)
         return enriched_rows
     def _is_entry_priority_blocked(self, score: float, market: str = "") -> bool:
         cutoff = self._effective_entry_priority_cutoff(market) if market else self._effective_entry_priority_cutoff()
@@ -8950,6 +9206,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._post_open_price_history.pop(_po_key, None)
             self._post_open_anchor.pop(_po_key, None)
             self._post_open_feature_last_emit.pop(_po_key, None)
+        cache = getattr(self, "_intraday_minute_cache", None)
+        if hasattr(cache, "clear"):
+            try:
+                session_date = self._current_session_date_str(market_key)
+            except Exception as exc:
+                session_date = ""
+                log.warning(f"[intraday minute cache clear] {market_key} session_date resolve failed: {exc}")
+            try:
+                kwargs = {"market": market_key, "tickers": list(selected or [])}
+                if session_date:
+                    kwargs["session_date"] = session_date
+                cache.clear(**kwargs)
+            except Exception as exc:
+                log.warning(f"[intraday minute cache clear] {market_key} failed: {exc}")
 
     def _observe_post_open_price(
         self,

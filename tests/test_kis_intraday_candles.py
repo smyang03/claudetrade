@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import unittest
+from unittest.mock import patch
+
+import pandas as pd
+
+import kis_api
+
+
+class _Resp:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return self.payload
+
+
+class KISIntradayCandleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        kis_api._INTRADAY_CACHE.clear()
+
+    def test_kr_kis_intraday_normalizes_rows(self) -> None:
+        payload = {
+            "output2": [
+                {
+                    "stck_bsop_date": "20260513",
+                    "stck_cntg_hour": "090100",
+                    "stck_oprc": "101",
+                    "stck_hgpr": "102",
+                    "stck_lwpr": "100",
+                    "stck_prpr": "101",
+                    "cntg_vol": "20",
+                },
+                {
+                    "stck_bsop_date": "20260513",
+                    "stck_cntg_hour": "090000",
+                    "stck_oprc": "100",
+                    "stck_hgpr": "101",
+                    "stck_lwpr": "99",
+                    "stck_prpr": "100",
+                    "cntg_vol": "10",
+                },
+            ]
+        }
+
+        with patch("kis_api._kis_get", return_value=_Resp(payload)):
+            df = kis_api._intraday_ohlcv_kr_kis(
+                "005930",
+                "token",
+                session_date="2026-05-13",
+                start_at="2026-05-13T09:00:00",
+                end_at="2026-05-13T09:02:00",
+            )
+
+        self.assertEqual(list(df["close"]), [100.0, 101.0])
+        self.assertEqual(list(df["volume"]), [10.0, 20.0])
+        self.assertEqual(str(df.iloc[0]["ts"]), "2026-05-13 09:00:00")
+
+    def test_kr_kis_intraday_does_not_use_cumulative_volume_as_bar_volume(self) -> None:
+        payload = {
+            "output2": [
+                {
+                    "stck_bsop_date": "20260513",
+                    "stck_cntg_hour": "090000",
+                    "stck_oprc": "100",
+                    "stck_hgpr": "101",
+                    "stck_lwpr": "99",
+                    "stck_prpr": "100",
+                    "cntg_vol": "",
+                    "acml_vol": "999999",
+                }
+            ]
+        }
+
+        with patch("kis_api._kis_get", return_value=_Resp(payload)):
+            df = kis_api._intraday_ohlcv_kr_kis(
+                "005930",
+                "token",
+                session_date="2026-05-13",
+                start_at="2026-05-13T09:00:00",
+                end_at="2026-05-13T09:02:00",
+            )
+
+        self.assertEqual(df.iloc[0]["volume"], 0.0)
+
+    def test_us_provider_disabled_is_fail_closed(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "provider disabled"):
+            kis_api.get_intraday_candles(
+                "AAPL",
+                market="US",
+                session_date="2026-05-13",
+                start_at="2026-05-13T22:30:00",
+                end_at="2026-05-13T22:35:00",
+                provider="disabled",
+            )
+
+    def test_us_yfinance_provider_dispatches_and_caches(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "ts": pd.to_datetime(["2026-05-13T22:30:00"]),
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.5],
+                "volume": [1000.0],
+                "source": ["yfinance_intraday"],
+            }
+        )
+        with patch("kis_api._intraday_ohlcv_us_yf", return_value=frame.copy()) as mocked:
+            first = kis_api.get_intraday_candles(
+                "aapl",
+                market="US",
+                session_date="2026-05-13",
+                start_at="2026-05-13T22:30:00",
+                end_at="2026-05-13T22:35:00",
+                provider="yfinance",
+            )
+            second = kis_api.get_intraday_candles(
+                "AAPL",
+                market="US",
+                session_date="2026-05-13",
+                start_at="2026-05-13T22:30:00",
+                end_at="2026-05-13T22:35:00",
+                provider="yfinance",
+            )
+
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(first.iloc[0]["close"], second.iloc[0]["close"])
+
+
+if __name__ == "__main__":
+    unittest.main()

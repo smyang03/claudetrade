@@ -185,7 +185,7 @@ def _merge_current_rows(
     current: sqlite3.Connection,
     dst: sqlite3.Connection,
     backup_max_session: str | None,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int, list[dict[str, Any]]]:
     src_cols = _columns(current, "decisions")
     dst_cols = _columns(dst, "decisions")
     rows = current.execute("SELECT * FROM decisions ORDER BY id").fetchall()
@@ -197,8 +197,12 @@ def _merge_current_rows(
     merged = 0
     skipped_fixture = 0
     id_conflicts = 0
+    id_remapped = 0
+    id_remap_log: list[dict[str, Any]] = []
     cols = [col for col in dst_cols if col in src_cols]
     sql = f"INSERT INTO decisions ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})"
+    remap_cols = [col for col in cols if col != "id"]
+    remap_sql = f"INSERT INTO decisions ({', '.join(remap_cols)}) VALUES ({', '.join('?' for _ in remap_cols)})"
 
     for row in rows:
         if _is_fixture_row(row):
@@ -209,11 +213,25 @@ def _merge_current_rows(
         row_id = int(row["id"])
         if row_id in current_ids:
             id_conflicts += 1
+            cursor = dst.execute(remap_sql, [row[col] for col in remap_cols])
+            new_id = int(cursor.lastrowid)
+            current_ids.add(new_id)
+            id_remapped += 1
+            id_remap_log.append(
+                {
+                    "old_id": row_id,
+                    "new_id": new_id,
+                    "session_date": str(row["session_date"] or ""),
+                    "market": str(row["market"] or ""),
+                    "ticker": str(row["ticker"] or ""),
+                }
+            )
+            merged += 1
             continue
         dst.execute(sql, [row[col] for col in cols])
         current_ids.add(row_id)
         merged += 1
-    return merged, skipped_fixture, id_conflicts
+    return merged, skipped_fixture, id_conflicts, id_remapped, id_remap_log
 
 
 def _remove_fixture_rows(conn: sqlite3.Connection) -> int:
@@ -237,17 +255,17 @@ def _update_matching_decision(
     ticker: str,
     session_date: str,
     values: dict[str, Any],
-) -> bool:
+) -> dict[str, int]:
     rows = conn.execute(
         """
-        SELECT id
+        SELECT id, filled
         FROM decisions
         WHERE market=? AND ticker=? AND session_date=? AND decision='BUY_SIGNAL'
         """,
         (market, ticker, session_date),
     ).fetchall()
     if len(rows) != 1:
-        return False
+        return {"updated": 0, "filled_updated": 0}
     allowed = {
         "entry_price",
         "exit_price",
@@ -259,17 +277,50 @@ def _update_matching_decision(
     }
     update = {key: value for key, value in values.items() if key in allowed and value is not None}
     if not update:
-        return False
-    assignments = ", ".join(f"{key}=COALESCE({key}, ?)" for key in update)
+        return {"updated": 0, "filled_updated": 0}
+    assignments = []
+    params = []
+    for key, value in update.items():
+        if key == "filled":
+            assignments.append("filled=?")
+        else:
+            assignments.append(f"{key}=COALESCE({key}, ?)")
+        params.append(value)
     conn.execute(
-        f"UPDATE decisions SET {assignments} WHERE id=?",
-        [*update.values(), rows[0]["id"]],
+        f"UPDATE decisions SET {', '.join(assignments)} WHERE id=?",
+        [*params, rows[0]["id"]],
     )
-    return True
+    filled_updated = 0
+    if "filled" in update:
+        try:
+            before = None if rows[0]["filled"] is None else int(rows[0]["filled"])
+            after = int(update["filled"])
+            filled_updated = 1 if before != after else 0
+        except Exception:
+            filled_updated = 1
+    return {"updated": 1, "filled_updated": filled_updated}
+
+
+def _closed_event_name(item: dict[str, Any]) -> str:
+    return str(
+        item.get("event")
+        or item.get("action")
+        or item.get("type")
+        or item.get("status")
+        or ""
+    ).lower()
+
+
+def _is_closed_or_fill_event(event_name: str) -> bool:
+    normalized = str(event_name or "").lower()
+    return any(
+        token in normalized
+        for token in ("closed", "close", "exit", "exited", "sell", "sold", "liquidat", "filled")
+    )
 
 
 def _supplement_from_live_jsonl(conn: sqlite3.Connection, path: Path) -> dict[str, int]:
-    summary = {"events_seen": 0, "rows_updated": 0}
+    summary = {"events_seen": 0, "rows_updated": 0, "filled_updated": 0, "jsonl_closed_inferred": 0}
     if not path.exists():
         return summary
     with path.open("r", encoding="utf-8", errors="replace") as f:
@@ -281,14 +332,9 @@ def _supplement_from_live_jsonl(conn: sqlite3.Connection, path: Path) -> dict[st
                 item = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            event_name = str(
-                item.get("event")
-                or item.get("action")
-                or item.get("type")
-                or item.get("status")
-                or ""
-            ).lower()
-            if "closed" not in event_name and item.get("pnl_pct") is None:
+            event_name = _closed_event_name(item)
+            closed_event = _is_closed_or_fill_event(event_name)
+            if not closed_event and item.get("pnl_pct") is None:
                 continue
             market = str(item.get("market") or "").upper()
             ticker = str(item.get("ticker") or item.get("symbol") or "")
@@ -296,7 +342,11 @@ def _supplement_from_live_jsonl(conn: sqlite3.Connection, path: Path) -> dict[st
             if not (market and ticker and session_date):
                 continue
             summary["events_seen"] += 1
-            updated = _update_matching_decision(
+            hold_days = item.get("hold_days")
+            if hold_days is None:
+                hold_days = item.get("held_days")
+            filled = 1 if closed_event else (1 if item.get("filled") is True else None)
+            update_result = _update_matching_decision(
                 conn,
                 market=market,
                 ticker=ticker,
@@ -305,14 +355,17 @@ def _supplement_from_live_jsonl(conn: sqlite3.Connection, path: Path) -> dict[st
                     "entry_price": item.get("entry_price"),
                     "exit_price": item.get("exit_price"),
                     "exit_reason": item.get("exit_reason") or item.get("reason"),
-                    "hold_days": item.get("hold_days"),
+                    "hold_days": hold_days,
                     "pnl_pct": item.get("pnl_pct"),
-                    "filled": 1 if item.get("filled") is True else None,
+                    "filled": filled,
                     "order_status": item.get("order_status"),
                 },
             )
-            if updated:
+            if update_result["updated"]:
                 summary["rows_updated"] += 1
+                summary["filled_updated"] += int(update_result.get("filled_updated", 0))
+                if closed_event:
+                    summary["jsonl_closed_inferred"] += 1
     return summary
 
 
@@ -325,7 +378,7 @@ def _table_columns_by_name(conn: sqlite3.Connection) -> dict[str, set[str]]:
 
 
 def _supplement_from_selection_db(conn: sqlite3.Connection, path: Path) -> dict[str, int]:
-    summary = {"rows_seen": 0, "rows_updated": 0}
+    summary = {"rows_seen": 0, "rows_updated": 0, "filled_updated": 0}
     if not path.exists():
         return summary
     try:
@@ -344,14 +397,16 @@ def _supplement_from_selection_db(conn: sqlite3.Connection, path: Path) -> dict[
                 rows = src.execute(f"SELECT {', '.join(select_cols)} FROM {table}").fetchall()
                 for row in rows:
                     summary["rows_seen"] += 1
-                    if _update_matching_decision(
+                    update_result = _update_matching_decision(
                         conn,
                         market=str(row["market"]).upper(),
                         ticker=str(row["ticker"]),
                         session_date=str(row["session_date"])[:10],
                         values=dict(row),
-                    ):
+                    )
+                    if update_result["updated"]:
                         summary["rows_updated"] += 1
+                        summary["filled_updated"] = summary.get("filled_updated", 0) + int(update_result.get("filled_updated", 0))
     except Exception as exc:
         summary["error"] = 1
         summary["error_message"] = str(exc)[:300]
@@ -379,6 +434,16 @@ def _checkpoint_db(path: Path) -> None:
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
         conn.close()
+
+
+def _quick_check_db(path: Path) -> dict[str, Any]:
+    try:
+        with _connect(path, read_only=True) as conn:
+            rows = [str(row[0]) for row in conn.execute("PRAGMA quick_check").fetchall()]
+        ok = bool(rows) and all(value.lower() == "ok" for value in rows)
+        return {"quick_check_ok": ok, "quick_check_result": rows}
+    except Exception as exc:
+        return {"quick_check_ok": False, "quick_check_result": [str(exc)[:300]]}
 
 
 def _preserve_current_db(current_path: Path) -> list[str]:
@@ -412,10 +477,16 @@ def _build_recovered_db(
         "current_rows_merged": 0,
         "current_fixture_rows_skipped": 0,
         "id_conflicts": 0,
+        "id_remapped": 0,
+        "id_remap_log": [],
         "fixture_rows_removed": 0,
         "outcome_supplement": {},
+        "filled_updated": 0,
+        "jsonl_closed_inferred": 0,
         "forward_update": {},
         "final_diag": {},
+        "quick_check_ok": False,
+        "quick_check_result": [],
     }
 
     with _connect(backup_path, read_only=True) as backup, _connect(current_path, read_only=True) as current, _connect(target_path) as dst:
@@ -426,12 +497,18 @@ def _build_recovered_db(
 
         backup_max_session = _max_session_date(backup)
         report["backup_rows_copied"] = _copy_backup_rows(backup, dst)
-        merged, skipped_fixture, id_conflicts = _merge_current_rows(current, dst, backup_max_session)
+        merged, skipped_fixture, id_conflicts, id_remapped, id_remap_log = _merge_current_rows(current, dst, backup_max_session)
         report["current_rows_merged"] = merged
         report["current_fixture_rows_skipped"] = skipped_fixture
         report["id_conflicts"] = id_conflicts
+        report["id_remapped"] = id_remapped
+        report["id_remap_log"] = id_remap_log
         report["fixture_rows_removed"] = _remove_fixture_rows(dst)
         report["outcome_supplement"] = _supplement_outcomes(dst)
+        live_summary = report["outcome_supplement"].get("live_decisions_jsonl", {})
+        selection_summary = report["outcome_supplement"].get("ticker_selection_log_db", {})
+        report["filled_updated"] = int(live_summary.get("filled_updated", 0)) + int(selection_summary.get("filled_updated", 0))
+        report["jsonl_closed_inferred"] = int(live_summary.get("jsonl_closed_inferred", 0))
         dst.commit()
 
     if not skip_forward_update:
@@ -467,11 +544,16 @@ def recover(
             skip_forward_update=skip_forward_update,
         )
         _checkpoint_db(work_db)
+        quick_check = _quick_check_db(work_db)
+        report.update(quick_check)
 
         if not apply:
             report["apply_mode"] = "dry_run"
             report["output_path"] = str(output) if output else None
             return report
+
+        if not bool(report.get("quick_check_ok")):
+            raise RuntimeError(f"recovered decisions DB quick_check failed: {report.get('quick_check_result')}")
 
         if output:
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -497,7 +579,12 @@ def _print_human(report: dict[str, Any]) -> None:
     print(f"backup_rows_copied={report.get('backup_rows_copied')}")
     print(f"current_rows_merged={report.get('current_rows_merged')}")
     print(f"current_fixture_rows_skipped={report.get('current_fixture_rows_skipped')}")
+    print(f"id_conflicts={report.get('id_conflicts')}")
+    print(f"id_remapped={report.get('id_remapped')}")
     print(f"fixture_rows_removed={report.get('fixture_rows_removed')}")
+    print(f"filled_updated={report.get('filled_updated')}")
+    print(f"jsonl_closed_inferred={report.get('jsonl_closed_inferred')}")
+    print(f"quick_check_ok={report.get('quick_check_ok')} result={report.get('quick_check_result')}")
     final = report.get("final_diag", {})
     if final:
         print(

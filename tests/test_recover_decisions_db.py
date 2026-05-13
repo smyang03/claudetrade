@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tools import recover_decisions_db
 
@@ -28,6 +30,9 @@ def _insert_row(
     row_id: int,
     ticker: str,
     session_date: str,
+    market: str = "KR",
+    decision: str = "NO_SIGNAL",
+    filled: int = 0,
     forward_1d: float | None = None,
     forward_3d: float | None = None,
     forward_5d: float | None = None,
@@ -40,17 +45,51 @@ def _insert_row(
             """
             INSERT INTO decisions (
                 id, ts, market, ticker, session_date, mode, decision,
-                forward_1d, forward_3d, forward_5d, data_source, is_simulated
+                filled, forward_1d, forward_3d, forward_5d, data_source, is_simulated
             ) VALUES (
-                ?, '2026-05-13T09:00:00', 'KR', ?, ?, 'NEUTRAL', 'NO_SIGNAL',
-                ?, ?, ?, ?, ?
+                ?, '2026-05-13T09:00:00', ?, ?, ?, 'NEUTRAL', ?,
+                ?, ?, ?, ?, ?, ?
             )
             """,
-            (row_id, ticker, session_date, forward_1d, forward_3d, forward_5d, data_source, is_simulated),
+            (
+                row_id,
+                market,
+                ticker,
+                session_date,
+                decision,
+                filled,
+                forward_1d,
+                forward_3d,
+                forward_5d,
+                data_source,
+                is_simulated,
+            ),
         )
         conn.commit()
     finally:
         conn.close()
+
+
+def _decision_rows(path: Path):
+    conn = sqlite3.connect(str(path))
+    try:
+        return conn.execute(
+            """
+            SELECT id, market, ticker, session_date, decision, filled, hold_days, pnl_pct
+            FROM decisions
+            ORDER BY id
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _write_live_jsonl(root: Path, rows: list[dict]) -> Path:
+    state = root / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    path = state / "live_decisions.jsonl"
+    path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+    return path
 
 
 class RecoverDecisionsDbTests(unittest.TestCase):
@@ -145,6 +184,254 @@ class RecoverDecisionsDbTests(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(rows, [(26, "BACK", "2026-04-03"), (86371, "LIVE", "2026-05-12")])
+
+    def test_id_conflict_post_backup_live_row_is_remapped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="BACK", session_date="2026-04-03")
+            _insert_row(current, row_id=1, ticker="LIVE", session_date="2026-05-12")
+
+            report = recover_decisions_db.recover(
+                backup_path=backup,
+                current_path=current,
+                output_path=output,
+                apply=True,
+                skip_forward_update=True,
+            )
+
+            rows = _decision_rows(output)
+            self.assertEqual([(row[2], row[3]) for row in rows], [("BACK", "2026-04-03"), ("LIVE", "2026-05-12")])
+            self.assertNotEqual(rows[1][0], 1)
+            self.assertEqual(report["id_conflicts"], 1)
+            self.assertEqual(report["id_remapped"], 1)
+            self.assertEqual(report["id_remap_log"][0]["old_id"], 1)
+            self.assertEqual(report["id_remap_log"][0]["new_id"], rows[1][0])
+
+    def test_filled_default_zero_is_overwritten_by_supplement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="LIVE", session_date="2026-05-12", decision="BUY_SIGNAL", filled=0)
+            _write_live_jsonl(
+                temp,
+                [
+                    {
+                        "event": "closed",
+                        "market": "KR",
+                        "ticker": "LIVE",
+                        "session_date": "2026-05-12",
+                        "pnl_pct": 1.25,
+                    }
+                ],
+            )
+
+            with patch.object(recover_decisions_db, "ROOT", temp):
+                report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=True,
+                    skip_forward_update=True,
+                )
+
+            rows = _decision_rows(output)
+            self.assertEqual(rows[0][5], 1)
+            self.assertEqual(rows[0][7], 1.25)
+            self.assertEqual(report["filled_updated"], 1)
+
+    def test_closed_jsonl_infers_held_days_and_filled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="LIVE", session_date="2026-05-12", decision="BUY_SIGNAL", filled=0)
+            _write_live_jsonl(
+                temp,
+                [
+                    {
+                        "type": "closed",
+                        "market": "KR",
+                        "ticker": "LIVE",
+                        "session_date": "2026-05-12",
+                        "held_days": 3,
+                        "pnl_pct": 2.5,
+                    }
+                ],
+            )
+
+            with patch.object(recover_decisions_db, "ROOT", temp):
+                report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=True,
+                    skip_forward_update=True,
+                )
+
+            rows = _decision_rows(output)
+            self.assertEqual(rows[0][5], 1)
+            self.assertEqual(rows[0][6], 3)
+            self.assertEqual(rows[0][7], 2.5)
+            self.assertEqual(report["jsonl_closed_inferred"], 1)
+
+    def test_closed_jsonl_overrides_explicit_false_filled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="LIVE", session_date="2026-05-12", decision="BUY_SIGNAL", filled=0)
+            _write_live_jsonl(
+                temp,
+                [
+                    {
+                        "event": "closed",
+                        "market": "KR",
+                        "ticker": "LIVE",
+                        "session_date": "2026-05-12",
+                        "held_days": 1,
+                        "pnl_pct": -0.5,
+                        "filled": False,
+                    }
+                ],
+            )
+
+            with patch.object(recover_decisions_db, "ROOT", temp):
+                recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=True,
+                    skip_forward_update=True,
+                )
+
+            rows = _decision_rows(output)
+            self.assertEqual(rows[0][5], 1)
+
+    def test_dry_run_and_apply_report_core_counts_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="BACK", session_date="2026-04-03")
+            _insert_row(current, row_id=1, ticker="LIVE", session_date="2026-05-12", decision="BUY_SIGNAL", filled=0)
+            _write_live_jsonl(
+                temp,
+                [
+                    {
+                        "event": "closed",
+                        "market": "KR",
+                        "ticker": "LIVE",
+                        "session_date": "2026-05-12",
+                        "held_days": 2,
+                        "pnl_pct": 3.0,
+                    }
+                ],
+            )
+            before_rows = _decision_rows(current)
+
+            with patch.object(recover_decisions_db, "ROOT", temp):
+                dry_report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=False,
+                    skip_forward_update=True,
+                )
+                self.assertFalse(output.exists())
+                apply_report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=True,
+                    skip_forward_update=True,
+                )
+
+            self.assertEqual(_decision_rows(current), before_rows)
+            for key in (
+                "current_rows_merged",
+                "current_fixture_rows_skipped",
+                "id_conflicts",
+                "id_remapped",
+                "filled_updated",
+                "jsonl_closed_inferred",
+            ):
+                self.assertEqual(dry_report[key], apply_report[key])
+            self.assertTrue(dry_report["quick_check_ok"])
+            self.assertTrue(apply_report["quick_check_ok"])
+
+    def test_recovery_simulation_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="BACK", session_date="2026-04-03")
+            _insert_row(current, row_id=1, ticker="LIVE", session_date="2026-05-12", decision="BUY_SIGNAL", filled=0)
+            _write_live_jsonl(
+                temp,
+                [
+                    {
+                        "type": "closed",
+                        "market": "KR",
+                        "ticker": "LIVE",
+                        "session_date": "2026-05-12",
+                        "held_days": 4,
+                        "pnl_pct": 4.2,
+                        "filled": False,
+                    }
+                ],
+            )
+
+            with patch.object(recover_decisions_db, "ROOT", temp):
+                dry_report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=False,
+                    skip_forward_update=True,
+                )
+                apply_report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=True,
+                    skip_forward_update=True,
+                )
+
+            rows = _decision_rows(output)
+            self.assertEqual([(row[2], row[3]) for row in rows], [("BACK", "2026-04-03"), ("LIVE", "2026-05-12")])
+            live_row = rows[1]
+            self.assertNotEqual(live_row[0], 1)
+            self.assertEqual(live_row[5], 1)
+            self.assertEqual(live_row[6], 4)
+            self.assertEqual(live_row[7], 4.2)
+            self.assertEqual(apply_report["id_remapped"], 1)
+            self.assertEqual(apply_report["filled_updated"], 1)
+            self.assertEqual(apply_report["jsonl_closed_inferred"], 1)
+            self.assertTrue(apply_report["id_remap_log"])
+            self.assertTrue(apply_report["quick_check_ok"])
+            for key in ("id_conflicts", "id_remapped", "filled_updated", "jsonl_closed_inferred"):
+                self.assertEqual(dry_report[key], apply_report[key])
 
 
 if __name__ == "__main__":
