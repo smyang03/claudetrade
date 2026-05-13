@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import Mock, patch
+
 from trading_bot import TradingBot
 
 
@@ -153,6 +155,47 @@ def _bot_with_snapshot(snapshot: dict, *, lookup_fill: dict | None = None) -> Tr
     return bot
 
 
+def _bot_for_broker_sync(snapshot: dict) -> TradingBot:
+    bot = TradingBot.__new__(TradingBot)
+    bot.usd_krw_rate = 1000.0
+    bot.is_paper = False
+    bot.pending_orders = []
+    bot._broker_state = {}
+    bot._session_closed_tickers = {"KR": set(), "US": set()}
+    bot.risk = _Risk([_pending_position()])
+    bot.risk.cash = 1_000_000.0
+    bot.decision_events: list[dict] = []
+    bot.saved_positions = 0
+    bot.live_status_writes = 0
+    bot.proceeds_records: list[dict] = []
+
+    bot._market_enabled = lambda market: str(market).upper() == "US"  # type: ignore[method-assign]
+    bot._token_for_market = lambda market, force_refresh=False: "token"  # type: ignore[method-assign]
+    bot._current_session_date_str = lambda market: "2026-05-08"  # type: ignore[method-assign]
+    bot._reconcile_pending_orders = lambda broker_kr, broker_us: None  # type: ignore[method-assign]
+    bot._broker_truth_market_snapshot = lambda market, force=True, ttl_sec=15: snapshot  # type: ignore[method-assign]
+    bot._lookup_order_fill = lambda market, order_no, ticker, created_at="": None  # type: ignore[method-assign]
+    bot._record_decision_event = lambda market, action, ticker, **kw: bot.decision_events.append(  # type: ignore[method-assign]
+        {"market": market, "action": action, "ticker": ticker, **kw}
+    )
+    bot._save_positions = lambda: setattr(bot, "saved_positions", bot.saved_positions + 1)  # type: ignore[method-assign]
+    bot._write_live_status = lambda market, force=False: setattr(bot, "live_status_writes", bot.live_status_writes + 1)  # type: ignore[method-assign]
+    bot._note_recent_sell_proceeds = lambda market, ticker, **kw: bot.proceeds_records.append(  # type: ignore[method-assign]
+        {"market": market, "ticker": ticker, **kw}
+    )
+    bot._note_stop_loss_event = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    bot._flag_execution_issue = Mock()  # type: ignore[method-assign]
+    return bot
+
+
+def _broker_balance_without_us_positions() -> dict:
+    return {
+        "cash": 1000.0,
+        "total_eval": 0.0,
+        "stocks": [],
+    }
+
+
 def test_pending_sell_fill_closes_local_position_and_records_closed_event() -> None:
     bot = _bot_with_snapshot(
         {
@@ -287,6 +330,129 @@ def test_pending_sell_position_absent_assumes_sold_and_closes_local_position() -
     event = bot.decision_events[-1]
     assert event["broker_fill_source"] == "broker_position_absent_inferred"
     assert event["detail"] == "pending_sell_reconcile:BROKER_POSITION_GONE_ASSUME_SOLD"
+
+
+def test_pending_sell_order_no_only_is_reconciled_as_active() -> None:
+    bot = _bot_with_snapshot(
+        {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "positions": [],
+            "open_orders": [],
+            "today_fills": [],
+        }
+    )
+    pos = bot.risk.positions[0]
+    pos["sell_confirmation_pending"] = False
+    pos["pending_sell_status"] = "submitted"
+
+    summary = TradingBot._reconcile_pending_sell_confirmations(bot, "US", force=True)
+
+    assert summary["checked"] == 1
+    assert summary["closed"] == 1
+    assert bot.risk.positions == []
+    assert bot.decision_events[-1]["detail"] == "pending_sell_reconcile:BROKER_POSITION_GONE_ASSUME_SOLD"
+
+
+def test_resolved_pending_sell_order_no_metadata_is_not_reconciled() -> None:
+    bot = _bot_with_snapshot(
+        {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "positions": [],
+            "open_orders": [],
+            "today_fills": [],
+        }
+    )
+    pos = bot.risk.positions[0]
+    pos["sell_confirmation_pending"] = False
+    pos["pending_sell_status"] = "resolved"
+    pos["pending_sell_resolution"] = "BROKER_STILL_HELD_NO_OPEN_ORDER_CLEAR_STALE_PENDING"
+
+    summary = TradingBot._reconcile_pending_sell_confirmations(bot, "US", force=True)
+
+    assert summary["checked"] == 0
+    assert len(bot.risk.positions) == 1
+    assert bot.decision_events == []
+
+
+def test_broker_sync_protects_pending_sell_absent_position_and_reconciles() -> None:
+    bot = _bot_for_broker_sync(
+        {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "positions": [],
+            "open_orders": [],
+            "today_fills": [],
+        }
+    )
+
+    with patch("trading_bot.get_balance", return_value=_broker_balance_without_us_positions()):
+        TradingBot._sync_runtime_with_broker(bot)
+
+    assert bot.risk.positions == []
+    bot._flag_execution_issue.assert_not_called()
+    assert bot.decision_events[-1]["detail"] == "pending_sell_reconcile:BROKER_POSITION_GONE_ASSUME_SOLD"
+    assert bot.proceeds_records
+    assert bot.proceeds_records[-1]["market"] == "US"
+    assert bot.proceeds_records[-1]["ticker"] == "IREN"
+    assert bot.proceeds_records[-1]["proceeds_krw"] > 0
+
+
+def test_broker_sync_keeps_pending_sell_when_broker_truth_unavailable() -> None:
+    bot = _bot_for_broker_sync(
+        {
+            "missing": False,
+            "stale": True,
+            "error": "snapshot_stale",
+            "positions": [],
+            "open_orders": [],
+            "today_fills": [],
+        }
+    )
+
+    with patch("trading_bot.get_balance", return_value=_broker_balance_without_us_positions()):
+        TradingBot._sync_runtime_with_broker(bot)
+
+    assert len(bot.risk.positions) == 1
+    pos = bot.risk.positions[0]
+    assert pos["broker_reconcile_status"] == "pending_sell_confirmation_protected"
+    assert pos["pending_sell_resolution"] == "BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING"
+    bot._flag_execution_issue.assert_not_called()
+    assert bot.proceeds_records == []
+
+
+def test_broker_sync_keeps_pending_sell_when_broker_open_order_exists() -> None:
+    bot = _bot_for_broker_sync(
+        {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "positions": [],
+            "open_orders": [
+                {
+                    "ticker": "IREN",
+                    "side": "sell",
+                    "order_no": "0031706077",
+                    "remaining_qty": 2,
+                }
+            ],
+            "today_fills": [],
+        }
+    )
+
+    with patch("trading_bot.get_balance", return_value=_broker_balance_without_us_positions()):
+        TradingBot._sync_runtime_with_broker(bot)
+
+    assert len(bot.risk.positions) == 1
+    pos = bot.risk.positions[0]
+    assert pos["sell_confirmation_pending"] is True
+    assert pos["pending_sell_resolution"] == "BROKER_OPEN_ORDER_FOUND_KEEP_PENDING"
+    bot._flag_execution_issue.assert_not_called()
+    assert bot.proceeds_records == []
 
 
 def test_pending_sell_still_held_without_open_order_clears_stale_pending() -> None:

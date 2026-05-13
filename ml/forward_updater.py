@@ -10,6 +10,7 @@ This updater is idempotent:
 from __future__ import annotations
 
 import argparse
+import math
 import sqlite3
 import sys
 from pathlib import Path
@@ -18,10 +19,11 @@ from typing import Optional
 import pandas as pd
 
 _ROOT = Path(__file__).parent.parent
-_DB_PATH = _ROOT / "data" / "ml" / "decisions.db"
 _PRICE_DIR = _ROOT / "data" / "price"
 
 sys.path.insert(0, str(_ROOT))
+from ml.db_writer import _resolve_db_path
+
 try:
     from logger import get_collector_logger
 
@@ -35,8 +37,17 @@ except Exception:
 _price_cache: dict[str, Optional[pd.DataFrame]] = {}
 
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        result = super().__exit__(exc_type, exc_value, traceback)
+        self.close()
+        return result
+
+
 def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_DB_PATH), timeout=10)
+    db_path = _resolve_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), timeout=10, factory=_ClosingConnection)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     return conn
@@ -65,20 +76,27 @@ def _load_price(market: str, ticker: str) -> Optional[pd.DataFrame]:
         return None
 
 
-def _calc_forward_return(df: pd.DataFrame, session_date: str, n_days: int) -> Optional[float]:
+def _calc_forward_return(df: pd.DataFrame, session_date: str, n_days: int) -> tuple[Optional[float], str]:
+    if "close" not in df.columns:
+        return None, "price_column_missing"
     dates = df.index.tolist()
     if session_date not in dates:
-        return None
+        return None, "session_date_missing"
     base_idx = dates.index(session_date)
     future_idx = base_idx + n_days
     if future_idx >= len(dates):
-        return None
+        return None, "future_price_not_available"
 
-    base_close = float(df.loc[session_date, "close"])
-    future_close = float(df.iloc[future_idx]["close"])
-    if base_close <= 0:
-        return None
-    return round((future_close - base_close) / base_close * 100, 4)
+    try:
+        base_close = float(df.loc[session_date, "close"])
+        future_close = float(df.iloc[future_idx]["close"])
+    except Exception:
+        return None, "price_column_missing"
+    if not math.isfinite(base_close) or base_close <= 0:
+        return None, "base_close_invalid"
+    if not math.isfinite(future_close):
+        return None, "future_price_not_available"
+    return round((future_close - base_close) / base_close * 100, 4), ""
 
 
 def _fetch_pending(market: Optional[str]) -> list[dict]:
@@ -103,17 +121,29 @@ def run(
     market: Optional[str] = None,
     dry_run: bool = False,
     forward_days: tuple[int, ...] = (1, 3, 5),
-) -> None:
+) -> dict:
     pending = _fetch_pending(market)
     _log.info(f"[forward] pending rows={len(pending)} market={market or 'ALL'} dry_run={dry_run}")
 
+    summary = {
+        "pending": len(pending),
+        "updated": 0,
+        "partial_updated": 0,
+        "skipped": 0,
+        "missing_csv": 0,
+        "would_update": 0,
+        "skip_by": {
+            "session_date_missing": 0,
+            "future_price_not_available": 0,
+            "base_close_invalid": 0,
+            "price_column_missing": 0,
+        },
+        "dry_run": dry_run,
+    }
+
     if not pending:
         _log.info("[forward] nothing to update")
-        return
-
-    updated = 0
-    skipped = 0
-    missing_csv = 0
+        return summary
 
     for row in pending:
         decision_id = row["id"]
@@ -123,20 +153,29 @@ def run(
 
         df = _load_price(market_code, ticker)
         if df is None:
-            missing_csv += 1
+            summary["missing_csv"] += 1
             continue
 
         calc_map = {n: _calc_forward_return(df, session_date, n) for n in forward_days}
+        values = {n: result[0] for n, result in calc_map.items()}
+        reasons = {n: result[1] for n, result in calc_map.items()}
 
-        f1d = row["forward_1d"] if row["forward_1d"] is not None else calc_map.get(1)
-        f3d = row["forward_3d"] if row["forward_3d"] is not None else calc_map.get(3)
-        f5d = row["forward_5d"] if row["forward_5d"] is not None else calc_map.get(5)
+        f1d = row["forward_1d"] if row["forward_1d"] is not None else values.get(1)
+        f3d = row["forward_3d"] if row["forward_3d"] is not None else values.get(3)
+        f5d = row["forward_5d"] if row["forward_5d"] is not None else values.get(5)
 
         if f1d is None and f3d is None and f5d is None:
-            skipped += 1
+            reason = _row_skip_reason(reasons)
+            summary["skipped"] += 1
+            if reason in summary["skip_by"]:
+                summary["skip_by"][reason] += 1
             continue
 
+        if any(v is None for v in (f1d, f3d, f5d)):
+            summary["partial_updated"] += 1
+
         if dry_run:
+            summary["would_update"] += 1
             print(
                 f"[DRY] id={decision_id:6d} {market_code} {ticker:8s} {session_date} "
                 f"f1d={_fmt(f1d)} f3d={_fmt(f3d)} f5d={_fmt(f5d)}"
@@ -149,13 +188,33 @@ def run(
                     "UPDATE decisions SET forward_1d=?, forward_3d=?, forward_5d=? WHERE id=?",
                     (f1d, f3d, f5d, decision_id),
                 )
-            updated += 1
+            summary["updated"] += 1
         except Exception as e:
             _log.warning(f"[forward] update failed id={decision_id}: {e}")
 
+    skip_parts = ", ".join(
+        f"{key}={value}" for key, value in summary["skip_by"].items() if value
+    ) or "none"
     _log.info(
-        f"[forward] done updated={updated} skipped={skipped} missing_csv={missing_csv}"
+        f"[forward] done updated={summary['updated']} "
+        f"partial_updated={summary['partial_updated']} skipped={summary['skipped']} "
+        f"skip_by={{{skip_parts}}} missing_csv={summary['missing_csv']}"
     )
+    return summary
+
+
+def _row_skip_reason(reasons: dict[int, str]) -> str:
+    priority = (
+        "session_date_missing",
+        "base_close_invalid",
+        "price_column_missing",
+        "future_price_not_available",
+    )
+    present = {reason for reason in reasons.values() if reason}
+    for reason in priority:
+        if reason in present:
+            return reason
+    return "future_price_not_available"
 
 
 def _fmt(v: Optional[float]) -> str:

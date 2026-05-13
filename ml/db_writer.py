@@ -15,6 +15,7 @@ ml/db_writer.py — ML 의사결정 로그 DB 인터페이스
 """
 import sqlite3
 import json
+import os
 import sys
 from pathlib import Path
 from datetime import datetime, date
@@ -26,7 +27,8 @@ STANCE_ORDER = [
 ]
 
 _ROOT = Path(__file__).parent.parent
-_DB_PATH = _ROOT / "data" / "ml" / "decisions.db"
+_PROD_DB_PATH = (_ROOT / "data" / "ml" / "decisions.db").resolve()
+_DB_PATH = _PROD_DB_PATH
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # ── logger ────────────────────────────────────────────────────────────────────
@@ -39,9 +41,27 @@ except Exception:
     _log = logging.getLogger("ml.db_writer")
 
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        result = super().__exit__(exc_type, exc_value, traceback)
+        self.close()
+        return result
+
+
+def _resolve_db_path() -> Path:
+    override = os.environ.get("ML_DECISIONS_DB_PATH", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    legacy_path = Path(_DB_PATH).expanduser().resolve()
+    if legacy_path != _PROD_DB_PATH:
+        return legacy_path
+    return _PROD_DB_PATH
+
+
 def _get_conn() -> sqlite3.Connection:
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(_DB_PATH), timeout=10)
+    db_path = _resolve_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), timeout=10, factory=_ClosingConnection)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
@@ -75,7 +95,7 @@ def init_db():
     except Exception as _pte:
         _log.warning("[ml.db] param_sessions 테이블 초기화 실패: %s", _pte)
 
-    _log.info(f"[ml.db] 초기화 완료: {_DB_PATH}")
+    _log.info(f"[ml.db] 초기화 완료: {_resolve_db_path()}")
 
 
 # ── stance 인코딩 헬퍼 ─────────────────────────────────────────────────────────
@@ -339,4 +359,4 @@ def print_stats(market: str = None):
 if __name__ == "__main__":
     init_db()
     print_stats()
-    print(f"DB 경로: {_DB_PATH}")
+    print(f"DB 경로: {_resolve_db_path()}")

@@ -1,17 +1,32 @@
-﻿# Developed Work Summary - 2026-05-08
+# Developed Work Summary - 2026-05-13
 
-이 문서는 완료된 작업의 요약만 보존합니다. 2026-05-05 정리에서 완료된 세부 plan 문서는 `docs/plans/`에서 삭제했고, 필요하면 Git history에서 복구합니다. 현재 실행해야 할 일과 삭제 후보는 [TODO_ROADMAP.md](TODO_ROADMAP.md)에 남깁니다.
+이 문서는 완료된 작업의 요약만 보존한다. 실행해야 할 일은 [TODO_ROADMAP.md](TODO_ROADMAP.md) 하나만 기준으로 본다. 삭제된 상세 plan은 Git history에서 복구할 수 있다.
 
-## 2026-05-08 코드 기준 삭제 후보
+## 2026-05-13 완료로 삭제한 plan
 
-| 문서 | 완료 판단 근거 | 다음 정리 |
+| 문서 | 완료 판단 근거 | 보존 리뷰 |
 | --- | --- | --- |
-| `docs/plans/p0_pathb_fill_dashboard_followup_20260503.md` | 원래 남았던 PathB runtime blocker가 해소됐고 focused QA가 `81 passed, 2 warnings`입니다. | 완료 요약만 보존하고 `docs/plans/`에서 삭제 가능 |
-| `docs/plans/p0_post_isolation_qa_expansion_20260502.md` | post-isolation QA command가 `72 passed, 2 warnings`, 후속 batch가 `36 passed, 2 warnings`입니다. | 완료 요약만 보존하고 `docs/plans/`에서 삭제 가능 |
-| `docs/plans/entry_risk_control_development_20260508.md` | 시장별 daily cap, KR 신규 진입 차단, PlanA MFE breakeven, US broker quarantine이 구현됐고 `tests/test_entry_risk_controls.py`가 green입니다. | `docs/reports/entry_risk_control_qa_20260508.md`와 이 요약만 보존하고 `docs/plans/`에서 삭제 가능 |
-| `docs/plans/TRADING_IMPROVEMENT_WORKLOG_20260421.md` | 과거 worklog이며 실행 가능한 최신 항목은 `TODO_ROADMAP.md`, tests, reports로 흡수됐습니다. | archive 또는 삭제 가능 |
+| `docs/plans/p0_pathb_fill_dashboard_followup_20260503.md` | PathB runtime, KIS WS fill notice, dashboard KIS profile focused QA가 green으로 기록됨 | 원래 blocker였던 token routing/fill/dashboard profile 회귀가 테스트로 흡수됐다. |
+| `docs/plans/p0_post_isolation_qa_expansion_20260502.md` | post-isolation QA batch와 후속 batch가 green으로 기록됨 | KIS market profile isolation 이후 회귀 위험이 낮아져 active plan에서 제거했다. |
+| `docs/plans/entry_risk_control_development_20260508.md` | `tests/test_entry_risk_controls.py`와 `docs/reports/entry_risk_control_qa_20260508.md` | 시장별 entry cap, KR 신규 진입 차단, US broker quarantine, PlanA MFE breakeven이 구현됐다. |
+| `docs/plans/TRADING_IMPROVEMENT_WORKLOG_20260421.md` | 최신 실행 항목이 TODO, tests, reports로 흡수됨 | 과거 worklog로만 의미가 있어 별도 active 문서로 유지하지 않는다. |
+| `docs/plans/decisions_db_operational_role_and_recovery_plan_20260512.md` | `python -m pytest tests/test_db_health.py tests/test_recover_decisions_db.py tests/test_ml_db_writer_paths.py tests/test_forward_updater.py -q` -> `7 passed`; repo health read-only check가 `ml.decisions_db_health PASS` | 운영 DB 오염 방지, 복구 dry-run, health check, forward skip reason 개선이 구현됐다. |
 
-## 2026-05-05에 삭제한 완료 plan 범위
+## 2026-05-13 통합 삭제한 active plan 원본
+
+미완료 항목은 완료 처리하지 않고 [TODO_ROADMAP.md](TODO_ROADMAP.md)에 우선순위, 사유, 개선 전후 리뷰로 통합했다.
+
+| 묶음 | 통합한 원본 |
+| --- | --- |
+| KIS / fill truth | `docs/KIS_API_TODO.md`, `docs/KIS_WS_FILL_SYNC_PLAN.md` |
+| live safety / ops | `kr_us_live_ops_qa_20260427.md`, `live_sell_reconciliation_dashboard_pnl_plan_20260506.md`, `order_equity_reconciliation_improvement_20260429.md`, `pathb_pullback_wait_live_policy_review_20260512.md` |
+| audit / observability | `execution_audit_observability_plan_20260430.md`, `live_audit_execution_future_plan_20260508.md` |
+| Claude usage / cost | `claude_api_cost_optimization_plan_20260507.md`, `claude_prompt_usage_performance_ledger_20260511.md` |
+| 후보/전략 품질 | `hybrid_lite_attribution_miss_quality_plan_20260509.md`, `watch_trigger_future_backlog_20260508.md`, `candidate_tier_state_machine_plan_20260507.md`, `theme_candidate_injection_plan_20260506.md` |
+| 데이터 소스 / preopen | `pending_data_sources_krx_bigkinds_20260510.md`, `us_extended_hours_screening_plan_20260502.md` |
+| 구조 / 장기 보류 | `MODULARIZATION.md`, `DUAL_RUNTIME_ARCHITECTURE.md`, `BRAIN_TRAIN_TODO.md`, `PLAN_intraday_strategy_roadmap.md`, `PLAN_momentum_opening_gate.md` |
+
+## 이전에 삭제한 완료 plan 범위
 
 | 묶음 | 삭제한 완료 plan |
 | --- | --- |
@@ -25,30 +40,14 @@
 | Preopen implementation | preopen shadow basket implementation, preopen scheduler automation |
 | Recovery / encoding | repository health check and recovery follow-up |
 
-2026-05-05에는 PathB QA 문서 2개를 실패 근거로 남겼지만, 2026-05-08 focused QA 기준으로는 삭제 후보입니다.
-
-## 남아 있는 완료 리포트
-
-| 문서 | 성격 |
-| --- | --- |
-| [KIS WebSocket Fill Sync](KIS_WS_FILL_SYNC_PLAN.md) | 구현/로컬 QA 완료, 실수신 운영 검증 남음 |
-| [Brain JSON Postmortem Cleanup QA](reports/brain_json_postmortem_cleanup_20260430.md) | brain cleanup 검증 |
-| [Shadow Audit QA](reports/shadow_audit_qa_20260430.md) | shadow audit 회귀 검증 |
-| [Shadow Audit Gap Report](reports/shadow_audit_gap_20260430.md) | shadow audit gap 분석 |
-| [Soft Exit Arbitration QA](reports/soft_exit_arbitration_qa_20260430.md) | soft exit QA 결과 |
-| [Rule Simulation](reports/rule_simulation_20260420_20260429.md) | 과거 로그 기반 룰 시뮬레이션 |
-| [Historical Candidate / Execution Review](reports/historical_candidate_execution_review_20260420_20260429.md) | 후보/실행 분석 |
-| [Live Improvement Simulation](reports/live_improvement_simulation_20260501_live_improvement.md) | live 개선 시뮬레이션 |
-| [Preopen Candidate Flow Design Report](reports/preopen_candidate_flow_design_report_20260506.md) | preopen/candidate action 구현 리포트 |
-| [Claude Call Review](reports/claude_call_review_20260429.md) | Claude 호출 품질 분석 |
-| [Claude Usage Quality Optimization](reports/claude_usage_quality_optimization_20260430.md) | 사용량/품질 최적화 분석 |
-| [Entry Risk Control QA](reports/entry_risk_control_qa_20260508.md) | entry risk control 구현/QA 결과 |
-
 ## 현재 완료로 보지 않는 항목
 
-- KR/US live ops QA: guardian가 아직 `BLOCK_START`입니다.
-- Live sell/dashboard PnL hotfix: dashboard PathB QA와 `RECOVERY_MICRO` gate는 완료됐고, legacy `daily_pnl` fallback source labeling 검토만 남았습니다.
-- RiskManager KR/US 분리: 아직 단일 `self.risk` 구조입니다.
-- Preopen/extended-hours 성능 판단: shadow 구현은 있지만 10세션 관찰 리포트가 필요합니다.
-- Candidate tier state machine: future plan이며 tier book runtime은 아직 없습니다.
-- Theme candidate injection: research/design 단계이며 runtime injection flow는 아직 없습니다.
+- KIS WS/REST 체결 truth의 실제 payload 검증.
+- PathB `PULLBACK_WAIT` live 전이 audit와 reconfirm shadow.
+- Dashboard PnL fallback source labeling과 broker/local mismatch ops 표시.
+- `RiskManager` KR/US 분리.
+- SafetyContext audit field 확장.
+- Counterfactual shadow infrastructure와 hybrid/watch trigger 성과 검증.
+- Preopen/extended-hours 10세션 성과 리포트.
+- Candidate tier book, theme injection, KRX/BigKinds integration.
+- Dual runtime, Brain Train, 신규 intraday/VWAP/momentum gate.

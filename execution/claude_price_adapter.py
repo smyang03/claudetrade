@@ -7,7 +7,7 @@ from typing import Any
 from config.v2 import DEFAULT_V2_CONFIG, V2Config
 from decision.claude_price_plan import PricePlan
 from lifecycle.event_store import EventStore
-from lifecycle.models import LifecycleEvent, LifecycleEventType
+from lifecycle.models import LifecycleEvent, LifecycleEventType, utc_now_iso
 from lifecycle.path_context import attach_path_context
 
 
@@ -188,7 +188,11 @@ class ClaudePriceAdapter:
         self.store.update_path_run(
             path_run_id,
             status="PARTIAL_FILLED",
-            plan={"partial_entry_price": float(price or 0), "partial_entry_qty": int(qty or 0)},
+            plan={
+                "partial_entry_price": float(price or 0),
+                "partial_entry_qty": int(qty or 0),
+                "partial_filled_at": utc_now_iso(),
+            },
             merge_plan=True,
         )
         self._append_event(
@@ -214,7 +218,12 @@ class ClaudePriceAdapter:
         self.store.update_path_run(
             path_run_id,
             status="FILLED",
-            plan={"actual_entry_price": float(price or 0), "filled_qty": int(qty or 0), "entry_execution_id": execution_id},
+            plan={
+                "actual_entry_price": float(price or 0),
+                "filled_qty": int(qty or 0),
+                "entry_execution_id": execution_id,
+                "filled_at": utc_now_iso(),
+            },
             merge_plan=True,
         )
         self._append_event(

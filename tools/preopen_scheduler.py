@@ -91,6 +91,8 @@ def _run_job(job: PreopenJob, *, timeout_sec: int, dry_run: bool) -> dict[str, A
         "cwd": str(ROOT),
         "capture_output": True,
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
         "timeout": max(10, int(timeout_sec)),
     }
     if sys.platform.startswith("win"):

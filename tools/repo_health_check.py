@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import sqlite3
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -236,6 +237,12 @@ def check_git_diff(root: Path, include_git: bool) -> CheckResult:
         "trading_bot.py",
         "state/brain.json",
         "tools/repo_health_check.py",
+        "ml/db_writer.py",
+        "ml/forward_updater.py",
+        "ml/db_health.py",
+        "ml/test_full.py",
+        "strategy/param_tuner.py",
+        "tools/recover_decisions_db.py",
         "docs/plans/recovery_and_followup_todo_20260501.md",
     ]
     try:
@@ -249,6 +256,63 @@ def check_git_diff(root: Path, include_git: bool) -> CheckResult:
     return CheckResult("git.diff_check", "FAIL", _short_output(proc))
 
 
+def check_ml_db_health(root: Path) -> CheckResult:
+    target = root / "data" / "ml" / "decisions.db"
+    try:
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from ml import db_health
+
+        result = db_health.check_db_health(target, read_only=True)
+    except Exception as exc:
+        return CheckResult("ml.decisions_db_health", "FAIL", str(exc))
+
+    if not result.get("exists"):
+        return CheckResult("ml.decisions_db_health", "FAIL", f"missing file: {target}")
+
+    fixture_rows = result.get("contamination", {}).get("fixture_rows")
+    seq = result.get("sqlite_sequence", {}).get("decisions")
+    detail = (
+        f"rows={result.get('total_rows')} live={result.get('live_rows')} "
+        f"latest={result.get('latest_session_date')} fixture_rows={fixture_rows} "
+        f"seq={seq} recent_live={result.get('last_3_trading_days_live_rows')}"
+    )
+    if result.get("ok"):
+        return CheckResult("ml.decisions_db_health", "PASS", detail)
+    errors = ", ".join(str(e) for e in result.get("errors", []))
+    return CheckResult("ml.decisions_db_health", "FAIL", f"{detail}; errors={errors}")
+
+
+def check_selection_db_health(root: Path) -> CheckResult:
+    target = root / "data" / "ticker_selection_log.db"
+    if not target.exists():
+        return CheckResult("selection.db_health", "WARN", f"missing file: {target}")
+    conn = None
+    try:
+        conn = sqlite3.connect(str(target), timeout=5)
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ticker_selection_log'"
+        ).fetchone()
+        if table is None:
+            return CheckResult("selection.db_health", "FAIL", "ticker_selection_log table missing")
+        total, latest = conn.execute(
+            "SELECT COUNT(*), MAX(date) FROM ticker_selection_log"
+        ).fetchone()
+        traded = conn.execute(
+            "SELECT COUNT(*) FROM ticker_selection_log WHERE COALESCE(traded, 0) != 0"
+        ).fetchone()[0]
+    except Exception as exc:
+        return CheckResult("selection.db_health", "FAIL", str(exc))
+    finally:
+        if conn is not None:
+            conn.close()
+    return CheckResult(
+        "selection.db_health",
+        "PASS",
+        f"rows={total} traded={traded} latest={latest}",
+    )
+
+
 def run_checks(root: Path, include_git: bool) -> list[CheckResult]:
     results: list[CheckResult] = []
     results.append(check_py_compile(root))
@@ -260,6 +324,8 @@ def run_checks(root: Path, include_git: bool) -> list[CheckResult]:
         results.append(CheckResult("trading_bot.ast", "FAIL", ast_error))
     results.append(check_trading_bot_structure(tree))
     results.append(check_strategy_aliases(tree))
+    results.append(check_ml_db_health(root))
+    results.append(check_selection_db_health(root))
     results.append(check_git_diff(root, include_git))
     return results
 

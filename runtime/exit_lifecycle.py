@@ -8,6 +8,7 @@ SYSTEM_GUARD_REASONS = {
     "loss_cap",
     "stop_loss",
     "profit_floor",
+    "profit_ladder",
     "mfe_breakeven",
     "trail_stop",
     "soft_exit_floor_price",

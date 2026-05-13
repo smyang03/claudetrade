@@ -39,7 +39,8 @@ except Exception:
 
 from minority_report.claude_utils import extract_json as _extract_json_shared
 
-_DB_PATH  = _ROOT / "data" / "ml" / "decisions.db"
+_PROD_DB_PATH = (_ROOT / "data" / "ml" / "decisions.db").resolve()
+_DB_PATH  = _PROD_DB_PATH
 _SESSION_STATE_PATH = _ROOT / "state" / "param_tuner_sessions.json"
 _ENABLED  = os.getenv("CLAUDE_PARAM_REVIEW", "false").lower() in ("1", "true", "yes")
 
@@ -74,9 +75,27 @@ _cache_mode: dict[str, str] = {}
 # DB helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        result = super().__exit__(exc_type, exc_value, traceback)
+        self.close()
+        return result
+
+
+def _resolve_db_path() -> Path:
+    override = os.environ.get("ML_DECISIONS_DB_PATH", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    legacy_path = Path(_DB_PATH).expanduser().resolve()
+    if legacy_path != _PROD_DB_PATH:
+        return legacy_path
+    return _PROD_DB_PATH
+
+
 def _get_conn() -> sqlite3.Connection:
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(_DB_PATH), timeout=10)
+    db_path = _resolve_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), timeout=10, factory=_ClosingConnection)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn

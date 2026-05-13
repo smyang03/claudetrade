@@ -275,8 +275,42 @@ class EquityReferenceTests(unittest.TestCase):
                 ret = trading_bot.TradingBot._market_daily_return_pct(bot, "US")
 
         self.assertEqual(ctx["source"], "broker_current_sell_lag_adjusted")
+        self.assertEqual(ctx["base_krw"], 1_272_940)
         self.assertEqual(ctx["adjustment_krw"], 105_530)
         self.assertGreater(ret, -1.0)
+
+    def test_equity_only_halt_warning_includes_lag_context_without_halting(self) -> None:
+        bot = self._bot_for_equity("US", 1_000_000, 900_000, daily_pnl=0)
+        bot.risk.all_trade_log = []
+        bot.risk.halted = False
+        bot.risk.halt_reason = ""
+        bot.risk.positions = [
+            {
+                "ticker": "SNAP",
+                "qty": 1,
+                "sell_confirmation_pending": True,
+                "pending_sell_order_no": "0030639869",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(trading_bot, "DECISIONS_FILE", Path(tmp) / "decisions.jsonl"), patch.dict(
+                trading_bot.HARD_RULES,
+                {"max_daily_loss_pct": -8.0},
+            ), self.assertLogs(trading_bot.log.name, level="WARNING") as caught:
+                halted = trading_bot.TradingBot._check_market_halt(bot, "US")
+
+        self.assertFalse(halted)
+        self.assertFalse(bot.risk.halted)
+        self.assertEqual(bot.risk.halt_reason, "")
+        logs = "\n".join(caught.output)
+        self.assertIn("equity breach only", logs)
+        self.assertIn("broker_total=", logs)
+        self.assertIn("internal=", logs)
+        self.assertIn("adjustment=", logs)
+        self.assertIn("fallback=", logs)
+        self.assertIn("pending_sell=SNAP", logs)
+        self.assertIn("0030639869", logs)
 
 
 class NewBuyGateTests(unittest.TestCase):

@@ -1,93 +1,85 @@
-﻿# TODO Roadmap - 2026-05-08
+# TODO Roadmap - 2026-05-13
 
-이 문서는 `docs/plans/`의 계획 문서를 현재 코드와 focused QA 결과 기준으로 다시 분류한 실행 우선순위 리포트입니다. 완료로 확인된 plan은 아래 "삭제/정리 후보"에 모아 두고, 실제 실행해야 할 항목만 우선순위 표에 남깁니다.
+이 문서가 현재 active plan의 단일 원장이다. `docs/plans/*.md` 24개와 `docs/KIS_API_TODO.md`, `docs/KIS_WS_FILL_SYNC_PLAN.md`의 미완료 내용을 이 문서로 흡수했고, 완료되었거나 흡수된 원본 plan 문서는 삭제했다.
 
-## 이번 코드 기준 재분류 결과
+## 분류 기준
 
-- `docs/plans/` 현재 Markdown은 17개입니다. 이 중 13개는 active/보류 plan이고, 4개는 삭제 또는 archive 후보입니다.
-- 2026-05-05에 남겼던 PathB runtime QA 실패 2건은 현재 재현되지 않습니다.
-- `p0_pathb_fill_dashboard_followup_20260503.md`, `p0_post_isolation_qa_expansion_20260502.md`는 원래 범위의 focused QA가 green이므로 삭제 후보로 분류합니다.
-- `entry_risk_control_development_20260508.md`는 코드와 focused QA 기준 구현 완료입니다. active 우선순위에서 제거하고 삭제/정리 후보로 이동합니다.
-- `TRADING_IMPROVEMENT_WORKLOG_20260421.md`는 최신 TODO와 테스트/리포트로 흡수된 과거 worklog라 archive/delete 후보입니다.
-- `live_sell_reconciliation_dashboard_pnl_plan_20260506.md`의 dashboard QA 실패와 `RECOVERY_MICRO` gate 누락은 수정됐습니다. legacy `daily_pnl` fallback source labeling 검토만 active follow-up으로 남깁니다.
+- 완료 삭제: 코드와 focused QA 또는 read-only health check로 개선이 확인된 항목.
+- 통합 삭제: 아직 해야 하지만 별도 원본 문서로 남겨 두면 우선순위가 흩어지는 항목.
+- 운영 검증: 코드 구현은 끝났지만 실제 계좌, payload, 세션 데이터로 확인해야 닫을 수 있는 항목.
+- 장기 보류: P0/P1 안정화 또는 shadow 데이터가 쌓이기 전에는 구현하지 않는 항목.
 
-## 재검토 결론
+## 이번 재분류 리뷰
 
-- Guardian `BLOCK_START`는 `tools/live_guardian.py`의 start gate입니다. hard fail이 있으면 `ok=false`, `gate=BLOCK_START`, CLI exit code `2`가 되므로 새 live 시작/재시작 기준으로는 hard block입니다. 다만 이미 떠 있는 bot을 kill한다는 의미는 아닙니다.
-- 사용자 검토대로 Entry risk control은 `RECOVERY_MICRO`보다 먼저 닫는 것이 맞았지만, 현재 코드 기준으로는 이미 닫힌 상태입니다. 따라서 "3번보다 먼저 수행"이 아니라 "완료/삭제 후보"로 재분류합니다.
-- `RECOVERY_MICRO` first-stop cooldown 예외는 구현됐고, same-ticker/second-stop/zero-freeze 회귀 테스트가 추가됐습니다.
-- 남은 P0 순서는 `Guardian BLOCK_START` -> `KIS WS 실수신 검증`입니다. 코드 작업 기준으로는 dashboard fallback source labeling 검토가 다음 작은 follow-up입니다.
-- 원래 6~10번 항목의 상대 순서는 유지합니다. 완료 항목을 active 표에서 제거하면서 번호만 앞으로 당겨졌습니다.
+| 구분 | 리뷰 |
+| --- | --- |
+| 완료된 개선 | PathB token/fill/dashboard QA, post-isolation QA, entry risk control, ML decisions DB 보호/복구/health check는 코드와 테스트 근거가 있어 active plan에서 제거했다. |
+| 부분 완료 | live sell reconciliation, order/equity reconciliation, guardian/preflight, preopen shadow, candidate quality 계열은 기반 구현이 있으나 운영 검증 또는 표시/감사 후속이 남았다. |
+| 아직 미구현 | `RiskManager` KR/US 분리, candidate tier book, theme injection, KRX/BigKinds credential integration, WATCH_TRIGGER 자동 승격, dual runtime 추출은 아직 active code path가 아니다. |
+| 문서 구조 | 미완료 항목을 이 문서 하나로 통합했다. 상세 과거 계획은 Git history에서 복구하고, 완료 요약은 `docs/DEVELOPED_WORK.md`에 둔다. |
 
-## 현재 확인 근거
+## 완료되어 삭제한 계획
 
-- 통과: `python -m pytest tests/test_pathb_runtime.py -q` -> `39 passed, 2 warnings`.
-- 통과: `python -m pytest tests/test_pathb_runtime.py tests/test_kis_ws_fill_notice.py tests/test_dashboard_kis_profile.py tests/test_live_order_reconciliation.py tests/test_live_preflight_credentials.py tests/test_p0_data_quality.py tests/test_p0_data_quality_backfill.py -q` -> `81 passed, 2 warnings`.
-- 통과: `python -m pytest tests/test_pathb_runtime.py tests/test_broker_truth_snapshot.py tests/test_dashboard_kis_profile.py tests/test_live_preflight_credentials.py tests/test_kis_ws_fill_notice.py tests/test_live_order_reconciliation.py -q` -> `72 passed, 2 warnings`.
-- 통과: `python -m pytest tests/test_pid_lock.py tests/test_startup_token_refresh.py tests/test_kis_market_profile.py tests/test_kis_token_auto_refresh.py tests/test_live_token_balance.py tests/test_order_equity_reconciliation_improvement.py tests/test_v2_phase5.py -q` -> `36 passed, 2 warnings`.
-- 통과: `python -m pytest tests/test_live_sell_pending_reconcile.py tests/test_pathb_realized_pnl_dedupe.py -q` -> `9 passed, 2 warnings`.
-- 통과: `python -m pytest tests/test_entry_risk_controls.py -q` -> `6 passed, 2 warnings`.
-- 통과: `python -m py_compile trading_bot.py runtime/v2_lifecycle_runtime.py runtime/pathb_runtime.py`.
-- 통과: `python -m pytest tests/test_order_equity_reconciliation_improvement.py tests/test_dashboard_pathb.py tests/test_auto_sell_claude_gate.py -q` -> `70 passed, 2 warnings`.
-- 최신 guardian 리포트: `data/v2_reports/live_guardian_20260508_140245.json` 기준 `gate=BLOCK_START`.
-  - hard fail: `broker_truth.us_stale_state`.
-  - soft fail: US credential fallback, 이전 ORDER_UNKNOWN/stale PathB rows, lifecycle warnings, pid lock, calendar/wait timing operational 확인 등.
-- 코드 확인:
-  - `trading_bot.py`는 여전히 단일 `self.risk` 중심입니다. `RiskManager` KR/US 분리는 미완료입니다.
-  - `runtime/candidate_tier_state.py`와 tier book runtime은 없습니다. `candidate_tier_state_machine_plan_20260507.md`는 future plan입니다.
-  - `entry_risk_control_development_20260508.md`는 구현 완료입니다. `tests/test_entry_risk_controls.py`가 시장별 daily cap, US broker quarantine, PlanA MFE breakeven을 커버하고 QA report가 있습니다.
-  - theme injection 관련 runtime counter/flow(`theme_candidate_count`, `theme_injection`)는 코드에 없습니다. `theme_candidate_injection_plan_20260506.md`는 research/design 단계입니다.
-  - `minority_report/hold_advisor.py`는 여전히 bull/bear/neutral 3인 호출 구조입니다. 비용 최적화 plan은 일부 cooldown/기록 외에 핵심 절감 적용 전입니다.
-
-## P0 - live 시작 전 차단/정합성
-
-| 순위 | 과제 | 근거 | 장점 | 단점/비용 | 지연 리스크 | 권장 액션 |
-| ---: | --- | --- | --- | --- | --- | --- |
-| 1 | Guardian `BLOCK_START` 해소 | `kr_us_live_ops_qa_20260427.md`, `live_guardian_20260508_140245.json` | stale broker truth 상태에서 live 시작을 차단 | 운영 계좌/API refresh 확인 필요 | stale US 계좌 truth로 주문/보유 판단이 오염될 수 있음 | US broker truth refresh가 PASS가 될 때까지 live start 금지 |
-| 2 | KIS WS 체결통보 실수신 검증 | `KIS_WS_FILL_SYNC_PLAN.md`, `tests/test_kis_ws_fill_notice.py` | REST 지연보다 빠른 fill truth 확보 | 모의/실계좌 payload 수집 필요 | WS/REST 중복 반영 또는 실체결 누락이 실제 주문에서만 드러남 | 모의 -> 소액 실전 순서로 full/partial fill 수신 검증 |
-
-## P1 - 계좌/시장 경계와 운영 가시성
-
-| 순위 | 과제 | 근거 | 장점 | 단점/비용 | 지연 리스크 | 권장 액션 |
-| ---: | --- | --- | --- | --- | --- | --- |
-| 3 | Live sell/dashboard fallback source labeling | `live_sell_reconciliation_dashboard_pnl_plan_20260506.md` | legacy `daily_pnl` fallback과 market-scoped PnL source를 구분 | 표시 라벨 중심의 작은 dashboard cleanup | fallback source가 불명확하면 PnL 출처 판단이 느려짐 | `live_status_daily_pnl_legacy` source labeling만 마무리 |
-| 4 | `RiskManager` KR/US 분리 | `MODULARIZATION.md`, `trading_bot.py` 단일 `self.risk` | 시장별 cash/positions/halt/daily_pnl 경계가 명확해짐 | 호출부가 많아 작은 단계로 나눠야 함 | KR/US 포지션·현금·daily halt 혼선이 계속 숨음 | `_rm(market)` adapter부터 시작하고 기존 `self.risk` 호환층을 둠 |
-| 5 | 주문/계좌 reconciliation follow-up | `order_equity_reconciliation_improvement_20260429.md` | broker/local mismatch와 SafetyContext audit이 운영자에게 보임 | dashboard/ops 배선이 필요 | mismatch가 로그에만 남고 운영자가 즉시 못 봄 | `path_run_id` dedupe 완료분은 체크 처리하고, dashboard mismatch 노출/SafetyContext audit만 남김 |
-| 6 | Exit/후보 관찰 보강 | `execution_audit_observability_plan_20260430.md` | post-exit 결과, cancel status, opening simulation을 근거로 판단 가능 | 로그/대시보드 작업이 많음 | Claude SELL/opening 보호 적용 여부를 감으로 결정 | `post_exit_close_return_pct`, ORDER_UNKNOWN cancel visibility부터 구현 |
-| 7 | Claude API 비용 1차 절감 | `claude_api_cost_optimization_plan_20260507.md` | daily token 사용량을 낮추되 핵심 판단 품질 유지 | shadow 비교와 stage별 안전장치 필요 | 호출량 증가가 계속 누적되고 비용/latency가 악화 | AUTO_SELL_REVIEW 1인화, hold_advisor cache, preopen duplicate cache를 shadow/guarded로 적용 |
-| 8 | KIS 체결조회 후처리 보강 | `KIS_API_TODO.md` | US 체결조회 필드/키 조합/당일 캐시가 명확해짐 | API 응답 원문 마스킹 로그 필요 | 주문번호 직접 검색 제한 시 fill truth 확인이 불안정 | US fill raw 1회 마스킹 로그 -> 안정 키 조합 -> 당일 fill cache 순서 |
-
-## P2 - 판단 품질/후보 발견 개선
-
-| 순위 | 과제 | 근거 | 장점 | 단점/비용 | 지연 리스크 | 권장 액션 |
-| ---: | --- | --- | --- | --- | --- | --- |
-| 9 | Preopen/US extended-hours 10세션 관찰 | `us_extended_hours_screening_plan_20260502.md`, `preopen/*` | 정규장 전 후보 우선순위 판단 근거 확보 | provider 품질·스프레드·volume noise 검증 필요 | 얇은 premarket print를 과신할 수 있음 | preopen shadow/scheduler를 계속 운영하고 10-session outcome report 작성 |
-| 10 | Theme candidate injection 설계 검증 | `theme_candidate_injection_plan_20260506.md` | 반도체/AI/전력 같은 테마 후보가 selection 표면에 올라옴 | 후보 cap/diversity를 건드려 기존 고품질 후보를 밀 수 있음 | 테마 강세장 후보가 기본 screener 밖이면 놓침 | shadow-only injection counter와 prompt visibility 테스트부터 추가 |
-| 11 | Candidate tier state machine shadow 설계 | `candidate_tier_state_machine_plan_20260507.md` | flat `today_tickers`를 stateful lifecycle로 전환 | 상태 소유권 refactor라 회귀 위험 큼 | BENCH/QUARANTINE이 계속 advisory 수준에 머묾 | 현재 trainer guard 안정 후 `runtime/candidate_tier_state.py`를 shadow-only로 추가 |
-| 12 | Market breadth / prompt contract 개선 | `audit/market_analysis_tune_prompt_audit_20260501.md` | Claude가 개별 대형주 예시보다 breadth/count 기반으로 장세 판단 | 프롬프트 변경은 shadow 비교 필요 | morning/tune 판단이 특정 종목에 과앵커링 | breadth 저장은 유지하고 analyst/tune prompt를 shadow-first로 교체 |
-
-## P3 - 보류/지금은 낮은 우선순위
-
-| 과제 | 근거 | 지금 보류하는 이유 | 다시 볼 조건 |
+| 삭제한 원본 | 완료 판단 근거 | 개선 전 | 개선 후 리뷰 |
 | --- | --- | --- | --- |
-| `MODULARIZATION.md` P1~P4 파일 분리 | `MODULARIZATION.md` | P0 guardian/live sell/RiskManager 경계가 먼저 | live gate clean 및 `_rm(market)` 도입 후 |
-| Dual runtime 구조 | `DUAL_RUNTIME_ARCHITECTURE.md` | shared/account runtime은 모듈화 이후가 안전 | paper/live 계좌 경계가 코드상 분리된 뒤 |
-| Brain Train 모드 | `BRAIN_TRAIN_TODO.md` | 샘플 수를 늘리다 저품질 거래가 Brain을 오염시킬 수 있음 | 운영 전략 품질이 안정되고 샘플 부족이 명확할 때 |
-| 신규 전략/게이트 | `PLAN_intraday_strategy_roadmap.md`, `PLAN_momentum_opening_gate.md` | 입력 품질/운영 안전보다 후순위 | P0/P1 안정화와 shadow 성과 확인 후 |
+| `docs/plans/p0_pathb_fill_dashboard_followup_20260503.md` | `tests/test_pathb_runtime.py` 포함 focused batch가 green으로 기록됨 | US PathB token routing, fill ledger eviction, dashboard `kis_profile` 노출이 blocker였다. | market-specific token/fill/dashboard 회귀가 테스트로 고정되어 active plan 필요가 없어졌다. |
+| `docs/plans/p0_post_isolation_qa_expansion_20260502.md` | post-isolation focused batch와 후속 batch가 green으로 기록됨 | KIS profile isolation 이후 PathB, broker truth, preflight 회귀 위험이 남아 있었다. | token provider, dashboard profile, WS idempotency 회귀 범위가 테스트로 흡수됐다. |
+| `docs/plans/entry_risk_control_development_20260508.md` | `tests/test_entry_risk_controls.py`와 QA report가 있음 | KR/US daily entry cap, US broker quarantine, PlanA MFE breakeven이 흩어져 있었다. | 시장별 cap과 신규 진입 차단, MFE 보호가 구현되어 live risk control 기본선이 올라갔다. |
+| `docs/plans/TRADING_IMPROVEMENT_WORKLOG_20260421.md` | 최신 실행 항목이 이 문서, tests, reports로 흡수됨 | 과거 worklog와 최신 TODO가 섞여 우선순위 판단이 흐렸다. | 기록은 Git history에 맡기고 실행 항목만 이 문서에 남긴다. |
+| `docs/plans/decisions_db_operational_role_and_recovery_plan_20260512.md` | `tests/test_db_health.py`, `tests/test_recover_decisions_db.py`, `tests/test_ml_db_writer_paths.py`, `tests/test_forward_updater.py`가 `7 passed`; repo health가 `ml.decisions_db_health PASS` | `ml/test_full.py`가 운영 DB를 오염시킬 수 있었고 복구/health check가 불명확했다. | 테스트 DB override, 복구 dry-run, fixture contamination 탐지, repo health 통합이 완료됐다. |
 
-## 삭제/정리 후보
+## 남은 작업 우선순위
 
-| 문서 | 현재 코드 기준 판단 | 정리 액션 |
-| --- | --- | --- |
-| `docs/plans/p0_pathb_fill_dashboard_followup_20260503.md` | 원래 blocker였던 PathB runtime focused QA가 green입니다. | `DEVELOPED_WORK.md`에 완료 요약만 남기고 `docs/plans/`에서 삭제 가능 |
-| `docs/plans/p0_post_isolation_qa_expansion_20260502.md` | post-isolation QA 1/2차 focused command가 green입니다. | `DEVELOPED_WORK.md`에 완료 요약만 남기고 `docs/plans/`에서 삭제 가능 |
-| `docs/plans/entry_risk_control_development_20260508.md` | 구현 완료이며 `tests/test_entry_risk_controls.py`와 QA report가 있습니다. | `docs/reports/entry_risk_control_qa_20260508.md`와 `DEVELOPED_WORK.md` 요약만 남기고 `docs/plans/`에서 삭제 가능 |
-| `docs/plans/TRADING_IMPROVEMENT_WORKLOG_20260421.md` | 과거 worklog이며 실행 가능한 최신 항목은 이 문서와 개별 plan/test/report로 흡수됐습니다. | 필요하면 archive, 아니면 삭제 가능 |
+| 우선 | 작업 | 사유 | 개선 전 리뷰 | 개선 후 목표 |
+| --- | --- | --- | --- | --- |
+| P0-1 | KIS fill truth 실수신 검증 | 실제 체결 payload는 로컬 mock과 다를 수 있고, fill truth가 틀리면 중복 주문/PnL/포지션이 모두 흔들린다. | WS parser와 pending 반영은 테스트됐지만 모의/실계좌 full, partial, cancel payload는 아직 운영 검증 전이다. US 체결조회 raw 필드도 1회 마스킹 로그로 확정해야 한다. | 모의계좌 후 소액 실전에서 WS full/partial fill 수신, REST fallback 중복 방지, US fill key 조합, 당일 fill cache 재기동 복원을 검증한다. |
+| P0-2 | PathB `PULLBACK_WAIT` live 전이 audit와 reconfirm shadow | `trade_ready=[]`여도 PathB conditional plan이 실주문으로 이어질 수 있어 운영자 해석과 stale-plan 위험이 있다. | 현재는 buy-zone 진입 시 safety gate 후 주문 가능하지만 `PULLBACK_WAIT -> live order`가 감사/대시보드에서 충분히 분리되지 않는다. | 전이 reason을 별도 기록하고, `PATHB_PULLBACK_WAIT_RECONFIRM_MODE=off|shadow|required` 후보를 shadow로 비교한다. |
+| P0-3 | Dashboard PnL source labeling과 broker/local mismatch 노출 | 운영자가 daily PnL 또는 주문 불일치를 잘못 읽으면 live 중지/재개 판단이 틀어진다. | market-scoped PnL 필드는 생겼지만 legacy `daily_pnl` fallback source가 명확히 구분되지 않고, broker/local mismatch는 ops 화면에서 즉시 보이지 않는다. | `live_status_daily_pnl_legacy` 같은 source를 분리하고, broker-only/local-only/duplicate pending order를 dashboard ops 경고로 노출한다. |
+| P0-4 | live 전 guardian/preflight 운영 runbook 고정 | guardian 코드는 구현됐지만 실제 시작 전에는 환경, token, broker truth, dashboard 상태가 매번 바뀐다. | `tests/test_live_guardian.py` 계열은 통과하지만 실제 `BLOCK_START`/`ALLOW_START` 판정은 세션 직전 상태를 봐야 한다. | live 시작 전 `tools/live_guardian.py --mode live --json` 결과를 저장하고 hard fail 0, schema mismatch 0, broker truth stale 0일 때만 시작한다. |
+| P0-5 | 기존 broker open order 수동 확인 | 이미 브로커에 남은 주문은 코드 패치로 소급 제거할 수 없다. | `006340`, `047040` 같은 과거 KR 주문은 local state만 믿으면 위험하다. | KIS app/HTS/API에서 open buy order 0을 확인하고, 남아 있으면 수동 취소 후 dashboard/order state와 대조한다. |
+| P1-1 | `RiskManager` KR/US 분리 | 단일 `self.risk` 구조는 cash, positions, daily halt, realized PnL 경계를 계속 섞을 수 있다. | 시장별 보정 로직은 늘었지만 핵심 runtime은 여전히 `self.risk` 중심이다. | `_rm(market)` adapter와 호환층부터 도입하고, KR/US cash/position/halt가 분리된 테스트를 추가한다. |
+| P1-2 | `SafetyContext` audit field 확장 | daily return 보정은 됐지만 어떤 equity source가 쓰였는지 감사 필드가 부족하다. | 안정화된 `daily_pnl_pct`만 넣어 원인 분석이 어렵다. | `equity_return_pct`, `realized_return_pct`, `unrealized_return_pct`, `equity_source`, `broker_lag_suspected`를 audit에 남긴다. |
+| P1-3 | 실행/counterfactual observability | live 규칙 변경은 실제/반사실 결과를 비교할 로그가 있어야 한다. | candidate health, route audit 일부는 있지만 ready-no-signal, prompt expansion, strategy mismatch의 반사실 outcome이 부족하다. | `audit_counterfactual_decisions/outcomes` 계열 저장소를 만들고 30m/60m outcome을 붙여 rule 변경 전 shadow 평가를 가능하게 한다. |
+| P1-4 | Claude API 비용 절감 1차 | 비용을 낮추되 selection/action 품질 저하는 막아야 한다. | 최근 baseline은 약 578k tokens/day였고, hold advisor와 selection이 큰 비중이다. | AUTO_SELL_REVIEW 1인화+escalation, price-aware hold cache, preopen duplicate cache를 먼저 적용하고 품질 지표를 비교한다. |
+| P2-1 | Preopen/US extended-hours 10세션 관찰 | 장전 후보는 얇은 print와 regular open continuation을 구분해야 한다. | preopen collector/scheduler/dashboard는 있으나 10세션 outcome 판단이 아직 부족하다. | 10세션 report로 Top3 selected/ready, 30m/60m return, spread/liquidity noise를 평가한 뒤 live 반영 여부를 결정한다. |
+| P2-2 | Hybrid-lite와 WATCH_TRIGGER shadow 고도화 | A/B 통합, gap hard skip, cancel reactivation, watch promotion은 샘플 없이 켜면 과최적화 위험이 크다. | immediate QA는 끝났지만 miss-quality, route attribution, watch-only missed runup이 아직 충분하지 않다. | PathB miss label, PlanA gap overextension observe-only, WATCH_TRIGGER state shadow를 쌓고 활성 조건을 숫자로 고정한다. |
+| P2-3 | Candidate tier state machine shadow | flat `today_tickers`는 CORE/WATCH/BENCH/QUARANTINE 상태를 직접 표현하지 못한다. | trainer tier snapshot은 advisory이고 runtime source of truth가 아니다. | `CandidateTierBook`을 shadow로 만들고 기존 list와 diff를 검증한 뒤 source-of-truth 전환을 판단한다. |
+| P2-4 | KRX/BigKinds와 theme injection | KR 후보 품질 개선에는 공식 데이터와 테마 후보 주입 검증이 필요하다. | KRX/BIGKINDS credential이 없고, theme basket은 설계만 있다. | key 확보 후 dry-run, normalized SQLite 저장, digest/theme candidate injection shadow, mocked tests 순서로 진행한다. |
+| P3-1 | Dual runtime SharedEngine/AccountRuntime | paper/live 단일 프로세스 구조는 RiskManager 분리 이후가 안전하다. | Phase 0 분리는 되어 있으나 SharedEngine 추출은 아직 전제 조건이 안 됐다. | KR/US/account runtime 경계가 안정된 뒤 decision ledger와 account runtime을 분리한다. |
+| P3-2 | Brain Train 모드 | 거래 수를 늘리는 학습 모드는 저품질 샘플로 Brain을 오염시킬 수 있다. | 샘플 부족 문제는 있지만 운영 전략 품질이 먼저 안정되어야 한다. | 운영 품질 안정 후에도 샘플 부족이 명확할 때만 별도 weight/flag를 둔 train mode를 설계한다. |
+| P3-3 | 신규 intraday/VWAP/momentum opening gate | 새 전략은 입력 품질과 실행 안전보다 후순위다. | ORP 기반 계획과 momentum opening gate 설계는 있으나 live edge 검증 전이다. | P0/P1 안정화와 shadow 성과 확인 후 VWAP reclaim/reversion, momentum opening gate를 작은 실험으로 시작한다. |
 
 ## 바로 실행 순서
 
-1. US broker truth stale hard fail 해소 후 `tools/live_guardian.py --mode live --json` 재실행.
-2. KIS WS fill notice 실수신 검증.
-3. Dashboard legacy `daily_pnl` fallback source labeling cleanup.
-4. 완료된 PathB QA plan 2개, Entry risk control plan, 과거 worklog를 삭제/보관 처리.
-5. `RiskManager` KR/US 분리의 첫 adapter 패치 시작.
+1. P0-1 KIS fill truth 실수신 검증을 모의계좌에서 먼저 수행한다.
+2. P0-2 PathB `PULLBACK_WAIT` audit reason과 shadow reconfirm 설정을 추가한다.
+3. P0-3 dashboard PnL source/mismatch 표시를 작은 패치로 닫는다.
+4. P0-4 guardian/preflight 결과를 live 시작 전 runbook 산출물로 남긴다.
+5. 그 다음 P1-1 `RiskManager` 분리를 adapter 단계로 시작한다.
+
+## 삭제/흡수한 원본 매핑
+
+| 원본 문서 | 새 위치 |
+| --- | --- |
+| `docs/KIS_API_TODO.md` | P0-1 |
+| `docs/KIS_WS_FILL_SYNC_PLAN.md` | P0-1 |
+| `docs/plans/pathb_pullback_wait_live_policy_review_20260512.md` | P0-2 |
+| `docs/plans/live_sell_reconciliation_dashboard_pnl_plan_20260506.md` | P0-3 |
+| `docs/plans/order_equity_reconciliation_improvement_20260429.md` | P0-3, P0-5, P1-2 |
+| `docs/plans/kr_us_live_ops_qa_20260427.md` | P0-4 |
+| `docs/plans/MODULARIZATION.md` | P1-1, P3-1 |
+| `docs/plans/execution_audit_observability_plan_20260430.md` | P1-3 |
+| `docs/plans/live_audit_execution_future_plan_20260508.md` | P1-3, P2-2 |
+| `docs/plans/claude_api_cost_optimization_plan_20260507.md` | P1-4 |
+| `docs/plans/claude_prompt_usage_performance_ledger_20260511.md` | P1-4 |
+| `docs/plans/us_extended_hours_screening_plan_20260502.md` | P2-1 |
+| `docs/plans/hybrid_lite_attribution_miss_quality_plan_20260509.md` | P2-2 |
+| `docs/plans/watch_trigger_future_backlog_20260508.md` | P2-2 |
+| `docs/plans/candidate_tier_state_machine_plan_20260507.md` | P2-3 |
+| `docs/plans/theme_candidate_injection_plan_20260506.md` | P2-4 |
+| `docs/plans/pending_data_sources_krx_bigkinds_20260510.md` | P2-4 |
+| `docs/plans/DUAL_RUNTIME_ARCHITECTURE.md` | P3-1 |
+| `docs/plans/BRAIN_TRAIN_TODO.md` | P3-2 |
+| `docs/plans/PLAN_intraday_strategy_roadmap.md` | P3-3 |
+| `docs/plans/PLAN_momentum_opening_gate.md` | P3-3 |
+| 완료 삭제 문서 5개 | `docs/DEVELOPED_WORK.md`와 위 완료 테이블 |

@@ -90,13 +90,16 @@
 
 - `docs/trading_process.md`
   - 운영 플로우 기준 문서
-- `docs/archive/`
-  - 과거 개발 로그
-- `docs/plans/`
-  - 아직 적용하지 않은 설계안
+- `docs/TODO_ROADMAP.md`
+  - active plan 단일 원장
+- `docs/DEVELOPED_WORK.md`
+  - 완료 plan 요약
+- `docs/reports/`
+  - QA, 분석, 시뮬레이션 리포트
 
 ## 10. 정리 원칙
 
 - `state/`, `logs/`, `data/backtest/`, `data/cache/`는 자주 변합니다
 - Git에는 보통 소스/문서만 올리고, 생성 산출물은 제외합니다
 - 운영 판단은 `brain.json`, `decisions.db`, `ticker_selection_log.db`를 함께 봐야 합니다
+- 미완료 계획은 `docs/TODO_ROADMAP.md` 하나로 통합합니다

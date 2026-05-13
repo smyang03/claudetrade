@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import subprocess
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -161,6 +162,32 @@ class PreopenSchedulerTests(unittest.TestCase):
 
         self.assertEqual(summary["ran"], 1)
         run_mock.assert_not_called()
+
+    def test_real_run_reads_subprocess_output_as_utf8(self) -> None:
+        now = datetime(2026, 5, 4, 17, 5, tzinfo=KST)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)), patch(
+                "preopen.scheduler.is_trading_day",
+                return_value=True,
+            ), patch("tools.preopen_scheduler.subprocess.run") as run_mock:
+                run_mock.return_value = subprocess.CompletedProcess(
+                    args=["python", "tools/preopen_collector.py"],
+                    returncode=0,
+                    stdout="한글 ok",
+                    stderr="",
+                )
+                summary = run_scheduler_once(
+                    mode="live",
+                    markets=["US"],
+                    dry_run=False,
+                    now_dt=now,
+                    interval_sec=60,
+                )
+
+        self.assertEqual(summary["ran"], 1)
+        self.assertEqual(run_mock.call_args.kwargs["encoding"], "utf-8")
+        self.assertEqual(run_mock.call_args.kwargs["errors"], "replace")
 
     def test_dashboard_payload_includes_scheduler_status(self) -> None:
         now = datetime(2026, 5, 4, 17, 5, tzinfo=KST)

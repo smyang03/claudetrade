@@ -1,7 +1,22 @@
 """ml/test_full.py — ML DB 전체 기능 검증"""
-import sys, json, sqlite3
+import os
+import sys
+import json
+import tempfile
+from pathlib import Path
 from datetime import date, datetime, time as dt_time
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
+
+_ROOT = Path(__file__).resolve().parents[1]
+_PROD_DB_PATH = (_ROOT / "data" / "ml" / "decisions.db").resolve()
+_TMPDIR = tempfile.TemporaryDirectory()
+_TMP_DB_PATH = (Path(_TMPDIR.name) / "test_decisions.db").resolve()
+os.environ["ML_DECISIONS_DB_PATH"] = str(_TMP_DB_PATH)
+
+if Path(os.environ["ML_DECISIONS_DB_PATH"]).expanduser().resolve() == _PROD_DB_PATH:
+    print("[FATAL] test_full.py points to production decisions.db")
+    sys.exit(2)
+
+sys.path.insert(0, str(_ROOT))
 
 from ml.db_writer import (
     init_db, write_decision, update_filled, update_trade_outcome,
@@ -11,12 +26,6 @@ from ml.db_writer import (
 print('=' * 60)
 print('ML DB 전체 기능 검증')
 print('=' * 60)
-
-# 초기화
-conn = sqlite3.connect(str(__import__('pathlib').Path(__file__).parent.parent / 'data' / 'ml' / 'decisions.db'))
-conn.execute('DELETE FROM decisions')
-conn.commit()
-conn.close()
 
 errors = []
 

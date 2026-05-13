@@ -11623,6 +11623,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         return {
             "market": market_key,
+            "base_krw": float(base),
             "total_krw": float(selected_total),
             "cash_krw": cash_krw,
             "position_krw": position_value,
@@ -11664,9 +11665,38 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if not self.risk.halt_reason:
                 self.risk.halt_reason = "daily_loss"
         elif equity_breach and not pnl_breach:
+            try:
+                halt_base_krw = float(self._market_session_start_equity_krw(market) or 0)
+                halt_equity_context = self._market_equity_reference_context(market)
+            except Exception:
+                halt_base_krw = 0.0
+                halt_equity_context = {}
+            pending_sell_tickers = []
+            for _halt_pos in list(getattr(self.risk, "positions", []) or []):
+                try:
+                    _halt_market = self._ticker_market(str(_halt_pos.get("ticker", "") or ""))
+                except Exception:
+                    _halt_market = ""
+                if _halt_market != str(market or "").upper():
+                    continue
+                if self._has_active_pending_sell_confirmation(_halt_pos):
+                    _halt_ticker = str(_halt_pos.get("ticker", "") or "").strip().upper()
+                    if _halt_ticker:
+                        _halt_order_no = str(_halt_pos.get("pending_sell_order_no", "") or "").strip()
+                        pending_sell_tickers.append(f"{_halt_ticker}:{_halt_order_no}" if _halt_order_no else _halt_ticker)
+            pending_sell_text = ",".join(pending_sell_tickers[:8]) if pending_sell_tickers else "-"
             log.warning(
                 f"[HALT 보류 {market}] equity breach only "
-                f"(equity={ret:.2f}% realized={realized_ret:.2f}% threshold={threshold:.2f}%)"
+                f"(equity={ret:.2f}% realized={realized_ret:.2f}% threshold={threshold:.2f}% "
+                f"base={float(halt_equity_context.get('base_krw', halt_base_krw) or 0):,.0f} "
+                f"total={float(halt_equity_context.get('total_krw', 0) or 0):,.0f} "
+                f"source={halt_equity_context.get('source', '')} "
+                f"broker_total={float(halt_equity_context.get('broker_total_krw', 0) or 0):,.0f} "
+                f"internal={float(halt_equity_context.get('internal_krw', 0) or 0):,.0f} "
+                f"adjustment={float(halt_equity_context.get('adjustment_krw', 0) or 0):,.0f} "
+                f"lag_suspected={bool(halt_equity_context.get('lag_suspected'))} "
+                f"fallback={halt_equity_context.get('fallback_reason', '')} "
+                f"pending_sell={pending_sell_text})"
             )
         elif self.risk.halted and allow_auto_release and ret > threshold * 0.5:
             note = f" note={auto_release_note}" if auto_release_note else ""
@@ -11762,6 +11792,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _positions_before = json.dumps(self.risk.positions, ensure_ascii=False, sort_keys=True, default=str)
         synced_positions = {}
         removed = []
+        protected_pending_sell_markets = set()
         seen_keys = set()
         saved_templates = {}
         _positions_file = get_runtime_path("state", f"{self._mode}_open_positions.json")
@@ -11795,6 +11826,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             broker_pos = broker.get(key[1])
             pending_orders = pending_by_key.get(key) or []
             if not broker_pos or broker_pos.get("qty", 0) <= 0:
+                if self._has_active_pending_sell_confirmation(pos):
+                    pos["broker_reconcile_status"] = "pending_sell_confirmation_protected"
+                    synced_positions[key] = self._normalize_position_metadata(
+                        pos,
+                        market,
+                        origin=str(pos.get("position_origin") or "saved_restore"),
+                        integrity="protected",
+                        management_protected=True,
+                    )
+                    seen_keys.add(key)
+                    protected_pending_sell_markets.add(market)
+                    log.warning(
+                        f"[pending sell broker sync protected] {market} {ticker} "
+                        f"order={pos.get('pending_sell_order_no', '')} broker_position_absent"
+                    )
+                    continue
                 if pending_orders:
                     pos["broker_reconcile_status"] = "pending_only"
                     synced_positions[key] = self._normalize_position_metadata(
@@ -11878,6 +11925,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.warning(f"[브로커 런타임 동기화] 브로커 미보유 포지션 제거: {removed}")
 
         self.risk.positions = list(synced_positions.values())
+        if protected_pending_sell_markets:
+            for _pending_sell_market in sorted(protected_pending_sell_markets):
+                try:
+                    _pending_sell_summary = self._reconcile_pending_sell_confirmations(_pending_sell_market, force=True)
+                    if _pending_sell_summary.get("checked"):
+                        log.warning(
+                            f"[pending sell broker sync reconcile] {_pending_sell_market} {_pending_sell_summary}"
+                        )
+                except Exception as _pending_sell_reconcile_e:
+                    log.warning(
+                        f"[pending sell broker sync reconcile failed] "
+                        f"{_pending_sell_market}: {_pending_sell_reconcile_e}"
+                    )
         if json.dumps(self.risk.positions, ensure_ascii=False, sort_keys=True, default=str) != _positions_before:
             self._save_positions()
         # 공유 풀 기준 내부 equity는 KR 현금만이 아니라 US 현금까지 포함해야 한다.
@@ -12460,7 +12520,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _us_order_block_reason(self, ticker: str) -> str:
         return self._us_order_blocked.get(ticker.upper(), "")
     def _refresh_token(self, market: str = "KR"):
-        self._token_for_market(market, force_refresh=True)
+        market_key = str(market or "KR").upper()
+        try:
+            self._token_for_market(market_key, force_refresh=True)
+            return True
+        except Exception as exc:
+            log.warning(f"[{market_key}] KIS token force refresh failed: {exc}")
+            try:
+                token = get_access_token(force_refresh=False, market=market_key)
+                if token:
+                    if not hasattr(self, "tokens"):
+                        self.tokens = {}
+                    self.tokens[market_key] = token
+                    if market_key == "KR" or not self.token:
+                        self.token = token
+                    log.warning(f"[{market_key}] using cached KIS token after force refresh failure")
+                    return True
+            except Exception as fallback_exc:
+                log.warning(f"[{market_key}] cached KIS token fallback failed: {fallback_exc}")
+            raise
     def _ticker_market(self, ticker: str) -> str:
         return "US" if ticker.isalpha() else "KR"
     def _price_to_krw(self, price: float, market: str) -> float:
@@ -12516,6 +12594,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 return fallback / float(self.usd_krw_rate)
             return fallback
         return self._float_or_zero(pos.get("current_price" if current else "entry"))
+
+    def _apply_pathb_hold_advice_bridge(self, pos: dict, market: str, advice: dict) -> dict:
+        if not isinstance(pos, dict) or not isinstance(advice, dict):
+            return {"updated": False, "reason": "invalid_input"}
+        if str(advice.get("action", "HOLD") or "HOLD").upper() != "HOLD":
+            return {"updated": False, "reason": "action_not_hold"}
+        if self._float_or_zero(advice.get("protective_stop")) <= 0:
+            return {"updated": False, "reason": "protective_stop_missing"}
+        pathb = getattr(self, "pathb", None)
+        if pathb is None or not callable(getattr(pathb, "apply_general_hold_advice_policy", None)):
+            return {"updated": False, "reason": "pathb_unavailable"}
+        live_pos = self._find_live_position_for_candidate(pos, market) or pos
+        if not str(live_pos.get("pathb_path_run_id") or pos.get("pathb_path_run_id") or "").strip():
+            return {"updated": False, "reason": "not_pathb_position"}
+        if not live_pos.get("pathb_path_run_id") and pos.get("pathb_path_run_id"):
+            live_pos["pathb_path_run_id"] = pos.get("pathb_path_run_id")
+        price_pos = self._position_with_latest_price_context(live_pos, market)
+        current_native = self._native_position_price(price_pos, market, current=True)
+        if current_native <= 0:
+            current_native = self._native_position_price(pos, market, current=True)
+        try:
+            return pathb.apply_general_hold_advice_policy(live_pos, market, advice, current_native)
+        except Exception as exc:
+            log.exception(f"[PathB protective_hold bridge] failed {market} {pos.get('ticker')}: {exc}")
+            return {"updated": False, "reason": f"bridge_failed:{exc}"}
 
     def _position_with_latest_price_context(self, pos: dict, market: str) -> dict:
         price_pos = dict(pos)
@@ -13082,8 +13185,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if pos.get("trailing"):
                     for p2 in self.risk.positions:
                         if p2.get("ticker") == ticker:
-        # ── 텔레그램 알림 ───────────────────────────────────────────────────
                             p2["hold_advice"] = advice
+                self._apply_pathb_hold_advice_bridge(pos, market, advice)
                 hold_list.append((ticker, reason))
                 log.info(f"[오전 리뷰] {ticker} {action} 유지: {reason}")
         # ── 텔레그램 알림 ───────────────────────────────────────────────────
@@ -13505,6 +13608,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         p2["pending_next_open_sell"] = False
                         p2["pending_next_open_reason"] = ""
                     break
+            if action == "HOLD" and isinstance(advice, dict):
+                self._apply_pathb_hold_advice_bridge(pos, market, advice)
             action_ko = {"HOLD": "홀드 유지", "TRAIL": "트레일링 유지", "SELL": "즉시 매도"}.get(action, action)
             color_icon = "🔴" if action == "SELL" else ("🟡" if action == "TRAIL" else "🟢")
             block = (
@@ -14877,6 +14982,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return value
         return 0.0
 
+    def _has_active_pending_sell_confirmation(self, pos: dict) -> bool:
+        if not isinstance(pos, dict):
+            return False
+        if bool(pos.get("sell_confirmation_pending")):
+            return True
+        order_no = str(pos.get("pending_sell_order_no", "") or "").strip()
+        if not order_no:
+            return False
+        status = str(pos.get("pending_sell_status", "") or "").strip().lower()
+        resolution = str(pos.get("pending_sell_resolution", "") or "").strip().upper()
+        broker_status = str(pos.get("pending_sell_broker_status", "") or "").strip().upper()
+        if status in {"resolved", "cleared"}:
+            return False
+        resolved_markers = {
+            "BROKER_SELL_FILL_CONFIRMED",
+            "BROKER_POSITION_GONE_ASSUME_SOLD",
+            "BROKER_STILL_HELD_NO_OPEN_ORDER_CLEAR_STALE_PENDING",
+        }
+        if resolution in resolved_markers or broker_status in resolved_markers:
+            return False
+        return True
+
     def _clear_sell_confirmation_pending(self, pos: dict, resolution: str, extra: Optional[dict] = None) -> None:
         now_iso = datetime.now(KST).isoformat(timespec="seconds")
         pos["sell_confirmation_pending"] = False
@@ -15088,7 +15215,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         pending_positions = []
         for pos in list(getattr(self.risk, "positions", []) or []):
             ticker = str(pos.get("ticker", "") or "")
-            if self._ticker_market(ticker) != market_key or not pos.get("sell_confirmation_pending"):
+            if self._ticker_market(ticker) != market_key or not self._has_active_pending_sell_confirmation(pos):
                 continue
             key = ticker.upper() if market_key == "US" else ticker
             if target_key and key != target_key:
@@ -16049,7 +16176,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _log_flow("info", "[US] session-open screener cache invalidated")
             except Exception as _uce:
                 log.debug(f"[US] 스크리너 캐시 무효화 실패(무시): {_uce}")
-        self._refresh_token()
+        try:
+            self._refresh_token(market)
+        except Exception as token_exc:
+            log.warning(f"[{market}] session_open aborted: KIS token refresh failed: {token_exc}")
+            system_alert(
+                f"{market} session_open token refresh failed",
+                [str(token_exc)],
+                icon="!",
+            )
+            self.session_active = False
+            if self.current_market == market:
+                self.current_market = None
+            if hasattr(self, "_active_session_date") and isinstance(self._active_session_date, dict):
+                self._active_session_date[market] = None
+            self._update_session_date_diagnostics(market, "session_open_token_failed")
+            self._leave_market_task(market, "session_open")
+            return
         self.session_active = True
         self.current_market = market
         try:

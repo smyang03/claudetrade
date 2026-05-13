@@ -71,5 +71,5 @@ python -m phase1_trainer.sim_runner --market ALL --engine both --start 2022-01-0
 ## 문서 정리 원칙
 
 - 루트에는 사용자/운영 기준 문서만 둠
-- 상세 로그성 문서는 `docs/archive/`
-- 보류 중인 설계안은 `docs/plans/`
+- 상세 로그성 문서는 `docs/reports/` 또는 Git history에 보존
+- active plan은 `docs/TODO_ROADMAP.md` 하나로 통합

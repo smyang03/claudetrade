@@ -470,6 +470,7 @@ def get_access_token(force_refresh: bool = False, market: str = "KR"):
         raise RuntimeError(f"KIS {profile.market} APP_KEY/APP_SECRET 값이 비어 있습니다. .env를 확인하세요.")
 
     last_error = None
+    last_status_detail = ""
     for attempt in range(1, max(1, KIS_TOKEN_RETRY) + 1):
         try:
             resp = _kis_post(
@@ -486,11 +487,21 @@ def get_access_token(force_refresh: bool = False, market: str = "KR"):
                 time.sleep(1.5 * attempt)
         except requests.exceptions.RequestException as e:
             last_error = e
+            response = getattr(e, "response", None)
+            if response is not None:
+                body = str(getattr(response, "text", "") or "").replace("\n", " ")[:300]
+                last_status_detail = f" HTTP status={response.status_code}, body={body}"
             break
 
+    mode_hint = ""
+    if last_status_detail.startswith(" HTTP status=403"):
+        mode_hint = (
+            " 403은 네트워크 timeout보다 KIS 실거래/모의투자 앱키 불일치, 앱 승인 상태, "
+            "계좌 권한, 또는 BASE_URL 설정 오류 가능성이 큽니다."
+        )
     raise RuntimeError(
         f"KIS {profile.market} 토큰 발급 연결 실패. "
-        f"URL={profile.base_url}/oauth2/tokenP, timeout={KIS_HTTP_TIMEOUT}s, retries={KIS_TOKEN_RETRY}. "
+        f"URL={profile.base_url}/oauth2/tokenP, timeout={KIS_HTTP_TIMEOUT}s, retries={KIS_TOKEN_RETRY}.{last_status_detail}{mode_hint} "
         "망/방화벽에서 KIS 도메인(210.107.75.32) 29443/9443 포트 차단 여부를 확인하고, "
         "필요 시 KIS_BASE_URL/KIS_HTTP_TIMEOUT 값을 조정하세요."
     ) from last_error
