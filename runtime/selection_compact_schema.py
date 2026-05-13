@@ -123,8 +123,9 @@ t=ticker, a=action, s=strategy, c=numeric confidence 0.0-1.0.
 fr=freshness label, mat=setup maturity label, ceil=max action allowed by evidence.
 rc=short reason code, blk=array of blockers, inv=short invalidation condition.
 Allowed actions: BUY_READY, PROBE_READY, PULLBACK_WAIT, WATCH, AVOID.
-pt only for BUY_READY/PROBE_READY/PULLBACK_WAIT.
-WATCH/AVOID omit pt.
+pt is required for every ca item.
+BUY_READY/PROBE_READY/PULLBACK_WAIT use populated pt.
+WATCH/AVOID use empty pt={{}}.
 pt keys only: ref,lo,hi,tgt,stp,days,conf.
 pt.days must be numeric hold_days, not direction text.
 pt.conf must be numeric confidence 0.0-1.0, not a reason or confirmation phrase.
@@ -132,7 +133,7 @@ Legacy d/cf are parser-compatible aliases only; do not output d/cf.
 ref must equal supplied p= price when available.
 tr may contain only BUY_READY or PROBE_READY tickers.
 Do not include reasons, veto, risk_tags, allocation, budgets, sizing, long strings, candidate_actions, price_targets, recommended_strategy, or extra keys.
-JSON shape: {{"wl":["T"],"tr":["T"],"ca":[{{"t":"T","a":"WATCH","s":"momentum","c":0.0,"fr":"UNKNOWN","mat":"WEAK","ceil":"WATCH","rc":"WATCH_ONLY","blk":[],"inv":"setup_invalid"}}]}}"""
+JSON shape: {{"wl":["T"],"tr":["T"],"ca":[{{"t":"T","a":"WATCH","s":"momentum","c":0.0,"fr":"UNKNOWN","mat":"WEAK","ceil":"WATCH","rc":"WATCH_ONLY","blk":[],"inv":"setup_invalid","pt":{{}}}}]}}"""
 
 
 def _valid_order(candidates: list[dict[str, Any]], market: str) -> list[str]:
@@ -353,21 +354,29 @@ def canonicalize_compact_selection(
             reasons[ticker] = reason_code
         confidence = _bounded_confidence(raw_item.get("c"))
         reference_price = refs.get(ticker)
-        target = _compact_price_targets(
-            raw_item.get("pt"),
-            reference_price,
-            item_warnings,
-            action_confidence=confidence,
-        )
+        raw_pt = raw_item.get("pt")
+        target: dict[str, Any] = {}
+        if action in ACTIONABLE_ACTIONS:
+            target = _compact_price_targets(
+                raw_pt,
+                reference_price,
+                item_warnings,
+                action_confidence=confidence,
+            )
+        elif isinstance(raw_pt, dict) and raw_pt:
+            _compact_price_targets(
+                raw_pt,
+                reference_price,
+                item_warnings,
+                action_confidence=confidence,
+            )
+            item_warnings.append("non_actionable_price_targets_ignored")
         if action in ACTIONABLE_ACTIONS:
             missing_target_keys = [key for key in REQUIRED_PRICE_TARGET_KEYS if key not in target]
             if missing_target_keys:
                 item_warnings.append("missing_price_targets:" + ",".join(missing_target_keys))
                 action = "WATCH"
                 target = {}
-        elif target:
-            item_warnings.append("non_actionable_price_targets_ignored")
-            target = {}
         if fatal_contract and action in ACTIONABLE_ACTIONS:
             item_warnings.append("compact_contract_failed_demoted")
             action = "WATCH"
@@ -478,7 +487,7 @@ def canonicalize_compact_selection(
         "price_targets": price_targets,
         "candidate_actions": canonical_actions,
         "_price_target_coverage": coverage,
-        "_parse_recovered": False,
+        "_parse_recovered": bool((parsed or {}).get("_parse_recovered")),
         "_fallback_mode": "selection_truncated" if stop_reason == "max_tokens" else str((parsed or {}).get("_fallback_mode", "") or ""),
         "_candidate_actions_v2_requested": True,
         "_legacy_auto_ready_promoted": False,

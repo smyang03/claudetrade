@@ -160,6 +160,50 @@ class PreSessionSellQueueTests(unittest.TestCase):
         self.assertEqual(pos["hold_advice"], {"action": "SELL"})
         bot._save_positions.assert_called_once()
 
+    def test_post_session_sell_advice_queues_next_open_sell(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        pos = {
+            "ticker": "HALO",
+            "name": "Halozyme",
+            "qty": 1,
+            "entry": 70.34,
+            "current_price": 71.16,
+            "display_avg_price": 70.34,
+            "display_current_price": 71.16,
+            "held_days": 1,
+            "pathb_path_run_id": "run_halo",
+        }
+        bot.risk = type("Risk", (), {"positions": [pos]})()
+        bot.today_judgment = {"digest_prompt": ""}
+        bot.usd_krw_rate = 1350.0
+        bot.price_cache = {}
+        bot.price_cache_raw = {}
+        bot._lookup_ticker_name = lambda ticker, market: ""  # type: ignore[method-assign]
+        bot._advisor_pos = lambda cand, market: cand  # type: ignore[method-assign]
+        bot._minutes_to_close = lambda market: 0.0  # type: ignore[method-assign]
+        bot._current_judgment_phase = lambda market: "post_session"  # type: ignore[method-assign]
+        bot._current_session_date_str = lambda market: "2026-05-13"  # type: ignore[method-assign]
+        bot._save_positions = Mock()  # type: ignore[method-assign]
+        bot._write_live_status = Mock()  # type: ignore[method-assign]
+        advice = {
+            "action": "SELL",
+            "reason": "risk is no longer acceptable",
+            "votes": {"risk": {"action": "SELL", "reason": "trail broken"}},
+        }
+
+        with patch("minority_report.hold_advisor.ask", return_value=advice):
+            bot._post_session_position_review("US", [pos])
+
+        self.assertTrue(pos["pending_next_open_sell"])
+        self.assertEqual(pos["pending_next_open_reason"], "trail broken")
+        self.assertEqual(pos["pending_next_open_sell_recheck_status"], "needs_opening_recheck")
+        self.assertEqual(pos["pending_next_open_sell_recheck_phase"], "post_session")
+        self.assertEqual(pos["pending_next_open_sell_recheck_session"], "2026-05-13")
+        self.assertEqual(pos["pending_next_open_sell_recheck_cause"], "post_session_hold_advisor_sell")
+        self.assertEqual(pos["hold_advice"], advice)
+        bot._save_positions.assert_called_once()
+        bot._write_live_status.assert_called_once_with("US", force=True)
+
     def test_pending_next_open_sell_recheck_waits_for_opening_refresh(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         bot.session_active = True

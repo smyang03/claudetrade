@@ -60,6 +60,7 @@ class SelectionCompactSchemaTests(unittest.TestCase):
                     "rc": "WATCH_WEAK",
                     "blk": ["weak"],
                     "inv": "setup_invalid",
+                    "pt": {},
                 },
             ],
         }
@@ -84,6 +85,72 @@ class SelectionCompactSchemaTests(unittest.TestCase):
         self.assertTrue(meta["candidate_actions"][0]["why_not_watch"])
         self.assertFalse(meta["_candidate_actions_missing_contract"])
         self.assertEqual(meta["_selection_raw_schema"], "compact")
+
+    def test_compact_watch_empty_pt_is_warning_free(self) -> None:
+        meta = normalize_selection_result(
+            {
+                "wl": ["SMCI"],
+                "tr": [],
+                "ca": [
+                    {
+                        "t": "SMCI",
+                        "a": "WATCH",
+                        "s": "momentum",
+                        "c": 0.2,
+                        "fr": "UNKNOWN",
+                        "mat": "WEAK",
+                        "ceil": "WATCH",
+                        "rc": "WATCH_ONLY",
+                        "blk": [],
+                        "inv": "setup_invalid",
+                        "pt": {},
+                    }
+                ],
+            },
+            self._candidates(),
+            "US",
+            reference_prices=reference_prices_from_candidates(self._candidates(), "US"),
+            stop_reason="end_turn",
+        )
+
+        self.assertEqual(meta["watchlist"], ["SMCI"])
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["candidate_actions"][0]["price_targets"], {})
+        warnings = meta["_compact_validation"]["warnings"]
+        self.assertFalse(any("non_actionable_price_targets_ignored" in item for item in warnings))
+
+    def test_compact_watch_non_empty_pt_is_ignored_with_warning(self) -> None:
+        meta = normalize_selection_result(
+            {
+                "wl": ["SMCI"],
+                "tr": [],
+                "ca": [
+                    {
+                        "t": "SMCI",
+                        "a": "WATCH",
+                        "s": "momentum",
+                        "c": 0.2,
+                        "fr": "UNKNOWN",
+                        "mat": "WEAK",
+                        "ceil": "WATCH",
+                        "rc": "WATCH_ONLY",
+                        "blk": [],
+                        "inv": "setup_invalid",
+                        "pt": {"ref": 48.25, "lo": 47.0},
+                    }
+                ],
+            },
+            self._candidates(),
+            "US",
+            reference_prices=reference_prices_from_candidates(self._candidates(), "US"),
+            stop_reason="end_turn",
+        )
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["candidate_actions"][0]["price_targets"], {})
+        self.assertNotIn("SMCI", meta["price_targets"])
+        warnings = meta["_compact_validation"]["warnings"]
+        self.assertTrue(any("non_actionable_price_targets_ignored" in item for item in warnings))
 
     def test_compact_text_hold_direction_and_confirmation_fallback_keep_ready(self) -> None:
         candidates = [
@@ -377,8 +444,11 @@ class SelectionCompactSchemaTests(unittest.TestCase):
         contract = compact_output_contract(watch_max=15, trade_max=5)
         self.assertIn("Use keys only: wl,tr,ca", contract)
         self.assertIn("Do not include reasons", contract)
+        self.assertIn("WATCH/AVOID use empty pt={}", contract)
         self.assertIn("pt.days must be numeric hold_days", contract)
         self.assertIn("pt.conf must be numeric confidence", contract)
+        self.assertIn('"pt":{}', contract)
+        self.assertNotIn("WATCH/AVOID omit pt", contract)
         self.assertNotIn('"candidate_actions"', contract)
 
 

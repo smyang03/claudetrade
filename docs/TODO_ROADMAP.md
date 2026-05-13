@@ -33,8 +33,8 @@
 | 우선 | 작업 | 사유 | 개선 전 리뷰 | 개선 후 목표 |
 | --- | --- | --- | --- | --- |
 | P0-1 | KIS fill truth 실수신 검증 | 실제 체결 payload는 로컬 mock과 다를 수 있고, fill truth가 틀리면 중복 주문/PnL/포지션이 모두 흔들린다. | WS parser와 pending 반영은 테스트됐지만 모의/실계좌 full, partial, cancel payload는 아직 운영 검증 전이다. US 체결조회 raw 필드도 1회 마스킹 로그로 확정해야 한다. | 모의계좌 후 소액 실전에서 WS full/partial fill 수신, REST fallback 중복 방지, US fill key 조합, 당일 fill cache 재기동 복원을 검증한다. |
-| P0-2 | PathB `PULLBACK_WAIT` live 전이 audit와 reconfirm shadow | `trade_ready=[]`여도 PathB conditional plan이 실주문으로 이어질 수 있어 운영자 해석과 stale-plan 위험이 있다. | 현재는 buy-zone 진입 시 safety gate 후 주문 가능하지만 `PULLBACK_WAIT -> live order`가 감사/대시보드에서 충분히 분리되지 않는다. | 전이 reason을 별도 기록하고, `PATHB_PULLBACK_WAIT_RECONFIRM_MODE=off|shadow|required` 후보를 shadow로 비교한다. |
-| P0-3 | Dashboard PnL source labeling과 broker/local mismatch 노출 | 운영자가 daily PnL 또는 주문 불일치를 잘못 읽으면 live 중지/재개 판단이 틀어진다. | market-scoped PnL 필드는 생겼지만 legacy `daily_pnl` fallback source가 명확히 구분되지 않고, broker/local mismatch는 ops 화면에서 즉시 보이지 않는다. | `live_status_daily_pnl_legacy` 같은 source를 분리하고, broker-only/local-only/duplicate pending order를 dashboard ops 경고로 노출한다. |
+| P0-2 | PathB `PULLBACK_WAIT` live 전이 audit reason | `trade_ready=[]`여도 PathB conditional plan이 실주문으로 이어질 수 있어 운영자 해석과 stale-plan 위험이 있다. | 현재는 buy-zone 진입 시 safety gate 후 주문 가능하지만 `PULLBACK_WAIT -> live order`가 감사/대시보드에서 충분히 분리되지 않는다. | 먼저 전이 reason만 별도 기록한다. reconfirm shadow와 `PATHB_PULLBACK_WAIT_RECONFIRM_MODE=off|shadow|required` 비교는 후속으로 미룬다. |
+| P0-3 | Dashboard PnL source 표시 small patch | 운영자가 daily PnL source를 잘못 읽으면 live 중지/재개 판단이 틀어진다. | market-scoped PnL 필드는 생겼지만 legacy `daily_pnl` fallback source가 명확히 구분되지 않는다. broker/local mismatch 전면 정비는 더 큰 작업이다. | 먼저 `broker_truth_confirmed_local_pnl`, `local_decisions_duplicate_sell_deduped`, `live_status_market_realized_pnl`, `live_status_daily_pnl_legacy` 같은 source label을 화면에 노출한다. |
 | P0-4 | live 전 guardian/preflight 운영 runbook 고정 | guardian 코드는 구현됐지만 실제 시작 전에는 환경, token, broker truth, dashboard 상태가 매번 바뀐다. | `tests/test_live_guardian.py` 계열은 통과하지만 실제 `BLOCK_START`/`ALLOW_START` 판정은 세션 직전 상태를 봐야 한다. | live 시작 전 `tools/live_guardian.py --mode live --json` 결과를 저장하고 hard fail 0, schema mismatch 0, broker truth stale 0일 때만 시작한다. |
 | P0-5 | 기존 broker open order 수동 확인 | 이미 브로커에 남은 주문은 코드 패치로 소급 제거할 수 없다. | `006340`, `047040` 같은 과거 KR 주문은 local state만 믿으면 위험하다. | KIS app/HTS/API에서 open buy order 0을 확인하고, 남아 있으면 수동 취소 후 dashboard/order state와 대조한다. |
 | P1-1 | `RiskManager` KR/US 분리 | 단일 `self.risk` 구조는 cash, positions, daily halt, realized PnL 경계를 계속 섞을 수 있다. | 시장별 보정 로직은 늘었지만 핵심 runtime은 여전히 `self.risk` 중심이다. | `_rm(market)` adapter와 호환층부터 도입하고, KR/US cash/position/halt가 분리된 테스트를 추가한다. |
@@ -49,13 +49,42 @@
 | P3-2 | Brain Train 모드 | 거래 수를 늘리는 학습 모드는 저품질 샘플로 Brain을 오염시킬 수 있다. | 샘플 부족 문제는 있지만 운영 전략 품질이 먼저 안정되어야 한다. | 운영 품질 안정 후에도 샘플 부족이 명확할 때만 별도 weight/flag를 둔 train mode를 설계한다. |
 | P3-3 | 신규 intraday/VWAP/momentum opening gate | 새 전략은 입력 품질과 실행 안전보다 후순위다. | ORP 기반 계획과 momentum opening gate 설계는 있으나 live edge 검증 전이다. | P0/P1 안정화와 shadow 성과 확인 후 VWAP reclaim/reversion, momentum opening gate를 작은 실험으로 시작한다. |
 
+## 2026-05-13 실행 판단 메모
+
+위험도만 보면 P0-5와 P0-1이 가장 높다. 기존 broker open order와 fill truth가 틀리면 중복 주문, 잘못된 포지션 복원, PnL 오염이 바로 발생할 수 있다.
+
+다만 개발 작업 효율은 다르다. P0-5/P0-1은 운영 확인, 시장 시간, 모의/소액 주문 payload가 필요하므로 즉시 코드로 닫기 어렵다. 따라서 작은 코드 패치는 먼저 끝내고, broker/fill 검증은 병행 운영 작업으로 둔다.
+
+### 지금 당장 해야 할 것
+
+| 실행 순서 | 항목 | 판단 |
+| --- | --- | --- |
+| 1 | P0-4 guardian preflight runbook | 코드가 이미 있으므로 `tools/live_guardian.py --mode live --json` 결과를 live 시작 전마다 파일로 남기는 작업부터 한다. 이후 작업 중에도 live 시작 가능 여부를 객관적으로 확인할 수 있다. |
+| 2 | P0-2 `PULLBACK_WAIT` audit reason | reconfirm shadow 설계는 나중이다. 지금은 `PULLBACK_WAIT -> live order` 전이 reason만 남겨 운영자가 로그로 추적 가능하게 만든다. |
+| 3 | P0-3 dashboard PnL source 표시 | RiskManager 분리 전에는 전면 정비를 하지 않는다. 현재 source field를 화면에 명확히 보여주는 small patch만 먼저 한다. |
+| 4 | P0-5 -> P0-1 broker open order 확인 후 fill truth 검증 | 위험도는 가장 높다. KIS app/HTS/API에서 기존 open buy order 0을 확인한 뒤 모의계좌 WS full/partial fill, US fill key, 재기동 복원을 검증한다. |
+
+### 장기로 봐야 할 것
+
+| 항목 | 이유 |
+| --- | --- |
+| P1-1 `RiskManager` KR/US 분리 | `trading_bot.py` 전반에 영향이 크므로 `_rm(market)` adapter부터 단계적으로 도입해야 한다. |
+| P1-2 `SafetyContext` audit field | P1-1로 시장별 risk/equity 경계가 분리된 뒤 의미가 커진다. |
+| P1-3 counterfactual observability | 인프라 구축이 선행되어야 하고 즉각적인 live 안전 효과는 작다. |
+| P1-4 Claude API 비용 절감 | P0 안정화 후 품질 기준을 잡고 시작해야 한다. |
+| P2-1 preopen 10세션 관찰 | 지금은 passive하게 데이터가 쌓이는 단계이며, live 개입은 아직 이르다. |
+| P2-2 hybrid/watch trigger shadow | miss-quality 샘플이 아직 부족하다. |
+| P2-3 CandidateTierBook | P1-1 `RiskManager` 분리와 후보/계좌 경계 안정화 이후가 안전하다. |
+| P2-4 KRX/BigKinds | credential 없이는 시작할 수 없다. |
+| P3 전체 | P0/P1 안정화 이후로 미룬다. |
+
 ## 바로 실행 순서
 
-1. P0-1 KIS fill truth 실수신 검증을 모의계좌에서 먼저 수행한다.
-2. P0-2 PathB `PULLBACK_WAIT` audit reason과 shadow reconfirm 설정을 추가한다.
-3. P0-3 dashboard PnL source/mismatch 표시를 작은 패치로 닫는다.
-4. P0-4 guardian/preflight 결과를 live 시작 전 runbook 산출물로 남긴다.
-5. 그 다음 P1-1 `RiskManager` 분리를 adapter 단계로 시작한다.
+1. P0-4 guardian/preflight 결과를 live 시작 전 runbook 산출물로 남긴다.
+2. P0-2 PathB `PULLBACK_WAIT` live 전이 audit reason을 추가한다.
+3. P0-3 dashboard PnL source label을 small patch로 노출한다.
+4. P0-5 broker open order 수동 확인을 수행한 뒤 P0-1 KIS fill truth 실수신 검증을 진행한다.
+5. 위 P0 4개가 안정되면 P1-1 `RiskManager` 분리를 adapter 단계로 시작한다.
 
 ## 삭제/흡수한 원본 매핑
 

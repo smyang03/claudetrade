@@ -55,6 +55,29 @@ def _env_bool_flag(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _json_array_object_cap(items: list[dict], max_chars: int) -> tuple[str, list[dict], int]:
+    """Serialize a JSON array without cutting any item in the middle."""
+
+    limit = max(2, int(max_chars or 0))
+    parts: list[str] = []
+    included: list[dict] = []
+    current_len = 2  # opening and closing brackets
+    source_items = [dict(item) for item in (items or []) if isinstance(item, dict)]
+    for item in source_items:
+        try:
+            encoded = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        except TypeError:
+            encoded = json.dumps(item, ensure_ascii=False, separators=(",", ":"), default=str)
+        next_len = current_len + len(encoded) + (1 if parts else 0)
+        if next_len > limit:
+            break
+        parts.append(encoded)
+        included.append(item)
+        current_len = next_len
+    omitted = max(0, len(source_items) - len(included))
+    return "[" + ",".join(parts) + "]", included, omitted
+
+
 def _build_tuning_feedback_contract(
     market: str,
     evidence_items: list[dict],
@@ -193,6 +216,76 @@ def _recover_partial_selection_json(s: str) -> dict:
     if veto:
         recovered["veto"] = veto
     return recovered
+
+
+def _compact_array_section(text: str, field: str) -> str:
+    marker = f'"{field}"'
+    raw = str(text or "")
+    start = raw.find(marker)
+    if start == -1:
+        return ""
+    colon = raw.find(":", start + len(marker))
+    bracket = raw.find("[", colon + 1)
+    if colon == -1 or bracket == -1:
+        return ""
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(bracket, len(raw)):
+        ch = raw[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return raw[bracket:idx + 1]
+    return ""
+
+
+def _recover_compact_ticker_array(text: str, field: str) -> list[str]:
+    section = _compact_array_section(text, field)
+    if not section:
+        return []
+    values: list = []
+    try:
+        parsed = json.loads(section)
+        if isinstance(parsed, list):
+            values = parsed
+    except Exception:
+        values = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', section)
+    out: list[str] = []
+    for value in values:
+        ticker = str(value or "").strip()
+        if ticker and ticker not in out:
+            out.append(ticker)
+    return out
+
+
+def _recover_compact_watch_selection(text: str) -> dict:
+    watchlist = _recover_compact_ticker_array(text, "wl")
+    raw_trade_ready = _recover_compact_ticker_array(text, "tr")
+    if not watchlist and raw_trade_ready:
+        watchlist = list(raw_trade_ready)
+    if not watchlist:
+        return {}
+    return {
+        "wl": watchlist,
+        "tr": [],
+        "ca": [],
+        "_parse_recovered": True,
+        "_fallback_mode": "compact_watch_recovered",
+        "_recovered_raw_trade_ready": raw_trade_ready,
+    }
 
 
 def _extract_json_strict(text: str) -> dict:
@@ -1574,10 +1667,24 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             if len(evidence_items) >= int(os.getenv("SELECTION_FULL_EVIDENCE_MAX", "8")):
                 break
     evidence_section = ""
+    evidence_omitted_count = 0
+    if evidence_items:
+        evidence_max_chars = _env_int_bound("SELECTION_EVIDENCE_MAX_CHARS", 3500, 128, 20000)
+        evidence_json, capped_evidence_items, evidence_omitted_count = _json_array_object_cap(
+            evidence_items,
+            evidence_max_chars,
+        )
+        evidence_items = capped_evidence_items
     if evidence_items:
         evidence_section = (
             "\nRuntime evidence pack (use as facts; soft-gate override must match these values):\n"
-            + json.dumps(evidence_items, ensure_ascii=False, separators=(",", ":"))[: int(os.getenv("SELECTION_EVIDENCE_MAX_CHARS", "3500"))]
+            + evidence_json
+            + "\n"
+            + (
+                f"Runtime evidence pack metadata: included={len(evidence_items)} omitted={evidence_omitted_count} "
+                f"max_chars={evidence_max_chars}\n"
+                if evidence_omitted_count else ""
+            )
             + "\n"
         )
     n_cands = len([c for c in prompt_candidates if c.get("ticker")])
@@ -1891,14 +1998,19 @@ Rules:
             except Exception as parse_exc:
                 if compact_selection_enabled:
                     log.warning(f"[ticker-selection] {market} compact parse failed: {parse_exc}")
-                    result = {
-                        "wl": _safe_watch_fallback(prompt_candidates, market),
-                        "tr": [],
-                        "ca": [],
-                        "_fallback_mode": "selection_parse_failed",
-                    }
+                    recovered_compact = _recover_compact_watch_selection(raw)
+                    if recovered_compact:
+                        result = recovered_compact
+                        parse_stage = "compact_watch_recovered"
+                    else:
+                        result = {
+                            "wl": _safe_watch_fallback(prompt_candidates, market),
+                            "tr": [],
+                            "ca": [],
+                            "_fallback_mode": "selection_parse_failed",
+                        }
+                        parse_stage = "compact_parse_failed"
                     parse_error = True
-                    parse_stage = "compact_parse_failed"
                 else:
                     raise
         selection_meta = normalize_selection_result(
@@ -1913,6 +2025,7 @@ Rules:
         if evidence_items:
             selection_meta["evidence_version"] = "selection_evidence.v1"
             selection_meta["evidence_tickers"] = [str(item.get("ticker") or "") for item in evidence_items]
+            selection_meta["evidence_omitted_count"] = int(evidence_omitted_count)
         if tuning_feedback_meta:
             selection_meta["tuning_feedback"] = dict(tuning_feedback_meta)
             selection_meta["tuning_feedback_applied"] = True
@@ -1933,6 +2046,7 @@ Rules:
                 "active_lessons": active_lesson_meta,
                 "evidence_version": "selection_evidence.v1" if evidence_items else "",
                 "evidence_tickers": [str(item.get("ticker") or "") for item in evidence_items],
+                "evidence_omitted_count": int(evidence_omitted_count),
                 "tuning_feedback_rule_version": tuning_feedback_meta.get("rule_version", ""),
                 "tuning_feedback_applied": bool(tuning_feedback_meta),
                 "stop_reason": stop_reason,
@@ -2012,6 +2126,7 @@ Rules:
         if evidence_items:
             selection_meta.setdefault("evidence_version", "selection_evidence.v1")
             selection_meta.setdefault("evidence_tickers", [str(item.get("ticker") or "") for item in evidence_items])
+            selection_meta.setdefault("evidence_omitted_count", int(evidence_omitted_count))
         if tuning_feedback_meta:
             selection_meta.setdefault("tuning_feedback", dict(tuning_feedback_meta))
             selection_meta.setdefault("tuning_feedback_applied", True)

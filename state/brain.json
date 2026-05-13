@@ -1,6 +1,6 @@
 {
   "meta": {
-    "version": 3273,
+    "version": 3278,
     "created": "2026-03-19",
     "last_updated": "2026-05-13",
     "trained_days_kr": 36,
@@ -694,43 +694,43 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "30min_tune": {
-          "count": 67,
+          "count": 68,
           "correct": 6,
-          "rate": 0.09,
-          "insight": "Historically low precision (9% over 67 trials); treat as weak context only. Note: low rate may partly reflect prior volume data quality issues (corrected). (Context: 지수 개장 대비 +0.00%로 방향 전환 없고, breadth universe 확장(30→59) 후 advance_ratio 61%(36/59))",
+          "rate": 0.088,
+          "insight": "지수 개장 대비 +1.59% 상승으로 아침 MODERATE_BULL thesis 방향 일치, breadth advance_ratio는 60종목 기준 70%(42/60)로 재산정 시 아침 77% 대비 소폭 하락이나 GC/DC 데이터 미집계 구간임을 감안하면 thesis 훼손 없음—vol_spike 54/60(90%)로 거래량 모멘텀 강하고 경고 없으므로 momentum_wait를 -5분 단축해 mid-session 진입 효율 개선.",
           "last_seen": "2026-05-13",
           "adjusted": 6,
-          "adjusted_rate": 0.09,
+          "adjusted_rate": 0.088,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
-          "count": 55,
+          "count": 56,
           "correct": 9,
-          "rate": 0.164,
-          "insight": "지수 개장 대비 +0.00%·30분 기울기 flat으로 방향 반전 없고, breadth universe 확대(30→59) 후 advance_ratio -16%p 하락은 종목 수 증가에 따른 희석 효과로 아침 thesis 훼손 증거 불충분—거래량 high 유지·경고 없음·DKNG(-1.7%)·ZBRA(-2.7%) 손실 포지션 SL 여유 잔존으로 MAINTAIN 유지",
+          "rate": 0.161,
+          "insight": "지수 +1.34%로 아침 MODERATE_BULL thesis 유지되고 30분 기울기 -0.24%p는 소폭 냉각이나 반전 수준 아님—breadth advance_ratio 68%(41/60)로 아침 77% 대비 -8%p 하락했으나 universe 확대(30→60) 효과 감안 시 절대 advancers +18·vol_spike 54/60로 모멘텀 건재, GC/DC 결측은 데이터 갱신 지연으로 판단 보류, ZBRA -2.3%·DKNG -1.4% 부담 있으나 SL 미도달·NOVT +6.4%·RAL +4.9% 버퍼로 포트폴리오 전체 양호, 직전 MAINTAIN 연속 1회로 전환 근거 미충족",
           "last_seen": "2026-05-13",
           "adjusted": 9,
-          "adjusted_rate": 0.164,
+          "adjusted_rate": 0.161,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "120min_tune": {
-          "count": 45,
+          "count": 46,
           "correct": 13,
-          "rate": 0.289,
-          "insight": "지수 +1.27% 상승·30분 기울기 +1.27%p 상승으로 아침 MODERATE_BULL thesis 방향 일치, breadth advance_ratio -12%p 하락·GC/DC 소멸은 universe 확대(30→60) 효과로 절대 adv/dec=39/17(70%) 양호하며 vol_spike 52개 유지·경고 없음으로 thesis 유지; momentum wait -5분 조정은 rising 장중 모멘텀에서 entry 기회 소폭 개선 목적",
+          "rate": 0.283,
+          "insight": "지수 +2.05% 상승·30분 기울기 +0.33%p 상승 유지로 아침 MODERATE_BULL thesis 방향 일치, breadth advance_ratio -13%p 하락은 universe 확장(30→60) 효과로 절대 adv 38/60=63% 여전히 과반 우위이며 경고 없음—momentum wait -5m 기존 조정 유지, DKNG(-1.4%)·ZBRA(-2.3%) 개별 손실은 각 SL 미도달로 포지션 변경 불필요",
           "last_seen": "2026-05-13",
           "adjusted": 13,
-          "adjusted_rate": 0.289,
+          "adjusted_rate": 0.283,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "150min_tune": {
-          "count": 40,
+          "count": 41,
           "correct": 12,
-          "rate": 0.3,
-          "insight": "지수 개장 대비 +0.72%로 아침 MODERATE_BULL thesis 유지 중이나 30분 기울기 -0.55%p 하락·advance_ratio -13%p(77%→63%)·GC 24→0 소멸로 모멘텀 약화 감지—단, 절대 breadth 38/21(63%)·vol_spike 52개 정상·포지션 SL 미도달(DKNG -1.7% SL 36,204 근접 주의)로 thesis 훼손 수준 미달, 추가 하락 확인 전 조정 유보",
+          "rate": 0.293,
+          "insight": "지수 +2.05% 상승으로 아침 MODERATE_BULL thesis 유효하며, 30분 기울기 flat·거래량 normal·경고 없음으로 추세 안정 확인—breadth advance_ratio -5%p 소폭 후퇴·GC/DC 결측은 universe 확장(30→60) 효과로 아침 대비 실질 악화 근거 불충분, momentum_wait -5m 유지로 mid-session 잔여 86분 내 포착 기회 보존.",
           "last_seen": "2026-05-13",
           "adjusted": 12,
-          "adjusted_rate": 0.3,
+          "adjusted_rate": 0.293,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "180min_tune": {
@@ -834,13 +834,13 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "90min_tune": {
-          "count": 47,
+          "count": 48,
           "correct": 9,
-          "rate": 0.191,
-          "insight": "지수 변화 +0.00% / 30분 기울기 flat으로 방향 반전 신호 없고, breadth universe 확대(30→60) 후 advance_ratio 64.6%(39/60)로 아침 77% 대비 -12%p 하락했으나 과반 우위 유지·거래량 정상·경고 없음—NOVT +6.0%·RAL +4.5% 등 핵심 포지션 수익 견조하고 DKNG(-1.7%)·ZBRA(-2.7%)는 SL과 아직 여유 있어 MODERATE_BULL thesis 유지 판단",
+          "rate": 0.188,
+          "insight": "지수 +1.72%·30분 기울기 +0.38%p 상승으로 아침 MODERATE_BULL thesis 유지, breadth advance_ratio 67%(40/60)로 아침 77% 대비 -10%p 하락했으나 vol_spike 53개·경고 없음·상승 기울기 지속으로 하향 조정 근거 불충분—momentum_wait -5m 유지로 상승 모멘텀 포착 지속.",
           "last_seen": "2026-05-13",
           "adjusted": 9,
-          "adjusted_rate": 0.191,
+          "adjusted_rate": 0.188,
           "metric_semantics": "adjusted_not_accuracy"
         }
       },

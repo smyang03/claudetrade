@@ -113,6 +113,53 @@ class PathBProfitProtectionTests(unittest.TestCase):
             self.assertEqual(policy["protective_stop"], 70.80)
             self.assertLessEqual(policy["hard_stop"], policy["protective_stop"])
 
+    def test_apply_general_sell_advice_creates_forced_sell_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, _bot, store, plan = _runtime_with_plan(tmp, market="US")
+            pos = {
+                "ticker": "HALO",
+                "qty": 1,
+                "display_avg_price": 70.34,
+                "display_current_price": 71.16,
+                "pathb_path_run_id": plan.path_run_id,
+            }
+            advice = {
+                "action": "SELL",
+                "valid_for_min": 10,
+                "confidence": 0.74,
+                "reason": "thesis weakened",
+            }
+
+            result = runtime.apply_general_hold_advice_policy(pos, "US", advice, 71.16)
+
+            self.assertTrue(result["updated"])
+            policy = store.find_path_run(plan.path_run_id)["plan"]["auto_sell_policy"]
+            self.assertEqual(policy["mode"], "forced_sell")
+            self.assertEqual(policy["close_reason"], "CLOSED_CLAUDE_SELL")
+            self.assertEqual(policy["reason"], "thesis weakened")
+
+    def test_forced_sell_policy_emits_sell_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, _bot, store, plan = _runtime_with_plan(tmp, market="US")
+            store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "forced_sell",
+                        "close_reason": "CLOSED_CLAUDE_SELL",
+                        "valid_until": (datetime.now(KST) + timedelta(minutes=10)).isoformat(timespec="seconds"),
+                    }
+                },
+                merge_plan=True,
+            )
+
+            result = runtime._evaluate_pathb_auto_sell_policy(plan, {"ticker": "HALO"}, 71.20)
+
+            self.assertEqual(result["action"], "sell")
+            self.assertEqual(result["signal"].reason, "policy_forced_sell")
+            self.assertEqual(result["signal"].close_reason, "CLOSED_CLAUDE_SELL")
+
     def test_protective_hold_sells_on_protective_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, _bot, store, plan = _runtime_with_plan(tmp, market="US")
@@ -268,6 +315,27 @@ class PathBProfitProtectionTests(unittest.TestCase):
         self.assertEqual(second["reason"], "cooldown")
         self.assertEqual(ask.call_count, 1)
 
+    def test_profit_protection_review_sell_creates_forced_sell_policy(self) -> None:
+        env = {
+            "PATHB_PROFIT_REVIEW_ENABLED": "true",
+            "PATHB_PROFIT_REVIEW_TIMEOUT_SEC": "0",
+            "PATHB_PROFIT_REVIEW_COOLDOWN_SEC": "0",
+            "PATHB_LADDER_MIN_HOLD_SEC": "0",
+        }
+        advice = {"action": "SELL", "confidence": 0.8, "reason": "give back risk"}
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", env, clear=False):
+            runtime, _bot, store, plan = _runtime_with_plan(tmp, market="KR")
+            pos = {"ticker": "005930", "entry": 100.0, "peak_pnl_pct": 3.0, "pathb_path_run_id": plan.path_run_id}
+            with patch("minority_report.hold_advisor.ask", return_value=advice):
+                result = runtime._maybe_trigger_profit_protection_review(plan, pos, 102.50, "KR")
+
+            policy = store.find_path_run(plan.path_run_id)["plan"]["auto_sell_policy"]
+
+        self.assertTrue(result["triggered"])
+        self.assertEqual(result["reason"], "forced_sell_policy")
+        self.assertEqual(policy["mode"], "forced_sell")
+        self.assertEqual(policy["close_reason"], "CLOSED_CLAUDE_SELL")
+
     def test_trading_bot_bridge_uses_non_trailing_pathb_position(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         bot.usd_krw_rate = 1350.0
@@ -294,6 +362,27 @@ class PathBProfitProtectionTests(unittest.TestCase):
         self.assertEqual(args[1], "US")
         self.assertEqual(args[2], advice)
         self.assertAlmostEqual(args[3], 71.16)
+
+    def test_trading_bot_bridge_accepts_sell_advice_for_pathb_position(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.usd_krw_rate = 1350.0
+        bot.price_cache = {}
+        bot.price_cache_raw = {"HALO": 71.16}
+        pos = {
+            "ticker": "HALO",
+            "qty": 1,
+            "display_avg_price": 70.34,
+            "display_current_price": 71.16,
+            "pathb_path_run_id": "run_halo",
+        }
+        bot.risk = SimpleNamespace(positions=[pos])
+        bot.pathb = SimpleNamespace(apply_general_hold_advice_policy=Mock(return_value={"updated": True}))
+        advice = {"action": "SELL", "reason": "exit"}
+
+        result = bot._apply_pathb_hold_advice_bridge(pos, "US", advice)
+
+        self.assertTrue(result["updated"])
+        bot.pathb.apply_general_hold_advice_policy.assert_called_once()
 
 
 if __name__ == "__main__":

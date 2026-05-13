@@ -12598,9 +12598,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _apply_pathb_hold_advice_bridge(self, pos: dict, market: str, advice: dict) -> dict:
         if not isinstance(pos, dict) or not isinstance(advice, dict):
             return {"updated": False, "reason": "invalid_input"}
-        if str(advice.get("action", "HOLD") or "HOLD").upper() != "HOLD":
-            return {"updated": False, "reason": "action_not_hold"}
-        if self._float_or_zero(advice.get("protective_stop")) <= 0:
+        action = str(advice.get("action", "HOLD") or "HOLD").upper()
+        if action not in {"HOLD", "SELL"}:
+            return {"updated": False, "reason": "action_not_hold_or_sell"}
+        if action == "HOLD" and self._float_or_zero(advice.get("protective_stop")) <= 0:
             return {"updated": False, "reason": "protective_stop_missing"}
         pathb = getattr(self, "pathb", None)
         if pathb is None or not callable(getattr(pathb, "apply_general_hold_advice_policy", None)):
@@ -13165,6 +13166,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     reason = v["reason"][:80]
                     break
             if action == "SELL":
+                if not reason:
+                    reason = str(advice.get("reason", "") or "")[:80]
                 for p2 in self.risk.positions:
                     if p2.get("ticker") == ticker:
                         p2["hold_advice"] = advice
@@ -13470,9 +13473,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         reason = v["reason"][:80]
                         break
                 # hold_advice 포지션에 기록 (대시보드에서 보임)
+                if not reason:
+                    reason = str(advice.get("reason", "") or "")[:80]
                 for p2 in self.risk.positions:
                     if p2.get("ticker") == ticker:
                         p2["hold_advice"] = advice
+                        if action == "SELL":
+                            now_iso = datetime.now(KST).isoformat(timespec="seconds")
+                            phase = self._current_judgment_phase(market)
+                            p2["pending_next_open_sell"] = True
+                            p2["pending_next_open_reason"] = reason
+                            p2["pending_next_open_sell_recheck_status"] = "needs_opening_recheck"
+                            p2["pending_next_open_sell_recheck_phase"] = phase
+                            p2["pending_next_open_sell_recheck_session"] = self._current_session_date_str(market)
+                            p2["pending_next_open_sell_recheck_at"] = now_iso
+                            p2["pending_next_open_sell_recheck_cause"] = "post_session_hold_advisor_sell"
+                            log.info(f"[post session Claude sell] {ticker} queued for next session open")
                 if action == "TRAIL" and advice.get("trail_pct"):
                     trail_info = f" (트레일링 {advice['trail_pct']*100:.1f}%)"
             except Exception as e:

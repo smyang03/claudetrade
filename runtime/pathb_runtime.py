@@ -1836,6 +1836,7 @@ class PathBRuntime:
             "profit_ladder",
             "policy_protective_stop",
             "policy_hard_stop",
+            "policy_forced_sell",
         }
 
     @staticmethod
@@ -1901,23 +1902,11 @@ class PathBRuntime:
     ) -> tuple[dict[str, Any], str]:
         if not isinstance(advice, dict) or bool(advice.get("fallback", False)):
             return {}, "fallback_or_invalid_advice"
-        if str((advice or {}).get("action", "") or "").upper() != "HOLD":
-            return {}, "action_not_hold"
+        action = str((advice or {}).get("action", "") or "").upper()
+        if action not in {"HOLD", "SELL"}:
+            return {}, "action_not_hold_or_sell"
         close_reason = str(signal.close_reason or "").strip().upper()
         signal_reason = str(signal.reason or "").strip().lower()
-        protective_hold_reasons = {
-            "trail_stop",
-            "profit_floor",
-            "stop_loss",
-            "soft_exit_floor_price",
-        }
-        if close_reason not in {
-            "CLOSED_CLAUDE_PRICE_TARGET",
-            "CLOSED_CLAUDE_PRICE_STOP",
-            "CLOSED_PROFIT_FLOOR",
-            "CLOSED_TRAILING_STOP",
-        } and signal_reason not in protective_hold_reasons:
-            return {}, "unsupported_close_reason"
         current = float(current_native or 0)
         if current <= 0:
             return {}, "invalid_current_price"
@@ -1949,6 +1938,32 @@ class PathBRuntime:
             "invalid_if": str(advice.get("invalid_if", "") or "")[:240],
             "max_rechecks": max(0, min(8, self._policy_int(advice.get("max_rechecks")))),
         }
+        if action == "SELL":
+            forced_close_reason = str(advice.get("close_reason") or close_reason or "CLOSED_CLAUDE_SELL").strip().upper()
+            if not forced_close_reason.startswith("CLOSED_"):
+                forced_close_reason = "CLOSED_CLAUDE_SELL"
+            return {
+                **base,
+                "mode": "forced_sell",
+                "source": str(advice.get("source", "") or "hold_advisor_sell")[:80],
+                "force_sell": True,
+                "close_reason": forced_close_reason,
+                "signal_close_reason": forced_close_reason,
+            }, ""
+
+        protective_hold_reasons = {
+            "trail_stop",
+            "profit_floor",
+            "stop_loss",
+            "soft_exit_floor_price",
+        }
+        if close_reason not in {
+            "CLOSED_CLAUDE_PRICE_TARGET",
+            "CLOSED_CLAUDE_PRICE_STOP",
+            "CLOSED_PROFIT_FLOOR",
+            "CLOSED_TRAILING_STOP",
+        } and signal_reason not in protective_hold_reasons:
+            return {}, "unsupported_close_reason"
         if close_reason == "CLOSED_CLAUDE_PRICE_TARGET":
             revised_target = self._round_policy_price(advice.get("revised_sell_target"), market, direction="up")
             if revised_target <= current:
@@ -2115,8 +2130,9 @@ class PathBRuntime:
                 return {"updated": False, "reason": "invalid_position"}
             if not isinstance(advice, dict):
                 return {"updated": False, "reason": "invalid_advice"}
-            if str(advice.get("action", "HOLD") or "HOLD").upper() != "HOLD":
-                return {"updated": False, "reason": "action_not_hold"}
+            action = str(advice.get("action", "HOLD") or "HOLD").upper()
+            if action not in {"HOLD", "SELL"}:
+                return {"updated": False, "reason": "action_not_hold_or_sell"}
             path_run_id = str(pos.get("pathb_path_run_id") or pos.get("path_run_id") or "").strip()
             if not path_run_id:
                 return {"updated": False, "reason": "not_pathb_position"}
@@ -2135,6 +2151,31 @@ class PathBRuntime:
                 current = self._current_native_price(market_key, plan.ticker)
             if current <= 0:
                 return {"updated": False, "reason": "invalid_current_price"}
+            if action == "SELL":
+                sell_advice = {**advice, "source": str(advice.get("source", "") or "general_review_sell")}
+                signal = ExitSignal(True, "policy_forced_sell", "CLOSED_CLAUDE_SELL", current, path_run_id)
+                policy, reject_reason = self._pathb_auto_sell_policy_from_advice(
+                    plan,
+                    pos,
+                    signal,
+                    sell_advice,
+                    current,
+                    now=datetime.now(KST),
+                )
+                if not policy:
+                    return {"updated": False, "reason": reject_reason or "forced_sell_policy_rejected"}
+                result = self._set_pathb_auto_sell_policy(path_run_id, policy)
+                if result.get("updated"):
+                    log.warning(
+                        f"[PathB forced_sell SET] {market_key} {plan.ticker} "
+                        f"valid_until={policy.get('valid_until', '')} reason={policy.get('reason', '')}"
+                    )
+                else:
+                    log.info(
+                        f"[PathB forced_sell SKIP] {market_key} {plan.ticker} "
+                        f"reason={result.get('reason')}"
+                    )
+                return result
 
             protective_stop = self._round_policy_price(advice.get("protective_stop"), market_key, direction="down")
             if protective_stop <= 0:
@@ -2233,8 +2274,6 @@ class PathBRuntime:
         return {"action": "skip", "reason": reason, "policy": policy}
 
     def _evaluate_pathb_auto_sell_policy(self, plan: PricePlan, pos: dict[str, Any], current: float) -> dict[str, Any]:
-        if self._pathb_hold_policy_mode() == "off":
-            return {"action": "proceed", "reason": "policy_mode_off"}
         run = self.store.find_path_run(plan.path_run_id) or {}
         plan_json = run.get("plan") or {}
         policy = plan_json.get("auto_sell_policy") if isinstance(plan_json, dict) else {}
@@ -2253,6 +2292,18 @@ class PathBRuntime:
         if current_price <= 0:
             return {"action": "proceed", "reason": "invalid_current_price", "policy": policy}
         mode = str(policy.get("mode", "") or "")
+        if mode == "forced_sell":
+            close_reason = str(policy.get("close_reason") or policy.get("signal_close_reason") or "CLOSED_CLAUDE_SELL").strip().upper()
+            if not close_reason.startswith("CLOSED_"):
+                close_reason = "CLOSED_CLAUDE_SELL"
+            return {
+                "action": "sell",
+                "reason": "policy_forced_sell",
+                "signal": ExitSignal(True, "policy_forced_sell", close_reason, current_price, plan.path_run_id),
+                "policy": policy,
+            }
+        if self._pathb_hold_policy_mode() == "off":
+            return {"action": "proceed", "reason": "policy_mode_off", "policy": policy}
         reask_at = self._parse_kst_iso(policy.get("reask_after_at"))
         if reask_at is not None and reask_at <= now:
             close_reason = "CLOSED_CLAUDE_PRICE_STOP" if mode == "stop_recovery" else "CLOSED_CLAUDE_PRICE_TARGET"
@@ -2730,11 +2781,13 @@ class PathBRuntime:
                 )
                 return {"triggered": True, "reason": "hold_policy", "bridge": bridge_result, "advice": advice}
             if action == "SELL":
+                advice = {**advice, "source": "profit_protection_review"} if isinstance(advice, dict) else {"action": "SELL"}
+                bridge_result = self.apply_general_hold_advice_policy(pos, market, advice, current_price)
                 log.warning(
-                    f"[PathB profit_review SELL ignored] {plan.market} {plan.ticker} "
-                    f"current={current_price:g} next_scan_will_handle_exit_paths"
+                    f"[PathB profit_review SELL policy] {plan.market} {plan.ticker} "
+                    f"current={current_price:g} bridge={bridge_result.get('reason')}"
                 )
-                return {"triggered": True, "reason": "sell_no_direct_execution", "advice": advice}
+                return {"triggered": True, "reason": "forced_sell_policy", "bridge": bridge_result, "advice": advice}
             return {"triggered": True, "reason": "hold_without_protective_stop", "advice": advice}
         except Exception as exc:
             log.warning(f"[PathB profit_review failed] {plan.market} {plan.ticker}: {exc}")
@@ -5156,6 +5209,8 @@ class PathBRuntime:
             meta["exit_owner"] = "mfe_breakeven_policy"
         elif close_reason == "CLOSED_PROFIT_LADDER":
             meta["exit_owner"] = "profit_ladder_policy"
+        elif close_reason == "CLOSED_CLAUDE_SELL":
+            meta["exit_owner"] = "claude_sell_policy"
         return meta
 
     def _maybe_run_pre_close_carry_review(
