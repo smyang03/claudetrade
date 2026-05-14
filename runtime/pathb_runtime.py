@@ -3005,6 +3005,11 @@ class PathBRuntime:
             detail = str(advice["reason"])[:500]
             confidence = 0.0
             fallback = True
+            # fail-safe: reviewer 불가 시 수익/손실 보호 신호 원래대로 집행
+            if raw_close_reason in {"CLOSED_PROFIT_LADDER", "CLOSED_HARD_STOP", "CLOSED_LOSS_CAP"}:
+                action = "SELL"
+                advice["action"] = "SELL"
+                detail = detail + f" | review_unavailable_failsafe:{raw_close_reason.lower()}"
         force_sell, force_detail = self._pathb_auto_sell_review_force_sell_required(
             plan,
             pos,

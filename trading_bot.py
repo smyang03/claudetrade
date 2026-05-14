@@ -15550,6 +15550,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             detail = str(advice["reason"])[:500]
             confidence = 0.0
             fallback = True
+            # fail-safe: reviewer 불가 시 원래 보호 매도 신호 집행
+            if reason_key in {"policy_protective_stop", "policy_hard_stop"}:
+                action = "SELL"
+                advice["action"] = "SELL"
+                detail = detail + f" | review_unavailable_failsafe:{reason_key}"
 
         force_sell, force_detail = self._auto_sell_review_force_sell_required(
             cand,
