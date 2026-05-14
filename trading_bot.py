@@ -3879,43 +3879,55 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         passed = bool(final_action and final_action != "HARD_BLOCK" and not blocker)
         reason = str((route_payload or {}).get("reason") or (gate_info or {}).get("block_reason") or "")
         kr_late_gate = dict((route_payload or {}).get("kr_late_entry_gate") or {})
+        runtime_gate = dict((route_payload or {}).get("runtime_gate") or {})
+        route_source = str(runtime_gate.get("route_source") or (route_payload or {}).get("route_source") or "").strip()
+        partial_reselect_pre_gate = route_source == "partial_reselect"
+        payload = {
+            "candidate_trace_id": self._candidate_trace_id(market_key, key),
+            "ticker": key,
+            "known_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "claude_action": str((action or {}).get("action") or (route_payload or {}).get("requested_action") or ""),
+            "requested_action": str((route_payload or {}).get("requested_action") or (action or {}).get("action") or ""),
+            "final_action": final_action,
+            "route": (route_payload or {}).get("route"),
+            "passed": passed,
+            "blocker": blocker or None,
+            "reason": reason,
+            "hard_safety": {
+                "passed": passed,
+                "reason": reason if not passed else "",
+            },
+            "route_lock": {
+                "passed": passed,
+                "reason": str((route_payload or {}).get("runtime_gate_reason") or ""),
+            },
+            "runtime_gate": runtime_gate,
+            "health_state": (gate_info or {}).get("health_state", ""),
+            "ready_degraded": bool((gate_info or {}).get("ready_degraded")),
+            "stale": bool((gate_info or {}).get("stale")),
+            "stale_age_min": (gate_info or {}).get("stale_age_min"),
+            "stale_cycle": bool((gate_info or {}).get("stale_cycle")),
+            "stale_cycle_count": (gate_info or {}).get("stale_cycle_count", 0),
+            "repeated_failed_ready_count": (gate_info or {}).get("repeated_failed_ready_count", 0),
+            "no_fill_cycle_count": (gate_info or {}).get("no_fill_cycle_count", 0),
+            "trainer_tier": (gate_info or {}).get("trainer_tier", ""),
+            "cohort_key": (gate_info or {}).get("cohort_key", ""),
+            "cohort_reliability": (gate_info or {}).get("cohort_reliability", 0.0),
+            "warnings": list((route_payload or {}).get("warnings") or []),
+        }
+        if partial_reselect_pre_gate:
+            payload.update(
+                {
+                    "event_source": "candidate_action_route_pre_replacement",
+                    "pre_replacement": True,
+                    "route_source": route_source,
+                }
+            )
         try:
             self._write_funnel_event(
                 "gate_evaluation",
                 market_key,
-                {
-                    "candidate_trace_id": self._candidate_trace_id(market_key, key),
-                    "ticker": key,
-                    "known_at": datetime.now(KST).isoformat(timespec="seconds"),
-                    "claude_action": str((action or {}).get("action") or (route_payload or {}).get("requested_action") or ""),
-                    "requested_action": str((route_payload or {}).get("requested_action") or (action or {}).get("action") or ""),
-                    "final_action": final_action,
-                    "route": (route_payload or {}).get("route"),
-                    "passed": passed,
-                    "blocker": blocker or None,
-                    "reason": reason,
-                    "hard_safety": {
-                        "passed": passed,
-                        "reason": reason if not passed else "",
-                    },
-                    "route_lock": {
-                        "passed": passed,
-                        "reason": str((route_payload or {}).get("runtime_gate_reason") or ""),
-                    },
-                    "runtime_gate": dict((route_payload or {}).get("runtime_gate") or {}),
-                    "health_state": (gate_info or {}).get("health_state", ""),
-                    "ready_degraded": bool((gate_info or {}).get("ready_degraded")),
-                    "stale": bool((gate_info or {}).get("stale")),
-                    "stale_age_min": (gate_info or {}).get("stale_age_min"),
-                    "stale_cycle": bool((gate_info or {}).get("stale_cycle")),
-                    "stale_cycle_count": (gate_info or {}).get("stale_cycle_count", 0),
-                    "repeated_failed_ready_count": (gate_info or {}).get("repeated_failed_ready_count", 0),
-                    "no_fill_cycle_count": (gate_info or {}).get("no_fill_cycle_count", 0),
-                    "trainer_tier": (gate_info or {}).get("trainer_tier", ""),
-                    "cohort_key": (gate_info or {}).get("cohort_key", ""),
-                    "cohort_reliability": (gate_info or {}).get("cohort_reliability", 0.0),
-                    "warnings": list((route_payload or {}).get("warnings") or []),
-                },
+                payload,
             )
         except Exception:
             pass
@@ -4212,6 +4224,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "evidence_action_ceiling": live_pack.get("action_ceiling"),
             "evidence_pack": live_pack,
         }
+        try:
+            context.update(self._candidate_entry_timing_context(market_key, key, action=action, meta=meta))
+        except Exception:
+            route_source = str(
+                (meta or {}).get("_entry_route_source")
+                or (action or {}).get("route_source")
+                or (action or {}).get("source")
+                or (meta or {}).get("_candidate_actions_source")
+                or ""
+            ).strip()
+            if route_source:
+                context["route_source"] = route_source
         return context
 
     @staticmethod
@@ -5002,6 +5026,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 execution_context=execution_context,
             )
             route_payload = decision.to_dict()
+            if execution_context.get("route_source"):
+                route_payload["route_source"] = str(execution_context.get("route_source") or "")
+                route_payload.setdefault("runtime_gate", {})["route_source"] = route_payload["route_source"]
             route_payload["requested_action"] = str((action or {}).get("action") or "")
             route_payload["action_created_at"] = str(action_for_route.get("created_at") or "")
             route_payload["action_expires_at"] = str(action_for_route.get("expires_at") or "")
@@ -6924,11 +6951,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         candidate_meta: dict,
         candidate_map: dict[str, dict],
         n_replace: int,
-    ) -> list[str]:
+    ) -> dict:
+        result = {
+            "accepted": [],
+            "accepted_gates": {},
+            "rejected": {},
+            "slot_unfilled": [],
+        }
         remaining = list(dict.fromkeys(candidate_trade_ready or []))
         if not remaining:
-            return []
+            return result
         selected: list[str] = []
+        accepted_gates: dict[str, dict] = {}
+        rejected_attempts: dict[str, list[dict]] = {}
         selected_strategies: set[str] = set()
         selected_categories: set[str] = set()
         selected_sectors: set[str] = set()
@@ -6991,6 +7026,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         try:
             _in_health_tracker = self._candidate_health_tracker(market)
             _BAD_HEALTH = {"FAILED_READY", "WEAKENING_READY"}
+            before_health = list(remaining)
             remaining = [
                 t for t in remaining
                 if (
@@ -6999,6 +7035,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     and not self._candidate_health_is_stale(market, _in_health_tracker.state_for(t))
                 )
             ]
+            health_removed = [t for t in before_health if t not in set(remaining)]
+            for ticker in health_removed:
+                result["rejected"][ticker] = {
+                    "reason": "candidate_health_blocked",
+                    "best_outgoing_tried": "",
+                    "attempts": [],
+                }
         except Exception:
             pass
         for idx, target_strategy in enumerate(target_strategies):
@@ -7008,10 +7051,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             accepted = False
             for best in sorted(remaining, key=lambda ticker: _score(ticker, target_strategy), reverse=True):
                 gate_ok, gate = self._candidate_replacement_delta_ok(market, outgoing, best, candidate_map)
+                gate = dict(gate or {})
+                if gate_ok:
+                    gate.setdefault("reason", "")
+                else:
+                    gate["reason"] = "trainer_replacement_delta_blocked"
                 if not gate_ok:
+                    rejected_attempts.setdefault(best, []).append(gate)
                     continue
                 remaining.remove(best)
                 _accept(best)
+                accepted_gates[best] = gate
                 accepted = True
                 break
             if not accepted:
@@ -7019,8 +7069,216 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     f"[partial replacement gate] {market} outgoing={outgoing} "
                     f"no incoming cleared trainer delta"
                 )
+                result["slot_unfilled"].append(outgoing)
                 continue
-        return selected[:n_replace]
+        for ticker, attempts in rejected_attempts.items():
+            if ticker in selected:
+                continue
+            try:
+                best_attempt = max(
+                    attempts,
+                    key=lambda item: float(item.get("incoming_score") or float("-inf")),
+                )
+            except Exception:
+                best_attempt = attempts[0] if attempts else {}
+            result["rejected"][ticker] = {
+                "reason": "trainer_replacement_delta_blocked",
+                "best_outgoing_tried": str((best_attempt or {}).get("outgoing") or ""),
+                "attempts": attempts,
+            }
+        result["accepted"] = selected[:n_replace]
+        result["accepted_gates"] = {
+            ticker: accepted_gates.get(ticker, {})
+            for ticker in result["accepted"]
+        }
+        return result
+
+    def _partial_reselect_action_maps(self, market: str, meta: dict) -> tuple[dict[str, dict], dict[str, dict]]:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        action_by_ticker: dict[str, dict] = {}
+        for action in list((meta or {}).get("candidate_actions") or []):
+            if not isinstance(action, dict):
+                continue
+            ticker = self._selection_ticker_key(market_key, action.get("ticker"))
+            if ticker:
+                action_by_ticker[ticker] = dict(action)
+        route_by_ticker: dict[str, dict] = {}
+        for route in list((meta or {}).get("_candidate_action_routes") or []):
+            if not isinstance(route, dict):
+                continue
+            ticker = self._selection_ticker_key(market_key, route.get("ticker"))
+            if ticker:
+                route_by_ticker[ticker] = dict(route)
+        return action_by_ticker, route_by_ticker
+
+    def _partial_reselect_replacement_summary(
+        self,
+        market: str,
+        meta: dict,
+        candidate_trade_ready: list[str],
+        replacement_pool: list[str],
+        replacement_result: dict,
+    ) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        action_by_ticker, route_by_ticker = self._partial_reselect_action_maps(market_key, meta)
+        ready_actions = {"BUY_READY", "PROBE_READY", "ADD_READY"}
+        candidate_ready: list[str] = []
+        for ticker in list(candidate_trade_ready or []):
+            key = self._selection_ticker_key(market_key, ticker)
+            route = route_by_ticker.get(key, {})
+            action = action_by_ticker.get(key, {})
+            requested = str(route.get("requested_action") or action.get("action") or "").upper()
+            final = str(route.get("final_action") or "").upper()
+            if requested in ready_actions or final in ready_actions:
+                candidate_ready.append(key)
+        accepted = [
+            self._selection_ticker_key(market_key, ticker)
+            for ticker in list((replacement_result or {}).get("accepted") or [])
+        ]
+        rejected = {
+            self._selection_ticker_key(market_key, ticker): dict(detail or {})
+            for ticker, detail in dict((replacement_result or {}).get("rejected") or {}).items()
+        }
+        replacement_pool_keys = [
+            self._selection_ticker_key(market_key, ticker)
+            for ticker in list(replacement_pool or [])
+        ]
+        unresolved = [
+            ticker for ticker in candidate_ready
+            if ticker in set(replacement_pool_keys)
+            and ticker not in set(accepted)
+            and ticker not in set(rejected.keys())
+        ]
+        return {
+            "candidate_ready": list(dict.fromkeys(candidate_ready)),
+            "replacement_pool": replacement_pool_keys,
+            "accepted": list(dict.fromkeys(accepted)),
+            "accepted_gates": {
+                self._selection_ticker_key(market_key, ticker): dict(detail or {})
+                for ticker, detail in dict((replacement_result or {}).get("accepted_gates") or {}).items()
+            },
+            "rejected": rejected,
+            "slot_unfilled": list((replacement_result or {}).get("slot_unfilled") or []),
+            "unresolved": unresolved,
+        }
+
+    def _write_partial_reselect_replacement_corrections(
+        self,
+        market: str,
+        meta: dict,
+        replacement_summary: dict,
+    ) -> None:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        ready_set = set(replacement_summary.get("candidate_ready") or [])
+        if not ready_set:
+            return
+        action_by_ticker, route_by_ticker = self._partial_reselect_action_maps(market_key, meta)
+        ready_actions = {"BUY_READY", "PROBE_READY", "ADD_READY"}
+        for ticker, detail in dict(replacement_summary.get("rejected") or {}).items():
+            key = self._selection_ticker_key(market_key, ticker)
+            if key not in ready_set:
+                continue
+            action = action_by_ticker.get(key, {})
+            route = route_by_ticker.get(key, {})
+            requested = str(route.get("requested_action") or action.get("action") or "").upper()
+            original_final = str(route.get("final_action") or "").upper()
+            if requested not in ready_actions and original_final not in ready_actions:
+                continue
+            runtime_gate = dict(route.get("runtime_gate") or {})
+            reason = str((detail or {}).get("reason") or "trainer_replacement_delta_blocked")
+            replacement_gate = dict(detail or {})
+            replacement_gate.setdefault("ticker", key)
+            try:
+                self._write_funnel_event(
+                    "gate_evaluation",
+                    market_key,
+                    {
+                        "candidate_trace_id": self._candidate_trace_id(market_key, key),
+                        "ticker": key,
+                        "known_at": datetime.now(KST).isoformat(timespec="seconds"),
+                        "event_source": "partial_reselect_replacement_gate",
+                        "correction": True,
+                        "supersedes": "candidate_action_route_pre_replacement",
+                        "claude_action": str(action.get("action") or requested),
+                        "requested_action": requested or str(action.get("action") or ""),
+                        "final_action": "WATCH",
+                        "route": None,
+                        "passed": False,
+                        "blocker": "partial_reselect_replacement_gate",
+                        "reason": reason,
+                        "hard_safety": {"passed": False, "reason": reason},
+                        "route_lock": {"passed": False, "reason": reason},
+                        "runtime_gate": runtime_gate,
+                        "replacement_gate": replacement_gate,
+                        "replacement_summary": {
+                            "accepted": list(replacement_summary.get("accepted") or []),
+                            "slot_unfilled": list(replacement_summary.get("slot_unfilled") or []),
+                        },
+                        "warnings": [reason],
+                    },
+                )
+            except Exception:
+                pass
+        unresolved = list(replacement_summary.get("unresolved") or [])
+        if unresolved:
+            reason = "partial_reselect_ready_without_final_resolution"
+            try:
+                self._write_funnel_event(
+                    "partial_reselect_ready_resolution_alert",
+                    market_key,
+                    {
+                        "known_at": datetime.now(KST).isoformat(timespec="seconds"),
+                        "event_source": "partial_reselect_replacement_gate",
+                        "reason": reason,
+                        "tickers": unresolved,
+                        "accepted": list(replacement_summary.get("accepted") or []),
+                        "rejected": list(dict(replacement_summary.get("rejected") or {}).keys()),
+                        "slot_unfilled": list(replacement_summary.get("slot_unfilled") or []),
+                    },
+                )
+            except Exception:
+                pass
+            log.warning(f"[partial_reselect alert] {market_key} {reason} tickers={','.join(unresolved[:8])}")
+
+    def _record_partial_reselect_replacement_snapshot(
+        self,
+        market: str,
+        *,
+        selected: list[str],
+        meta: dict,
+        replacement_summary: dict,
+        applied_selected: list[str],
+        applied_trade_ready: list[str],
+    ) -> None:
+        snapshot_meta = dict(meta or {})
+        snapshot_meta["_partial_reselect_replacement"] = dict(replacement_summary or {})
+        snapshot_meta["trade_ready"] = list(applied_trade_ready or [])
+        stages = {
+            "raw": {
+                "watchlist": list(dict.fromkeys(snapshot_meta.get("watchlist") or selected or [])),
+                "trade_ready": list(snapshot_meta.get("_raw_trade_ready") or (meta or {}).get("trade_ready") or []),
+            },
+            "normalized": {
+                "watchlist": list(snapshot_meta.get("watchlist") or selected or []),
+                "trade_ready": list(applied_trade_ready or []),
+                "runtime_filtered": dict(snapshot_meta.get("_runtime_filtered_trade_ready") or {}),
+                "missing_price_target_demoted": list(snapshot_meta.get("_missing_price_target_demoted") or []),
+            },
+            "applied": {
+                "selected": list(applied_selected or []),
+                "trade_ready": list(applied_trade_ready or []),
+            },
+        }
+        try:
+            self._record_candidate_funnel_snapshot(
+                market,
+                selected=list(selected or []),
+                meta=snapshot_meta,
+                stages=stages,
+            )
+        except Exception as exc:
+            log.debug(f"[partial_reselect snapshot] {market}: {exc}")
+
     def _watch_only_reason_text(self, market: str, ticker: str) -> str:
         parts: list[str] = []
         reason_map = self.today_ticker_reasons.get(market, {}) or {}
@@ -8244,6 +8502,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return True
         new_rank = self._post_open_feature_quality_rank(new)
         old_rank = self._post_open_feature_quality_rank(old)
+        if bool(new.get("fail_closed")):
+            if old_rank <= 0:
+                return True
+            new_dt = self._post_open_feature_known_at(new)
+            old_dt = self._post_open_feature_known_at(old)
+            stale_sec = self._runtime_float("INTRADAY_EVIDENCE_FAIL_CLOSED_REPLACE_STALE_SEC", 300.0)
+            return bool(new_dt and old_dt and (new_dt - old_dt).total_seconds() >= stale_sec)
         if new_rank <= 0 and old_rank > 0:
             return False
         new_dt = self._post_open_feature_known_at(new)
@@ -8279,6 +8544,52 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         row["post_open_ret_10m_pct"] = features.get("ret_10m_pct")
         row["post_open_ret_30m_pct"] = features.get("ret_30m_pct")
         row["post_open_pullback_from_high_pct"] = features.get("pullback_from_high_pct")
+    def _intraday_fail_closed_feature_map(
+        self,
+        market: str,
+        tickers: list[str],
+        *,
+        known_at: Optional[datetime] = None,
+        anchor_at: Optional[datetime] = None,
+        reason: str = "coverage_below_threshold",
+    ) -> dict[str, dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        known = known_at or datetime.now(KST).replace(tzinfo=None)
+        missing_fields = [
+            "current_price",
+            "ret_3m_pct",
+            "ret_5m_pct",
+            "opening_range_break",
+            "vwap_distance_pct",
+            "volume_ratio_open",
+        ]
+        out: dict[str, dict] = {}
+        for raw_ticker in tickers or []:
+            ticker = self._selection_ticker_key(market_key, raw_ticker)
+            if not ticker:
+                continue
+            out[ticker] = {
+                "ticker": ticker,
+                "market": market_key,
+                "known_at": known.isoformat(timespec="seconds"),
+                "anchor_at": anchor_at.isoformat(timespec="seconds") if isinstance(anchor_at, datetime) else None,
+                "current_price": None,
+                "ret_3m_pct": None,
+                "ret_5m_pct": None,
+                "ret_10m_pct": None,
+                "ret_30m_pct": None,
+                "opening_range_break": None,
+                "vwap_distance_pct": None,
+                "volume_ratio_open": None,
+                "bar_count": 0,
+                "momentum_state": "unknown",
+                "data_quality": "minute_missing",
+                "missing_fields": list(missing_fields),
+                "source": "intraday_fail_closed",
+                "fail_closed": True,
+                "fail_closed_reason": str(reason or "coverage_below_threshold"),
+            }
+        return out
     def _intraday_avg_daily_volume_map(self, market: str, candidates: list[dict]) -> dict[str, float]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         out: dict[str, float] = {}
@@ -8332,6 +8643,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return {}
         provider_default = "kis" if market_key == "KR" else "disabled"
         provider = str(self._runtime_value(f"INTRADAY_EVIDENCE_PROVIDER_{market_key}", provider_default) or provider_default).strip().lower()
+        fail_closed = self._runtime_bool("INTRADAY_EVIDENCE_FAIL_CLOSED", True)
+        threshold = self._runtime_float(f"{market_key}_INTRADAY_EVIDENCE_MIN_COMPLETE_RATIO", 0.6 if market_key == "KR" else 0.5)
         max_tickers = max(1, int(self._runtime_float("INTRADAY_EVIDENCE_MAX_TICKERS", 30)))
         tickers = []
         for candidate in candidates or []:
@@ -8343,6 +8656,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not tickers:
             return {}
         if provider in {"disabled", "none", "off", "false"}:
+            sentinel_map = (
+                self._intraday_fail_closed_feature_map(
+                    market_key,
+                    tickers,
+                    known_at=datetime.now(KST).replace(tzinfo=None),
+                    reason="provider_disabled",
+                )
+                if fail_closed
+                else {}
+            )
             self._write_funnel_event(
                 "selection_intraday_evidence_coverage",
                 market_key,
@@ -8357,14 +8680,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "missing": len(tickers),
                     "complete_ratio": 0.0,
                     "errors_sample": ["provider_disabled"],
+                    "fail_closed_enabled": bool(fail_closed),
+                    "fail_closed_applied": bool(sentinel_map),
+                    "fail_closed_reason": "provider_disabled" if sentinel_map else "",
+                    "threshold": float(threshold),
+                    "blocked_or_missing_count": len(sentinel_map),
                 },
             )
-            return {}
+            if sentinel_map:
+                self._merge_last_post_open_features(market_key, sentinel_map)
+            return sentinel_map
         try:
             session_date = self._current_session_date_str(market_key)
             regular_open = self._market_regular_open_dt(market_key, session_date=session_date).astimezone(KST).replace(tzinfo=None)
         except Exception as exc:
             log.warning(f"[intraday evidence] {market_key} session/open resolve failed; fail-closed: {exc}")
+            sentinel_map = (
+                self._intraday_fail_closed_feature_map(
+                    market_key,
+                    tickers,
+                    known_at=datetime.now(KST).replace(tzinfo=None),
+                    reason="session_open_resolve_failed",
+                )
+                if fail_closed
+                else {}
+            )
             self._write_funnel_event(
                 "selection_intraday_evidence_coverage",
                 market_key,
@@ -8379,10 +8719,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "missing": len(tickers),
                     "complete_ratio": 0.0,
                     "errors_sample": [f"session_open_resolve_failed:{str(exc)[:160]}"],
+                    "fail_closed_enabled": bool(fail_closed),
+                    "fail_closed_applied": bool(sentinel_map),
+                    "fail_closed_reason": "session_open_resolve_failed" if sentinel_map else "",
+                    "threshold": float(threshold),
+                    "blocked_or_missing_count": len(sentinel_map),
                 },
             )
-            return {}
+            if sentinel_map:
+                self._merge_last_post_open_features(market_key, sentinel_map)
+            return sentinel_map
         known = datetime.now(KST).replace(tzinfo=None)
+        opening_range_min = 10 if market_key == "KR" else 15
+        elapsed_min = max(0.0, (known - regular_open).total_seconds() / 60.0)
+        warmup = elapsed_min < opening_range_min
+        retry_due_store = getattr(self, "_intraday_evidence_retry_due_by_market", None)
+        if not isinstance(retry_due_store, dict):
+            retry_due_store = {}
+            self._intraday_evidence_retry_due_by_market = retry_due_store
+        retry_due_at = str(retry_due_store.get(market_key) or "")
+        retry_due_dt = self._post_open_feature_known_at({"known_at": retry_due_at}) if retry_due_at else None
+        retry_active = bool(retry_due_dt is not None and known >= retry_due_dt)
         cache = self._ensure_intraday_minute_cache()
         cache.provider_name = provider
         cache.ttl_sec = max(1.0, self._runtime_float("INTRADAY_EVIDENCE_CACHE_TTL_SEC", 30.0))
@@ -8397,6 +8754,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             token = self._token_for_market(market_key)
         except Exception:
             token = None
+        if retry_active:
+            try:
+                cache.clear(market=market_key, tickers=tickers, session_date=session_date)
+            except Exception:
+                pass
+            retry_due_store.pop(market_key, None)
         result = cache.get_many(
             market=market_key,
             tickers=tickers,
@@ -8405,7 +8768,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             regular_open=regular_open.isoformat(timespec="seconds"),
             known_at=known.isoformat(timespec="seconds"),
             avg_daily_volume_by_ticker=self._intraday_avg_daily_volume_map(market_key, candidates),
-            opening_range_min=10 if market_key == "KR" else 15,
+            opening_range_min=opening_range_min,
             provider_name=provider,
         )
         ratio_fallback = self._intraday_candidate_volume_ratio_map(market_key, candidates)
@@ -8421,6 +8784,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         partial = sum(1 for item in features_by_ticker.values() if str((item or {}).get("data_quality")) == "minute_partial")
         missing = max(0, requested - complete - partial)
         complete_ratio = (complete / requested) if requested else 0.0
+        partial_ratio = (partial / requested) if requested else 0.0
+        coverage_ratio = ((complete + partial) / requested) if requested and warmup else complete_ratio
+        fail_closed_applied = bool(requested and not warmup and coverage_ratio < threshold and fail_closed)
+        fail_closed_reason = "coverage_below_threshold" if fail_closed_applied else ""
+        fail_closed_tickers: list[str] = []
+        if fail_closed_applied:
+            for ticker in tickers:
+                features = features_by_ticker.get(ticker)
+                if str((features or {}).get("data_quality")) != "minute_complete":
+                    fail_closed_tickers.append(ticker)
+        retry_scheduled_at = ""
+        if warmup and requested and complete < requested:
+            retry_dt = regular_open + timedelta(minutes=opening_range_min + 1)
+            if retry_dt > known:
+                retry_scheduled_at = retry_dt.isoformat(timespec="seconds")
+                retry_due_store[market_key] = retry_scheduled_at
         self._write_funnel_event(
             "selection_intraday_evidence_coverage",
             market_key,
@@ -8434,18 +8813,45 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "partial": partial,
                 "missing": missing,
                 "complete_ratio": round(float(complete_ratio), 4),
+                "partial_ratio": round(float(partial_ratio), 4),
+                "coverage_ratio": round(float(coverage_ratio), 4),
+                "warmup": bool(warmup),
+                "elapsed_min": round(float(elapsed_min), 2),
+                "opening_range_min": int(opening_range_min),
+                "retry_active": bool(retry_active),
+                "retry_due_at": retry_scheduled_at or retry_due_at,
                 "used_cache": int(result.get("used_cache") or 0),
                 "errors_sample": [
                     f"{ticker}:{error}" for ticker, error in list((result.get("errors_by_ticker") or {}).items())[:5]
                 ],
+                "fail_closed_enabled": bool(fail_closed),
+                "fail_closed_applied": bool(fail_closed_applied),
+                "fail_closed_reason": fail_closed_reason,
+                "threshold": float(threshold),
+                "blocked_or_missing_count": len(fail_closed_tickers),
             },
         )
-        threshold = self._runtime_float(f"{market_key}_INTRADAY_EVIDENCE_MIN_COMPLETE_RATIO", 0.6 if market_key == "KR" else 0.5)
-        if requested and complete_ratio < threshold:
+        if requested and not warmup and coverage_ratio < threshold:
             log.warning(
                 f"[intraday evidence coverage] {market_key} complete_ratio={complete_ratio:.2f} "
                 f"< threshold={threshold:.2f} provider={provider} requested={requested}"
             )
+        if fail_closed_applied:
+            complete_features = {
+                ticker: dict(features)
+                for ticker, features in features_by_ticker.items()
+                if str((features or {}).get("data_quality")) == "minute_complete"
+            }
+            complete_features.update(
+                self._intraday_fail_closed_feature_map(
+                    market_key,
+                    fail_closed_tickers,
+                    known_at=known,
+                    anchor_at=regular_open,
+                    reason=fail_closed_reason,
+                )
+            )
+            features_by_ticker = complete_features
         self._merge_last_post_open_features(market_key, features_by_ticker)
         return features_by_ticker
     def _annotate_selection_execution_features(self, market: str, candidates: list, mode: str = "") -> list:
@@ -8627,7 +9033,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         or runtime_cfg.get_bool("ENABLE_POST_OPEN_FEATURES", False)
                         or runtime_cfg.get_bool("POST_OPEN_FEATURES_LIVE_ENABLED", False)
                     )
-                if post_open_enabled:
+                if post_open_enabled and not bool((post_open_features_by_ticker.get(selection_key) or {}).get("fail_closed")):
                     raw_px = self._positive_float_or_none(
                         row.get("price")
                         or getattr(self, "price_cache_raw", {}).get(ticker)
@@ -9451,6 +9857,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "price_target_coverage": coverage,
             "candidate_action_routes": list((meta or {}).get("_candidate_action_routes") or []),
             "pathb_wait_tickers": list((meta or {}).get("_pathb_wait_tickers") or []),
+            "partial_reselect": dict((meta or {}).get("_partial_reselect_replacement") or {}),
             "live_evidence": {
                 key: value
                 for key, value in ((meta or {}).get("_live_evidence") or {}).items()
@@ -21830,7 +22237,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 for t in list(dict.fromkeys(replacement_pool + list(new_meta.get("watchlist") or new_selected or [])))
                 if t not in set(current_tickers)
             ]
-        replace_in = self._pick_partial_replace_in(
+        replacement_result = self._pick_partial_replace_in(
             market,
             replace_out,
             replacement_pool,
@@ -21838,6 +22245,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             candidate_map,
             n_replace,
         )
+        replace_in = list(replacement_result.get("accepted") or [])
+        replacement_summary = self._partial_reselect_replacement_summary(
+            market,
+            new_meta,
+            candidate_trade_ready,
+            replacement_pool,
+            replacement_result,
+        )
+        new_meta["_partial_reselect_replacement"] = replacement_summary
         if replace_in:
             try:
                 _pr_date = datetime.now(KST).strftime("%Y-%m-%d")
@@ -21849,6 +22265,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception as _te:
                 log.warning(f"[tsdb] insert_batch(partial) failed: {_te}")
         if not replace_in:
+            self._write_partial_reselect_replacement_corrections(
+                market,
+                new_meta,
+                replacement_summary,
+            )
+            current_ready_snapshot = [
+                t for t in self.trade_ready_tickers.get(market, [])
+                if t in current_tickers
+            ]
+            self._record_partial_reselect_replacement_snapshot(
+                market,
+                selected=list(new_selected or []),
+                meta=new_meta,
+                replacement_summary=replacement_summary,
+                applied_selected=current_tickers,
+                applied_trade_ready=current_ready_snapshot,
+            )
             log.info(f"[부분교체] {market}: 유효 신규 종목 없음 → 스킵")
             return
         effective_replace_out = replace_out[:len(replace_in)]
@@ -21881,6 +22314,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "recommended_strategy": new_meta.get("recommended_strategy", {}),
             "max_position_pct": new_meta.get("max_position_pct", {}),
             "price_targets": merged_price_targets,
+            "_partial_reselect_replacement": replacement_summary,
         }
         final_meta = self._normalize_selection_meta_runtime(market, final_meta, final, mode=mode)
         final_meta = self._enforce_trade_ready_price_targets(market, final_meta)
@@ -21896,6 +22330,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.today_ticker_reasons[market] = final_meta["reasons"]
         self.today_judgment["selection_meta"] = final_meta
         self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
+        self._write_partial_reselect_replacement_corrections(
+            market,
+            new_meta,
+            replacement_summary,
+        )
+        self._record_partial_reselect_replacement_snapshot(
+            market,
+            selected=list(new_selected or []),
+            meta=final_meta,
+            replacement_summary=replacement_summary,
+            applied_selected=final,
+            applied_trade_ready=self.trade_ready_tickers[market],
+        )
         # 교체된 종목 쿨다운 등록 (60분)
         for t in effective_replace_out:
             self._ticker_exclude_log.setdefault(market, []).append(
@@ -22762,6 +23209,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # decisions.jsonl 폴백 먼저
         # 재시작 등으로 trade_log가 비어 있는 경우 당일 closed 거래를 보조 소스로 추가해 매매 저장 누락을 방지한다.
         log.info(f"[{market}] trade_log dedupe: {_initial_trade_count} -> {len(session_trades)}")
+        _dec_trades_count = 0
+        _canonical_before_merge_count = len(session_trades)
+        _canonical_after_merge_count = len(session_trades)
         # decisions.jsonl 폴백 먼저
         # 재시작 등으로 trade_log가 비어 있는 경우 당일 closed 거래를 보조 소스로 추가해 매매 저장 누락을 방지한다.
         try:
@@ -22807,12 +23257,43 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "source_kind": "decisions_fallback",
                     })
             if _dec_trades:
+                _dec_trades_count = len(_dec_trades)
                 log.info(f"[{market}] decisions.jsonl 폴백 {len(_dec_trades)}건 머지 (trade_log 누락 보완)")
                 _before_merge_count = len(session_trades) + len(_dec_trades)
+                _canonical_before_merge_count = _before_merge_count
                 session_trades = self._canonicalize_session_trades(session_trades + _dec_trades, market, today)
+                _canonical_after_merge_count = len(session_trades)
                 log.info(f"[{market}] canonical trade merge: {_before_merge_count} -> {len(session_trades)}")
         except Exception as _dm_e:
             log.warning(f"[{market}] decisions.jsonl 머지 실패: {_dm_e}")
+        try:
+            _duplicate_count = max(0, int(_canonical_before_merge_count or 0) - int(_canonical_after_merge_count or 0))
+            _duplicate_ratio = (
+                float(_duplicate_count) / float(_canonical_before_merge_count)
+                if int(_canonical_before_merge_count or 0) > 0
+                else 0.0
+            )
+            _merge_summary = {
+                "market": market,
+                "trading_date": today,
+                "raw_trade_log_count": int(_initial_trade_count),
+                "fallback_decisions_count": int(_dec_trades_count),
+                "canonical_before_count": int(_canonical_before_merge_count),
+                "canonical_after_count": int(_canonical_after_merge_count),
+                "duplicate_count": int(_duplicate_count),
+                "duplicate_ratio": round(float(_duplicate_ratio), 4),
+            }
+            _write_event = getattr(self, "_write_funnel_event", None)
+            if callable(_write_event):
+                _write_event("session_close_trade_merge", market, _merge_summary)
+            _fallback_warn = int(float(os.getenv("SESSION_CLOSE_FALLBACK_WARN_COUNT", "10") or 10))
+            _duplicate_warn = float(os.getenv("SESSION_CLOSE_DUPLICATE_WARN_RATIO", "0.30") or 0.30)
+            if _dec_trades_count >= _fallback_warn or _duplicate_ratio >= _duplicate_warn:
+                log.warning(f"[{market}] session close merge summary warning: {_merge_summary}")
+            else:
+                log.info(f"[{market}] session close merge summary: {_merge_summary}")
+        except Exception as _merge_summary_exc:
+            log.debug(f"[{market}] session close merge summary failed: {_merge_summary_exc}")
         _sell_log = [t for t in session_trades if t.get("side") == "sell"]
         execution_health = self._build_execution_health(market, session_trades)
         cumulative_equity = int(round(self._kis_total_equity_krw()))

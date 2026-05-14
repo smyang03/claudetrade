@@ -145,6 +145,7 @@ class PathBRuntime:
     ORDER_UNKNOWN_SOFT_TIMEOUT_SEC = ORDER_UNKNOWN_SOFT_TIMEOUT_SEC_DEFAULT
     ORDER_UNKNOWN_HARD_TIMEOUT_SEC = ORDER_UNKNOWN_HARD_TIMEOUT_SEC_DEFAULT
     ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS = ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS_DEFAULT
+    SELL_PENDING_LOOKBACK_SESSIONS = 5
     PRE_CLOSE_CARRY_REVIEW_MINUTES = 15.0
     HOLD_POLICY_MIN_VALID_MINUTES = 3
     HOLD_POLICY_MAX_VALID_MINUTES = 30
@@ -174,6 +175,8 @@ class PathBRuntime:
         self._last_unknown_reconcile_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._profit_review_last_attempt_at: dict[str, float] = {}
         self._profit_review_calls_this_scan = 0
+        self._pathb_sell_attempt_locks: dict[str, float] = {}
+        self._entry_block_log_state: dict[str, dict[str, Any]] = {}
         self.broker_truth = BrokerTruthSnapshot(
             runtime_mode=self.mode,
             token_provider=lambda market="KR": _bot_token(self.bot, market),
@@ -525,6 +528,46 @@ class PathBRuntime:
                     link_episode(signal_id, episode_id, reason="ORDER_UNKNOWN_PATHB_BLOCKED")
             except Exception:
                 pass
+
+    def _log_entry_scan_blocked(self, market: str, entry_gate: dict[str, Any]) -> None:
+        market_key = str(market or "").upper()
+        reason = str((entry_gate or {}).get("reason") or "NEW_BUY_BLOCKED")
+        scope = str((entry_gate or {}).get("scope") or "market")
+        if reason != "BROKER_SYNC_QUARANTINE":
+            log.warning(f"[PathB entry scan blocked] {market_key} {reason} scope={scope}")
+            return
+        state_key = f"{market_key}:{reason}:{scope}"
+        states = getattr(self, "_entry_block_log_state", None)
+        if not isinstance(states, dict):
+            states = {}
+            self._entry_block_log_state = states
+        now = time.time()
+        state = states.setdefault(state_key, {"count": 0, "last_emit": 0.0})
+        state["count"] = int(state.get("count", 0) or 0) + 1
+        try:
+            interval = max(5, _env_int("PATHB_ENTRY_BLOCK_SUMMARY_SEC", 60))
+        except Exception:
+            interval = 60
+        last_emit = float(state.get("last_emit", 0.0) or 0.0)
+        if last_emit and now - last_emit < interval:
+            log.info(
+                f"[PathB entry scan blocked] {market_key} {reason} scope={scope} "
+                f"suppressed_count={state['count']}"
+            )
+            return
+        details = (entry_gate or {}).get("details") if isinstance((entry_gate or {}).get("details"), dict) else {}
+        broker_state = getattr(self.bot, "_broker_state", {}).get(market_key, {}) if getattr(self, "bot", None) is not None else {}
+        broker_trust = str(details.get("broker_trust_level") or broker_state.get("trust_level") or "")
+        last_ok_at = str(broker_state.get("last_ok_at") or "")
+        last_error = str(broker_state.get("last_error") or broker_state.get("error") or "")
+        recheck_after = details.get("recheck_after_seconds", "")
+        log.warning(
+            f"[PathB entry scan blocked] {market_key} {reason} scope={scope} "
+            f"repeat={state['count']} broker_trust={broker_trust} last_ok_at={last_ok_at} "
+            f"last_error={last_error[:120]} recheck_after_seconds={recheck_after}"
+        )
+        state["count"] = 0
+        state["last_emit"] = now
 
     def _audit_pathb_price_seen(self, plan: PricePlan, current: float, *, source: str) -> None:
         bot = getattr(self, "bot", None)
@@ -940,10 +983,7 @@ class PathBRuntime:
         entry_gate = self._new_buy_block_state(market, strategy="path_b")
         if not bool(entry_gate.get("allowed", True)):
             self._audit_entry_scan_blocked(market, entry_gate)
-            log.warning(
-                f"[PathB entry scan blocked] {market} {entry_gate.get('reason')} "
-                f"scope={entry_gate.get('scope')}"
-            )
+            self._log_entry_scan_blocked(market, entry_gate)
             return
         kr_blocked_tickers: list[str] = []
         for run in self.adapter.get_waiting_runs(market, self.mode, self._session_date(market)):
@@ -2927,86 +2967,122 @@ class PathBRuntime:
 
     def _submit_sell(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> bool:
         market = plan.market
-        run = self.store.find_path_run(plan.path_run_id) or {}
-        if self._pathb_sell_in_flight(run, pos):
-            log.info(
-                f"[PathB sell skipped] {market} {plan.ticker} sell already in flight "
-                f"run={plan.path_run_id}"
-            )
+        if not self._acquire_pathb_sell_attempt_lock(market, plan.ticker, plan.path_run_id):
+            log.info(f"[PathB sell skipped] {market} {plan.ticker} sell attempt lock active run={plan.path_run_id}")
             return False
-        qty = int(pos.get("qty", 0) or 0)
-        order_price = self._compute_sell_order_price(market, signal.price)
-        if qty <= 0 or order_price < 0:
-            return False
-        review = self._run_pathb_sell_review_gate(plan, pos, signal)
-        if not bool(review.get("allowed", False)):
-            return False
-        pos["pathb_closing"] = datetime.now(KST).isoformat(timespec="seconds")
-        audit_signal_id = self._audit_pathb_exit_signal(plan, pos, signal)
-
+        keep_lock = False
         try:
-            pre = precheck_order(plan.ticker, qty, order_price, "sell", _bot_token(self.bot, market), market=market)
-        except Exception as exc:
-            pos.pop("pathb_closing", None)
-            self._note_sell_failure(market, plan.ticker, signal.reason, f"pathb_precheck_exception:{exc}")
-            log.error(f"[PathB SELL PRECHECK EXCEPTION] {market} {plan.ticker}: {exc}")
-            return False
-        if not pre.get("ok"):
-            pos.pop("pathb_closing", None)
-            self._note_sell_failure(market, plan.ticker, signal.reason, str(pre.get("msg", "") or "precheck_failed"))
-            log.error(f"[PathB SELL PRECHECK FAILED] {market} {plan.ticker}: {pre}")
-            return False
+            run = self.store.find_path_run(plan.path_run_id) or {}
+            if self._pathb_sell_in_flight(run, pos):
+                log.info(
+                    f"[PathB sell skipped] {market} {plan.ticker} sell already in flight "
+                    f"run={plan.path_run_id}"
+                )
+                return False
+            qty = int(pos.get("qty", 0) or 0)
+            order_price = self._compute_sell_order_price(market, signal.price)
+            if qty <= 0 or order_price < 0:
+                return False
+            review = self._run_pathb_sell_review_gate(plan, pos, signal)
+            if not bool(review.get("allowed", False)):
+                return False
+            latest_run = self.store.find_path_run(plan.path_run_id) or {}
+            latest_pos = self._find_position(market, plan.ticker, path_run_id=plan.path_run_id) or pos
+            if self._pathb_sell_in_flight(latest_run, latest_pos):
+                log.info(
+                    f"[PathB sell skipped] {market} {plan.ticker} sell became in-flight before precheck "
+                    f"run={plan.path_run_id}"
+                )
+                return False
+            pos["pathb_closing"] = datetime.now(KST).isoformat(timespec="seconds")
+            audit_signal_id = self._audit_pathb_exit_signal(plan, pos, signal)
 
-        try:
-            result = place_order(plan.ticker, qty, order_price, "sell", _bot_token(self.bot, market), market=market)
-        except Exception as exc:
-            self.adapter.mark_order_unknown(
+            try:
+                pre = precheck_order(plan.ticker, qty, order_price, "sell", _bot_token(self.bot, market), market=market)
+            except Exception as exc:
+                pos.pop("pathb_closing", None)
+                self._note_sell_failure(market, plan.ticker, signal.reason, f"pathb_precheck_exception:{exc}")
+                log.error(f"[PathB SELL PRECHECK EXCEPTION] {market} {plan.ticker}: {exc}")
+                return False
+            if not pre.get("ok"):
+                pos.pop("pathb_closing", None)
+                if self._precheck_failed_zero_holding(pre):
+                    try:
+                        self.reconcile_sell_pending(market, force=True)
+                    except Exception as exc:
+                        log.debug(f"[PathB sell precheck reconcile failed] {market} {plan.ticker}: {exc}")
+                    refreshed_run = self.store.find_path_run(plan.path_run_id) or {}
+                    refreshed_pos = self._find_position(market, plan.ticker, path_run_id=plan.path_run_id) or pos
+                    if str(refreshed_run.get("status", "") or "") == "CLOSED":
+                        log.info(
+                            f"[PathB sell precheck skipped] {market} {plan.ticker} broker already closed "
+                            f"run={plan.path_run_id}"
+                        )
+                        return False
+                    if self._pathb_sell_in_flight(refreshed_run, refreshed_pos):
+                        log.info(
+                            f"[PathB sell precheck skipped] {market} {plan.ticker} sell in flight after reconcile "
+                            f"run={plan.path_run_id}"
+                        )
+                        return False
+                self._note_sell_failure(market, plan.ticker, signal.reason, str(pre.get("msg", "") or "precheck_failed"))
+                log.error(f"[PathB SELL PRECHECK FAILED] {market} {plan.ticker}: {pre}")
+                return False
+
+            try:
+                result = place_order(plan.ticker, qty, order_price, "sell", _bot_token(self.bot, market), market=market)
+            except Exception as exc:
+                self.adapter.mark_order_unknown(
+                    plan.path_run_id,
+                    detail=f"sell_order_exception:{exc}",
+                    runtime_mode=self.mode,
+                    brain_snapshot_id=self._brain_snapshot_id(market),
+                )
+                log.error(f"[PathB SELL UNKNOWN] {market} {plan.ticker} sell order exception: {exc}")
+                return False
+
+            if not result.get("success"):
+                pos.pop("pathb_closing", None)
+                self._note_sell_failure(market, plan.ticker, signal.reason, str(result.get("msg", "") or "sell_order_failed"))
+                log.error(f"[PathB SELL FAILED] {market} {plan.ticker}: {result.get('msg', '')}")
+                return False
+
+            execution_id = str(result.get("order_no", "") or f"pathb_sell_{market}_{plan.ticker}_{int(time.time())}")
+            self.sell_manager.mark_sell_order_sent(
                 plan.path_run_id,
-                detail=f"sell_order_exception:{exc}",
+                price=order_price,
+                qty=qty,
+                execution_id=execution_id,
                 runtime_mode=self.mode,
                 brain_snapshot_id=self._brain_snapshot_id(market),
+                close_reason=signal.close_reason,
             )
-            log.error(f"[PathB SELL UNKNOWN] {market} {plan.ticker} sell order exception: {exc}")
-            return False
-
-        if not result.get("success"):
-            pos.pop("pathb_closing", None)
-            self._note_sell_failure(market, plan.ticker, signal.reason, str(result.get("msg", "") or "sell_order_failed"))
-            log.error(f"[PathB SELL FAILED] {market} {plan.ticker}: {result.get('msg', '')}")
-            return False
-
-        execution_id = str(result.get("order_no", "") or f"pathb_sell_{market}_{plan.ticker}_{int(time.time())}")
-        self.sell_manager.mark_sell_order_sent(
-            plan.path_run_id,
-            price=order_price,
-            qty=qty,
-            execution_id=execution_id,
-            runtime_mode=self.mode,
-            brain_snapshot_id=self._brain_snapshot_id(market),
-            close_reason=signal.close_reason,
-        )
-        pos["pathb_pending_sell_order_no"] = execution_id
-        pos["pathb_pending_sell_qty"] = qty
-        pos["pathb_pending_close_reason"] = signal.close_reason
-        pos["pathb_pending_sell_price"] = order_price
-        try:
-            self.bot._save_positions()
-        except Exception:
-            pass
-        self._audit_pathb_sell_sent(
-            plan,
-            pos,
-            signal,
-            signal_id=audit_signal_id,
-            qty=qty,
-            order_no=execution_id,
-            order_price=order_price,
-        )
-        log.warning(
-            f"[PathB SELL SENT] {market} {plan.ticker} qty={qty} order_price={order_price:g} "
-            f"order={execution_id} reason={signal.close_reason}"
-        )
-        return True
+            pos["pathb_pending_sell_order_no"] = execution_id
+            pos["pathb_pending_sell_qty"] = qty
+            pos["pathb_pending_close_reason"] = signal.close_reason
+            pos["pathb_pending_sell_price"] = order_price
+            try:
+                self.bot._save_positions()
+            except Exception:
+                pass
+            self._audit_pathb_sell_sent(
+                plan,
+                pos,
+                signal,
+                signal_id=audit_signal_id,
+                qty=qty,
+                order_no=execution_id,
+                order_price=order_price,
+            )
+            log.warning(
+                f"[PathB SELL SENT] {market} {plan.ticker} qty={qty} order_price={order_price:g} "
+                f"order={execution_id} reason={signal.close_reason}"
+            )
+            keep_lock = True
+            return True
+        finally:
+            if not keep_lock:
+                self._release_pathb_sell_attempt_lock(market, plan.ticker, plan.path_run_id)
 
     def _compute_sell_order_price(self, market: str, raw_price: float) -> float:
         calculator = getattr(self.bot, "_compute_order_price", None)
@@ -3021,6 +3097,15 @@ class PathBRuntime:
                 marker(market, ticker, reason, detail)
             except Exception:
                 pass
+
+    @staticmethod
+    def _precheck_failed_zero_holding(precheck: dict[str, Any]) -> bool:
+        if str((precheck or {}).get("reason", "") or "") != "insufficient_holding":
+            return False
+        try:
+            return int(float((precheck or {}).get("allowed_qty", 0) or 0)) <= 0
+        except Exception:
+            return True
 
     def _broker_remaining_qty(self, market: str, ticker: str) -> int | None:
         if self.is_paper:
@@ -3393,18 +3478,72 @@ class PathBRuntime:
         return (datetime.now(KST) - requested_at.astimezone(KST)).total_seconds() >= 120
 
     def _pending_sell_runs(self, market: str) -> list[dict[str, Any]]:
-        runs: list[dict[str, Any]] = []
+        market_key = str(market or "").upper()
+        candidates: list[dict[str, Any]] = []
         for status in ("SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED"):
-            runs.extend(
+            candidates.extend(
                 self.store.path_runs_for_session(
-                    market=market,
+                    market=market_key,
                     runtime_mode=self.mode,
-                    session_date=self._session_date(market),
                     status=status,
                     path_type="claude_price",
                 )
             )
+        lookback_sessions = max(
+            1,
+            _env_int("PATHB_SELL_PENDING_LOOKBACK_SESSIONS", self.SELL_PENDING_LOOKBACK_SESSIONS),
+        )
+        sessions: list[str] = []
+        for run in sorted(candidates, key=lambda item: str(item.get("session_date", "") or ""), reverse=True):
+            session_date = str(run.get("session_date", "") or "")
+            if session_date and session_date not in sessions:
+                sessions.append(session_date)
+            if len(sessions) >= lookback_sessions:
+                break
+        current_session = self._session_date(market_key)
+        if current_session and current_session not in sessions:
+            sessions.append(current_session)
+        allowed_sessions = set(sessions)
+        ttl_days = max(1, _env_int("PATHB_SELL_PENDING_RECONCILE_TTL_DAYS", 3))
+        cutoff = datetime.now(KST) - timedelta(days=ttl_days)
+        runs: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def add(run: dict[str, Any] | None) -> None:
+            if not run:
+                return
+            if str(run.get("path_type", "")) != "claude_price":
+                return
+            if str(run.get("market", "") or "").upper() != market_key:
+                return
+            if str(run.get("runtime_mode", "") or "") != self.mode:
+                return
+            if str(run.get("status", "") or "") not in {"SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED"}:
+                return
+            path_run_id = str(run.get("path_run_id", "") or "")
+            if not path_run_id or path_run_id in seen:
+                return
+            session_date = str(run.get("session_date", "") or "")
+            if session_date not in allowed_sessions and not self._pathb_pending_sell_recent_enough(run, cutoff):
+                return
+            seen.add(path_run_id)
+            runs.append(run)
+
+        for run in candidates:
+            add(run)
+        for pos in self._local_pathb_positions(market_key):
+            add(self.store.find_path_run(str(pos.get("pathb_path_run_id", "") or "")))
         return runs
+
+    def _pathb_pending_sell_recent_enough(self, run: dict[str, Any], cutoff: datetime) -> bool:
+        plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        for key in ("sell_order_sent_at", "updated_at", "created_at"):
+            raw = str(plan.get(key) or run.get(key) or "").strip()
+            parsed = self._parse_kst_iso(raw.replace("Z", "+00:00"))
+            if parsed is not None and parsed >= cutoff:
+                return True
+        market = str(run.get("market", "") or "").upper()
+        return str(run.get("session_date", "") or "") == self._session_date(market)
 
     def _reconcile_sell_pending_run(self, run: dict[str, Any], market: str, *, session_end: bool = False) -> str:
         path_run_id = str(run.get("path_run_id", "") or "")
@@ -4966,6 +5105,45 @@ class PathBRuntime:
         if str(pos.get("pathb_pending_sell_order_no", "") or "").strip():
             return True
         return False
+
+    def _pathb_sell_attempt_lock_key(self, market: str, ticker: str, path_run_id: str) -> str:
+        return ":".join(
+            [
+                str(market or "").upper(),
+                self._ticker_key(str(market or "").upper(), ticker),
+                str(path_run_id or ""),
+            ]
+        )
+
+    def _pathb_sell_attempt_lock_ttl_sec(self) -> float:
+        return max(1.0, _env_float("PATHB_SELL_ATTEMPT_LOCK_TTL_SEC", 60.0))
+
+    def _acquire_pathb_sell_attempt_lock(self, market: str, ticker: str, path_run_id: str) -> bool:
+        locks = getattr(self, "_pathb_sell_attempt_locks", None)
+        if not isinstance(locks, dict):
+            locks = {}
+            self._pathb_sell_attempt_locks = locks
+        now = time.monotonic()
+        for key, expires_at in list(locks.items()):
+            try:
+                if float(expires_at or 0) <= now:
+                    locks.pop(key, None)
+            except Exception:
+                locks.pop(key, None)
+        key = self._pathb_sell_attempt_lock_key(market, ticker, path_run_id)
+        try:
+            expires_at = float(locks.get(key, 0) or 0)
+        except Exception:
+            expires_at = 0.0
+        if expires_at > now:
+            return False
+        locks[key] = now + self._pathb_sell_attempt_lock_ttl_sec()
+        return True
+
+    def _release_pathb_sell_attempt_lock(self, market: str, ticker: str, path_run_id: str) -> None:
+        locks = getattr(self, "_pathb_sell_attempt_locks", None)
+        if isinstance(locks, dict):
+            locks.pop(self._pathb_sell_attempt_lock_key(market, ticker, path_run_id), None)
 
     def _local_pathb_positions(self, market: str) -> list[dict[str, Any]]:
         market_key = str(market or "").upper()

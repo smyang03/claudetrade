@@ -322,6 +322,154 @@ class RecoverDecisionsDbTests(unittest.TestCase):
             rows = _decision_rows(output)
             self.assertEqual(rows[0][5], 1)
 
+    def test_auto_sell_review_hold_does_not_infer_closed_fill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="LIVE", session_date="2026-05-12", decision="BUY_SIGNAL", filled=0)
+            _write_live_jsonl(
+                temp,
+                [
+                    {
+                        "type": "auto_sell_review",
+                        "auto_sell_review_action": "HOLD",
+                        "order_status": "closed",
+                        "market": "KR",
+                        "ticker": "LIVE",
+                        "session_date": "2026-05-12",
+                    }
+                ],
+            )
+
+            with patch.object(recover_decisions_db, "ROOT", temp):
+                report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=True,
+                    skip_forward_update=True,
+                )
+
+            rows = _decision_rows(output)
+            self.assertEqual(rows[0][5], 0)
+            self.assertEqual(report["jsonl_closed_inferred"], 0)
+            self.assertEqual(report["jsonl_review_skipped"], 1)
+
+    def test_auto_sell_review_sell_without_fill_evidence_does_not_infer_fill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="LIVE", session_date="2026-05-12", decision="BUY_SIGNAL", filled=0)
+            _write_live_jsonl(
+                temp,
+                [
+                    {
+                        "event": "sell_review",
+                        "auto_sell_review_action": "SELL",
+                        "market": "KR",
+                        "ticker": "LIVE",
+                        "session_date": "2026-05-12",
+                    }
+                ],
+            )
+
+            with patch.object(recover_decisions_db, "ROOT", temp):
+                report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=True,
+                    skip_forward_update=True,
+                )
+
+            rows = _decision_rows(output)
+            self.assertEqual(rows[0][5], 0)
+            self.assertEqual(report["jsonl_closed_inferred"], 0)
+            self.assertEqual(report["jsonl_review_skipped"], 1)
+
+    def test_pnl_only_jsonl_supplements_without_forcing_filled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="LIVE", session_date="2026-05-12", decision="BUY_SIGNAL", filled=0)
+            _write_live_jsonl(
+                temp,
+                [
+                    {
+                        "event": "outcome_snapshot",
+                        "market": "KR",
+                        "ticker": "LIVE",
+                        "session_date": "2026-05-12",
+                        "pnl_pct": 1.1,
+                    }
+                ],
+            )
+
+            with patch.object(recover_decisions_db, "ROOT", temp):
+                report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=True,
+                    skip_forward_update=True,
+                )
+
+            rows = _decision_rows(output)
+            self.assertEqual(rows[0][5], 0)
+            self.assertEqual(rows[0][7], 1.1)
+            self.assertEqual(report["jsonl_closed_inferred"], 0)
+            self.assertEqual(report["filled_updated"], 0)
+
+    def test_sell_filled_jsonl_is_treated_as_fill_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+            _insert_row(backup, row_id=1, ticker="LIVE", session_date="2026-05-12", decision="BUY_SIGNAL", filled=0)
+            _write_live_jsonl(
+                temp,
+                [
+                    {
+                        "event": "sell_filled",
+                        "market": "KR",
+                        "ticker": "LIVE",
+                        "session_date": "2026-05-12",
+                        "held_days": 2,
+                        "pnl_pct": 2.2,
+                    }
+                ],
+            )
+
+            with patch.object(recover_decisions_db, "ROOT", temp):
+                report = recover_decisions_db.recover(
+                    backup_path=backup,
+                    current_path=current,
+                    output_path=output,
+                    apply=True,
+                    skip_forward_update=True,
+                )
+
+            rows = _decision_rows(output)
+            self.assertEqual(rows[0][5], 1)
+            self.assertEqual(rows[0][6], 2)
+            self.assertEqual(rows[0][7], 2.2)
+            self.assertEqual(report["jsonl_closed_inferred"], 1)
+
     def test_dry_run_and_apply_report_core_counts_match(self):
         with tempfile.TemporaryDirectory() as tmp:
             temp = Path(tmp)
@@ -372,6 +520,7 @@ class RecoverDecisionsDbTests(unittest.TestCase):
                 "id_remapped",
                 "filled_updated",
                 "jsonl_closed_inferred",
+                "jsonl_review_skipped",
             ):
                 self.assertEqual(dry_report[key], apply_report[key])
             self.assertTrue(dry_report["quick_check_ok"])
@@ -430,7 +579,7 @@ class RecoverDecisionsDbTests(unittest.TestCase):
             self.assertEqual(apply_report["jsonl_closed_inferred"], 1)
             self.assertTrue(apply_report["id_remap_log"])
             self.assertTrue(apply_report["quick_check_ok"])
-            for key in ("id_conflicts", "id_remapped", "filled_updated", "jsonl_closed_inferred"):
+            for key in ("id_conflicts", "id_remapped", "filled_updated", "jsonl_closed_inferred", "jsonl_review_skipped"):
                 self.assertEqual(dry_report[key], apply_report[key])
 
 

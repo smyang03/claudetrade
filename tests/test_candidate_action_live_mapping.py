@@ -966,6 +966,113 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
             "kr_partial_replacement_watch_only",
         )
 
+    def test_partial_reselect_gate_event_is_marked_pre_replacement(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["AAPL"],
+            "candidate_actions": [
+                {
+                    "ticker": "AAPL",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"reference_price": 100.0},
+                }
+            ],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            TradingBot._apply_selection_meta(
+                bot,
+                "US",
+                ["AAPL"],
+                mode="BALANCED",
+                source="partial_reselect",
+            )
+
+        gate_payloads = [payload for event_type, _, payload in bot._gate_events if event_type == "gate_evaluation"]
+        self.assertEqual(gate_payloads[0]["event_source"], "candidate_action_route_pre_replacement")
+        self.assertTrue(gate_payloads[0]["pre_replacement"])
+        self.assertEqual(gate_payloads[0]["route_source"], "partial_reselect")
+
+    def test_partial_reselect_rejected_ready_writes_corrective_gate_event_and_snapshot(self) -> None:
+        bot = _make_bot()
+        bot.today_tickers = {"KR": ["001", "002"]}
+        bot.trade_ready_tickers = {"KR": [], "US": []}
+        bot.selection_meta["KR"] = {"watchlist": ["001", "002"], "trade_ready": []}
+        bot.today_ticker_reasons = {"KR": {"001": "old", "002": "old"}}
+        bot.today_judgment = {
+            "market": "KR",
+            "tickers": ["001", "002"],
+            "consensus": {"mode": "BALANCED"},
+            "digest_prompt": "",
+        }
+        bot._partial_reselect_last = {}
+        bot._ticker_exclude_log = {"KR": []}
+        bot._tsdb_selection_ids = {"KR": {}}
+        bot.price_cache_raw = {}
+        bot._last_post_open_features_by_ticker = {"KR": {}}
+        bot._partial_replace_score = lambda market, ticker, protected=None: {"001": 5.0, "002": 4.0}.get(ticker, 0.0)
+        bot._screen_market_candidates = lambda market, mode: [{"ticker": "010", "entry_priority_score": 0.0}]
+        bot._filter_candidates_by_history = lambda candidates, market: list(candidates)
+        bot._annotate_selection_execution_features = lambda market, candidates, mode: list(candidates)
+        bot._build_intraday_context = lambda market: ""
+        bot._load_lesson_candidate_summary = lambda market: ""
+        bot._get_market_change_pct = lambda market: 0.0
+        bot._get_secondary_change_pct = lambda market: 0.0
+        bot._current_judgment_phase = lambda market: "intraday_live"
+        bot._build_selection_evidence_pack = lambda market, candidates: {}
+        bot._persist_live_judgment = lambda market: None
+        bot._update_candidate_health = lambda *args, **kwargs: None
+        bot._run_param_review = lambda *args, **kwargs: None
+        bot._candidate_health_tracker = lambda market: _HealthTracker(
+            {
+                "001": {"ticker": "001", "health_state": "STABLE_READY", "ready_count": 1, "mfe_pct": 3.0},
+                "002": {"ticker": "002", "health_state": "STABLE_READY", "ready_count": 1, "mfe_pct": 2.0},
+                "010": {"ticker": "010", "health_state": "OBSERVE"},
+            }
+        )
+        snapshots = []
+        bot._record_candidate_funnel_snapshot = (
+            lambda market, *, selected, meta, stages: snapshots.append((market, selected, meta, stages))
+        )
+        selection_meta = {
+            "watchlist": ["010"],
+            "trade_ready": ["010"],
+            "candidate_actions": [
+                {
+                    "ticker": "010",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"reference_price": 100.0},
+                }
+            ],
+            "recommended_strategy": {"010": "momentum"},
+            "price_targets": {"010": {"reference_price": 100.0}},
+        }
+
+        with patch("trading_bot.select_tickers", return_value=(["010"], {"010": "new"})), patch(
+            "trading_bot.get_last_selection_meta",
+            return_value=selection_meta,
+        ):
+            TradingBot._partial_reselect(bot, "KR")
+
+        self.assertEqual(bot.today_tickers["KR"], ["001", "002"])
+        self.assertNotIn("010", bot.trade_ready_tickers["KR"])
+        corrective = [
+            payload
+            for event_type, _, payload in bot._gate_events
+            if event_type == "gate_evaluation"
+            and payload.get("event_source") == "partial_reselect_replacement_gate"
+        ]
+        self.assertEqual(len(corrective), 1)
+        self.assertEqual(corrective[0]["ticker"], "010")
+        self.assertEqual(corrective[0]["final_action"], "WATCH")
+        self.assertFalse(corrective[0]["passed"])
+        self.assertEqual(corrective[0]["reason"], "trainer_replacement_delta_blocked")
+        self.assertGreaterEqual(len(corrective[0]["replacement_gate"]["attempts"]), 1)
+        self.assertEqual(snapshots[0][2]["_partial_reselect_replacement"]["rejected"]["010"]["reason"], "trainer_replacement_delta_blocked")
+        self.assertEqual(snapshots[0][3]["applied"]["selected"], ["001", "002"])
+
     def test_candidate_audit_live_write_records_routes(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})

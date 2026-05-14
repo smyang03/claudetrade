@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from typing import Any, Callable
 
 from runtime.intraday_features import compute_intraday_features
@@ -60,7 +60,7 @@ class IntradayMinuteCache:
             ),
         )
         self.timeout_sec = max(
-            1.0,
+            0.05,
             float(timeout_sec if timeout_sec is not None else os.getenv("INTRADAY_EVIDENCE_PREFETCH_TIMEOUT_SEC", "8")),
         )
         self._now = now_func or time.time
@@ -102,24 +102,89 @@ class IntradayMinuteCache:
             item = self._cache.get(key)
             if not item:
                 return None
-            if now - float(item.get("cached_at", 0.0) or 0.0) > self.ttl_sec:
+            ttl_sec = float(item.get("ttl_sec", self.ttl_sec) or self.ttl_sec)
+            if now - float(item.get("cached_at", 0.0) or 0.0) > ttl_sec:
                 self._cache.pop(key, None)
                 return None
             return dict(item.get("features") or {})
 
     def _store(self, key: tuple[str, str, str, str], features: dict[str, Any]) -> None:
+        quality = str((features or {}).get("data_quality") or "").strip().lower()
+        if quality == "minute_missing":
+            try:
+                missing_ttl = float(os.getenv("INTRADAY_EVIDENCE_MISSING_CACHE_TTL_SEC", "0") or 0)
+            except Exception:
+                missing_ttl = 0.0
+            if missing_ttl <= 0:
+                return
+            ttl_sec = max(0.05, min(float(self.ttl_sec), missing_ttl))
+        elif quality == "minute_partial":
+            try:
+                partial_ttl = float(os.getenv("INTRADAY_EVIDENCE_PARTIAL_CACHE_TTL_SEC", "5") or 5)
+            except Exception:
+                partial_ttl = 5.0
+            ttl_sec = max(0.05, min(float(self.ttl_sec), partial_ttl))
+        else:
+            ttl_sec = float(self.ttl_sec)
         with self._lock:
-            self._cache[key] = {"cached_at": self._now(), "features": dict(features)}
+            self._cache[key] = {"cached_at": self._now(), "ttl_sec": ttl_sec, "features": dict(features)}
 
-    def _call_provider(self, **kwargs):
+    def _shutdown_executor(self, executor: ThreadPoolExecutor, *, wait: bool) -> None:
+        try:
+            executor.shutdown(wait=wait, cancel_futures=True)
+        except TypeError:
+            executor.shutdown(wait=wait)
+
+    def _call_provider(self, *, timeout_sec: float | None = None, deadline: float | None = None, **kwargs):
+        started = self._now()
         if self.min_call_interval_sec > 0:
             with self._call_lock:
                 now = self._now()
                 wait_sec = self.min_call_interval_sec - (now - self._last_call_ts)
                 if wait_sec > 0:
+                    if timeout_sec is not None and wait_sec >= timeout_sec:
+                        raise TimeoutError("provider_timeout")
                     time.sleep(wait_sec)
                 self._last_call_ts = self._now()
-        return self.provider(**kwargs)
+        if timeout_sec is not None:
+            elapsed = max(0.0, self._now() - started)
+            timeout_sec = max(0.0, timeout_sec - elapsed)
+            if timeout_sec <= 0:
+                raise TimeoutError("provider_timeout")
+        provider_kwargs = dict(kwargs)
+        if deadline is not None:
+            provider_kwargs.setdefault("deadline", deadline)
+            provider_kwargs.setdefault("request_timeout", timeout_sec)
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self.provider, **provider_kwargs)
+        try:
+            result = future.result(timeout=timeout_sec)
+        except FuturesTimeoutError as exc:
+            future.cancel()
+            self._shutdown_executor(executor, wait=False)
+            raise TimeoutError("provider_timeout") from exc
+        except TypeError:
+            future.cancel()
+            self._shutdown_executor(executor, wait=False)
+            clean_kwargs = dict(kwargs)
+            executor = ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(self.provider, **clean_kwargs)
+            try:
+                result = future.result(timeout=timeout_sec)
+            except FuturesTimeoutError as exc:
+                future.cancel()
+                self._shutdown_executor(executor, wait=False)
+                raise TimeoutError("provider_timeout") from exc
+            except Exception:
+                self._shutdown_executor(executor, wait=False)
+                raise
+            self._shutdown_executor(executor, wait=True)
+            return result
+        except Exception:
+            self._shutdown_executor(executor, wait=False)
+            raise
+        self._shutdown_executor(executor, wait=True)
+        return result
 
     def _fetch_one(
         self,
@@ -133,12 +198,18 @@ class IntradayMinuteCache:
         avg_daily_volume: float | None,
         opening_range_min: int | None,
         provider_name: str,
+        deadline: float | None = None,
     ) -> tuple[str, dict[str, Any] | None, bool, str]:
         key = self._cache_key(market, session_date, ticker, provider_name)
         cached = self._cached(key)
         if cached is not None:
             return key[2], cached, True, ""
         try:
+            remaining = None
+            if deadline is not None:
+                remaining = deadline - self._now()
+                if remaining <= 0:
+                    return key[2], None, False, "prefetch_timeout"
             candles = self._call_provider(
                 ticker=key[2],
                 token=token,
@@ -147,6 +218,8 @@ class IntradayMinuteCache:
                 start_at=regular_open,
                 end_at=known_at,
                 provider=provider_name,
+                timeout_sec=remaining,
+                deadline=deadline,
             )
             features = compute_intraday_features(
                 candles,
@@ -160,6 +233,8 @@ class IntradayMinuteCache:
             )
             self._store(key, features)
             return key[2], features, False, ""
+        except TimeoutError as exc:
+            return key[2], None, False, str(exc)[:240] or "provider_timeout"
         except Exception as exc:
             return key[2], None, False, str(exc)[:240]
 
@@ -194,6 +269,9 @@ class IntradayMinuteCache:
             if _positive(value) is not None
         }
 
+        started_at = self._now()
+        deadline = started_at + self.timeout_sec
+
         def _task(ticker: str):
             return self._fetch_one(
                 market=market_key,
@@ -205,12 +283,12 @@ class IntradayMinuteCache:
                 avg_daily_volume=avg_map.get(ticker),
                 opening_range_min=opening_range_min,
                 provider_name=provider_label,
+                deadline=deadline,
             )
 
-        started_at = self._now()
         if self.max_workers <= 1 or len(ordered) <= 1:
             for idx, ticker in enumerate(ordered):
-                if self._now() - started_at > self.timeout_sec:
+                if self._now() >= deadline:
                     for remaining in ordered[idx:]:
                         errors_by_ticker[remaining] = "prefetch_timeout"
                     break
@@ -221,12 +299,13 @@ class IntradayMinuteCache:
                     features_by_ticker[out_ticker] = features
                 elif error:
                     errors_by_ticker[out_ticker] = error
-                if self._now() - started_at > self.timeout_sec:
+                if self._now() >= deadline:
                     for remaining in ordered[idx + 1:]:
                         errors_by_ticker[remaining] = "prefetch_timeout"
                     break
         else:
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            executor = ThreadPoolExecutor(max_workers=self.max_workers)
+            try:
                 futures = {executor.submit(_task, ticker): ticker for ticker in ordered}
                 done = set()
                 try:
@@ -245,6 +324,8 @@ class IntradayMinuteCache:
                             continue
                         future.cancel()
                         errors_by_ticker[ticker] = f"timeout_or_cancelled:{exc}"[:240]
+            finally:
+                self._shutdown_executor(executor, wait=False)
 
         complete = 0
         partial = 0

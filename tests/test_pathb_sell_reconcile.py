@@ -64,12 +64,12 @@ class _Control:
         return PathBControlState(enabled=True, emergency_disabled=False)
 
 
-def _plan(ticker: str = "SNAP"):
+def _plan(ticker: str = "SNAP", session_date: str = "2026-04-27"):
     return make_price_plan(
         decision_id=f"dec_{ticker}",
         ticker=ticker,
         market="US",
-        session_date="2026-04-27",
+        session_date=session_date,
         buy_zone_low=6,
         buy_zone_high=6.2,
         sell_target=6.6,
@@ -118,6 +118,58 @@ def _runtime(tmp: str, *, balance_provider, ccld_provider) -> tuple[PathBRuntime
 
 
 class PathBSellReconcileTests(unittest.TestCase):
+    def test_previous_session_pending_sell_reconciles_from_broker_fill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda: "token",
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "SNAP",
+                        "side": "sell",
+                        "order_no": "prev-sell",
+                        "order_qty": 12,
+                        "filled_qty": 12,
+                        "remaining_qty": 0,
+                        "avg_price": 6.2,
+                    }
+                ],
+                date_provider=lambda market: "2026-04-27",
+            )
+            plan = _plan(session_date="2026-04-26")
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=6.0,
+                qty=12,
+                execution_id="prev-buy",
+                runtime_mode="live",
+                brain_snapshot_id="brain",
+            )
+            runtime.sell_manager.mark_sell_order_sent(
+                plan.path_run_id,
+                execution_id="prev-sell",
+                price=6.2,
+                qty=12,
+                close_reason="CLOSED_CLAUDE_PRICE_PRE_CLOSE",
+                runtime_mode="live",
+                brain_snapshot_id="brain",
+            )
+
+            summary = runtime.reconcile_sell_pending("US", force=True)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["closed"], 1)
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertTrue(run["plan"]["exit_fill_confirmed"])
+            self.assertEqual(run["plan"]["exit_execution_id"], "prev-sell")
+
     def test_balance_zero_without_ccld_does_not_close_snap_shape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan = _runtime(

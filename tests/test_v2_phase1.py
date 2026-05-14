@@ -123,6 +123,51 @@ class V2Phase1Tests(unittest.TestCase):
             self.assertEqual(event_types, ["CLAUDE_TRADE_READY", "ORDER_SENT", "CLOSED"])
             self.assertEqual(runtime.decision_id_for_ticker("KR", "067170"), decision_id)
 
+    def test_runtime_injects_path_type_for_pathb_lifecycle_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-11",
+                ticker="STM",
+                prompt_version="v2",
+                brain_snapshot_id="brain_test",
+            )
+            runtime = V2LifecycleRuntime.__new__(V2LifecycleRuntime)
+            runtime.bot = _DummyLifecycleBot()
+            runtime.enabled = True
+            runtime.registry = registry
+            runtime.decision_ids = {"US": {"STM": decision_id}}
+            runtime.brain_snapshot_ids = {"US": "brain_test"}
+            runtime.brain_snapshot_store = None
+
+            runtime.record_event(
+                "ORDER_ACKED",
+                "US",
+                "STM",
+                decision_id=decision_id,
+                execution_id="buy-1",
+                payload={"entry_route": "path_b", "path_run_id": "path_20260511_US_STM_claude_price"},
+            )
+            runtime.record_event(
+                "FILLED",
+                "US",
+                "STM",
+                decision_id=decision_id,
+                execution_id="buy-1",
+                payload={"fill_price_native": 61.35},
+            )
+
+            events = store.events_for_decision(decision_id)
+            filled = events[-1]
+
+        self.assertEqual(filled["event_type"], "FILLED")
+        self.assertEqual(filled["payload"]["entry_route"], "path_b")
+        self.assertEqual(filled["payload"]["path_run_id"], "path_20260511_US_STM_claude_price")
+        self.assertEqual(filled["payload"]["path_type"], "claude_price")
+
     def test_runtime_does_not_create_decision_from_close_only_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")

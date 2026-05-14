@@ -78,6 +78,31 @@ class LiveEvidencePackTests(unittest.TestCase):
         self.assertEqual(pack["action_ceiling"], "WATCH")
         self.assertIn("data_missing", pack["negative_evidence"])
 
+    def test_minute_missing_fail_closed_caps_to_watch_even_with_candidate_price(self) -> None:
+        pack = build_live_evidence_pack(
+            market="KR",
+            ticker="004710",
+            candidate={"ticker": "004710", "price": 14140},
+            features={
+                "ticker": "004710",
+                "market": "KR",
+                "current_price": None,
+                "ret_3m_pct": None,
+                "ret_5m_pct": None,
+                "opening_range_break": None,
+                "vwap_distance_pct": None,
+                "volume_ratio_open": None,
+                "data_quality": "minute_missing",
+                "fail_closed": True,
+                "missing_fields": ["current_price", "ret_3m_pct", "ret_5m_pct"],
+            },
+            action={"ticker": "004710", "action": "BUY_READY"},
+        )
+
+        self.assertEqual(pack["data_state"], "missing")
+        self.assertEqual(pack["action_ceiling"], "WATCH")
+        self.assertIn("current_price", pack["missing_fields"])
+
     def test_attach_summary_adds_counts_and_packs(self) -> None:
         meta = attach_live_evidence_summary(
             market="KR",

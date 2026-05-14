@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import threading
 import unittest
 from datetime import datetime
+from unittest.mock import patch
 
 from runtime.intraday_minute_cache import IntradayMinuteCache
 from trading_bot import KST, TradingBot
@@ -42,6 +44,24 @@ def _candles(prefix: str = "2026-05-13T09") -> list[dict]:
     ]
 
 
+def _us_warmup_candles() -> list[dict]:
+    return [
+        {"ts": f"2026-05-13T22:{minute:02d}:00", "open": 100 + idx, "high": 101 + idx, "low": 99 + idx, "close": 100 + idx, "volume": 100}
+        for idx, minute in enumerate(range(30, 36))
+    ]
+
+
+class _USWarmupDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        value = datetime(2026, 5, 13, 22, 35, tzinfo=tz)
+        return value
+
+    @classmethod
+    def fromisoformat(cls, value: str):
+        return datetime.fromisoformat(value)
+
+
 def _make_bot(provider, market: str = "KR") -> TradingBot:
     bot = TradingBot.__new__(TradingBot)
     provider_name = "fake"
@@ -53,6 +73,7 @@ def _make_bot(provider, market: str = "KR") -> TradingBot:
             "INTRADAY_EVIDENCE_CACHE_TTL_SEC": 30,
             "INTRADAY_EVIDENCE_PREFETCH_TIMEOUT_SEC": 4,
             "INTRADAY_EVIDENCE_MAX_TICKERS": 30,
+            "INTRADAY_EVIDENCE_FAIL_CLOSED": True,
             "KR_INTRADAY_KIS_MAX_WORKERS": 1,
             "KR_INTRADAY_KIS_MIN_CALL_INTERVAL_SEC": 0,
             "ENABLE_POST_OPEN_FEATURES_SHADOW": True,
@@ -109,6 +130,7 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
             raise RuntimeError("down")
 
         bot = _make_bot(provider, market="US")
+        bot.runtime_config.values["INTRADAY_EVIDENCE_FAIL_CLOSED"] = False
         bot._last_post_open_features_by_ticker = {
             "US": {
                 "AAPL": {
@@ -160,12 +182,125 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
             "NEUTRAL",
         )
 
-        self.assertNotIn("post_open_features", rows[0])
+        features = rows[0]["post_open_features"]
+        self.assertEqual(features["data_quality"], "minute_missing")
+        self.assertTrue(features["fail_closed"])
+        self.assertEqual(features["fail_closed_reason"], "session_open_resolve_failed")
         event, market, payload = bot._last_funnel_event
         self.assertEqual(event, "selection_intraday_evidence_coverage")
         self.assertEqual(market, "KR")
         self.assertEqual(payload["missing"], 1)
+        self.assertTrue(payload["fail_closed_applied"])
+        self.assertEqual(payload["blocked_or_missing_count"], 1)
         self.assertIn("session_open_resolve_failed", payload["errors_sample"][0])
+
+    def test_us_opening_range_warmup_does_not_fail_close_partial_evidence(self) -> None:
+        bot = _make_bot(lambda **kwargs: _us_warmup_candles(), market="US")
+        bot.runtime_config.values["US_INTRADAY_EVIDENCE_MIN_COMPLETE_RATIO"] = 1.0
+
+        with patch("trading_bot.datetime", _USWarmupDatetime):
+            rows = TradingBot._annotate_selection_execution_features(
+                bot,
+                "US",
+                [{"ticker": "aapl", "price": 105, "volume": 600, "vol_ratio": 1.0}],
+                "NEUTRAL",
+            )
+
+        features = rows[0]["post_open_features"]
+        self.assertEqual(features["data_quality"], "minute_partial")
+        self.assertFalse(features.get("fail_closed", False))
+        event, market, payload = bot._last_funnel_event
+        self.assertEqual(event, "selection_intraday_evidence_coverage")
+        self.assertEqual(market, "US")
+        self.assertTrue(payload["warmup"])
+        self.assertEqual(payload["opening_range_min"], 15)
+        self.assertFalse(payload["fail_closed_applied"])
+        self.assertEqual(payload["partial"], 1)
+        self.assertEqual(payload["retry_due_at"], "2026-05-13T22:46:00")
+        self.assertEqual(bot._intraday_evidence_retry_due_by_market["US"], "2026-05-13T22:46:00")
+
+    def test_fail_closed_below_threshold_does_not_overwrite_partial_store(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles()[:1])
+        bot.runtime_config.values["KR_INTRADAY_EVIDENCE_MIN_COMPLETE_RATIO"] = 1.0
+        bot.runtime_config.values["INTRADAY_EVIDENCE_FAIL_CLOSED_REPLACE_STALE_SEC"] = 999999
+        bot._last_post_open_features_by_ticker = {
+            "KR": {
+                "005930": {
+                    "ticker": "005930",
+                    "market": "KR",
+                    "known_at": "2026-05-13T09:01:00",
+                    "current_price": 100.0,
+                    "ret_3m_pct": None,
+                    "ret_5m_pct": None,
+                    "data_quality": "minute_partial",
+                }
+            },
+            "US": {},
+        }
+
+        rows = TradingBot._annotate_selection_execution_features(
+            bot,
+            "KR",
+            [{"ticker": "005930", "price": 100, "volume": 100, "vol_ratio": 1.0}],
+            "NEUTRAL",
+        )
+
+        features = rows[0]["post_open_features"]
+        self.assertEqual(features["data_quality"], "minute_missing")
+        self.assertTrue(features["fail_closed"])
+        self.assertEqual(features["fail_closed_reason"], "coverage_below_threshold")
+        self.assertEqual(bot._last_post_open_features_by_ticker["KR"]["005930"]["data_quality"], "minute_partial")
+        event, _market, payload = bot._last_funnel_event
+        self.assertEqual(event, "selection_intraday_evidence_coverage")
+        self.assertTrue(payload["fail_closed_applied"])
+        self.assertEqual(payload["blocked_or_missing_count"], 1)
+
+    def test_provider_disabled_fail_closed_returns_missing_sentinel(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles(), market="US")
+        bot.runtime_config.values["INTRADAY_EVIDENCE_PROVIDER_US"] = "disabled"
+
+        rows = TradingBot._annotate_selection_execution_features(
+            bot,
+            "US",
+            [{"ticker": "aapl", "price": 190.0}],
+            "NEUTRAL",
+        )
+
+        features = rows[0]["post_open_features"]
+        self.assertEqual(features["ticker"], "AAPL")
+        self.assertEqual(features["data_quality"], "minute_missing")
+        self.assertEqual(features["fail_closed_reason"], "provider_disabled")
+        event, market, payload = bot._last_funnel_event
+        self.assertEqual(event, "selection_intraday_evidence_coverage")
+        self.assertEqual(market, "US")
+        self.assertTrue(payload["fail_closed_applied"])
+
+    def test_provider_timeout_fail_closed_returns_missing_sentinel(self) -> None:
+        release = threading.Event()
+
+        def provider(**kwargs):
+            release.wait(2.0)
+            return _candles()
+
+        bot = _make_bot(provider)
+        bot.runtime_config.values["INTRADAY_EVIDENCE_PREFETCH_TIMEOUT_SEC"] = 0.1
+
+        rows = TradingBot._annotate_selection_execution_features(
+            bot,
+            "KR",
+            [{"ticker": "005930", "price": 100.0}],
+            "NEUTRAL",
+        )
+        release.set()
+
+        features = rows[0]["post_open_features"]
+        self.assertEqual(features["data_quality"], "minute_missing")
+        self.assertTrue(features["fail_closed"])
+        event, market, payload = bot._last_funnel_event
+        self.assertEqual(event, "selection_intraday_evidence_coverage")
+        self.assertEqual(market, "KR")
+        self.assertTrue(payload["fail_closed_applied"])
+        self.assertIn("provider_timeout", payload["errors_sample"][0])
 
 
 if __name__ == "__main__":

@@ -559,9 +559,17 @@ class EventStore:
             if isinstance(payload, dict) and (
                 payload.get("entry_route") or payload.get("path_run_id") or payload.get("pathb_path_run_id")
             ):
+                entry_route = str(payload.get("entry_route") or "")
+                path_run_id = str(payload.get("path_run_id") or payload.get("pathb_path_run_id") or "")
+                path_type = str(payload.get("path_type") or "")
+                if not entry_route and path_run_id:
+                    entry_route = "path_b"
+                if not path_type and (entry_route == "path_b" or path_run_id):
+                    path_type = "claude_price"
                 return {
-                    "entry_route": str(payload.get("entry_route") or ""),
-                    "path_run_id": str(payload.get("path_run_id") or payload.get("pathb_path_run_id") or ""),
+                    "entry_route": entry_route,
+                    "path_type": path_type,
+                    "path_run_id": path_run_id,
                     "parent_decision_id": str(payload.get("parent_decision_id") or data.get("decision_id") or ""),
                     "selection_snapshot_ts": str(payload.get("selection_snapshot_ts") or ""),
                     "strategy_used": str(payload.get("strategy_used") or payload.get("strategy") or ""),

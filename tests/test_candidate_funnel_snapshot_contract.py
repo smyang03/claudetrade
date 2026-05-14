@@ -143,6 +143,42 @@ class CandidateFunnelSnapshotContractTests(unittest.TestCase):
         self.assertEqual(bot.events[0][2]["pool_separation_state"], "separated")
         self.assertEqual(bot.events[1][2]["gainers_ratio"], 0.4)
 
+    def test_partial_reselect_diagnostics_are_passed_through(self) -> None:
+        class DummyBot:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, str, dict]] = []
+
+            def _write_funnel_event(self, event_type: str, market: str, payload: dict) -> None:
+                self.events.append((event_type, market, payload))
+
+        bot = DummyBot()
+
+        TradingBot._record_candidate_funnel_snapshot(
+            bot,
+            "KR",
+            selected=["010"],
+            meta={
+                "watchlist": ["010"],
+                "trade_ready": [],
+                "_partial_reselect_replacement": {
+                    "candidate_ready": ["010"],
+                    "replacement_pool": ["010"],
+                    "accepted": [],
+                    "rejected": {"010": {"reason": "trainer_replacement_delta_blocked"}},
+                    "slot_unfilled": ["001"],
+                },
+            },
+            stages={"applied": {"selected": ["001"], "trade_ready": []}},
+        )
+
+        payload = bot.events[0][2]
+        self.assertEqual(payload["execution_pool_count"], 0)
+        self.assertEqual(payload["partial_reselect"]["candidate_ready"], ["010"])
+        self.assertEqual(
+            payload["partial_reselect"]["rejected"]["010"]["reason"],
+            "trainer_replacement_delta_blocked",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

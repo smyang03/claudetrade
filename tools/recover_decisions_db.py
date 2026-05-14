@@ -301,26 +301,105 @@ def _update_matching_decision(
     return {"updated": 1, "filled_updated": filled_updated}
 
 
+REVIEW_ONLY_EVENT_MARKERS = (
+    "review",
+    "check",
+    "inspect",
+    "candidate",
+    "advice",
+    "evaluate",
+)
+CLOSED_EVENT_NAMES = {
+    "closed",
+    "close",
+    "position_closed",
+    "trade_closed",
+    "closed_position",
+    "exit",
+    "exited",
+    "liquidated",
+    "liquidation",
+}
+FILL_EVENT_NAMES = {
+    "filled",
+    "order_filled",
+    "sell_filled",
+    "sell_executed",
+    "exit_filled",
+    "close_filled",
+}
+FILL_STATUS_NAMES = {"filled", "executed", "closed", "done"}
+
+
+def _event_text_values(item: dict[str, Any]) -> list[str]:
+    values = []
+    for key in ("event", "event_type", "type", "action", "status", "name"):
+        value = item.get(key)
+        if value not in (None, ""):
+            values.append(str(value).strip().lower())
+    return values
+
+
 def _closed_event_name(item: dict[str, Any]) -> str:
-    return str(
-        item.get("event")
-        or item.get("action")
-        or item.get("type")
-        or item.get("status")
-        or ""
-    ).lower()
+    values = _event_text_values(item)
+    return values[0] if values else ""
+
+
+def _is_review_only_event(item: dict[str, Any]) -> bool:
+    values = _event_text_values(item)
+    review_action = str(item.get("auto_sell_review_action") or "").strip().lower()
+    if review_action:
+        values.append(f"auto_sell_review_action:{review_action}")
+    return any(marker in value for value in values for marker in REVIEW_ONLY_EVENT_MARKERS)
+
+
+def _has_explicit_fill_evidence(item: dict[str, Any]) -> bool:
+    if item.get("filled") is True:
+        return True
+    for key in ("order_status", "fill_status", "status"):
+        value = str(item.get(key) or "").strip().lower()
+        if value in FILL_STATUS_NAMES:
+            return True
+    return any(item.get(key) not in (None, "") for key in ("filled_at", "executed_at", "closed_at"))
+
+
+def _classify_jsonl_recovery_event(item: dict[str, Any]) -> dict[str, Any]:
+    event_values = _event_text_values(item)
+    event_name = event_values[0] if event_values else ""
+    is_review_only = _is_review_only_event(item)
+    if is_review_only:
+        return {
+            "event_name": event_name,
+            "is_closed": False,
+            "infer_filled": False,
+            "is_review_only": True,
+            "reason": "review_only",
+        }
+    event_matches = any(value in CLOSED_EVENT_NAMES or value in FILL_EVENT_NAMES for value in event_values)
+    explicit_fill = _has_explicit_fill_evidence(item)
+    is_closed = bool(event_matches or explicit_fill)
+    return {
+        "event_name": event_name,
+        "is_closed": is_closed,
+        "infer_filled": is_closed,
+        "is_review_only": False,
+        "reason": "closed_or_filled" if is_closed else "pnl_only",
+    }
 
 
 def _is_closed_or_fill_event(event_name: str) -> bool:
-    normalized = str(event_name or "").lower()
-    return any(
-        token in normalized
-        for token in ("closed", "close", "exit", "exited", "sell", "sold", "liquidat", "filled")
-    )
+    normalized = str(event_name or "").strip().lower()
+    return normalized in CLOSED_EVENT_NAMES or normalized in FILL_EVENT_NAMES
 
 
 def _supplement_from_live_jsonl(conn: sqlite3.Connection, path: Path) -> dict[str, int]:
-    summary = {"events_seen": 0, "rows_updated": 0, "filled_updated": 0, "jsonl_closed_inferred": 0}
+    summary = {
+        "events_seen": 0,
+        "rows_updated": 0,
+        "filled_updated": 0,
+        "jsonl_closed_inferred": 0,
+        "jsonl_review_skipped": 0,
+    }
     if not path.exists():
         return summary
     with path.open("r", encoding="utf-8", errors="replace") as f:
@@ -332,9 +411,10 @@ def _supplement_from_live_jsonl(conn: sqlite3.Connection, path: Path) -> dict[st
                 item = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            event_name = _closed_event_name(item)
-            closed_event = _is_closed_or_fill_event(event_name)
-            if not closed_event and item.get("pnl_pct") is None:
+            event_class = _classify_jsonl_recovery_event(item)
+            if event_class.get("is_review_only"):
+                summary["jsonl_review_skipped"] += 1
+            if not event_class.get("is_closed") and item.get("pnl_pct") is None:
                 continue
             market = str(item.get("market") or "").upper()
             ticker = str(item.get("ticker") or item.get("symbol") or "")
@@ -345,7 +425,7 @@ def _supplement_from_live_jsonl(conn: sqlite3.Connection, path: Path) -> dict[st
             hold_days = item.get("hold_days")
             if hold_days is None:
                 hold_days = item.get("held_days")
-            filled = 1 if closed_event else (1 if item.get("filled") is True else None)
+            filled = 1 if event_class.get("infer_filled") else None
             update_result = _update_matching_decision(
                 conn,
                 market=market,
@@ -364,7 +444,7 @@ def _supplement_from_live_jsonl(conn: sqlite3.Connection, path: Path) -> dict[st
             if update_result["updated"]:
                 summary["rows_updated"] += 1
                 summary["filled_updated"] += int(update_result.get("filled_updated", 0))
-                if closed_event:
+                if event_class.get("infer_filled"):
                     summary["jsonl_closed_inferred"] += 1
     return summary
 
@@ -483,6 +563,7 @@ def _build_recovered_db(
         "outcome_supplement": {},
         "filled_updated": 0,
         "jsonl_closed_inferred": 0,
+        "jsonl_review_skipped": 0,
         "forward_update": {},
         "final_diag": {},
         "quick_check_ok": False,
@@ -509,6 +590,7 @@ def _build_recovered_db(
         selection_summary = report["outcome_supplement"].get("ticker_selection_log_db", {})
         report["filled_updated"] = int(live_summary.get("filled_updated", 0)) + int(selection_summary.get("filled_updated", 0))
         report["jsonl_closed_inferred"] = int(live_summary.get("jsonl_closed_inferred", 0))
+        report["jsonl_review_skipped"] = int(live_summary.get("jsonl_review_skipped", 0))
         dst.commit()
 
     if not skip_forward_update:
@@ -584,6 +666,7 @@ def _print_human(report: dict[str, Any]) -> None:
     print(f"fixture_rows_removed={report.get('fixture_rows_removed')}")
     print(f"filled_updated={report.get('filled_updated')}")
     print(f"jsonl_closed_inferred={report.get('jsonl_closed_inferred')}")
+    print(f"jsonl_review_skipped={report.get('jsonl_review_skipped')}")
     print(f"quick_check_ok={report.get('quick_check_ok')} result={report.get('quick_check_result')}")
     final = report.get("final_diag", {})
     if final:

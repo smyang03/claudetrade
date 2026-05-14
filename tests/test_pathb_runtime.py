@@ -375,6 +375,109 @@ class PathBRuntimeTests(unittest.TestCase):
         self.assertEqual(place.call_args.args[4], "token-US-0")
         self.assertEqual(place.call_args.kwargs["market"], "US")
 
+    def test_pathb_sell_attempt_lock_blocks_duplicate_precheck(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            bot.current_market = "US"
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            plan = make_price_plan(
+                decision_id="dec_us_sell_lock",
+                ticker="AAPL",
+                market="US",
+                session_date="2026-05-01",
+                buy_zone_low=180,
+                buy_zone_high=181,
+                sell_target=190,
+                stop_loss=175,
+                hold_days=1,
+                confidence=0.8,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=180,
+                qty=2,
+                execution_id="us-buy-1",
+                runtime_mode="live",
+                brain_snapshot_id="brain-us",
+            )
+            pos = {
+                "ticker": "AAPL",
+                "market": "US",
+                "qty": 2,
+                "entry": 180.0,
+                "path_type": "claude_price",
+                "pathb_path_run_id": plan.path_run_id,
+            }
+            signal = ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 190.0, plan.path_run_id)
+
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+                "runtime.pathb_runtime.precheck_order", return_value={"ok": True}
+            ) as precheck, patch(
+                "runtime.pathb_runtime.place_order",
+                return_value={"success": True, "order_no": "us-sell-1"},
+            ):
+                first = runtime._submit_sell(plan, pos, signal)
+                second = runtime._submit_sell(plan, pos, signal)
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+        self.assertEqual(precheck.call_count, 1)
+
+    def test_pathb_sell_zero_holding_precheck_triggers_reconcile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            bot.current_market = "US"
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_sell_pending = Mock(return_value={"checked": 1})
+            plan = make_price_plan(
+                decision_id="dec_us_sell_reconcile",
+                ticker="AAPL",
+                market="US",
+                session_date="2026-05-01",
+                buy_zone_low=180,
+                buy_zone_high=181,
+                sell_target=190,
+                stop_loss=175,
+                hold_days=1,
+                confidence=0.8,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=180,
+                qty=2,
+                execution_id="us-buy-1",
+                runtime_mode="live",
+                brain_snapshot_id="brain-us",
+            )
+            pos = {
+                "ticker": "AAPL",
+                "market": "US",
+                "qty": 2,
+                "entry": 180.0,
+                "path_type": "claude_price",
+                "pathb_path_run_id": plan.path_run_id,
+            }
+
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+                "runtime.pathb_runtime.precheck_order",
+                return_value={"ok": False, "reason": "insufficient_holding", "allowed_qty": 0, "msg": "no shares"},
+            ), patch("runtime.pathb_runtime.place_order") as place:
+                accepted = runtime._submit_sell(
+                    plan,
+                    pos,
+                    ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 190.0, plan.path_run_id),
+                )
+
+        self.assertFalse(accepted)
+        runtime.reconcile_sell_pending.assert_called_once_with("US", force=True)
+        place.assert_not_called()
+
     def test_brain_snapshot_id_has_cold_start_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()

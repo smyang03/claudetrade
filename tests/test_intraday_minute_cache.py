@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 
 from runtime.intraday_minute_cache import IntradayMinuteCache
@@ -92,6 +94,71 @@ class IntradayMinuteCacheTests(unittest.TestCase):
         self.assertEqual(second["used_cache"], 1)
         self.assertEqual(first["features_by_ticker"]["AAA"]["current_price"], second["features_by_ticker"]["AAA"]["current_price"])
 
+    def test_missing_features_are_not_cached_by_default(self) -> None:
+        calls = 0
+
+        def provider(**kwargs):
+            nonlocal calls
+            calls += 1
+            return []
+
+        cache = IntradayMinuteCache(provider=provider, provider_name="fake", ttl_sec=30, max_workers=1)
+        for _ in range(2):
+            cache.get_many(
+                market="KR",
+                tickers=["AAA"],
+                session_date="2026-05-13",
+                token=None,
+                regular_open="2026-05-13T09:00:00",
+                known_at="2026-05-13T09:06:00",
+                avg_daily_volume_by_ticker={"AAA": 39000},
+                opening_range_min=10,
+            )
+
+        self.assertEqual(calls, 2)
+        self.assertFalse(cache._cache)
+
+    def test_partial_features_use_shorter_cache_ttl(self) -> None:
+        now = [1000.0]
+        calls = 0
+
+        def provider(**kwargs):
+            nonlocal calls
+            calls += 1
+            return _candles()
+
+        cache = IntradayMinuteCache(
+            provider=provider,
+            provider_name="fake",
+            ttl_sec=30,
+            max_workers=1,
+            now_func=lambda: now[0],
+        )
+        cache.get_many(
+            market="KR",
+            tickers=["AAA"],
+            session_date="2026-05-13",
+            token=None,
+            regular_open="2026-05-13T09:00:00",
+            known_at="2026-05-13T09:06:00",
+            avg_daily_volume_by_ticker={"AAA": 39000},
+            opening_range_min=10,
+        )
+        now[0] += 6
+        second = cache.get_many(
+            market="KR",
+            tickers=["AAA"],
+            session_date="2026-05-13",
+            token=None,
+            regular_open="2026-05-13T09:00:00",
+            known_at="2026-05-13T09:06:00",
+            avg_daily_volume_by_ticker={"AAA": 39000},
+            opening_range_min=10,
+        )
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(second["used_cache"], 0)
+
     def test_session_date_change_does_not_reuse_cache(self) -> None:
         calls = 0
 
@@ -165,6 +232,78 @@ class IntradayMinuteCacheTests(unittest.TestCase):
         self.assertIn("BBB", result["errors_by_ticker"])
         self.assertIn("CCC", result["errors_by_ticker"])
         self.assertEqual(result["missing"], 2)
+
+    def test_single_worker_provider_call_is_bounded_by_timeout(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        def provider(**kwargs):
+            started.set()
+            release.wait(2.0)
+            return _candles()
+
+        cache = IntradayMinuteCache(
+            provider=provider,
+            provider_name="fake",
+            ttl_sec=30,
+            max_workers=1,
+            timeout_sec=0.1,
+        )
+
+        start = time.monotonic()
+        result = cache.get_many(
+            market="KR",
+            tickers=["AAA"],
+            session_date="2026-05-13",
+            token=None,
+            regular_open="2026-05-13T09:00:00",
+            known_at="2026-05-13T09:06:00",
+            avg_daily_volume_by_ticker={"AAA": 39000},
+            opening_range_min=3,
+        )
+        elapsed = time.monotonic() - start
+        release.set()
+
+        self.assertTrue(started.is_set())
+        self.assertLess(elapsed, 1.0)
+        self.assertNotIn("AAA", result["features_by_ticker"])
+        self.assertEqual(result["errors_by_ticker"]["AAA"], "provider_timeout")
+        self.assertFalse(cache._cache)
+
+    def test_multi_worker_timeout_returns_completed_and_marks_unfinished(self) -> None:
+        release = threading.Event()
+
+        def provider(**kwargs):
+            if kwargs["ticker"] == "SLOW":
+                release.wait(2.0)
+            return _candles()
+
+        cache = IntradayMinuteCache(
+            provider=provider,
+            provider_name="fake",
+            ttl_sec=30,
+            max_workers=2,
+            timeout_sec=0.15,
+        )
+
+        start = time.monotonic()
+        result = cache.get_many(
+            market="KR",
+            tickers=["FAST", "SLOW"],
+            session_date="2026-05-13",
+            token=None,
+            regular_open="2026-05-13T09:00:00",
+            known_at="2026-05-13T09:06:00",
+            avg_daily_volume_by_ticker={"FAST": 39000, "SLOW": 39000},
+            opening_range_min=3,
+        )
+        elapsed = time.monotonic() - start
+        release.set()
+
+        self.assertLess(elapsed, 1.0)
+        self.assertIn("FAST", result["features_by_ticker"])
+        self.assertNotIn("SLOW", result["features_by_ticker"])
+        self.assertIn("SLOW", result["errors_by_ticker"])
 
 
 if __name__ == "__main__":

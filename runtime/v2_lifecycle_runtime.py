@@ -428,6 +428,7 @@ class V2LifecycleRuntime:
                 route = str(carried.get("entry_route") or "")
                 path_run_id = path_run_id or str(carried.get("path_run_id") or "")
                 for key in (
+                    "path_type",
                     "parent_decision_id",
                     "selection_snapshot_ts",
                     "strategy_used",
@@ -445,12 +446,16 @@ class V2LifecycleRuntime:
         if not route:
             route = "unknown"
 
+        if path_run_id and route != "path_b":
+            route = "path_b"
         data.setdefault("entry_route", route)
         if path_run_id:
             data.setdefault("path_run_id", path_run_id)
         data.setdefault("parent_decision_id", str(data.get("parent_decision_id") or decision_id or ""))
         data.setdefault("selection_snapshot_ts", self._selection_snapshot_ts(market))
-        if route == "path_b":
+        if route == "path_b" or path_run_id:
+            data["entry_route"] = "path_b"
+            data.setdefault("path_type", "claude_price")
             data.setdefault("strategy_used", "claude_price")
             data.setdefault("route_source", "buy_zone_hit")
         else:

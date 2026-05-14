@@ -75,6 +75,12 @@ def _lookup_route(routes: list[dict[str, Any]], market: str, ticker: str) -> dic
 
 def classify_live_evidence_state(features: dict[str, Any]) -> tuple[str, list[str]]:
     missing: list[str] = []
+    data_quality = str((features or {}).get("data_quality") or "").strip().lower()
+    if data_quality == "minute_missing" or bool((features or {}).get("fail_closed")):
+        explicit_missing = list((features or {}).get("missing_fields") or [])
+        fallback_missing = ["current_price", *CORE_MOMENTUM_FIELDS, *CONFIRMATION_FIELDS]
+        return "missing", list(dict.fromkeys([*explicit_missing, *fallback_missing]))
+
     current_price = _num(features.get("current_price") or features.get("price"))
     if current_price is None:
         missing.append("current_price")

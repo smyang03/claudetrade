@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import unittest
 from unittest.mock import patch
 
@@ -86,6 +87,20 @@ class KISIntradayCandleTests(unittest.TestCase):
             )
 
         self.assertEqual(df.iloc[0]["volume"], 0.0)
+
+    def test_kr_kis_intraday_deadline_prevents_page_request(self) -> None:
+        with patch("kis_api._kis_get") as mocked:
+            with self.assertRaisesRegex(TimeoutError, "provider_timeout"):
+                kis_api._intraday_ohlcv_kr_kis(
+                    "005930",
+                    "token",
+                    session_date="2026-05-13",
+                    start_at="2026-05-13T09:00:00",
+                    end_at="2026-05-13T09:02:00",
+                    deadline=time.time() - 0.1,
+                )
+
+        mocked.assert_not_called()
 
     def test_us_provider_disabled_is_fail_closed(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "provider disabled"):

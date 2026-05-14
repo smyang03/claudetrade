@@ -311,7 +311,7 @@ class CandidateTrainerReplacementTests(unittest.TestCase):
         )
         bot.runtime_config = _RuntimeConfig({"US_TRAINER_REPLACEMENT_MIN_IN_SCORE": 4.0, "US_TRAINER_REPLACEMENT_DELTA": 0.75})
 
-        selected = TradingBot._pick_partial_replace_in(
+        result = TradingBot._pick_partial_replace_in(
             bot,
             "US",
             ["OUT"],
@@ -321,7 +321,37 @@ class CandidateTrainerReplacementTests(unittest.TestCase):
             1,
         )
 
-        self.assertEqual(selected, ["IN"])
+        self.assertEqual(result["accepted"], ["IN"])
+        self.assertIn("IN", result["accepted_gates"])
+        self.assertEqual(result["rejected"], {})
+
+    def test_pick_partial_replace_in_reports_rejected_attempts_and_unfilled_slots(self) -> None:
+        bot = _bot_with_health(
+            {
+                "OUT": {"health_state": "STABLE_READY", "ready_count": 1, "mfe_pct": 3.0, "mae_pct": 0.0},
+                "IN": {"health_state": "OBSERVE"},
+            }
+        )
+        bot.runtime_config = _RuntimeConfig({"KR_TRAINER_REPLACEMENT_MIN_IN_SCORE": 5.5, "KR_TRAINER_REPLACEMENT_DELTA": 1.25})
+
+        result = TradingBot._pick_partial_replace_in(
+            bot,
+            "KR",
+            ["OUT"],
+            ["IN"],
+            {"recommended_strategy": {}},
+            {"IN": {"ticker": "IN", "entry_priority_score": 0.0}},
+            1,
+        )
+
+        self.assertEqual(result["accepted"], [])
+        self.assertEqual(result["slot_unfilled"], ["OUT"])
+        self.assertIn("IN", result["rejected"])
+        rejected = result["rejected"]["IN"]
+        self.assertEqual(rejected["reason"], "trainer_replacement_delta_blocked")
+        self.assertEqual(rejected["best_outgoing_tried"], "OUT")
+        self.assertEqual(rejected["attempts"][0]["incoming"], "IN")
+        self.assertFalse(rejected["attempts"][0]["passed"])
 
     def test_candidate_trainer_tier_marks_core_and_quarantine(self) -> None:
         bot = _bot_with_health(

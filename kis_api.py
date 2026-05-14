@@ -881,6 +881,8 @@ def _intraday_ohlcv_kr_kis(
     session_date: str,
     start_at=None,
     end_at=None,
+    deadline: Optional[float] = None,
+    request_timeout: Optional[float] = None,
 ) -> pd.DataFrame:
     """KR 당일 1분봉 조회.
 
@@ -903,6 +905,12 @@ def _intraday_ohlcv_kr_kis(
     seen_times: set[str] = set()
 
     for _ in range(max_pages):
+        timeout = float(request_timeout if request_timeout is not None else 10)
+        if deadline is not None:
+            remaining = float(deadline) - time.time()
+            if remaining <= 0:
+                raise TimeoutError("provider_timeout")
+            timeout = max(0.05, min(timeout, remaining))
         resp = _kis_get(
             f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
             headers=_headers(token, "FHKST03010200", market="KR"),
@@ -913,7 +921,7 @@ def _intraday_ohlcv_kr_kis(
                 "FID_INPUT_HOUR_1": end_hms,
                 "FID_PW_DATA_INCU_YN": "N",
             },
-            timeout=10,
+            timeout=timeout,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -953,7 +961,14 @@ def _intraday_ohlcv_kr_kis(
         if next_hms == end_hms:
             break
         end_hms = next_hms
-        time.sleep(float(os.getenv("KR_INTRADAY_KIS_PAGE_SLEEP_SEC", "0.05")))
+        sleep_sec = float(os.getenv("KR_INTRADAY_KIS_PAGE_SLEEP_SEC", "0.05"))
+        if deadline is not None:
+            remaining = float(deadline) - time.time()
+            if remaining <= 0:
+                raise TimeoutError("provider_timeout")
+            sleep_sec = min(sleep_sec, max(0.0, remaining))
+        if sleep_sec > 0:
+            time.sleep(sleep_sec)
 
     if not rows_all:
         return _intraday_empty_frame()
@@ -1062,6 +1077,8 @@ def get_intraday_candles(
     end_at=None,
     interval: str = "1m",
     provider: str = "",
+    deadline: Optional[float] = None,
+    request_timeout: Optional[float] = None,
 ) -> pd.DataFrame:
     market_key = _normalize_market(market)
     if str(interval or "1m").lower() not in {"1m", "1min", "1"}:
@@ -1095,8 +1112,10 @@ def get_intraday_candles(
                 session_date=session_text,
                 start_at=start_at,
                 end_at=end_at,
+                deadline=deadline,
+                request_timeout=request_timeout,
             ),
-            retries=2,
+            retries=0 if deadline is not None else 2,
             delay_sec=float(os.getenv("KR_INTRADAY_KIS_RETRY_AFTER_SEC", "1.0")),
         )
     elif provider_key == "yfinance":
