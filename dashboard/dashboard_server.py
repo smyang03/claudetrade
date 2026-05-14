@@ -2416,16 +2416,32 @@ def _broker_snapshot(mode: str = "paper") -> dict:
             return _with_broker_cache_meta(stale_snapshot, meta) if stale_snapshot else {}
 
         usd_krw = _get_usd_krw_cached()
+        kis_usd_krw = float((us or {}).get("kis_exchange_rate", 0) or 0)
+        if kis_usd_krw > 0:
+            usd_krw = kis_usd_krw
 
         kr_cash = float(kr.get("cash", 0) or 0)
         kr_orderable = float(kr.get("orderable_cash", kr_cash) or kr_cash)
         kr_eval = float(kr.get("total_eval", 0) or 0)
         us_cash_usd = float(us.get("cash", 0) or 0)
         us_orderable_cash_usd = float(us.get("orderable_cash", us_cash_usd) or us_cash_usd)
+        us_asset_cash_usd = float(us.get("asset_cash", max(us_cash_usd, us_orderable_cash_usd)) or 0)
+        if us_asset_cash_usd <= 0:
+            us_asset_cash_usd = max(us_cash_usd, us_orderable_cash_usd)
         us_eval_usd = float(us.get("total_eval", 0) or 0)
         us_cash_krw = us_cash_usd * usd_krw
+        us_asset_cash_krw = us_asset_cash_usd * usd_krw
         us_orderable_cash_krw = us_orderable_cash_usd * usd_krw
         us_eval_krw = us_eval_usd * usd_krw
+        kis_us_asset_krw = float(us.get("market_asset_krw", 0) or 0)
+        kis_us_asset_cash_krw = float(us.get("asset_cash_krw", 0) or 0)
+        kis_us_eval_krw = float(us.get("total_eval_krw", 0) or 0)
+        if kis_us_eval_krw > 0:
+            us_eval_krw = kis_us_eval_krw
+        if kis_us_asset_cash_krw > 0:
+            us_asset_cash_krw = kis_us_asset_cash_krw
+        if kis_us_asset_krw > 0:
+            us_asset_cash_krw = max(kis_us_asset_krw - us_eval_krw, 0.0)
         source = "broker"
 
         # KIS US paper는 달러 현금을 0으로 반환하는 경우가 있어 KR 현금이 과대계상될 수 있다.
@@ -2439,7 +2455,8 @@ def _broker_snapshot(mode: str = "paper") -> dict:
                 kr_cash_effective = max(kr_cash - us_cost_krw, 0.0)
                 source = "broker+paper_us_cash_estimated"
 
-        cumulative = kr_cash_effective + kr_eval + us_cash_krw + us_eval_krw
+        us_asset_krw = kis_us_asset_krw if kis_us_asset_krw > 0 else us_asset_cash_krw + us_eval_krw
+        cumulative = kr_cash_effective + kr_eval + us_asset_krw
 
         def _unrealized_krw(stocks: list, market: str) -> float:
             total = 0.0
@@ -2450,6 +2467,13 @@ def _broker_snapshot(mode: str = "paper") -> dict:
                 pnl_native = (current_price - avg_price) * qty
                 total += pnl_native if market == "KR" else pnl_native * usd_krw
             return total
+
+        def _balance_profit_krw(balance: dict, stocks: list, market: str) -> float:
+            if market == "US" and balance.get("total_profit_krw") is not None:
+                return float(balance.get("total_profit_krw", 0) or 0)
+            if market == "KR" and balance.get("total_profit") is not None:
+                return float(balance.get("total_profit", 0) or 0)
+            return _unrealized_krw(stocks, market)
 
         last_error = "; ".join(snapshot_errors)
         meta = _broker_cache_meta(
@@ -2471,14 +2495,21 @@ def _broker_snapshot(mode: str = "paper") -> dict:
             "kr_eval": kr_eval,
             "us_cash_usd": us_cash_usd,
             "us_cash_krw": us_cash_krw,
+            "us_asset_cash_usd": us_asset_cash_usd,
+            "us_asset_cash_krw": us_asset_cash_krw,
             "us_orderable_cash_usd": us_orderable_cash_usd,
             "us_orderable_cash_krw": us_orderable_cash_krw,
             "us_eval_usd": us_eval_usd,
             "us_eval_krw": us_eval_krw,
+            "us_asset_krw": us_asset_krw,
+            "kis_account_total_asset_krw": float(us.get("kis_total_asset_krw", 0) or 0),
+            "us_kis_exchange_rate": float(us.get("kis_exchange_rate", 0) or 0),
+            "kr_profit_krw": _balance_profit_krw(kr, kr.get("stocks", []), "KR"),
+            "us_profit_krw": _balance_profit_krw(us, us.get("stocks", []), "US"),
             "cumulative": cumulative,
             "unrealized_krw": {
-                "KR": _unrealized_krw(kr.get("stocks", []), "KR"),
-                "US": _unrealized_krw(us.get("stocks", []), "US"),
+                "KR": _balance_profit_krw(kr, kr.get("stocks", []), "KR"),
+                "US": _balance_profit_krw(us, us.get("stocks", []), "US"),
             },
         }
         _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
@@ -2490,7 +2521,10 @@ def _broker_snapshot(mode: str = "paper") -> dict:
 def _market_asset_krw_from_broker_snapshot(broker: dict, market: str) -> float:
     broker = broker or {}
     if market == "US":
-        return float(broker.get("us_cash_krw", 0) or 0) + float(broker.get("us_eval_krw", 0) or 0)
+        if float(broker.get("us_asset_krw", 0) or 0) > 0:
+            return float(broker.get("us_asset_krw", 0) or 0)
+        cash_krw = float(broker.get("us_asset_cash_krw", broker.get("us_cash_krw", 0)) or 0)
+        return cash_krw + float(broker.get("us_eval_krw", 0) or 0)
     return float(broker.get("kr_cash_effective", broker.get("kr_cash", 0)) or 0) + float(broker.get("kr_eval", 0) or 0)
 
 
@@ -2521,10 +2555,12 @@ def _persist_broker_equity_snapshot(broker: dict, mode: str = "paper") -> None:
             "date": today_us,
             "asset_krw": round(_market_asset_krw_from_broker_snapshot(broker, "US"), 6),
             "unrealized_krw": round(float((broker.get("unrealized_krw", {}) or {}).get("US", 0) or 0), 6),
-            "cash_krw": round(float(broker.get("us_cash_krw", 0) or 0), 6),
+            "cash_krw": round(float(broker.get("us_asset_cash_krw", broker.get("us_cash_krw", 0)) or 0), 6),
             "eval_krw": round(float(broker.get("us_eval_krw", 0) or 0), 6),
             "orderable_cash_krw": round(float(broker.get("us_orderable_cash_krw", 0) or 0), 6),
-            "native_cash": round(float(broker.get("us_cash_usd", 0) or 0), 6),
+            "settled_cash_krw": round(float(broker.get("us_cash_krw", 0) or 0), 6),
+            "native_cash": round(float(broker.get("us_asset_cash_usd", broker.get("us_cash_usd", 0)) or 0), 6),
+            "native_settled_cash": round(float(broker.get("us_cash_usd", 0) or 0), 6),
             "native_eval": round(float(broker.get("us_eval_usd", 0) or 0), 6),
             "native_orderable_cash": round(float(broker.get("us_orderable_cash_usd", 0) or 0), 6),
             "native_currency": "USD",
@@ -2670,6 +2706,40 @@ def _live_equity_payload(
         equity_values[i] = next_value - float(realized_by_date.get(next_label, 0.0) or 0.0)
 
     equity = [float(v or 0.0) for v in equity_values]
+
+    other_market = "US" if market == "KR" else "KR"
+    other_current_asset = _market_asset_krw_from_broker_snapshot(broker or {}, other_market) if broker else 0.0
+    other_session_label = _session_trade_date(other_market).isoformat()
+    other_asset_map: dict[str, float] = {}
+    for item in _load_broker_equity_snapshots(other_market, period, start, end, mode=mode):
+        label = str(item.get("date", "") or "")[:10]
+        asset = float(item.get("asset_krw", 0) or 0)
+        if label and asset > 0:
+            other_asset_map[label] = asset
+    if other_current_asset > 0:
+        other_asset_map[other_session_label] = other_current_asset
+    other_sorted = sorted(other_asset_map.items())
+
+    def _latest_other_asset_for(label: str) -> float:
+        latest = 0.0
+        for other_label, asset in other_sorted:
+            if other_label <= label:
+                latest = float(asset or 0.0)
+            else:
+                break
+        if latest <= 0 and other_current_asset > 0:
+            latest = float(other_current_asset)
+        return latest
+
+    account_equity: list[float] = []
+    broker_account_total = float((broker or {}).get("cumulative", 0) or 0)
+    for idx, label in enumerate(labels):
+        if broker_account_total > 0 and label == session_label:
+            account_equity.append(broker_account_total)
+            continue
+        other_asset = _latest_other_asset_for(label)
+        account_equity.append(float(equity[idx] or 0.0) + other_asset)
+
     unrealized: list[float] = []
     last_unrealized = 0.0
     for label in labels:
@@ -2718,6 +2788,7 @@ def _live_equity_payload(
     return {
         "labels": labels,
         "equity": [round(v, 6) for v in equity],
+        "account_equity_krw": [round(v, 6) for v in account_equity],
         "account_asset_krw": [round(v, 6) for v in equity],
         "pnl": pnl_pct_series,
         "wins": wins,
@@ -2737,6 +2808,9 @@ def _live_equity_payload(
         "basis": "broker_asset_reconstructed",
         "reconciliation_basis": "broker_asset_trading_pnl_cashflow",
         "asset_basis": "kis_broker_account",
+        "equity_scope": "selected_market",
+        "account_equity_scope": "account_total",
+        "account_equity_basis": "selected_market_plus_latest_other_market",
         "performance_basis": "realized_pnl_plus_unrealized_delta",
         "cash_flow_basis": "asset_delta_minus_trading_pnl",
         "cash_flow_label": "입출금/환전 추정",
@@ -2787,7 +2861,13 @@ def _dashboard_usd_krw_for_pnl(mode: str) -> float:
     try:
         live_us = _load_live_status("US", mode=mode) or {}
         snap = ((live_us.get("broker") or {}).get("last_trusted_snapshot") or {})
-        for usd_key, krw_key in (("cash_usd", "cash_krw"), ("eval_usd", "eval_krw")):
+        pairs = []
+        if snap.get("asset_cash_usd") is not None:
+            pairs.append(("asset_cash_usd", "cash_krw"))
+        if snap.get("settled_cash_krw") is not None:
+            pairs.append(("cash_usd", "settled_cash_krw"))
+        pairs.extend((("cash_usd", "cash_krw"), ("eval_usd", "eval_krw")))
+        for usd_key, krw_key in pairs:
             usd = float(snap.get(usd_key, 0) or 0)
             krw = float(snap.get(krw_key, 0) or 0)
             if usd > 0 and krw > 0:
@@ -4306,7 +4386,9 @@ def api_summary():
     if broker:
         usd_krw = float(broker.get("usd_krw", 0) or usd_krw)
         kr_asset = float(broker.get("kr_cash_effective", broker.get("kr_cash", 0)) or 0) + float(broker.get("kr_eval", 0) or 0)
-        us_asset = float(broker.get("us_cash_krw", 0) or 0) + float(broker.get("us_eval_krw", 0) or 0)
+        us_asset = float(broker.get("us_asset_krw", 0) or 0)
+        if us_asset <= 0:
+            us_asset = float(broker.get("us_asset_cash_krw", broker.get("us_cash_krw", 0)) or 0) + float(broker.get("us_eval_krw", 0) or 0)
         market_unrealized = float(broker.get("unrealized_krw", {}).get(market, 0) or 0)
         asset_source = str(broker.get("source", "broker") or "broker")
         if market == "US" and us_asset <= 0:
@@ -4392,6 +4474,49 @@ def api_summary():
         realized_excluding_eval_pnl_krw = float(trading_pnl_krw or 0.0) - float(unrealized_today_delta_krw or 0.0)
     starting_asset_krw = float(live_equity_summary.get("starting_asset_krw", 0.0) or 0.0)
     starting_capital_krw = float(live_equity_summary.get("starting_capital_krw", 0.0) or 0.0)
+    broker_unrealized = (broker or {}).get("unrealized_krw", {}) if isinstance(broker, dict) else {}
+    holding_unrealized_krw_kr = float((broker_unrealized or {}).get("KR", 0) or 0)
+    holding_unrealized_krw_us = float((broker_unrealized or {}).get("US", 0) or 0)
+    if market == "KR" and "KR" not in (broker_unrealized or {}):
+        holding_unrealized_krw_kr = float(unrealized_pnl_krw or 0)
+    if market == "US" and "US" not in (broker_unrealized or {}):
+        holding_unrealized_krw_us = float(unrealized_pnl_krw or 0)
+    holding_eval_krw_kr = float((broker or {}).get("kr_eval", 0) or 0)
+    holding_eval_krw_us = float((broker or {}).get("us_eval_krw", 0) or 0)
+
+    def _positions_eval_krw(pos_items: list, pos_market: str) -> float:
+        total = 0.0
+        for pos in pos_items or []:
+            qty = float(pos.get("qty", 0) or 0)
+            current_price = float(
+                pos.get("display_current_price", 0)
+                or pos.get("current_price", 0)
+                or pos.get("avg_price", 0)
+                or pos.get("entry", 0)
+                or 0
+            )
+            if qty <= 0 or current_price <= 0:
+                continue
+            amount = qty * current_price
+            if pos_market == "US" and str(pos.get("currency", "") or "").upper() == "USD":
+                amount *= usd_krw
+            total += amount
+        return total
+
+    if market == "KR" and holding_eval_krw_kr <= 0:
+        holding_eval_krw_kr = _positions_eval_krw(positions, "KR")
+    if market == "US" and holding_eval_krw_us <= 0:
+        holding_eval_krw_us = _positions_eval_krw(positions, "US")
+    holding_unrealized_total_krw = holding_unrealized_krw_kr + holding_unrealized_krw_us
+    holding_cost_krw = (
+        max(holding_eval_krw_kr - holding_unrealized_krw_kr, 0.0)
+        + max(holding_eval_krw_us - holding_unrealized_krw_us, 0.0)
+    )
+    holding_unrealized_total_pct = (
+        (holding_unrealized_total_krw / holding_cost_krw) * 100.0
+        if holding_cost_krw > 0
+        else None
+    )
     lifetime_realized_pnl = _lifetime_realized_pnl_summary(mode)
     trade_turnover = _current_session_trade_turnover(market, mode)
     pnl_summary = {
@@ -4405,6 +4530,14 @@ def api_summary():
             "unrealized_pnl_krw": round(float(unrealized_pnl_krw or 0), 0),
             "unrealized_today_delta_krw": round(float(unrealized_today_delta_krw or 0), 0),
             "holding_unrealized_pnl_krw": round(float(unrealized_pnl_krw or 0), 0),
+            "holding_unrealized_pnl_krw_kr": round(holding_unrealized_krw_kr, 0),
+            "holding_unrealized_pnl_krw_us": round(holding_unrealized_krw_us, 0),
+            "holding_unrealized_total_pnl_krw": round(holding_unrealized_total_krw, 0),
+            "holding_unrealized_total_pct": (
+                round(float(holding_unrealized_total_pct), 4)
+                if holding_unrealized_total_pct is not None
+                else None
+            ),
             "trade_turnover": trade_turnover,
             "basis": "selected_market_realized_plus_unrealized_delta",
         },
@@ -4500,6 +4633,14 @@ def api_summary():
             "unrealized_pnl_krw": round(unrealized_pnl_krw, 0),
             "unrealized_today_delta_krw": round(unrealized_today_delta_krw, 0),
             "holding_unrealized_pnl_krw": round(unrealized_pnl_krw, 0),
+            "holding_unrealized_pnl_krw_kr": round(holding_unrealized_krw_kr, 0),
+            "holding_unrealized_pnl_krw_us": round(holding_unrealized_krw_us, 0),
+            "holding_unrealized_total_pnl_krw": round(holding_unrealized_total_krw, 0),
+            "holding_unrealized_total_pct": (
+                round(float(holding_unrealized_total_pct), 4)
+                if holding_unrealized_total_pct is not None
+                else None
+            ),
             "trade_turnover": trade_turnover,
             "today_trade_total_krw": trade_turnover.get("total_krw", 0),
             "today_trade_buy_krw": trade_turnover.get("buy_krw", 0),
@@ -4525,13 +4666,14 @@ def api_summary():
             "asset_krw_us":   round(us_asset, 0),
             "asset_krw_cash": round(float((broker or {}).get("kr_cash_effective", (broker or {}).get("kr_cash", 0)) or 0), 0),
             "asset_krw_eval": round(float((broker or {}).get("kr_eval", 0) or 0), 0),
-            "asset_usd_cash": round(float((broker or {}).get("us_cash_usd", 0) or 0), 2),
+            "asset_usd_cash": round(float((broker or {}).get("us_asset_cash_usd", (broker or {}).get("us_cash_usd", 0)) or 0), 2),
             "asset_usd_eval": round(float((broker or {}).get("us_eval_usd", 0) or 0), 2),
             "asset_usd_total": round(
-                float((broker or {}).get("us_cash_usd", 0) or 0) + float((broker or {}).get("us_eval_usd", 0) or 0),
+                float((broker or {}).get("us_asset_cash_usd", (broker or {}).get("us_cash_usd", 0)) or 0) + float((broker or {}).get("us_eval_usd", 0) or 0),
                 2,
             ),
-            "broker_cash_krw": round(float((broker or {}).get("kr_cash_effective", (broker or {}).get("kr_cash", 0)) or 0) + float((broker or {}).get("us_cash_krw", 0) or 0), 0),
+            "broker_cash_krw": round(float((broker or {}).get("kr_cash_effective", (broker or {}).get("kr_cash", 0)) or 0) + float((broker or {}).get("us_asset_cash_krw", (broker or {}).get("us_cash_krw", 0)) or 0), 0),
+            "broker_settled_cash_krw": round(float((broker or {}).get("kr_cash_effective", (broker or {}).get("kr_cash", 0)) or 0) + float((broker or {}).get("us_cash_krw", 0) or 0), 0),
             "broker_orderable_cash_kr": round(float((broker or {}).get("kr_orderable_cash", 0) or 0), 0),
             "broker_orderable_cash_usd": round(float((broker or {}).get("us_orderable_cash_usd", 0) or 0), 2),
             "broker_orderable_cash_us_krw": round(float((broker or {}).get("us_orderable_cash_krw", 0) or 0), 0),
@@ -6716,7 +6858,7 @@ def api_candidate_audit_rows():
                        r.claude_action, r.claude_reason, r.route_final_action,
                        r.route_reason, r.route_runtime_gate_reason,
                        r.buy_signal_count, r.filled_count, r.pnl_pct, r.exit_reason,
-                       r.close_reason, r.classification,
+                       r.close_reason, r.classification, r.payload_json,
                        {', '.join(trainer_select)},
                        o.status AS outcome_status,
                        o.return_pct AS outcome_return_pct,
@@ -6735,6 +6877,18 @@ def api_candidate_audit_rows():
                 query_params,
             )
         ]
+        for row in rows:
+            try:
+                payload = json.loads(str(row.pop("payload_json", "") or "{}"))
+            except Exception:
+                payload = {}
+            screener_quality = payload.get("screener_quality") if isinstance(payload, dict) else {}
+            if not isinstance(screener_quality, dict):
+                screener_quality = {}
+            row["screener_quality_state"] = str(screener_quality.get("screener_quality_state") or "")
+            row["screener_degraded"] = bool(screener_quality.get("screener_degraded"))
+            row["screener_degraded_reason"] = str(screener_quality.get("screener_degraded_reason") or "")
+            row["screener_cache_skipped_reason"] = str(screener_quality.get("screener_cache_skipped_reason") or "")
         return jsonify({
             "ok": True,
             "exists": True,
@@ -8050,16 +8204,28 @@ function renderLifetimeRealized(today) {
   const unknown = Number(lifetime.unknown_cost_basis_count || 0);
   const krSource = ((lifetime.KR || {}).current_session_source || '');
   const usSource = ((lifetime.US || {}).current_session_source || '');
-  const sourceHint = [krSource ? 'KR ' + krSource : '', usSource ? 'US ' + usSource : ''].filter(Boolean).join(' · ');
+  const sourceHint = [krSource ? 'KR ' + koSource(krSource) : '', usSource ? 'US ' + koSource(usSource) : ''].filter(Boolean).join(' · ');
+  const holdingEval = Number(today.holding_unrealized_total_pnl_krw ?? today.holding_unrealized_pnl_krw ?? 0);
+  const holdingEvalPctRaw = today.holding_unrealized_total_pct;
+  const holdingEvalPct = holdingEvalPctRaw === null || holdingEvalPctRaw === undefined || holdingEvalPctRaw === ''
+    ? NaN
+    : Number(holdingEvalPctRaw);
+  const totalWithHoldings = total + holdingEval;
   const totalEl = document.getElementById('lifetime-pnl-total');
   const splitEl = document.getElementById('lifetime-pnl-split');
+  const holdingEl = document.getElementById('lifetime-pnl-with-holdings');
   const basisEl = document.getElementById('lifetime-pnl-basis');
   if (totalEl) {
     totalEl.textContent = fmt.krw(total);
     totalEl.className = 'card-value ' + colorClass(total);
   }
   if (splitEl) splitEl.textContent = `KR ${fmt.krw(kr)} · US ${fmt.krw(us)}`;
-  if (basisEl) basisEl.textContent = `입출금 제외 · 매수/매도 실현 기준${unknown > 0 ? ` · 원가불명 ${unknown}건 제외` : ''}${sourceHint ? ' · 당일보정 ' + sourceHint : ''}`;
+  if (holdingEl) {
+    const pctText = Number.isFinite(holdingEvalPct) ? ` (${fmt.pct(holdingEvalPct)})` : '';
+    holdingEl.textContent = `보유평가 반영 시 ${fmt.krw(totalWithHoldings)} · 평가 ${fmt.krw(holdingEval)}${pctText}`;
+    holdingEl.title = `누적 실현손익 ${fmt.krw(total)} + 현재 보유 평가손익 ${fmt.krw(holdingEval)}`;
+  }
+  if (basisEl) basisEl.textContent = `입출금 제외 · 매수/매도 실현 기준${unknown > 0 ? ` · 원가불명 ${unknown}건 제외` : ''}${sourceHint ? ' · 오늘 체결 반영 ' + sourceHint : ''}`;
 }
 
 function koStopClusterReason(reason) {
@@ -8199,8 +8365,16 @@ const SOURCE_KO = {
   broker_truth: '계좌 조회',
   broker_account: '계좌 조회',
   broker_balance: '브로커 잔고',
+  broker_trade_history: '브로커 체결 원장',
+  broker_today_fill_fifo: '오늘 브로커 체결(선입선출)',
+  broker_today_fill_fifo_partial: '오늘 브로커 체결 일부(선입선출)',
+  broker_today_fills: '오늘 브로커 체결',
+  broker_confirmed_local_matches: '브로커 확인 체결',
   broker_sync: '브로커 동기화',
   local_fallback: '로컬 보완',
+  local_decisions_duplicate_sell_deduped: '로컬 청산 중복 제거',
+  live_status_market_realized_pnl: '실시간 상태 실현손익',
+  live_status_or_metrics_fallback: '엔진/상태 추정',
   position_fallback: '포지션 보완',
   internal_fallback: '엔진 추정',
   'broker+paper_us_cash_estimated': '브로커 기준 · US 모의현금 추정',
@@ -8389,6 +8563,7 @@ PAGE_TODAY_HTML = """
     <div class="card-label">누적 실현손익</div>
     <div class="card-value" id="lifetime-pnl-total">--</div>
     <div class="card-sub"  id="lifetime-pnl-split">KR -- · US --</div>
+    <div class="card-sub"  id="lifetime-pnl-with-holdings">보유평가 반영 시 --</div>
     <div class="card-sub"  id="lifetime-pnl-basis" style="margin-top:4px">입출금 제외</div>
   </div>
   <div class="card purple">
@@ -8607,9 +8782,14 @@ async function loadEquityChart() {
 
   const colors = (d.wins || []).map(w => w ? 'rgba(16,185,129,0.8)' : 'rgba(239,68,68,0.8)');
   const liveAssetBasis = d.asset_basis === 'kis_broker_account';
+  const accountEquity = Array.isArray(d.account_equity_krw) && d.account_equity_krw.length === d.labels.length
+    ? d.account_equity_krw
+    : null;
+  const equityData = liveAssetBasis && accountEquity ? accountEquity : d.equity;
+  const equityLabel = liveAssetBasis && accountEquity ? '계좌 총자산(KIS)' : (liveAssetBasis ? '계좌 자산(KIS)' : '누적 자산');
   const datasets = [
     {
-      type: 'line', label: liveAssetBasis ? '계좌 자산(KIS)' : '누적 자산', data: d.equity,
+      type: 'line', label: equityLabel, data: equityData,
       borderColor: 'rgba(6,182,212,0.9)', backgroundColor: 'rgba(6,182,212,0.05)',
       borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1', fill: true,
     },
@@ -9740,9 +9920,14 @@ async function loadHistEquity() {
 
   const colors = (d.wins || []).map(w => w ? 'rgba(16,185,129,0.75)' : 'rgba(239,68,68,0.75)');
   const liveAssetBasis = d.asset_basis === 'kis_broker_account';
+  const accountEquity = Array.isArray(d.account_equity_krw) && d.account_equity_krw.length === d.labels.length
+    ? d.account_equity_krw
+    : null;
+  const equityData = liveAssetBasis && accountEquity ? accountEquity : d.equity;
+  const equityLabel = liveAssetBasis && accountEquity ? '계좌 총자산(KIS)' : (liveAssetBasis ? '계좌 자산(KIS)' : '누적 자산');
   const datasets = [
     {
-      type: 'line', label: liveAssetBasis ? '계좌 자산(KIS)' : '누적 자산', data: d.equity,
+      type: 'line', label: equityLabel, data: equityData,
       borderColor: 'rgba(59,130,246,0.9)', backgroundColor: 'rgba(59,130,246,0.05)',
       borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1', fill: true,
     },
@@ -12057,6 +12242,22 @@ function drawLineChart(canvasId, key, data, label, color) {
   resetChart(key);
   const el = document.getElementById(canvasId);
   if (!el) return;
+  const pointPnl = Array.isArray(data.point_pnl_pct) ? data.point_pnl_pct.map(v => Number(v || 0)) : [];
+  const options = chartOptions('%');
+  if (pointPnl.length) {
+    options.plugins.tooltip = {
+      callbacks: {
+        label: ctx => `${label}: ${fmtSignedPct(ctx.raw)}`,
+        afterLabel: ctx => {
+          const idx = ctx.dataIndex;
+          const parts = [`해당 거래: ${fmtSignedPct(pointPnl[idx])}`];
+          const reason = (data.point_close_reasons || [])[idx];
+          if (reason) parts.push(`청산: ${koPathBReason(reason)}`);
+          return parts;
+        }
+      }
+    };
+  }
   charts[key] = new Chart(el.getContext('2d'), {
     type: 'line',
     data: {
@@ -12066,11 +12267,15 @@ function drawLineChart(canvasId, key, data, label, color) {
         data: data.data || [],
         borderColor: color,
         backgroundColor: 'rgba(16,185,129,0.12)',
+        pointBackgroundColor: pointPnl.length ? pointPnl.map(v => v > 0 ? '#10b981' : (v < 0 ? '#ef4444' : '#94a3b8')) : color,
+        pointBorderColor: pointPnl.length ? pointPnl.map(v => v > 0 ? '#10b981' : (v < 0 ? '#ef4444' : '#94a3b8')) : color,
+        pointRadius: pointPnl.length ? 3 : 0,
+        pointHoverRadius: pointPnl.length ? 5 : 3,
         tension: 0.25,
         fill: true
       }]
     },
-    options: chartOptions('%')
+    options
   });
 }
 

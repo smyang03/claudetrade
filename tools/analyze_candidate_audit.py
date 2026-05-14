@@ -781,6 +781,7 @@ def watch_trigger_funnel_summary(*, session_date: str = "", market: str = "") ->
     blocked_reason_counts: Counter[str] = Counter()
     not_eval_reason_counts: Counter[str] = Counter()
     strategy_counts: Counter[str] = Counter()
+    strategy_source_counts: Counter[str] = Counter()
     tickers_by_result: dict[str, set[str]] = defaultdict(set)
     for row in not_evaluated_rows:
         reason = str(row.get("reason") or "unknown")
@@ -790,6 +791,8 @@ def watch_trigger_funnel_summary(*, session_date: str = "", market: str = "") ->
         result_counts[result] += 1
         strategy = str(row.get("strategy") or "unassigned")
         strategy_counts[strategy] += 1
+        strategy_source = str(row.get("strategy_source") or "unassigned")
+        strategy_source_counts[strategy_source] += 1
         blocked = str(row.get("blocked_reason") or "").strip()
         if blocked:
             blocked_reason_counts[blocked] += 1
@@ -812,6 +815,7 @@ def watch_trigger_funnel_summary(*, session_date: str = "", market: str = "") ->
         "shadow_result_counts": dict(result_counts.most_common()),
         "blocked_reason_counts": dict(blocked_reason_counts.most_common()),
         "strategy_counts": dict(strategy_counts.most_common()),
+        "strategy_source_counts": dict(strategy_source_counts.most_common()),
         "tickers_by_result": {
             result: sorted(tickers)[:30]
             for result, tickers in sorted(tickers_by_result.items())

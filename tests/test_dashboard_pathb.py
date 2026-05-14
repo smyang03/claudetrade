@@ -290,10 +290,10 @@ class DashboardPathBTests(unittest.TestCase):
             "usd_krw": 1300.0,
             "kr_cash": 0.0,
             "kr_cash_effective": 0.0,
-            "kr_eval": 0.0,
+            "kr_eval": 200_000.0,
             "us_cash_krw": 1000.0,
-            "us_eval_krw": 0.0,
-            "unrealized_krw": {"US": 0.0},
+            "us_eval_krw": 130_000.0,
+            "unrealized_krw": {"KR": 10_000.0, "US": -5_000.0},
         }
         positions_cache = {
             "hit": True,
@@ -382,6 +382,10 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(today["pnl_summary"]["lifetime_realized"]["kr_pnl_krw"], -1000.0)
         self.assertEqual(today["pnl_summary"]["lifetime_realized"]["us_pnl_krw"], 2500.0)
         self.assertEqual(today["pnl_summary"]["lifetime_realized"]["total_pnl_krw"], 1500.0)
+        self.assertEqual(today["holding_unrealized_pnl_krw_kr"], 10000.0)
+        self.assertEqual(today["holding_unrealized_pnl_krw_us"], -5000.0)
+        self.assertEqual(today["holding_unrealized_total_pnl_krw"], 5000.0)
+        self.assertAlmostEqual(today["holding_unrealized_total_pct"], 1.5385, places=4)
         self.assertEqual(today["stop_cluster"]["daily_stop_count"], 3)
         self.assertEqual(today["stop_cluster"]["hard_block_count"], 4)
 
@@ -929,6 +933,40 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(data["pnl"], [0.0, 1.5])
         self.assertEqual(data["basis"], "broker_asset_reconstructed")
         self.assertEqual(data["reconciliation_basis"], "broker_asset_trading_pnl_cashflow")
+
+    def test_history_equity_live_exposes_account_total_series_for_chart(self) -> None:
+        broker = {
+            "source": "broker",
+            "cumulative": 5_300_000.0,
+            "kr_cash_effective": 2_000_000.0,
+            "kr_cash": 2_000_000.0,
+            "kr_eval": 0.0,
+            "us_asset_krw": 3_300_000.0,
+            "us_eval_krw": 300_000.0,
+            "unrealized_krw": {"US": 10_000.0, "KR": 0.0},
+        }
+
+        def session_date(market: str, *_args, **_kwargs):
+            return date(2026, 5, 14) if market == "US" else date(2026, 5, 15)
+
+        with patch.object(
+            dashboard_server, "_session_trade_date", side_effect=session_date
+        ), patch.object(
+            dashboard_server, "_broker_snapshot", return_value=broker
+        ), patch.object(
+            dashboard_server, "_persist_broker_equity_snapshot"
+        ), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", return_value=[]
+        ), patch.object(
+            dashboard_server, "_load_broker_equity_snapshots", return_value=[]
+        ):
+            res = app.test_client().get("/api/history/equity?market=US&mode=live&period=month")
+
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data["equity"][-1], 3_300_000.0)
+        self.assertEqual(data["account_equity_krw"][-1], 5_300_000.0)
+        self.assertEqual(data["account_equity_scope"], "account_total")
 
     def test_history_equity_live_adds_active_session_realized_adjustment(self) -> None:
         snapshots = [

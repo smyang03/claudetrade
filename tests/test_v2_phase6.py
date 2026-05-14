@@ -207,6 +207,31 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(comparison["path_b"]["avg_pnl_pct"], 1.6836)
         self.assertEqual(comparison["path_b"]["realized_pnl_value"], 1764.2989)
 
+    def test_pathb_pnl_chart_keeps_individual_trade_pnl_next_to_cumulative(self):
+        charts = v2_ops_summary._path_b_charts(
+            [
+                {
+                    "ticker": "F",
+                    "status": "CLOSED",
+                    "plan": {"pnl_pct": 3.0324, "close_reason": "CLOSED_CLAUDE_PRICE_TARGET"},
+                },
+                {
+                    "ticker": "IREN",
+                    "status": "CLOSED",
+                    "plan": {"pnl_pct": -2.0008, "close_reason": "CLOSED_LOSS_CAP"},
+                },
+            ],
+            metrics={},
+        )
+
+        self.assertEqual(charts["pnl"]["labels"], ["F", "IREN"])
+        self.assertEqual(charts["pnl"]["data"], [3.0324, 1.0316])
+        self.assertEqual(charts["pnl"]["point_pnl_pct"], [3.0324, -2.0008])
+        self.assertEqual(
+            charts["pnl"]["point_close_reasons"],
+            ["CLOSED_CLAUDE_PRICE_TARGET", "CLOSED_LOSS_CAP"],
+        )
+
     def test_pathb_selection_summary_exposes_compact_validation_state(self):
         selection_meta = {
             "watchlist": ["AAPL", "MSFT"],

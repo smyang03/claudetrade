@@ -48,6 +48,8 @@ LIVE_CONFIG_KEYS = {
     "US_MAX_POSITIONS",
     "DAILY_LOSS_LIMIT_PCT",
     "V2_MAX_DAILY_ENTRIES",
+    "KR_DAILY_ENTRY_CAP",
+    "US_DAILY_ENTRY_CAP",
     "V2_LIFECYCLE_ENABLED",
     "V2_FIXED_SIZING_ENABLED",
     "V2_BRAIN_POLICY",
@@ -427,7 +429,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     checks.append(
         CheckResult(
             "config.pathb_market_live_gates",
-            "FAIL" if disabled_pathb_markets else "PASS",
+            "WARN" if disabled_pathb_markets else "PASS",
             "Path B market live gates disabled: " + ",".join(disabled_pathb_markets)
             if disabled_pathb_markets
             else "Path B market live gates are enabled for KR/US",

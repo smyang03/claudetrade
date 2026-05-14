@@ -158,6 +158,24 @@ def write_candidate_quality_log(
                 "history_usable_rows": int(candidate.get("history_usable_rows") or 0),
                 "history_required_rows": int(candidate.get("history_required_rows") or 0),
                 "screen_quality": str(candidate.get("screen_quality") or ""),
+                "screener_quality_state": str(candidate.get("screener_quality_state") or ""),
+                "screener_degraded": bool(candidate.get("screener_degraded")),
+                "screener_degraded_reason": str(candidate.get("screener_degraded_reason") or ""),
+                "raw_count_by_category": candidate.get("raw_count_by_category") if isinstance(candidate.get("raw_count_by_category"), dict) else {},
+                "filtered_count_by_category": candidate.get("filtered_count_by_category") if isinstance(candidate.get("filtered_count_by_category"), dict) else {},
+                "dollar_volume_reject_count_by_category": (
+                    candidate.get("dollar_volume_reject_count_by_category")
+                    if isinstance(candidate.get("dollar_volume_reject_count_by_category"), dict)
+                    else {}
+                ),
+                "quota_total": _safe_int(candidate.get("quota_total")),
+                "fresh_count": _safe_int(candidate.get("fresh_count")),
+                "min_cache_count": _safe_int(candidate.get("min_cache_count")),
+                "min_dollar_vol": _safe_float(candidate.get("min_dollar_vol")),
+                "market_elapsed_min": _safe_float(candidate.get("market_elapsed_min")),
+                "screener_cache_used": bool(candidate.get("screener_cache_used")),
+                "screener_cache_saved": bool(candidate.get("screener_cache_saved")),
+                "screener_cache_skipped_reason": str(candidate.get("screener_cache_skipped_reason") or ""),
                 "selection_bias": str(candidate.get("selection_bias") or ""),
                 "trade_policy": str(candidate.get("trade_policy") or ""),
             }

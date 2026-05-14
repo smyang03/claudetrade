@@ -134,6 +134,14 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
                     "trainer_candidate_state": "PLAN_A",
                     "prompt_pool_version": "trainer_prompt_pool_v1",
                     "classification": "watch_only",
+                    "payload": {
+                        "screener_quality": {
+                            "screener_quality_state": "DEGRADED_COUNT",
+                            "screener_degraded": True,
+                            "screener_degraded_reason": "fresh_count_below_min_cache_count",
+                            "screener_cache_skipped_reason": "fresh_count_below_min_cache_count",
+                        }
+                    },
                 }
             )
             store.upsert_candidate(
@@ -183,6 +191,8 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             by_ticker = {row["ticker"]: row for row in rows_data["rows"]}
             self.assertEqual(by_ticker["NVTS"]["trainer_candidate_state"], "PLAN_A")
             self.assertEqual(by_ticker["NVTS"]["trainer_score_rank"], 1)
+            self.assertEqual(by_ticker["NVTS"]["screener_quality_state"], "DEGRADED_COUNT")
+            self.assertTrue(by_ticker["NVTS"]["screener_degraded"])
             self.assertEqual(by_ticker["WEAK"]["prompt_excluded_reason"], "trainer_quarantine")
 
     def test_candidate_audit_summary_missing_db_is_non_fatal(self) -> None:

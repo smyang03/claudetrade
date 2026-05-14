@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from bot.screener_quality import opening_fresh_quality_metrics, write_candidate_quality_log
 
@@ -90,6 +92,114 @@ class ScreenerQualityTests(unittest.TestCase):
         self.assertTrue(metrics["judge_triggered"])
         self.assertEqual(metrics["existing_trade_ready_weakened"], 2)
         self.assertIn("existing_trade_ready_weakened>=2", metrics["trigger_reason"])
+
+    def _us_candidates(self, count: int, category: str = "most_actives") -> list[dict]:
+        prefix = {"most_actives": "A", "day_gainers": "G", "day_losers": "L"}.get(category, "T")
+        return [
+            {
+                "ticker": f"{prefix}{chr(65 + (idx // 26) % 26)}{chr(65 + idx % 26)}",
+                "name": f"Test {idx}",
+                "price": 10.0 + idx,
+                "change_rate": 1.0,
+                "volume": 5_000_000,
+                "vol_ratio": 1.0,
+                "category": category,
+                "exchange": "NMS",
+                "fullExchangeName": "NasdaqGS",
+            }
+            for idx in range(count)
+        ]
+
+    def _us_raw_by_cat(self, *, actives: int = 15, gainers: int = 10, losers: int = 5) -> dict:
+        return {
+            "most_actives": self._us_candidates(actives, "most_actives"),
+            "day_gainers": self._us_candidates(gainers, "day_gainers"),
+            "day_losers": self._us_candidates(losers, "day_losers"),
+        }
+
+    def test_us_screener_degraded_fresh_result_is_not_cached(self) -> None:
+        import kis_api
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"US_SCREEN_MIN_CACHE_CANDIDATES": "30", "US_SCREEN_MIN_CACHE_RATIO": "0.60"},
+        ), patch.object(kis_api, "_US_SCREEN_CACHE_PATH", Path(tmp) / "us_screen_cache.json"), patch.object(
+            kis_api,
+            "_yf_screen_candidates",
+            return_value=self._us_raw_by_cat(actives=2, gainers=0, losers=0),
+        ):
+            rows = kis_api.screen_market_us(top_n=30, mode="NEUTRAL")
+
+            self.assertEqual(len(rows), 2)
+            self.assertFalse(kis_api._US_SCREEN_CACHE_PATH.exists())
+            self.assertEqual(rows[0]["screener_quality_state"], "DEGRADED_COUNT")
+            self.assertEqual(rows[0]["screener_cache_skipped_reason"], "fresh_count_below_min_cache_count")
+
+    def test_us_screener_low_quality_cache_is_not_reused(self) -> None:
+        import kis_api
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"US_SCREEN_MIN_CACHE_CANDIDATES": "30", "US_SCREEN_MIN_CACHE_RATIO": "0.60"},
+        ), patch.object(kis_api, "_US_SCREEN_CACHE_PATH", Path(tmp) / "us_screen_cache.json"), patch.object(
+            kis_api,
+            "_yf_screen_candidates",
+            return_value=self._us_raw_by_cat(),
+        ):
+            kis_api._US_SCREEN_CACHE_PATH.write_text(
+                json.dumps(
+                    {
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "candidates": self._us_candidates(2),
+                        "source": "yf",
+                        "cached_at": __import__("time").time(),
+                        "mode": "NEUTRAL",
+                        "preset": {
+                            "min_price": 5.0,
+                            "max_chg": 25.0,
+                            "min_dollar_vol": 15_000_000,
+                            "loser_max_chg": 20.0,
+                            "quota_actives": 15,
+                            "quota_gainers": 10,
+                            "quota_losers": 5,
+                            "fmp_max": 5,
+                            "top_n": 30,
+                            "schema": kis_api._US_SCREEN_CACHE_SCHEMA,
+                        },
+                        "schema": kis_api._US_SCREEN_CACHE_SCHEMA,
+                        "quality": {"fresh_count": 2, "min_cache_count": 30},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            rows = kis_api.screen_market_us(top_n=30, mode="NEUTRAL")
+
+            self.assertEqual(len(rows), 30)
+            self.assertFalse(rows[0]["screener_cache_used"])
+            self.assertTrue(rows[0]["screener_cache_saved"])
+
+    def test_us_screener_sufficient_fresh_result_is_cached_and_reused(self) -> None:
+        import kis_api
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"US_SCREEN_MIN_CACHE_CANDIDATES": "30", "US_SCREEN_MIN_CACHE_RATIO": "0.60"},
+        ), patch.object(kis_api, "_US_SCREEN_CACHE_PATH", Path(tmp) / "us_screen_cache.json"):
+            with patch.object(kis_api, "_yf_screen_candidates", return_value=self._us_raw_by_cat()):
+                first = kis_api.screen_market_us(top_n=30, mode="NEUTRAL")
+                self.assertTrue(kis_api._US_SCREEN_CACHE_PATH.exists())
+                self.assertTrue(first[0]["screener_cache_saved"])
+            with patch.object(
+                kis_api,
+                "_yf_screen_candidates",
+                side_effect=AssertionError("fresh fetch should not be called when cache is reusable"),
+            ):
+                second = kis_api.screen_market_us(top_n=30, mode="NEUTRAL")
+
+        self.assertEqual(len(second), 30)
+        self.assertTrue(second[0]["screener_cache_used"])
 
 
 if __name__ == "__main__":

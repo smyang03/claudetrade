@@ -11,6 +11,7 @@ from audit import candidate_audit_store as audit_store_module
 from audit.candidate_audit_store import CandidateAuditStore, candidate_key
 from tools.analyze_candidate_audit import analyze_candidate_audit, classify_strategy_match, watch_trigger_funnel_summary
 from tools.backfill_candidate_audit import backfill_candidate_audit
+from tools.candidate_audit_outcome_catchup import build_catchup_plan, run_catchup
 from tools.update_candidate_audit_outcomes import update_candidate_audit_outcomes
 
 
@@ -135,6 +136,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                                 "ticker": "AAPL",
                                 "result": "would_promote",
                                 "strategy": "opening_range_pullback",
+                                "strategy_source": "candidate_action.primary_bucket",
                             },
                             ensure_ascii=False,
                         ),
@@ -165,6 +167,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(summary["watch_trigger_would_promote_count"], 1)
         self.assertEqual(summary["watch_trigger_blocked_count"], 1)
         self.assertEqual(summary["blocked_reason_counts"]["missing_strategy"], 1)
+        self.assertEqual(summary["strategy_source_counts"]["candidate_action.primary_bucket"], 1)
 
     def test_backfill_builds_separate_candidate_audit_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -611,6 +614,34 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertAlmostEqual(base_30["return_pct"], 2.0)
             self.assertAlmostEqual(base_30["max_runup_pct"], 3.0)
             self.assertEqual(late_30["status"], "insufficient_samples")
+
+    def test_candidate_audit_outcome_catchup_builds_market_date_plan(self) -> None:
+        plan = build_catchup_plan(from_date="2026-05-08", to_date="2026-05-09", market="")
+
+        self.assertEqual(
+            plan,
+            [
+                {"session_date": "2026-05-08", "market": "KR"},
+                {"session_date": "2026-05-08", "market": "US"},
+                {"session_date": "2026-05-09", "market": "KR"},
+                {"session_date": "2026-05-09", "market": "US"},
+            ],
+        )
+
+    def test_candidate_audit_outcome_catchup_dry_run_does_not_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            summary = run_catchup(
+                db_path=db_path,
+                date_arg="2026-05-08",
+                market="KR",
+                runtime_mode="live",
+                dry_run=True,
+            )
+
+        self.assertTrue(summary["dry_run"])
+        self.assertEqual(summary["planned"], [{"session_date": "2026-05-08", "market": "KR"}])
+        self.assertEqual(summary["results"], [])
 
     def test_analysis_percentiles_and_strategy_mismatch_are_python_side(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

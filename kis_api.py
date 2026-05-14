@@ -1912,9 +1912,13 @@ def _get_us_cash_snapshot(token: str) -> dict:
     usd_row = max(pool, key=_row_score) if pool else {}
     cash = _to_float(usd_row.get("frcr_dncl_amt1"), 0.0)
     orderable = _to_float(usd_row.get("frcr_gnrl_ord_psbl_amt"), cash)
+    # For US accounts, settled foreign cash can be lower than the account value
+    # while same-day unsettled sell proceeds are already reflected in orderable.
+    asset_cash = max(cash, orderable)
     return {
         "cash": round(cash, 6),
         "orderable_cash": round(orderable, 6),
+        "asset_cash": round(asset_cash, 6),
         "currency": "USD",
     }
 
@@ -1924,29 +1928,7 @@ def _get_balance_us_present_fallback(token: str) -> dict:
 
     inquire-balance가 실전에서 간헐적으로 500을 반환할 때 사용한다.
     """
-    profile = get_kis_market_profile("US")
-    acnt_no, acnt_prdt = profile.account_no.split("-")
-    tr_id = "VTRP6504R" if IS_PAPER_US else "CTRP6504R"
-    def _fetch():
-        resp = _kis_get(
-            f"{profile.base_url}/uapi/overseas-stock/v1/trading/inquire-present-balance",
-            headers=_headers(token, tr_id, market="US"),
-            params={
-                "CANO": acnt_no,
-                "ACNT_PRDT_CD": acnt_prdt,
-                "WCRC_FRCR_DVSN_CD": "02",
-                "NATN_CD": "840",
-                "TR_MKET_CD": "00",
-                "INQR_DVSN_CD": "00",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        _require_kis_success(data, "해외현재잔고 조회")
-        return data
-
-    data = _retry_kis("US present balance", _fetch, retries=4, delay_sec=1.2)
+    data = _get_us_present_balance_data(token)
 
     stocks = []
     for row in data.get("output1", []) or []:
@@ -1977,14 +1959,72 @@ def _get_balance_us_present_fallback(token: str) -> dict:
 
     total_cost_usd = sum(s["qty"] * s["avg_price"] for s in stocks)
     profit_rate = (total_profit / total_cost_usd * 100.0) if total_cost_usd > 0 else 0.0
-    return {
+    result = {
         "stocks": stocks,
         "total_eval": round(total_eval_usd, 2),
         "cash": float(cash_snapshot.get("cash", 0.0) or 0.0),
         "orderable_cash": float(cash_snapshot.get("orderable_cash", 0.0) or 0.0),
+        "asset_cash": float(cash_snapshot.get("asset_cash", cash_snapshot.get("cash", 0.0)) or 0.0),
         "total_profit": round(total_profit, 2),
         "profit_rate": round(profit_rate, 4),
         "currency": "USD",
+    }
+    result.update(_us_present_krw_fields(data))
+    return result
+
+
+def _get_us_present_balance_data(token: str) -> dict:
+    profile = get_kis_market_profile("US")
+    acnt_no, acnt_prdt = profile.account_no.split("-")
+    tr_id = "VTRP6504R" if IS_PAPER_US else "CTRP6504R"
+
+    def _fetch():
+        resp = _kis_get(
+            f"{profile.base_url}/uapi/overseas-stock/v1/trading/inquire-present-balance",
+            headers=_headers(token, tr_id, market="US"),
+            params={
+                "CANO": acnt_no,
+                "ACNT_PRDT_CD": acnt_prdt,
+                "WCRC_FRCR_DVSN_CD": "02",
+                "NATN_CD": "840",
+                "TR_MKET_CD": "00",
+                "INQR_DVSN_CD": "00",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _require_kis_success(data, "해외현재잔고 조회")
+        return data
+
+    return _retry_kis("US present balance", _fetch, retries=4, delay_sec=1.2)
+
+
+def _us_present_krw_fields(data: dict) -> dict:
+    summary2 = _first_record(data.get("output2", {}))
+    summary3 = _first_record(data.get("output3", {}))
+    if not summary3:
+        return {}
+
+    total_asset_krw = _to_float(summary3.get("tot_asst_amt"), 0.0)
+    domestic_cash_krw = _to_float(summary3.get("tot_dncl_amt"), 0.0)
+    cma_eval_krw = _to_float(summary3.get("cma_evlu_amt"), 0.0)
+    eval_krw = _to_float(summary3.get("evlu_amt_smtl_amt"), 0.0)
+    profit_krw = _to_float(summary3.get("tot_evlu_pfls_amt"), 0.0)
+    purchase_krw = _to_float(summary3.get("pchs_amt_smtl_amt"), 0.0)
+    market_asset_krw = max(total_asset_krw - domestic_cash_krw - cma_eval_krw, 0.0) if total_asset_krw > 0 else 0.0
+    asset_cash_krw = max(market_asset_krw - eval_krw, 0.0) if market_asset_krw > 0 else 0.0
+    exchange_rate = _to_float(summary2.get("frst_bltn_exrt"), 0.0)
+
+    return {
+        "kis_total_asset_krw": round(total_asset_krw, 6),
+        "kis_domestic_cash_krw": round(domestic_cash_krw, 6),
+        "market_asset_krw": round(market_asset_krw, 6),
+        "asset_cash_krw": round(asset_cash_krw, 6),
+        "total_eval_krw": round(eval_krw, 6),
+        "purchase_amount_krw": round(purchase_krw, 6),
+        "total_profit_krw": round(profit_krw, 6),
+        "kis_exchange_rate": round(exchange_rate, 6),
     }
 
 
@@ -2040,16 +2080,24 @@ def _get_balance_us(token, force_refresh: bool = False) -> dict:
         )
 
         cash_snapshot = _get_us_cash_snapshot(token)
+        present_fields = {}
+        try:
+            present_fields = _us_present_krw_fields(_get_us_present_balance_data(token))
+        except Exception as present_error:
+            log.debug(f"KIS US 현재잔고 원화요약 조회 실패: {present_error}")
 
-        return {
+        result = {
             "stocks":       stocks,
             "total_eval":   round(total_eval_usd, 2),
             "cash":         float(cash_snapshot.get("cash", 0.0) or 0.0),
             "orderable_cash": float(cash_snapshot.get("orderable_cash", 0.0) or 0.0),
+            "asset_cash":   float(cash_snapshot.get("asset_cash", cash_snapshot.get("cash", 0.0)) or 0.0),
             "total_profit": round(total_profit, 2),
             "profit_rate":  profit_rate,
             "currency":     "USD",
         }
+        result.update(present_fields)
+        return result
 
     if force_refresh:
         _cache_invalidate(_BALANCE_CACHE, cache_key)
@@ -3495,7 +3543,7 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
 
 
 _US_SCREEN_CACHE_PATH = get_runtime_path("state", "us_screen_cache.json")
-_US_SCREEN_CACHE_SCHEMA = 2
+_US_SCREEN_CACHE_SCHEMA = 3
 
 # 레거시 캐시 경로 (이전 버전 호환)
 _AV_CACHE_PATH = _US_SCREEN_CACHE_PATH
@@ -3523,6 +3571,139 @@ def _extract_us_volume(item: dict) -> int:
 
 def _has_meaningful_candidate_volume(candidates: list) -> bool:
     return any(_safe_int(c.get("volume"), 0) > 0 for c in candidates)
+
+
+def _safe_float_value(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return float(default)
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _us_screen_cache_threshold(quota_total: int) -> dict:
+    quota = max(0, int(quota_total or 0))
+    absolute_raw = max(0, _safe_int(os.getenv("US_SCREEN_MIN_CACHE_CANDIDATES"), 30))
+    ratio = _safe_float_value(os.getenv("US_SCREEN_MIN_CACHE_RATIO"), 0.60)
+    ratio = max(0.0, ratio)
+    absolute_floor = min(absolute_raw, quota)
+    ratio_floor = min(quota, int(math.ceil(quota * ratio))) if quota > 0 else 0
+    return {
+        "quota_total": quota,
+        "absolute_floor": absolute_floor,
+        "ratio_floor": ratio_floor,
+        "min_cache_count": max(absolute_floor, ratio_floor),
+        "ratio": ratio,
+    }
+
+
+def _us_screen_market_elapsed_min() -> Optional[float]:
+    try:
+        from bot.session_date import KST, resolve_session_date_str
+        from preopen.scheduler import regular_open_dt
+
+        now_dt = datetime.now(KST)
+        session_date = resolve_session_date_str("US", now_dt)
+        opened = regular_open_dt("US", session_date)
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=KST)
+        else:
+            opened = opened.astimezone(KST)
+        return (now_dt - opened).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
+def _us_screen_quality_state(
+    *,
+    source: str,
+    fresh_count: int,
+    threshold: dict,
+    raw_count_by_category: dict,
+    filtered_count_by_category: dict,
+    dollar_reject_count_by_category: dict,
+) -> dict:
+    min_cache_count = int(threshold.get("min_cache_count") or 0)
+    fresh = int(fresh_count or 0)
+    reasons: list[str] = []
+    state = "OK"
+    if min_cache_count > 0 and fresh < min_cache_count:
+        state = "DEGRADED_COUNT"
+        reasons.append("fresh_count_below_min_cache_count")
+    category_degraded = False
+    for cat, raw_count in (raw_count_by_category or {}).items():
+        if int(raw_count or 0) > 0 and int((filtered_count_by_category or {}).get(cat, 0) or 0) == 0:
+            category_degraded = True
+            break
+    if category_degraded and state == "OK":
+        state = "DEGRADED_CATEGORY"
+    if category_degraded:
+        reasons.append("category_filtered_to_zero")
+    elapsed_min = _us_screen_market_elapsed_min()
+    early_window = _safe_float_value(os.getenv("US_SCREEN_EARLY_VOLUME_WINDOW_MIN"), 30.0)
+    dollar_reject_total = sum(int(v or 0) for v in (dollar_reject_count_by_category or {}).values())
+    early_volume_degraded = (
+        elapsed_min is not None
+        and 0.0 <= float(elapsed_min) <= early_window
+        and dollar_reject_total > 0
+    )
+    if early_volume_degraded and state == "OK":
+        state = "DEGRADED_EARLY_VOLUME"
+    if early_volume_degraded:
+        reasons.append("early_dollar_volume_rejects")
+    return {
+        "screener_quality_state": state,
+        "screener_degraded": state != "OK",
+        "screener_degraded_reason": ",".join(dict.fromkeys(reasons)),
+        "raw_count_by_category": dict(raw_count_by_category or {}),
+        "filtered_count_by_category": dict(filtered_count_by_category or {}),
+        "dollar_volume_reject_count_by_category": dict(dollar_reject_count_by_category or {}),
+        "quota_total": int(threshold.get("quota_total") or 0),
+        "fresh_count": fresh,
+        "min_cache_count": min_cache_count,
+        "min_cache_ratio": float(threshold.get("ratio") or 0.0),
+        "market_elapsed_min": round(float(elapsed_min), 2) if elapsed_min is not None else None,
+        "screener_cache_used": False,
+        "screener_cache_saved": False,
+        "screener_cache_skipped_reason": "",
+        "source": str(source or ""),
+    }
+
+
+def _annotate_us_screen_quality(candidates: list, quality: dict) -> list:
+    annotated = []
+    for row in candidates or []:
+        item = dict(row or {})
+        for key in (
+            "screener_quality_state",
+            "screener_degraded",
+            "screener_degraded_reason",
+            "raw_count_by_category",
+            "filtered_count_by_category",
+            "dollar_volume_reject_count_by_category",
+            "quota_total",
+            "fresh_count",
+            "min_cache_count",
+            "min_dollar_vol",
+            "market_elapsed_min",
+            "screener_cache_used",
+            "screener_cache_saved",
+            "screener_cache_skipped_reason",
+        ):
+            if key in quality:
+                item[key] = quality.get(key)
+        annotated.append(item)
+    return annotated
+
+
+def _us_screen_cache_eligible(quality: dict) -> bool:
+    try:
+        return int(quality.get("fresh_count") or 0) >= int(quality.get("min_cache_count") or 0)
+    except Exception:
+        return False
 
 
 def _candidate_us_exchange_code(candidate: dict) -> Optional[str]:
@@ -3621,6 +3802,24 @@ def _us_post_filter(
     min_dollar_vol: float,
     loser_max_chg: float,
 ) -> list:
+    return _us_post_filter_with_stats(
+        candidates,
+        category,
+        min_price,
+        max_abs_chg,
+        min_dollar_vol,
+        loser_max_chg,
+    )[0]
+
+
+def _us_post_filter_with_stats(
+    candidates: list,
+    category: str,
+    min_price: float,
+    max_abs_chg: float,
+    min_dollar_vol: float,
+    loser_max_chg: float,
+) -> tuple[list, dict]:
     """
     소스 무관 공통 후처리 필터 (raw 수집 후 적용).
 
@@ -3630,6 +3829,10 @@ def _us_post_filter(
     """
     _BAD_SFXS = {"W", "U", "R"}
     result = []
+    stats = {
+        "raw_count": len(candidates or []),
+        "dollar_volume_reject_count": 0,
+    }
     for c in candidates:
         ticker = str(c.get("ticker", "")).strip()
         if not ticker or not ticker.isalpha() or len(ticker) > 5:
@@ -3655,9 +3858,11 @@ def _us_post_filter(
         if category == "day_losers" and change_abs > loser_max_chg:
             continue
         if not vol_miss and min_dollar_vol > 0 and price * volume < min_dollar_vol:
+            stats["dollar_volume_reject_count"] += 1
             continue
         result.append(c)
-    return result
+    stats["filtered_count"] = len(result)
+    return result, stats
 
 
 def _yf_screen_candidates() -> dict:
@@ -3816,6 +4021,8 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
         while sum(_quota.values()) < _target_n:
             _quota[_fill_order[_idx % len(_fill_order)]] += 1
             _idx += 1
+    _quota_total = sum(int(v or 0) for v in _quota.values())
+    _cache_threshold = _us_screen_cache_threshold(_quota_total)
     _cache_mode = str(mode).upper()
     _logger.info(
         f"[US 스크리너] mode={mode} → "
@@ -3848,17 +4055,41 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                     cands  = cached["candidates"]
                     cached_mode = str(cached.get("mode", "")).upper()
                     cached_preset = cached.get("preset", {})
+                    cached_quality = dict(cached.get("quality") or {})
+                    cached_fresh_count = _safe_int(cached_quality.get("fresh_count"), len(cands or []))
                     if cached_mode != _cache_mode or cached_preset != _cache_preset:
                         _logger.info(
                             f"[US 스크리너 캐시] mode/preset 불일치 "
                             f"(cached={cached_mode or '-'} current={_cache_mode}) → 재스크리닝"
                         )
+                    elif cached_fresh_count < int(_cache_threshold.get("min_cache_count") or 0):
+                        _logger.info(
+                            f"[US 스크리너 캐시] 재사용 건너뜀: fresh_count={cached_fresh_count} "
+                            f"min_cache_count={_cache_threshold.get('min_cache_count')} "
+                            f"quota_total={_cache_threshold.get('quota_total')} "
+                            f"ratio={_cache_threshold.get('ratio')} source={source or '-'} "
+                            f"mode={_cache_mode} top_n={_target_n}"
+                        )
                     elif source == "yf" and _has_meaningful_candidate_volume(cands):
                         _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
-                        return cands[:_target_n]
+                        cached_quality.update(
+                            {
+                                "screener_cache_used": True,
+                                "screener_cache_saved": False,
+                                "screener_cache_skipped_reason": "",
+                            }
+                        )
+                        return _annotate_us_screen_quality(cands[:_target_n], cached_quality)
                     elif source == "fmp" and cands:
                         _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
-                        return cands[:_target_n]
+                        cached_quality.update(
+                            {
+                                "screener_cache_used": True,
+                                "screener_cache_saved": False,
+                                "screener_cache_skipped_reason": "",
+                            }
+                        )
+                        return _annotate_us_screen_quality(cands[:_target_n], cached_quality)
                 else:
                     _logger.info(
                         f"[US 스크리너 캐시] 만료 ({cache_age/60:.0f}분 > TTL {_CACHE_TTL_SEC//60}분) → 재스크리닝"
@@ -3872,10 +4103,22 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
         merged: list = []
         seen: set = set()
         cat_stats = {}
+        raw_count_by_category = {}
+        filtered_count_by_category = {}
+        dollar_reject_count_by_category = {}
         for cat, quota in _quota.items():
             bucket = raw_by_cat.get(cat, [])
-            filtered = _us_post_filter(bucket, cat, _min_price, _max_chg,
-                                       _min_dollar_vol, _loser_max_chg)
+            filtered, filter_stats = _us_post_filter_with_stats(
+                bucket,
+                cat,
+                _min_price,
+                _max_chg,
+                _min_dollar_vol,
+                _loser_max_chg,
+            )
+            raw_count_by_category[cat] = int(filter_stats.get("raw_count") or 0)
+            filtered_count_by_category[cat] = int(filter_stats.get("filtered_count") or 0)
+            dollar_reject_count_by_category[cat] = int(filter_stats.get("dollar_volume_reject_count") or 0)
             added = 0
             for c in filtered:
                 if c["ticker"] in seen or added >= quota:
@@ -3886,6 +4129,15 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
             cat_stats[cat] = added
 
         if merged:
+            quality = _us_screen_quality_state(
+                source="yf",
+                fresh_count=len(merged),
+                threshold=_cache_threshold,
+                raw_count_by_category=raw_count_by_category,
+                filtered_count_by_category=filtered_count_by_category,
+                dollar_reject_count_by_category=dollar_reject_count_by_category,
+            )
+            quality["min_dollar_vol"] = _min_dollar_vol
             _logger.info(
                 f"[YF 스크리너] 통과={len(merged)}종목 "
                 f"actives={cat_stats.get('most_actives',0)} "
@@ -3893,45 +4145,93 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                 f"losers={cat_stats.get('day_losers',0)} "
                 f"(기준: ${_min_price}+, ≤{_max_chg}%, dolvol≥${_min_dollar_vol/1e6:.0f}M)"
             )
-            _US_SCREEN_CACHE_PATH.write_text(
-                json.dumps({"date": today, "candidates": merged,
-                            "source": "yf", "cached_at": _time.time(),
-                            "mode": _cache_mode, "preset": _cache_preset,
-                            "schema": _US_SCREEN_CACHE_SCHEMA},
-                           ensure_ascii=False),
-                encoding="utf-8",
-            )
-            return merged[:_target_n]
+            if _us_screen_cache_eligible(quality):
+                quality["screener_cache_saved"] = True
+                _US_SCREEN_CACHE_PATH.write_text(
+                    json.dumps({"date": today, "candidates": merged,
+                                "source": "yf", "cached_at": _time.time(),
+                                "mode": _cache_mode, "preset": _cache_preset,
+                                "schema": _US_SCREEN_CACHE_SCHEMA,
+                                "quality": quality},
+                               ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            else:
+                quality["screener_cache_skipped_reason"] = "fresh_count_below_min_cache_count"
+                _logger.warning(
+                    f"[US 스크리너 캐시] 저장 건너뜀: fresh_count={quality.get('fresh_count')} "
+                    f"min_cache_count={quality.get('min_cache_count')} "
+                    f"quota_total={quality.get('quota_total')} ratio={quality.get('min_cache_ratio')} "
+                    f"source=yf mode={_cache_mode} top_n={_target_n}"
+                )
+            return _annotate_us_screen_quality(merged[:_target_n], quality)
     except Exception as e:
         _logger.warning(f"[YF 스크리너] 실패: {e}")
 
     # ── 2차: FMP fallback — volume_missing, 최대 _fmp_max개 ──────────────
     try:
         fmp_raw = _fmp_screen_candidates()
-        fmp_filtered = _us_post_filter(fmp_raw, "most_actives", _min_price, _max_chg,
-                                       _min_dollar_vol, _loser_max_chg)
+        fmp_filtered, fmp_stats = _us_post_filter_with_stats(
+            fmp_raw,
+            "most_actives",
+            _min_price,
+            _max_chg,
+            _min_dollar_vol,
+            _loser_max_chg,
+        )
         fmp_cands = fmp_filtered[:_fmp_max]
         if fmp_cands:
-            _logger.info(f"[FMP 스크리너] 통과={len(fmp_cands)}종목 (최대 {_fmp_max}개, volume 미포함)")
-            _US_SCREEN_CACHE_PATH.write_text(
-                json.dumps({"date": today, "candidates": fmp_cands,
-                            "source": "fmp", "cached_at": _time.time(),
-                            "mode": _cache_mode, "preset": _cache_preset,
-                            "schema": _US_SCREEN_CACHE_SCHEMA},
-                           ensure_ascii=False),
-                encoding="utf-8",
+            quality = _us_screen_quality_state(
+                source="fmp",
+                fresh_count=len(fmp_cands),
+                threshold=_cache_threshold,
+                raw_count_by_category={"fmp": int(fmp_stats.get("raw_count") or 0)},
+                filtered_count_by_category={"fmp": int(fmp_stats.get("filtered_count") or 0)},
+                dollar_reject_count_by_category={"fmp": int(fmp_stats.get("dollar_volume_reject_count") or 0)},
             )
-            return fmp_cands[:_target_n]
+            quality["min_dollar_vol"] = _min_dollar_vol
+            _logger.info(f"[FMP 스크리너] 통과={len(fmp_cands)}종목 (최대 {_fmp_max}개, volume 미포함)")
+            if _us_screen_cache_eligible(quality):
+                quality["screener_cache_saved"] = True
+                _US_SCREEN_CACHE_PATH.write_text(
+                    json.dumps({"date": today, "candidates": fmp_cands,
+                                "source": "fmp", "cached_at": _time.time(),
+                                "mode": _cache_mode, "preset": _cache_preset,
+                                "schema": _US_SCREEN_CACHE_SCHEMA,
+                                "quality": quality},
+                               ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            else:
+                quality["screener_cache_skipped_reason"] = "fresh_count_below_min_cache_count"
+                _logger.warning(
+                    f"[US 스크리너 캐시] 저장 건너뜀: fresh_count={quality.get('fresh_count')} "
+                    f"min_cache_count={quality.get('min_cache_count')} "
+                    f"quota_total={quality.get('quota_total')} ratio={quality.get('min_cache_ratio')} "
+                    f"source=fmp mode={_cache_mode} top_n={_target_n}"
+                )
+            return _annotate_us_screen_quality(fmp_cands[:_target_n], quality)
     except Exception as e:
         _logger.warning(f"[FMP 스크리너] 실패: {e}")
 
     # ── 3차: 하드코딩 폴백 ───────────────────────────────────────────────
     _logger.warning("[US 스크리너] 모든 소스 실패 → 폴백 유니버스 사용")
-    return [
+    fallback = [
         {"ticker": t, "name": t, "price": 0.0, "change_rate": 0.0,
          "volume": 0, "vol_ratio": 1.0, "category": "fallback"}
         for t in _US_FALLBACK_UNIVERSE
     ]
+    quality = _us_screen_quality_state(
+        source="fallback",
+        fresh_count=len(fallback),
+        threshold=_cache_threshold,
+        raw_count_by_category={"fallback": len(fallback)},
+        filtered_count_by_category={"fallback": len(fallback)},
+        dollar_reject_count_by_category={"fallback": 0},
+    )
+    quality["screener_cache_skipped_reason"] = "fallback_not_cached"
+    quality["min_dollar_vol"] = _min_dollar_vol
+    return _annotate_us_screen_quality(fallback, quality)
 
 
 def _aes_cbc_base64_dec(key: str, iv: str, cipher_text: str) -> str:

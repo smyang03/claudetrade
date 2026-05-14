@@ -717,15 +717,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if self._market_enabled("US"):
             try:
                 bal_us = self._get_balance_with_token_refresh("US")
-                usd_krw = get_usd_krw()
+                usd_krw = float(bal_us.get("kis_exchange_rate", 0) or get_usd_krw())
                 self.usd_krw_rate = float(usd_krw)
                 us_cash_usd    = float(bal_us.get("cash", 0) or 0)
-                us_cash_krw_   = int(us_cash_usd * usd_krw)
+                us_orderable_usd = float(bal_us.get("orderable_cash", us_cash_usd) or us_cash_usd)
+                us_asset_cash_usd = float(bal_us.get("asset_cash", max(us_cash_usd, us_orderable_usd)) or 0)
+                if us_asset_cash_usd <= 0:
+                    us_asset_cash_usd = max(us_cash_usd, us_orderable_usd)
+                us_cash_krw_   = int(float(bal_us.get("asset_cash_krw", 0) or 0) or us_asset_cash_usd * usd_krw)
                 us_eval_usd    = float(bal_us.get("total_eval", 0) or 0)
                 us_eval_krw    = int(us_eval_usd * usd_krw)
                 _log_normal(
                     "info",
-                    f"{mode_label} | KIS US balance ${us_cash_usd:.2f} "
+                    f"{mode_label} | KIS US balance ${us_asset_cash_usd:.2f} "
                     f"cash({us_cash_krw_:,} KRW) + ${us_eval_usd:.2f} eval({us_eval_krw:,} KRW)"
                     f" | positions {len(bal_us['stocks'])}",
                 )
@@ -6626,16 +6630,77 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         lookup = self._selection_ticker_key(market_key, ticker)
         meta = self.selection_meta.get(market_key, {}) if hasattr(self, "selection_meta") else {}
+
+        def _strategy_from_bucket(raw: str) -> str:
+            normalized = _normalize_strategy_name(raw)
+            if normalized:
+                return normalized
+            value = str(raw or "").strip().lower()
+            bucket_map = {
+                "momentum_now": "momentum",
+                "volume_surge": "momentum",
+                "near_breakout": "momentum",
+                "prev_strength": "momentum",
+                "liquidity_leader": "momentum",
+                "pullback_watch": "gap_pullback",
+                "pre_move_setup": "opening_range_pullback",
+                "sector_lagging_leader": "continuation",
+                "day_gainers": "momentum",
+                "most_actives": "momentum",
+                "day_losers": "mean_reversion",
+            }
+            return bucket_map.get(value, "")
+
+        def _strategy_from_candidate(row: dict, source: str) -> tuple[str, str]:
+            if not isinstance(row, dict):
+                return "", ""
+            for key in ("recommended_strategy", "strategy", "route_strategy", "strategy_name"):
+                candidate_strategy = _normalize_strategy_name(row.get(key, ""))
+                if candidate_strategy:
+                    return candidate_strategy, f"{source}.{key}"
+            for key in ("primary_bucket", "category"):
+                candidate_strategy = _strategy_from_bucket(str(row.get(key) or ""))
+                if candidate_strategy:
+                    return candidate_strategy, f"{source}.{key}"
+            try:
+                from bot.bucket_classifier import classify_candidate_bucket
+
+                classified = classify_candidate_bucket(row, market_key)
+                candidate_strategy = _strategy_from_bucket(str(classified.get("primary_bucket") or ""))
+                if candidate_strategy:
+                    return candidate_strategy, "bucket_classifier.primary_bucket"
+            except Exception:
+                pass
+            return "", ""
+
         for action in (meta or {}).get("candidate_actions") or []:
             if not isinstance(action, dict):
                 continue
             action_ticker = self._selection_ticker_key(market_key, action.get("ticker", ""))
             if action_ticker != lookup:
                 continue
-            for key in ("recommended_strategy", "strategy", "route_strategy", "strategy_name"):
-                strategy = _normalize_strategy_name(action.get(key, ""))
+            strategy, source = _strategy_from_candidate(action, "candidate_action")
+            if strategy:
+                return strategy, source
+        for pool_key in ("_final_prompt_pool", "watchlist_candidates", "candidates"):
+            for row in (meta or {}).get(pool_key) or []:
+                if not isinstance(row, dict):
+                    continue
+                row_ticker = self._selection_ticker_key(market_key, row.get("ticker", ""))
+                if row_ticker != lookup:
+                    continue
+                strategy, source = _strategy_from_candidate(row, pool_key)
                 if strategy:
-                    return strategy, f"candidate_action.{key}"
+                    return strategy, source
+        for row in (getattr(self, "_last_screen_candidates", {}) or {}).get(market_key, []) or []:
+            if not isinstance(row, dict):
+                continue
+            row_ticker = self._selection_ticker_key(market_key, row.get("ticker", ""))
+            if row_ticker != lookup:
+                continue
+            strategy, source = _strategy_from_candidate(row, "last_screen_candidate")
+            if strategy:
+                return strategy, source
         return "", ""
     def _log_watch_trigger_not_evaluated(
         self,
@@ -10025,6 +10090,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for row in prompt_rows
         }
         excluded_rows = list((meta or {}).get("_excluded_from_prompt") or [])
+        actual_prompt_tickers = [
+            self._selection_ticker_key(market_key, row.get("ticker"))
+            for row in prompt_rows
+            if self._selection_ticker_key(market_key, row.get("ticker"))
+        ]
+        excluded_prompt_tickers = []
+        for item in excluded_rows:
+            if not isinstance(item, dict):
+                continue
+            candidate = item.get("candidate") if isinstance(item.get("candidate"), dict) else item
+            key = self._selection_ticker_key(market_key, (candidate or {}).get("ticker") or item.get("ticker"))
+            if key:
+                excluded_prompt_tickers.append(key)
 
         def _candidate_row_value(row: dict, *keys: str, default=None):
             for key in keys:
@@ -10032,6 +10110,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if value not in (None, ""):
                     return value
             return default
+
+        _screener_quality_keys = (
+            "screener_quality_state",
+            "screener_degraded",
+            "screener_degraded_reason",
+            "raw_count_by_category",
+            "filtered_count_by_category",
+            "dollar_volume_reject_count_by_category",
+            "quota_total",
+            "fresh_count",
+            "min_cache_count",
+            "min_dollar_vol",
+            "market_elapsed_min",
+            "screener_cache_used",
+            "screener_cache_saved",
+            "screener_cache_skipped_reason",
+        )
+
+        def _screener_quality_payload(*sources: dict) -> dict:
+            payload: dict = {}
+            for source in sources:
+                if not isinstance(source, dict):
+                    continue
+                for key in _screener_quality_keys:
+                    value = source.get(key)
+                    if value not in (None, "", [], {}):
+                        payload[key] = value
+            return payload
+
+        call_screener_quality = _screener_quality_payload(meta or {})
+        if not call_screener_quality:
+            for row in prompt_rows:
+                call_screener_quality = _screener_quality_payload(row)
+                if call_screener_quality:
+                    break
 
         def _trainer_audit_fields(row: dict, *, included: bool, excluded_reason: str = "") -> dict:
             components = row.get("trainer_score_components")
@@ -10099,6 +10212,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "candidate_actions_source": (meta or {}).get("_candidate_actions_source", ""),
                         "selection_stages": stages,
                         "audit_source": "live_write",
+                        "actual_prompt_tickers": actual_prompt_tickers,
+                        "excluded_prompt_tickers": excluded_prompt_tickers,
+                        "actual_prompt_count": len(actual_prompt_tickers),
+                        "excluded_prompt_count": len(excluded_prompt_tickers),
+                        "screener_quality_state": call_screener_quality.get("screener_quality_state", ""),
+                        "screener_quality": call_screener_quality,
                         "shadow_only": self._runtime_bool("ENABLE_CANDIDATE_AUDIT_SHADOW", False)
                         and not self._runtime_bool("ENABLE_CANDIDATE_AUDIT_LIVE", False),
                     },
@@ -10186,6 +10305,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "evidence_tickers": list((meta or {}).get("evidence_tickers") or []),
                             "tuning_feedback": tuning_feedback,
                             "selection_stage": "live_selection_meta",
+                            "screener_quality": _screener_quality_payload(prompt_row, action, meta or {}),
                         },
                     }
                 )
@@ -10225,6 +10345,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "payload": {
                             "selection_stage": "trainer_prompt_pool",
                             "prompt_pool_audit": True,
+                            "screener_quality": _screener_quality_payload(row, meta or {}),
                         },
                     }
                 )
@@ -10266,6 +10387,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "selection_stage": "trainer_prompt_pool_excluded",
                             "prompt_pool_audit": True,
                             "excluded_reason": excluded_reason,
+                            "screener_quality": _screener_quality_payload(row, item, meta or {}),
                         },
                     }
                 )
@@ -11693,25 +11815,47 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         balance = balance or {}
         if market == "US":
             cash_usd = float(balance.get("cash", 0) or 0)
+            orderable_usd = float(balance.get("orderable_cash", cash_usd) or cash_usd)
+            asset_cash_usd = float(balance.get("asset_cash", max(cash_usd, orderable_usd)) or 0)
+            if asset_cash_usd <= 0:
+                asset_cash_usd = max(cash_usd, orderable_usd)
             eval_usd = float(balance.get("total_eval", 0) or 0)
-            total_krw = (cash_usd + eval_usd) * float(self.usd_krw_rate or 0)
+            rate = float(balance.get("kis_exchange_rate", 0) or self.usd_krw_rate or 0)
+            eval_krw = float(balance.get("total_eval_krw", 0) or 0) or eval_usd * rate
+            asset_cash_krw = float(balance.get("asset_cash_krw", 0) or 0) or asset_cash_usd * rate
+            market_asset_krw = float(balance.get("market_asset_krw", 0) or 0)
+            if market_asset_krw > 0:
+                total_krw = market_asset_krw
+                asset_cash_krw = max(total_krw - eval_krw, 0.0)
+            else:
+                total_krw = asset_cash_krw + eval_krw
+            profit_krw = float(balance.get("total_profit_krw", 0) or 0)
             return {
                 "market": market,
                 "cash_usd": cash_usd,
+                "asset_cash_usd": asset_cash_usd,
+                "orderable_cash_usd": orderable_usd,
                 "eval_usd": eval_usd,
-                "cash_krw": cash_usd * float(self.usd_krw_rate or 0),
-                "eval_krw": eval_usd * float(self.usd_krw_rate or 0),
+                "cash_krw": asset_cash_krw,
+                "settled_cash_krw": cash_usd * rate,
+                "orderable_cash_krw": orderable_usd * rate,
+                "eval_krw": eval_krw,
                 "total_krw": total_krw,
+                "profit_krw": profit_krw,
+                "kis_total_asset_krw": float(balance.get("kis_total_asset_krw", 0) or 0),
+                "kis_exchange_rate": float(balance.get("kis_exchange_rate", 0) or 0),
                 "positions": len(balance.get("stocks", []) or []),
                 "fetched_at": datetime.now(KST).isoformat(timespec="seconds"),
             }
         cash_krw = float(balance.get("cash", 0) or 0)
         eval_krw = float(balance.get("total_eval", 0) or 0)
+        profit_krw = float(balance.get("total_profit", 0) or 0)
         return {
             "market": market,
             "cash_krw": cash_krw,
             "eval_krw": eval_krw,
             "total_krw": cash_krw + eval_krw,
+            "profit_krw": profit_krw,
             "positions": len(balance.get("stocks", []) or []),
             "fetched_at": datetime.now(KST).isoformat(timespec="seconds"),
         }
@@ -11922,8 +12066,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         try:
             bal_us = get_balance(self._token_for_market("US"), market="US")
             us_cash_usd = float(bal_us.get("cash", 0))
+            us_orderable_usd = float(bal_us.get("orderable_cash", us_cash_usd) or us_cash_usd)
+            us_asset_cash_usd = float(bal_us.get("asset_cash", max(us_cash_usd, us_orderable_usd)) or 0)
+            if us_asset_cash_usd <= 0:
+                us_asset_cash_usd = max(us_cash_usd, us_orderable_usd)
             us_eval_usd = float(bal_us.get("total_eval", 0))
-            us_total_krw = (us_cash_usd + us_eval_usd) * self.usd_krw_rate
+            us_rate = float(bal_us.get("kis_exchange_rate", 0) or self.usd_krw_rate or 0)
+            us_total_krw = float(bal_us.get("market_asset_krw", 0) or 0)
+            if us_total_krw <= 0:
+                us_total_krw = (us_asset_cash_usd + us_eval_usd) * us_rate
             us_ok = True
             self._set_broker_state(
                 "US",
@@ -12625,7 +12776,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         us_cash_krw = 0.0
         if us_ok:
             try:
-                us_cash_krw = float(bal_us.get("cash", 0) or 0) * float(self.usd_krw_rate or 0)
+                _us_cash_usd = float(bal_us.get("cash", 0) or 0)
+                _us_orderable_usd = float(bal_us.get("orderable_cash", _us_cash_usd) or _us_cash_usd)
+                _us_asset_cash_usd = float(bal_us.get("asset_cash", max(_us_cash_usd, _us_orderable_usd)) or 0)
+                if _us_asset_cash_usd <= 0:
+                    _us_asset_cash_usd = max(_us_cash_usd, _us_orderable_usd)
+                us_cash_krw = float(bal_us.get("asset_cash_krw", 0) or 0) or _us_asset_cash_usd * float(self.usd_krw_rate or 0)
             except Exception:
                 us_cash_krw = 0.0
         # KIS paper US 계좌는 USD 현금을 0으로 반환한다.
@@ -14465,6 +14621,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     @staticmethod
     def _auto_sell_review_required(reason: str) -> bool:
+        if _env_bool("CLAUDE_REVIEW_ALL_AUTOMATED_SELLS", False):
+            return str(reason or "").strip().lower() not in {
+                "manual_sell",
+                "operator_kill",
+                "pathb_kill",
+                "pathb_closeall",
+                "daily_loss_stop",
+                "broker_mismatch",
+            }
         return str(reason or "").strip().lower() not in {
             "manual_sell",
             "mfe_breakeven",
@@ -15260,7 +15425,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             reason_key,
             current_native=current_native,
         )
-        if force_sell:
+        review_all = self._runtime_bool("CLAUDE_REVIEW_ALL_AUTOMATED_SELLS", False)
+        emergency_force = str(reason_key or "").strip().lower() in {
+            "daily_loss_stop",
+            "broker_mismatch",
+            "operator_kill",
+            "pathb_kill",
+        }
+        if force_sell and (not review_all or emergency_force):
             return self._auto_sell_review_force_sell_result(
                 cand,
                 market,
@@ -16949,7 +17121,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             order_pct = float(os.getenv("MAX_ORDER_PCT", "0.05"))
             if market == "US":
                 bal_us    = get_balance(self._token_for_market("US"), market="US")
-                us_cash   = float(bal_us.get("cash", 0) or 0) * self.usd_krw_rate
+                us_rate = float(bal_us.get("kis_exchange_rate", 0) or self.usd_krw_rate or 0)
+                us_cash   = float(bal_us.get("orderable_cash", bal_us.get("cash", 0)) or 0) * us_rate
                 new_max   = min(env_cap, int(us_cash * order_pct))
             else:
                 bal_kr    = get_balance(self._token_for_market("KR"), market="KR")
@@ -17912,6 +18085,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if market == "US":
             return int(os.getenv("US_ENTRY_SCAN_REGULAR_INTERVAL_MIN", "5")) * 60
         return _ENTRY_SCAN_REGULAR_INTERVAL_MIN * 60
+    def _maybe_update_candidate_audit_outcomes_intraday(self, market: str) -> None:
+        if not self._runtime_bool("CANDIDATE_AUDIT_INTRADAY_OUTCOME_UPDATE_ENABLED", True):
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        elapsed_min = self._market_open_elapsed_min(market_key)
+        if elapsed_min is None or float(elapsed_min) < 60.0:
+            return
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = date.today().isoformat()
+        done = getattr(self, "_candidate_audit_outcome_intraday_done", None)
+        if not isinstance(done, set):
+            done = set()
+            self._candidate_audit_outcome_intraday_done = done
+        run_key = (getattr(self, "_mode", "live"), market_key, session_date, 60)
+        if run_key in done:
+            return
+        try:
+            from tools.update_candidate_audit_outcomes import update_candidate_audit_outcomes
+
+            summary = update_candidate_audit_outcomes(
+                session_date=session_date,
+                market=market_key,
+                runtime_mode=getattr(self, "_mode", "live"),
+                horizons=(30, 60),
+            )
+            done.add(run_key)
+            log.info(
+                f"[candidate audit outcomes] intraday updated {market_key} "
+                f"session={session_date} rows={summary.get('outcome_rows', 0)} "
+                f"status={summary.get('status_counts', {})}"
+            )
+        except Exception as exc:
+            log.warning(f"[candidate audit outcomes] intraday update failed {market_key}: {exc}")
     def run_housekeeping(self, market: str):
         if not self._enter_market_task(market, "housekeeping"):
             return
@@ -17927,6 +18135,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._process_exit_candidates()
             if getattr(self, "pathb", None) is not None:
                 self.pathb.scan_exits(market)
+            self._maybe_update_candidate_audit_outcomes_intraday(market)
             self._write_live_status(market)
         except Exception as _hk_e:
             log.error(f"[housekeeping 오류] {market}: {_hk_e}", exc_info=True)

@@ -1068,12 +1068,17 @@ def _path_b_charts(runs: list[dict[str, Any]], metrics: dict[str, Any]) -> dict[
     closed = [run for run in runs if str(run.get("status", "")) == "CLOSED"]
     pnl_labels: list[str] = []
     pnl_series: list[float] = []
+    point_pnl_pct: list[float] = []
+    point_close_reasons: list[str] = []
     cumulative = 0.0
     for idx, run in enumerate(closed, 1):
         plan = run.get("plan") or {}
-        cumulative += float(_to_float(plan.get("pnl_pct")) or 0.0)
+        pnl_pct = float(_to_float(plan.get("pnl_pct")) or 0.0)
+        cumulative += pnl_pct
         pnl_labels.append(str(run.get("ticker") or idx))
         pnl_series.append(round(cumulative, 4))
+        point_pnl_pct.append(round(pnl_pct, 4))
+        point_close_reasons.append(str(plan.get("close_reason") or ""))
     return {
         "status": {
             "labels": list(status_counts.keys()),
@@ -1091,6 +1096,9 @@ def _path_b_charts(runs: list[dict[str, Any]], metrics: dict[str, Any]) -> dict[
         "pnl": {
             "labels": pnl_labels,
             "data": pnl_series,
+            "point_pnl_pct": point_pnl_pct,
+            "point_close_reasons": point_close_reasons,
+            "basis": "cumulative_sum_of_closed_trade_pnl_pct",
         },
     }
 

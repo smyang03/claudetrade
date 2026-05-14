@@ -77,6 +77,76 @@ class DashboardKisProfileTests(unittest.TestCase):
         self.assertEqual(snapshot["kis_profile"]["US"]["credential_mode"], "separate_us")
         self.assertEqual(snapshot["cumulative"], 1000.0 + 2000.0 + (2.0 + 3.0) * 1300.0)
 
+    def test_broker_snapshot_uses_us_asset_cash_for_equity(self) -> None:
+        @contextmanager
+        def fake_runtime(_mode: str):
+            yield
+
+        def fake_token(*, market: str = "KR") -> str:
+            return f"token-{market}"
+
+        def fake_balance(token: str, *, market: str, force_refresh: bool = False) -> dict:
+            if market == "US":
+                return {
+                    "cash": 2.0,
+                    "orderable_cash": 4.0,
+                    "asset_cash": 4.0,
+                    "total_eval": 3.0,
+                    "stocks": [],
+                    "currency": "USD",
+                }
+            return {"cash": 1000.0, "total_eval": 2000.0, "stocks": [], "currency": "KRW"}
+
+        with patch.object(dashboard_server, "_kis_runtime", fake_runtime), patch.object(
+            dashboard_server, "get_access_token", side_effect=fake_token
+        ), patch.object(
+            dashboard_server, "get_balance", side_effect=fake_balance
+        ), patch.object(
+            dashboard_server, "get_kis_profile_summary", return_value={}
+        ), patch.object(
+            dashboard_server, "_get_usd_krw_cached", return_value=1300.0
+        ):
+            snapshot = dashboard_server._broker_snapshot("live")
+
+        self.assertEqual(snapshot["us_cash_usd"], 2.0)
+        self.assertEqual(snapshot["us_asset_cash_usd"], 4.0)
+        self.assertEqual(snapshot["cumulative"], 1000.0 + 2000.0 + (4.0 + 3.0) * 1300.0)
+
+    def test_broker_snapshot_uses_kis_us_profit_krw_for_unrealized(self) -> None:
+        @contextmanager
+        def fake_runtime(_mode: str):
+            yield
+
+        def fake_token(*, market: str = "KR") -> str:
+            return f"token-{market}"
+
+        def fake_balance(token: str, *, market: str, force_refresh: bool = False) -> dict:
+            if market == "US":
+                return {
+                    "cash": 2.0,
+                    "orderable_cash": 4.0,
+                    "asset_cash": 4.0,
+                    "total_eval": 3.0,
+                    "total_profit_krw": -1234.0,
+                    "stocks": [{"ticker": "AAPL", "qty": 1, "avg_price": 10.0, "eval_price": 20.0}],
+                    "currency": "USD",
+                }
+            return {"cash": 1000.0, "total_eval": 0.0, "total_profit": 0.0, "stocks": [], "currency": "KRW"}
+
+        with patch.object(dashboard_server, "_kis_runtime", fake_runtime), patch.object(
+            dashboard_server, "get_access_token", side_effect=fake_token
+        ), patch.object(
+            dashboard_server, "get_balance", side_effect=fake_balance
+        ), patch.object(
+            dashboard_server, "get_kis_profile_summary", return_value={}
+        ), patch.object(
+            dashboard_server, "_get_usd_krw_cached", return_value=1300.0
+        ):
+            snapshot = dashboard_server._broker_snapshot("live")
+
+        self.assertEqual(snapshot["unrealized_krw"]["US"], -1234.0)
+        self.assertEqual(snapshot["us_profit_krw"], -1234.0)
+
     def test_broker_snapshot_rechecks_cache_under_lock_for_parallel_calls(self) -> None:
         balance_calls: list[str] = []
 

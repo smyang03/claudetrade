@@ -1869,6 +1869,12 @@ class PathBRuntime:
 
     @staticmethod
     def _pathb_sell_review_required(signal: ExitSignal) -> bool:
+        if _env_bool("CLAUDE_REVIEW_ALL_AUTOMATED_SELLS", False):
+            return str(signal.reason or "").strip().lower() not in {
+                "pathb_kill",
+                "pathb_closeall",
+                "operator_kill",
+            }
         return str(signal.reason or "").strip().lower() not in {
             "pathb_kill",
             "pathb_closeall",
@@ -1883,6 +1889,84 @@ class PathBRuntime:
     def _pathb_hold_policy_mode() -> str:
         raw = str(os.getenv("PATHB_HOLD_POLICY_MODE", "enforce") or "enforce").strip().lower()
         return raw if raw in {"off", "shadow", "enforce"} else "enforce"
+
+    @staticmethod
+    def _pathb_auto_sell_review_default_policy(signal: ExitSignal) -> str:
+        reason_key = str(signal.reason or "").strip().lower()
+        close_reason = str(signal.close_reason or "").strip().upper()
+        if reason_key == "loss_cap" or close_reason == "CLOSED_LOSS_CAP":
+            return (
+                "This loss-cap alert is reviewable, but serious. SELL unless fresh evidence shows "
+                "the thesis is intact, the loss remains controlled, and a concrete protective_stop, "
+                "recover_above, invalid_if, and next_review_min are provided."
+            )
+        if reason_key in {"hard_stop", "policy_hard_stop"} or close_reason == "CLOSED_HARD_STOP":
+            return (
+                "This hard-stop alert is reviewable, but serious. SELL unless fresh evidence shows "
+                "a transient stop check with bounded recovery risk. HOLD requires protective_stop, "
+                "hard_stop, recover_above, invalid_if, and near next_review_min."
+            )
+        if reason_key in {"profit_ladder", "profit_floor", "trail_stop"} or close_reason == "CLOSED_PROFIT_LADDER":
+            return (
+                "This profit-protection sell is reviewable. SELL if giveback risk now outweighs "
+                "remaining upside. HOLD only when upside remains attractive and the retained "
+                "profit/loss floor is explicit."
+            )
+        return (
+            "SELL only if this PathB automatic sell signal remains valid after fresh review. "
+            "Return HOLD when evidence is stale, ambiguous, or the position should be rechecked later."
+        )
+
+    @staticmethod
+    def _pathb_review_position_pnl_pct(pos: dict[str, Any], market: str, current_native: float = 0.0) -> float:
+        try:
+            if str(market or "").upper() == "US":
+                entry = float(pos.get("display_avg_price") or pos.get("entry_native") or 0)
+            else:
+                entry = float(pos.get("entry") or 0)
+            current = float(current_native or pos.get("display_current_price") or pos.get("current_price") or 0)
+            if entry > 0 and current > 0:
+                return (current / entry - 1.0) * 100.0
+        except Exception:
+            pass
+        return 0.0
+
+    @staticmethod
+    def _pathb_auto_sell_review_force_sell_threshold_pct(market: str) -> float:
+        market_key = str(market or "").upper()
+        raw = os.getenv(
+            f"{market_key}_AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT",
+            os.getenv("AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT", "2.5"),
+        )
+        try:
+            return max(0.0, float(raw or 0))
+        except Exception:
+            return 2.5
+
+    def _pathb_auto_sell_review_force_sell_required(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        current_native: float,
+    ) -> tuple[bool, str]:
+        reason_key = str(signal.reason or "").strip().lower()
+        close_reason = str(signal.close_reason or "").strip().upper()
+        if reason_key in {"pathb_kill", "pathb_closeall", "operator_kill"}:
+            return True, f"catastrophic_exit:{reason_key}"
+        if reason_key not in {"loss_cap", "hard_stop", "policy_hard_stop"} and close_reason not in {
+            "CLOSED_LOSS_CAP",
+            "CLOSED_HARD_STOP",
+            "CLOSED_CLAUDE_PRICE_STOP",
+        }:
+            return False, ""
+        threshold = self._pathb_auto_sell_review_force_sell_threshold_pct(plan.market)
+        if threshold <= 0:
+            return False, ""
+        pnl_pct = self._pathb_review_position_pnl_pct(pos, plan.market, current_native=current_native)
+        if pnl_pct <= -threshold:
+            return True, f"loss {pnl_pct:.2f}% <= force threshold -{threshold:.2f}%"
+        return False, ""
 
     @staticmethod
     def _parse_kst_iso(raw: Any) -> datetime | None:
@@ -1997,9 +2081,14 @@ class PathBRuntime:
             "stop_loss",
             "soft_exit_floor_price",
         }
+        stop_recovery_close_reasons = {
+            "CLOSED_CLAUDE_PRICE_STOP",
+            "CLOSED_LOSS_CAP",
+            "CLOSED_HARD_STOP",
+        }
         if close_reason not in {
             "CLOSED_CLAUDE_PRICE_TARGET",
-            "CLOSED_CLAUDE_PRICE_STOP",
+            *stop_recovery_close_reasons,
             "CLOSED_PROFIT_FLOOR",
             "CLOSED_TRAILING_STOP",
         } and signal_reason not in protective_hold_reasons:
@@ -2034,7 +2123,7 @@ class PathBRuntime:
                 "reask_if_price_above": reask_if_price_above,
             }, ""
 
-        if close_reason != "CLOSED_CLAUDE_PRICE_STOP":
+        if close_reason not in stop_recovery_close_reasons:
             protective_stop = self._round_policy_price(advice.get("protective_stop"), market, direction="down")
             if protective_stop <= 0:
                 return {}, "protective_stop_missing"
@@ -2843,7 +2932,11 @@ class PathBRuntime:
 
     def _run_pathb_sell_review_gate(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> dict[str, Any]:
         raw_close_reason = str(signal.close_reason or "").strip().upper()
-        if raw_close_reason in {"CLOSED_HARD_STOP", "CLOSED_LOSS_CAP", "CLOSED_PROFIT_LADDER"}:
+        if not _env_bool("CLAUDE_REVIEW_ALL_AUTOMATED_SELLS", False) and raw_close_reason in {
+            "CLOSED_HARD_STOP",
+            "CLOSED_LOSS_CAP",
+            "CLOSED_PROFIT_LADDER",
+        }:
             return {"allowed": True, "bypassed": True, "reason": raw_close_reason.lower()}
         if not self._pathb_sell_review_required(signal):
             return {"allowed": True, "bypassed": True, "reason": "operator_close"}
@@ -2875,10 +2968,7 @@ class PathBRuntime:
         else:
             review_pos["current_price"] = current_native
             review_pos["display_current_price"] = current_native
-        default_policy = (
-            "SELL only if this PathB automatic sell signal remains valid after fresh review. "
-            "Return HOLD when evidence is stale, ambiguous, or the position should be rechecked later."
-        )
+        default_policy = self._pathb_auto_sell_review_default_policy(signal)
         try:
             from minority_report.hold_advisor import ask as advisor_ask
 
@@ -2915,6 +3005,15 @@ class PathBRuntime:
             detail = str(advice["reason"])[:500]
             confidence = 0.0
             fallback = True
+        force_sell, force_detail = self._pathb_auto_sell_review_force_sell_required(
+            plan,
+            pos,
+            signal,
+            current_native,
+        )
+        if action != "SELL" and force_sell:
+            action = "SELL"
+            detail = (detail + " | " if detail else "") + f"system_force_sell_after_review:{force_detail}"
         payload = {
             "auto_sell_reviewed_at": now_iso,
             "auto_sell_review_reason": str(signal.reason or ""),
@@ -2924,6 +3023,9 @@ class PathBRuntime:
             "auto_sell_review_confidence": confidence,
             "auto_sell_review_fallback": fallback,
         }
+        if force_sell:
+            payload["auto_sell_review_system_force_sell"] = True
+            payload["auto_sell_review_force_detail"] = force_detail
         if action == "HOLD":
             policy, reject_reason = self._pathb_auto_sell_policy_from_advice(
                 plan,

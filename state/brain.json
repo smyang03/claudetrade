@@ -1,16 +1,16 @@
 {
   "meta": {
-    "version": 3278,
+    "version": 3366,
     "created": "2026-03-19",
-    "last_updated": "2026-05-13",
-    "trained_days_kr": 36,
-    "trained_days_us": 39,
+    "last_updated": "2026-05-15",
+    "trained_days_kr": 38,
+    "trained_days_us": 40,
     "description": "Claude 마이너리티 리포트 판단 메모리",
     "brain_quality_cleaned_at": "2026-05-01T03:54:10+00:00"
   },
   "markets": {
     "KR": {
-      "trained_days": 34,
+      "trained_days": 36,
       "training_period": {
         "phase1": "2024-10-01 ~ 2024-12-31 (하락장 50일)",
         "phase2": "2025-01-01 ~ 2025-05-31 (반등/횡보 50일)",
@@ -19,53 +19,53 @@
       "current_regime": "unknown",
       "analyst_performance": {
         "bull": {
-          "total": 33,
-          "hit": 14,
-          "miss": 19,
-          "rate": 0.424,
+          "total": 35,
+          "hit": 15,
+          "miss": 20,
+          "rate": 0.429,
           "recent_7d": {
             "total": 7,
-            "hit": 4,
-            "rate": 0.571
+            "hit": 5,
+            "rate": 0.714
           },
           "recent_30d": {
             "total": 30,
-            "hit": 13,
-            "rate": 0.433
+            "hit": 14,
+            "rate": 0.467
           },
           "trend": "improving"
         },
         "bear": {
-          "total": 33,
-          "hit": 15,
-          "miss": 18,
-          "rate": 0.455,
+          "total": 35,
+          "hit": 16,
+          "miss": 19,
+          "rate": 0.457,
           "recent_7d": {
             "total": 7,
-            "hit": 5,
-            "rate": 0.714
+            "hit": 6,
+            "rate": 0.857
           },
           "recent_30d": {
             "total": 30,
-            "hit": 13,
-            "rate": 0.433
+            "hit": 14,
+            "rate": 0.467
           },
           "trend": "improving"
         },
         "neutral": {
-          "total": 33,
-          "hit": 11,
-          "miss": 22,
-          "rate": 0.333,
+          "total": 35,
+          "hit": 12,
+          "miss": 23,
+          "rate": 0.343,
           "recent_7d": {
             "total": 7,
-            "hit": 5,
-            "rate": 0.714
+            "hit": 6,
+            "rate": 0.857
           },
           "recent_30d": {
             "total": 30,
-            "hit": 9,
-            "rate": 0.3
+            "hit": 12,
+            "rate": 0.4
           },
           "trend": "improving"
         }
@@ -77,8 +77,8 @@
           "win_rate": 0.0
         },
         "MODERATE_BULL": {
-          "count": 5,
-          "avg_pnl": -0.3816,
+          "count": 6,
+          "avg_pnl": -0.318,
           "win_rate": 0.0
         },
         "CAUTIOUS": {
@@ -102,9 +102,9 @@
           "win_rate": 0.25
         },
         "MILD_BULL": {
-          "count": 6,
-          "avg_pnl": -0.5426,
-          "win_rate": 0.167
+          "count": 7,
+          "avg_pnl": -0.4651,
+          "win_rate": 0.143
         },
         "MILD_BEAR": {
           "count": 7,
@@ -669,6 +669,36 @@
           "avg_pnl_when_followed": -1.1365671288899333,
           "insight": "수급 데이터 전종목 결측 + VKOSPI 결측 환경에서 claude_price 전략 진입은 즉시 차단해야 함. 데이터 결측은 단순 불편이 아니라 고점 진입 리스크를 은폐하는 구조적 위험 신호임. 또한 5d 강모멘텀(+6.37%) 이후 당일 +0.75% 소폭 상승은 소화 국면 진입 확인이며, 이 구간에서 거래 규모(size) 축소 및 신규 진입 억제가 최우선이어야 함.",
           "examples": []
+        },
+        {
+          "id": "P067",
+          "type": "과소대응",
+          "description": "Neutral 분석가가 데이터 결측을 하향 조정 근거로 오용해 MILD_BULL 판단. Bear 분석가도 장초반 급락(당일 내 완전 회복)을 과도하게 가중. 결과적으로 +4.32% 상승장에서 세션 손익 +0.00% — 모멘텀 포착 완전 실패.",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "unknown",
+          "best_mode": "unknown",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "KIS 지수 결측·VKOSPI 결측은 하향 조정 근거가 아님. Breadth 77%·GC 24/6·거래량 폭증 20개의 복합 강세 신호가 확인된 상태에서 데이터 결측은 중립 처리 후 기존 강세 thesis 유지가 원칙. 결측=불확실=하향이라는 오류 패턴 즉시 차단 필요. 세션 손익 +0.00%는 매수 기회 포착 실패를 의미하며, +4.32% 강세장에서 거래 미체결은 필터 과잉의 직접 비용.",
+          "examples": []
+        },
+        {
+          "id": "P068",
+          "type": "반등오판/과소대응",
+          "description": "5d +10.18% 강모멘텀 직후 세션에서 원약세·과매수·변동성 결측 3중 경고를 Breadth 강세로 희석해 MILD_BULL 합의 도달. Bear 단독 경고가 합의에서 묻히는 P033 유사 패턴 재발. 실제 -2.29% 급락으로 CAUTIOUS 이하 판단이 정답이었음.",
+          "count": 1,
+          "bull_hit": 0,
+          "bear_hit": 1,
+          "bull_accuracy": 0.0,
+          "bear_accuracy": 1.0,
+          "best_strategy": "unknown",
+          "best_mode": "unknown",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "5d +10% 이상 급등 후 첫 세션에서 USD/KRW +1.3% 원약세 + RSI 과매수 13개 + VKOSPI 결측 3종 동시 발생 시, Breadth·GC 긍정 신호와 무관하게 CAUTIOUS_BEAR 또는 DEFENSIVE로 강제 하향 규칙 적용 필요. 강모멘텀 이후 차익실현 세션에서 MILD_BULL 유지는 반복적 오판 패턴임.",
+          "examples": []
         }
       ],
       "tuning_patterns": {
@@ -694,53 +724,53 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "30min_tune": {
-          "count": 68,
+          "count": 70,
           "correct": 6,
-          "rate": 0.088,
-          "insight": "지수 개장 대비 +1.59% 상승으로 아침 MODERATE_BULL thesis 방향 일치, breadth advance_ratio는 60종목 기준 70%(42/60)로 재산정 시 아침 77% 대비 소폭 하락이나 GC/DC 데이터 미집계 구간임을 감안하면 thesis 훼손 없음—vol_spike 54/60(90%)로 거래량 모멘텀 강하고 경고 없으므로 momentum_wait를 -5분 단축해 mid-session 진입 효율 개선.",
-          "last_seen": "2026-05-13",
+          "rate": 0.086,
+          "insight": "지수 변화 +0.00%, 30분 기울기 N/A(첫 샘플)로 방향 확인 불가, breadth는 advance_ratio 하락(-33%p)이나 절대 adv/dec=27/11로 우세 유지, GC/DC 소멸은 아침 universe 확대(30→80) 효과로 해석 가능하며 아침 CAUTIOUS thesis 훼손 근거 부족, NBIS +3.0% 수익 중 SL 유효, blackout 구간으로 신규 진입 없음.",
+          "last_seen": "2026-05-14",
           "adjusted": 6,
-          "adjusted_rate": 0.088,
+          "adjusted_rate": 0.086,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
-          "count": 56,
+          "count": 58,
           "correct": 9,
-          "rate": 0.161,
-          "insight": "지수 +1.34%로 아침 MODERATE_BULL thesis 유지되고 30분 기울기 -0.24%p는 소폭 냉각이나 반전 수준 아님—breadth advance_ratio 68%(41/60)로 아침 77% 대비 -8%p 하락했으나 universe 확대(30→60) 효과 감안 시 절대 advancers +18·vol_spike 54/60로 모멘텀 건재, GC/DC 결측은 데이터 갱신 지연으로 판단 보류, ZBRA -2.3%·DKNG -1.4% 부담 있으나 SL 미도달·NOVT +6.4%·RAL +4.9% 버퍼로 포트폴리오 전체 양호, 직전 MAINTAIN 연속 1회로 전환 근거 미충족",
-          "last_seen": "2026-05-13",
+          "rate": 0.155,
+          "insight": "지수 변화 +0.00%·30분 기울기 flat이나 breadth가 adv/dec=44/15(advance_ratio +8%p)·vol_spike=45로 아침 대비 확대되어 MILD_BULL thesis 유지 중이며, GC/DC·RSI_OB 리셋은 단기 과열 해소로 해석, ops 병목 없음 → 조정 불필요",
+          "last_seen": "2026-05-14",
           "adjusted": 9,
-          "adjusted_rate": 0.161,
+          "adjusted_rate": 0.155,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "120min_tune": {
-          "count": 46,
+          "count": 47,
           "correct": 13,
-          "rate": 0.283,
-          "insight": "지수 +2.05% 상승·30분 기울기 +0.33%p 상승 유지로 아침 MODERATE_BULL thesis 방향 일치, breadth advance_ratio -13%p 하락은 universe 확장(30→60) 효과로 절대 adv 38/60=63% 여전히 과반 우위이며 경고 없음—momentum wait -5m 기존 조정 유지, DKNG(-1.4%)·ZBRA(-2.3%) 개별 손실은 각 SL 미도달로 포지션 변경 불필요",
-          "last_seen": "2026-05-13",
+          "rate": 0.277,
+          "insight": "지수 변화 +0.00%·30분 기울기 flat이나 breadth universe 확장(30→59) 속 advance_ratio +3%p(41/18)·vol_spike 54로 모멘텀 확산 유지, GC/DC·RSI_OB 소멸은 과열 해소로 해석되어 MILD_BULL thesis 유효하며 NBIS +3.0% 포지션도 SL 여유 충분",
+          "last_seen": "2026-05-14",
           "adjusted": 13,
-          "adjusted_rate": 0.283,
+          "adjusted_rate": 0.277,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "150min_tune": {
-          "count": 41,
+          "count": 42,
           "correct": 12,
-          "rate": 0.293,
-          "insight": "지수 +2.05% 상승으로 아침 MODERATE_BULL thesis 유효하며, 30분 기울기 flat·거래량 normal·경고 없음으로 추세 안정 확인—breadth advance_ratio -5%p 소폭 후퇴·GC/DC 결측은 universe 확장(30→60) 효과로 아침 대비 실질 악화 근거 불충분, momentum_wait -5m 유지로 mid-session 잔여 86분 내 포착 기회 보존.",
-          "last_seen": "2026-05-13",
+          "rate": 0.286,
+          "insight": "지수 +1.72% 상승·30분 기울기 +1.72%p 상승·breadth advance_ratio 68%(40/59)·vol_spike 54개로 아침 MILD_BULL thesis 유지되며 모멘텀 확산 강화 확인, VKOSPI 결측 및 원약세 리스크 잔존하나 경고 신호 없음으로 momentum_wait -5분 단축 및 KR ATR cap 소폭 완화 적용",
+          "last_seen": "2026-05-14",
           "adjusted": 12,
-          "adjusted_rate": 0.293,
+          "adjusted_rate": 0.286,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "180min_tune": {
-          "count": 39,
+          "count": 40,
           "correct": 9,
-          "rate": 0.231,
-          "insight": "지수 -1.55% 약세 지속·breadth advance_ratio -23%p 악화(32/28)·GC/DC 소멸로 아침 CAUTIOUS thesis 유지되며, 최근 30분 +0.72%p 반등은 단기 기술적 되돌림 수준으로 REVERSE 전환 근거 불충분—직전 TIGHTEN 파라미터 유지가 적절",
-          "last_seen": "2026-05-12",
+          "rate": 0.225,
+          "insight": "지수 +1.75%·30분 기울기 +0.03%p 상승·advance_ratio 72%(+5%p)·vol_spike 54개로 아침 MILD_BULL thesis 강화 확인, blackout 진입 전 close_guard 구간이므로 신규 진입 최소화하되 기존 조정값(wait -5m, atr_cap +0.01) 유지로 momentum 포착 여지 보존",
+          "last_seen": "2026-05-14",
           "adjusted": 9,
-          "adjusted_rate": 0.231,
+          "adjusted_rate": 0.225,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "210min_tune": {
@@ -834,26 +864,24 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "90min_tune": {
-          "count": 48,
+          "count": 50,
           "correct": 9,
-          "rate": 0.188,
-          "insight": "지수 +1.72%·30분 기울기 +0.38%p 상승으로 아침 MODERATE_BULL thesis 유지, breadth advance_ratio 67%(40/60)로 아침 77% 대비 -10%p 하락했으나 vol_spike 53개·경고 없음·상승 기울기 지속으로 하향 조정 근거 불충분—momentum_wait -5m 유지로 상승 모멘텀 포착 지속.",
-          "last_seen": "2026-05-13",
+          "rate": 0.18,
+          "insight": "지수 변화 +0.00%·30분 기울기 flat이나 breadth universe 확대(59종목) 속 advance_ratio 68%(40/59)로 아침 67% 수준 유지·vol_spike 52건으로 거래량 모멘텀 지속·GC/DC/RSI 신호 소멸은 데이터 리셋 효과로 해석, 아침 MILD_BULL thesis 훼손 근거 없어 MAINTAIN 유지",
+          "last_seen": "2026-05-14",
           "adjusted": 9,
-          "adjusted_rate": 0.188,
+          "adjusted_rate": 0.18,
           "metric_semantics": "adjusted_not_accuracy"
         }
       },
       "current_beliefs": {
-        "market_regime": "5d 강모멘텀(+6.37%) 이후 단기 소화 국면 진입 확인. 당일 +0.75% 소폭 상승에 그치고 포트폴리오 -1.14% LOSS로 대형주 과매수 부담 실현 중. RSI>80 종목 비중 축소 및 중소형 RSI≤70 종목 선별 집중 국면. 다음 세션은 거래량 수반 여부로 추세 지속/조정 분기 판단 필요.",
+        "market_regime": "코스피 5d +10.18% 급등 후 -2.29% 단기 차익실현 조정 진입. RSI 과매수 해소 미완료·원약세 지속·VKOSPI 결측 상태. 모멘텀 장세 종료 여부 미확정이나 단기 조정 국면 진입 신호 확인. 다음 세션은 낙폭 과대 반등 vs 추가 조정 분기점으로 거래량·환율 안정 여부가 핵심 판단 기준.",
         "bull_reliability": "unknown",
         "bear_reliability": "unknown",
         "best_strategy": "unknown",
         "avoid": [],
         "emphasize": [],
         "learned_lessons": [
-          "복합매수신호2개이상+지수상승시환율고점무효화가능",
-          "0주@0원체결감지시즉시주문취소및재검증필수",
           "시장상승일에도momentum당일손절8건=진입필터강화필요",
           "오후14시이후momentum진입=손절확률90%,금지규칙추가",
           "골든크로스12개+거래량폭증은매집신호,분배아님",
@@ -861,7 +889,9 @@
           "MILD_BULL 합의 + 코스피 5d +7%이상 모멘텀장세에서 watch_only runup≥5% 비율 50% 초과 시 trade_ready 전환 임계값을 한 단계 완화(복합신호 2개→1.5개 기준 적용) 검토 필수. 단, RSI>75 종목은 제외.",
           "MILD_BULL + 5d 강모멘텀 환경에서 watch_only→trade_ready 전환 임계 완화(복합신호 1.5개 기준, RSI≤75 조건) 즉시 적용 검토. intraday_review_sell 청산은 당일 +0.9% 수익 확보에 기여했으나 runup 추가 여력 차단 위험 존재 — 청산 기준에 trailing stop 또는 시간 기반 hold 연장 옵션 추가 검토.",
           "5d 강모멘텀 후 당일 보합(-0.00%) 마감은 단기 소화 국면 신호일 수 있음. 다음 세션은 횡보 돌파 or 조정 분기점으로 거래량 확인 후 방향 추종 전략 우선. watch_only runup 누적 미스(57.1%) 해소를 위해 RSI≤75·복합신호 1.5개 이상 종목의 trade_ready 전환 기준 즉시 적용 검토.",
-          "수급 데이터 전종목 결측 + VKOSPI 결측 동시 발생 시 claude_price 전략 진입 완전 차단 규칙 추가. 5d 모멘텀 +6% 이상 후 당일 시장 +1% 미만 소폭 상승은 단기 소화 국면 확정 신호로 간주, 해당 세션 size 50% 이하 강제 축소 적용."
+          "수급 데이터 전종목 결측 + VKOSPI 결측 동시 발생 시 claude_price 전략 진입 완전 차단 규칙 추가. 5d 모멘텀 +6% 이상 후 당일 시장 +1% 미만 소폭 상승은 단기 소화 국면 확정 신호로 간주, 해당 세션 size 50% 이하 강제 축소 적용.",
+          "장초반 갭하락 후 당일 내 완전 회복(+0.00%→+4.32%) 패턴은 강세 지속 신호. Breadth 77%이상·GC 4:1 이상·거래량 폭증 20개 이상 3개 조건 동시 충족 시 데이터 결측(KIS·VKOSPI)은 판단 하향 근거로 사용 금지. 해당 조건에서 최소 MODERATE_BULL 유지 강제 규칙 적용.",
+          "5d 누적 +10% 초과 강모멘텀 직후 세션에서 USD/KRW 1d +1.0% 초과 + RSI 과매수 10개 이상 + VKOSPI 결측 3개 조건 동시 충족 시 Breadth 60% 이상·GC 우세 여부와 무관하게 최종 합의를 CAUTIOUS 이하로 강제 하향. Neutral 분석가가 Bull 신호를 근거로 MILD_BULL을 지지할 경우 Bear 분석가 단독 비토권 부여."
         ]
       },
       "recent_days": [
@@ -1662,6 +1692,66 @@
             }
           ],
           "selection_feedback": "- 최근 20일 selected=475 trade_ready=88 watch_only=387 traded=25\n- trade_ready 3d: hit_rate=46.4% avg_fwd=+5.3% avg_runup=+17.4% avg_dd=-7.6% (n=69)\n- watch_only 3d: avg_fwd=+4.3% avg_runup=+16.1% avg_dd=-5.9% (n=248)\n- missed watch_only: runup>=5.0% 164건 (66.1%)\n- weak trade_ready: forward_3d<=0 37건 (53.6%)\n- by board: KOSPI selected=249 miss_watch=56.4%(n=149) weak_TR=55.3%(n=47) watch_runup=+13.9%"
+        },
+        {
+          "date": "2026-05-13",
+          "mode": "MODERATE_BULL",
+          "pnl_pct": 0.0,
+          "market_change": 4.32,
+          "win": false,
+          "bull_result": "HIT",
+          "bear_result": "HIT",
+          "neutral_result": "HIT",
+          "bull_stance": "MODERATE_BULL",
+          "bear_stance": "MODERATE_BULL",
+          "neutral_stance": "MILD_BULL",
+          "bull_reason": "Breadth 77%(23/30 상승)·GC 24/DC 6·거래량 폭증 20개로 시장 전반 모멘텀 확인되며, 장중 KIS 지수 결측은 하향 조정 근거 불충분—RSI 과매수 18개·일부 대형주(삼성전자 -2.28%, NAVER -3.55%) 약세로 STRONG_BULL 유보",
+          "bear_reason": "코스피 5d +18.54%·breadth 77%(23/30)·GC 24/6 우위로 시장 모멘텀 유효하나, 장초반 4.3%p 급락(현재 +0.00%)·RSI 과매수 18개·VKOSPI 결측·USD/KRW 1d +0.9% KRW 약세가 단기 과열 조정 가능성을 시사해 MODERATE_BULL 유지",
+          "neutral_reason": "Breadth 77%(23/30 상승)·GC 24 vs DC 6(4:1)의 광범위한 상승 우위가 유효하나, KIS 실시간 지수 결측·VKOSPI 결측·장초반 4.3%p 갭하락 후 +0.00% 전환으로 현재 모멘텀 미확인 상태이며 지표 간 상충(기술적 긍정 vs 수급/매크로 불확실)이 MODERATE_BULL 상향을 제한",
+          "key_lesson": "KIS 지수 결측·VKOSPI 결측은 하향 조정 근거가 아님. Breadth 77%·GC 24/6·거래량 폭증 20개의 복합 강세 신호가 확인된 상태에서 데이터 결측은 중립 처리 후 기존 강세 thesis 유지가 원칙. 결측=불확실=하향이라는 오류 패턴 즉시 차단 필요. 세션 손익 +0.00%는 매수 기회 포착 실패를 의미하며, +4.32% 강세장에서 거래 미체결은 필터 과잉의 직접 비용.",
+          "issue_type": "과소대응",
+          "postmortem_fallback_note": "",
+          "best_trade": null,
+          "worst_trade": null,
+          "worst_trade_reason": "",
+          "trades": 0,
+          "execution_contaminated": false,
+          "execution_learning_excluded": false,
+          "execution_warning": false,
+          "execution_issues": [],
+          "execution_issue_labels": [],
+          "execution_issue_details": [],
+          "selection_feedback": "- 최근 20일 selected=500 trade_ready=84 watch_only=416 traded=25\n- trade_ready 3d: hit_rate=44.6% avg_fwd=+5.1% avg_runup=+17.6% avg_dd=-8.2% (n=74)\n- watch_only 3d: avg_fwd=+2.9% avg_runup=+15.4% avg_dd=-7.0% (n=281)\n- missed watch_only: runup>=5.0% 183건 (65.1%)\n- weak trade_ready: forward_3d<=0 41건 (55.4%)\n- by board: KOSDAQ selected=257 miss_watch=78.7%(n=122) weak_TR=51.7%(n=29) watch_runup=+18.2"
+        },
+        {
+          "date": "2026-05-14",
+          "mode": "MILD_BULL",
+          "pnl_pct": 0.0,
+          "market_change": -2.29,
+          "win": false,
+          "bull_result": "MISS",
+          "bear_result": "MISS",
+          "neutral_result": "MISS",
+          "bull_stance": "MILD_BULL",
+          "bear_stance": "CAUTIOUS",
+          "neutral_stance": "MILD_BULL",
+          "bull_reason": "Breadth 67% 상승·GC 20/DC 10·거래량 급증 22개로 모멘텀 확산은 유효하나, KIS 실시간 지수 미제공으로 현재 장중 방향 확인 불가·VKOSPI 결측·USD/KRW +1.3% 원약세가 겹쳐 MODERATE_BULL 확신 근거 부족",
+          "bear_reason": "USD/KRW 1d +1.3% 원약세(위험 신호 1개 확정)·VKOSPI 결측으로 변동성 불확실성 존재하며, breadth 67% 상승·GC 20/DC 10은 긍정적이나 RSI 과매수 13개 집중과 장중 KIS 지수 미확인 상태에서 BULL 분석가의 갭 회복 논거만으로 위험 신호를 상쇄하기 부족",
+          "neutral_reason": "Breadth 67%(20/10) 상승 우위·GC/DC 2:1·거래량 급증 22개로 기술적 모멘텀은 유효하나, 장중 KIS 지수 미제공(신뢰도 저하)·VKOSPI 결측·USD/KRW +1.3% 원약세·RSI 과매수 13개 누적으로 상단 제한 가능성 상존해 MILD_BULL 유지",
+          "key_lesson": "5d +10% 이상 급등 후 첫 세션에서 USD/KRW +1.3% 원약세 + RSI 과매수 13개 + VKOSPI 결측 3종 동시 발생 시, Breadth·GC 긍정 신호와 무관하게 CAUTIOUS_BEAR 또는 DEFENSIVE로 강제 하향 규칙 적용 필요. 강모멘텀 이후 차익실현 세션에서 MILD_BULL 유지는 반복적 오판 패턴임.",
+          "issue_type": "반등오판/과소대응",
+          "postmortem_fallback_note": "",
+          "best_trade": null,
+          "worst_trade": null,
+          "worst_trade_reason": "",
+          "trades": 0,
+          "execution_contaminated": false,
+          "execution_learning_excluded": false,
+          "execution_warning": false,
+          "execution_issues": [],
+          "execution_issue_labels": [],
+          "execution_issue_details": [],
+          "selection_feedback": "- 최근 20일 selected=488 trade_ready=77 watch_only=411 traded=25\n- trade_ready 3d: hit_rate=43.8% avg_fwd=+4.9% avg_runup=+18.4% avg_dd=-8.0% (n=73)\n- watch_only 3d: avg_fwd=+2.7% avg_runup=+16.0% avg_dd=-7.7% (n=299)\n- missed watch_only: runup>=5.0% 194건 (64.9%)\n- weak trade_ready: forward_3d<=0 41건 (56.2%)\n- by board: KOSDAQ selected=271 miss_watch=77.4%(n=146) weak_TR=55.9%(n=34) watch_runup=+18.6"
         }
       ],
       "debate_history": [
@@ -2504,7 +2594,54 @@
           },
           "changes": [],
           "consensus_shifted": false,
-          "outcome": null
+          "outcome": "wrong"
+        },
+        {
+          "date": "2026-05-14",
+          "r1": {
+            "bull": {
+              "stance": "MODERATE_BULL",
+              "confidence": 0.72,
+              "key_reason": "장전 코스피 -2.29%에서 현재 +0.00%로 2.3%p 갭 회복, breadth 67% 상승·GC 20/DC 10·거래량 급증 22개(폭증 "
+            },
+            "bear": {
+              "stance": "CAUTIOUS",
+              "confidence": 0.65,
+              "key_reason": "코스피 1d -2.29% 하락 후 현재 +0.00%로 반등 중이나, USD/KRW 1d +1.3% 약세(위험 신호), VKOSPI 결측으로 변동"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "Breadth 67% 상승(20/10), GC/DC 2:1 우위, RSI 과매수 13개 vs 과매도 3개로 강한 기술적 모멘텀 존재하나, 1d "
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MILD_BULL",
+              "confidence": 0.65,
+              "key_reason": "Breadth 67% 상승·GC 20/DC 10·거래량 급증 22개로 모멘텀 확산은 유효하나, KIS 실시간 지수 미제공으로 현재 장중 방향 확"
+            },
+            "bear": {
+              "stance": "CAUTIOUS",
+              "confidence": 0.62,
+              "key_reason": "USD/KRW 1d +1.3% 원약세(위험 신호 1개 확정)·VKOSPI 결측으로 변동성 불확실성 존재하며, breadth 67% 상승·GC 2"
+            },
+            "neutral": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "Breadth 67%(20/10) 상승 우위·GC/DC 2:1·거래량 급증 22개로 기술적 모멘텀은 유효하나, 장중 KIS 지수 미제공(신뢰도 "
+            }
+          },
+          "changes": [
+            {
+              "analyst": "bull",
+              "r1_stance": "MODERATE_BULL",
+              "r2_stance": "MILD_BULL",
+              "reason": "NEUTRAL 분석가의 '실시간 지수 미확인 상태에서 MODERATE_BULL 유지는 과신' 논거가 설득력 있음. 과거 이력상 MODERATE_BULL 유지 시 적중률 12%로 낮고, 장중 5분 경과 시점에서 KIS 지수 쿼리 오류로 현재 방향 불확인 상태임을 감안해 한 단계 하향. breadth 자체는 긍정적이나 RSI 과매수 13개 집중과 실시간 데이터 공백이 추가 상단 확신을 제한"
+            }
+          ],
+          "consensus_shifted": true,
+          "outcome": "wrong"
         }
       ],
       "execution_patterns": {
@@ -3562,45 +3699,45 @@
           "action": "buy_skipped",
           "strategy": "kr_sector_play",
           "reason": "unaffordable_high_price",
-          "count": 61,
+          "count": 75,
           "success": 0,
-          "fail": 61,
+          "fail": 75,
           "avg_pnl_pct": 0.0,
-          "last_detail": "unaffordable_high_price: price_krw=938,000 budget_krw=100,000 shortfall_krw=838,000",
-          "last_seen": "2026-05-12",
+          "last_detail": "unaffordable_high_price: price_krw=1,010,000 budget_krw=66,000 shortfall_krw=944,000",
+          "last_seen": "2026-05-14",
           "examples": [
             {
-              "date": "2026-05-12",
+              "date": "2026-05-14",
               "ticker": "009150",
-              "detail": "unaffordable_high_price: price_krw=930,000 budget_krw=100,000 shortfall_krw=830,000",
+              "detail": "unaffordable_high_price: price_krw=1,015,000 budget_krw=66,000 shortfall_krw=949,000",
               "selected_reason": "kr_sector_etf=091160.KS",
               "pnl_pct": 0.0
             },
             {
-              "date": "2026-05-12",
-              "ticker": "009150",
-              "detail": "unaffordable_high_price: price_krw=936,000 budget_krw=100,000 shortfall_krw=836,000",
+              "date": "2026-05-14",
+              "ticker": "000660",
+              "detail": "unaffordable_high_price: price_krw=1,977,000 budget_krw=66,000 shortfall_krw=1,911,000",
               "selected_reason": "kr_sector_etf=091160.KS",
               "pnl_pct": 0.0
             },
             {
-              "date": "2026-05-12",
+              "date": "2026-05-14",
               "ticker": "009150",
-              "detail": "unaffordable_high_price: price_krw=939,000 budget_krw=100,000 shortfall_krw=839,000",
+              "detail": "unaffordable_high_price: price_krw=1,012,000 budget_krw=66,000 shortfall_krw=946,000",
               "selected_reason": "kr_sector_etf=091160.KS",
               "pnl_pct": 0.0
             },
             {
-              "date": "2026-05-12",
-              "ticker": "009150",
-              "detail": "unaffordable_high_price: price_krw=934,000 budget_krw=100,000 shortfall_krw=834,000",
+              "date": "2026-05-14",
+              "ticker": "000660",
+              "detail": "unaffordable_high_price: price_krw=1,967,000 budget_krw=66,000 shortfall_krw=1,901,000",
               "selected_reason": "kr_sector_etf=091160.KS",
               "pnl_pct": 0.0
             },
             {
-              "date": "2026-05-12",
+              "date": "2026-05-14",
               "ticker": "009150",
-              "detail": "unaffordable_high_price: price_krw=938,000 budget_krw=100,000 shortfall_krw=838,000",
+              "detail": "unaffordable_high_price: price_krw=1,010,000 budget_krw=66,000 shortfall_krw=944,000",
               "selected_reason": "kr_sector_etf=091160.KS",
               "pnl_pct": 0.0
             }
@@ -4191,7 +4328,7 @@
       ]
     },
     "US": {
-      "trained_days": 39,
+      "trained_days": 40,
       "training_period": {
         "phase1": "2025-01-01 ~ 2025-04-30 (조정장 50일)",
         "phase2": "2025-05-01 ~ 2025-09-30 (강세장 100일)",
@@ -4317,9 +4454,9 @@
           "avg_pnl": 2.2046
         },
         "gap_pullback": {
-          "count": 33,
-          "win_rate": 0.576,
-          "avg_pnl": 0.6402
+          "count": 34,
+          "win_rate": 0.588,
+          "avg_pnl": 0.6299
         },
         "mean_reversion": {
           "count": 1,
@@ -4977,131 +5114,131 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "30min_tune": {
-          "count": 97,
+          "count": 100,
           "correct": 11,
-          "rate": 0.113,
-          "insight": "개장 대비 -0.55% 하락 지속 + breadth advance_ratio -36%p 급락(adv/dec 28/36 역전, GC/DC 0/0 소멸)으로 아침 CAUTIOUS thesis 악화 확인, 신규 진입 문턱 강화(wait +5m, cutoff +0.02) 적용하나 기존 포지션(NOVT +3.9%, RAL +4.3% 수익 양호)은 SL 유지",
-          "last_seen": "2026-05-13",
+          "rate": 0.11,
+          "insight": "Below-average precision (11% over 100 trials); use with caution. (Context: 지수 +0.80% 강세 전환 + breadth advance_ratio 47%→71%(adv 42/dec 16, +24%p 개선)로 아침 Bea)",
+          "last_seen": "2026-05-15",
           "adjusted": 11,
-          "adjusted_rate": 0.113,
+          "adjusted_rate": 0.11,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
-          "count": 66,
+          "count": 69,
           "correct": 7,
-          "rate": 0.106,
-          "insight": "30분 기울기 +0.40%p 반등으로 방향 전환 신호 있으나, breadth가 universe 79 기준 advance_ratio -34%p 급락(adv/dec=36/43 역전), GC 22→0·DC 8→0 소멸로 아침 thesis 핵심 근거 붕괴되었고 ZBRA -2.5% 등 포지션 압력 존재하므로 신규 진입 규모 추가 축소 유지",
-          "last_seen": "2026-05-13",
+          "rate": 0.101,
+          "insight": "Below-average precision (10% over 69 trials); use with caution. (Context: 지수 +0.66%로 아침 대비 개선, breadth advance_ratio +20%p(40/19)로 아침 thesis 강화되나 최근 30분 기)",
+          "last_seen": "2026-05-15",
           "adjusted": 7,
-          "adjusted_rate": 0.106,
+          "adjusted_rate": 0.101,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "90min_tune": {
-          "count": 50,
+          "count": 52,
           "correct": 7,
-          "rate": 0.14,
-          "insight": "Below-average precision (14% over 50 trials); use with caution. (Context: 개장 대비 -0.92% 하락·30분 기울기 -0.06%p 지속 하강·breadth advance_ratio -34%p 급락(adv/dec 37/)",
-          "last_seen": "2026-05-13",
+          "rate": 0.135,
+          "insight": "Below-average precision (14% over 52 trials); use with caution. (Context: 지수 +0.70%(아침 +0.35% 대비 가속)·30분 기울기 +0.17%p 상승·breadth advance_ratio +19%p(40/20))",
+          "last_seen": "2026-05-14",
           "adjusted": 7,
-          "adjusted_rate": 0.14,
+          "adjusted_rate": 0.135,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "120min_tune": {
-          "count": 38,
+          "count": 40,
           "correct": 2,
-          "rate": 0.053,
-          "insight": "Historically low precision (5% over 38 trials); treat as weak context only. (Context: 지수 +0.21% 상승·30분 기울기 +0.05%p 우상향으로 아침 MODERATE_BULL thesis 유지 중이며, breadth unive)",
-          "last_seen": "2026-05-12",
+          "rate": 0.05,
+          "insight": "Historically low precision (5% over 40 trials); treat as weak context only. (Context: 지수 +0.86%(아침 +0.35% 대비 개선)·30분 기울기 +0.16%p 상승 지속·breadth advance_ratio +21%p(42/)",
+          "last_seen": "2026-05-15",
           "adjusted": 2,
-          "adjusted_rate": 0.053,
+          "adjusted_rate": 0.05,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "150min_tune": {
-          "count": 32,
+          "count": 34,
           "correct": 3,
-          "rate": 0.094,
-          "insight": "Historically low precision (9% over 32 trials); treat as weak context only. (Context: 지수 +0.33% 및 30분 기울기 +0.11%p 상승으로 아침 MODERATE_BULL thesis 유지, breadth universe 확장)",
-          "last_seen": "2026-05-12",
+          "rate": 0.088,
+          "insight": "Historically low precision (9% over 34 trials); treat as weak context only. (Context: 지수 +0.87%(아침 +0.35% 대비 가속), 30분 기울기 +0.01%p 상승 유지, breadth advance_ratio +25%p 개)",
+          "last_seen": "2026-05-15",
           "adjusted": 3,
-          "adjusted_rate": 0.094,
+          "adjusted_rate": 0.088,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "180min_tune": {
-          "count": 27,
+          "count": 29,
           "correct": 4,
-          "rate": 0.148,
-          "insight": "Below-average precision (15% over 27 trials); use with caution. (Context: 지수 +0.34% 상승·30분 기울기 +0.01%p(rising)로 아침 MODERATE_BULL thesis와 동일 방향 유지, breadth)",
-          "last_seen": "2026-05-12",
+          "rate": 0.138,
+          "insight": "Below-average precision (14% over 29 trials); use with caution. (Context: 지수 +0.95%·30분 기울기 +0.08%p 상승 지속·breadth advance_ratio +27%p(44/15) 대폭 개선으로 아침 CA)",
+          "last_seen": "2026-05-15",
           "adjusted": 4,
-          "adjusted_rate": 0.148,
+          "adjusted_rate": 0.138,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "210min_tune": {
-          "count": 20,
+          "count": 21,
           "correct": 2,
-          "rate": 0.1,
-          "insight": "Below-average precision (10% over 20 trials); use with caution. (Context: 지수 +0.27% 양권 유지, breadth 확대(adv/dec 51/25, advance_ratio ~67%)로 아침 MODERATE_BULL)",
-          "last_seen": "2026-05-12",
+          "rate": 0.095,
+          "insight": "Historically low precision (10% over 21 trials); treat as weak context only. (Context: 지수 +0.52% 상승, 30분 기울기 +0.14%p 상승 중, breadth advance_ratio +5%p 개선(49/26)으로 아침 MI)",
+          "last_seen": "2026-05-14",
           "adjusted": 2,
-          "adjusted_rate": 0.1,
+          "adjusted_rate": 0.095,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "240min_tune": {
-          "count": 17,
+          "count": 18,
           "correct": 2,
-          "rate": 0.118,
-          "insight": "Below-average precision (12% over 17 trials); use with caution. (Context: 지수 +0.18% 유지·breadth 52/25(advance_ratio ~67%)로 아침 73%에서 소폭 하락했으나 GC/DC 소멸·RSI O)",
-          "last_seen": "2026-05-12",
+          "rate": 0.111,
+          "insight": "Below-average precision (11% over 18 trials); use with caution. (Context: 지수 +0.63% 상승, 30분 기울기 +0.11%p 상승 지속, breadth advance_ratio +6%p 개선(51/25)으로 아침 M)",
+          "last_seen": "2026-05-14",
           "adjusted": 2,
-          "adjusted_rate": 0.118,
+          "adjusted_rate": 0.111,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "270min_tune": {
-          "count": 11,
+          "count": 12,
           "correct": 3,
-          "rate": 0.273,
-          "insight": "지수 -0.49% + 30분 기울기 -0.08%p 하락 지속 + breadth advance_ratio -15%p 악화(adv/dec 35/38 역전) + GC/DC 전멸(0/0)로 아침 thesis 훼손, IREN -4.3% SL 근접 포함 포지션 리스크 관리 강화 필요",
-          "last_seen": "2026-05-08",
+          "rate": 0.25,
+          "insight": "지수 +0.61% 상승으로 아침 MILD_BULL thesis 유지되며 breadth universe 확장(30→79) 후 advance_ratio +7%p·advancers 53/79(67%)로 개선되어 상승 확산 확인되나, 최근 30분 기울기 -0.02%p 소폭 하락·거래량 low·잔여 124분으로 momentum_wait 현행 -5분 유지가 적절하고 추가 조정 불필요",
+          "last_seen": "2026-05-14",
           "adjusted": 3,
-          "adjusted_rate": 0.273,
+          "adjusted_rate": 0.25,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "300min_tune": {
+          "count": 12,
+          "correct": 2,
+          "rate": 0.167,
+          "insight": "지수 +0.77% / 30분 기울기 +0.16%p 상승 지속, breadth advance_ratio +6%p(52/26) 확대로 아침 MILD_BULL thesis 강화, 경고 없음; momentum_wait -5 유지로 mid-session 94분 잔여 구간 포착 효율 확보.",
+          "last_seen": "2026-05-14",
+          "adjusted": 2,
+          "adjusted_rate": 0.167,
+          "metric_semantics": "adjusted_not_accuracy"
+        },
+        "330min_tune": {
           "count": 11,
           "correct": 2,
           "rate": 0.182,
-          "insight": "지수 -0.34% 약세 지속 + breadth advance_ratio -14%p 악화(36/37 GC/DC 0/0 완전 소멸)로 아침 thesis 핵심 근거(19/11 GC우위) 붕괴, 최근 30분 +0.16%p 반등은 미약하여 신규 진입 추가 제한 유지, IREN -4.0% SL 상회 주의",
-          "last_seen": "2026-05-08",
+          "insight": "지수 +0.68% 상승으로 아침 MILD_BULL thesis 유지, breadth advance_ratio +6%p 개선(51/26)으로 확산 강화 확인되나 최근 30분 기울기 -0.09%p 하락·거래량 low·잔여 63분으로 신규 공격 자제, momentum_wait -5m 유지로 잔여 세션 포착 효율 유지.",
+          "last_seen": "2026-05-14",
           "adjusted": 2,
           "adjusted_rate": 0.182,
           "metric_semantics": "adjusted_not_accuracy"
         },
-        "330min_tune": {
-          "count": 10,
-          "correct": 2,
-          "rate": 0.2,
-          "insight": "지수 -0.44% 지속 하락 + 30분 기울기 -0.11%p 낙하 + breadth advance_ratio -13%p 급락(63%→50%) + GC/DC 전량 소멸(19→0/11→0)로 아침 MILD_BULL thesis 핵심 근거 붕괴, IREN -6.0% SL 근접 포함 포지션 리스크 집중으로 TIGHTEN 유지하며 모드 NEUTRAL 하향",
-          "last_seen": "2026-05-08",
-          "adjusted": 2,
-          "adjusted_rate": 0.2,
-          "metric_semantics": "adjusted_not_accuracy"
-        },
         "360min_tune": {
-          "count": 8,
+          "count": 9,
           "correct": 2,
-          "rate": 0.25,
-          "insight": "지수 -0.50% + 30분 기울기 -0.06%p 하락 지속, breadth advance_ratio -16%p 악화(adv/dec 34/38 역전), GC/DC 전멸로 아침 NEUTRAL thesis 유지 근거 소멸 → 세션 종료 33분 전 late phase에서 신규 진입 억제 및 기존 TIGHTEN 유지가 적합, IREN -6.2% SL(88,328) 이미 돌파 근접 주의",
-          "last_seen": "2026-05-08",
+          "rate": 0.222,
+          "insight": "지수 +0.70% / 30분 기울기 +0.03%p 상승 지속, breadth advance_ratio +7%p 확대(52/26)로 아침 MILD_BULL thesis 강화 확인; 마감 33분 잔여로 신규 진입 실익 낮아 wait 단축(-5m) 유지하되 cutoff·ATR cap 추가 조정 불필요",
+          "last_seen": "2026-05-14",
           "adjusted": 2,
-          "adjusted_rate": 0.25,
+          "adjusted_rate": 0.222,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "390min_tune": {
-          "count": 7,
+          "count": 8,
           "correct": 0,
           "rate": 0.0,
-          "insight": "Historically low precision (0% over 7 trials); treat as weak context only. (Context: 지수 -0.37%로 약세이나 최근 30분 기울기 +0.13%p 반등 중, blackout=yes(to_close=0m)로 신규진입 불가 상태이며)",
-          "last_seen": "2026-05-08",
+          "insight": "Historically low precision (0% over 8 trials); treat as weak context only. (Context: 장 마감 2분 전 blackout 구간·close_guard 상태이며 지수 +0.59%로 아침 MILD_BULL thesis 유지, breadt)",
+          "last_seen": "2026-05-14",
           "adjusted": 0,
           "adjusted_rate": 0.0,
           "metric_semantics": "adjusted_not_accuracy"
@@ -6035,6 +6172,55 @@
             }
           ],
           "selection_feedback": "- 최근 20일 selected=719 trade_ready=122 watch_only=597 traded=11\n- trade_ready 3d: hit_rate=74.1% avg_fwd=+5.3% avg_runup=+8.9% avg_dd=-3.1% (n=108)\n- watch_only 3d: avg_fwd=+1.9% avg_runup=+6.3% avg_dd=-4.4% (n=418)\n- missed watch_only: runup>=5.0% 225건 (53.8%)\n- weak trade_ready: forward_3d<=0 28건 (25.9%)\n- by category: most_actives selected=413 miss_watch=54.1%(n=259) weak_TR=5.4%(n=37) watch_run"
+        },
+        {
+          "date": "2026-05-13",
+          "mode": "MILD_BULL",
+          "pnl_pct": 0.4834991068824711,
+          "market_change": 0.5934354746791055,
+          "win": true,
+          "bull_result": "HIT",
+          "bear_result": "HIT",
+          "neutral_result": "HIT",
+          "bull_stance": "MILD_BULL",
+          "bear_stance": "CAUTIOUS",
+          "neutral_stance": "MILD_BULL",
+          "bull_reason": "Breadth 60% 상승(18/30), GC/DC 19/11 우세, XLV·XLF·XLE 섹터 확산 확인되나 XLK -1.51% 기술 약세와 TSLA·GOOGL·QCOM 등 과매수 RSI 누적으로 확산 제한적; 인트라데이 S&P500 -0.03%·NASDAQ +0.29% 소폭 회복, VIX 18.04 안정권으로 MILD_BULL 유지",
+          "bear_reason": "Breadth 60% 상승·GC/DC 19/11로 양호하나 XLK -1.51% 기술 섹터 약세·대형주 RSI 과매수 누적(QCOM 89.5, GOOGL 79.3)·개장 4분 블랙아웃 구간으로 방향성 미확정 상태이며, VIX 18.04 안정권이나 intraday 상승 중으로 구조적 위험 완전 해소 미확인",
+          "neutral_reason": "Breadth 60% 상승(18/30), GC/DC 19/11 긍정적 우위로 2:1 기준 충족; 인트라데이 S&P500 -0.03%·NASDAQ +0.29%로 프리오픈 약세 대비 개선 확인되나, 개장 4분 블랙아웃 구간·XLK -1.51% 기술섹터 약세·대형주 RSI 과매수(QCOM 89.5, GOOGL 79.3) 누적으로 강한 stance 자제",
+          "key_lesson": "",
+          "issue_type": "",
+          "postmortem_fallback_note": "",
+          "best_trade": "STM",
+          "worst_trade": "ON",
+          "worst_trade_reason": "ON gap_pullback 전략은 진입 후 고점 +2.14%까지 도달했으나 모멘텀이 소진되며 +0.30%에서 trail stop / profit_floor 조건으로 조기 청산, 최종 +482 KRW(+0.29%)에 그침. gap_pullback 전략 특성상 초기 모멘텀에 의존하는데 1주 고정 qty와 타이트한 trail 간격이 수익 극대화를 구조적으로 제한. 고점 대비 -1.84%p 반납은 trail 간격 설정이 과도하게 보수적이었음을 시사. 손실은 아니나 최악 거래로 분류된 이유는 상대적 수익 효율이 가장 낮았기 때문.",
+          "trades": 4,
+          "execution_contaminated": true,
+          "execution_learning_excluded": true,
+          "execution_warning": false,
+          "execution_issues": [
+            "broker_position_removed",
+            "sell_failed"
+          ],
+          "execution_issue_labels": [
+            "브로커 미보유 포지션 정리",
+            "매도 실패"
+          ],
+          "execution_issue_details": [
+            {
+              "issue": "broker_position_removed",
+              "label": "브로커 미보유 포지션 정리",
+              "severity": "sync_warning",
+              "learning_excluded": false
+            },
+            {
+              "issue": "sell_failed",
+              "label": "매도 실패",
+              "severity": "trade_affecting",
+              "learning_excluded": true
+            }
+          ],
+          "selection_feedback": "- 최근 20일 selected=723 trade_ready=119 watch_only=604 traded=11\n- trade_ready 3d: hit_rate=76.2% avg_fwd=+5.6% avg_runup=+9.2% avg_dd=-3.1% (n=105)\n- watch_only 3d: avg_fwd=+1.9% avg_runup=+6.3% avg_dd=-4.3% (n=408)\n- missed watch_only: runup>=5.0% 222건 (54.4%)\n- weak trade_ready: forward_3d<=0 25건 (23.8%)\n- by category: most_actives selected=408 miss_watch=54.8%(n=252) weak_TR=5.4%(n=37) watch_run"
         }
       ],
       "debate_history": [
@@ -7232,36 +7418,36 @@
           "date": "2026-05-13",
           "r1": {
             "bull": {
-              "stance": "MODERATE_BULL",
-              "confidence": 0.72,
-              "key_reason": "Breadth 80% 상승(24/5), GC 22개 vs DC 8개, 거래량 급증/폭증 16개로 시장 breadth 강건하나, 현재 S&P500"
+              "stance": "MILD_BULL",
+              "confidence": 0.65,
+              "key_reason": "breadth 60% 상승(18/30), GC 19/11 우세, XLV +1.96%·XLF +0.78%·XLE +0.70% 섹터 확산이나 XLK"
             },
             "bear": {
-              "stance": "MODERATE_BULL",
-              "confidence": 0.72,
-              "key_reason": "Breadth 강세(상승 80%, GC/DC 22/8), VIX 18.2 안정, 섹터 분산(XLK +1.34%, XLE +2.64%), 하지만 "
+              "stance": "CAUTIOUS",
+              "confidence": 0.58,
+              "key_reason": "Breadth 양호 (60% 상승, GC/DC 19/11) 하지만 대형주 과매수 누적 (TSLA RSI 78.1, AAPL RSI 75.5, G"
             },
             "neutral": {
               "stance": "MILD_BULL",
               "confidence": 0.62,
-              "key_reason": "Breadth 80% 상승(24/5), GC 22개 vs DC 8개(2.75:1), 거래량 급증 15개, 섹터 XLK +1.34%/XLE +2."
+              "key_reason": "Breadth 상승 60% (18/12)로 2:1 이상 우위, GC/DC 19/11 긍정적, RSI 과매수 8개로 모멘텀 존재하나 S&P500 "
             }
           },
           "r2": {
             "bull": {
-              "stance": "MODERATE_BULL",
-              "confidence": 0.7,
-              "key_reason": "Breadth 80% 상승(24/5), GC 22 vs DC 8, 거래량 급증 16개로 시장 구조 강건; 인트라데이 S&P -0.55%·NASD"
+              "stance": "MILD_BULL",
+              "confidence": 0.63,
+              "key_reason": "Breadth 60% 상승(18/30), GC/DC 19/11 우세, XLV·XLF·XLE 섹터 확산 확인되나 XLK -1.51% 기술 약세와 "
             },
             "bear": {
-              "stance": "MODERATE_BULL",
-              "confidence": 0.68,
-              "key_reason": "Breadth 80% 상승(GC 22 vs DC 8)·VIX 18.2 안정으로 구조적 강세 유지되나, 인트라데이 S&P -0.55%·NASDAQ"
+              "stance": "CAUTIOUS",
+              "confidence": 0.57,
+              "key_reason": "Breadth 60% 상승·GC/DC 19/11로 양호하나 XLK -1.51% 기술 섹터 약세·대형주 RSI 과매수 누적(QCOM 89.5, G"
             },
             "neutral": {
               "stance": "MILD_BULL",
-              "confidence": 0.6,
-              "key_reason": "Breadth 80% 상승(24/5), GC 22 vs DC 8(2.75:1)로 구조적 강세 유지되나, 인트라데이 S&P500 -0.55%·NA"
+              "confidence": 0.62,
+              "key_reason": "Breadth 60% 상승(18/30), GC/DC 19/11 긍정적 우위로 2:1 기준 충족; 인트라데이 S&P500 -0.03%·NASDAQ"
             }
           },
           "changes": [
@@ -7272,6 +7458,46 @@
               "reason": "BULL·BEAR 분석가 모두 인트라데이 NASDAQ -1.87% 실시간 낙폭이 전일 breadth 개선 신호를 단기 압도한다는 점에서 일치했고, 현재 세션 중반(193분 경과)에서 추가 하락 리스크가 잔존한다는 논거는 통계적으로 타당. 과거 이력상 변경 시 적중률(14%)이 유지(30%)보다 낮으나, 이번은 단순 다수 동조가 아니라 INTRADAY_CONTEXT 오버라이드 지침에 따른 실시간 데이터 우선 원칙에 근거한 조정으로 판단. MILD_BULL → CAUTIOUS로 한 단계 하향, confidence는 신호 충돌로 0.60 유지."
             }
           ],
+          "consensus_shifted": false,
+          "outcome": null
+        },
+        {
+          "date": "2026-05-14",
+          "r1": {
+            "bull": {
+              "stance": "MILD_BULL",
+              "confidence": 0.62,
+              "key_reason": "breadth 47% 상승(14/16)으로 중립 경계에 걸쳐 있고 GC/DC 18/12로 골든크로스 우위이나 과반 미만 상승으로 MODERATE"
+            },
+            "bear": {
+              "stance": "CAUTIOUS",
+              "confidence": 0.62,
+              "key_reason": "VIX 17.9 안정적이나 breadth 약화(상승 47%, GC 18/DC 12), RSI 과매수 8개 누적, TSLA/AAPL/GOOGL/C"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.58,
+              "key_reason": "시장 breadth 14상승/16하락(47% 상승)으로 균등 분포 + GC/DC 18/12 약한 우위 + RSI 과매수 8개 vs 과매도 2개 "
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MILD_BULL",
+              "confidence": 0.6,
+              "key_reason": "breadth 47% 상승(14/16)·GC 18/DC 12로 골든크로스 우위 유지되나 과반 미충족, S&P500 +0.35%·VIX 17.9 "
+            },
+            "bear": {
+              "stance": "CAUTIOUS",
+              "confidence": 0.6,
+              "key_reason": "VIX 17.9 안정·HYG/TNX/DXY 정상권이나 breadth 47%(14상승/16하락)·GC18/DC12 약한 우위에 그치고 RSI 과매"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.57,
+              "key_reason": "breadth 14상승/16하락(47%)으로 균등 분포 유지, GC/DC 18/12 약한 우위이나 RSI 과매수 8개 누적 및 섹터 혼조(XLK"
+            }
+          },
+          "changes": [],
           "consensus_shifted": false,
           "outcome": null
         }
@@ -7389,19 +7615,12 @@
           "action": "buy_order",
           "strategy": "gap_pullback",
           "reason": "gap_pullback 진입",
-          "count": 9,
-          "success": 9,
+          "count": 10,
+          "success": 10,
           "fail": 0,
           "avg_pnl_pct": 0.0,
-          "last_detail": "선택이유: HARD pin confirmed; +11.4% RS, liq=high, turn=$3.8B, from_high+18.9% at_high, ma60 above; state=unknown but strong RS justifies gap_pullback probe",
+          "last_detail": "선택이유: EARLY_STRENGTH_POSITIVE_R5_R10",
           "examples": [
-            {
-              "date": "2026-04-28",
-              "ticker": "QCOM",
-              "detail": "선택이유: 당일 +11.12%, RS SP+10.3%. near_high, ma60 above, liq=high, turn $4.4B. ATR 2.8%(low) → 타이트한 손절 가능. earn=pre 주의이나 blackout 중이므로 단기 price action 중심.",
-              "selected_reason": "당일 +11.12%, RS SP+10.3%. near_high, ma60 above, liq=high, turn $4.4B. ATR 2.8%(low) → 타이트한 손절 가능. earn=pre 주의이나 blackout 중이므로 단기 price action 중심.",
-              "pnl_pct": 0.0
-            },
             {
               "date": "2026-05-01",
               "ticker": "STX",
@@ -7429,9 +7648,16 @@
               "detail": "선택이유: HARD pin confirmed; +11.4% RS, liq=high, turn=$3.8B, from_high+18.9% at_high, ma60 above; state=unknown but strong RS justifies gap_pullback probe",
               "selected_reason": "HARD pin confirmed; +11.4% RS, liq=high, turn=$3.8B, from_high+18.9% at_high, ma60 above; state=unknown but strong RS justifies gap_pullback probe",
               "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-05-14",
+              "ticker": "ON",
+              "detail": "선택이유: EARLY_STRENGTH_POSITIVE_R5_R10",
+              "selected_reason": "EARLY_STRENGTH_POSITIVE_R5_R10",
+              "pnl_pct": 0.0
             }
           ],
-          "last_seen": "2026-05-08"
+          "last_seen": "2026-05-14"
         },
         "sell_filled|gap_pullback|max_hold_final": {
           "action": "sell_filled",
@@ -7586,20 +7812,13 @@
           "action": "sell_filled",
           "strategy": "claude_price",
           "reason": "pre_close",
-          "count": 11,
-          "success": 11,
+          "count": 12,
+          "success": 12,
           "fail": 0,
-          "avg_pnl_pct": 1.066,
-          "last_detail": "pathb_run=path_20260511_US_OKLO_claude_price_1e49ab61 close_reason=CLOSED_CLAUDE_PRICE_PRE_CLOSE",
-          "last_seen": "2026-05-12",
+          "avg_pnl_pct": 1.2346,
+          "last_detail": "pathb_run=path_20260513_US_STM_claude_price_6c49b959 close_reason=CLOSED_CLAUDE_PRICE_PRE_CLOSE",
+          "last_seen": "2026-05-14",
           "examples": [
-            {
-              "date": "2026-04-28",
-              "ticker": "ORKA",
-              "detail": "entry=110,138 hold_days=0",
-              "selected_reason": "",
-              "pnl_pct": 1.019488685668513
-            },
             {
               "date": "2026-05-07",
               "ticker": "FSLY",
@@ -7627,6 +7846,13 @@
               "detail": "pathb_run=path_20260511_US_OKLO_claude_price_1e49ab61 close_reason=CLOSED_CLAUDE_PRICE_PRE_CLOSE",
               "selected_reason": "",
               "pnl_pct": -1.32418878754762
+            },
+            {
+              "date": "2026-05-14",
+              "ticker": "STM",
+              "detail": "pathb_run=path_20260513_US_STM_claude_price_6c49b959 close_reason=CLOSED_CLAUDE_PRICE_PRE_CLOSE",
+              "selected_reason": "",
+              "pnl_pct": 3.089415695542344
             }
           ]
         },
@@ -7702,12 +7928,12 @@
           "action": "sell_filled",
           "strategy": "gap_pullback",
           "reason": "profit_floor",
-          "count": 1,
-          "success": 1,
+          "count": 2,
+          "success": 2,
           "fail": 0,
-          "avg_pnl_pct": 0.4567,
-          "last_detail": "entry=966,629 hold_days=0",
-          "last_seen": "2026-05-01",
+          "avg_pnl_pct": 0.3731,
+          "last_detail": "entry=166,514 hold_days=0",
+          "last_seen": "2026-05-14",
           "examples": [
             {
               "date": "2026-05-01",
@@ -7715,6 +7941,13 @@
               "detail": "entry=966,629 hold_days=0",
               "selected_reason": "",
               "pnl_pct": 0.45674257924632244
+            },
+            {
+              "date": "2026-05-14",
+              "ticker": "ON",
+              "detail": "entry=166,514 hold_days=0",
+              "selected_reason": "",
+              "pnl_pct": 0.28953193585952375
             }
           ]
         },
@@ -7903,34 +8136,13 @@
           "action": "buy_order",
           "strategy": "claude_price",
           "reason": "unknown",
-          "count": 7,
-          "success": 7,
+          "count": 10,
+          "success": 10,
           "fail": 0,
           "avg_pnl_pct": 0.0,
-          "last_detail": "pathb_run=path_20260512_US_ZBRA_claude_price_823b3570 partial=False",
-          "last_seen": "2026-05-13",
+          "last_detail": "pathb_run=path_20260513_US_NOK_claude_price_fb04da6a partial=False",
+          "last_seen": "2026-05-14",
           "examples": [
-            {
-              "date": "2026-05-12",
-              "ticker": "AXTI",
-              "detail": "pathb_run=path_20260511_US_AXTI_claude_price_3a4e2b9b partial=False",
-              "selected_reason": "claude_price",
-              "pnl_pct": 0.0
-            },
-            {
-              "date": "2026-05-12",
-              "ticker": "OKLO",
-              "detail": "pathb_run=path_20260511_US_OKLO_claude_price_1e49ab61 partial=False",
-              "selected_reason": "claude_price",
-              "pnl_pct": 0.0
-            },
-            {
-              "date": "2026-05-12",
-              "ticker": "SMTC",
-              "detail": "pathb_run=path_20260511_US_SMTC_claude_price_c34a3657 partial=False",
-              "selected_reason": "claude_price",
-              "pnl_pct": 0.0
-            },
             {
               "date": "2026-05-13",
               "ticker": "DKNG",
@@ -7942,6 +8154,27 @@
               "date": "2026-05-13",
               "ticker": "ZBRA",
               "detail": "pathb_run=path_20260512_US_ZBRA_claude_price_823b3570 partial=False",
+              "selected_reason": "claude_price",
+              "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-05-14",
+              "ticker": "STM",
+              "detail": "pathb_run=path_20260513_US_STM_claude_price_6c49b959 partial=False",
+              "selected_reason": "claude_price",
+              "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-05-14",
+              "ticker": "AAOI",
+              "detail": "pathb_run=path_20260513_US_AAOI_claude_price_a95f53bc partial=False",
+              "selected_reason": "claude_price",
+              "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-05-14",
+              "ticker": "NOK",
+              "detail": "pathb_run=path_20260513_US_NOK_claude_price_fb04da6a partial=False",
               "selected_reason": "claude_price",
               "pnl_pct": 0.0
             }
@@ -7966,6 +8199,100 @@
               "pnl_pct": -1.513113651647613
             }
           ]
+        },
+        "buy_order|opening_range_pullback|opening_range_pullback 진입": {
+          "action": "buy_order",
+          "strategy": "opening_range_pullback",
+          "reason": "opening_range_pullback 진입",
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "avg_pnl_pct": 0.0,
+          "last_detail": "선택이유: AT_HIGH_STRONG_RS_PLAN_A",
+          "last_seen": "2026-05-14",
+          "examples": [
+            {
+              "date": "2026-05-14",
+              "ticker": "NBIS",
+              "detail": "선택이유: AT_HIGH_STRONG_RS_PLAN_A",
+              "selected_reason": "AT_HIGH_STRONG_RS_PLAN_A",
+              "pnl_pct": 0.0
+            }
+          ]
+        },
+        "sell_filled|claude_price|profit_ladder": {
+          "action": "sell_filled",
+          "strategy": "claude_price",
+          "reason": "profit_ladder",
+          "count": 2,
+          "success": 2,
+          "fail": 0,
+          "avg_pnl_pct": 1.1847,
+          "last_detail": "pathb_run=path_20260513_US_NOK_claude_price_fb04da6a close_reason=CLOSED_PROFIT_LADDER",
+          "last_seen": "2026-05-14",
+          "examples": [
+            {
+              "date": "2026-05-14",
+              "ticker": "AAOI",
+              "detail": "pathb_run=path_20260513_US_AAOI_claude_price_a95f53bc close_reason=CLOSED_PROFIT_LADDER",
+              "selected_reason": "",
+              "pnl_pct": 0.5075429113080794
+            },
+            {
+              "date": "2026-05-14",
+              "ticker": "NOK",
+              "detail": "pathb_run=path_20260513_US_NOK_claude_price_fb04da6a close_reason=CLOSED_PROFIT_LADDER",
+              "selected_reason": "",
+              "pnl_pct": 1.861974729241866
+            }
+          ]
+        },
+        "auto_sell_review|gap_pullback|profit_floor": {
+          "action": "auto_sell_review",
+          "strategy": "gap_pullback",
+          "reason": "profit_floor",
+          "count": 1,
+          "success": 0,
+          "fail": 1,
+          "avg_pnl_pct": 0.0,
+          "last_detail": "고점(+2.14%) 대비 현재 +0.30%로 -1.84%p 반납 — gap_pullback 전략에서 모멘텀이 소진됐고 24분 내 고점 회복 근거가 없으며, 자동 매도 사유(트레일 스톱 또는 이익 반납 한도)가 여전히 유효하므로 청산이 합리적이다.",
+          "last_seen": "2026-05-14",
+          "examples": [
+            {
+              "date": "2026-05-14",
+              "ticker": "ON",
+              "detail": "고점(+2.14%) 대비 현재 +0.30%로 -1.84%p 반납 — gap_pullback 전략에서 모멘텀이 소진됐고 24분 내 고점 회복 근거가 없으며, 자동 매도 사유(트레일 스톱 또는 이익 반납 한도)가 여전히 유효하므로 청산이 합리적이다.",
+              "selected_reason": "",
+              "pnl_pct": 0.0
+            }
+          ]
+        },
+        "buy_skipped|sector_play|unaffordable_high_price": {
+          "action": "buy_skipped",
+          "strategy": "sector_play",
+          "reason": "unaffordable_high_price",
+          "count": 2,
+          "success": 0,
+          "fail": 2,
+          "avg_pnl_pct": 0.0,
+          "last_detail": "unaffordable_high_price: price_krw=1,514,080 budget_krw=81,000 shortfall_krw=1,433,080",
+          "last_seen": "2026-05-14",
+          "examples": [
+            {
+              "date": "2026-05-14",
+              "ticker": "LLY",
+              "detail": "unaffordable_high_price: price_krw=1,513,423 budget_krw=81,000 shortfall_krw=1,432,423",
+              "selected_reason": "sector_etf=XLV",
+              "pnl_pct": 0.0
+            },
+            {
+              "date": "2026-05-14",
+              "ticker": "LLY",
+              "detail": "unaffordable_high_price: price_krw=1,514,080 budget_krw=81,000 shortfall_krw=1,433,080",
+              "selected_reason": "sector_etf=XLV",
+              "pnl_pct": 0.0
+            }
+          ]
         }
       },
       "execution_lessons": [
@@ -7977,12 +8304,14 @@
         "청산 실패 주요 사유: intraday_review_sell",
         "손실 매도 주요 사유: trail_stop",
         "손실 매도 주요 사유: stop_loss",
-        "손실 매도 주요 사유: loss_cap"
+        "손실 매도 주요 사유: loss_cap",
+        "수익 청산 유효 패턴: profit_ladder",
+        "수익 청산 유효 패턴: profit_floor"
       ],
       "execution_stats": {
-        "buy_order": 21,
+        "buy_order": 26,
         "buy_failed": 0,
-        "sell_filled": 35,
+        "sell_filled": 39,
         "sell_failed": 2
       },
       "archived_issue_patterns": [
@@ -8117,20 +8446,23 @@
   "correction_guide": {
     "KR": {
       "bull_adjustments": [
-        "MACD골든크로스+BB상단동시=반등신호우선",
-        "전원DEFENSIVE합의시Bull재검토의무화"
+        "5d 누적 +8% 초과 후 첫 1~2 세션에서 Bull 논거 가중치 30% 강제 축소 적용",
+        "원약세 1d +1.0% 초과 환경에서 Breadth·GC 긍정 신호의 Bull 가중치를 절반으로 제한",
+        "RSI 과매수 10개 이상 + VKOSPI 결측 동시 발생 시 MODERATE_BULL 이상 주장 금지"
       ],
       "bear_adjustments": [
-        "RSI과매수단독근거DEFENSIVE금지",
-        "환율고점+지수하락에도MACD골든크로스시약화처리"
+        "USD/KRW 1d +1.0% 초과 + 5d 강모멘텀 이후 조합 시 CAUTIOUS → CAUTIOUS_BEAR 자동 상향 검토",
+        "Bear 단독 경고 3개 이상 시 Neutral·Bull 합의로 희석되더라도 최종 모드 CAUTIOUS 하한선 강제 유지",
+        "VKOSPI 결측 + 원약세 동시 발생은 위험 신호 1.5개로 가중 계산 적용"
       ],
       "tuning_rules": [
-        "전원DEFENSIVE합의→NEUTRAL전환검토",
-        "거래량증가+MACD골든크로스=매집신호우선",
-        "Bear신호3개이상이라도NEUTRAL최소유지"
+        "5d +8% 초과 모멘텀 직후 세션: 장 초반 30분 breadth advance_ratio 60% 미만 확인 시 즉시 DEFENSIVE로 전환",
+        "원약세 1d +1.0% 초과 + RSI 과매수 10개 이상 조합: 신규 momentum 진입 완전 차단, 기존 포지션 TP 30% 하향 조정",
+        "내일 세션 판단 기준: 코스피 -2.29% 급락 다음날이므로 낙폭 과대 반등 패턴(P034) 경계 — 장초반 30분 거래량 + 환율 안정(USD/KRW 1d 변화 -0.3% 이내) 동시 확인 시에만 MILD_BULL 재진입 허용",
+        "내일 USD/KRW 추가 상승(1,500원 돌파) 시 DEFENSIVE 강제 전환 규칙 적용"
       ],
-      "today_notes": "DEFENSIVE반복=기회비용누적,내일NEUTRAL기본값",
-      "generated_date": "2026-04-20"
+      "today_notes": "오늘 -2.29% 급락은 5d 강모멘텀 후 차익실현 + 원약세 복합 압력으로 해석. 체결 매도 없어 세션 손익 +0.00%이나 판단 오류는 명확함. Bear 분석가 적중(최근 7일 71.4% improving)으로 내일 Bear 가중치 한시적 우대(+10%p) 적용. 내일은 낙폭 과대 기술적 반등 가능성과 추가 조정 분기점 — RSI 과매수 부분 해소, 환율 안정 여부를 오전 30분 내 확인 후 판단 확정 권고.",
+      "generated_date": "2026-05-14"
     },
     "US": {
       "bull_adjustments": [
@@ -8153,20 +8485,12 @@
     }
   },
   "hold_advisor_performance": {
-    "total": 123,
+    "total": 124,
     "hold_count": 18,
     "hold_success": 2,
-    "sell_count": 105,
+    "sell_count": 106,
     "hold_avg_extra_pnl": -11.603,
     "recent": [
-      {
-        "date": "2026-05-05",
-        "market": "US",
-        "ticker": "EAT",
-        "decision": "SELL",
-        "success": false,
-        "extra_pnl_pct": -5.5993
-      },
       {
         "date": "2026-05-05",
         "market": "US",
@@ -8318,6 +8642,14 @@
         "decision": "SELL",
         "success": true,
         "extra_pnl_pct": 7.8434
+      },
+      {
+        "date": "2026-05-13",
+        "market": "US",
+        "ticker": "ON",
+        "decision": "SELL",
+        "success": true,
+        "extra_pnl_pct": 0.2895
       }
     ]
   },

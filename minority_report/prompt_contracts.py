@@ -10,7 +10,8 @@ COMMON_DECISION_CONTRACT = """Decision contract:
 - Use only the supplied market, candidate, and position data.
 - Do not invent tickers, prices, volume, support/resistance, or unavailable facts.
 - If a required data point is missing, use null or "unknown" instead of guessing.
-- Hard risk rules are deterministic system rules and cannot be relaxed by you.
+- Catastrophic system rules are deterministic and cannot be relaxed by you.
+- When the system asks for AUTO_SELL_REVIEW, reviewable risk exits may be re-judged from fresh evidence.
 - Price, allocation, hold, and carry outputs are advisory inputs only.
 - The system decides final order budget, quantity, broker checks, and forced exits.
 - Return strict JSON only when a JSON schema is requested."""
@@ -37,6 +38,8 @@ PRICE_PLAN_CONTRACT = """Price-plan contract:
 - target_basis must identify the evidence used; invalid_if must state the setup failure condition."""
 
 HARD_SOFT_RULE_CONTRACT = """Hard/soft rule boundary:
-- Hard rules owned by the system: stop loss, daily loss limit, broker-truth distrust, unconfirmed orders, market-close forced liquidation, max position limits, cash shortage, minimum order, and bad data quality.
+- Hard rules owned by the system: daily loss limit, broker-truth distrust, unconfirmed orders, market-close forced liquidation, max position limits, cash shortage, minimum order, and bad data quality.
+- Reviewable risk exits during AUTO_SELL_REVIEW: loss_cap, stop_loss, hard_stop, trail_stop, profit_floor, and profit_ladder.
 - Soft areas where Claude may advise: target trailing, pre-close carry exception, soft-exit recheck, candidate risk cap, and price-plan proposal.
-- A Claude HOLD never overrides a system hard-exit condition."""
+- A Claude HOLD never overrides catastrophic, broker-truth, emergency, or operator-kill conditions.
+- For reviewable risk exits, HOLD is valid only as bounded advice with protective_stop, invalid_if, and next_review_min."""

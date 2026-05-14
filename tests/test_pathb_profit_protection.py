@@ -296,6 +296,25 @@ class PathBProfitProtectionTests(unittest.TestCase):
         self.assertEqual(v2_close_reason("profit_ladder"), "CLOSED_PROFIT_LADDER")
         self.assertEqual(reason_family("profit_ladder"), "profit_ladder")
 
+    def test_closed_profit_ladder_calls_sell_review_when_review_all_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true"},
+            clear=False,
+        ):
+            runtime, _bot, store, plan = _runtime_with_plan(tmp, market="KR")
+            signal = ExitSignal(True, "profit_ladder", "CLOSED_PROFIT_LADDER", 101.5, plan.path_run_id)
+
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.8}) as ask:
+                result = runtime._run_pathb_sell_review_gate(plan, {}, signal)
+
+            run = store.find_path_run(plan.path_run_id)
+            self.assertTrue(result["allowed"])
+            self.assertFalse(result.get("bypassed", False))
+            ask.assert_called_once()
+            self.assertEqual(run["plan"]["auto_sell_review_action"], "SELL")
+            self.assertEqual(normalize_pathb_decision_exit_reason("CLOSED_PROFIT_LADDER"), "profit_ladder")
+
     def test_profit_protection_review_respects_cooldown(self) -> None:
         env = {
             "PATHB_PROFIT_REVIEW_ENABLED": "true",
