@@ -1502,7 +1502,7 @@ class TradingBotGateTests(unittest.TestCase):
                 2,
             )
 
-        self.assertEqual(picked, ["111111", "222222"])
+        self.assertEqual(picked["accepted"], ["111111", "222222"])
 
     def test_fetch_signal_ready_ohlcv_tops_up_us_history(self):
         bot = self._make_bot()

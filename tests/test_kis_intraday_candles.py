@@ -102,6 +102,21 @@ class KISIntradayCandleTests(unittest.TestCase):
 
         mocked.assert_not_called()
 
+    def test_retry_kis_zero_retries_means_single_attempt(self) -> None:
+        calls = 0
+
+        def _fail():
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("boom")
+
+        with patch("kis_api.time.sleep") as mocked_sleep:
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                kis_api._retry_kis("unit", _fail, retries=0, delay_sec=0.01)
+
+        self.assertEqual(calls, 1)
+        mocked_sleep.assert_not_called()
+
     def test_us_provider_disabled_is_fail_closed(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "provider disabled"):
             kis_api.get_intraday_candles(

@@ -213,6 +213,19 @@ _FINNHUB_EXCHANGE_MAP = {
     "AMERICAN STOCK EXCHANGE": "AMEX",
     "NYSE MKT":                "AMEX",
     "NYSE ARCA":               "AMEX",
+    "AMEX":                    "AMEX",
+}
+
+_YAHOO_US_EXCHANGE_MAP = {
+    "NMS": "NASD",
+    "NGM": "NASD",
+    "NCM": "NASD",
+    "NAS": "NASD",
+    "NYQ": "NYSE",
+    "NYS": "NYSE",
+    "ASE": "AMEX",
+    "AMX": "AMEX",
+    "PCX": "AMEX",
 }
 
 
@@ -239,6 +252,21 @@ def _save_exchange_cache() -> None:
         log.warning(f"[exchange_cache] 저장 실패: {e}")
 
 
+def _map_us_exchange_name(exchange_name: str) -> Optional[str]:
+    exch_name = str(exchange_name or "").upper()
+    for key, code in sorted(_FINNHUB_EXCHANGE_MAP.items(), key=lambda item: len(item[0]), reverse=True):
+        if key in exch_name:
+            return code
+    return None
+
+
+def _map_yahoo_us_exchange(exchange_code: str, exchange_name: str = "") -> Optional[str]:
+    code = str(exchange_code or "").strip().upper()
+    if code in _YAHOO_US_EXCHANGE_MAP:
+        return _YAHOO_US_EXCHANGE_MAP[code]
+    return _map_us_exchange_name(exchange_name) or _map_us_exchange_name(code)
+
+
 def _resolve_us_exchange_finnhub(ticker: str) -> str:
     """Finnhub profile2 → KIS 거래소 코드 (NASD/NYSE/AMEX) 반환. 실패 시 ValueError."""
     if not FINNHUB_KEY:
@@ -250,10 +278,36 @@ def _resolve_us_exchange_finnhub(ticker: str) -> str:
     )
     resp.raise_for_status()
     exch_name = (resp.json().get("exchange") or "").upper()
-    for key, code in _FINNHUB_EXCHANGE_MAP.items():
-        if key in exch_name:
-            return code
+    code = _map_us_exchange_name(exch_name)
+    if code:
+        return code
     raise ValueError(f"Finnhub 거래소 매핑 불가: {ticker} exchange='{exch_name}'")
+
+
+def _resolve_us_exchange_yahoo(ticker: str) -> str:
+    """Yahoo search metadata → KIS 거래소 코드. Finnhub 심볼 충돌/지연 보조용."""
+    normalized = str(ticker or "").strip().upper()
+    if not normalized:
+        raise ValueError("ticker empty")
+    resp = requests.get(
+        "https://query1.finance.yahoo.com/v1/finance/search",
+        params={"q": normalized, "quotesCount": 10, "newsCount": 0},
+        headers={"User-Agent": "Mozilla/5.0 (compatible; trading-bot/1.0)"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    quotes = resp.json().get("quotes", [])
+    for q in quotes:
+        if str(q.get("symbol", "")).strip().upper() != normalized:
+            continue
+        code = _map_yahoo_us_exchange(q.get("exchange"), q.get("exchDisp"))
+        if code:
+            return code
+        raise ValueError(
+            f"Yahoo 거래소 매핑 불가: {normalized} "
+            f"exchange='{q.get('exchange', '')}' exchDisp='{q.get('exchDisp', '')}'"
+        )
+    raise ValueError(f"Yahoo 심볼 검색 실패: {normalized}")
 
 
 def _cache_get(cache: dict, key):
@@ -283,7 +337,7 @@ def _log_cache_use_throttled(key: str, message: str, interval_sec: int = 300):
 
 
 def _retry_kis(label: str, fn, retries: int = None, delay_sec: float = 0.6):
-    attempts = max(1, retries or KIS_QUERY_RETRY)
+    attempts = max(1, KIS_QUERY_RETRY if retries is None else retries)
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
@@ -661,7 +715,16 @@ def _get_ovrs_excg_cd(ticker: str, token: str = None) -> str:
         return code
     except Exception as e:
         log.debug(f"[exchange_resolve] Finnhub 실패 [{normalized}]: {e}")
-    # 4. KIS VTS probe (보조)
+    # 4. Yahoo metadata fallback. Some newly listed ADRs/foreign issuers lag in Finnhub profile2.
+    try:
+        code = _resolve_us_exchange_yahoo(normalized)
+        _US_EXCHANGE_CACHE[normalized] = code
+        _save_exchange_cache()
+        log.info(f"[exchange_resolve] {normalized} → {code} (Yahoo)")
+        return code
+    except Exception as e:
+        log.debug(f"[exchange_resolve] Yahoo 실패 [{normalized}]: {e}")
+    # 5. KIS VTS probe (보조)
     if token:
         try:
             code = _probe_us_exchange_code(normalized, token)
@@ -3432,6 +3495,7 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
 
 
 _US_SCREEN_CACHE_PATH = get_runtime_path("state", "us_screen_cache.json")
+_US_SCREEN_CACHE_SCHEMA = 2
 
 # 레거시 캐시 경로 (이전 버전 호환)
 _AV_CACHE_PATH = _US_SCREEN_CACHE_PATH
@@ -3459,6 +3523,13 @@ def _extract_us_volume(item: dict) -> int:
 
 def _has_meaningful_candidate_volume(candidates: list) -> bool:
     return any(_safe_int(c.get("volume"), 0) > 0 for c in candidates)
+
+
+def _candidate_us_exchange_code(candidate: dict) -> Optional[str]:
+    return _map_yahoo_us_exchange(
+        candidate.get("exchange") or candidate.get("exchangeShortName"),
+        candidate.get("fullExchangeName") or candidate.get("exchDisp"),
+    )
 
 
 def get_screening_preset(market: str, mode: str) -> dict:
@@ -3565,6 +3636,13 @@ def _us_post_filter(
             continue
         if ticker[-1] in _BAD_SFXS:
             continue
+        if (
+            c.get("exchange")
+            or c.get("exchangeShortName")
+            or c.get("fullExchangeName")
+            or c.get("exchDisp")
+        ) and not _candidate_us_exchange_code(c):
+            continue
         price      = float(c.get("price", 0) or 0)
         change_abs = abs(float(c.get("change_rate", 0) or 0))
         volume     = int(c.get("volume", 0) or 0)
@@ -3625,6 +3703,9 @@ def _yf_screen_candidates() -> dict:
                         "volume":      int(q.get("regularMarketVolume", 0)),
                         "vol_ratio":   1.0,
                         "category":    screen_id,
+                        "exchange":    q.get("exchange", ""),
+                        "fullExchangeName": q.get("fullExchangeName", ""),
+                        "quoteType":   q.get("quoteType", ""),
                     })
                 except (ValueError, TypeError):
                     continue
@@ -3684,6 +3765,8 @@ def _fmp_screen_candidates() -> list:
                         "vol_ratio":      1.0,
                         "volume_missing": True,
                         "category":       ep,
+                        "exchange":       item.get("exchange", ""),
+                        "exchangeShortName": item.get("exchangeShortName", ""),
                     })
                 except (ValueError, TypeError):
                     continue
@@ -3750,6 +3833,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
         "quota_losers": _quota["day_losers"],
         "fmp_max": _fmp_max,
         "top_n": _target_n,
+        "schema": _US_SCREEN_CACHE_SCHEMA,
     }
     _CACHE_TTL_SEC  = int(os.getenv("US_SCREEN_CACHE_TTL_SEC", "1800"))
 
@@ -3812,7 +3896,8 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
             _US_SCREEN_CACHE_PATH.write_text(
                 json.dumps({"date": today, "candidates": merged,
                             "source": "yf", "cached_at": _time.time(),
-                            "mode": _cache_mode, "preset": _cache_preset},
+                            "mode": _cache_mode, "preset": _cache_preset,
+                            "schema": _US_SCREEN_CACHE_SCHEMA},
                            ensure_ascii=False),
                 encoding="utf-8",
             )
@@ -3831,7 +3916,8 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
             _US_SCREEN_CACHE_PATH.write_text(
                 json.dumps({"date": today, "candidates": fmp_cands,
                             "source": "fmp", "cached_at": _time.time(),
-                            "mode": _cache_mode, "preset": _cache_preset},
+                            "mode": _cache_mode, "preset": _cache_preset,
+                            "schema": _US_SCREEN_CACHE_SCHEMA},
                            ensure_ascii=False),
                 encoding="utf-8",
             )

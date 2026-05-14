@@ -835,7 +835,7 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
         try:
             from kis_api import (
                 _US_EXCHANGE_CACHE, _US_EXCHANGE_MAP,
-                _resolve_us_exchange_finnhub, _save_exchange_cache,
+                _get_ovrs_excg_cd, _save_exchange_cache,
             )
             known = set(_US_EXCHANGE_CACHE) | {t for ts in _US_EXCHANGE_MAP.values() for t in ts}
             new_tickers = [t for t in tickers if t not in known]
@@ -844,8 +844,7 @@ def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: in
                 resolved = 0
                 for t in new_tickers:
                     try:
-                        code = _resolve_us_exchange_finnhub(t)
-                        _US_EXCHANGE_CACHE[t] = code
+                        _get_ovrs_excg_cd(t)
                         resolved += 1
                     except Exception as e:
                         print(f"    {t}: resolve 실패 ({e})")
