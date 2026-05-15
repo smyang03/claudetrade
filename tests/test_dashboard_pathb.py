@@ -510,7 +510,9 @@ class DashboardPathBTests(unittest.TestCase):
                 {"side": "sell", "pnl_known": True, "pnl": 600.0},
             ]
 
-        with patch.object(dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows), patch.object(
+        with patch.object(dashboard_server, "_broker_period_profit_bucket", return_value=None), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows
+        ), patch.object(
             dashboard_server, "_apply_current_session_realized_adjustment", return_value=None
         ):
             summary = dashboard_server._lifetime_realized_pnl_summary("live")
@@ -543,7 +545,9 @@ class DashboardPathBTests(unittest.TestCase):
                 }
             return {"market": market, "session_active": False}
 
-        with patch.object(dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows), patch.object(
+        with patch.object(dashboard_server, "_broker_period_profit_bucket", return_value=None), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows
+        ), patch.object(
             dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
         ), patch.object(
             dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
@@ -564,6 +568,77 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(summary["US"]["current_session_adjustment_krw"], -250.0)
         self.assertEqual(summary["us_pnl_krw"], -1250.0)
         self.assertEqual(summary["total_pnl_krw"], -1250.0)
+
+    def test_period_profit_bucket_includes_today_pnl_for_current_session(self) -> None:
+        payload = {
+            "today_date": "20260516",
+            "rows": [
+                {"trad_dt": "20260515", "rlzt_pfls": "1000"},
+                {"trad_dt": "20260516", "rlzt_pfls": "-2500"},
+            ],
+            "summary": {"tot_rlzt_pfls": "-1500"},
+            "source": "kis_period_trade_profit",
+            "query_start": "20260101",
+            "query_end": "20260516",
+        }
+
+        bucket = dashboard_server._period_profit_bucket_from_payload("KR", payload)
+
+        self.assertEqual(bucket["pnl_krw"], -1500.0)
+        self.assertEqual(bucket["today_date"], "20260516")
+        self.assertEqual(bucket["today_pnl_krw"], -2500.0)
+
+    def test_period_profit_direct_adds_missing_intraday_adjustment(self) -> None:
+        direct = {
+            "pnl_krw": 1000.0,
+            "known_sell_count": 1,
+            "sell_count": 1,
+            "unknown_cost_basis_count": 0,
+            "source": "kis_period_trade_profit",
+            "today_pnl_krw": 0.0,
+        }
+
+        with patch.object(dashboard_server, "_broker_period_profit_bucket", side_effect=[direct, None]), patch.object(
+            dashboard_server,
+            "_current_session_realized_pnl_status",
+            return_value={"available": True, "pnl_krw": 300.0, "source": "live_status_market_realized_pnl"},
+        ), patch.object(
+            dashboard_server, "_session_trade_date", return_value=date(2026, 5, 16)
+        ), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", return_value=[]
+        ), patch.object(
+            dashboard_server, "_apply_current_session_realized_adjustment", return_value=None
+        ):
+            summary = dashboard_server._lifetime_realized_pnl_summary("live")
+
+        self.assertEqual(summary["KR"]["pnl_krw"], 1300.0)
+        self.assertEqual(summary["KR"]["current_session_adjustment_krw"], 300.0)
+        self.assertEqual(summary["kr_pnl_krw"], 1300.0)
+
+    def test_period_profit_direct_skips_duplicate_intraday_adjustment(self) -> None:
+        direct = {
+            "pnl_krw": 1000.0,
+            "known_sell_count": 1,
+            "sell_count": 1,
+            "unknown_cost_basis_count": 0,
+            "source": "kis_overseas_period_profit",
+            "today_pnl_krw": -250.0,
+        }
+
+        with patch.object(dashboard_server, "_broker_period_profit_bucket", side_effect=[None, direct]), patch.object(
+            dashboard_server,
+            "_current_session_realized_pnl_status",
+            return_value={"available": True, "pnl_krw": -250.0, "source": "broker_today_fill_fifo"},
+        ), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", return_value=[]
+        ), patch.object(
+            dashboard_server, "_apply_current_session_realized_adjustment", return_value=None
+        ):
+            summary = dashboard_server._lifetime_realized_pnl_summary("live")
+
+        self.assertEqual(summary["US"]["pnl_krw"], 1000.0)
+        self.assertNotIn("current_session_adjustment_krw", summary["US"])
+        self.assertEqual(summary["us_pnl_krw"], 1000.0)
 
     def test_current_session_realized_pnl_prefers_broker_confirmed_fills(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

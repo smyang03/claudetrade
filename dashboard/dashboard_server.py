@@ -3518,13 +3518,24 @@ def _period_profit_bucket_from_payload(market: str, payload: dict) -> dict:
     market_key = "US" if str(market or "").upper() == "US" else "KR"
     rows = list((payload or {}).get("rows") or [])
     summary = (payload or {}).get("summary") if isinstance((payload or {}).get("summary"), dict) else {}
+    today_s = str((payload or {}).get("today_date") or _session_trade_date(market_key).strftime("%Y%m%d"))
     if market_key == "KR":
         row_pnl = sum(_broker_period_profit_number(row.get("rlzt_pfls")) for row in rows)
+        today_pnl = sum(
+            _broker_period_profit_number(row.get("rlzt_pfls"))
+            for row in rows
+            if str(row.get("trad_dt", "") or "").replace("-", "")[:8] == today_s
+        )
         summary_pnl = _broker_period_profit_number(summary.get("tot_rlzt_pfls"))
         fee_krw = sum(_broker_period_profit_number(row.get("fee")) for row in rows)
         tax_krw = sum(_broker_period_profit_number(row.get("tl_tax")) for row in rows)
     else:
         row_pnl = sum(_broker_period_profit_number(row.get("ovrs_rlzt_pfls_amt")) for row in rows)
+        today_pnl = sum(
+            _broker_period_profit_number(row.get("ovrs_rlzt_pfls_amt"))
+            for row in rows
+            if str(row.get("trad_day", "") or "").replace("-", "")[:8] == today_s
+        )
         summary_pnl = _broker_period_profit_number(summary.get("ovrs_rlzt_pfls_tot_amt"))
         fee_krw = sum(_broker_period_profit_number(row.get("stck_sll_tlex")) for row in rows)
         tax_krw = 0.0
@@ -3537,6 +3548,8 @@ def _period_profit_bucket_from_payload(market: str, payload: dict) -> dict:
         "source": str((payload or {}).get("source") or "kis_period_profit"),
         "query_start": str((payload or {}).get("query_start") or ""),
         "query_end": str((payload or {}).get("query_end") or ""),
+        "today_date": today_s,
+        "today_pnl_krw": round(float(today_pnl or 0.0), 6),
         "summary_pnl_krw": round(float(summary_pnl or 0.0), 6),
         "row_pnl_krw": round(float(row_pnl or 0.0), 6),
         "fee_krw": round(float(fee_krw or 0.0), 6),
@@ -3573,6 +3586,31 @@ def _broker_period_profit_bucket(market: str, mode: str, start_date: date, end_d
                 max_pages=30,
             )
     return _period_profit_bucket_from_payload(market_key, payload)
+
+
+def _apply_current_session_period_profit_adjustment(bucket: dict, market: str, mode: str) -> None:
+    try:
+        status = _current_session_realized_pnl_status(market, mode)
+        if not bool(status.get("available", False)):
+            return
+        live_realized = float(status.get("pnl_krw", 0) or 0)
+        if abs(live_realized) < 1e-9:
+            return
+        period_today_pnl = float((bucket or {}).get("today_pnl_krw", 0) or 0)
+        adjustment = live_realized - period_today_pnl
+        if abs(adjustment) < 0.5:
+            return
+        bucket["pnl_krw"] = round(float(bucket.get("pnl_krw", 0) or 0) + adjustment, 6)
+        bucket["current_session_adjustment_krw"] = round(adjustment, 6)
+        bucket["current_session_realized_pnl_krw"] = round(live_realized, 6)
+        bucket["current_session_rows_pnl_krw"] = round(period_today_pnl, 6)
+        bucket["current_session_date"] = _session_trade_date(market).isoformat()
+        bucket["current_session_source"] = str(status.get("source", "") or "live_status_daily_pnl")
+        if status.get("broker_sell_count") is not None:
+            bucket["current_session_broker_sell_count"] = int(status.get("broker_sell_count", 0) or 0)
+            bucket["current_session_matched_local_count"] = int(status.get("matched_local_count", 0) or 0)
+    except Exception:
+        return
 
 
 def _known_sell_pnl_for_date(rows: list[dict], trade_date: str) -> float:
@@ -4070,6 +4108,7 @@ def _lifetime_realized_pnl_summary(mode: str = "live") -> dict:
             except Exception as exc:
                 errors[market] = f"period_profit_direct_failed: {exc}"
         if direct_bucket is not None:
+            _apply_current_session_period_profit_adjustment(direct_bucket, market, runtime_mode)
             summary[market] = direct_bucket
             continue
         try:
