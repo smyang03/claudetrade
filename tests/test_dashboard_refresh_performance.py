@@ -21,6 +21,7 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         dashboard_server._BROKER_SNAPSHOT_STATUS.clear()
         dashboard_server._BROKER_POSITIONS_CACHE.clear()
         dashboard_server._BROKER_POSITIONS_STATUS.clear()
+        dashboard_server._BROKER_TRADE_BUNDLE_CACHE.clear()
         dashboard_server._STATE_JSON_CACHE.clear()
 
     def tearDown(self) -> None:
@@ -30,6 +31,7 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         dashboard_server._BROKER_SNAPSHOT_STATUS.clear()
         dashboard_server._BROKER_POSITIONS_CACHE.clear()
         dashboard_server._BROKER_POSITIONS_STATUS.clear()
+        dashboard_server._BROKER_TRADE_BUNDLE_CACHE.clear()
         dashboard_server._STATE_JSON_CACHE.clear()
 
     def test_broker_snapshot_fast_returns_no_cache_without_kis_call(self) -> None:
@@ -447,6 +449,49 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertEqual(payload["today"]["broker_cache_source"], "no_cache")
         self.assertEqual(payload["today"]["account_asset_krw"], 1_000_000)
         self.assertEqual(payload["today"]["account_asset_source"], "internal_fallback")
+
+    def test_lifetime_realized_endpoint_fetches_broker_summary_on_demand(self) -> None:
+        summary = {
+            "basis": "broker_fills_fifo_excluding_cash_flow",
+            "source": "broker_trade_rows_with_pnl",
+            "KR": {"pnl_krw": 1_000.0, "known_sell_count": 1, "sell_count": 1, "unknown_cost_basis_count": 0},
+            "US": {"pnl_krw": 2_000.0, "known_sell_count": 1, "sell_count": 1, "unknown_cost_basis_count": 0},
+            "kr_pnl_krw": 1_000.0,
+            "us_pnl_krw": 2_000.0,
+            "total_pnl_krw": 3_000.0,
+            "known_sell_count": 2,
+            "sell_count": 2,
+            "unknown_cost_basis_count": 0,
+            "errors": {},
+        }
+        with patch.object(dashboard_server, "_lifetime_realized_pnl_summary", return_value=dict(summary)) as fetch_summary:
+            response = dashboard_server.app.test_client().post(
+                "/api/pnl/lifetime-realized",
+                json={"mode": "live"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        fetch_summary.assert_called_once_with("live")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["lifetime_realized"]["total_pnl_krw"], 3_000.0)
+        self.assertEqual(payload["lifetime_realized"]["request_source"], "dashboard_on_demand")
+        self.assertIn("fetched_at", payload["lifetime_realized"])
+
+    def test_lifetime_realized_endpoint_force_clears_trade_cache_for_mode(self) -> None:
+        dashboard_server._BROKER_TRADE_BUNDLE_CACHE[("live", "KR", "all", "", "")] = {"ts": 1, "value": {}}
+        dashboard_server._BROKER_TRADE_BUNDLE_CACHE[("paper", "KR", "all", "", "")] = {"ts": 1, "value": {}}
+        summary = dashboard_server._empty_lifetime_realized_pnl_summary()
+
+        with patch.object(dashboard_server, "_lifetime_realized_pnl_summary", return_value=summary):
+            response = dashboard_server.app.test_client().post(
+                "/api/pnl/lifetime-realized",
+                json={"mode": "live", "force": True},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(("live", "KR", "all", "", ""), dashboard_server._BROKER_TRADE_BUNDLE_CACHE)
+        self.assertIn(("paper", "KR", "all", "", ""), dashboard_server._BROKER_TRADE_BUNDLE_CACHE)
 
     def test_live_equity_endpoints_default_to_fast_payload(self) -> None:
         fast_payload = {

@@ -2415,6 +2415,167 @@ def inquire_ccnl_us(token: str,
     return _retry_kis("US inquire ccnl", _fetch)
 
 
+def _kis_cont_header(resp) -> str:
+    try:
+        return str(resp.headers.get("tr_cont") or resp.headers.get("TR_CONT") or "").strip()
+    except Exception:
+        return ""
+
+
+def inquire_period_trade_profit_kr(
+    token: str,
+    start_date: str,
+    end_date: str,
+    *,
+    ticker: str = "",
+    sort_dvsn: str = "02",
+    cblc_dvsn: str = "00",
+    max_pages: int = 10,
+) -> dict:
+    """국내주식 기간별매매손익현황조회 (HTS 0856 종목별)."""
+    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    rows: list[dict] = []
+    summaries: list[dict] = []
+    fk100 = ""
+    nk100 = ""
+    tr_cont = ""
+
+    for _ in range(max(1, int(max_pages or 1))):
+        headers = _headers(token, "TTTC8715R", market="KR")
+        if tr_cont:
+            headers["tr_cont"] = tr_cont
+        params = {
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "SORT_DVSN": sort_dvsn,
+            "INQR_STRT_DT": start_date,
+            "INQR_END_DT": end_date,
+            "CBLC_DVSN": cblc_dvsn,
+            "PDNO": ticker,
+            "CTX_AREA_FK100": fk100,
+            "CTX_AREA_NK100": nk100,
+        }
+
+        def _fetch():
+            resp = _kis_get(
+                f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-period-trade-profit",
+                headers=headers,
+                params=params,
+                timeout=20,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            _require_kis_success(data, "국내 기간별매매손익현황조회")
+            return resp, data
+
+        resp, data = _retry_kis("KR period trade profit", _fetch)
+        output1 = data.get("output1") or []
+        if isinstance(output1, dict):
+            output1 = [output1]
+        rows.extend([row for row in output1 if isinstance(row, dict)])
+        output2 = data.get("output2") or {}
+        if isinstance(output2, dict):
+            summaries.append(output2)
+        elif isinstance(output2, list):
+            summaries.extend([row for row in output2 if isinstance(row, dict)])
+        fk100 = str(data.get("ctx_area_fk100", "") or "")
+        nk100 = str(data.get("ctx_area_nk100", "") or "")
+        cont = _kis_cont_header(resp)
+        if cont not in {"M", "F"}:
+            break
+        tr_cont = "N"
+        time.sleep(0.15)
+
+    return {
+        "market": "KR",
+        "rows": rows,
+        "summary": summaries[-1] if summaries else {},
+        "summaries": summaries,
+        "query_start": start_date,
+        "query_end": end_date,
+        "source": "kis_period_trade_profit",
+    }
+
+
+def inquire_period_profit_us(
+    token: str,
+    start_date: str,
+    end_date: str,
+    *,
+    exchange_code: str = "NASD",
+    currency: str = "USD",
+    ticker: str = "",
+    won_currency: bool = True,
+    max_pages: int = 10,
+) -> dict:
+    """해외주식 기간손익조회."""
+    profile = get_kis_market_profile("US")
+    acnt_no, acnt_prdt = profile.account_no.split("-")
+    rows: list[dict] = []
+    summaries: list[dict] = []
+    fk200 = ""
+    nk200 = ""
+    tr_cont = ""
+
+    for _ in range(max(1, int(max_pages or 1))):
+        headers = _headers(token, "TTTS3039R", market="US")
+        if tr_cont:
+            headers["tr_cont"] = tr_cont
+        params = {
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "OVRS_EXCG_CD": exchange_code,
+            "NATN_CD": "",
+            "CRCY_CD": currency,
+            "PDNO": ticker,
+            "INQR_STRT_DT": start_date,
+            "INQR_END_DT": end_date,
+            "WCRC_FRCR_DVSN_CD": "02" if won_currency else "01",
+            "CTX_AREA_FK200": fk200,
+            "CTX_AREA_NK200": nk200,
+        }
+
+        def _fetch():
+            resp = _kis_get(
+                f"{profile.base_url}/uapi/overseas-stock/v1/trading/inquire-period-profit",
+                headers=headers,
+                params=params,
+                timeout=20,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            _require_kis_success(data, "해외 기간손익조회")
+            return resp, data
+
+        resp, data = _retry_kis("US period profit", _fetch)
+        output1 = data.get("output1") or []
+        if isinstance(output1, dict):
+            output1 = [output1]
+        rows.extend([row for row in output1 if isinstance(row, dict)])
+        output2 = data.get("output2") or {}
+        if isinstance(output2, dict):
+            summaries.append(output2)
+        elif isinstance(output2, list):
+            summaries.extend([row for row in output2 if isinstance(row, dict)])
+        fk200 = str(data.get("ctx_area_fk200", "") or "")
+        nk200 = str(data.get("ctx_area_nk200", "") or "")
+        cont = _kis_cont_header(resp)
+        if cont not in {"M", "F"}:
+            break
+        tr_cont = "N"
+        time.sleep(0.15)
+
+    return {
+        "market": "US",
+        "rows": rows,
+        "summary": summaries[-1] if summaries else {},
+        "summaries": summaries,
+        "query_start": start_date,
+        "query_end": end_date,
+        "source": "kis_overseas_period_profit",
+    }
+
+
 def get_order_fill_us(token: str, order_no: str, ticker: str = "", created_at: str = "") -> Optional[dict]:
     if not order_no:
         return None

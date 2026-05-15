@@ -62,6 +62,8 @@ from kis_api import (
     get_kis_profile_summary,
     inquire_daily_ccld_kr,
     inquire_ccnl_us,
+    inquire_period_trade_profit_kr,
+    inquire_period_profit_us,
 )
 try:
     from phase1_trainer.digest_builder import KR_TICKERS as _KR_TICKERS_STATIC
@@ -3502,6 +3504,77 @@ def _realized_pnl_bucket_from_rows(rows: list[dict]) -> dict:
     }
 
 
+def _broker_period_profit_number(value, default: float = 0.0) -> float:
+    try:
+        text = str(value if value is not None else "").replace(",", "").strip()
+        if not text:
+            return float(default)
+        return float(text)
+    except Exception:
+        return float(default)
+
+
+def _period_profit_bucket_from_payload(market: str, payload: dict) -> dict:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    rows = list((payload or {}).get("rows") or [])
+    summary = (payload or {}).get("summary") if isinstance((payload or {}).get("summary"), dict) else {}
+    if market_key == "KR":
+        row_pnl = sum(_broker_period_profit_number(row.get("rlzt_pfls")) for row in rows)
+        summary_pnl = _broker_period_profit_number(summary.get("tot_rlzt_pfls"))
+        fee_krw = sum(_broker_period_profit_number(row.get("fee")) for row in rows)
+        tax_krw = sum(_broker_period_profit_number(row.get("tl_tax")) for row in rows)
+    else:
+        row_pnl = sum(_broker_period_profit_number(row.get("ovrs_rlzt_pfls_amt")) for row in rows)
+        summary_pnl = _broker_period_profit_number(summary.get("ovrs_rlzt_pfls_tot_amt"))
+        fee_krw = sum(_broker_period_profit_number(row.get("stck_sll_tlex")) for row in rows)
+        tax_krw = 0.0
+    pnl_krw = row_pnl if rows else summary_pnl
+    return {
+        "pnl_krw": round(float(pnl_krw or 0.0), 6),
+        "known_sell_count": len(rows),
+        "sell_count": len(rows),
+        "unknown_cost_basis_count": 0,
+        "source": str((payload or {}).get("source") or "kis_period_profit"),
+        "query_start": str((payload or {}).get("query_start") or ""),
+        "query_end": str((payload or {}).get("query_end") or ""),
+        "summary_pnl_krw": round(float(summary_pnl or 0.0), 6),
+        "row_pnl_krw": round(float(row_pnl or 0.0), 6),
+        "fee_krw": round(float(fee_krw or 0.0), 6),
+        "tax_krw": round(float(tax_krw or 0.0), 6),
+    }
+
+
+def _broker_period_profit_bucket(market: str, mode: str, start_date: date, end_date: date) -> Optional[dict]:
+    runtime_mode = _normalize_mode(mode)
+    if runtime_mode != "live":
+        return None
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    start_s = start_date.strftime("%Y%m%d")
+    end_s = end_date.strftime("%Y%m%d")
+    with _kis_runtime(runtime_mode):
+        token = get_access_token(market=market_key)
+        if market_key == "KR":
+            payload = inquire_period_trade_profit_kr(
+                token,
+                start_s,
+                end_s,
+                sort_dvsn="02",
+                cblc_dvsn="00",
+                max_pages=30,
+            )
+        else:
+            payload = inquire_period_profit_us(
+                token,
+                start_s,
+                end_s,
+                exchange_code="NASD",
+                currency="USD",
+                won_currency=True,
+                max_pages=30,
+            )
+    return _period_profit_bucket_from_payload(market_key, payload)
+
+
 def _known_sell_pnl_for_date(rows: list[dict], trade_date: str) -> float:
     total = 0.0
     date_key = str(trade_date or "")[:10]
@@ -3988,12 +4061,22 @@ def _lifetime_realized_pnl_summary(mode: str = "live") -> dict:
     summary = _empty_lifetime_realized_pnl_summary()
     runtime_mode = _normalize_mode(mode)
     errors: dict[str, str] = {}
+    d_start, d_end = _resolve_period_bounds("all", "", "")
     for market in ("KR", "US"):
+        direct_bucket = None
+        if runtime_mode == "live":
+            try:
+                direct_bucket = _broker_period_profit_bucket(market, runtime_mode, d_start, d_end)
+            except Exception as exc:
+                errors[market] = f"period_profit_direct_failed: {exc}"
+        if direct_bucket is not None:
+            summary[market] = direct_bucket
+            continue
         try:
             rows = _broker_trade_rows_with_pnl(market, "all", "", "", mode=runtime_mode)
         except Exception as exc:
             rows = []
-            errors[market] = str(exc)
+            errors[market] = f"{errors.get(market) + '; ' if errors.get(market) else ''}{exc}"
         summary[market] = _realized_pnl_bucket_from_rows(rows)
         _apply_current_session_realized_adjustment(summary[market], rows, market, runtime_mode)
 
@@ -4006,7 +4089,24 @@ def _lifetime_realized_pnl_summary(mode: str = "live") -> dict:
     summary["sell_count"] = int(kr_bucket.get("sell_count", 0) or 0) + int(us_bucket.get("sell_count", 0) or 0)
     summary["unknown_cost_basis_count"] = int(kr_bucket.get("unknown_cost_basis_count", 0) or 0) + int(us_bucket.get("unknown_cost_basis_count", 0) or 0)
     summary["errors"] = errors
+    summary["source"] = (
+        "kis_period_profit_direct"
+        if any(str((summary.get(market, {}) or {}).get("source", "")).startswith("kis_") for market in ("KR", "US"))
+        else "broker_trade_rows_with_pnl"
+    )
+    if summary["source"] == "kis_period_profit_direct":
+        summary["basis"] = "kis_period_profit_excluding_cash_flow"
     return summary
+
+
+def _clear_broker_trade_bundle_cache_for_mode(mode: str) -> None:
+    runtime_mode = _normalize_mode(mode)
+    for key in list(_BROKER_TRADE_BUNDLE_CACHE.keys()):
+        try:
+            if key[0] == runtime_mode:
+                _BROKER_TRADE_BUNDLE_CACHE.pop(key, None)
+        except Exception:
+            continue
 
 
 def _broker_realized_pnl_krw(market: str, trade_date: str, mode: str = "paper") -> float:
@@ -6500,6 +6600,27 @@ def api_broker_refresh():
     elif result.get("reason") == "refresh_pending":
         status = 202
     return jsonify(_broker_refresh_public_payload(result)), status
+
+
+@app.route("/api/pnl/lifetime-realized", methods=["POST"])
+def api_lifetime_realized_pnl():
+    body = request.get_json(silent=True) or {}
+    mode = _normalize_mode(body.get("mode") or request.args.get("mode") or "live")
+    force_raw = body.get("force", request.args.get("force", False))
+    force = str(force_raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+    if force:
+        _clear_broker_trade_bundle_cache_for_mode(mode)
+    summary = _lifetime_realized_pnl_summary(mode)
+    errors = summary.get("errors") if isinstance(summary.get("errors"), dict) else {}
+    summary["request_source"] = "dashboard_on_demand"
+    summary["fetched_at"] = datetime.now(KST).isoformat(timespec="seconds")
+    summary["force"] = bool(force)
+    return jsonify({
+        "ok": not bool(errors),
+        "mode": mode,
+        "lifetime_realized": summary,
+        "errors": errors,
+    })
 
 
 @app.route("/api/control/restart-bot", methods=["POST"])
@@ -9074,7 +9195,38 @@ function formatAccountAssetSummary(today, tradingKrw, assetBreakdown, assetSourc
 }
 
 function renderLifetimeRealized(today) {
-  const lifetime = ((today.pnl_summary || {}).lifetime_realized) || {};
+  const rawLifetime = ((today.pnl_summary || {}).lifetime_realized) || {};
+  const lifetimeOverride = window.__lifetimeRealizedOverride || null;
+  const lifetime = (lifetimeOverride && lifetimeOverride.mode === MODE && lifetimeOverride.payload)
+    ? lifetimeOverride.payload
+    : rawLifetime;
+  const totalEl = document.getElementById('lifetime-pnl-total');
+  const splitEl = document.getElementById('lifetime-pnl-split');
+  const holdingEl = document.getElementById('lifetime-pnl-with-holdings');
+  const basisEl = document.getElementById('lifetime-pnl-basis');
+  const statusEl = document.getElementById('lifetime-pnl-refresh-status');
+  const source = String(lifetime.source || '');
+  const basis = String(lifetime.basis || '');
+  if (source === 'summary_fast_no_broker_trade_refresh' || basis === 'cached_state_fast_path') {
+    if (totalEl) {
+      totalEl.textContent = '--';
+      totalEl.className = 'card-value neutral-color';
+    }
+    if (splitEl) splitEl.textContent = 'KR -- · US --';
+    if (holdingEl) {
+      const holdingEval = Number(today.holding_unrealized_total_pnl_krw ?? today.holding_unrealized_pnl_krw ?? 0);
+      const holdingEvalPctRaw = today.holding_unrealized_total_pct;
+      const holdingEvalPct = holdingEvalPctRaw === null || holdingEvalPctRaw === undefined || holdingEvalPctRaw === ''
+        ? NaN
+        : Number(holdingEvalPctRaw);
+      const pctText = Number.isFinite(holdingEvalPct) ? ` (${fmt.pct(holdingEvalPct)})` : '';
+      holdingEl.textContent = `보유평가 ${fmt.krw(holdingEval)}${pctText}`;
+      holdingEl.title = '한투 조회 전에는 누적 실현손익을 보유평가에 합산하지 않습니다';
+    }
+    if (basisEl) basisEl.textContent = '입출금 제외 · 한투 조회 전';
+    if (statusEl && !statusEl.textContent) statusEl.textContent = '한투 조회 버튼을 누르면 누적 실현손익을 가져옵니다';
+    return;
+  }
   const kr = Number(lifetime.kr_pnl_krw ?? ((lifetime.KR || {}).pnl_krw) ?? 0);
   const us = Number(lifetime.us_pnl_krw ?? ((lifetime.US || {}).pnl_krw) ?? 0);
   const total = Number(lifetime.total_pnl_krw ?? (kr + us));
@@ -9088,10 +9240,6 @@ function renderLifetimeRealized(today) {
     ? NaN
     : Number(holdingEvalPctRaw);
   const totalWithHoldings = total + holdingEval;
-  const totalEl = document.getElementById('lifetime-pnl-total');
-  const splitEl = document.getElementById('lifetime-pnl-split');
-  const holdingEl = document.getElementById('lifetime-pnl-with-holdings');
-  const basisEl = document.getElementById('lifetime-pnl-basis');
   if (totalEl) {
     totalEl.textContent = fmt.krw(total);
     totalEl.className = 'card-value ' + colorClass(total);
@@ -9102,7 +9250,51 @@ function renderLifetimeRealized(today) {
     holdingEl.textContent = `보유평가 반영 시 ${fmt.krw(totalWithHoldings)} · 평가 ${fmt.krw(holdingEval)}${pctText}`;
     holdingEl.title = `누적 실현손익 ${fmt.krw(total)} + 현재 보유 평가손익 ${fmt.krw(holdingEval)}`;
   }
-  if (basisEl) basisEl.textContent = `입출금 제외 · 매수/매도 실현 기준${unknown > 0 ? ` · 원가불명 ${unknown}건 제외` : ''}${sourceHint ? ' · 오늘 체결 반영 ' + sourceHint : ''}`;
+  if (basisEl) {
+    const basisText = source === 'kis_period_profit_direct'
+      ? '입출금 제외 · 한투 기간손익 기준'
+      : '입출금 제외 · 매수/매도 실현 기준';
+    basisEl.textContent = `${basisText}${unknown > 0 ? ` · 원가불명 ${unknown}건 제외` : ''}${sourceHint ? ' · 오늘 체결 반영 ' + sourceHint : ''}`;
+  }
+}
+
+async function refreshLifetimeRealized(button) {
+  const btn = button || document.getElementById('lifetime-pnl-refresh-btn');
+  const status = document.getElementById('lifetime-pnl-refresh-status');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '조회 중';
+  }
+  if (status) status.textContent = '한투 체결 원장 조회 중...';
+  try {
+    const payload = await apiPost('/api/pnl/lifetime-realized', {force: true})
+      .then(r => r.json());
+    const lifetime = payload.lifetime_realized || {};
+    if (!lifetime || !Object.keys(lifetime).length) {
+      if (status) status.textContent = payload.error ? `조회 실패 · ${payload.error}` : '조회 결과 없음';
+      return;
+    }
+    const baseToday = window.__todaySummary || {};
+    const pnlSummary = {...(baseToday.pnl_summary || {}), lifetime_realized: lifetime};
+    window.__lifetimeRealizedOverride = {mode: MODE, payload: lifetime};
+    window.__todaySummary = {...baseToday, pnl_summary: pnlSummary};
+    renderLifetimeRealized(window.__todaySummary);
+    const fetchedAt = String(lifetime.fetched_at || '').slice(11, 19);
+    const errors = payload.errors || lifetime.errors || {};
+    const errorMarkets = Object.keys(errors).filter(k => errors[k]);
+    if (status) {
+      status.textContent = errorMarkets.length
+        ? `일부 조회 실패 · ${errorMarkets.join(', ')}`
+        : `한투 조회 완료${fetchedAt ? ' · ' + fetchedAt : ''}`;
+    }
+  } catch(e) {
+    if (status) status.textContent = '조회 실패';
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '한투 조회';
+    }
+  }
 }
 
 function koStopClusterReason(reason) {
@@ -9437,11 +9629,15 @@ PAGE_TODAY_HTML = """
     <div class="card-sub"  id="win-detail">--</div>
   </div>
   <div class="card yellow">
-    <div class="card-label">누적 실현손익</div>
+    <div class="card-label" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <span>누적 실현손익</span>
+      <button id="lifetime-pnl-refresh-btn" type="button" onclick="refreshLifetimeRealized(this)" style="padding:3px 8px;border:1px solid rgba(234,179,8,0.45);border-radius:4px;background:rgba(234,179,8,0.10);color:#fde68a;font-size:11px;cursor:pointer">한투 조회</button>
+    </div>
     <div class="card-value" id="lifetime-pnl-total">--</div>
     <div class="card-sub"  id="lifetime-pnl-split">KR -- · US --</div>
     <div class="card-sub"  id="lifetime-pnl-with-holdings">보유평가 반영 시 --</div>
     <div class="card-sub"  id="lifetime-pnl-basis" style="margin-top:4px">입출금 제외</div>
+    <div class="card-sub"  id="lifetime-pnl-refresh-status" style="margin-top:4px"></div>
   </div>
   <div class="card purple">
     <div class="card-label">AI 크레딧 (오늘)</div>
