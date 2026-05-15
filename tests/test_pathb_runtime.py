@@ -560,6 +560,79 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["status"], "WAITING")
             self.assertEqual(run["path_type"], "claude_price")
 
+    def test_register_from_selection_meta_preserves_pullback_wait_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runs = runtime.register_from_selection_meta(
+                "KR",
+                {
+                    "trade_ready": [],
+                    "_pathb_registration_scope": "candidate_actions_wait_only",
+                    "_pathb_wait_tickers": ["005930"],
+                    "v2_decision_ids": {"005930": "dec_wait"},
+                    "_pathb_wait_origins": {
+                        "005930": {
+                            "origin_action": "PULLBACK_WAIT",
+                            "origin_route": "pathb_wait_only",
+                            "registration_scope": "candidate_actions_wait_only",
+                            "not_patha_trade_ready": True,
+                            "reason": "wait for buy zone",
+                        }
+                    },
+                    "_pathb_price_targets": {
+                        "005930": {
+                            "buy_zone_low": 52000,
+                            "buy_zone_high": 52500,
+                            "sell_target": 54500,
+                            "stop_loss": 51000,
+                            "hold_days": 1,
+                            "confidence": 0.7,
+                        }
+                    },
+                },
+            )
+
+            self.assertEqual(len(runs), 1)
+            run = store.find_path_run(runs[0])
+            plan = run["plan"]
+            self.assertEqual(plan["origin_action"], "PULLBACK_WAIT")
+            self.assertEqual(plan["origin_route"], "pathb_wait_only")
+            self.assertEqual(plan["registration_scope"], "candidate_actions_wait_only")
+            self.assertTrue(plan["not_patha_trade_ready"])
+            self.assertEqual(plan["origin_reason"], "wait for buy zone")
+
+    def test_pathb_order_and_position_metadata_include_origin(self) -> None:
+        plan = make_price_plan(
+            decision_id="dec_wait",
+            ticker="005930",
+            market="KR",
+            session_date="2026-04-27",
+            buy_zone_low=52_000,
+            buy_zone_high=52_500,
+            sell_target=54_500,
+            stop_loss=51_000,
+            hold_days=1,
+            confidence=0.7,
+            origin_action="PULLBACK_WAIT",
+            origin_route="pathb_wait_only",
+            registration_scope="candidate_actions_wait_only",
+            not_patha_trade_ready=True,
+            origin_reason="wait for buy zone",
+        )
+        order: dict = {}
+        pos: dict = {}
+
+        PathBRuntime._attach_pathb_order_metadata(order, plan)
+        PathBRuntime._attach_pathb_position_metadata(pos, plan)
+
+        self.assertEqual(order["pathb_origin_action"], "PULLBACK_WAIT")
+        self.assertEqual(order["pathb_origin_route"], "pathb_wait_only")
+        self.assertTrue(order["not_patha_trade_ready"])
+        self.assertEqual(pos["pathb_origin_action"], "PULLBACK_WAIT")
+        self.assertTrue(pos["not_patha_trade_ready"])
+
     def test_register_from_selection_meta_keeps_plan_when_active_order_unknown_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")

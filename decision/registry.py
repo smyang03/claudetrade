@@ -91,14 +91,17 @@ class DecisionRegistry:
         selection_meta = selection_meta or {}
         strategy_map = selection_meta.get("recommended_strategy") or {}
         timing_map = selection_meta.get("timing_style") or {}
+        origin_map = selection_meta.get("_pathb_wait_origins") if isinstance(selection_meta.get("_pathb_wait_origins"), dict) else {}
         decision_ids: dict[str, str] = {}
         for ticker in tickers:
             strategy_hint = ""
             timing_style = "momentum_timing"
+            ticker_key = str(ticker or "").strip().upper() if str(market or "").upper() == "US" else str(ticker or "").strip()
             if isinstance(strategy_map, dict):
                 strategy_hint = str(strategy_map.get(ticker) or strategy_map.get(str(ticker).upper()) or "")
             if isinstance(timing_map, dict):
                 timing_style = str(timing_map.get(ticker) or timing_map.get(str(ticker).upper()) or timing_style)
+            ticker_origin = origin_map.get(ticker) or origin_map.get(ticker_key) or origin_map.get(str(ticker).upper()) or {}
             decision_ids[ticker] = self.register_trade_ready(
                 market=market,
                 runtime_mode=runtime_mode,
@@ -108,7 +111,7 @@ class DecisionRegistry:
                 brain_snapshot_id=brain_snapshot_id,
                 strategy_hint=strategy_hint,
                 timing_style=timing_style,
-                payload={"selection_meta": selection_meta},
+                payload={"selection_meta": selection_meta, "ticker_origin": dict(ticker_origin or {})},
                 reuse_existing=reuse_existing,
             )
         return decision_ids

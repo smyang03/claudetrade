@@ -267,6 +267,31 @@ def route_candidate_action(
     if cancel_if_open_above > 0:
         gate_context["cancel_if_open_above"] = cancel_if_open_above
     gate_context["overextended"] = bool(overextended)
+    pathb_hysteresis_enabled = True
+    if context.get("pathb_suspend_hysteresis_enabled") not in (None, ""):
+        pathb_hysteresis_enabled = _boolish(context.get("pathb_suspend_hysteresis_enabled"))
+    else:
+        raw_hysteresis = os.getenv(
+            f"{market_text}_PATHB_SUSPEND_HYSTERESIS_ENABLED",
+            os.getenv("PATHB_SUSPEND_HYSTERESIS_ENABLED", "true"),
+        )
+        pathb_hysteresis_enabled = _boolish(raw_hysteresis)
+    pathb_negative_watch_count = int(_num_or_none(context.get("pathb_wait_negative_watch_count")) or 0)
+    if pathb_negative_watch_count <= 0:
+        pathb_negative_watch_count = 1 if pathb_waiting else 0
+    pathb_suspend_threshold = int(
+        _num_or_none(context.get("pathb_suspend_negative_watch_threshold"))
+        or _num_or_none(os.getenv(f"{market_text}_PATHB_SUSPEND_NEGATIVE_WATCH_THRESHOLD"))
+        or _num_or_none(os.getenv("PATHB_SUSPEND_NEGATIVE_WATCH_THRESHOLD"))
+        or 3
+    )
+    pathb_suspend_threshold = max(1, pathb_suspend_threshold)
+    pathb_explicit_invalidation = _boolish(context.get("pathb_explicit_invalidation"))
+    gate_context["pathb_waiting"] = bool(pathb_waiting)
+    gate_context["pathb_wait_negative_watch_count"] = pathb_negative_watch_count
+    gate_context["pathb_suspend_negative_watch_threshold"] = pathb_suspend_threshold
+    gate_context["pathb_suspend_hysteresis_enabled"] = bool(pathb_hysteresis_enabled)
+    gate_context["pathb_explicit_invalidation"] = bool(pathb_explicit_invalidation)
     for key in (
         "ret_3m_pct",
         "ret_10m_pct",
@@ -380,6 +405,20 @@ def route_candidate_action(
             "반등 실패",
         )
         return any(keyword in reason_text for keyword in negative_keywords)
+
+    def _pathb_negative_watch_suspend_decision() -> tuple[bool, str, str]:
+        if not pathb_waiting:
+            return False, "", ""
+        quality = str(data_quality or "").strip().lower()
+        hard_invalidation = pathb_explicit_invalidation or quality in {"bad", "bad_data", "invalid"}
+        if (
+            market_text == "KR"
+            and pathb_hysteresis_enabled
+            and not hard_invalidation
+            and pathb_negative_watch_count < pathb_suspend_threshold
+        ):
+            return False, "watch_keeps_pathb_waiting_hysteresis", "pathb_suspend_hysteresis"
+        return True, "watch_suspends_stale_pathb", ""
 
     if gate_final_action == "HARD_BLOCK" or gate_blocker:
         return _decision("HARD_BLOCK", reason=gate_blocker or "hard_safety")
@@ -540,23 +579,26 @@ def route_candidate_action(
         if not has_pullback_target(price_targets):
             return _decision("WATCH", reason="missing_pullback_target")
         if _negative_watch_context():
+            suspend_pathb, _, hysteresis_reason = _pathb_negative_watch_suspend_decision()
             return _decision(
                 "WATCH",
                 reason="pullback_wait_blocked_negative_context",
-                suspend_pathb=bool(pathb_waiting),
+                suspend_pathb=suspend_pathb,
                 warnings=["pullback_wait_negative_context"],
                 demoted_to="WATCH",
-                runtime_gate_reason="negative_pullback_context",
+                runtime_gate_reason=hysteresis_reason or "negative_pullback_context",
             )
         return _decision("PULLBACK_WAIT", route="PathB.wait", reason="pullback_wait")
 
     if requested == "WATCH":
         if pathb_waiting and _negative_watch_context():
+            suspend_pathb, reason, hysteresis_reason = _pathb_negative_watch_suspend_decision()
             return _decision(
                 "WATCH",
-                reason="watch_suspends_stale_pathb",
-                suspend_pathb=True,
+                reason=reason,
+                suspend_pathb=suspend_pathb,
                 warnings=["pathb_waiting_negative_context_shadow"],
+                runtime_gate_reason=hysteresis_reason,
             )
         return _decision("WATCH", reason="watch")
 
@@ -572,10 +614,12 @@ def route_candidate_action(
         return _decision("EXPIRED", reason="action_expired")
 
     if pathb_waiting and _negative_watch_context():
+        suspend_pathb, reason, hysteresis_reason = _pathb_negative_watch_suspend_decision()
         return _decision(
             "WATCH",
-            reason="watch_suspends_stale_pathb",
-            suspend_pathb=True,
+            reason=reason,
+            suspend_pathb=suspend_pathb,
             warnings=["pathb_waiting_negative_context_shadow"],
+            runtime_gate_reason=hysteresis_reason,
         )
     return _decision("WATCH", reason="watch")

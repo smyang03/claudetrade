@@ -671,6 +671,40 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertIn("recent_sessions", payload)
         self.assertIn("next_actions", payload)
 
+    def test_dashboard_api_compact_response_keeps_sixty_outcome_rows(self) -> None:
+        candidates = [{"ticker": f"T{i}", "shadow_preopen_rank": i} for i in range(1, 61)]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-02",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "candidate_count": len(candidates),
+                    "candidates": candidates,
+                }, session_date="2026-05-02")
+                for idx in range(1, 61):
+                    save_outcome_record("US", "2026-05-02", {
+                        "ticker": f"T{idx}",
+                        "offset_min": 30,
+                        "anchor_price": 10.0,
+                        "price": 10.0 + idx / 100.0,
+                        "post_open_return_pct": idx / 10.0,
+                        "post_open_30m_return_pct": idx / 10.0,
+                    })
+                from dashboard import dashboard_server
+
+                with dashboard_server.app.test_client() as client:
+                    response = client.get("/api/preopen?market=US&session_date=2026-05-02&limit=60")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["summary"]["candidate_display_count"], 60)
+        self.assertEqual(payload["summary"]["outcome_display_count"], 60)
+        self.assertEqual(payload["summary"]["outcome_display_limit"], 60)
+        self.assertEqual(len(payload["outcome_timeline"]), 60)
+
 
 if __name__ == "__main__":
     unittest.main()

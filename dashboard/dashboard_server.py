@@ -168,6 +168,24 @@ def _with_broker_cache_meta(payload: dict, meta: dict) -> dict:
     return data
 
 
+def _broker_snapshot_cache_hit_meta(cached: dict, now_ts: float, source: str = "cache") -> dict:
+    cached = cached if isinstance(cached, dict) else {}
+    stored_meta = cached.get("meta") if isinstance(cached.get("meta"), dict) else {}
+    if not stored_meta:
+        value = cached.get("value")
+        stored_meta = value.get("cache") if isinstance(value, dict) and isinstance(value.get("cache"), dict) else {}
+    original_stale = bool(cached.get("was_stale", stored_meta.get("stale", False)))
+    original_error = str(cached.get("last_error", stored_meta.get("last_error", "")) or "")
+    return _broker_cache_meta(
+        hit=True,
+        stale=original_stale,
+        cached=cached,
+        now_ts=now_ts,
+        last_error=original_error,
+        source=source,
+    )
+
+
 def _broker_snapshot_status(mode: str = "paper") -> dict:
     return copy.deepcopy(_BROKER_SNAPSHOT_STATUS.get(_normalize_mode(mode), {}))
 
@@ -2284,7 +2302,13 @@ def _broker_snapshot_from_truth(mode: str) -> dict:
     generated_at = str(snap.get("generated_at") or kr.get("last_success_at") or us.get("last_success_at") or "")
     age_sec = _dt_age_sec(generated_at)
     cached_ts = _time.time() - float(age_sec or 0)
-    any_stale = bool(kr.get("stale")) or bool(us.get("stale")) or bool(snap.get("_state_cache_stale"))
+    any_stale = (
+        bool(kr.get("stale"))
+        or bool(us.get("stale"))
+        or bool(kr.get("error"))
+        or bool(us.get("error"))
+        or bool(snap.get("_state_cache_stale"))
+    )
     source = str(snap.get("_state_cache_source") or "broker_truth_snapshot")
     last_error = "; ".join(
         part for part in (
@@ -2294,7 +2318,13 @@ def _broker_snapshot_from_truth(mode: str) -> dict:
         )
         if part
     )
-    cached = {"ts": cached_ts, "value": {}}
+    cached = {
+        "ts": cached_ts,
+        "value": {},
+        "meta": {},
+        "was_stale": any_stale,
+        "last_error": last_error,
+    }
     meta = _broker_cache_meta(hit=True, stale=any_stale, cached=cached, now_ts=_time.time(), last_error=last_error, source=source)
     result = {
         "source": source,
@@ -2322,6 +2352,7 @@ def _broker_snapshot_from_truth(mode: str) -> dict:
         "unrealized_krw": {"KR": kr_profit, "US": us_profit_native * usd_krw},
     }
     cached["value"] = copy.deepcopy(result)
+    cached["meta"] = copy.deepcopy(meta)
     _BROKER_SNAPSHOT_CACHE[runtime_mode] = cached
     _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
     return result
@@ -2358,7 +2389,7 @@ def _broker_snapshot_fast(mode: str = "paper") -> dict:
             )
             _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
             return _with_broker_cache_meta(cached.get("value", {}), meta)
-        meta = _broker_cache_meta(hit=True, stale=False, cached=cached, now_ts=now_ts, source="cache")
+        meta = _broker_snapshot_cache_hit_meta(cached, now_ts, source="cache")
         _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
         return _with_broker_cache_meta(cached.get("value", {}), meta)
     return _broker_snapshot_from_truth(runtime_mode)
@@ -2381,6 +2412,7 @@ def _broker_snapshot_refresh(mode: str = "live", *, force: bool = False) -> dict
         }
     if not _BROKER_REFRESH_LOCK.acquire(blocking=False):
         return {"ok": False, "reason": "refresh_pending", "snapshot": _broker_snapshot_fast(runtime_mode)}
+    saved_cache = _BROKER_SNAPSHOT_CACHE.get(runtime_mode)
     try:
         _BROKER_REFRESH_LAST_TS[runtime_mode] = now_ts
         _BROKER_REFRESH_STATUS[runtime_mode] = {"running": True, "started_at": datetime.now(KST).isoformat(timespec="seconds")}
@@ -2401,6 +2433,8 @@ def _broker_snapshot_refresh(mode: str = "live", *, force: bool = False) -> dict
             "ok": False,
             "error": str(exc),
         }
+        if saved_cache is not None:
+            _BROKER_SNAPSHOT_CACHE[runtime_mode] = saved_cache
         return {"ok": False, "reason": "error", "error": str(exc), "snapshot": _broker_snapshot_fast(runtime_mode)}
     finally:
         _BROKER_REFRESH_LOCK.release()
@@ -2452,17 +2486,32 @@ def _broker_truth_market_with_meta(market: str, mode: str) -> tuple[Optional[dic
     source = str((snap or {}).get("_state_cache_source") or ("broker_truth_snapshot" if isinstance(markets, dict) and markets else "no_cache"))
     last_error = str((snap or {}).get("_state_cache_error", "") or "")
     now_ts = _time.time()
-    if data is None or data.get("missing") or data.get("error"):
+    if data is None or data.get("missing"):
         if isinstance(data, dict) and data.get("error"):
             last_error = str(data.get("error") or last_error)
         meta = _broker_cache_meta(hit=False, stale=True, cached=None, now_ts=now_ts, last_error=last_error, source=source)
         return None, meta
+    if data.get("error"):
+        last_error = str(data.get("error") or last_error)
+        summary = data.get("account_summary") if isinstance(data.get("account_summary"), dict) else {}
+        has_last_success = bool(str(data.get("last_success_at", "") or "").strip())
+
+        def _positive_summary_value(key: str) -> bool:
+            try:
+                return float(summary.get(key, 0) or 0) > 0
+            except Exception:
+                return False
+
+        has_payload = has_last_success or bool(data.get("positions")) or any(
+            _positive_summary_value(key) for key in ("cash", "orderable_cash", "total_eval")
+        )
+        if not has_payload:
+            meta = _broker_cache_meta(hit=False, stale=True, cached=None, now_ts=now_ts, last_error=last_error, source=source)
+            return None, meta
     generated_at = str((data or {}).get("last_success_at") or (snap or {}).get("generated_at") or "")
     age_sec = _dt_age_sec(generated_at)
     cached_ts = now_ts - float(age_sec or 0)
-    stale = bool((data or {}).get("stale")) or bool((snap or {}).get("_state_cache_stale")) or age_sec is None
-    if data.get("error"):
-        last_error = str(data.get("error") or last_error)
+    stale = bool((data or {}).get("stale")) or bool(data.get("error")) or bool((snap or {}).get("_state_cache_stale")) or age_sec is None
     cached = {"ts": cached_ts, "value": {}}
     meta = _broker_cache_meta(hit=True, stale=stale, cached=cached, now_ts=now_ts, last_error=last_error, source=source)
     return data, meta
@@ -2788,7 +2837,7 @@ def _broker_snapshot(mode: str = "paper") -> dict:
         ttl_sec = 20
     cached = _BROKER_SNAPSHOT_CACHE.get(runtime_mode)
     if ttl_sec > 0 and cached and now_ts - float(cached.get("ts", 0) or 0) < ttl_sec:
-        meta = _broker_cache_meta(hit=True, stale=False, cached=cached, now_ts=now_ts, source="cache")
+        meta = _broker_snapshot_cache_hit_meta(cached, now_ts, source="cache")
         _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
         return _with_broker_cache_meta(cached.get("value", {}), meta)
 
@@ -2796,7 +2845,7 @@ def _broker_snapshot(mode: str = "paper") -> dict:
         now_ts = _time.time()
         cached = _BROKER_SNAPSHOT_CACHE.get(runtime_mode)
         if ttl_sec > 0 and cached and now_ts - float(cached.get("ts", 0) or 0) < ttl_sec:
-            meta = _broker_cache_meta(hit=True, stale=False, cached=cached, now_ts=now_ts, source="cache")
+            meta = _broker_snapshot_cache_hit_meta(cached, now_ts, source="cache")
             _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
             return _with_broker_cache_meta(cached.get("value", {}), meta)
         stale_snapshot = copy.deepcopy(cached.get("value", {})) if cached else {}
@@ -2928,7 +2977,13 @@ def _broker_snapshot(mode: str = "paper") -> dict:
         }
         _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
         if ttl_sec > 0:
-            _BROKER_SNAPSHOT_CACHE[runtime_mode] = {"ts": _time.time(), "value": copy.deepcopy(result)}
+            _BROKER_SNAPSHOT_CACHE[runtime_mode] = {
+                "ts": _time.time(),
+                "value": copy.deepcopy(result),
+                "meta": copy.deepcopy(meta),
+                "was_stale": bool(meta.get("stale", False)),
+                "last_error": str(meta.get("last_error", "") or ""),
+            }
         return result
 
 
@@ -2942,7 +2997,7 @@ def _market_asset_krw_from_broker_snapshot(broker: dict, market: str) -> float:
     return float(broker.get("kr_cash_effective", broker.get("kr_cash", 0)) or 0) + float(broker.get("kr_eval", 0) or 0)
 
 
-def _persist_broker_equity_snapshot(broker: dict, mode: str = "paper") -> None:
+def _persist_broker_equity_snapshot(broker: dict, mode: str = "paper", markets: Optional[set[str]] = None) -> None:
     if not broker:
         return
     path = _broker_equity_history_path(mode)
@@ -2983,6 +3038,11 @@ def _persist_broker_equity_snapshot(broker: dict, mode: str = "paper") -> None:
             "captured_at": datetime.now(KST).isoformat(),
         },
     }
+    if markets is not None:
+        market_filter = {"US" if str(market or "").upper() == "US" else "KR" for market in markets}
+        updates = {key: row for key, row in updates.items() if key[0] in market_filter}
+        if not updates:
+            return
     rows_by_key: dict[tuple[str, str], dict] = {}
     if path.exists():
         try:
@@ -3247,7 +3307,8 @@ def _live_equity_payload_fast(
     current_asset = _market_asset_krw_from_broker_snapshot(broker or {}, market) if broker else 0.0
     current_unrealized = float(((broker or {}).get("unrealized_krw", {}) or {}).get(market, 0) or 0)
     d_start, d_end = _resolve_period_bounds(period, start, end)
-    session_label = _session_trade_date(market).isoformat()
+    session_day = _session_trade_date(market)
+    session_label = session_day.isoformat()
 
     snapshot_rows = _load_broker_equity_snapshots(market, period, start, end, mode=mode)
     snapshot_asset_map: dict[str, float] = {}
@@ -3263,7 +3324,7 @@ def _live_equity_payload_fast(
         snapshot_unrealized_map[label] = float(item.get("unrealized_krw", 0) or 0)
         snapshot_source_map[label] = str(item.get("source", "") or "")
 
-    if current_asset > 0 and d_start <= _session_trade_date(market) <= d_end:
+    if current_asset > 0 and d_start <= session_day <= d_end:
         snapshot_asset_map[session_label] = current_asset
         snapshot_unrealized_map[session_label] = current_unrealized
         snapshot_source_map[session_label] = str((broker or {}).get("source", "cached_state") or "cached_state")
@@ -3277,13 +3338,38 @@ def _live_equity_payload_fast(
     equity = [float(snapshot_asset_map.get(label, 0.0) or 0.0) for label in labels]
     other_market = "US" if market == "KR" else "KR"
     other_current_asset = _market_asset_krw_from_broker_snapshot(broker or {}, other_market) if broker else 0.0
-    other_session_label = _session_trade_date(other_market).isoformat()
+    other_session_day = _session_trade_date(other_market)
+    other_session_label = other_session_day.isoformat()
     other_asset_map: dict[str, float] = {}
-    for item in _load_broker_equity_snapshots(other_market, period, start, end, mode=mode):
+    other_snapshot_rows = _load_broker_equity_snapshots(other_market, period, start, end, mode=mode)
+    for item in other_snapshot_rows:
         label = str(item.get("date", "") or "")[:10]
         asset = float(item.get("asset_krw", 0) or 0)
         if label and asset > 0:
             other_asset_map[label] = asset
+
+    def _history_has_asset(rows: list[dict], label: str) -> bool:
+        for item in rows or []:
+            if str(item.get("date", "") or "")[:10] != label:
+                continue
+            if float(item.get("asset_krw", 0) or 0) > 0:
+                return True
+        return False
+
+    markets_to_persist: set[str] = set()
+    if current_asset > 0 and d_start <= session_day <= d_end and not _history_has_asset(snapshot_rows, session_label):
+        markets_to_persist.add(market)
+    if (
+        other_current_asset > 0
+        and d_start <= other_session_day <= d_end
+        and not _history_has_asset(other_snapshot_rows, other_session_label)
+    ):
+        markets_to_persist.add(other_market)
+    if markets_to_persist:
+        try:
+            _persist_broker_equity_snapshot(broker, mode=mode, markets=markets_to_persist)
+        except Exception:
+            pass
     if other_current_asset > 0:
         other_asset_map[other_session_label] = other_current_asset
     other_sorted = sorted(other_asset_map.items())
@@ -3313,6 +3399,16 @@ def _live_equity_payload_fast(
             last_unrealized = float(snapshot_unrealized_map.get(label, 0.0) or 0.0)
         unrealized.append(last_unrealized)
 
+    session_realized = 0.0
+    if d_start <= session_day <= d_end:
+        try:
+            live = _load_live_status(market, mode=mode) or {}
+            status = _current_session_realized_pnl_status(market, mode, live=live)
+            if bool(status.get("available", False)):
+                session_realized = float(status.get("pnl_krw", 0) or 0)
+        except Exception:
+            session_realized = 0.0
+
     realized_series: list[float] = []
     unrealized_delta_series: list[float] = []
     trading_pnl_series: list[float] = []
@@ -3323,8 +3419,8 @@ def _live_equity_payload_fast(
     wins: list[bool] = []
     cumulative_trade = 0.0
     cumulative_flow = 0.0
-    for idx, _label in enumerate(labels):
-        realized = 0.0
+    for idx, label in enumerate(labels):
+        realized = session_realized if label == session_label else 0.0
         previous_unrealized = unrealized[idx - 1] if idx > 0 else 0.0
         unrealized_delta = unrealized[idx] - previous_unrealized
         trading_pnl = realized + unrealized_delta
@@ -4953,8 +5049,7 @@ def api_summary():
     broker = _broker_snapshot_fast(mode=mode) if live_mode else _broker_snapshot(mode=mode)
     if broker and not live_mode:
         _persist_broker_equity_snapshot(broker, mode=mode)
-    broker_source = str((broker or {}).get("source", "") or "")
-    broker_has_account = bool(broker) and broker_source not in {"no_cache", "state_parse_error_no_cache"}
+    broker_has_account = _broker_snapshot_has_account(broker)
     kr_asset = 0.0
     us_asset = 0.0
     usd_krw = float(os.getenv("USD_KRW_RATE", "1350") or 1350)
@@ -5847,7 +5942,7 @@ def _compact_preopen_scheduler(scheduler: Any) -> dict:
     return compact
 
 
-def _compact_preopen_payload(payload: dict, *, outcome_limit: int = 30) -> dict:
+def _compact_preopen_payload(payload: dict, *, outcome_limit: int = 60) -> dict:
     if not isinstance(payload, dict):
         return {}
     if isinstance(payload.get("scheduler"), dict):
@@ -5908,7 +6003,7 @@ def api_preopen():
                 compact_state.pop("digest_raw", None)
                 payload["state"] = compact_state
             payload["outcome"] = []
-            payload = _compact_preopen_payload(payload, outcome_limit=30)
+            payload = _compact_preopen_payload(payload, outcome_limit=60)
         return jsonify(payload)
     except Exception as exc:
         return jsonify({
@@ -8661,6 +8756,17 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 .hit     {{ background: rgba(16,185,129,0.2); color: var(--green); }}
 .miss    {{ background: rgba(239,68,68,0.2);  color: var(--red); }}
 .partial {{ background: rgba(245,158,11,0.2); color: var(--yellow); }}
+.pnl-source-badge {{
+  display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 6px;
+  border-radius: 4px; font-size: 11px; font-weight: 700; vertical-align: middle;
+  border: 1px solid var(--border); color: var(--muted);
+}}
+.pnl-source-badge.ok {{
+  color: var(--green); border-color: rgba(16,185,129,0.35);
+}}
+.pnl-source-badge.warn {{
+  color: #b45309; border-color: rgba(245,158,11,0.45);
+}}
 
 .side-buy  {{ color: var(--green); }}
 .side-sell {{ color: var(--red); }}
@@ -8892,6 +8998,27 @@ function escapeHtml(v) {
     '"': '&quot;',
     "'": '&#39;'
   }[ch]));
+}
+
+function pnlSourceLabel(source) {
+  const s = String(source || '');
+  const labels = {
+    broker_truth_confirmed_local_pnl: '브로커확인',
+    broker_trade_history: '브로커체결',
+    current_session_status: '세션상태',
+    live_status_cached: '라이브상태',
+    live_status_or_metrics_fallback: 'fallback',
+    live_status_daily_pnl: 'live_status',
+    live_status_daily_pnl_legacy: 'legacy'
+  };
+  return labels[s] || s || '-';
+}
+
+function pnlSourceClass(source) {
+  const s = String(source || '');
+  if (s === 'broker_truth_confirmed_local_pnl' || s === 'broker_trade_history') return 'ok';
+  if (s.includes('fallback') || s.includes('legacy')) return 'warn';
+  return 'neutral';
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -10253,8 +10380,11 @@ async function loadSummary() {
   pnlEl.innerHTML = `${fmt.pct(tradingPct)} <span class="card-value-extra ${colorClass(tradingKrw)}">${fmt.krw(tradingKrw)}</span>`;
   pnlEl.className = 'card-value ' + colorClass(tradingPct);
   const todayKrw = document.getElementById('today-krw');
-  todayKrw.textContent = `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 평가손익 ${fmt.krw(evalDeltaKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}`;
-  todayKrw.title = `총손익 ${fmt.krw(tradingKrw)} · 보유평가 누적 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${t.realized_pnl_source || '-'}`;
+  const pnlSource = String(t.realized_pnl_source || '-');
+  todayKrw.innerHTML =
+    `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 평가손익 ${fmt.krw(evalDeltaKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}` +
+    ` <span class="pnl-source-badge ${pnlSourceClass(pnlSource)}">${escapeHtml(pnlSourceLabel(pnlSource))}</span>`;
+  todayKrw.title = `총손익 ${fmt.krw(tradingKrw)} · 보유평가 누적 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${pnlSource}`;
   document.getElementById('cumulative').textContent = fmt.asset(accountAsset);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
@@ -11303,8 +11433,11 @@ async function loadSummary() {
   }
   const todayKrw = document.getElementById('today-krw');
   if (todayKrw) {
-    todayKrw.textContent = `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 평가손익 ${fmt.krw(evalDeltaKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}`;
-    todayKrw.title = `총손익 ${fmt.krw(tradingKrw)} · 보유평가 누적 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${t.realized_pnl_source || '-'}`;
+    const pnlSource = String(t.realized_pnl_source || '-');
+    todayKrw.innerHTML =
+      `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 평가손익 ${fmt.krw(evalDeltaKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}` +
+      ` <span class="pnl-source-badge ${pnlSourceClass(pnlSource)}">${escapeHtml(pnlSourceLabel(pnlSource))}</span>`;
+    todayKrw.title = `총손익 ${fmt.krw(tradingKrw)} · 보유평가 누적 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${pnlSource}`;
   }
   const cumulative = document.getElementById('cumulative');
   if (cumulative) cumulative.textContent = fmt.asset(accountAsset);

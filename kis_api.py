@@ -3442,6 +3442,7 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
             )
             filtered = _apply_product_filter(merged, "premarket")
             final = _cap_kr_screen_candidates(filtered, top_n)
+            _write_price_collection_priority("KR", final, source="screen", mode=mode)
             _save_kr_screen_audit(
                 "premarket",
                 mode,
@@ -3518,6 +3519,7 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
                     "[KR 스크리너 캐시] 저장 건너뜀: KOSDAQ coverage=0 "
                     f"(candidates={len(final)}, kospi_raw={len(kospi_result)}, kosdaq_raw={len(kosdaq_result)})"
                 )
+            _write_price_collection_priority("KR", final, source="screen", mode=mode)
             _save_kr_screen_audit(
                 "intraday",
                 mode,
@@ -3535,11 +3537,15 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
         # API 완전 실패 시 캐시 → 하드코딩 순
         cached = _load_kr_screen_cache()
         if cached:
-            return _apply_product_filter(cached, "cache")[:top_n]
-        return _apply_product_filter([
+            out = _apply_product_filter(cached, "cache")[:top_n]
+            _write_price_collection_priority("KR", out, source="cache", mode=mode)
+            return out
+        out = _apply_product_filter([
             {"ticker": t, "name": t, "price": 0, "change_rate": 0.0, "volume": 0, "vol_ratio": 1.0}
             for t in _KR_FALLBACK_UNIVERSE
         ], "fallback")[:top_n]
+        _write_price_collection_priority("KR", out, source="fallback", mode=mode)
+        return out
 
 
 _US_SCREEN_CACHE_PATH = get_runtime_path("state", "us_screen_cache.json")

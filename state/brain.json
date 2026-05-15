@@ -1,6 +1,6 @@
 {
   "meta": {
-    "version": 3428,
+    "version": 3431,
     "created": "2026-03-19",
     "last_updated": "2026-05-16",
     "trained_days_kr": 39,
@@ -5266,23 +5266,23 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "150min_tune": {
-          "count": 34,
+          "count": 35,
           "correct": 3,
-          "rate": 0.088,
-          "insight": "Historically low precision (9% over 34 trials); treat as weak context only. (Context: 지수 +0.87%(아침 +0.35% 대비 가속), 30분 기울기 +0.01%p 상승 유지, breadth advance_ratio +25%p 개)",
-          "last_seen": "2026-05-15",
+          "rate": 0.086,
+          "insight": "지수 -0.92%로 아침 베어 시나리오 범위 내 유지, 30분 기울기 +0.13%p 소폭 반등 중이나 breadth advance_ratio -10%p·decliners +21·GC 0/DC 0으로 구조적 개선 없어 CAUTIOUS 유지—직전 TIGHTEN 조정(wait+5m, cutoff+0.02) 그대로 연장하며 추가 완화 불가",
+          "last_seen": "2026-05-16",
           "adjusted": 3,
-          "adjusted_rate": 0.088,
+          "adjusted_rate": 0.086,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "180min_tune": {
-          "count": 29,
-          "correct": 4,
-          "rate": 0.138,
-          "insight": "Below-average precision (14% over 29 trials); use with caution. (Context: 지수 +0.95%·30분 기울기 +0.08%p 상승 지속·breadth advance_ratio +27%p(44/15) 대폭 개선으로 아침 CA)",
-          "last_seen": "2026-05-15",
-          "adjusted": 4,
-          "adjusted_rate": 0.138,
+          "count": 30,
+          "correct": 5,
+          "rate": 0.167,
+          "insight": "지수 -0.96% + 30분 기울기 -0.04%p 하락 지속, breadth advance_ratio -10%p 악화(adv/dec=27/35, GC/DC=0/0)로 아침 thesis 약화 확인—신규 진입 추가 억제, 기존 포지션 중 DXCM -0.9% 약세 모니터링 강화",
+          "last_seen": "2026-05-16",
+          "adjusted": 5,
+          "adjusted_rate": 0.167,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "210min_tune": {
@@ -6366,53 +6366,6 @@
         }
       ],
       "debate_history": [
-        {
-          "date": "2026-03-30",
-          "r1": {
-            "bull": {
-              "stance": "DEFENSIVE",
-              "confidence": 0.85,
-              "key_reason": "S&P500 -1.67% 광폭 낙장, MACD 전 종목 데드크로스 + RSI 과매도(알파벳 22.0) 단독 신호로는 반등 근거 부족 — 시장 전"
-            },
-            "bear": {
-              "stance": "CAUTIOUS_BEAR",
-              "confidence": 0.82,
-              "key_reason": "S&P500 -1.67%, 나스닥 -2.15% 낙폭 + 전 종목 MACD 데드크로스 + RSI 다중 과매도(알파벳 22.0, 엔비디아 31.4,"
-            },
-            "neutral": {
-              "stance": "CAUTIOUS_BEAR",
-              "confidence": 0.68,
-              "key_reason": "S&P500 -1.67% 낙폭 + 4개 종목 MACD 데드크로스 + RSI 30대 약세권 유지 + 알파벳 RSI 22.0 과매도 반등 신호도 다"
-            }
-          },
-          "r2": {
-            "bull": {
-              "stance": "CAUTIOUS_BEAR",
-              "confidence": 0.78,
-              "key_reason": "전 종목 MACD 데드크로스 + S&P500 -1.67%·나스닥 -2.15% 광폭 하락 + 알파벳 RSI 22.0 극단 과매도에도 거래량 1.5"
-            },
-            "bear": {
-              "stance": "CAUTIOUS_BEAR",
-              "confidence": 0.79,
-              "key_reason": "S&P500 -1.67%·나스닥 -2.15% 낙폭 + 전 종목 MACD 데드크로스 + RSI 다중 약세권(알파벳 22.0·엔비디아 31.4·테슬"
-            },
-            "neutral": {
-              "stance": "CAUTIOUS_BEAR",
-              "confidence": 0.68,
-              "key_reason": "S&P500 -1.67%·나스닥 -2.15% 동반 낙폭 + 전 종목 MACD 데드크로스 + RSI 다중 과매도(알파벳 22.0·엔비디아 31.4"
-            }
-          },
-          "changes": [
-            {
-              "analyst": "bull",
-              "r1_stance": "DEFENSIVE",
-              "r2_stance": "CAUTIOUS_BEAR",
-              "reason": "BEAR·NEUTRAL 분석가 모두 CAUTIOUS_BEAR 수렴, 과거 토론 이력상 의견 변경 시 적중률 50% vs 유지 시 0%로 변경이 우위 — DEFENSIVE는 서킷브레이커 수준 공황에 해당하나 현 상황은 하락추세 내 기술적 약세로 CAUTIOUS_BEAR가 적절한 스텝다운"
-            }
-          ],
-          "consensus_shifted": true,
-          "outcome": "wrong"
-        },
         {
           "date": "2026-03-31",
           "r1": {
@@ -7607,36 +7560,36 @@
           "date": "2026-05-16",
           "r1": {
             "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.62,
-              "key_reason": "인트라데이 S&P500 -0.93%, NASDAQ -1.21%, VIX 18.27(+5.86%)로 프리오픈 대비 악화됐으나, 일간 breadth"
+              "stance": "MILD_BEAR",
+              "confidence": 0.72,
+              "key_reason": "인트라데이 실시간 기준 S&P500 -0.96%, NASDAQ -1.22%, VIX 18.05(+4.58%)로 장중 하락 압력이 뚜렷하며, br"
             },
             "bear": {
               "stance": "CAUTIOUS",
               "confidence": 0.62,
-              "key_reason": "Intraday reversal detected: SPY -0.93%, NDX -1.21% vs preopen +0.77%/+0.88%; VIX"
+              "key_reason": "VIX 18.05 안정적이고 HYG -0.08% 미미하나, 실시간 시장이 S&P500 -0.96% / NASDAQ -1.22%로 역전되었고 br"
             },
             "neutral": {
               "stance": "NEUTRAL",
               "confidence": 0.58,
-              "key_reason": "Breadth 신호 균등(상승 16/하락 14, GC 18/DC 12)하며 기술적 과매수 집중(RSI 과매수 11개)과 매크로 약세(S&P500"
+              "key_reason": "Breadth 53% 상승(16/14)으로 약한 우위, GC 18/DC 12 양호하나, 현재 실시간(-0.96% S&P500 vs 사전 +0.7"
             }
           },
           "r2": {
             "bull": {
-              "stance": "MILD_BULL",
-              "confidence": 0.57,
-              "key_reason": "일간 breadth 상승 53%(16/30), GC 18/DC 12, XLK +1.50% 섹터 주도로 구조적 MILD_BULL 유지—단 장중 S"
+              "stance": "MILD_BEAR",
+              "confidence": 0.7,
+              "key_reason": "인트라데이 S&P500 -0.96%·NASDAQ -1.22% 실질 하락 확인, RSI 과매수 11개 vs 과매도 2개로 단기 되돌림 위험 우세,"
             },
             "bear": {
               "stance": "CAUTIOUS",
               "confidence": 0.63,
-              "key_reason": "인트라데이 S&P500 -0.93%/NASDAQ -1.21% 현실화 + VIX +5.85%(18.27) 상승으로 변동성 압력 확인, breadt"
+              "key_reason": "S&P500 -0.96% / NASDAQ -1.22% 인트라데이 하락 + VIX 18.05(+4.58%) 상승 조합이 단기 압력을 확인하나, H"
             },
             "neutral": {
               "stance": "NEUTRAL",
               "confidence": 0.55,
-              "key_reason": "Breadth 상승/하락 균등(16/30 상승, GC 18/DC 12)하나 인트라데이 S&P500 -0.93%·NASDAQ -1.21%로 프리오"
+              "key_reason": "Breadth 53% 상승(16/14)·GC 18/DC 12로 구조적 중립 유지되나, 인트라데이 S&P500 -0.96%·NASDAQ -1.22"
             }
           },
           "changes": [],

@@ -57,6 +57,9 @@ LIVE_CONFIG_KEYS = {
     "PATHB_MODE",
     "PATHB_ENABLED",
     "PATHB_KR_LIVE_ENABLED",
+    "KR_CLAUDE_PRICE_LIVE_ENABLED",
+    "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
+    "KR_CONTINUATION_NEW_ENTRY_BLOCK",
     "PATHB_US_LIVE_ENABLED",
     "PATHB_TELEGRAM_CONTROL_ENABLED",
     "PATHB_FIXED_ORDER_KRW",
@@ -77,6 +80,10 @@ LIVE_CONFIG_KEYS = {
     "US_REENTRY_COOLDOWN_MINUTES",
     "USD_KRW_RATE",
     "KIS_US_CREDENTIAL_FALLBACK_ACCEPTED",
+    "KR_MAX_SINGLE_LOSS_PCT",
+    "KR_LOSS_CAP_SHADOW_PCT",
+    "PLANA_MFE_BREAKEVEN_ENABLED",
+    "PATHB_MFE_BREAKEVEN_ENABLED",
 }
 
 RUNTIME_CONFIG_DRIFT_KEYS = {
@@ -86,7 +93,12 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "US_DAILY_ENTRY_CAP",
     "PATHB_ENABLED",
     "PATHB_KR_LIVE_ENABLED",
+    "KR_CLAUDE_PRICE_LIVE_ENABLED",
+    "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
+    "KR_CONTINUATION_NEW_ENTRY_BLOCK",
     "PATHB_US_LIVE_ENABLED",
+    "KR_MAX_SINGLE_LOSS_PCT",
+    "KR_LOSS_CAP_SHADOW_PCT",
     "PATHB_MAX_POSITIONS",
     "PATHB_MAX_DAILY_ENTRIES",
     "PATHB_FIXED_ORDER_KRW",
@@ -762,9 +774,10 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                     "previous_session_count": len(previous_unknown),
                     "accepted_exception": False,
                     "remediation_required": bool(unknown_rows),
+                    "auto_remediation": False,
                     "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
                     "operator_action": (
-                        "run the PathB legacy remediation report and reconcile against broker fills/open orders"
+                        "verify broker open orders/fills first, then run the PathB legacy remediation report; do not override broker truth from local DB only"
                         if unknown_rows
                         else "none"
                     ),
@@ -799,9 +812,10 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                     "stale_active_count": len(stale_active),
                     "accepted_exception": False,
                     "remediation_required": bool(stale_active),
+                    "auto_remediation": False,
                     "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
                     "operator_action": (
-                        "verify broker state before closing, expiring, or backfilling any prior-session active row"
+                        "verify broker positions/open orders/fills before closing, expiring, or backfilling any prior-session active row"
                         if stale_active
                         else "none"
                     ),

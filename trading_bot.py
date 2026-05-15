@@ -825,6 +825,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._task_start_time: dict[str, float] = {"KR": 0.0, "US": 0.0}  # 작업 지연 감지
         self._live_status_written_at: dict[str, float] = {"KR": 0.0, "US": 0.0}  # 중복 쓰기 방지
         self._ticker_no_signal_minutes: dict = {}  # ticker -> 누적 무신호 시간(분), KR 교체 임계에 사용
+        self._pathb_negative_watch_counts: dict[str, int] = {}
         self.usd_krw_rate = float(getattr(self, "usd_krw_rate", 0) or os.getenv("USD_KRW_RATE", "1350"))
         self.enable_limit_order = _env_bool("ENABLE_LIMIT_ORDER", False)
         self.limit_order_offset_bps = int(os.getenv("LIMIT_ORDER_OFFSET_BPS", "5"))
@@ -3050,6 +3051,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if len(kept) != len(current):
                     meta[list_key] = kept
                     changed = True
+            origins = dict(meta.get("_pathb_wait_origins") or {})
+            kept_origins = {raw_key: value for raw_key, value in origins.items() if not _same(raw_key)}
+            if len(kept_origins) != len(origins):
+                meta["_pathb_wait_origins"] = kept_origins
+                changed = True
 
         if changed:
             self._commit_selection_meta_runtime(market_key, meta, persist=persist)
@@ -3129,6 +3135,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if len(kept) != len(current):
                 meta[list_key] = kept
                 changed = True
+        origins = dict(meta.get("_pathb_wait_origins") or {})
+        kept_origins = {raw_key: value for raw_key, value in origins.items() if _key(raw_key) != old_key}
+        if len(kept_origins) != len(origins):
+            meta["_pathb_wait_origins"] = kept_origins
+            changed = True
 
         runtime_filtered = dict(meta.get("_runtime_filtered_trade_ready") or {})
         reason_text = f"{reason}:{new_key}"
@@ -3887,17 +3898,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         runtime_gate = dict((route_payload or {}).get("runtime_gate") or {})
         route_source = str(runtime_gate.get("route_source") or (route_payload or {}).get("route_source") or "").strip()
         partial_reselect_pre_gate = route_source == "partial_reselect"
+        requested_action_text = str((route_payload or {}).get("requested_action") or (action or {}).get("action") or "")
+        would_live_before_gate = requested_action_text.upper() in {"PROBE_READY", "BUY_READY", "ADD_READY", "PULLBACK_WAIT"}
         payload = {
             "candidate_trace_id": self._candidate_trace_id(market_key, key),
             "ticker": key,
             "known_at": datetime.now(KST).isoformat(timespec="seconds"),
             "claude_action": str((action or {}).get("action") or (route_payload or {}).get("requested_action") or ""),
-            "requested_action": str((route_payload or {}).get("requested_action") or (action or {}).get("action") or ""),
+            "requested_action": requested_action_text,
             "final_action": final_action,
             "route": (route_payload or {}).get("route"),
             "passed": passed,
             "blocker": blocker or None,
             "reason": reason,
+            "runtime_gate_reason": str((route_payload or {}).get("runtime_gate_reason") or ""),
+            "would_live_before_gate": bool((route_payload or {}).get("would_live_before_gate")) or would_live_before_gate,
+            "demoted_to": str((route_payload or {}).get("demoted_to") or ""),
+            "strategy": str(
+                (route_payload or {}).get("strategy")
+                or (action or {}).get("strategy")
+                or (action or {}).get("recommended_strategy")
+                or (action or {}).get("route_strategy")
+                or ""
+            ),
+            "pathb_waiting": bool((route_payload or {}).get("pathb_waiting") or runtime_gate.get("pathb_waiting")),
+            "pathb_suspend_shadow": bool((route_payload or {}).get("pathb_suspend_shadow")),
             "hard_safety": {
                 "passed": passed,
                 "reason": reason if not passed else "",
@@ -4235,6 +4260,58 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "evidence_coverage_ratio": live_features.get("evidence_coverage_ratio"),
             "evidence_pack": live_pack,
         }
+        requested_action = str((action or {}).get("action") or "").strip().upper()
+        pathb_waiting = bool((route_state or {}).get("waiting"))
+        pathb_counter_key = f"{market_key}:{key}"
+        pathb_counts = getattr(self, "_pathb_negative_watch_counts", None)
+        if not isinstance(pathb_counts, dict):
+            pathb_counts = {}
+            setattr(self, "_pathb_negative_watch_counts", pathb_counts)
+        reason_text = " ".join(
+            str(value or "")
+            for value in (
+                (action or {}).get("reason"),
+                (action or {}).get("invalidation_condition"),
+                context.get("reason"),
+            )
+        ).lower()
+        data_quality_text = str(data_quality_raw if data_quality_raw not in (None, "") else "missing").strip().lower()
+        negative_watch_like = (
+            pathb_waiting
+            and requested_action in {"WATCH", "PULLBACK_WAIT"}
+            and (
+                str(momentum_state or "").strip().lower()
+                in {"fade", "fading", "weak", "weakening", "direction_unconfirmed"}
+                or data_quality_text in {"bad", "bad_data", "stale", "invalid"}
+                or any(
+                    keyword in reason_text
+                    for keyword in ("fade", "fading", "direction_unconfirmed", "volume_collapse", "weakening")
+                )
+            )
+        )
+        if negative_watch_like:
+            pathb_negative_watch_count = int(pathb_counts.get(pathb_counter_key, 0) or 0) + 1
+            pathb_counts[pathb_counter_key] = pathb_negative_watch_count
+        else:
+            pathb_negative_watch_count = 0
+            pathb_counts.pop(pathb_counter_key, None)
+        pathb_suspend_threshold = int(
+            max(
+                1.0,
+                self._runtime_float(
+                    f"{market_key}_PATHB_SUSPEND_NEGATIVE_WATCH_THRESHOLD",
+                    self._runtime_float("PATHB_SUSPEND_NEGATIVE_WATCH_THRESHOLD", 3.0),
+                ),
+            )
+        )
+        context["pathb_waiting"] = pathb_waiting
+        context["pathb_wait_negative_watch_count"] = pathb_negative_watch_count
+        context["pathb_suspend_negative_watch_threshold"] = pathb_suspend_threshold
+        context["pathb_suspend_hysteresis_enabled"] = self._runtime_bool(
+            f"{market_key}_PATHB_SUSPEND_HYSTERESIS_ENABLED",
+            self._runtime_bool("PATHB_SUSPEND_HYSTERESIS_ENABLED", True),
+        )
+        context["pathb_explicit_invalidation"] = requested_action == "AVOID" or "invalidated" in reason_text
         try:
             context.update(self._candidate_entry_timing_context(market_key, key, action=action, meta=meta))
         except Exception:
@@ -4825,6 +4902,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         plan_a_ready: list[str] = []
         pathb_wait: list[str] = []
         pathb_targets: dict[str, dict] = {}
+        pathb_wait_origins: dict[str, dict] = {}
         action_routes: list[dict] = []
         allocation_intent = dict(normalized_meta.get("allocation_intent") or {})
         max_order_cap_pct = dict(normalized_meta.get("max_order_cap_pct") or {})
@@ -5045,6 +5123,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             route_payload["action_expires_at"] = str(action_for_route.get("expires_at") or "")
             route_payload["routed_at"] = datetime.now(KST).isoformat(timespec="seconds")
             route_payload["pathb_status"] = route_state.get("status", "")
+            route_payload["pathb_waiting"] = bool(route_state.get("waiting"))
+            route_payload["pathb_active_order"] = bool(route_state.get("active_order"))
+            route_payload["strategy"] = str(
+                (action or {}).get("strategy")
+                or (action or {}).get("recommended_strategy")
+                or (action or {}).get("route_strategy")
+                or ""
+            )
+            route_payload["would_live_before_gate"] = str((action or {}).get("action") or "").upper() in {
+                "PROBE_READY",
+                "BUY_READY",
+                "ADD_READY",
+                "PULLBACK_WAIT",
+            }
             route_payload["health_state"] = gate_info.get("health_state", "")
             route_payload["ready_degraded"] = bool(gate_info.get("ready_degraded"))
             route_payload["stale"] = bool(gate_info.get("stale"))
@@ -5101,6 +5193,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                 except Exception:
                     pass
+            elif route_state.get("waiting") and decision.reason == "watch_keeps_pathb_waiting_hysteresis":
+                route_payload["pathb_suspend_shadow"] = True
+                route_payload["pathb_suspend_deferred"] = True
+                route_payload["pathb_suspend_path_run_id"] = route_state.get("path_run_id", "")
+                route_payload["pathb_suspend_reason"] = decision.reason
+                try:
+                    self._write_funnel_event(
+                        "pathb_suspend_shadow",
+                        market_key,
+                        {
+                            "candidate_trace_id": self._candidate_trace_id(market_key, key),
+                            "ticker": key,
+                            "path_run_id": route_state.get("path_run_id", ""),
+                            "pathb_status": route_state.get("status", ""),
+                            "claude_action": str((action or {}).get("action") or ""),
+                            "final_action": decision.final_action,
+                            "reason": decision.reason,
+                            "runtime_gate": route_payload.get("runtime_gate", {}),
+                            "shadow_only": True,
+                            "deferred": True,
+                        },
+                    )
+                except Exception:
+                    pass
             action_routes.append(route_payload)
             self._write_candidate_action_gate_event(
                 market_key,
@@ -5134,6 +5250,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     price_targets[key] = target
             elif decision.final_action == "PULLBACK_WAIT":
                 pathb_wait.append(key)
+                reason = str((action or {}).get("reason") or decision.reason or "").strip()
+                pathb_wait_origins[key] = {
+                    "origin_action": "PULLBACK_WAIT",
+                    "origin_route": "pathb_wait_only",
+                    "registration_scope": "candidate_actions_wait_only",
+                    "not_patha_trade_ready": True,
+                    "reason": reason,
+                    "source_prompt_id": str((action or {}).get("source_prompt_id") or ""),
+                }
                 target = dict((action or {}).get("price_targets") or {})
                 if target:
                     pathb_targets[key] = target
@@ -5149,6 +5274,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         normalized_meta["_candidate_action_plan_a_ready"] = list(dict.fromkeys(plan_a_ready))
         normalized_meta["_pathb_wait_tickers"] = list(dict.fromkeys(pathb_wait))
         normalized_meta["_pathb_price_targets"] = pathb_targets
+        normalized_meta["_pathb_wait_origins"] = pathb_wait_origins
         normalized_meta["_pathb_registration_scope"] = "candidate_actions_wait_only"
         return normalized_meta
 
@@ -17687,6 +17813,43 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         }
         return True
 
+    def _failclose_trade_ready_after_resume_rescreen_empty(self, market: str, guard: dict) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        trade_ready_map = getattr(self, "trade_ready_tickers", {}) if isinstance(getattr(self, "trade_ready_tickers", None), dict) else {}
+        selection_meta_map = getattr(self, "selection_meta", {}) if isinstance(getattr(self, "selection_meta", None), dict) else {}
+        today = getattr(self, "today_judgment", {}) if isinstance(getattr(self, "today_judgment", None), dict) else {}
+        today_ready = list(today.get("trade_ready_tickers") or []) if today.get("market") == market_key else []
+        previous_trade_ready = list(dict.fromkeys(
+            list(trade_ready_map.get(market_key, []) or [])
+            + list((selection_meta_map.get(market_key, {}) or {}).get("trade_ready") or [])
+            + today_ready
+        ))
+        guard_reason = str((guard or {}).get("reason") or "rescreen_empty")
+        fail_closed_meta = dict(
+            (selection_meta_map.get(market_key, {}) if isinstance(selection_meta_map, dict) else {})
+            or (today.get("selection_meta", {}) if today.get("market") == market_key else {})
+            or {}
+        )
+        runtime_filtered = dict(fail_closed_meta.get("_runtime_filtered_trade_ready") or {})
+        for raw_ticker in previous_trade_ready:
+            key = self._selection_ticker_key(market_key, raw_ticker)
+            if key:
+                runtime_filtered[key] = f"resume_guard_failclosed:{guard_reason}"
+        fail_closed_meta["_runtime_filtered_trade_ready"] = runtime_filtered
+        fail_closed_meta["trade_ready"] = []
+        self._commit_selection_meta_runtime(market_key, fail_closed_meta, persist=False)
+        watch = list((getattr(self, "today_tickers", {}) or {}).get(market_key, []) or [])
+        log.warning(
+            f"[resume_guard_failclosed] {market_key}: rescreen_empty trade_ready cleared "
+            f"guard_reason={guard_reason} previous_trade_ready={previous_trade_ready} watch={watch}"
+        )
+        return {
+            "market": market_key,
+            "guard_reason": guard_reason,
+            "previous_trade_ready": previous_trade_ready,
+            "watch": watch,
+        }
+
     def session_open(self, market: str, trigger: str = "schedule"):
         if not self._enter_market_task(market, "session_open"):
             return
@@ -18543,7 +18706,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     fresh_excluded = [c.get("ticker", "") for c in fresh_candidates if c.get("ticker", "") not in fresh_selected]
                     watchlist_alert(market, consensus["mode"], fresh_selected, fresh_reasons, fresh_excluded, trigger="rescreen")
                 else:
-                    log.warning(f"[종목 재스크리닝] 후보 없음 → 기존 종목 유지: {self.today_tickers.get(market, [])}")
+                    self._failclose_trade_ready_after_resume_rescreen_empty(market, _resume_guard)
         # 대시보드가 장 중에도 오늘 판단을 볼 수 있도록 session_open 직후 즉시 기록
         self._persist_live_judgment(market)
         # 장전 보유 포지션 리뷰는 당일 판단이 준비된 뒤에만 수행한다.

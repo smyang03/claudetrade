@@ -117,6 +117,55 @@ class ScreenerQualityTests(unittest.TestCase):
             "day_losers": self._us_candidates(losers, "day_losers"),
         }
 
+    def _kr_candidates(self, start: int, count: int, market_type: str) -> list[dict]:
+        return [
+            {
+                "ticker": f"{start + idx:06d}",
+                "name": f"KR Test {idx}",
+                "price": 5_000 + idx * 100,
+                "change_rate": 5.0 + idx,
+                "volume": 500_000 + idx * 10_000,
+                "vol_ratio": 2.0 + idx / 10.0,
+                "market_type": market_type,
+            }
+            for idx in range(count)
+        ]
+
+    def test_kr_screener_writes_price_collection_priority(self) -> None:
+        import kis_api
+
+        kospi = self._kr_candidates(1000, 6, "KOSPI")
+        kosdaq = self._kr_candidates(2000, 6, "KOSDAQ")
+
+        def fake_rank(_token: str, *, input_iscd: str, **_kwargs):
+            return kosdaq if input_iscd == "1001" else kospi
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"KR_SCREEN_RESERVE_LIMIT": "10", "PRICE_COLLECTION_PRIORITY_WRITE": "true"},
+        ), patch.object(kis_api, "_US_SCREEN_CACHE_PATH", Path(tmp) / "us_screen_cache.json"), patch.object(
+            kis_api, "_KR_SCREEN_CACHE_PATH", Path(tmp) / "kr_screen_cache.json"
+        ), patch.object(
+            kis_api, "_is_kr_premarket_window", return_value=False
+        ), patch.object(
+            kis_api, "_kis_volume_rank", side_effect=fake_rank
+        ), patch.object(
+            kis_api, "_save_kr_screen_audit"
+        ), patch(
+            "bot.candidate_policy.filter_tradable_candidates", side_effect=lambda cands, _market: (cands, [])
+        ):
+            rows = kis_api.screen_market_kr("token", top_n=10, mode="NEUTRAL")
+
+            priority_files = list(Path(tmp).glob("price_collection_priority_KR_*.json"))
+            self.assertEqual(len(priority_files), 1)
+            priority = json.loads(priority_files[0].read_text(encoding="utf-8"))
+            priority_tickers = {item["ticker"] for item in priority["items"]}
+            self.assertEqual(priority["market"], "KR")
+            self.assertEqual(priority["source"], "screen")
+            self.assertEqual(priority["mode"], "NEUTRAL")
+            self.assertEqual(len(priority["items"]), len(rows))
+            self.assertTrue({row["ticker"] for row in rows}.issubset(priority_tickers))
+
     def test_us_screener_degraded_fresh_result_is_not_cached(self) -> None:
         import kis_api
 

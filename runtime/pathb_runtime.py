@@ -866,6 +866,7 @@ class PathBRuntime:
             trade_ready = list(meta.get("trade_ready") or [])
             price_targets = meta.get("price_targets") or {}
         decision_ids = meta.get("v2_decision_ids") or {}
+        origin_map = meta.get("_pathb_wait_origins") if isinstance(meta.get("_pathb_wait_origins"), dict) else {}
         session_date = self._session_date(market)
         registered: list[str] = []
         missing_price_targets: list[str] = []
@@ -926,6 +927,16 @@ class PathBRuntime:
                     },
                 )
                 continue
+            origin = origin_map.get(key) or origin_map.get(ticker) or origin_map.get(str(ticker).upper()) or {}
+            if isinstance(origin, dict) and origin:
+                raw_plan = {
+                    **dict(raw_plan),
+                    "_origin_action": str(origin.get("origin_action") or ""),
+                    "_origin_route": str(origin.get("origin_route") or ""),
+                    "_registration_scope": str(origin.get("registration_scope") or ""),
+                    "_not_patha_trade_ready": bool(origin.get("not_patha_trade_ready", False)),
+                    "_origin_reason": str(origin.get("reason") or origin.get("origin_reason") or ""),
+                }
             plan, errors = parse_plan_from_claude(
                 decision_id=decision_id,
                 ticker=key,
@@ -5453,6 +5464,11 @@ class PathBRuntime:
         order["parent_decision_id"] = plan.decision_id
         order["strategy_used"] = "claude_price"
         order["route_source"] = "buy_zone_hit"
+        order["pathb_origin_action"] = plan.origin_action
+        order["pathb_origin_route"] = plan.origin_route
+        order["pathb_registration_scope"] = plan.registration_scope
+        order["not_patha_trade_ready"] = bool(plan.not_patha_trade_ready)
+        order["pathb_origin_reason"] = plan.origin_reason
         order.setdefault("strategy", "claude_price")
         order.setdefault("source_strategy", "claude_price")
 
@@ -5467,6 +5483,11 @@ class PathBRuntime:
         pos["parent_decision_id"] = plan.decision_id
         pos["strategy_used"] = "claude_price"
         pos["route_source"] = "buy_zone_hit"
+        pos["pathb_origin_action"] = plan.origin_action
+        pos["pathb_origin_route"] = plan.origin_route
+        pos["pathb_registration_scope"] = plan.registration_scope
+        pos["not_patha_trade_ready"] = bool(plan.not_patha_trade_ready)
+        pos["pathb_origin_reason"] = plan.origin_reason
         pos.setdefault("strategy", "claude_price")
         pos.setdefault("source_strategy", "claude_price")
 

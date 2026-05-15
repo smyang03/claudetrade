@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from contextlib import ExitStack
@@ -17,6 +18,7 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         dashboard_server._BROKER_REFRESH_LAST_TS.clear()
         dashboard_server._BROKER_REFRESH_STATUS.clear()
         dashboard_server._BROKER_SNAPSHOT_CACHE.clear()
+        dashboard_server._BROKER_SNAPSHOT_STATUS.clear()
         dashboard_server._BROKER_POSITIONS_CACHE.clear()
         dashboard_server._BROKER_POSITIONS_STATUS.clear()
         dashboard_server._STATE_JSON_CACHE.clear()
@@ -25,6 +27,7 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         dashboard_server._BROKER_REFRESH_LAST_TS.clear()
         dashboard_server._BROKER_REFRESH_STATUS.clear()
         dashboard_server._BROKER_SNAPSHOT_CACHE.clear()
+        dashboard_server._BROKER_SNAPSHOT_STATUS.clear()
         dashboard_server._BROKER_POSITIONS_CACHE.clear()
         dashboard_server._BROKER_POSITIONS_STATUS.clear()
         dashboard_server._STATE_JSON_CACHE.clear()
@@ -100,6 +103,88 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertTrue(payload["cache"]["stale"])
         self.assertEqual(payload["cache"]["source"], "stale_cache_file_refresh_failed")
 
+    def test_broker_refresh_restores_stale_cache_when_refresh_raises(self) -> None:
+        old_ts = dashboard_server._time.time() - 120
+        dashboard_server._BROKER_SNAPSHOT_CACHE["live"] = {
+            "ts": old_ts,
+            "value": {"source": "broker", "cumulative": 1_234.0, "kr_cash": 1_234.0, "cache": {}},
+            "meta": {"stale": False, "source": "broker"},
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "DASHBOARD_BROKER_REFRESH_COOLDOWN_SEC": "0",
+                "DASHBOARD_BROKER_SNAPSHOT_CACHE_SEC": "20",
+            },
+        ), patch.object(
+            dashboard_server, "_broker_snapshot", side_effect=RuntimeError("kis down")
+        ), patch.object(
+            dashboard_server, "_load_broker_truth_snapshot_cached", return_value={}
+        ):
+            result = dashboard_server._broker_snapshot_refresh("live", force=True)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "error")
+        self.assertEqual(result["snapshot"]["cumulative"], 1_234.0)
+        self.assertEqual(result["snapshot"]["cache"]["source"], "stale_cache_file_refresh_failed")
+        self.assertEqual(dashboard_server._BROKER_SNAPSHOT_CACHE["live"]["value"]["cumulative"], 1_234.0)
+        self.assertEqual(dashboard_server._BROKER_REFRESH_STATUS["live"]["error"], "kis down")
+
+    def test_broker_snapshot_cache_hit_keeps_stale_truth_meta(self) -> None:
+        now_iso = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+        truth = {
+            "generated_at": now_iso,
+            "markets": {
+                "KR": {
+                    "account_summary": {
+                        "cash": 1_000.0,
+                        "orderable_cash": 1_000.0,
+                        "total_eval": 0.0,
+                        "total_profit": 0.0,
+                    },
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": True,
+                    "error": "snapshot lag",
+                },
+                "US": {
+                    "account_summary": {
+                        "cash": 0.0,
+                        "orderable_cash": 0.0,
+                        "total_eval": 0.0,
+                        "total_profit": 0.0,
+                    },
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": False,
+                },
+            },
+        }
+
+        with patch.dict(os.environ, {"DASHBOARD_BROKER_SNAPSHOT_CACHE_SEC": "20"}), patch.object(
+            dashboard_server, "_load_broker_truth_snapshot_cached", return_value=truth
+        ) as load_truth, patch.object(
+            dashboard_server, "_get_usd_krw_cached", return_value=1350.0
+        ), patch.object(
+            dashboard_server, "get_kis_profile_summary", side_effect=AssertionError("cache hit must not call KIS")
+        ):
+            first = dashboard_server._broker_snapshot_fast("live")
+            second = dashboard_server._broker_snapshot_fast("live")
+            third = dashboard_server._broker_snapshot("live")
+
+        self.assertEqual(load_truth.call_count, 1)
+        self.assertTrue(first["cache"]["stale"])
+        self.assertEqual(first["cache"]["source"], "broker_truth_snapshot")
+        self.assertTrue(second["cache"]["stale"])
+        self.assertEqual(second["cache"]["source"], "cache")
+        self.assertIn("KR: snapshot lag", second["cache"]["last_error"])
+        self.assertTrue(third["cache"]["stale"])
+        self.assertIn("KR: snapshot lag", third["cache"]["last_error"])
+        status = dashboard_server._broker_snapshot_status("live")
+        self.assertTrue(status["stale"])
+        self.assertIn("KR: snapshot lag", status["last_error"])
+
     def test_broker_positions_fast_rereads_truth_file_when_memory_cache_is_stale(self) -> None:
         old_ts = dashboard_server._time.time() - 120
         dashboard_server._BROKER_POSITIONS_CACHE[("live", "US")] = {
@@ -131,6 +216,119 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         status = dashboard_server._broker_positions_status("live", "US")
         self.assertEqual(status["source"], "broker_truth_snapshot")
         self.assertFalse(status["stale"])
+
+    def test_broker_positions_fast_keeps_stale_truth_positions_on_refresh_error(self) -> None:
+        now_iso = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+        truth = {
+            "generated_at": now_iso,
+            "markets": {
+                "KR": {
+                    "account_summary": {
+                        "cash": 1_000_000.0,
+                        "orderable_cash": 1_000_000.0,
+                        "total_eval": 70_000.0,
+                        "total_profit": 1_000.0,
+                    },
+                    "last_success_at": now_iso,
+                    "positions": [{"ticker": "005930", "qty": 1, "avg_price": 69_000.0, "current_price": 70_000.0}],
+                    "stale": True,
+                    "error": "KIS outage",
+                    "source": "broker_error_previous_snapshot",
+                }
+            },
+        }
+
+        with patch.object(dashboard_server, "_load_broker_truth_snapshot_cached", return_value=truth), patch.object(
+            dashboard_server, "_broker_snapshot", side_effect=AssertionError("positions fast path must not call KIS")
+        ):
+            positions = dashboard_server._load_broker_positions_fast("KR", mode="live")
+
+        self.assertEqual([row["ticker"] for row in positions], ["005930"])
+        status = dashboard_server._broker_positions_status("live", "KR")
+        self.assertEqual(status["source"], "broker_truth_snapshot")
+        self.assertTrue(status["stale"])
+        self.assertEqual(status["last_error"], "KIS outage")
+
+    def test_broker_positions_fast_rejects_error_truth_without_payload(self) -> None:
+        now_iso = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+        truth = {
+            "generated_at": now_iso,
+            "markets": {
+                "KR": {
+                    "missing": False,
+                    "account_summary": {"cash": 0.0, "orderable_cash": 0.0, "total_eval": 0.0},
+                    "last_success_at": "",
+                    "positions": [],
+                    "stale": True,
+                    "error": "KIS outage",
+                }
+            },
+        }
+
+        with patch.object(dashboard_server, "_load_broker_truth_snapshot_cached", return_value=truth):
+            positions = dashboard_server._load_broker_positions_fast("KR", mode="live")
+
+        self.assertIsNone(positions)
+        status = dashboard_server._broker_positions_status("live", "KR")
+        self.assertFalse(status["hit"])
+        self.assertTrue(status["stale"])
+        self.assertEqual(status["last_error"], "KIS outage")
+
+    def test_broker_positions_fast_keeps_empty_last_success_truth_on_refresh_error(self) -> None:
+        now_iso = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+        truth = {
+            "generated_at": now_iso,
+            "markets": {
+                "KR": {
+                    "missing": False,
+                    "account_summary": {"cash": 0.0, "orderable_cash": 0.0, "total_eval": 0.0},
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": True,
+                    "error": "KIS outage",
+                }
+            },
+        }
+
+        with patch.object(dashboard_server, "_load_broker_truth_snapshot_cached", return_value=truth):
+            positions = dashboard_server._load_broker_positions_fast("KR", mode="live")
+
+        self.assertEqual(positions, [])
+        status = dashboard_server._broker_positions_status("live", "KR")
+        self.assertTrue(status["hit"])
+        self.assertTrue(status["stale"])
+        self.assertEqual(status["last_error"], "KIS outage")
+
+    def test_broker_truth_error_with_account_summary_is_usable_stale_payload(self) -> None:
+        now_iso = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+        truth = {
+            "generated_at": now_iso,
+            "markets": {
+                "KR": {
+                    "missing": False,
+                    "account_summary": {"cash": 1_000_000.0, "orderable_cash": 900_000.0, "total_eval": 0.0},
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": True,
+                    "error": "KIS outage",
+                }
+            },
+        }
+
+        with patch.object(dashboard_server, "_load_broker_truth_snapshot_cached", return_value=truth):
+            data, meta = dashboard_server._broker_truth_market_with_meta("KR", "live")
+
+        self.assertIsNotNone(data)
+        self.assertTrue(meta["hit"])
+        self.assertTrue(meta["stale"])
+        self.assertEqual(meta["last_error"], "KIS outage")
+
+    def test_broker_snapshot_has_account_rejects_all_zero_truth_snapshot(self) -> None:
+        empty_truth = dashboard_server._empty_broker_snapshot("broker_truth_snapshot")
+        positive_truth = {**empty_truth, "kr_cash": 1.0}
+
+        self.assertFalse(dashboard_server._broker_snapshot_has_account(empty_truth))
+        self.assertTrue(dashboard_server._broker_snapshot_has_account(positive_truth))
 
     def test_state_json_parse_failure_falls_back_to_stale_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -272,6 +470,85 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertEqual(chart.get_json()["performance_basis"], "cached_state")
         self.assertEqual(history.get_json()["performance_basis"], "cached_state")
 
+    def test_live_equity_fast_includes_current_session_realized_pnl(self) -> None:
+        session = date(2026, 5, 15)
+        broker = {
+            "source": "cache",
+            "kr_cash_effective": 1_000_000.0,
+            "kr_cash": 1_000_000.0,
+            "kr_eval": 0.0,
+            "cumulative": 1_000_000.0,
+            "unrealized_krw": {"KR": 5_000.0, "US": 0.0},
+            "cache": {"hit": True, "stale": False, "source": "cache"},
+        }
+        live = {
+            "market": "KR",
+            "trading_date": "2026-05-15",
+            "market_realized_pnl_krw": 12_000.0,
+        }
+
+        with patch.object(dashboard_server, "_session_trade_date", return_value=session), patch.object(
+            dashboard_server, "_broker_snapshot_fast", return_value=broker
+        ), patch.object(
+            dashboard_server, "_load_broker_equity_snapshots", return_value=[]
+        ), patch.object(
+            dashboard_server, "_load_live_status", return_value=live
+        ), patch.object(
+            dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_deduped_local_session_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_broker_trade_rows_with_pnl", side_effect=AssertionError("fast path must not load broker trades")
+        ), patch.object(
+            dashboard_server, "_persist_broker_equity_snapshot"
+        ) as persist:
+            payload = dashboard_server._live_equity_payload_fast(
+                "KR",
+                "custom",
+                "2026-05-15",
+                "2026-05-15",
+                mode="live",
+            )
+
+        self.assertEqual(payload["labels"], ["2026-05-15"])
+        self.assertEqual(payload["realized_pnl_krw"], [12_000.0])
+        self.assertEqual(payload["unrealized_today_delta_krw"], [5_000.0])
+        self.assertEqual(payload["trading_pnl_krw"], [17_000.0])
+        self.assertEqual(payload["cumulative_trading_pnl_krw"], [17_000.0])
+        persist.assert_called_once_with(broker, mode="live", markets={"KR"})
+
+    def test_broker_equity_persist_market_filter_does_not_zero_other_market(self) -> None:
+        session = date(2026, 5, 15)
+        broker = {
+            "source": "cache",
+            "kr_cash_effective": 1_000_000.0,
+            "kr_cash": 1_000_000.0,
+            "kr_eval": 0.0,
+            "us_asset_krw": 0.0,
+            "us_asset_cash_krw": 0.0,
+            "us_eval_krw": 0.0,
+            "unrealized_krw": {"KR": 0.0, "US": 0.0},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "live_broker_equity_history.jsonl"
+            path.write_text(
+                '{"market":"US","date":"2026-05-15","asset_krw":2000000.0}\n',
+                encoding="utf-8",
+            )
+            with patch.object(dashboard_server, "_broker_equity_history_path", return_value=path), patch.object(
+                dashboard_server, "_session_trade_date", return_value=session
+            ):
+                dashboard_server._persist_broker_equity_snapshot(broker, mode="live", markets={"KR"})
+
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+        rows_by_market = {row["market"]: row for row in rows}
+        self.assertEqual(rows_by_market["US"]["asset_krw"], 2_000_000.0)
+        self.assertEqual(rows_by_market["KR"]["asset_krw"], 1_000_000.0)
+
     def test_live_equity_refresh_flag_keeps_explicit_blocking_refresh_path(self) -> None:
         refresh_payload = {"labels": ["refresh"], "equity": [2_000_000.0]}
 
@@ -407,7 +684,7 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
                 ],
                 "outcome_timeline": [
                     {"ticker": f"T{i}", "shadow_preopen_rank": i, "anchor_price": 10.0, "raw_payload": "x" * 1000}
-                    for i in range(40)
+                    for i in range(80)
                 ],
                 "state": {
                     "collector_status": "ok",
@@ -436,9 +713,9 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertNotIn("raw", payload["scheduler"]["last_job"])
         self.assertNotIn("raw_payload", payload["candidates"][0])
         self.assertNotIn("digest_raw", payload["candidates"][1])
-        self.assertEqual(len(payload["outcome_timeline"]), 30)
+        self.assertEqual(len(payload["outcome_timeline"]), 60)
         self.assertNotIn("raw_payload", payload["outcome_timeline"][0])
-        self.assertEqual(payload["summary"]["outcome_display_count"], 30)
+        self.assertEqual(payload["summary"]["outcome_display_count"], 60)
         self.assertNotIn("candidates", payload["state"])
         self.assertNotIn("raw_candidates", payload["state"])
         self.assertNotIn("digest_prompt", payload["state"])

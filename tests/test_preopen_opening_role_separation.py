@@ -271,6 +271,49 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertIn("_hydrate_trade_ready_resume_prices", source)
         self.assertIn("_trade_ready_resume_guard", source)
         self.assertIn("_last_trade_ready_resume_guard[market] = dict(_resume_guard)", source)
+        self.assertIn("_failclose_trade_ready_after_resume_rescreen_empty", source)
+
+    def test_resume_rescreen_empty_failcloses_trade_ready_state(self) -> None:
+        bot = self._resume_bot()
+        meta = {
+            "watchlist": ["AAPL"],
+            "trade_ready": ["AAPL"],
+            "selection_snapshot_ts": "2026-05-15T10:00:00+09:00",
+            "price_targets": {"AAPL": {"reference_price": 100.0}},
+        }
+        bot.today_tickers = {"US": ["AAPL"], "KR": []}
+        bot.trade_ready_tickers = {"US": ["AAPL"], "KR": []}
+        bot.selection_meta = {"US": dict(meta), "KR": {}}
+        bot.selection_stages = {
+            "US": {
+                "normalized": {"trade_ready": ["AAPL"], "runtime_filtered": {}},
+                "applied": {"trade_ready": ["AAPL"]},
+            }
+        }
+        bot.today_judgment = {
+            "market": "US",
+            "selection_meta": dict(meta),
+            "trade_ready_tickers": ["AAPL"],
+        }
+
+        summary = trading_bot.TradingBot._failclose_trade_ready_after_resume_rescreen_empty(
+            bot,
+            "US",
+            {"reason": "price_hydration_failed"},
+        )
+
+        self.assertEqual(summary["previous_trade_ready"], ["AAPL"])
+        self.assertEqual(bot.today_tickers["US"], ["AAPL"])
+        self.assertEqual(bot.trade_ready_tickers["US"], [])
+        self.assertEqual(bot.selection_meta["US"]["trade_ready"], [])
+        self.assertEqual(bot.today_judgment["trade_ready_tickers"], [])
+        self.assertEqual(bot.today_judgment["selection_meta"]["trade_ready"], [])
+        self.assertEqual(bot.selection_stages["US"]["normalized"]["trade_ready"], [])
+        self.assertEqual(bot.selection_stages["US"]["applied"]["trade_ready"], [])
+        self.assertEqual(
+            bot.selection_meta["US"]["_runtime_filtered_trade_ready"]["AAPL"],
+            "resume_guard_failclosed:price_hydration_failed",
+        )
 
     def test_startup_mid_session_preserves_recent_trade_ready_judgment(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)

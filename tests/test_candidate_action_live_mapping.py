@@ -214,9 +214,16 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
 
         self.assertEqual(meta["trade_ready"], [])
         self.assertEqual(meta["_pathb_wait_tickers"], ["GXO"])
+        self.assertEqual(meta["_pathb_wait_origins"]["GXO"]["origin_action"], "PULLBACK_WAIT")
+        self.assertTrue(meta["_pathb_wait_origins"]["GXO"]["not_patha_trade_ready"])
         self.assertEqual(bot.pathb.registered_meta["_pathb_registration_scope"], "candidate_actions_wait_only")
         self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], ["GXO"])
+        self.assertEqual(
+            bot.pathb.registered_meta["_pathb_wait_origins"]["GXO"]["origin_route"],
+            "pathb_wait_only",
+        )
         self.assertIn("GXO", bot.v2.registered_meta["trade_ready"])
+        self.assertEqual(bot.v2.registered_meta["_pathb_wait_origins"]["GXO"]["origin_action"], "PULLBACK_WAIT")
 
     def test_pullback_wait_with_fade_context_does_not_register_pathb(self) -> None:
         bot = _make_bot()
@@ -396,10 +403,38 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
             meta = TradingBot._apply_selection_meta(bot, "KR", ["024840"], mode="MODERATE_BULL")
 
         route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["reason"], "watch_keeps_pathb_waiting_hysteresis")
+        self.assertFalse(route["suspend_pathb"])
+        self.assertTrue(route["pathb_suspend_shadow"])
+        self.assertTrue(route["pathb_suspend_deferred"])
+        self.assertEqual(route["pathb_suspend_path_run_id"], "run_kbi")
+
+    def test_negative_watch_suspends_pathb_after_hysteresis_threshold(self) -> None:
+        bot = _make_bot()
+        bot.pathb = _DummyPathB(
+            {
+                "path_run_id": "run_kbi",
+                "status": "WAITING",
+                "plan": {"buy_zone_low": 8900.0, "buy_zone_high": 9100.0},
+            }
+        )
+        raw_meta = {
+            "watchlist": ["024840"],
+            "candidate_actions": [{"ticker": "024840", "action": "WATCH", "reason": "fade"}],
+            "_post_open_features_by_ticker": {
+                "024840": {"ticker": "024840", "market": "KR", "momentum_state": "fade", "data_quality": "good"}
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            TradingBot._apply_selection_meta(bot, "KR", ["024840"], mode="MODERATE_BULL")
+            TradingBot._apply_selection_meta(bot, "KR", ["024840"], mode="MODERATE_BULL")
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["024840"], mode="MODERATE_BULL")
+
+        route = meta["_candidate_action_routes"][0]
         self.assertEqual(route["reason"], "watch_suspends_stale_pathb")
         self.assertTrue(route["suspend_pathb"])
-        self.assertTrue(route["pathb_suspend_shadow"])
-        self.assertEqual(route["pathb_suspend_path_run_id"], "run_kbi")
+        self.assertFalse(route.get("pathb_suspend_deferred", False))
 
     def test_confident_buy_ready_cancels_pathb_waiting_before_plana(self) -> None:
         bot = _make_bot()

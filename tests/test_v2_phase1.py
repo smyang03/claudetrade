@@ -44,6 +44,34 @@ class V2Phase1Tests(unittest.TestCase):
             events = reopened.events_for_decision(decision_id)
             self.assertEqual([event["event_type"] for event in events], ["CLAUDE_TRADE_READY"])
 
+    def test_trade_ready_batch_payload_includes_ticker_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            registry = DecisionRegistry(store)
+            ids = registry.register_trade_ready_batch(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-11",
+                tickers=["GXO"],
+                prompt_version="v2",
+                brain_snapshot_id="brain_1",
+                selection_meta={
+                    "trade_ready": ["GXO"],
+                    "_pathb_wait_origins": {
+                        "GXO": {
+                            "origin_action": "PULLBACK_WAIT",
+                            "origin_route": "pathb_wait_only",
+                            "not_patha_trade_ready": True,
+                        }
+                    },
+                },
+            )
+
+            events = store.events_for_decision(ids["GXO"])
+            payload = events[0]["payload"]
+            self.assertEqual(payload["ticker_origin"]["origin_action"], "PULLBACK_WAIT")
+            self.assertTrue(payload["ticker_origin"]["not_patha_trade_ready"])
+
     def test_safety_and_timing_events_are_recordable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")

@@ -89,6 +89,17 @@ def _auto_trail_pct_for_market(market: str) -> float:
     market_key = str(market or "").upper()
     return AUTO_TRAIL_PCT_US if market_key == "US" else AUTO_TRAIL_PCT_KR
 
+
+def _float_env_optional(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return float(str(raw).replace(",", ""))
+    except Exception:
+        return None
+
+
 HARD_RULES = {
     "max_daily_loss_pct":   float(os.getenv("MAX_DAILY_LOSS_PCT",   "-3.0")),   # 일일 최대 손실 (%)
     "max_single_loss_pct":  float(os.getenv("MAX_SINGLE_LOSS_PCT",  "-2.0")),   # 단일 종목 최대 손실 (%)
@@ -392,6 +403,37 @@ class RiskManager:
             return (cp / entry - 1.0) * 100.0
         return None
 
+    def _position_market_key(self, pos: dict) -> str:
+        if str(pos.get("display_currency") or "").upper() == "USD":
+            return "US"
+        return "US" if str(getattr(self, "market", "") or "").upper() == "US" else "KR"
+
+    def _max_single_loss_pct_for_market(self, market: str) -> float:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        override = _float_env_optional(f"{market_key}_MAX_SINGLE_LOSS_PCT")
+        if override is not None:
+            return override
+        return float(HARD_RULES.get("max_single_loss_pct", 0) or 0)
+
+    def loss_cap_shadow_pct(self, pos: dict) -> float:
+        market_key = self._position_market_key(pos)
+        override = _float_env_optional(f"{market_key}_LOSS_CAP_SHADOW_PCT")
+        if override is None:
+            override = _float_env_optional("LOSS_CAP_SHADOW_PCT")
+        if override is None:
+            return 0.0
+        return max(0.0, min(0.99, abs(float(override or 0)) / 100.0))
+
+    def loss_cap_shadow_price(self, pos: dict, *, native: bool = False) -> float:
+        cap_pct = self.loss_cap_shadow_pct(pos)
+        if cap_pct <= 0:
+            return 0.0
+        if native and pos.get("display_currency") == "USD":
+            avg_usd = float(pos.get("display_avg_price") or 0)
+            return avg_usd * (1.0 - cap_pct) if avg_usd > 0 else 0.0
+        entry = float(pos.get("entry") or 0)
+        return entry * (1.0 - cap_pct) if entry > 0 else 0.0
+
     def position_loss_budget_krw(self, pos: dict) -> float:
         entry = float(pos.get("entry") or 0)
         qty = int(pos.get("qty", 0) or 0)
@@ -399,7 +441,7 @@ class RiskManager:
         if entry_value <= 0:
             return 0.0
         budgets: list[float] = []
-        single_loss_pct = abs(float(HARD_RULES.get("max_single_loss_pct", 0) or 0)) / 100.0
+        single_loss_pct = abs(self._max_single_loss_pct_for_market(self._position_market_key(pos))) / 100.0
         if single_loss_pct > 0:
             budgets.append(entry_value * single_loss_pct)
         session_loss_pct = max(0.0, float(POSITION_SESSION_LOSS_CAP_PCT or 0)) / 100.0
@@ -544,12 +586,20 @@ class RiskManager:
         peak_pnl_pct: float = 0.0,
         position_mfe_pct: float = 0.0,
         position_mae_pct: float = 0.0,
+        loss_cap_pct: float = 0.0,
+        loss_cap_shadow_pct: float = 0.0,
+        loss_cap_shadow_price: float = 0.0,
+        loss_cap_shadow_triggered: bool = False,
     ) -> dict:
         return {
             "strategy_stop_price": float(strategy_stop_price or 0),
             "loss_cap_price": float(loss_cap_price or 0),
             "effective_stop_price": float(effective_stop_price or 0),
             "loss_budget_krw": float(loss_budget_krw or 0),
+            "loss_cap_pct": float(loss_cap_pct or 0),
+            "loss_cap_shadow_pct": float(loss_cap_shadow_pct or 0),
+            "loss_cap_shadow_price": float(loss_cap_shadow_price or 0),
+            "loss_cap_shadow_triggered": bool(loss_cap_shadow_triggered),
             "profit_floor_price": float(profit_floor_price or 0),
             "profit_floor_triggered": bool(profit_floor_triggered),
             "peak_pnl_pct": float(peak_pnl_pct or 0),
@@ -887,6 +937,7 @@ class RiskManager:
                 tp_usd = avg_usd * (1 + tp_pct)
                 sl_usd = avg_usd * (1 - sl_pct)
                 loss_cap_usd = self.loss_cap_price(pos, native=True)
+                loss_cap_shadow_usd = self.loss_cap_shadow_price(pos, native=True)
                 floor_usd = self.profit_floor_price(pos, native=True)
                 mfe_breakeven_usd = self.mfe_breakeven_price(pos, native=True)
                 soft_floor_usd = self.soft_exit_floor_price(pos, native=True)
@@ -894,6 +945,10 @@ class RiskManager:
                     strategy_stop_price=sl_usd,
                     loss_cap_price=loss_cap_usd,
                     loss_budget_krw=loss_budget_krw,
+                    loss_cap_pct=self.loss_cap_pct(pos) * 100.0,
+                    loss_cap_shadow_pct=self.loss_cap_shadow_pct(pos) * 100.0,
+                    loss_cap_shadow_price=loss_cap_shadow_usd,
+                    loss_cap_shadow_triggered=bool(loss_cap_shadow_usd > 0 and cp_usd <= loss_cap_shadow_usd),
                     profit_floor_price=floor_usd,
                     profit_floor_triggered=floor_triggered,
                     peak_pnl_pct=peak_pnl_pct,
@@ -973,6 +1028,7 @@ class RiskManager:
 
             # KR 종목 (기존 로직)
             loss_cap_krw = self.loss_cap_price(pos)
+            loss_cap_shadow_krw = self.loss_cap_shadow_price(pos)
             floor_krw = self.profit_floor_price(pos)
             mfe_breakeven_krw = self.mfe_breakeven_price(pos)
             soft_floor_krw = self.soft_exit_floor_price(pos)
@@ -982,6 +1038,10 @@ class RiskManager:
                 strategy_stop_price=base_stop,
                 loss_cap_price=loss_cap_krw,
                 loss_budget_krw=loss_budget_krw,
+                loss_cap_pct=self.loss_cap_pct(pos) * 100.0,
+                loss_cap_shadow_pct=self.loss_cap_shadow_pct(pos) * 100.0,
+                loss_cap_shadow_price=loss_cap_shadow_krw,
+                loss_cap_shadow_triggered=bool(loss_cap_shadow_krw > 0 and cp <= loss_cap_shadow_krw),
                 profit_floor_price=floor_krw,
                 profit_floor_triggered=floor_triggered,
                 peak_pnl_pct=peak_pnl_pct,

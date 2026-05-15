@@ -6,7 +6,10 @@ trading_bot.py의 TradingBot 인스턴스에 접근해 실제 동작 수행.
 
 사용법: TradingBot 생성 후 commander.start(bot) 호출
 """
+from __future__ import annotations
+
 import os
+import secrets
 import threading
 import time
 import requests
@@ -31,6 +34,10 @@ KST = ZoneInfo("Asia/Seoul")
 
 TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = str(os.getenv("TELEGRAM_CHAT_ID", ""))
+DANGER_CONFIRM_TTL_SEC = 30
+DANGER_CONFIRM_PREFIX = "CONFIRM_"
+_pending_danger_confirms: dict[str, dict] = {}
+_pending_danger_lock = threading.Lock()
 
 HELP_TEXT = """━━━━━━━━━━━━━━━━━━━━━━
 📋 <b>명령어 목록</b>
@@ -98,6 +105,213 @@ def _send(text: str):
         log.error(f"[commander] 전송 실패: {mask_secrets(e)}")
 
 
+def _new_confirm_nonce() -> str:
+    return f"{DANGER_CONFIRM_PREFIX}{secrets.token_hex(3).upper()}"
+
+
+def _is_confirm_nonce(value: str) -> bool:
+    return str(value or "").strip().upper().startswith(DANGER_CONFIRM_PREFIX)
+
+
+def _position_snapshot(bot, ticker: str = "") -> list[dict]:
+    positions = list(getattr(getattr(bot, "risk", None), "positions", []) or [])
+    ticker_key = str(ticker or "").strip().upper()
+    snapshot: list[dict] = []
+    for pos in positions:
+        pos_ticker = str(pos.get("ticker", "") or "").strip()
+        if not pos_ticker:
+            continue
+        if ticker_key and pos_ticker.upper() != ticker_key:
+            continue
+        try:
+            market = bot._ticker_market(pos_ticker)
+        except Exception:
+            market = str(pos.get("market") or "").upper()
+        snapshot.append(
+            {
+                "market": market,
+                "ticker": pos_ticker,
+                "qty": int(pos.get("qty", 0) or 0),
+                "name": str(pos.get("name", "") or ""),
+            }
+        )
+    return snapshot
+
+
+def _danger_command_spec(cmd: str, args: list[str], bot) -> dict | None:
+    cmd_key = str(cmd or "").strip().lower()
+    clean_args = [str(arg).strip() for arg in args if str(arg).strip()]
+    if clean_args and _is_confirm_nonce(clean_args[-1]):
+        clean_args = clean_args[:-1]
+
+    if cmd_key == "/close":
+        if not clean_args:
+            return None
+        ticker = clean_args[0].upper()
+        snapshot = _position_snapshot(bot, ticker)
+        return {
+            "cmd": cmd_key,
+            "args": [ticker],
+            "key": f"{cmd_key}:{ticker}",
+            "label": f"{_display_symbol(ticker)} 수동 청산",
+            "target_detail": f"대상: {_display_symbol(ticker)}",
+            "snapshot": {"positions": snapshot},
+        }
+    if cmd_key in {"/closeall", "/panic"}:
+        snapshot = _position_snapshot(bot)
+        label = "긴급 중지 후 전체 포지션 청산" if cmd_key == "/panic" else "전체 포지션 청산"
+        return {
+            "cmd": cmd_key,
+            "args": [],
+            "key": cmd_key,
+            "label": label,
+            "target_detail": f"대상: {len(snapshot)}개 포지션",
+            "snapshot": {"positions": snapshot},
+        }
+    if cmd_key in {"/pathb_kill", "/pathb_closeall"}:
+        label = "B플랜 긴급 중지" if cmd_key == "/pathb_kill" else "B플랜 전체 청산 요청"
+        market = str(getattr(bot, "current_market", "") or "KR").upper()
+        return {
+            "cmd": cmd_key,
+            "args": [],
+            "key": cmd_key,
+            "label": label,
+            "target_detail": f"대상 시장: {market}",
+            "snapshot": {"market": market},
+        }
+    return None
+
+
+def _store_danger_confirm(spec: dict) -> str:
+    nonce = _new_confirm_nonce()
+    record = {
+        **spec,
+        "nonce": nonce,
+        "expires_at": time.monotonic() + DANGER_CONFIRM_TTL_SEC,
+        "used": False,
+    }
+    with _pending_danger_lock:
+        _pending_danger_confirms[nonce] = record
+    return nonce
+
+
+def _pop_danger_confirm(nonce: str) -> tuple[dict | None, str]:
+    key = str(nonce or "").strip().upper()
+    with _pending_danger_lock:
+        record = _pending_danger_confirms.pop(key, None)
+    if not record:
+        return None, "확인 코드가 일치하지 않습니다. 다시 명령을 입력하세요."
+    if bool(record.get("used")):
+        return None, "이미 사용된 확인 코드입니다."
+    if time.monotonic() > float(record.get("expires_at", 0) or 0):
+        return None, "확인 시간이 만료되었습니다. 다시 명령을 입력하세요."
+    record["used"] = True
+    return record, ""
+
+
+def _format_danger_confirm_prompt(spec: dict, nonce: str) -> str:
+    command = str(spec.get("cmd") or "")
+    args = " ".join(str(arg) for arg in (spec.get("args") or []) if str(arg))
+    confirm_cmd = " ".join(part for part in [command, args, nonce] if part).strip()
+    return (
+        f"⚠️ <b>{spec.get('label', '위험 명령')} 확인 필요</b>\n\n"
+        f"{spec.get('target_detail', '')}\n"
+        f"유효시간: {DANGER_CONFIRM_TTL_SEC}초\n\n"
+        "실행하려면 아래 명령을 그대로 입력하세요.\n"
+        f"<code>{confirm_cmd}</code>"
+    )
+
+
+def _cmd_closeall_snapshot(bot, snapshot: dict) -> str:
+    positions = list((snapshot or {}).get("positions") or [])
+    if not positions:
+        return "📌 실행 대상 포지션 없음"
+    results = []
+    for item in positions:
+        ticker = str(item.get("ticker", "") or "").strip()
+        if not ticker:
+            continue
+        before_qty = int(item.get("qty", 0) or 0)
+        current = next(
+            (
+                pos
+                for pos in list(getattr(getattr(bot, "risk", None), "positions", []) or [])
+                if str(pos.get("ticker", "") or "").upper() == ticker.upper()
+            ),
+            None,
+        )
+        if not current:
+            results.append(f"📌 {_display_symbol(ticker)} 포지션 없음")
+            continue
+        current_qty = int(current.get("qty", 0) or 0)
+        prefix = ""
+        if before_qty and current_qty != before_qty:
+            prefix = f"⚠️ 수량 변경 감지 {before_qty}주→{current_qty}주\n"
+        results.append(prefix + _cmd_close(bot, ticker.upper()))
+    return "\n\n".join(results) + f"\n\n✅ 확인된 청산 요청 처리 완료 ({len(positions)}건)"
+
+
+def _execute_danger_confirm(record: dict, bot) -> str:
+    cmd = str(record.get("cmd") or "").lower()
+    args = list(record.get("args") or [])
+    snapshot = dict(record.get("snapshot") or {})
+    if cmd == "/close":
+        if not args:
+            return "❌ 종목코드를 확인할 수 없습니다."
+        return _cmd_close(bot, str(args[0]).upper())
+    if cmd == "/closeall":
+        return _cmd_closeall_snapshot(bot, snapshot)
+    if cmd == "/panic":
+        try:
+            from interface.v2_telegram import handle_v2_command
+
+            msg = handle_v2_command("/panic", bot)
+        except Exception as exc:
+            msg = f"V2 panic 처리 실패: {exc}"
+        try:
+            return msg + "\n\n" + _cmd_closeall_snapshot(bot, snapshot)
+        except Exception as exc:
+            return msg + f"\n\n전체 청산 요청 실패: {exc}"
+    if cmd in {"/pathb_kill", "/pathb_closeall"}:
+        try:
+            from interface.v2_telegram import handle_v2_command
+
+            return handle_v2_command(cmd, bot)
+        except Exception as exc:
+            return f"V2 명령 처리 실패: {exc}"
+    return "지원하지 않는 확인 명령입니다."
+
+
+def _danger_confirm_gate(cmd: str, args: list[str], bot) -> tuple[bool, str | None]:
+    spec = _danger_command_spec(cmd, args, bot)
+    if spec is None and args and _is_confirm_nonce(str(args[-1])) and str(cmd or "").lower() in {
+        "/close",
+        "/closeall",
+        "/panic",
+        "/pathb_kill",
+        "/pathb_closeall",
+    }:
+        return True, "확인 코드가 일치하지 않습니다. 다시 명령을 입력하세요."
+    if spec is None:
+        return False, None
+    nonce_arg = str(args[-1]).strip().upper() if args and _is_confirm_nonce(str(args[-1])) else ""
+    if nonce_arg:
+        record, error = _pop_danger_confirm(nonce_arg)
+        if error:
+            return True, error
+        current_key = str(spec.get("key") or "")
+        stored_key = str(record.get("key") or "") if record else ""
+        if current_key != stored_key:
+            return True, "확인 코드가 현재 명령과 일치하지 않습니다. 다시 명령을 입력하세요."
+        return True, _execute_danger_confirm(record, bot)
+    snapshot = spec.get("snapshot") if isinstance(spec.get("snapshot"), dict) else {}
+    if cmd in {"/close", "/closeall", "/panic"} and not list((snapshot or {}).get("positions") or []):
+        return True, "📌 실행 대상 포지션 없음"
+    nonce = _store_danger_confirm(spec)
+    log.warning(f"[commander] 위험 명령 확인 대기: {spec.get('key')} nonce={nonce}")
+    return True, _format_danger_confirm_prompt(spec, nonce)
+
+
 def _normalize_market_arg(value):
     if value is None:
         return None
@@ -150,6 +364,9 @@ def _handle(text: str, bot) -> str:
     """명령어 파싱 후 응답 문자열 반환"""
     cmd = text.strip().lower().split()[0]
     args = text.strip().split()[1:]  # 추가 인자 (종목코드 등)
+    intercepted, response = _danger_confirm_gate(cmd, args, bot)
+    if intercepted:
+        return response or ""
 
     # ── 도움말 ────────────────────────────────────────────────────────────────
     if cmd in ("?", "/help", "/h"):

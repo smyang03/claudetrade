@@ -72,6 +72,11 @@ class PricePlan:
     invalidation_conditions: list[str] = field(default_factory=list)
     prompt_stage: str = "PRE_SESSION"
     prompt_version: str = "pathb_price_v1"
+    origin_action: str = ""
+    origin_route: str = ""
+    registration_scope: str = ""
+    not_patha_trade_ready: bool = False
+    origin_reason: str = ""
     created_at: str = field(default_factory=utc_now_iso)
 
     def validate(self, *, min_confidence: float | None = None, min_reward_risk: float = 1.2) -> list[str]:
@@ -150,6 +155,11 @@ class PricePlan:
             "invalidation_conditions": list(self.invalidation_conditions),
             "prompt_stage": self.prompt_stage,
             "prompt_version": self.prompt_version,
+            "origin_action": self.origin_action,
+            "origin_route": self.origin_route,
+            "registration_scope": self.registration_scope,
+            "not_patha_trade_ready": bool(self.not_patha_trade_ready),
+            "origin_reason": self.origin_reason,
             "created_at": self.created_at,
         }
 
@@ -181,6 +191,11 @@ def make_price_plan(
     invalidation_conditions: list[str] | None = None,
     prompt_stage: str = "PRE_SESSION",
     prompt_version: str = "pathb_price_v1",
+    origin_action: str = "",
+    origin_route: str = "",
+    registration_scope: str = "",
+    not_patha_trade_ready: bool = False,
+    origin_reason: str = "",
 ) -> PricePlan:
     market_value = str(market or "").upper()
     ticker_value = str(ticker or "").strip().upper() if market_value == "US" else str(ticker or "").strip()
@@ -211,6 +226,11 @@ def make_price_plan(
         invalidation_conditions=list(invalidation_conditions or [])[:8],
         prompt_stage=str(prompt_stage or "PRE_SESSION"),
         prompt_version=str(prompt_version or "pathb_price_v1"),
+        origin_action=str(origin_action or "")[:80],
+        origin_route=str(origin_route or "")[:80],
+        registration_scope=str(registration_scope or "")[:120],
+        not_patha_trade_ready=bool(not_patha_trade_ready),
+        origin_reason=str(origin_reason or "")[:240],
     )
 
 
@@ -262,6 +282,11 @@ def parse_plan_from_claude(
             invalidation_conditions=_as_str_list(raw.get("invalidation_conditions")),
             prompt_stage=prompt_stage,
             prompt_version=prompt_version,
+            origin_action=str(raw.get("_origin_action") or raw.get("origin_action") or ""),
+            origin_route=str(raw.get("_origin_route") or raw.get("origin_route") or ""),
+            registration_scope=str(raw.get("_registration_scope") or raw.get("registration_scope") or ""),
+            not_patha_trade_ready=bool(raw.get("_not_patha_trade_ready") or raw.get("not_patha_trade_ready")),
+            origin_reason=str(raw.get("_origin_reason") or raw.get("origin_reason") or ""),
         )
     except Exception as exc:
         return None, [f"parse_error:{exc}"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import risk_manager as risk_module
 from risk_manager import RiskManager
@@ -51,6 +52,22 @@ class LossCapProfitFloorTests(unittest.TestCase):
         self.assertEqual(candidates[0]["reason"], "loss_cap")
         self.assertAlmostEqual(candidates[0]["loss_cap_price"], 9_700.0)
         self.assertAlmostEqual(candidates[0]["effective_stop_price"], 9_700.0)
+
+    def test_kr_market_loss_cap_override_records_shadow_cap(self) -> None:
+        risk = RiskManager(init_cash=1_000_000)
+        risk.reset_daily_state(override_base=1_000_000)
+        risk.positions = [_kr_position(current_price=9_790.0)]
+
+        with patch.dict("os.environ", {"KR_MAX_SINGLE_LOSS_PCT": "-2.0", "KR_LOSS_CAP_SHADOW_PCT": "1.5"}):
+            candidates = risk.get_exit_candidates()
+
+        self.assertEqual(candidates[0]["reason"], "loss_cap")
+        self.assertAlmostEqual(candidates[0]["loss_cap_pct"], 2.0)
+        self.assertAlmostEqual(candidates[0]["loss_cap_price"], 9_800.0)
+        self.assertAlmostEqual(candidates[0]["effective_stop_price"], 9_800.0)
+        self.assertAlmostEqual(candidates[0]["loss_cap_shadow_pct"], 1.5)
+        self.assertAlmostEqual(candidates[0]["loss_cap_shadow_price"], 9_850.0)
+        self.assertTrue(candidates[0]["loss_cap_shadow_triggered"])
 
     def test_strategy_stop_keeps_reason_when_tighter_than_loss_cap(self) -> None:
         risk = RiskManager(init_cash=1_000_000)

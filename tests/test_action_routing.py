@@ -236,9 +236,27 @@ class ActionRoutingTests(unittest.TestCase):
         )
 
         self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "watch_keeps_pathb_waiting_hysteresis")
+        self.assertFalse(decision.suspend_pathb)
+        self.assertEqual(decision.runtime_gate_reason, "pathb_suspend_hysteresis")
+        self.assertFalse(decision.cancel_pathb)
+
+    def test_watch_negative_context_suspends_pathb_at_hysteresis_threshold(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "KBI", "action": "WATCH", "reason": "fade"},
+            market="KR",
+            pathb_waiting=True,
+            execution_context={
+                "momentum_state": "fade",
+                "data_quality": "good",
+                "pathb_wait_negative_watch_count": 3,
+                "pathb_suspend_negative_watch_threshold": 3,
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
         self.assertEqual(decision.reason, "watch_suspends_stale_pathb")
         self.assertTrue(decision.suspend_pathb)
-        self.assertFalse(decision.cancel_pathb)
 
     def test_avoid_suspends_pathb_shadow(self) -> None:
         decision = route_candidate_action(

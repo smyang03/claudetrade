@@ -49,6 +49,18 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertIn('id="lifetime-pnl-basis"', body)
         self.assertNotIn('id="streak-val"', body)
 
+    def test_today_page_shows_pnl_source_badge_helpers(self) -> None:
+        res = app.test_client().get("/")
+
+        self.assertEqual(res.status_code, 200)
+        body = res.get_data(as_text=True)
+        self.assertIn(".pnl-source-badge", body)
+        self.assertIn("function pnlSourceLabel", body)
+        self.assertIn("function pnlSourceClass", body)
+        self.assertIn("broker_truth_confirmed_local_pnl: '브로커확인'", body)
+        self.assertIn("live_status_or_metrics_fallback: 'fallback'", body)
+        self.assertIn("todayKrw.innerHTML", body)
+
     def test_today_page_defines_escape_html_before_judgment_rendering(self) -> None:
         res = app.test_client().get("/")
 
