@@ -134,6 +134,10 @@ class ScreenerQualityTests(unittest.TestCase):
             self.assertFalse(kis_api._US_SCREEN_CACHE_PATH.exists())
             self.assertEqual(rows[0]["screener_quality_state"], "DEGRADED_COUNT")
             self.assertEqual(rows[0]["screener_cache_skipped_reason"], "fresh_count_below_min_cache_count")
+            priority_files = list(Path(tmp).glob("price_collection_priority_US_*.json"))
+            self.assertEqual(len(priority_files), 1)
+            priority = json.loads(priority_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(priority["items"][0]["ticker"], rows[0]["ticker"])
 
     def test_us_screener_low_quality_cache_is_not_reused(self) -> None:
         import kis_api

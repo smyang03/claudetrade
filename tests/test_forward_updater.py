@@ -104,9 +104,9 @@ class ForwardUpdaterTests(unittest.TestCase):
             self.assertEqual(summary["partial_updated"], 1)
             self.assertEqual(summary["skipped"], 3)
             self.assertEqual(summary["missing_csv"], 0)
-            self.assertEqual(summary["skip_by"]["session_date_missing"], 1)
-            self.assertEqual(summary["skip_by"]["base_close_invalid"], 1)
-            self.assertEqual(summary["skip_by"]["future_price_not_available"], 1)
+            self.assertEqual(summary["malformed_csv"], 2)
+            self.assertEqual(summary["skip_by"]["stale_csv"], 1)
+            self.assertEqual(summary["skip_by"]["malformed_csv"], 2)
 
             conn = sqlite3.connect(str(db_path))
             try:

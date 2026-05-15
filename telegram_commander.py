@@ -77,6 +77,13 @@ HELP_TEXT += """
                                당일 손절 종목 재진입 차단은 유지
 """
 
+HELP_TEXT += """
+
+<b>수동 시장 명령</b>
+  /claude [KR|US]       활성 시장 Claude 재판단
+  /rescreen [KR|US]     활성 시장 후보 재선정
+"""
+
 
 def _send(text: str):
     if not TOKEN or not CHAT_ID:
@@ -89,6 +96,54 @@ def _send(text: str):
         )
     except Exception as e:
         log.error(f"[commander] 전송 실패: {mask_secrets(e)}")
+
+
+def _normalize_market_arg(value):
+    if value is None:
+        return None
+    market = str(value).strip().upper()
+    if not market:
+        return None
+    if market in {"KR", "US"}:
+        return market
+    raise ValueError(market)
+
+
+def _resolve_command_market(bot, market_arg=None):
+    explicit = _normalize_market_arg(market_arg)
+    judgment = getattr(bot, "today_judgment", None) or {}
+    current = str(getattr(bot, "current_market", "") or "").upper()
+    judgment_market = str(judgment.get("market") or "").upper()
+    market = explicit or current or judgment_market
+
+    if not market:
+        return None, "시장 정보를 확인할 수 없습니다. /claude KR 또는 /claude US 처럼 지정하세요."
+    if market not in {"KR", "US"}:
+        return None, f"지원하지 않는 시장입니다: {market}. KR 또는 US만 가능합니다."
+    if explicit and current and current != explicit:
+        return None, f"{explicit} 세션이 현재 활성 상태가 아닙니다. 현재 세션: {current}"
+    if judgment_market and judgment_market != market:
+        return None, f"{market} 판단이 현재 로드되어 있지 않습니다. 현재 판단: {judgment_market}"
+    return market, None
+
+
+def _command_judgment_ready(bot, market: str, *, require_digest: bool = False):
+    judgment = getattr(bot, "today_judgment", None) or {}
+    judgment_market = str(judgment.get("market") or "").upper() if isinstance(judgment, dict) else ""
+    market_key = str(market or "").upper()
+    if not isinstance(judgment, dict) or not judgment:
+        return False, f"{market_key} 판단이 아직 로드되지 않았습니다. session_open 이후 실행하세요."
+    if judgment_market != market_key:
+        return False, f"{market_key} 판단이 현재 로드되어 있지 않습니다. 현재 판단: {judgment_market or '-'}"
+    consensus = judgment.get("consensus")
+    digest_prompt = str(judgment.get("digest_prompt") or "").strip()
+    digest_raw = judgment.get("digest_raw")
+    has_digest = bool(digest_prompt) or bool(digest_raw)
+    if require_digest and not has_digest:
+        return False, f"{market_key} 판단 digest가 없습니다. session_open 이후 실행하세요."
+    if not isinstance(consensus, dict) or not consensus:
+        return False, f"{market_key} 합의 판단이 아직 로드되지 않았습니다. session_open 이후 실행하세요."
+    return True, ""
 
 
 def _handle(text: str, bot) -> str:
@@ -246,10 +301,10 @@ def _handle(text: str, bot) -> str:
 
     # ── Claude 긴급 재판단 ────────────────────────────────────────────────────
     if cmd == "/claude":
-        return _cmd_reinvoke(bot)
+        return _cmd_reinvoke(bot, args[0] if args else None)
 
     if cmd == "/rescreen":
-        return _cmd_rescreen(bot)
+        return _cmd_rescreen(bot, args[0] if args else None)
 
     # ── 특정 종목 청산 ────────────────────────────────────────────────────────
     if cmd == "/close":
@@ -904,26 +959,40 @@ def _cmd_judge(bot) -> str:
     )
 
 
-def _cmd_reinvoke(bot) -> str:
+def _cmd_reinvoke(bot, market_arg=None) -> str:
     if hasattr(bot, "is_claude_reinvoke_enabled") and not bot.is_claude_reinvoke_enabled():
         return "Claude 재판단 기능이 현재 꺼진 상태입니다."
     if not bot.session_active:
         return "❌ 세션이 활성화되어 있지 않습니다."
-    market = bot.today_judgment.get("market") if bot.today_judgment else None
-    if not market:
-        return "❌ 오늘 판단이 없습니다."
-    _send("⏳ Claude 긴급 재판단 시작... (1~2분 소요)")
+    try:
+        market, error = _resolve_command_market(bot, market_arg)
+    except ValueError:
+        return "명령 시장 인자가 잘못되었습니다. 사용법: /claude KR 또는 /claude US"
+    if error:
+        return error
+    ready, ready_error = _command_judgment_ready(bot, market, require_digest=True)
+    if not ready:
+        return ready_error
+    _send(f"⏳ {market} Claude 재판단 시작... (1~2분 소요)")
     try:
         bot._reinvoke_analysts(market, "수동 명령: /claude")
-        return "✅ 긴급 재판단 완료. 텔레그램 알림을 확인하세요."
+        return f"✅ {market} Claude 재판단 완료. 텔레그램 알림을 확인하세요."
     except Exception as e:
-        return f"❌ 재판단 실패: {e}"
+        return f"❌ {market} Claude 재판단 실패: {e}"
 
 
-def _cmd_rescreen(bot) -> str:
+def _cmd_rescreen(bot, market_arg=None) -> str:
     if not bot.session_active:
         return "세션이 비활성 상태입니다."
-    market = bot.current_market or (bot.today_judgment.get("market") if bot.today_judgment else None)
+    try:
+        market, error = _resolve_command_market(bot, market_arg)
+    except ValueError:
+        return "명령 시장 인자가 잘못되었습니다. 사용법: /rescreen KR 또는 /rescreen US"
+    if error:
+        return error
+    ready, ready_error = _command_judgment_ready(bot, market, require_digest=False)
+    if not ready:
+        return ready_error
     if not market:
         return "시장 정보를 알 수 없습니다."
     _send(f"🔄 {market} 종목 재추천 요청... (10~30초 소요)")

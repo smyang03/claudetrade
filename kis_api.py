@@ -3549,6 +3549,54 @@ _US_SCREEN_CACHE_SCHEMA = 3
 _AV_CACHE_PATH = _US_SCREEN_CACHE_PATH
 
 
+def _write_price_collection_priority(market: str, candidates: list, *, source: str, mode: str = "") -> None:
+    if str(os.getenv("PRICE_COLLECTION_PRIORITY_WRITE", "true")).strip().lower() in {"0", "false", "no", "off"}:
+        return
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    today = datetime.now().strftime("%Y%m%d")
+    seen: set[str] = set()
+    items: list[dict] = []
+    max_items = max(1, int(os.getenv(f"{market_key}_PRICE_COLLECTION_PRIORITY_MAX", "200")))
+    for row in candidates or []:
+        ticker = str((row or {}).get("ticker") or "").strip()
+        ticker_key = ticker.upper() if market_key == "US" else ticker
+        if not ticker_key or ticker_key in seen:
+            continue
+        seen.add(ticker_key)
+        items.append(
+            {
+                "rank": len(items) + 1,
+                "ticker": ticker_key,
+                "source": str(source or ""),
+                "mode": str(mode or ""),
+                "category": (row or {}).get("category", ""),
+                "price": (row or {}).get("price"),
+                "change_rate": (row or {}).get("change_rate"),
+                "volume": (row or {}).get("volume"),
+                "vol_ratio": (row or {}).get("vol_ratio"),
+                "screener_quality_state": (row or {}).get("screener_quality_state", ""),
+            }
+        )
+        if len(items) >= max_items:
+            break
+    if not items:
+        return
+    path = _US_SCREEN_CACHE_PATH.parent / f"price_collection_priority_{market_key}_{today}.json"
+    payload = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "market": market_key,
+        "source": str(source or ""),
+        "mode": str(mode or ""),
+        "items": items,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logging.getLogger("trading_system").debug(f"[price priority] write failed: {exc}")
+
+
 def _safe_int(value, default: int = 0) -> int:
     try:
         if value is None or value == "":
@@ -4079,7 +4127,9 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                                 "screener_cache_skipped_reason": "",
                             }
                         )
-                        return _annotate_us_screen_quality(cands[:_target_n], cached_quality)
+                        out = _annotate_us_screen_quality(cands[:_target_n], cached_quality)
+                        _write_price_collection_priority("US", out, source=f"cache:{source or 'unknown'}", mode=mode)
+                        return out
                     elif source == "fmp" and cands:
                         _logger.debug(f"[US 스크리너 캐시] 재사용 ({cache_age/60:.0f}분 경과)")
                         cached_quality.update(
@@ -4089,7 +4139,9 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                                 "screener_cache_skipped_reason": "",
                             }
                         )
-                        return _annotate_us_screen_quality(cands[:_target_n], cached_quality)
+                        out = _annotate_us_screen_quality(cands[:_target_n], cached_quality)
+                        _write_price_collection_priority("US", out, source=f"cache:{source or 'unknown'}", mode=mode)
+                        return out
                 else:
                     _logger.info(
                         f"[US 스크리너 캐시] 만료 ({cache_age/60:.0f}분 > TTL {_CACHE_TTL_SEC//60}분) → 재스크리닝"
@@ -4164,7 +4216,9 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                     f"quota_total={quality.get('quota_total')} ratio={quality.get('min_cache_ratio')} "
                     f"source=yf mode={_cache_mode} top_n={_target_n}"
                 )
-            return _annotate_us_screen_quality(merged[:_target_n], quality)
+            out = _annotate_us_screen_quality(merged[:_target_n], quality)
+            _write_price_collection_priority("US", out, source="yf", mode=mode)
+            return out
     except Exception as e:
         _logger.warning(f"[YF 스크리너] 실패: {e}")
 
@@ -4210,7 +4264,9 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                     f"quota_total={quality.get('quota_total')} ratio={quality.get('min_cache_ratio')} "
                     f"source=fmp mode={_cache_mode} top_n={_target_n}"
                 )
-            return _annotate_us_screen_quality(fmp_cands[:_target_n], quality)
+            out = _annotate_us_screen_quality(fmp_cands[:_target_n], quality)
+            _write_price_collection_priority("US", out, source="fmp", mode=mode)
+            return out
     except Exception as e:
         _logger.warning(f"[FMP 스크리너] 실패: {e}")
 
@@ -4231,7 +4287,9 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
     )
     quality["screener_cache_skipped_reason"] = "fallback_not_cached"
     quality["min_dollar_vol"] = _min_dollar_vol
-    return _annotate_us_screen_quality(fallback, quality)
+    out = _annotate_us_screen_quality(fallback, quality)
+    _write_price_collection_priority("US", out, source="fallback", mode=mode)
+    return out
 
 
 def _aes_cbc_base64_dec(key: str, iv: str, cipher_text: str) -> str:

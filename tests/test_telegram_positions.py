@@ -97,6 +97,81 @@ class TelegramPositionsTests(unittest.TestCase):
         self.assertEqual(bot._daily_sl_count["KR"], 0)
         self.assertEqual(bot._v2_same_day_stop_tickers["KR"], {"078150"})
 
+    def test_claude_command_uses_explicit_active_market(self) -> None:
+        calls: list[tuple[str, str]] = []
+        bot = SimpleNamespace(
+            session_active=True,
+            current_market="US",
+            today_judgment={"market": "US", "consensus": {"mode": "NEUTRAL"}, "digest_prompt": "digest"},
+            _reinvoke_analysts=lambda market, trigger: calls.append((market, trigger)),
+        )
+
+        with patch("telegram_commander._send"):
+            message = telegram_commander._handle("/claude US", bot)
+
+        self.assertEqual(calls[0][0], "US")
+        self.assertEqual(calls[0][1], "수동 명령: /claude")
+        self.assertIn("US", message)
+        self.assertIn("재판단 완료", message)
+        self.assertNotIn("complete", message)
+
+    def test_claude_command_rejects_non_active_market(self) -> None:
+        calls: list[tuple[str, str]] = []
+        bot = SimpleNamespace(
+            session_active=True,
+            current_market="US",
+            today_judgment={"market": "US", "consensus": {"mode": "NEUTRAL"}, "digest_prompt": "digest"},
+            _reinvoke_analysts=lambda market, trigger: calls.append((market, trigger)),
+        )
+
+        message = telegram_commander._handle("/claude KR", bot)
+
+        self.assertEqual(calls, [])
+        self.assertIn("US", message)
+
+    def test_rescreen_command_uses_explicit_active_market(self) -> None:
+        calls: list[str] = []
+        bot = SimpleNamespace(
+            session_active=True,
+            current_market="KR",
+            today_judgment={"market": "KR", "consensus": {"mode": "NEUTRAL"}},
+            manual_rescreen=lambda market: calls.append(market) or ["005930"],
+        )
+
+        with patch("telegram_commander._send"):
+            message = telegram_commander._handle("/rescreen KR", bot)
+
+        self.assertEqual(calls, ["KR"])
+        self.assertIn("005930", message)
+
+    def test_claude_command_rejects_missing_judgment_payload(self) -> None:
+        calls: list[tuple[str, str]] = []
+        bot = SimpleNamespace(
+            session_active=True,
+            current_market="US",
+            today_judgment={},
+            _reinvoke_analysts=lambda market, trigger: calls.append((market, trigger)),
+        )
+
+        message = telegram_commander._handle("/claude US", bot)
+
+        self.assertEqual(calls, [])
+        self.assertIn("판단", message)
+        self.assertNotIn("judgment", message)
+
+    def test_claude_command_rejects_invalid_market_without_internal_key(self) -> None:
+        bot = SimpleNamespace(
+            session_active=True,
+            current_market="US",
+            today_judgment={"market": "US", "consensus": {"mode": "NEUTRAL"}, "digest_prompt": "digest"},
+            _reinvoke_analysts=lambda market, trigger: None,
+        )
+
+        message = telegram_commander._handle("/claude JP", bot)
+
+        self.assertIn("명령 시장 인자가 잘못되었습니다", message)
+        self.assertNotIn("unsupported_market", message)
+
 
 if __name__ == "__main__":
     unittest.main()

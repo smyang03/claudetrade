@@ -341,17 +341,17 @@ class DashboardPathBTests(unittest.TestCase):
         ), patch.object(
             dashboard_server, "_broker_realized_pnl_krw", return_value=0
         ), patch.object(
-            dashboard_server, "_load_broker_positions", return_value=[]
+            dashboard_server, "_load_broker_positions_fast", return_value=[]
         ), patch.object(
             dashboard_server, "_broker_positions_status", return_value=positions_cache
         ), patch.object(
-            dashboard_server, "_broker_snapshot", return_value=broker
+            dashboard_server, "_broker_snapshot_fast", return_value=broker
         ), patch.object(
             dashboard_server, "_persist_broker_equity_snapshot"
         ), patch.object(
             dashboard_server, "_ticker_name_map", return_value={}
         ), patch.object(
-            dashboard_server, "_live_equity_payload", return_value={}
+            dashboard_server, "_live_equity_payload_fast", return_value={}
         ), patch.object(
             dashboard_server, "_today_signal_digest", return_value={}
         ), patch.object(
@@ -379,9 +379,11 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertTrue(today["broker_positions_cache_stale"])
         self.assertEqual(today["broker_positions_cache_age_sec"], 55)
         self.assertEqual(today["broker_last_error"], "snapshot boom")
-        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["kr_pnl_krw"], -1000.0)
-        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["us_pnl_krw"], 2500.0)
-        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["total_pnl_krw"], 1500.0)
+        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["basis"], "cached_state_fast_path")
+        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["source"], "summary_fast_no_broker_trade_refresh")
+        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["kr_pnl_krw"], 0.0)
+        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["us_pnl_krw"], 0.0)
+        self.assertEqual(today["pnl_summary"]["lifetime_realized"]["total_pnl_krw"], 0.0)
         self.assertEqual(today["holding_unrealized_pnl_krw_kr"], 10000.0)
         self.assertEqual(today["holding_unrealized_pnl_krw_us"], -5000.0)
         self.assertEqual(today["holding_unrealized_total_pnl_krw"], 5000.0)
@@ -874,7 +876,7 @@ class DashboardPathBTests(unittest.TestCase):
         ), patch.object(
             dashboard_server, "_load_broker_equity_snapshots", return_value=[]
         ):
-            res = app.test_client().get("/api/history/equity?market=US&mode=live")
+            res = app.test_client().get("/api/history/equity?market=US&mode=live&refresh=1")
 
         self.assertEqual(res.status_code, 200)
         data = res.get_json()
@@ -917,9 +919,15 @@ class DashboardPathBTests(unittest.TestCase):
             dashboard_server, "_broker_trade_rows_with_pnl", return_value=broker_rows
         ), patch.object(
             dashboard_server, "_load_broker_equity_snapshots", return_value=snapshots
+        ), patch.object(
+            dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_deduped_local_session_realized_pnl", return_value=None
         ):
             res = app.test_client().get(
-                "/api/history/equity?market=US&mode=live&period=custom&start=2026-04-29&end=2026-04-30"
+                "/api/history/equity?market=US&mode=live&period=custom&start=2026-04-29&end=2026-04-30&refresh=1"
             )
 
         self.assertEqual(res.status_code, 200)
@@ -960,7 +968,7 @@ class DashboardPathBTests(unittest.TestCase):
         ), patch.object(
             dashboard_server, "_load_broker_equity_snapshots", return_value=[]
         ):
-            res = app.test_client().get("/api/history/equity?market=US&mode=live&period=month")
+            res = app.test_client().get("/api/history/equity?market=US&mode=live&period=month&refresh=1")
 
         self.assertEqual(res.status_code, 200)
         data = res.get_json()
@@ -1002,10 +1010,14 @@ class DashboardPathBTests(unittest.TestCase):
         ), patch.object(
             dashboard_server, "load_today", return_value={"date": "2026-05-05", "market": "US"}
         ), patch.object(
+            dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
+        ), patch.object(
             dashboard_server, "_deduped_local_session_realized_pnl", return_value=None
         ):
             res = app.test_client().get(
-                "/api/history/equity?market=US&mode=live&period=custom&start=2026-05-05&end=2026-05-05"
+                "/api/history/equity?market=US&mode=live&period=custom&start=2026-05-05&end=2026-05-05&refresh=1"
             )
 
         self.assertEqual(res.status_code, 200)
@@ -1038,7 +1050,7 @@ class DashboardPathBTests(unittest.TestCase):
         ), patch.object(
             dashboard_server, "load_records_filtered", side_effect=AssertionError("historical records should not be used")
         ):
-            res = app.test_client().get("/api/chart/equity?market=KR&mode=live&period=3month")
+            res = app.test_client().get("/api/chart/equity?market=KR&mode=live&period=3month&refresh=1")
 
         self.assertEqual(res.status_code, 200)
         data = res.get_json()

@@ -92,8 +92,11 @@ _BROKER_SNAPSHOT_STATUS: dict[str, dict] = {}
 _BROKER_TRADE_BUNDLE_CACHE: dict[tuple[str, str, str, str, str], dict] = {}
 _BROKER_POSITIONS_CACHE: dict[tuple[str, str], dict] = {}
 _BROKER_POSITIONS_STATUS: dict[tuple[str, str], dict] = {}
+_BROKER_REFRESH_STATUS: dict[str, dict] = {}
+_BROKER_REFRESH_LAST_TS: dict[str, float] = {}
 _BROKER_SNAPSHOT_LOCK = threading.Lock()
 _BROKER_POSITIONS_LOCK = threading.Lock()
+_BROKER_REFRESH_LOCK = threading.Lock()
 _KIS_RUNTIME_LOCK = threading.Lock()
 _DASHBOARD_QUOTE_CACHE: dict[tuple[str, str, str], dict] = {}
 _DASHBOARD_QUOTE_LOCK = threading.Lock()
@@ -121,6 +124,7 @@ MAX_PYRAMID = int(os.getenv("MAX_PYRAMID", "8") or 8)
 SYSTEM_LOG_DIR = get_runtime_path("logs", "system", make_parents=False)
 RISK_LOG_DIR = get_runtime_path("logs", "risk", make_parents=False)
 _STATE_FILE_ALERTS: dict[str, dict] = {}
+_STATE_JSON_CACHE: dict[str, dict] = {}
 
 
 def _normalize_mode(mode: Optional[str]) -> str:
@@ -197,6 +201,30 @@ def _record_state_file_alert(path: Path, exc: Exception, *, category: str = "sta
 
 def _clear_state_file_alert(path: Path) -> None:
     _STATE_FILE_ALERTS.pop(str(path), None)
+
+
+def _read_json_state_cached(path: Path, default: Optional[dict] = None, *, category: str = "state_json") -> dict:
+    fallback = copy.deepcopy(default or {})
+    if not path.exists():
+        return fallback
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            _STATE_JSON_CACHE[str(path)] = copy.deepcopy(data)
+            _clear_state_file_alert(path)
+            return data
+    except Exception as exc:
+        _record_state_file_alert(path, exc, category=category)
+        cached = _STATE_JSON_CACHE.get(str(path))
+        if isinstance(cached, dict):
+            stale = copy.deepcopy(cached)
+            stale["_state_cache_stale"] = True
+            stale["_state_cache_source"] = "state_parse_error_stale_cache"
+            stale["_state_cache_error"] = str(exc)
+            return stale
+        fallback["_state_cache_source"] = "state_parse_error_no_cache"
+        fallback["_state_cache_error"] = str(exc)
+    return fallback
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -1981,13 +2009,8 @@ def _save_claude_control(data: dict, mode: str = "paper"):
 def _load_live_status(market: str, mode: str = "paper") -> dict:
     """Override: sanitize cross-market rows inside live status."""
     path = _live_status_path(mode, market)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        _clear_state_file_alert(path)
-    except Exception as exc:
-        _record_state_file_alert(path, exc)
+    data = _read_json_state_cached(path, {}, category="live_status")
+    if not data:
         return {}
     changed = False
     positions = []
@@ -2021,6 +2044,7 @@ def _load_live_status(market: str, mode: str = "paper") -> dict:
     if changed:
         try:
             _atomic_write_text(path, json.dumps(data, ensure_ascii=False))
+            _STATE_JSON_CACHE[str(path)] = copy.deepcopy(data)
         except Exception as exc:
             _record_state_file_alert(path, exc, category="state_json_write")
     return data
@@ -2143,6 +2167,396 @@ def _load_broker_positions(market: str, mode: str = "paper"):
         source="broker",
     )
     return positions
+
+
+def _broker_truth_snapshot_path(mode: str) -> Path:
+    runtime_mode = _normalize_mode(mode)
+    path = get_runtime_path("state", f"{runtime_mode}_broker_truth_snapshot.json")
+    if not path.exists() and runtime_mode == "live":
+        fallback = get_runtime_path("state", "broker_truth_snapshot.json")
+        if fallback.exists():
+            return fallback
+    return path
+
+
+def _dt_age_sec(value: str) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=KST)
+        return int(max((datetime.now(dt.tzinfo) - dt).total_seconds(), 0))
+    except Exception:
+        return None
+
+
+def _load_broker_truth_snapshot_cached(mode: str) -> dict:
+    return _read_json_state_cached(_broker_truth_snapshot_path(mode), {}, category="broker_truth_snapshot")
+
+
+def _empty_broker_snapshot(source: str = "no_cache", last_error: str = "") -> dict:
+    meta = _broker_cache_meta(hit=False, stale=True, cached=None, now_ts=_time.time(), last_error=last_error, source=source)
+    return {
+        "source": source,
+        "cache": meta,
+        "usd_krw": _get_usd_krw_cached(),
+        "kr_cash": 0.0,
+        "kr_cash_effective": 0.0,
+        "kr_orderable_cash": 0.0,
+        "kr_eval": 0.0,
+        "us_cash_usd": 0.0,
+        "us_cash_krw": 0.0,
+        "us_asset_cash_usd": 0.0,
+        "us_asset_cash_krw": 0.0,
+        "us_orderable_cash_usd": 0.0,
+        "us_orderable_cash_krw": 0.0,
+        "us_eval_usd": 0.0,
+        "us_eval_krw": 0.0,
+        "us_asset_krw": 0.0,
+        "kis_account_total_asset_krw": 0.0,
+        "us_kis_exchange_rate": 0.0,
+        "kr_profit_krw": 0.0,
+        "us_profit_krw": 0.0,
+        "cumulative": 0.0,
+        "unrealized_krw": {"KR": 0.0, "US": 0.0},
+    }
+
+
+def _broker_snapshot_has_account(snapshot: dict) -> bool:
+    if not isinstance(snapshot, dict) or not snapshot:
+        return False
+    source = str(snapshot.get("source", "") or "")
+    if source in {"no_cache", "state_parse_error_no_cache"}:
+        return False
+    numeric_keys = (
+        "cumulative",
+        "kr_cash",
+        "kr_cash_effective",
+        "kr_eval",
+        "us_cash_usd",
+        "us_cash_krw",
+        "us_asset_cash_usd",
+        "us_asset_cash_krw",
+        "us_eval_usd",
+        "us_eval_krw",
+        "us_asset_krw",
+    )
+    for key in numeric_keys:
+        try:
+            if float(snapshot.get(key, 0) or 0) > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _broker_snapshot_from_truth(mode: str) -> dict:
+    runtime_mode = _normalize_mode(mode)
+    snap = _load_broker_truth_snapshot_cached(runtime_mode)
+    markets = snap.get("markets") if isinstance(snap, dict) else {}
+    if not isinstance(markets, dict) or not markets:
+        source = str((snap or {}).get("_state_cache_source") or "no_cache")
+        empty = _empty_broker_snapshot(source=source, last_error=str((snap or {}).get("_state_cache_error", "") or ""))
+        _BROKER_SNAPSHOT_STATUS[runtime_mode] = empty.get("cache", {})
+        return empty
+
+    kr = markets.get("KR") if isinstance(markets.get("KR"), dict) else {}
+    us = markets.get("US") if isinstance(markets.get("US"), dict) else {}
+    kr_summary = kr.get("account_summary") if isinstance(kr.get("account_summary"), dict) else {}
+    us_summary = us.get("account_summary") if isinstance(us.get("account_summary"), dict) else {}
+    usd_krw = _get_usd_krw_cached()
+    kr_cash = float(kr_summary.get("cash", 0) or 0)
+    kr_orderable = float(kr_summary.get("orderable_cash", kr_cash) or kr_cash)
+    kr_eval = float(kr_summary.get("total_eval", 0) or 0)
+    kr_profit = float(kr_summary.get("total_profit", 0) or 0)
+    us_cash_usd = float(us_summary.get("cash", 0) or 0)
+    us_orderable_cash_usd = float(us_summary.get("orderable_cash", us_cash_usd) or us_cash_usd)
+    us_asset_cash_usd = max(us_cash_usd, us_orderable_cash_usd)
+    us_eval_usd = float(us_summary.get("total_eval", 0) or 0)
+    us_profit_native = float(us_summary.get("total_profit", 0) or 0)
+    us_cash_krw = us_cash_usd * usd_krw
+    us_asset_cash_krw = us_asset_cash_usd * usd_krw
+    us_orderable_cash_krw = us_orderable_cash_usd * usd_krw
+    us_eval_krw = us_eval_usd * usd_krw
+    us_asset_krw = us_asset_cash_krw + us_eval_krw
+    generated_at = str(snap.get("generated_at") or kr.get("last_success_at") or us.get("last_success_at") or "")
+    age_sec = _dt_age_sec(generated_at)
+    cached_ts = _time.time() - float(age_sec or 0)
+    any_stale = bool(kr.get("stale")) or bool(us.get("stale")) or bool(snap.get("_state_cache_stale"))
+    source = str(snap.get("_state_cache_source") or "broker_truth_snapshot")
+    last_error = "; ".join(
+        part for part in (
+            f"KR: {kr.get('error')}" if kr.get("error") else "",
+            f"US: {us.get('error')}" if us.get("error") else "",
+            str(snap.get("_state_cache_error", "") or ""),
+        )
+        if part
+    )
+    cached = {"ts": cached_ts, "value": {}}
+    meta = _broker_cache_meta(hit=True, stale=any_stale, cached=cached, now_ts=_time.time(), last_error=last_error, source=source)
+    result = {
+        "source": source,
+        "cache": meta,
+        "kis_profile": {},
+        "usd_krw": usd_krw,
+        "kr_cash": kr_cash,
+        "kr_cash_effective": kr_cash,
+        "kr_orderable_cash": kr_orderable,
+        "kr_eval": kr_eval,
+        "us_cash_usd": us_cash_usd,
+        "us_cash_krw": us_cash_krw,
+        "us_asset_cash_usd": us_asset_cash_usd,
+        "us_asset_cash_krw": us_asset_cash_krw,
+        "us_orderable_cash_usd": us_orderable_cash_usd,
+        "us_orderable_cash_krw": us_orderable_cash_krw,
+        "us_eval_usd": us_eval_usd,
+        "us_eval_krw": us_eval_krw,
+        "us_asset_krw": us_asset_krw,
+        "kis_account_total_asset_krw": 0.0,
+        "us_kis_exchange_rate": 0.0,
+        "kr_profit_krw": kr_profit,
+        "us_profit_krw": us_profit_native * usd_krw,
+        "cumulative": kr_cash + kr_eval + us_asset_krw,
+        "unrealized_krw": {"KR": kr_profit, "US": us_profit_native * usd_krw},
+    }
+    cached["value"] = copy.deepcopy(result)
+    _BROKER_SNAPSHOT_CACHE[runtime_mode] = cached
+    _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
+    return result
+
+
+def _broker_snapshot_fast(mode: str = "paper") -> dict:
+    runtime_mode = _normalize_mode(mode)
+    now_ts = _time.time()
+    try:
+        ttl_sec = max(int(os.getenv("DASHBOARD_BROKER_SNAPSHOT_CACHE_SEC", "20") or 20), 0)
+    except Exception:
+        ttl_sec = 20
+    cached = _BROKER_SNAPSHOT_CACHE.get(runtime_mode)
+    if cached:
+        age = now_ts - float(cached.get("ts", 0) or 0)
+        stale = ttl_sec <= 0 or age >= ttl_sec
+        if stale:
+            refreshed = _broker_snapshot_from_truth(runtime_mode)
+            if _broker_snapshot_has_account(refreshed):
+                return refreshed
+            refresh_cache = refreshed.get("cache", {}) if isinstance(refreshed, dict) else {}
+            last_error = str(
+                (refresh_cache or {}).get("last_error")
+                or (refreshed or {}).get("source", "")
+                or "truth_snapshot_unavailable"
+            )
+            meta = _broker_cache_meta(
+                hit=True,
+                stale=True,
+                cached=cached,
+                now_ts=now_ts,
+                last_error=last_error,
+                source="stale_cache_file_refresh_failed",
+            )
+            _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
+            return _with_broker_cache_meta(cached.get("value", {}), meta)
+        meta = _broker_cache_meta(hit=True, stale=False, cached=cached, now_ts=now_ts, source="cache")
+        _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
+        return _with_broker_cache_meta(cached.get("value", {}), meta)
+    return _broker_snapshot_from_truth(runtime_mode)
+
+
+def _broker_snapshot_refresh(mode: str = "live", *, force: bool = False) -> dict:
+    runtime_mode = _normalize_mode(mode)
+    now_ts = _time.time()
+    try:
+        cooldown_sec = max(int(os.getenv("DASHBOARD_BROKER_REFRESH_COOLDOWN_SEC", "30") or 30), 0)
+    except Exception:
+        cooldown_sec = 30
+    last_ts = float(_BROKER_REFRESH_LAST_TS.get(runtime_mode, 0) or 0)
+    if not force and cooldown_sec > 0 and now_ts - last_ts < cooldown_sec:
+        return {
+            "ok": False,
+            "reason": "cooldown",
+            "retry_after_sec": int(max(cooldown_sec - (now_ts - last_ts), 1)),
+            "snapshot": _broker_snapshot_fast(runtime_mode),
+        }
+    if not _BROKER_REFRESH_LOCK.acquire(blocking=False):
+        return {"ok": False, "reason": "refresh_pending", "snapshot": _broker_snapshot_fast(runtime_mode)}
+    try:
+        _BROKER_REFRESH_LAST_TS[runtime_mode] = now_ts
+        _BROKER_REFRESH_STATUS[runtime_mode] = {"running": True, "started_at": datetime.now(KST).isoformat(timespec="seconds")}
+        _BROKER_SNAPSHOT_CACHE.pop(runtime_mode, None)
+        snapshot = _broker_snapshot(mode=runtime_mode)
+        ok = bool(snapshot)
+        _BROKER_REFRESH_STATUS[runtime_mode] = {
+            "running": False,
+            "finished_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "ok": ok,
+            "source": (snapshot or {}).get("source", ""),
+        }
+        return {"ok": ok, "reason": "refreshed" if ok else "unavailable", "snapshot": snapshot}
+    except Exception as exc:
+        _BROKER_REFRESH_STATUS[runtime_mode] = {
+            "running": False,
+            "finished_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "ok": False,
+            "error": str(exc),
+        }
+        return {"ok": False, "reason": "error", "error": str(exc), "snapshot": _broker_snapshot_fast(runtime_mode)}
+    finally:
+        _BROKER_REFRESH_LOCK.release()
+
+
+def _broker_refresh_public_payload(result: dict) -> dict:
+    payload = result if isinstance(result, dict) else {}
+    snapshot = payload.get("snapshot") if isinstance(payload.get("snapshot"), dict) else {}
+    cache = snapshot.get("cache") if isinstance(snapshot.get("cache"), dict) else {}
+
+    def _positive(key: str) -> bool:
+        try:
+            return float(snapshot.get(key, 0) or 0) > 0
+        except Exception:
+            return False
+
+    public = {
+        "ok": bool(payload.get("ok", False)),
+        "reason": str(payload.get("reason", "") or ""),
+        "snapshot_meta": {
+            "source": str(snapshot.get("source", "") or ""),
+            "cache_source": str(cache.get("source", "") or ""),
+            "cache_hit": bool(cache.get("hit", False)),
+            "cache_stale": bool(cache.get("stale", False)),
+            "cache_age_sec": cache.get("age_sec"),
+            "markets_available": {
+                "KR": _positive("kr_cash") or _positive("kr_cash_effective") or _positive("kr_eval"),
+                "US": _positive("us_asset_krw") or _positive("us_cash_usd") or _positive("us_eval_krw"),
+            },
+        },
+    }
+    if payload.get("retry_after_sec") is not None:
+        public["retry_after_sec"] = payload.get("retry_after_sec")
+    if payload.get("error"):
+        public["error"] = str(payload.get("error", ""))[:300]
+    return public
+
+
+def _positions_from_truth_market(market: str, mode: str) -> Optional[list]:
+    positions, _meta = _positions_from_truth_market_with_meta(market, mode)
+    return positions
+
+
+def _broker_truth_market_with_meta(market: str, mode: str) -> tuple[Optional[dict], dict]:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    snap = _load_broker_truth_snapshot_cached(mode)
+    markets = snap.get("markets") if isinstance(snap, dict) else {}
+    data = markets.get(market_key) if isinstance(markets, dict) and isinstance(markets.get(market_key), dict) else None
+    source = str((snap or {}).get("_state_cache_source") or ("broker_truth_snapshot" if isinstance(markets, dict) and markets else "no_cache"))
+    last_error = str((snap or {}).get("_state_cache_error", "") or "")
+    now_ts = _time.time()
+    if data is None or data.get("missing") or data.get("error"):
+        if isinstance(data, dict) and data.get("error"):
+            last_error = str(data.get("error") or last_error)
+        meta = _broker_cache_meta(hit=False, stale=True, cached=None, now_ts=now_ts, last_error=last_error, source=source)
+        return None, meta
+    generated_at = str((data or {}).get("last_success_at") or (snap or {}).get("generated_at") or "")
+    age_sec = _dt_age_sec(generated_at)
+    cached_ts = now_ts - float(age_sec or 0)
+    stale = bool((data or {}).get("stale")) or bool((snap or {}).get("_state_cache_stale")) or age_sec is None
+    if data.get("error"):
+        last_error = str(data.get("error") or last_error)
+    cached = {"ts": cached_ts, "value": {}}
+    meta = _broker_cache_meta(hit=True, stale=stale, cached=cached, now_ts=now_ts, last_error=last_error, source=source)
+    return data, meta
+
+
+def _positions_from_truth_market_with_meta(market: str, mode: str) -> tuple[Optional[list], dict]:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    data, meta = _broker_truth_market_with_meta(market_key, mode)
+    if data is None:
+        return None, meta
+    positions = []
+    for stock in data.get("positions") or []:
+        if not isinstance(stock, dict):
+            continue
+        avg_price = float(stock.get("avg_price", 0) or 0)
+        current_price = float(stock.get("current_price", stock.get("eval_price", 0)) or 0)
+        pnl_pct = float(stock.get("pnl_pct", stock.get("profit_rate", 0)) or 0)
+        if not pnl_pct and avg_price > 0 and current_price > 0:
+            pnl_pct = (current_price / avg_price - 1.0) * 100.0
+        positions.append({
+            "ticker": stock.get("ticker", ""),
+            "name": stock.get("name", "") or stock.get("prdt_name", "") or "",
+            "qty": int(stock.get("qty", 0) or 0),
+            "avg_price": avg_price,
+            "current_price": current_price,
+            "pnl_pct": pnl_pct,
+            "strategy": "broker_balance",
+            "trailing": False,
+            "price_source": "broker_truth_snapshot",
+            "currency": "USD" if market_key == "US" else "KRW",
+        })
+    return positions, meta
+
+
+def _load_broker_positions_fast(market: str, mode: str = "paper"):
+    runtime_mode = _normalize_mode(mode)
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    cache_key = (runtime_mode, market_key)
+    now_ts = _time.time()
+    try:
+        ttl_sec = max(int(os.getenv("DASHBOARD_BROKER_POSITIONS_CACHE_SEC", "20") or 20), 0)
+    except Exception:
+        ttl_sec = 20
+    cached = _BROKER_POSITIONS_CACHE.get(cache_key)
+    if cached:
+        age = now_ts - float(cached.get("ts", 0) or 0)
+        stale = ttl_sec <= 0 or age >= ttl_sec
+        if stale:
+            truth_positions, truth_meta = _positions_from_truth_market_with_meta(market_key, runtime_mode)
+            if truth_positions is not None:
+                cached_ts = now_ts - float((truth_meta or {}).get("age_sec") or 0)
+                cached_payload = {
+                    "ts": cached_ts,
+                    "value": copy.deepcopy(truth_positions),
+                    "meta": copy.deepcopy(truth_meta or {}),
+                }
+                _BROKER_POSITIONS_CACHE[cache_key] = cached_payload
+                _BROKER_POSITIONS_STATUS[cache_key] = copy.deepcopy(truth_meta or {})
+                return truth_positions
+            last_error = str((truth_meta or {}).get("last_error") or (truth_meta or {}).get("source") or "truth_snapshot_unavailable")
+            meta = _broker_cache_meta(
+                hit=True,
+                stale=True,
+                cached=cached,
+                now_ts=now_ts,
+                last_error=last_error,
+                source="stale_cache_file_refresh_failed",
+            )
+            _BROKER_POSITIONS_STATUS[cache_key] = meta
+            return copy.deepcopy(cached.get("value", []))
+        cached_meta = cached.get("meta") if isinstance(cached.get("meta"), dict) else {}
+        stale = bool(cached_meta.get("stale", False))
+        _BROKER_POSITIONS_STATUS[cache_key] = _broker_cache_meta(
+            hit=True,
+            stale=stale,
+            cached=cached,
+            now_ts=now_ts,
+            last_error=str(cached_meta.get("last_error", "") or ""),
+            source="cache",
+        )
+        return copy.deepcopy(cached.get("value", []))
+    truth_positions, truth_meta = _positions_from_truth_market_with_meta(market_key, runtime_mode)
+    if truth_positions is not None:
+        cached_ts = now_ts - float((truth_meta or {}).get("age_sec") or 0)
+        cached_payload = {
+            "ts": cached_ts,
+            "value": copy.deepcopy(truth_positions),
+            "meta": copy.deepcopy(truth_meta or {}),
+        }
+        _BROKER_POSITIONS_CACHE[cache_key] = cached_payload
+        _BROKER_POSITIONS_STATUS[cache_key] = copy.deepcopy(truth_meta or {})
+        return truth_positions
+    _BROKER_POSITIONS_STATUS[cache_key] = copy.deepcopy(truth_meta or _broker_cache_meta(hit=False, stale=True, cached=None, now_ts=now_ts, source="no_cache"))
+    return None
 
 
 def _saved_positions_for_market(market: str, mode: str = "paper") -> list:
@@ -2815,6 +3229,157 @@ def _live_equity_payload(
         "cash_flow_basis": "asset_delta_minus_trading_pnl",
         "cash_flow_label": "입출금/환전 추정",
         "source": source,
+    }
+
+
+def _live_equity_payload_fast(
+    market: str,
+    period: str,
+    start: str,
+    end: str,
+    mode: str = "live",
+) -> dict:
+    """Build live equity from persisted state only. This function never calls KIS."""
+    market = str(market or "").upper() or best_market_with_data()
+    mode = _normalize_mode(mode)
+    broker = _broker_snapshot_fast(mode=mode)
+    cache_meta = (broker or {}).get("cache", {}) if isinstance(broker, dict) else {}
+    current_asset = _market_asset_krw_from_broker_snapshot(broker or {}, market) if broker else 0.0
+    current_unrealized = float(((broker or {}).get("unrealized_krw", {}) or {}).get(market, 0) or 0)
+    d_start, d_end = _resolve_period_bounds(period, start, end)
+    session_label = _session_trade_date(market).isoformat()
+
+    snapshot_rows = _load_broker_equity_snapshots(market, period, start, end, mode=mode)
+    snapshot_asset_map: dict[str, float] = {}
+    snapshot_unrealized_map: dict[str, float] = {}
+    snapshot_source_map: dict[str, str] = {}
+    for item in snapshot_rows:
+        label = str(item.get("date", "") or "")[:10]
+        if not label:
+            continue
+        asset = float(item.get("asset_krw", 0) or 0)
+        if asset > 0:
+            snapshot_asset_map[label] = asset
+        snapshot_unrealized_map[label] = float(item.get("unrealized_krw", 0) or 0)
+        snapshot_source_map[label] = str(item.get("source", "") or "")
+
+    if current_asset > 0 and d_start <= _session_trade_date(market) <= d_end:
+        snapshot_asset_map[session_label] = current_asset
+        snapshot_unrealized_map[session_label] = current_unrealized
+        snapshot_source_map[session_label] = str((broker or {}).get("source", "cached_state") or "cached_state")
+
+    labels = sorted(snapshot_asset_map.keys())
+    if not labels and current_asset > 0:
+        labels = [session_label]
+        snapshot_asset_map[session_label] = current_asset
+        snapshot_unrealized_map[session_label] = current_unrealized
+
+    equity = [float(snapshot_asset_map.get(label, 0.0) or 0.0) for label in labels]
+    other_market = "US" if market == "KR" else "KR"
+    other_current_asset = _market_asset_krw_from_broker_snapshot(broker or {}, other_market) if broker else 0.0
+    other_session_label = _session_trade_date(other_market).isoformat()
+    other_asset_map: dict[str, float] = {}
+    for item in _load_broker_equity_snapshots(other_market, period, start, end, mode=mode):
+        label = str(item.get("date", "") or "")[:10]
+        asset = float(item.get("asset_krw", 0) or 0)
+        if label and asset > 0:
+            other_asset_map[label] = asset
+    if other_current_asset > 0:
+        other_asset_map[other_session_label] = other_current_asset
+    other_sorted = sorted(other_asset_map.items())
+
+    def _latest_other_asset_for(label: str) -> float:
+        latest = 0.0
+        for other_label, asset in other_sorted:
+            if other_label <= label:
+                latest = float(asset or 0.0)
+            else:
+                break
+        if latest <= 0 and other_current_asset > 0:
+            latest = float(other_current_asset)
+        return latest
+
+    account_equity = [float(equity[idx] or 0.0) + _latest_other_asset_for(label) for idx, label in enumerate(labels)]
+    broker_account_total = float((broker or {}).get("cumulative", 0) or 0)
+    if broker_account_total > 0 and labels:
+        for idx, label in enumerate(labels):
+            if label == session_label:
+                account_equity[idx] = broker_account_total
+
+    unrealized = []
+    last_unrealized = 0.0
+    for label in labels:
+        if label in snapshot_unrealized_map:
+            last_unrealized = float(snapshot_unrealized_map.get(label, 0.0) or 0.0)
+        unrealized.append(last_unrealized)
+
+    realized_series: list[float] = []
+    unrealized_delta_series: list[float] = []
+    trading_pnl_series: list[float] = []
+    cumulative_trading_pnl: list[float] = []
+    cash_flow_series: list[float] = []
+    cumulative_cash_flow: list[float] = []
+    pnl_pct_series: list[float] = []
+    wins: list[bool] = []
+    cumulative_trade = 0.0
+    cumulative_flow = 0.0
+    for idx, _label in enumerate(labels):
+        realized = 0.0
+        previous_unrealized = unrealized[idx - 1] if idx > 0 else 0.0
+        unrealized_delta = unrealized[idx] - previous_unrealized
+        trading_pnl = realized + unrealized_delta
+        if idx == 0:
+            asset_delta = 0.0
+            base_equity = equity[idx] - trading_pnl
+        else:
+            asset_delta = equity[idx] - equity[idx - 1]
+            base_equity = equity[idx - 1]
+        cash_flow = asset_delta - trading_pnl if idx > 0 else 0.0
+        cumulative_trade += trading_pnl
+        cumulative_flow += cash_flow
+        pnl_pct = (trading_pnl / base_equity * 100.0) if base_equity > 0 else 0.0
+        realized_series.append(round(realized, 6))
+        unrealized_delta_series.append(round(unrealized_delta, 6))
+        trading_pnl_series.append(round(trading_pnl, 6))
+        cumulative_trading_pnl.append(round(cumulative_trade, 6))
+        cash_flow_series.append(round(cash_flow, 6))
+        cumulative_cash_flow.append(round(cumulative_flow, 6))
+        pnl_pct_series.append(round(pnl_pct, 4))
+        wins.append(trading_pnl > 0)
+
+    starting_asset = equity[0] if equity else 0.0
+    source = snapshot_source_map.get(labels[-1], str((broker or {}).get("source", "cached_state") or "cached_state")) if labels else str((broker or {}).get("source", "no_cache") or "no_cache")
+    return {
+        "labels": labels,
+        "equity": [round(v, 6) for v in equity],
+        "account_equity_krw": [round(v, 6) for v in account_equity],
+        "account_asset_krw": [round(v, 6) for v in equity],
+        "pnl": pnl_pct_series,
+        "wins": wins,
+        "modes": ["" for _ in labels],
+        "realized_pnl_krw": realized_series,
+        "unrealized_krw": [round(v, 6) for v in unrealized],
+        "unrealized_today_delta_krw": unrealized_delta_series,
+        "trading_pnl_krw": trading_pnl_series,
+        "daily_trading_pnl_krw": trading_pnl_series,
+        "cumulative_trading_pnl_krw": cumulative_trading_pnl,
+        "cash_flow_krw": cash_flow_series,
+        "cash_flow_estimate_krw": cash_flow_series,
+        "cumulative_cash_flow_krw": cumulative_cash_flow,
+        "cumulative_cash_flow_estimate_krw": cumulative_cash_flow,
+        "starting_asset_krw": round(starting_asset, 6),
+        "starting_capital_krw": round(starting_asset, 6),
+        "basis": "cached_broker_asset",
+        "reconciliation_basis": "cached_state_no_broker_refresh",
+        "asset_basis": "cached_kis_broker_account",
+        "equity_scope": "selected_market",
+        "account_equity_scope": "account_total",
+        "account_equity_basis": "cached_selected_market_plus_latest_other_market",
+        "performance_basis": "cached_state",
+        "cash_flow_basis": "cached_asset_delta_minus_unrealized_delta",
+        "cash_flow_label": "입출금/환전 추정",
+        "source": source,
+        "cache": cache_meta,
     }
 
 
@@ -4305,6 +4870,7 @@ def api_summary():
         return jsonify({})
 
     mode        = _request_mode()
+    live_mode   = _is_live_mode(mode)
     expected_date = _session_trade_date(market).isoformat()
     loaded_today_rec = load_today(market)
     loaded_today_date = str(
@@ -4333,23 +4899,34 @@ def api_summary():
 
     metrics_today = _record_metrics(today_rec, market)
     broker_trade_date = _session_trade_date(market).strftime("%Y%m%d")
-    broker_realized_pnl_krw = _broker_realized_pnl_krw(market, broker_trade_date, mode=mode)
-    realized_pnl_krw = broker_realized_pnl_krw
-    realized_pnl_source = "broker_trade_history"
-    if abs(float(realized_pnl_krw or 0)) < 1e-9:
-        realized_status = _current_session_realized_pnl_status(market, mode, live=live)
-        if bool(realized_status.get("available", False)):
-            realized_pnl_krw = float(realized_status.get("pnl_krw", 0) or 0)
-            realized_pnl_source = str(realized_status.get("source", "") or "current_session_status")
-        else:
-            realized_pnl_krw = live.get("daily_pnl", metrics_today.get("pnl_krw", result.get("pnl_krw", 0)))
-            realized_pnl_source = "live_status_or_metrics_fallback"
+    if live_mode:
+        pnl_map = live.get("market_daily_pnl_krw") if isinstance(live.get("market_daily_pnl_krw"), dict) else {}
+        realized_pnl_krw = float(
+            live.get("market_realized_pnl_krw")
+            or pnl_map.get(market)
+            or live.get("daily_pnl")
+            or metrics_today.get("pnl_krw", result.get("pnl_krw", 0))
+            or 0
+        )
+        realized_pnl_source = "live_status_cached"
+    else:
+        broker_realized_pnl_krw = _broker_realized_pnl_krw(market, broker_trade_date, mode=mode)
+        realized_pnl_krw = broker_realized_pnl_krw
+        realized_pnl_source = "broker_trade_history"
+        if abs(float(realized_pnl_krw or 0)) < 1e-9:
+            realized_status = _current_session_realized_pnl_status(market, mode, live=live)
+            if bool(realized_status.get("available", False)):
+                realized_pnl_krw = float(realized_status.get("pnl_krw", 0) or 0)
+                realized_pnl_source = str(realized_status.get("source", "") or "current_session_status")
+            else:
+                realized_pnl_krw = live.get("daily_pnl", metrics_today.get("pnl_krw", result.get("pnl_krw", 0)))
+                realized_pnl_source = "live_status_or_metrics_fallback"
     unrealized_pnl_krw = 0.0
     pnl_krw  = realized_pnl_krw
     pnl_pct  = live.get("daily_pnl_pct", result.get("pnl_pct", 0))
     cum_base = float(result.get("cumulative", 0) or PAPER_CASH)
     cum_asset = float((live.get("total_equity", 0) if live else 0) or cum_base or PAPER_CASH)
-    _raw_broker = _load_broker_positions(market, mode=mode)
+    _raw_broker = _load_broker_positions_fast(market, mode=mode) if live_mode else _load_broker_positions(market, mode=mode)
     broker_ok = _raw_broker is not None
     broker_positions = _filter_items_for_market(_raw_broker or [], market)
     position_context = (
@@ -4373,9 +4950,11 @@ def api_summary():
         pos["path_type"] = path_type
     for order in pending_orders:
         order["display_ticker"] = _display_ticker_label(order.get("ticker", ""), order.get("name", ""), name_map)
-    broker = _broker_snapshot(mode=mode)
-    if broker:
+    broker = _broker_snapshot_fast(mode=mode) if live_mode else _broker_snapshot(mode=mode)
+    if broker and not live_mode:
         _persist_broker_equity_snapshot(broker, mode=mode)
+    broker_source = str((broker or {}).get("source", "") or "")
+    broker_has_account = bool(broker) and broker_source not in {"no_cache", "state_parse_error_no_cache"}
     kr_asset = 0.0
     us_asset = 0.0
     usd_krw = float(os.getenv("USD_KRW_RATE", "1350") or 1350)
@@ -4383,7 +4962,7 @@ def api_summary():
     engine_equity_krw = float((live.get("total_equity", 0) if live else 0) or 0)
     engine_cash_krw = float((live.get("cash", 0) if live else 0) or 0)
 
-    if broker:
+    if broker_has_account:
         usd_krw = float(broker.get("usd_krw", 0) or usd_krw)
         kr_asset = float(broker.get("kr_cash_effective", broker.get("kr_cash", 0)) or 0) + float(broker.get("kr_eval", 0) or 0)
         us_asset = float(broker.get("us_asset_krw", 0) or 0)
@@ -4421,16 +5000,14 @@ def api_summary():
                     pnl_pct = (float(pnl_krw) / base_equity) * 100.0
 
     live_equity_summary: dict = {}
-    if _is_live_mode(mode):
+    if live_mode:
         try:
-            live_equity_summary = _live_equity_payload(
+            live_equity_summary = _live_equity_payload_fast(
                 market,
                 "all",
                 "",
                 "",
                 mode=mode,
-                broker=broker,
-                persist_broker=False,
             )
         except Exception:
             live_equity_summary = {}
@@ -4517,7 +5094,12 @@ def api_summary():
         if holding_cost_krw > 0
         else None
     )
-    lifetime_realized_pnl = _lifetime_realized_pnl_summary(mode)
+    if live_mode:
+        lifetime_realized_pnl = _empty_lifetime_realized_pnl_summary()
+        lifetime_realized_pnl["basis"] = "cached_state_fast_path"
+        lifetime_realized_pnl["source"] = "summary_fast_no_broker_trade_refresh"
+    else:
+        lifetime_realized_pnl = _lifetime_realized_pnl_summary(mode)
     trade_turnover = _current_session_trade_turnover(market, mode)
     pnl_summary = {
         "today": {
@@ -4625,8 +5207,8 @@ def api_summary():
             "starting_asset_krw": round(starting_asset_krw, 0),
             "starting_capital_krw": round(starting_capital_krw, 0),
             "cash_flow_label": "입출금/환전 추정",
-            "account_asset_source": "kis_broker_account" if broker else asset_source,
-            "performance_basis": "broker_realized_plus_unrealized_delta" if broker else "engine_fallback",
+            "account_asset_source": "cached_kis_broker_account" if broker_has_account and live_mode else ("kis_broker_account" if broker_has_account else asset_source),
+            "performance_basis": "cached_state" if live_mode else ("broker_realized_plus_unrealized_delta" if broker_has_account else "engine_fallback"),
             "realized_pnl_krw": round(realized_pnl_krw, 0),
             "realized_excluding_eval_pnl_krw": round(realized_excluding_eval_pnl_krw, 0),
             "realized_pnl_source": realized_pnl_source,
@@ -5181,20 +5763,162 @@ def api_position_chart():
     })
 
 
+_PREOPEN_CANDIDATE_FIELDS = {
+    "ticker",
+    "name",
+    "display_ticker",
+    "market",
+    "rank",
+    "shadow_preopen_rank",
+    "actual_selection_rank",
+    "preopen_score",
+    "preopen_grade",
+    "anchor_price",
+    "price",
+    "extended_price",
+    "gap_pct",
+    "extended_change_pct",
+    "volume",
+    "extended_volume",
+    "extended_dollar_volume",
+    "spread_pct",
+    "reason",
+    "reasons",
+    "risk_tags",
+    "selected",
+    "trade_ready",
+}
+
+_PREOPEN_OUTCOME_FIELDS = {
+    "ticker",
+    "name",
+    "display_ticker",
+    "market",
+    "shadow_preopen_rank",
+    "anchor_price",
+    "last_price",
+    "latest_return_pct",
+    "best_return_pct",
+    "worst_return_pct",
+    "returns_by_offset",
+    "statuses_by_offset",
+}
+
+
+def _compact_preopen_row(row: Any, allowed_fields: set[str]) -> dict:
+    if not isinstance(row, dict):
+        return {}
+    return {key: row.get(key) for key in allowed_fields if key in row}
+
+
+def _compact_preopen_scheduler(scheduler: Any) -> dict:
+    if not isinstance(scheduler, dict):
+        return {}
+    last_job = scheduler.get("last_job") if isinstance(scheduler.get("last_job"), dict) else {}
+    compact_last_job = {
+        key: last_job.get(key)
+        for key in (
+            "event",
+            "market",
+            "kind",
+            "session_date",
+            "started_at",
+            "finished_at",
+            "status",
+            "error",
+        )
+        if key in last_job
+    }
+    compact = {
+        key: scheduler.get(key)
+        for key in (
+            "status",
+            "enabled",
+            "last_tick_at",
+            "heartbeat_age_sec",
+            "next_run_at",
+            "due_count",
+            "error",
+        )
+        if key in scheduler
+    }
+    if compact_last_job:
+        compact["last_job"] = compact_last_job
+    return compact
+
+
+def _compact_preopen_payload(payload: dict, *, outcome_limit: int = 30) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    if isinstance(payload.get("scheduler"), dict):
+        payload["scheduler"] = _compact_preopen_scheduler(payload.get("scheduler"))
+    payload["candidates"] = [
+        _compact_preopen_row(row, _PREOPEN_CANDIDATE_FIELDS)
+        for row in (payload.get("candidates") or [])
+        if isinstance(row, dict)
+    ]
+    outcome_rows = [
+        _compact_preopen_row(row, _PREOPEN_OUTCOME_FIELDS)
+        for row in (payload.get("outcome_timeline") or [])
+        if isinstance(row, dict)
+    ]
+    requested_outcome_count = len(outcome_rows)
+    payload["outcome_timeline"] = outcome_rows[: max(0, int(outcome_limit or 0))]
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    if summary is not None:
+        summary["outcome_display_count"] = len(payload["outcome_timeline"])
+        summary["outcome_display_limit"] = min(
+            int(summary.get("outcome_display_limit", outcome_limit) or outcome_limit),
+            int(outcome_limit or 0),
+        )
+        summary["outcome_requested_display_count"] = requested_outcome_count
+        payload["summary"] = summary
+    return payload
+
+
 @app.route("/api/preopen")
 def api_preopen():
     market = str(request.args.get("market", current_market()) or "KR").upper()
     market = "US" if market == "US" else "KR"
     mode = _request_mode()
     session_date = request.args.get("session_date") or _session_trade_date(market).isoformat()
-    limit = int(request.args.get("limit", "60") or 60)
+    try:
+        requested_limit = int(request.args.get("limit", "50") or 50)
+    except Exception:
+        requested_limit = 50
+    limit = max(1, min(requested_limit, 200))
+    detail = str(request.args.get("detail", "") or "").strip().lower()
+    compact_response = detail not in {"full", "raw"}
     try:
         from preopen.storage import load_preopen_dashboard
-        return jsonify(load_preopen_dashboard(market, session_date=session_date, limit=limit, mode=mode))
+        payload = load_preopen_dashboard(market, session_date=session_date, limit=limit, mode=mode)
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        total_count = int(summary.get("candidate_total_count", summary.get("candidate_count", 0)) or 0)
+        payload["returned_count"] = len(payload.get("candidates") or [])
+        payload["total_count"] = total_count
+        payload["truncated"] = bool(total_count > payload["returned_count"] or requested_limit > limit)
+        payload["limit"] = limit
+        payload["requested_limit"] = requested_limit
+        if compact_response:
+            if isinstance(payload.get("state"), dict):
+                compact_state = dict(payload["state"])
+                compact_state.pop("candidates", None)
+                compact_state.pop("raw_candidates", None)
+                compact_state.pop("digest_prompt", None)
+                compact_state.pop("digest_raw", None)
+                payload["state"] = compact_state
+            payload["outcome"] = []
+            payload = _compact_preopen_payload(payload, outcome_limit=30)
+        return jsonify(payload)
     except Exception as exc:
         return jsonify({
             "market": market,
             "session_date": session_date,
+            "truncated": False,
+            "limit": limit,
+            "requested_limit": requested_limit,
+            "returned_count": 0,
+            "total_count": 0,
             "summary": {
                 "collector_status": "unavailable",
                 "error": str(exc),
@@ -5435,7 +6159,9 @@ def api_equity_chart():
     end     = request.args.get("end", "")
     mode    = _request_mode()
     if _is_live_mode(mode):
-        return jsonify(_live_equity_payload(market, period, start, end, mode=mode))
+        if str(request.args.get("refresh", "") or "").strip().lower() in {"1", "true", "yes", "y", "on"}:
+            return jsonify(_live_equity_payload(market, period, start, end, mode=mode))
+        return jsonify(_live_equity_payload_fast(market, period, start, end, mode=mode))
 
     records = load_records_filtered(market, period, start, end)
 
@@ -5666,6 +6392,19 @@ def api_control_status():
 def api_control_restart_dashboard():
     _restart_dashboard_process()
     return jsonify({"ok": True, "message": "대시보드 재시작 요청을 보냈습니다"})
+
+
+@app.route("/api/broker/refresh", methods=["POST"])
+def api_broker_refresh():
+    body = request.get_json(silent=True) or {}
+    mode = _normalize_mode(body.get("mode") or request.args.get("mode") or "live")
+    result = _broker_snapshot_refresh(mode=mode, force=False)
+    status = 200
+    if result.get("reason") == "cooldown":
+        status = 429
+    elif result.get("reason") == "refresh_pending":
+        status = 202
+    return jsonify(_broker_refresh_public_payload(result)), status
 
 
 @app.route("/api/control/restart-bot", methods=["POST"])
@@ -5921,7 +6660,9 @@ def api_history_equity():
     end     = request.args.get("end", "")
     mode = _request_mode()
     if _is_live_mode(mode):
-        return jsonify(_live_equity_payload(market, period, start, end, mode=mode))
+        if str(request.args.get("refresh", "") or "").strip().lower() in {"1", "true", "yes", "y", "on"}:
+            return jsonify(_live_equity_payload(market, period, start, end, mode=mode))
+        return jsonify(_live_equity_payload_fast(market, period, start, end, mode=mode))
 
     records = load_records_filtered(market, period, start, end)
 
@@ -7096,11 +7837,37 @@ def api_refresh_prices():
     body   = request.get_json(silent=True) or {}
     mode   = _normalize_mode(body.get("mode"))
     market = body.get("market", "KR").upper()
+    force_refresh = str(body.get("force") or body.get("refresh") or request.args.get("force") or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
     live = _load_live_status(market, mode=mode) or {}
     positions = live.get("positions", [])
     if not positions:
         return jsonify({"ok": True, "market": market, "live": False, "positions": []})
+
+    def _price_payload(*, refreshed: bool, source: str) -> dict:
+        return {
+            "ok": True,
+            "market": market,
+            "live": refreshed,
+            "source": source,
+            "positions": [
+                {
+                    "ticker":        p.get("ticker"),
+                    "current_price": p.get("current_price", p.get("avg_price", 0)),
+                    "avg_price":     p.get("avg_price", 0),
+                    "qty":           p.get("qty", 0),
+                    "pnl_pct":       (
+                        (float(p.get("current_price") or p.get("avg_price") or 0) /
+                         float(p.get("avg_price") or 1) - 1) * 100
+                        if p.get("avg_price") else p.get("pnl_pct", 0)
+                    ),
+                }
+                for p in positions
+            ],
+        }
+
+    if not force_refresh:
+        return jsonify(_price_payload(refreshed=False, source="live_status_cache"))
 
     is_live = _is_live_market(market)
     updated = False
@@ -7127,29 +7894,12 @@ def api_refresh_prices():
                 if updated:
                     live["positions"] = positions
                     live_path = _live_status_path(mode, market)
-                    live_path.write_text(json.dumps(live, ensure_ascii=False), encoding="utf-8")
+                    _atomic_write_text(live_path, json.dumps(live, ensure_ascii=False))
+                    _STATE_JSON_CACHE[str(live_path)] = copy.deepcopy(live)
         except Exception:
             is_live = False  # 토큰 오류 등 → 저장 데이터 반환
 
-    return jsonify({
-        "ok": True,
-        "market": market,
-        "live": is_live and updated,
-        "positions": [
-            {
-                "ticker":        p.get("ticker"),
-                "current_price": p.get("current_price", p.get("avg_price", 0)),
-                "avg_price":     p.get("avg_price", 0),
-                "qty":           p.get("qty", 0),
-                "pnl_pct":       (
-                    (float(p.get("current_price") or p.get("avg_price") or 0) /
-                     float(p.get("avg_price") or 1) - 1) * 100
-                    if p.get("avg_price") else p.get("pnl_pct", 0)
-                ),
-            }
-            for p in positions
-        ],
-    })
+    return jsonify(_price_payload(refreshed=is_live and updated, source="kis_refresh" if is_live and updated else "live_status_cache"))
 
 
 @app.route("/api/review_position", methods=["POST"])
@@ -9742,8 +10492,7 @@ async function refreshPrices(market) {
 }
 
 async function loadAll() {
-  await refreshPrices(MARKET);
-  await Promise.all([loadSummary(), loadJudgments(), loadEquityChart(), loadMarketContext(), loadCredits()]);
+  await Promise.all([loadJudgments(), loadEquityChart(), loadMarketContext(), loadCredits()]);
   loadMonitorTickers();
   loadSignalFeed();
 }
@@ -10493,6 +11242,45 @@ async function loadPositionCharts(positions) {
   }));
 }
 
+async function refreshBrokerSnapshot(button) {
+  const btn = button || document.getElementById('broker-refresh-btn');
+  const status = document.getElementById('broker-refresh-status');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '갱신 중...';
+  }
+  if (status) status.textContent = '브로커 갱신 요청 중';
+  try {
+    const res = await apiPost('/api/broker/refresh', {});
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 429) {
+      const retry = data.retry_after_sec ? `${data.retry_after_sec}초 후 재시도` : '잠시 후 재시도';
+      if (status) status.textContent = `쿨다운 · ${retry}`;
+      return;
+    }
+    if (res.status === 202) {
+      if (status) status.textContent = '갱신 진행 중';
+      return;
+    }
+    if (!res.ok || data.ok === false) {
+      if (status) status.textContent = data.error || data.reason || '갱신 실패';
+      return;
+    }
+    const meta = data.snapshot_meta || {};
+    await loadSummary();
+    if (typeof loadEquityChart === 'function') await loadEquityChart();
+    const freshStatus = document.getElementById('broker-refresh-status');
+    if (freshStatus) freshStatus.textContent = `갱신 완료 · ${meta.source || '-'}`;
+  } catch(e) {
+    if (status) status.textContent = '갱신 요청 실패';
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '브로커 갱신';
+    }
+  }
+}
+
 async function loadSummary() {
   const d = await apiGet('/api/summary', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.today) return;
@@ -10559,7 +11347,10 @@ async function loadSummary() {
       ? `<div style="margin-top:6px;color:#ef4444;font-size:12px">상태 파일 경고 ${(t.state_alerts || []).length}건 · 로그 탭 확인</div>`
       : '';
     const descTxt = modeDescription(t.mode) ? `<div style="margin-top:6px;color:var(--muted);font-size:12px">${modeDescription(t.mode)}</div>` : '';
-    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${cashTxt}${sessTxt}${riskText}${brokerTxt}${brokerWarnTxt}${descTxt}${alertTxt}`;
+    const brokerRefreshHtml = MODE === 'live'
+      ? ` <button id="broker-refresh-btn" type="button" onclick="refreshBrokerSnapshot(this)" style="margin-left:8px;padding:3px 8px;border:1px solid rgba(6,182,212,0.45);border-radius:4px;background:rgba(6,182,212,0.10);color:#67e8f9;font-size:11px;cursor:pointer">브로커 갱신</button><span id="broker-refresh-status" style="margin-left:6px;color:var(--muted);font-size:11px"></span>`
+      : '';
+    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${cashTxt}${sessTxt}${riskText}${brokerTxt}${brokerWarnTxt}${brokerRefreshHtml}${descTxt}${alertTxt}`;
   }
 
   const wrEl = document.getElementById('win-rate');
@@ -10764,10 +11555,6 @@ async function loadSummary() {
     loadPositionCharts(positions);
   }
 
-}
-
-if (typeof loadSummary === 'function') {
-  loadSummary();
 }
 
 loadSummary();
@@ -11714,15 +12501,19 @@ async function loadPathB() {
   document.getElementById('pathb-entry-rate').textContent = fmtPct(m.entry_rate_pct);
   document.getElementById('pathb-target-rate').textContent = fmtPct(m.target_hit_rate_pct);
   document.getElementById('pathb-avg-pnl').textContent = fmtSignedPct(m.avg_pnl_pct);
-  document.getElementById('pathb-realized').textContent = fmtMoney(m.realized_pnl_value);
+  document.getElementById('pathb-realized').textContent = fmtPathBMoney(m.realized_pnl_value, m.currency || market);
   const src = cfg.source || {};
   const conflicts = src.conflicts || {};
   const conflictText = Object.keys(conflicts).length
     ? ` | 설정 충돌 ${Object.entries(conflicts).map(([k, v]) => `${koConfigKey(k)} ${koConfigValue(v.runtime_env)}→${koConfigValue(v.start_config)}`).join(', ')}`
     : '';
+  const runtimeDrift = src.runtime_drift || {};
+  const runtimeDriftText = Object.keys(runtimeDrift).length
+    ? ` | 실행중 설정 차이 ${Object.entries(runtimeDrift).map(([k, v]) => `${koConfigKey(k)} ${koConfigValue(v.runtime_snapshot)}→${koConfigValue(v.file_effective)}`).join(', ')}`
+    : '';
   const ctlReason = koPathBReason(ctl.reason || '');
   document.getElementById('pathb-limits').textContent =
-    `1회 예산 ${fmtMoney(cfg.fixed_order_krw || 0)}원 | 투입금액 ${fmtMoney(m.deployed_value || 0)}원 | 동시보유 ${cfg.max_positions || 0}개 | 하루 진입 ${cfg.max_daily_entries || 0}회 | 최소 신뢰도 ${cfg.min_confidence || 0} | 당일청산 ${cfg.intraday_only ? '사용' : '미사용'} | 설정 ${src.start_config_applied ? '시작설정 적용' : '환경변수 기준'} | 제어 ${koControlBy(ctl.updated_by || 'default')}${ctlReason ? ' ' + ctlReason : ''}${conflictText}`;
+    `1회 예산 ${fmtMoney(cfg.fixed_order_krw || 0)}원 | 투입금액 ${fmtPathBMoney(m.deployed_value || 0, m.currency || market)} | 동시보유 ${cfg.max_positions || 0}개 | 하루 진입 ${cfg.max_daily_entries || 0}회 | 최소 신뢰도 ${cfg.min_confidence || 0} | 당일청산 ${cfg.intraday_only ? '사용' : '미사용'} | 설정 ${src.start_config_applied ? '시작설정 적용' : '환경변수 기준'} | 제어 ${koControlBy(ctl.updated_by || 'default')}${ctlReason ? ' ' + ctlReason : ''}${conflictText}${runtimeDriftText}`;
   const sel = b.selection || {};
   const sc = sel.counts || {};
   const noPlan = (sel.no_plan_reasons || []).map(koPathBSelectionReason).filter(Boolean);
@@ -11864,6 +12655,17 @@ function fmtSignedPct(v) {
 function fmtMoney(v) {
   const n = Number(v || 0);
   return n.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
+}
+
+function fmtPathBMoney(v, currency) {
+  const n = Number(v || 0);
+  const key = String(currency || '').toUpperCase();
+  if (key === 'USD' || key === 'US') {
+    const sign = n < 0 ? '-' : '';
+    return sign + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  if (key === 'MIXED') return fmtMoney(n) + ' (혼합)';
+  return fmtMoney(n) + '원';
 }
 
 function listText(v) {
@@ -13497,11 +14299,34 @@ def page_logs():
     return render_template_string(html)
 
 
+def _warm_dashboard_read_paths() -> None:
+    """Warm KIS-free dashboard read caches before accepting browser traffic."""
+    try:
+        client = app.test_client()
+        for market in ("KR", "US"):
+            for path in (
+                f"/api/summary?market={market}&mode=live",
+                f"/api/chart/equity?market={market}&period=3month&mode=live",
+                f"/api/history/equity?market={market}&period=3month&mode=live",
+            ):
+                try:
+                    client.get(path)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _start_dashboard_read_path_warmup() -> None:
+    threading.Thread(target=_warm_dashboard_read_paths, name="dashboard-read-warmup", daemon=True).start()
+
+
 # ── 실행 ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     _write_pid_file(DASHBOARD_PID_PATH, "dashboard_server", [sys.executable, str(Path(__file__).resolve())])
     atexit.register(lambda: _clear_pid_file(DASHBOARD_PID_PATH))
+    _start_dashboard_read_path_warmup()
     print("=" * 52)
     print("  TRADINGBRAIN Dashboard 시작")
     print("  http://localhost:5000 으로 접속하세요")
@@ -13513,4 +14338,4 @@ if __name__ == "__main__":
     print("  /analytics   분석")
     print("  /logs        위험/오류 로그")
     print("=" * 52)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

@@ -102,6 +102,24 @@ class LiveEvidencePackTests(unittest.TestCase):
         self.assertEqual(pack["data_state"], "missing")
         self.assertEqual(pack["action_ceiling"], "WATCH")
         self.assertIn("current_price", pack["missing_fields"])
+        self.assertEqual(pack["decision_trace"]["runtime_gate_reason"], "")
+
+    def test_fail_closed_reason_becomes_hard_block_when_present(self) -> None:
+        pack = build_live_evidence_pack(
+            market="KR",
+            ticker="004710",
+            features={
+                "data_quality": "minute_missing",
+                "fail_closed": True,
+                "fail_closed_reason": "coverage_below_threshold",
+                "runtime_gate_reason": "coverage_below_threshold",
+            },
+            action={"ticker": "004710", "action": "BUY_READY"},
+        )
+
+        self.assertEqual(pack["action_ceiling"], "WATCH")
+        self.assertEqual(pack["decision_trace"]["runtime_gate_reason"], "coverage_below_threshold")
+        self.assertIn("coverage_below_threshold", pack["risk_control_view"]["hard_blocks"])
 
     def test_attach_summary_adds_counts_and_packs(self) -> None:
         meta = attach_live_evidence_summary(

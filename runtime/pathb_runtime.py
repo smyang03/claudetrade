@@ -5076,6 +5076,37 @@ class PathBRuntime:
             )
         except Exception as exc:
             log.warning(f"[PathB blocked record failed] {market} {ticker} {reason_code}: {exc}")
+        if reason_code == "MAX_DAILY_ENTRIES":
+            try:
+                bot = getattr(self, "bot", None)
+                alert = getattr(bot, "_maybe_alert_new_buy_block", None)
+                if callable(alert):
+                    try:
+                        daily_count = self._base_daily_entry_count(market)
+                    except Exception:
+                        daily_count = None
+                    try:
+                        max_daily_entries = self._base_max_daily_entries(market)
+                    except Exception:
+                        max_daily_entries = None
+                    alert(
+                        market,
+                        "MAX_DAILY_ENTRIES",
+                        "market",
+                        {
+                            **(payload or {}),
+                            "market": market,
+                            "ticker": ticker,
+                            "strategy": "claude_price",
+                            "path_type": "claude_price",
+                            "path_run_id": path_run_id,
+                            "decision_id": decision_id,
+                            "daily_count": daily_count,
+                            "max_daily_entries": max_daily_entries,
+                        },
+                    )
+            except Exception as exc:
+                log.debug(f"[PathB blocked alert failed] {market} {ticker} {reason_code}: {exc}")
         try:
             bot = getattr(self, "bot", None)
             emit_signal = getattr(bot, "_audit_emit_signal", None)

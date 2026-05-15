@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import inspect
+import os
 import time
 import unittest
 from datetime import datetime, timedelta
@@ -12,6 +14,40 @@ from bot.session_date import KST
 
 
 class PreopenOpeningRoleSeparationTests(unittest.TestCase):
+    def _resume_bot(self):
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot._current_session_date_str = lambda market: "2026-05-15"
+        bot._is_market_session_now = lambda market: True
+        bot._new_buy_block_state = lambda market, ticker, strategy: {"allowed": True}
+        bot._token_for_market = lambda market: "token"
+        bot._price_to_krw = lambda price, market: float(price)
+        bot.price_cache_raw = {}
+        bot.price_cache = {}
+        return bot
+
+    def _resume_saved(self, *, now=None, market: str = "US") -> dict:
+        current = now or datetime.now(KST)
+        ticker = "AAPL" if market == "US" else "005930"
+        return {
+            "date": "2026-05-15",
+            "market": market,
+            "mode": "live",
+            "tickers": [ticker],
+            "trade_ready_tickers": [ticker],
+            "selection_meta": {
+                "watchlist": [ticker],
+                "trade_ready": [ticker],
+                "selection_snapshot_ts": current.isoformat(timespec="seconds"),
+                "price_targets": {ticker: {"reference_price": 100.0}},
+            },
+            "judgment_context_basis": {
+                "phase": "intraday_live",
+                "live_index_context_ok": True,
+                "updated_at": current.isoformat(timespec="seconds"),
+            },
+        }
+
     def test_judgment_phase_contract_blocks_preopen_for_kr_and_us(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
 
@@ -113,6 +149,372 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
             )
         )
 
+    def test_startup_mid_session_hydrates_empty_price_cache_before_guard(self) -> None:
+        bot = self._resume_bot()
+        now = datetime.now(KST)
+        saved = self._resume_saved(now=now)
+
+        with patch("trading_bot.get_price", return_value={"price": 100.5}) as get_price:
+            precheck = trading_bot.TradingBot._trade_ready_resume_precheck(
+                bot,
+                saved,
+                "US",
+                "startup_mid_session",
+                now_dt=now,
+            )
+            hydration = trading_bot.TradingBot._hydrate_trade_ready_resume_prices(
+                bot,
+                "US",
+                precheck["trade_ready"],
+                timeout_sec=2,
+            )
+            guard = trading_bot.TradingBot._trade_ready_resume_guard(
+                bot,
+                saved,
+                "US",
+                "startup_mid_session",
+                now_dt=now,
+                precheck=precheck,
+                price_hydration=hydration,
+            )
+
+        self.assertTrue(precheck["ready_for_price_check"])
+        self.assertEqual(get_price.call_count, 1)
+        self.assertEqual(bot.price_cache_raw["AAPL"], 100.5)
+        self.assertTrue(guard["preserve"])
+        self.assertEqual(guard["reason"], "preserve_recent_trade_ready")
+
+    def test_startup_mid_session_hydration_failure_rescreens(self) -> None:
+        bot = self._resume_bot()
+        now = datetime.now(KST)
+        saved = self._resume_saved(now=now)
+
+        with patch("trading_bot.get_price", side_effect=RuntimeError("provider down")):
+            precheck = trading_bot.TradingBot._trade_ready_resume_precheck(
+                bot,
+                saved,
+                "US",
+                "startup_mid_session",
+                now_dt=now,
+            )
+            hydration = trading_bot.TradingBot._hydrate_trade_ready_resume_prices(
+                bot,
+                "US",
+                precheck["trade_ready"],
+                timeout_sec=2,
+            )
+            guard = trading_bot.TradingBot._trade_ready_resume_guard(
+                bot,
+                saved,
+                "US",
+                "startup_mid_session",
+                now_dt=now,
+                precheck=precheck,
+                price_hydration=hydration,
+            )
+
+        self.assertFalse(guard["preserve"])
+        self.assertEqual(guard["reason"], "resume_price_hydration_failed")
+        self.assertIn("AAPL", guard["skipped"])
+
+    def test_startup_mid_session_rejects_missing_market(self) -> None:
+        bot = self._resume_bot()
+        saved = self._resume_saved()
+        saved.pop("market")
+
+        guard = trading_bot.TradingBot._trade_ready_resume_guard(
+            bot,
+            saved,
+            "US",
+            "startup_mid_session",
+        )
+
+        self.assertFalse(guard["preserve"])
+        self.assertEqual(guard["reason"], "incomplete_saved_judgment:missing_market")
+
+    def test_startup_mid_session_rejects_missing_session_date(self) -> None:
+        bot = self._resume_bot()
+        saved = self._resume_saved()
+        saved.pop("date")
+        saved.pop("session_date", None)
+
+        guard = trading_bot.TradingBot._trade_ready_resume_guard(
+            bot,
+            saved,
+            "US",
+            "startup_mid_session",
+        )
+
+        self.assertFalse(guard["preserve"])
+        self.assertEqual(guard["reason"], "incomplete_saved_judgment:missing_session_date")
+
+    def test_should_rescreen_reused_judgment_has_no_side_effect(self) -> None:
+        bot = self._resume_bot()
+        bot.price_cache_raw = {"AAPL": 100.5}
+        bot._last_trade_ready_resume_guard = {"US": {"reason": "old"}}
+        before = dict(bot._last_trade_ready_resume_guard)
+
+        should_rescreen = trading_bot.TradingBot._should_rescreen_reused_judgment(
+            bot,
+            "startup_mid_session",
+            self._resume_saved(),
+            "US",
+        )
+
+        self.assertFalse(should_rescreen)
+        self.assertEqual(bot._last_trade_ready_resume_guard, before)
+
+    def test_session_open_stores_resume_guard_in_call_site(self) -> None:
+        source = inspect.getsource(trading_bot.TradingBot.session_open)
+
+        self.assertIn("_trade_ready_resume_precheck", source)
+        self.assertIn("_hydrate_trade_ready_resume_prices", source)
+        self.assertIn("_trade_ready_resume_guard", source)
+        self.assertIn("_last_trade_ready_resume_guard[market] = dict(_resume_guard)", source)
+
+    def test_startup_mid_session_preserves_recent_trade_ready_judgment(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot._current_session_date_str = lambda market: "2026-05-15"
+        bot._is_market_session_now = lambda market: True
+        bot._new_buy_block_state = lambda market, ticker, strategy: {"allowed": True}
+        bot.price_cache_raw = {"AAPL": 100.5}
+        bot.price_cache = {}
+        now = datetime.now(KST)
+        saved = {
+            "date": "2026-05-15",
+            "market": "US",
+            "mode": "live",
+            "tickers": ["AAPL", "MSFT"],
+            "trade_ready_tickers": ["AAPL"],
+            "selection_meta": {
+                "watchlist": ["AAPL", "MSFT"],
+                "trade_ready": ["AAPL"],
+                "selection_snapshot_ts": now.isoformat(timespec="seconds"),
+                "price_targets": {"AAPL": {"buy_zone": [100.0, 101.0]}},
+            },
+            "judgment_context_basis": {
+                "phase": "intraday_live",
+                "live_index_context_ok": True,
+                "updated_at": now.isoformat(timespec="seconds"),
+            },
+        }
+
+        self.assertFalse(
+            trading_bot.TradingBot._should_rescreen_reused_judgment(
+                bot,
+                "startup_mid_session",
+                saved,
+                "US",
+            )
+        )
+        self.assertTrue(
+            trading_bot.TradingBot._should_rescreen_reused_judgment(
+                bot,
+                "schedule",
+            )
+        )
+        self.assertTrue(
+            trading_bot.TradingBot._should_rescreen_reused_judgment(
+                bot,
+                "",
+            )
+        )
+
+    def test_startup_mid_session_rescreens_stale_or_unconfirmed_trade_ready(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot._current_session_date_str = lambda market: "2026-05-15"
+        bot._is_market_session_now = lambda market: True
+        bot._new_buy_block_state = lambda market, ticker, strategy: {"allowed": True}
+        bot.price_cache_raw = {"AAPL": 100.5}
+        bot.price_cache = {}
+        stale = datetime.now(KST) - timedelta(minutes=45)
+        saved = {
+            "date": "2026-05-15",
+            "market": "US",
+            "mode": "live",
+            "tickers": ["AAPL"],
+            "trade_ready_tickers": ["AAPL"],
+            "selection_meta": {
+                "watchlist": ["AAPL"],
+                "trade_ready": ["AAPL"],
+                "selection_snapshot_ts": stale.isoformat(timespec="seconds"),
+                "price_targets": {"AAPL": {"buy_zone": [100.0, 101.0]}},
+            },
+            "judgment_context_basis": {
+                "phase": "intraday_live",
+                "live_index_context_ok": True,
+                "updated_at": stale.isoformat(timespec="seconds"),
+            },
+        }
+
+        with patch.dict(os.environ, {"TRADE_READY_RESTORE_MAX_AGE_MINUTES": "20"}, clear=False):
+            self.assertTrue(
+                trading_bot.TradingBot._should_rescreen_reused_judgment(
+                    bot,
+                    "startup_mid_session",
+                    saved,
+                    "US",
+                )
+            )
+
+        saved["selection_meta"]["selection_snapshot_ts"] = datetime.now(KST).isoformat(timespec="seconds")
+        saved["judgment_context_basis"]["live_index_context_ok"] = False
+        self.assertTrue(
+            trading_bot.TradingBot._should_rescreen_reused_judgment(
+                bot,
+                "startup_mid_session",
+                saved,
+                "US",
+            )
+        )
+
+    def test_startup_mid_session_rescreens_price_drift_exceeded(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot._current_session_date_str = lambda market: "2026-05-15"
+        bot._is_market_session_now = lambda market: True
+        bot._new_buy_block_state = lambda market, ticker, strategy: {"allowed": True}
+        bot.price_cache_raw = {"AAPL": 105.0}
+        bot.price_cache = {}
+        now = datetime.now(KST)
+        saved = {
+            "date": "2026-05-15",
+            "market": "US",
+            "mode": "live",
+            "tickers": ["AAPL"],
+            "trade_ready_tickers": ["AAPL"],
+            "selection_meta": {
+                "watchlist": ["AAPL"],
+                "trade_ready": ["AAPL"],
+                "selection_snapshot_ts": now.isoformat(timespec="seconds"),
+                "price_targets": {"AAPL": {"reference_price": 100.0}},
+            },
+            "judgment_context_basis": {
+                "phase": "intraday_live",
+                "live_index_context_ok": True,
+                "updated_at": now.isoformat(timespec="seconds"),
+            },
+        }
+
+        with patch.dict(os.environ, {"TRADE_READY_RESTORE_MAX_PRICE_DRIFT_PCT": "2.0"}, clear=False):
+            guard = trading_bot.TradingBot._trade_ready_resume_guard(
+                bot,
+                saved,
+                "US",
+                "startup_mid_session",
+                now_dt=now,
+            )
+
+        self.assertFalse(guard["preserve"])
+        self.assertEqual(guard["reason"], "price_drift_exceeded")
+        self.assertIn("AAPL", guard["skipped"])
+
+    def test_startup_mid_session_rescreens_when_price_unchecked_by_default(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot._current_session_date_str = lambda market: "2026-05-15"
+        bot._is_market_session_now = lambda market: True
+        bot._new_buy_block_state = lambda market, ticker, strategy: {"allowed": True}
+        bot.price_cache_raw = {}
+        bot.price_cache = {}
+        now = datetime.now(KST)
+        saved = {
+            "date": "2026-05-15",
+            "market": "US",
+            "mode": "live",
+            "tickers": ["AAPL"],
+            "trade_ready_tickers": ["AAPL"],
+            "selection_meta": {
+                "watchlist": ["AAPL"],
+                "trade_ready": ["AAPL"],
+                "selection_snapshot_ts": now.isoformat(timespec="seconds"),
+                "price_targets": {"AAPL": {"reference_price": 100.0}},
+            },
+            "judgment_context_basis": {
+                "phase": "intraday_live",
+                "live_index_context_ok": True,
+                "updated_at": now.isoformat(timespec="seconds"),
+            },
+        }
+
+        guard = trading_bot.TradingBot._trade_ready_resume_guard(
+            bot,
+            saved,
+            "US",
+            "startup_mid_session",
+            now_dt=now,
+        )
+
+        self.assertFalse(guard["preserve"])
+        self.assertEqual(guard["reason"], "resume_price_hydration_failed")
+        self.assertEqual(guard["skipped"], {"AAPL": "resume_price_hydration_failed"})
+
+    def test_startup_mid_session_records_trade_ready_restore_failure_metadata(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.today_judgment = {"market": "US"}
+        guard = {
+            "preserve": False,
+            "reason": "resume_price_hydration_failed",
+            "skipped": {"AAPL": "resume_price_hydration_failed"},
+            "price_hydration": {"failed": {"AAPL": "resume_price_hydration_failed"}},
+            "max_age_minutes": 20,
+            "age_minutes": 4.5,
+            "trade_ready": ["AAPL"],
+        }
+
+        recorded = trading_bot.TradingBot._record_trade_ready_restore_guard(
+            bot,
+            "US",
+            "startup_mid_session",
+            guard,
+        )
+
+        self.assertTrue(recorded)
+        meta = bot.today_judgment["trade_ready_restore"]
+        self.assertTrue(meta["attempted"])
+        self.assertEqual(meta["restored"], [])
+        self.assertEqual(meta["skipped"], {"AAPL": "resume_price_hydration_failed"})
+        self.assertEqual(meta["price_hydration"], {"failed": {"AAPL": "resume_price_hydration_failed"}})
+        self.assertEqual(meta["reason"], "resume_price_hydration_failed")
+        self.assertEqual(bot.today_judgment["trade_ready_resume_guard"], guard)
+
+        before = dict(bot.today_judgment)
+        self.assertFalse(
+            trading_bot.TradingBot._record_trade_ready_restore_guard(
+                bot,
+                "US",
+                "schedule",
+                {"preserve": False, "reason": "selection_stale"},
+            )
+        )
+        self.assertEqual(bot.today_judgment, before)
+
+    def test_max_daily_entries_alert_renders_rate_details(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._current_session_date_str = lambda market: "2026-05-15"
+        bot.today_judgment = {"consensus": {"mode": "NEUTRAL", "size": 20}}
+
+        with patch("trading_bot.block_alert") as alert:
+            trading_bot.TradingBot._maybe_alert_new_buy_block(
+                bot,
+                "US",
+                "MAX_DAILY_ENTRIES",
+                "market",
+                {
+                    "ticker": "AAPL",
+                    "strategy": "momentum",
+                    "rate_key": "live:US:buy",
+                    "daily_count": 20,
+                    "max_daily_entries": 20,
+                },
+            )
+
+        rendered = "\n".join(alert.call_args.args[1])
+        self.assertIn("daily entries: 20/20", rendered)
+        self.assertIn("rate key: live:US:buy", rendered)
+
     def test_consensus_new_buy_permission_block_sets_hard_size_zero(self) -> None:
         from minority_report import consensus as consensus_module
 
@@ -141,7 +543,12 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
             result = consensus_module.build_consensus(judgments, market="US")
 
         self.assertEqual(result["new_buy_permission"], "block")
+        self.assertEqual(
+            result["new_buy_permission_votes_by_role"],
+            {"bull": "allow", "bear": "block", "neutral": "selective"},
+        )
         self.assertEqual(result["max_gross_exposure_pct"], 25)
+        self.assertEqual(result["max_gross_exposure_pct_by_role"]["bear"], 25)
         self.assertEqual(result["size"], 0)
         self.assertGreater(result["size_before_new_buy_block"], 0)
 
@@ -167,6 +574,73 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertFalse(state["allowed"])
         self.assertEqual(state["reason"], "ANALYST_MAX_GROSS_EXPOSURE_REACHED")
         self.assertEqual(state["details"]["gross_exposure_pct"], 25.0)
+
+    def test_new_buy_block_alert_includes_votes_and_dedupes(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._current_session_date_str = lambda market: "2026-05-15"
+        bot.today_judgment = {"consensus": {"mode": "CAUTIOUS", "size": 0, "new_buy_permission": "block"}}
+        details = {
+            "ticker": "AAPL",
+            "strategy": "momentum",
+            "permission_votes_by_role": {"bull": "block", "bear": "selective", "neutral": "block"},
+            "max_gross_exposure_pct_by_role": {"bull": 35, "bear": 40, "neutral": 30},
+            "max_gross_exposure_pct": 30,
+        }
+
+        with patch.dict(os.environ, {"NEW_BUY_BLOCK_TG_ALERT_REASONS": ""}, clear=False):
+            with patch("trading_bot.block_alert") as alert:
+                trading_bot.TradingBot._maybe_alert_new_buy_block(
+                    bot,
+                    "US",
+                    "ANALYST_NEW_BUY_BLOCK",
+                    "market",
+                    details,
+                )
+                trading_bot.TradingBot._maybe_alert_new_buy_block(
+                    bot,
+                    "US",
+                    "ANALYST_NEW_BUY_BLOCK",
+                    "market",
+                    details,
+                )
+
+        self.assertEqual(alert.call_count, 1)
+        lines = alert.call_args.args[1]
+        rendered = "\n".join(lines)
+        self.assertIn("bull=block", rendered)
+        self.assertIn("mode: CAUTIOUS", rendered)
+        self.assertIn("size: 0%", rendered)
+        self.assertIn("/claude US", rendered)
+        self.assertIn("/rescreen US", rendered)
+
+    def test_reinvoke_rescreen_triggers_when_permission_relaxes_same_mode(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+
+        should_refresh, reason = trading_bot.TradingBot._should_refresh_selection_after_reinvoke(
+            bot,
+            {"mode": "CAUTIOUS", "size": 0, "new_buy_permission": "block", "max_gross_exposure_pct": 30},
+            {"mode": "CAUTIOUS", "size": 20, "new_buy_permission": "selective", "max_gross_exposure_pct": 30},
+            {"phase": "intraday_live_unconfirmed", "live_index_context_ok": False},
+            {"phase": "intraday_live", "live_index_context_ok": True},
+        )
+
+        self.assertTrue(should_refresh)
+        self.assertIn("new_buy_permission_relaxed", reason)
+
+    def test_reinvoke_rescreen_triggers_when_cap_relaxes_same_mode(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+
+        with patch.dict(os.environ, {"REINVOKE_RESCREEN_CAP_INCREASE_THRESHOLD_PCT": "10"}, clear=False):
+            should_refresh, reason = trading_bot.TradingBot._should_refresh_selection_after_reinvoke(
+                bot,
+                {"mode": "NEUTRAL", "size": 20, "new_buy_permission": "selective", "max_gross_exposure_pct": 20},
+                {"mode": "NEUTRAL", "size": 20, "new_buy_permission": "selective", "max_gross_exposure_pct": 40},
+                {"phase": "intraday_live", "live_index_context_ok": True},
+                {"phase": "intraday_live", "live_index_context_ok": True},
+            )
+
+        self.assertTrue(should_refresh)
+        self.assertIn("max_gross_cap_relaxed", reason)
 
     def test_run_cycle_blocks_new_buy_scan_when_judgment_not_executable(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)

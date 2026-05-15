@@ -13,6 +13,8 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 @dataclass
@@ -313,7 +315,43 @@ def check_selection_db_health(root: Path) -> CheckResult:
     )
 
 
-def run_checks(root: Path, include_git: bool) -> list[CheckResult]:
+def check_price_csv_health(root: Path, market: str, trigger: str = "manual") -> list[CheckResult]:
+    try:
+        from runtime.price_csv_health import price_csv_health_summary
+
+        summary = price_csv_health_summary(root, market)
+    except Exception as exc:
+        return [CheckResult(f"data.price_csv_freshness.{market.lower()}", "FAIL", f"health check failed: {exc}")]
+
+    counts = summary.get("counts", {})
+    malformed = int(counts.get("malformed_csv", 0))
+    missing = int(counts.get("missing_csv", 0))
+    stale = int(counts.get("stale_csv", 0))
+    total = int(summary.get("total", 0))
+    fresh_ratio = float(summary.get("fresh_ratio", 0.0))
+    trigger_key = str(trigger or "").upper()
+    is_postclose = trigger_key == f"{market.upper()}_POSTCLOSE"
+
+    freshness_status = "PASS"
+    if total == 0 or stale or fresh_ratio < 0.95:
+        freshness_status = "FAIL" if is_postclose and fresh_ratio < 0.95 else "WARN"
+    freshness_detail = (
+        f"total={total} fresh={summary.get('fresh_count', 0)} "
+        f"fresh_ratio={fresh_ratio:.1%} stale={stale} "
+        f"expected_last={summary.get('expected_last_date', '')} "
+        f"last_range={summary.get('oldest_last_date', '')}..{summary.get('newest_last_date', '')}"
+    )
+    integrity_status = "PASS"
+    if total == 0 or malformed or missing:
+        integrity_status = "FAIL" if is_postclose and (malformed or missing) else "WARN"
+    integrity_detail = f"total={total} malformed={malformed} missing={missing}"
+    return [
+        CheckResult(f"data.price_csv_freshness.{market.lower()}", freshness_status, freshness_detail),
+        CheckResult(f"data.price_csv_integrity.{market.lower()}", integrity_status, integrity_detail),
+    ]
+
+
+def run_checks(root: Path, include_git: bool, trigger: str = "manual") -> list[CheckResult]:
     results: list[CheckResult] = []
     results.append(check_py_compile(root))
     brain_result, brain_data = check_brain_json(root)
@@ -326,6 +364,8 @@ def run_checks(root: Path, include_git: bool) -> list[CheckResult]:
     results.append(check_strategy_aliases(tree))
     results.append(check_ml_db_health(root))
     results.append(check_selection_db_health(root))
+    results.extend(check_price_csv_health(root, "KR", trigger))
+    results.extend(check_price_csv_health(root, "US", trigger))
     results.append(check_git_diff(root, include_git))
     return results
 
@@ -339,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
-    results = run_checks(root, include_git=not args.skip_git_diff)
+    results = run_checks(root, include_git=not args.skip_git_diff, trigger=args.trigger)
     ok = all(result.status != "FAIL" for result in results)
     payload = {
         "ok": ok,

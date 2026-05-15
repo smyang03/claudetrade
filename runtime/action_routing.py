@@ -291,6 +291,12 @@ def route_candidate_action(
         "evidence_data_state",
         "evidence_missing_fields",
         "evidence_action_ceiling",
+        "evidence_fail_closed",
+        "evidence_fail_closed_reason",
+        "evidence_provider",
+        "evidence_requested",
+        "evidence_complete",
+        "evidence_coverage_ratio",
         "evidence_partial_grace_active",
         "evidence_pack",
         "spread_bps",
@@ -398,12 +404,16 @@ def route_candidate_action(
         gate_context["evidence_ceiling_applied"] = False
         if evidence_state == "missing" or evidence_ceiling in {"WATCH", "WAIT_CONFIRMATION"}:
             gate_context["evidence_ceiling_applied"] = True
+            fail_closed_reason = str(context.get("evidence_fail_closed_reason") or "").strip()
+            runtime_reason = fail_closed_reason or (
+                "data_fail_closed_watch_only" if bool(context.get("evidence_fail_closed")) else "evidence_action_ceiling"
+            )
             return _decision(
                 "WATCH",
-                reason="evidence_ceiling_watch",
+                reason="data_fail_closed_watch_only" if bool(context.get("evidence_fail_closed")) else "evidence_ceiling_watch",
                 warnings=["evidence_ceiling_applied"],
                 demoted_to="WATCH",
-                runtime_gate_reason="evidence_action_ceiling",
+                runtime_gate_reason=runtime_reason,
             )
         if requested == "BUY_READY" and evidence_state == "partial" and bool(context.get("evidence_partial_grace_active")):
             gate_context["evidence_ceiling_grace"] = "partial_grace"

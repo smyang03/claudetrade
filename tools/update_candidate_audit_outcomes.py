@@ -229,6 +229,7 @@ def update_candidate_audit_outcomes(
     target = Path(db_path) if db_path else get_runtime_path("data", "audit", "candidate_audit.db")
     store = CandidateAuditStore(target)
     label_generated_at = _utc_now()
+    next_due_at = (datetime.now(timezone.utc) + timedelta(minutes=max(horizons or DEFAULT_HORIZONS))).isoformat(timespec="seconds")
     min_samples = dict(MIN_SAMPLES_BY_HORIZON)
     if min_samples_by_horizon:
         min_samples.update({int(k): int(v) for k, v in min_samples_by_horizon.items()})
@@ -281,6 +282,10 @@ def update_candidate_audit_outcomes(
         "outcome_rows": written,
         "horizons": list(horizons),
         "status_counts": status_counts,
+        "label_generated_at": label_generated_at,
+        "last_success_at": label_generated_at if written or not candidates else "",
+        "next_due_at": next_due_at,
+        "outcome_health": "ok" if written or not candidates else "no_outcomes_written",
     }
 
 

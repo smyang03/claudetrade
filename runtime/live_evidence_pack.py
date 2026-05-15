@@ -139,11 +139,20 @@ def build_live_evidence_pack(
     data_quality = str(features.get("data_quality") or "unknown").strip().lower()
 
     hard_blocks: list[str] = []
-    block_reason = str(gate_info.get("block_reason") or route.get("runtime_gate_reason") or route.get("reason") or "")
+    feature_gate_reason = str(features.get("runtime_gate_reason") or features.get("fail_closed_reason") or "")
+    block_reason = str(
+        gate_info.get("block_reason")
+        or route.get("runtime_gate_reason")
+        or route.get("reason")
+        or feature_gate_reason
+        or ""
+    )
     if bool(gate_info.get("blocked")) and block_reason:
         hard_blocks.append(block_reason)
     if str(route.get("final_action") or "").upper() == "HARD_BLOCK" and block_reason:
         hard_blocks.append(block_reason)
+    if bool(features.get("fail_closed")) and feature_gate_reason:
+        hard_blocks.append(feature_gate_reason)
 
     positive: list[str] = []
     negative: list[str] = []
@@ -216,7 +225,7 @@ def build_live_evidence_pack(
             "route_action": route_action,
             "route": route.get("route") or "",
             "route_reason": route.get("reason") or "",
-            "runtime_gate_reason": route.get("runtime_gate_reason") or "",
+            "runtime_gate_reason": route.get("runtime_gate_reason") or feature_gate_reason or "",
             "execution_state": execution_state,
             "block_reason": block_reason,
             "execution_owner": "claude",

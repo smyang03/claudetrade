@@ -72,6 +72,7 @@ class PriceCollectorIncrementalTests(unittest.TestCase):
 
             with patch.object(price_collector, "PRICE_DIR", price_dir), \
                  patch.object(price_collector, "KR_TICKERS", {"417200": "417200"}), \
+                 patch.object(price_collector, "_load_price_priority_tickers", return_value=[]), \
                  patch.object(price_collector, "fetch_kr_daily", kis), \
                  patch.object(price_collector, "fetch_kr_daily_yfinance", yf), \
                  patch.object(price_collector.time, "sleep", lambda *_: None):
@@ -112,6 +113,7 @@ class PriceCollectorIncrementalTests(unittest.TestCase):
 
             with patch.object(price_collector, "PRICE_DIR", price_dir), \
                  patch.object(price_collector, "KR_TICKERS", {"417200": "417200"}), \
+                 patch.object(price_collector, "_load_price_priority_tickers", return_value=[]), \
                  patch.object(price_collector, "fetch_kr_daily", kis), \
                  patch.object(price_collector, "fetch_kr_daily_yfinance", yf), \
                  patch.object(price_collector.time, "sleep", lambda *_: None):
@@ -172,6 +174,7 @@ class PriceCollectorIncrementalTests(unittest.TestCase):
 
             with patch.object(price_collector, "PRICE_DIR", price_dir), \
                  patch.object(price_collector, "US_TICKERS", {"AAPL": "Apple"}), \
+                 patch.object(price_collector, "_load_price_priority_tickers", return_value=[]), \
                  patch.object(price_collector, "fetch_us_daily_yfinance", fetch), \
                  patch.object(price_collector, "_audit_csv_date_gaps", return_value=gap_audit), \
                  patch.object(price_collector, "_gap_ranges", return_value=[(pd.Timestamp("2026-05-08"), pd.Timestamp("2026-05-08"))]), \
@@ -186,6 +189,47 @@ class PriceCollectorIncrementalTests(unittest.TestCase):
             saved = pd.read_csv(path)
             self.assertIn("2026-05-08", saved["date"].astype(str).tolist())
             self.assertIn("2026-05-20", saved["date"].astype(str).tolist())
+
+    def test_us_incremental_fetches_when_csv_is_inside_old_grace_but_missing_expected_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            price_dir = root / "price"
+            us_dir = price_dir / "us"
+            us_dir.mkdir(parents=True)
+            path = us_dir / "us_AAPL.csv"
+            path.write_text(
+                "date,open,high,low,close,volume\n"
+                "2026-05-11,100,101,99,100,1000\n",
+                encoding="utf-8",
+            )
+            forward_df = pd.DataFrame(
+                [
+                    {
+                        "date": pd.Timestamp("2026-05-14"),
+                        "open": 114,
+                        "high": 115,
+                        "low": 113,
+                        "close": 114,
+                        "volume": 1000,
+                    }
+                ]
+            )
+            fetch = Mock(return_value=forward_df)
+
+            with patch.object(price_collector, "PRICE_DIR", price_dir), \
+                 patch.object(price_collector, "US_TICKERS", {"AAPL": "Apple"}), \
+                 patch.object(price_collector, "_load_price_priority_tickers", return_value=[]), \
+                 patch.object(price_collector, "fetch_us_daily_yfinance", fetch), \
+                 patch.object(price_collector, "_audit_csv_date_gaps", return_value={"gaps": [], "duplicate_dates": 0, "calendar_source": "test"}), \
+                 patch.object(price_collector.time, "sleep", lambda *_: None):
+                price_collector.collect_us_incremental(
+                    pd.Timestamp("2026-05-01"),
+                    pd.Timestamp("2026-05-15"),
+                )
+
+            fetch.assert_called_once()
+            saved = pd.read_csv(path)
+            self.assertIn("2026-05-14", saved["date"].astype(str).tolist())
 
     def test_csv_gap_audit_uses_trading_calendar_and_counts_duplicates(self) -> None:
         rows = pd.DataFrame(
@@ -208,6 +252,26 @@ class PriceCollectorIncrementalTests(unittest.TestCase):
         self.assertEqual([day.strftime("%Y-%m-%d") for day in audit["gaps"]], ["2026-05-08"])
         self.assertEqual(audit["calendar_source"], "test_calendar")
 
+    def test_us_expected_last_trading_day_waits_for_kst_close_buffer(self) -> None:
+        class BeforeUsCloseDatetime:
+            @staticmethod
+            def now():
+                from datetime import datetime
+
+                return datetime(2026, 5, 16, 0, 30, 0)
+
+        expected = [pd.Timestamp("2026-05-14"), pd.Timestamp("2026-05-15")]
+        with patch.object(price_collector, "datetime", BeforeUsCloseDatetime), patch.object(
+            price_collector,
+            "_expected_trading_days",
+            return_value=(expected[:1], "test_calendar"),
+        ) as calendar:
+            last, source = price_collector._expected_last_trading_day("US", pd.Timestamp("2026-05-16"))
+
+        self.assertEqual(last, pd.Timestamp("2026-05-14"))
+        self.assertEqual(source, "test_calendar")
+        self.assertEqual(calendar.call_args.args[2], pd.Timestamp("2026-05-14"))
+
     def test_save_removes_duplicate_dates_and_sorts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "prices.csv"
@@ -229,6 +293,51 @@ class PriceCollectorIncrementalTests(unittest.TestCase):
 
             saved = pd.read_csv(path)
             self.assertEqual(saved["date"].astype(str).tolist(), ["2026-05-08", "2026-05-11"])
+
+    def test_prioritize_ticker_map_uses_screener_priority_first(self) -> None:
+        with patch.object(price_collector, "_load_price_priority_tickers", return_value=["MSFT", "NEWC", "AAPL"]):
+            ordered = price_collector._prioritize_ticker_map(
+                {"AAPL": "Apple", "NVDA": "Nvidia", "MSFT": "Microsoft"},
+                "US",
+            )
+
+        self.assertEqual(list(ordered.keys()), ["MSFT", "NEWC", "AAPL", "NVDA"])
+        self.assertEqual(ordered["NEWC"], "NEWC")
+
+    def test_kr_incremental_includes_new_priority_ticker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            price_dir = Path(tmp) / "price"
+            (price_dir / "kr").mkdir(parents=True)
+            fetched: list[str] = []
+
+            def fake_fetch(ticker: str, start: str, end: str) -> pd.DataFrame:
+                fetched.append(ticker)
+                return pd.DataFrame(
+                    [
+                        {
+                            "date": pd.Timestamp("2026-05-15"),
+                            "open": 10,
+                            "high": 11,
+                            "low": 9,
+                            "close": 10,
+                            "volume": 100,
+                        }
+                    ]
+                )
+
+            with patch.object(price_collector, "PRICE_DIR", price_dir), \
+                 patch.object(price_collector, "KR_TICKERS", {"005930": "Samsung"}), \
+                 patch.object(price_collector, "_load_price_priority_tickers", return_value=["123456"]), \
+                 patch.object(price_collector, "fetch_kr_daily", fake_fetch), \
+                 patch.object(price_collector, "fetch_kr_daily_yfinance", Mock(return_value=pd.DataFrame())), \
+                 patch.object(price_collector.time, "sleep", lambda *_: None):
+                price_collector.collect_kr_incremental(
+                    pd.Timestamp("2026-05-15"),
+                    pd.Timestamp("2026-05-15"),
+                )
+
+            self.assertIn("123456", fetched)
+            self.assertTrue((price_dir / "kr" / "kr_123456.csv").exists())
 
 
 if __name__ == "__main__":

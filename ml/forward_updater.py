@@ -23,6 +23,7 @@ _PRICE_DIR = _ROOT / "data" / "price"
 
 sys.path.insert(0, str(_ROOT))
 from ml.db_writer import _resolve_db_path
+from runtime.price_csv_health import load_price_csv_frame
 
 try:
     from logger import get_collector_logger
@@ -34,7 +35,7 @@ except Exception:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     _log = logging.getLogger("ml.forward_updater")
 
-_price_cache: dict[str, Optional[pd.DataFrame]] = {}
+_price_cache: dict[str, tuple[Optional[pd.DataFrame], str]] = {}
 
 
 class _ClosingConnection(sqlite3.Connection):
@@ -53,27 +54,27 @@ def _get_conn() -> sqlite3.Connection:
     return conn
 
 
-def _load_price(market: str, ticker: str) -> Optional[pd.DataFrame]:
+def _load_price(market: str, ticker: str) -> tuple[Optional[pd.DataFrame], str]:
     key = f"{market}:{ticker}"
     if key in _price_cache:
         return _price_cache[key]
 
     mkt = market.lower()
     path = _PRICE_DIR / mkt / f"{mkt}_{ticker}.csv"
-    if not path.exists():
+    df, load_result = load_price_csv_frame(path, market, ticker)
+    if load_result.status == "missing_csv":
         _log.warning(f"[forward] missing CSV: {path}")
-        _price_cache[key] = None
-        return None
+        _price_cache[key] = (None, "missing_csv")
+        return _price_cache[key]
+    if load_result.status != "ok" or df is None:
+        _log.warning(f"[forward] invalid CSV {path}: {load_result.detail}")
+        _price_cache[key] = (None, "malformed_csv")
+        return _price_cache[key]
 
-    try:
-        df = pd.read_csv(path, dtype={"date": str}).sort_values("date").reset_index(drop=True)
-        df = df.set_index("date")
-        _price_cache[key] = df
-        return df
-    except Exception as e:
-        _log.warning(f"[forward] failed to load CSV {path}: {e}")
-        _price_cache[key] = None
-        return None
+    df = df.sort_values("date").reset_index(drop=True)
+    df = df.set_index("date")
+    _price_cache[key] = (df, "ok")
+    return _price_cache[key]
 
 
 def _calc_forward_return(df: pd.DataFrame, session_date: str, n_days: int) -> tuple[Optional[float], str]:
@@ -81,6 +82,8 @@ def _calc_forward_return(df: pd.DataFrame, session_date: str, n_days: int) -> tu
         return None, "price_column_missing"
     dates = df.index.tolist()
     if session_date not in dates:
+        if dates and str(session_date) > str(dates[-1]):
+            return None, "stale_csv"
         return None, "session_date_missing"
     base_idx = dates.index(session_date)
     future_idx = base_idx + n_days
@@ -131,8 +134,12 @@ def run(
         "partial_updated": 0,
         "skipped": 0,
         "missing_csv": 0,
+        "malformed_csv": 0,
         "would_update": 0,
         "skip_by": {
+            "missing_csv": 0,
+            "malformed_csv": 0,
+            "stale_csv": 0,
             "session_date_missing": 0,
             "future_price_not_available": 0,
             "base_close_invalid": 0,
@@ -151,9 +158,15 @@ def run(
         ticker = row["ticker"]
         session_date = row["session_date"]
 
-        df = _load_price(market_code, ticker)
+        df, load_status = _load_price(market_code, ticker)
         if df is None:
-            summary["missing_csv"] += 1
+            if load_status == "malformed_csv":
+                summary["malformed_csv"] += 1
+            else:
+                summary["missing_csv"] += 1
+            summary["skipped"] += 1
+            if load_status in summary["skip_by"]:
+                summary["skip_by"][load_status] += 1
             continue
 
         calc_map = {n: _calc_forward_return(df, session_date, n) for n in forward_days}
@@ -198,13 +211,17 @@ def run(
     _log.info(
         f"[forward] done updated={summary['updated']} "
         f"partial_updated={summary['partial_updated']} skipped={summary['skipped']} "
-        f"skip_by={{{skip_parts}}} missing_csv={summary['missing_csv']}"
+        f"skip_by={{{skip_parts}}} missing_csv={summary['missing_csv']} "
+        f"malformed_csv={summary['malformed_csv']}"
     )
     return summary
 
 
 def _row_skip_reason(reasons: dict[int, str]) -> str:
     priority = (
+        "missing_csv",
+        "malformed_csv",
+        "stale_csv",
         "session_date_missing",
         "base_close_invalid",
         "price_column_missing",

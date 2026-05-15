@@ -76,6 +76,8 @@ def run_catchup(
     runtime_mode: str = "live",
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     dry_run: bool = False,
+    write_report: bool = False,
+    report_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     plan = build_catchup_plan(date_arg=date_arg, from_date=from_date, to_date=to_date, days=days, market=market)
     results: list[dict[str, Any]] = []
@@ -90,7 +92,7 @@ def run_catchup(
                     horizons=horizons,
                 )
             )
-    return {
+    summary = {
         "dry_run": bool(dry_run),
         "runtime_mode": str(runtime_mode or "live").lower(),
         "horizons": list(horizons),
@@ -98,6 +100,18 @@ def run_catchup(
         "results": results,
         "total_outcome_rows": sum(int(row.get("outcome_rows") or 0) for row in results),
     }
+    if write_report:
+        summary["report_path"] = str(_write_catchup_report(summary, report_dir=report_dir))
+    return summary
+
+
+def _write_catchup_report(summary: dict[str, Any], *, report_dir: str | Path | None = None) -> Path:
+    out_dir = Path(report_dir) if report_dir else ROOT / "data" / "v2_reports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = out_dir / f"candidate_audit_outcome_catchup_{stamp}.json"
+    path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    return path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -122,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         runtime_mode=args.runtime_mode,
         horizons=_parse_horizons(args.horizons),
         dry_run=args.dry_run,
+        write_report=True,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

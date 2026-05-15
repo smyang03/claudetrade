@@ -49,6 +49,19 @@ V2_TELEGRAM_COMMANDS: tuple[str, ...] = (
     "/pathb_closeall",
 )
 
+RUNTIME_DRIFT_KEYS: tuple[str, ...] = (
+    "ENABLED_MARKETS",
+    "V2_MAX_DAILY_ENTRIES",
+    "KR_DAILY_ENTRY_CAP",
+    "US_DAILY_ENTRY_CAP",
+    "PATHB_ENABLED",
+    "PATHB_KR_LIVE_ENABLED",
+    "PATHB_US_LIVE_ENABLED",
+    "PATHB_MAX_POSITIONS",
+    "PATHB_MAX_DAILY_ENTRIES",
+    "PATHB_FIXED_ORDER_KRW",
+)
+
 
 def build_v2_ops_summary(
     *,
@@ -1018,6 +1031,12 @@ def _broker_evidence_for_path_run(run: dict[str, Any], broker_truth: dict[str, A
 
 def _path_b_metrics(runs: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(runs)
+    currencies = {
+        "USD" if str(run.get("market", "") or "").upper() == "US" else "KRW"
+        for run in runs
+        if str(run.get("market", "") or "").upper() in {"KR", "US"}
+    }
+    currency = next(iter(currencies)) if len(currencies) == 1 else ("mixed" if currencies else "native")
     entered_statuses = {"ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED", "FILLED", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED", "CLOSED"}
     entered = [run for run in runs if str(run.get("status", "")) in entered_statuses]
     closed = [run for run in runs if str(run.get("status", "")) == "CLOSED"]
@@ -1059,7 +1078,7 @@ def _path_b_metrics(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_pnl_pct": round(sum(pnl_values) / len(pnl_values), 4) if pnl_values else 0.0,
         "realized_pnl_value": round(realized, 4),
         "deployed_value": round(deployed, 4),
-        "currency": "native",
+        "currency": currency,
     }
 
 
@@ -1241,6 +1260,50 @@ def _path_b_config(runtime_mode: str | None = None) -> dict[str, Any]:
     }
 
 
+def _norm_config_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    return str(value)
+
+
+def _latest_runtime_config_snapshot(mode: str) -> tuple[str, dict[str, Any]]:
+    try:
+        config_dir = get_runtime_path("logs", "config", "_probe", make_parents=False).parent
+    except Exception:
+        config_dir = Path(__file__).resolve().parent.parent / "logs" / "config"
+    if not config_dir.exists():
+        return "", {}
+    candidates = sorted(
+        config_dir.glob(f"effective_config_*_{mode}.redacted.json"),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            return str(path), json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return "", {}
+
+
+def _runtime_config_drift(effective: dict[str, str], mode: str) -> dict[str, Any]:
+    snapshot_path, payload = _latest_runtime_config_snapshot(mode)
+    runtime_effective = dict((payload or {}).get("effective") or {})
+    drift: dict[str, dict[str, str]] = {}
+    for key in RUNTIME_DRIFT_KEYS:
+        if key not in effective and key not in runtime_effective:
+            continue
+        file_value = _norm_config_value(effective.get(key, ""))
+        runtime_value = _norm_config_value(runtime_effective.get(key, ""))
+        if file_value != runtime_value:
+            drift[key] = {"file_effective": file_value, "runtime_snapshot": runtime_value}
+    return {
+        "snapshot_path": snapshot_path,
+        "written_at": (payload or {}).get("written_at", ""),
+        "drift": drift,
+    }
+
+
 def _effective_runtime_env(runtime_mode: str | None) -> tuple[dict[str, str], dict[str, Any]]:
     root = Path(__file__).resolve().parent.parent
     mode = str(runtime_mode or "live").lower()
@@ -1267,12 +1330,18 @@ def _effective_runtime_env(runtime_mode: str | None) -> tuple[dict[str, str], di
         except Exception:
             applied = False
     watched = [
+        "ENABLED_MARKETS",
         "PATHB_FIXED_ORDER_KRW",
         "PATHB_MAX_POSITIONS",
         "PATHB_MAX_DAILY_ENTRIES",
+        "PATHB_ENABLED",
+        "PATHB_KR_LIVE_ENABLED",
+        "PATHB_US_LIVE_ENABLED",
         "PATHB_INTRADAY_ONLY",
         "PATHB_MIN_CONFIDENCE",
         "V2_MAX_DAILY_ENTRIES",
+        "KR_DAILY_ENTRY_CAP",
+        "US_DAILY_ENTRY_CAP",
         "KR_MAX_POSITIONS",
         "US_MAX_POSITIONS",
     ]
@@ -1281,11 +1350,14 @@ def _effective_runtime_env(runtime_mode: str | None) -> tuple[dict[str, str], di
         for key in watched
         if key in base_env and key in overrides and str(base_env.get(key)) != str(overrides.get(key))
     }
+    runtime_snapshot = _runtime_config_drift(effective, mode)
     return effective, {
         "runtime_env": str(env_path),
         "start_config": str(start_config_path) if start_config_path.exists() else "",
         "start_config_applied": applied,
         "conflicts": conflicts,
+        "runtime_snapshot": runtime_snapshot,
+        "runtime_drift": runtime_snapshot.get("drift", {}),
     }
 
 

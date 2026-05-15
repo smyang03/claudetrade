@@ -79,6 +79,19 @@ LIVE_CONFIG_KEYS = {
     "KIS_US_CREDENTIAL_FALLBACK_ACCEPTED",
 }
 
+RUNTIME_CONFIG_DRIFT_KEYS = {
+    "ENABLED_MARKETS",
+    "V2_MAX_DAILY_ENTRIES",
+    "KR_DAILY_ENTRY_CAP",
+    "US_DAILY_ENTRY_CAP",
+    "PATHB_ENABLED",
+    "PATHB_KR_LIVE_ENABLED",
+    "PATHB_US_LIVE_ENABLED",
+    "PATHB_MAX_POSITIONS",
+    "PATHB_MAX_DAILY_ENTRIES",
+    "PATHB_FIXED_ORDER_KRW",
+}
+
 REQUIRED_TABLE_COLUMNS = {
     "v2_decisions": {
         "decision_id",
@@ -204,6 +217,64 @@ def load_effective_config(mode: str) -> dict[str, Any]:
         "effective": effective,
         "start_config": start_config,
     }
+
+
+def _latest_runtime_config_snapshot(mode: str) -> tuple[Path | None, dict[str, Any]]:
+    try:
+        config_dir = get_runtime_path("logs", "config", "_probe", make_parents=False).parent
+    except Exception:
+        config_dir = ROOT / "logs" / "config"
+    if not config_dir.exists():
+        return None, {}
+    pattern = f"effective_config_*_{mode}.redacted.json"
+    candidates = sorted(
+        config_dir.glob(pattern),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            return path, json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return None, {}
+
+
+def _runtime_config_drift_payload(config: dict[str, Any], snapshot_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    effective = dict(config.get("effective") or {})
+    runtime_effective = dict((snapshot_payload or {}).get("effective") or {})
+    drift: dict[str, dict[str, Any]] = {}
+    for key in sorted(RUNTIME_CONFIG_DRIFT_KEYS):
+        if key not in effective and key not in runtime_effective:
+            continue
+        file_value = _norm_config_value(effective.get(key, ""))
+        runtime_value = _norm_config_value(runtime_effective.get(key, ""))
+        if file_value != runtime_value:
+            drift[key] = {"file_effective": file_value, "runtime_snapshot": runtime_value}
+    return drift
+
+
+def _runtime_config_drift_check(config: dict[str, Any], mode: str) -> CheckResult:
+    path, payload = _latest_runtime_config_snapshot(mode)
+    if path is None:
+        return CheckResult(
+            "config.runtime_snapshot_drift",
+            "WARN",
+            "no runtime effective_config snapshot found",
+            {"mode": mode},
+        )
+    drift = _runtime_config_drift_payload(config, payload)
+    return CheckResult(
+        "config.runtime_snapshot_drift",
+        "WARN" if drift else "PASS",
+        "latest runtime config snapshot differs from files" if drift else "runtime snapshot matches file effective config",
+        {
+            "snapshot_path": str(path),
+            "written_at": payload.get("written_at", ""),
+            "runtime_mode": payload.get("runtime_mode", ""),
+            "drift": drift,
+        },
+    )
 
 
 def _truthy(value: Any) -> bool:
@@ -414,6 +485,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
 
     important = {key: effective.get(key, "") for key in sorted(LIVE_CONFIG_KEYS) if key in effective}
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
+    checks.append(_runtime_config_drift_check(config, mode))
     if effective.get("PATHB_INTRADAY_ONLY", "").lower() != "true":
         checks.append(CheckResult("config.pathb_intraday_only", "WARN", "Path B is not forced intraday", {"value": effective.get("PATHB_INTRADAY_ONLY")}))
     else:
@@ -1627,6 +1699,66 @@ def _ops_summary_checks(mode: str) -> list[CheckResult]:
     return checks
 
 
+def _price_csv_checks() -> list[CheckResult]:
+    checks: list[CheckResult] = []
+    try:
+        from runtime.price_csv_health import price_csv_health_summary
+    except Exception as exc:
+        return [CheckResult("price_csv.import", "FAIL", f"price CSV health import failed: {exc}")]
+
+    for market in ("KR", "US"):
+        try:
+            summary = price_csv_health_summary(ROOT, market)
+        except Exception as exc:
+            checks.append(CheckResult(f"price_csv.{market.lower()}", "FAIL", f"price CSV health failed: {exc}"))
+            continue
+        counts = summary.get("counts", {})
+        malformed = int(counts.get("malformed_csv", 0))
+        missing = int(counts.get("missing_csv", 0))
+        stale = int(counts.get("stale_csv", 0))
+        total = int(summary.get("total", 0))
+        fresh_ratio = float(summary.get("fresh_ratio", 0.0))
+        freshness_detail = (
+            f"total={total} fresh={summary.get('fresh_count', 0)} "
+            f"fresh_ratio={fresh_ratio:.1%} stale={stale} "
+            f"expected_last={summary.get('expected_last_date', '')} "
+            f"last_range={summary.get('oldest_last_date', '')}..{summary.get('newest_last_date', '')}"
+        )
+        freshness_status = "PASS" if total and fresh_ratio >= 0.95 else "WARN"
+        checks.append(CheckResult(f"data.price_csv_freshness.{market.lower()}", freshness_status, freshness_detail, summary))
+        integrity_detail = f"total={total} malformed={malformed} missing={missing}"
+        integrity_status = "PASS" if total and not malformed and not missing else "WARN"
+        checks.append(CheckResult(f"data.price_csv_integrity.{market.lower()}", integrity_status, integrity_detail, summary))
+    return checks
+
+
+def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
+    path = get_runtime_path("data", "audit", "candidate_audit.db", make_parents=False)
+    if not path.exists():
+        return [CheckResult("candidate_audit.outcome_update", "WARN", f"candidate audit DB missing: {path}")]
+    conn = None
+    try:
+        conn = sqlite3.connect(str(path), timeout=5)
+        tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "audit_candidate_outcomes" not in tables:
+            return [CheckResult("candidate_audit.outcome_update", "WARN", "audit_candidate_outcomes table missing")]
+        total, latest = conn.execute(
+            "SELECT COUNT(*), MAX(label_generated_at) FROM audit_candidate_outcomes"
+        ).fetchone()
+    except Exception as exc:
+        return [CheckResult("candidate_audit.outcome_update", "WARN", f"candidate outcome check failed: {exc}")]
+    finally:
+        if conn is not None:
+            conn.close()
+
+    status = "PASS" if int(total or 0) > 0 and latest else "WARN"
+    detail = f"outcome_rows={int(total or 0)} latest_label_generated_at={latest or ''}"
+    return [CheckResult("candidate_audit.outcome_update", status, detail, {"path": str(path), "rows": int(total or 0), "latest": latest or ""})]
+
+
 def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, include_dashboard: bool = True) -> dict[str, Any]:
     checks: list[CheckResult] = []
     config_checks, config = _config_checks(mode, allow_config_conflicts)
@@ -1640,6 +1772,8 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     if include_dashboard:
         checks.extend(_dashboard_checks())
     checks.extend(_telegram_checks())
+    checks.extend(_price_csv_checks())
+    checks.extend(_candidate_audit_outcome_checks(mode))
     checks.extend(_ops_summary_checks(mode))
     fail_count = sum(1 for check in checks if check.status == "FAIL")
     warn_count = sum(1 for check in checks if check.status == "WARN")

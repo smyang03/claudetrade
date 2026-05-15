@@ -49,9 +49,22 @@ KIS_BASE = (
 )
 
 BASE_DIR  = Path(__file__).parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 PRICE_DIR = BASE_DIR / "data" / "price"
 (PRICE_DIR / "kr").mkdir(parents=True, exist_ok=True)
 (PRICE_DIR / "us").mkdir(parents=True, exist_ok=True)
+
+from runtime.price_csv_health import (  # noqa: E402
+    load_price_csv_frame,
+    normalize_price_frame,
+    price_csv_identity,
+    quarantine_bad_price_csv,
+)
+try:  # noqa: E402
+    from runtime_paths import get_runtime_path
+except Exception:  # noqa: E402
+    get_runtime_path = None
 
 # ── 수집 대상 종목 ────────────────────────────────────────────────────────────
 
@@ -412,6 +425,20 @@ def _expected_trading_days(market: str, start_dt: pd.Timestamp, end_dt: pd.Times
         return [pd.Timestamp(day).normalize() for day in pd.date_range(start, end, freq="D") if day.weekday() < 5], "weekday_fallback"
 
 
+def _expected_last_trading_day(market: str, end_dt: pd.Timestamp):
+    market_key = str(market or "").upper()
+    expected_end = pd.Timestamp(end_dt).normalize()
+    if market_key == "US":
+        now = datetime.now()
+        local_today = pd.Timestamp(now.date()).normalize()
+        latest_completed_local = local_today - pd.Timedelta(days=2 if now.hour < 7 else 1)
+        expected_end = min(expected_end, latest_completed_local)
+    expected, source = _expected_trading_days(market_key, expected_end - pd.Timedelta(days=21), expected_end)
+    if not expected:
+        return None, source
+    return expected[-1], source
+
+
 def _audit_csv_date_gaps(df: pd.DataFrame, market: str) -> dict:
     if df.empty or "date" not in df.columns:
         return {"calendar_source": "none", "gaps": [], "duplicate_dates": 0}
@@ -444,6 +471,50 @@ def _gap_ranges(gaps: list[pd.Timestamp]) -> list[tuple[pd.Timestamp, pd.Timesta
         start = prev = day
     ranges.append((start, prev))
     return ranges
+
+
+def _price_priority_state_path(market: str) -> Path:
+    market_key = str(market or "").upper()
+    stamp = date.today().strftime("%Y%m%d")
+    if get_runtime_path is not None:
+        try:
+            return get_runtime_path("state", f"price_collection_priority_{market_key}_{stamp}.json")
+        except Exception:
+            pass
+    return BASE_DIR / "state" / f"price_collection_priority_{market_key}_{stamp}.json"
+
+
+def _load_price_priority_tickers(market: str) -> list[str]:
+    path = _price_priority_state_path(market)
+    if not path.exists():
+        return []
+    try:
+        import json
+
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    market_key = str(market or "").upper()
+    tickers: list[str] = []
+    for item in payload.get("items") or []:
+        ticker = str((item or {}).get("ticker") or "").strip()
+        ticker = ticker.upper() if market_key == "US" else ticker
+        if ticker and ticker not in tickers:
+            tickers.append(ticker)
+    return tickers
+
+
+def _prioritize_ticker_map(ticker_map: dict, market: str) -> dict:
+    priority = _load_price_priority_tickers(market)
+    if not priority:
+        return ticker_map
+    out = {}
+    for ticker in priority:
+        out[ticker] = ticker_map.get(ticker, ticker)
+    for ticker, name in ticker_map.items():
+        if ticker not in out:
+            out[ticker] = name
+    return out
 
 
 def fetch_kr_daily_yfinance(ticker: str, start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> pd.DataFrame:
@@ -491,6 +562,7 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
         code = p.stem[3:]  # "kr_005930" → "005930"
         if code not in all_tickers:
             all_tickers[code] = code  # 이름 모를 경우 코드로 대체
+    all_tickers = _prioritize_ticker_map(all_tickers, "KR")
 
     print(f"  대상 종목: {len(all_tickers)}개 (KR_TICKERS {len(KR_TICKERS)} + 기존CSV 추가)")
 
@@ -498,9 +570,22 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
         path = PRICE_DIR / "kr" / f"kr_{ticker}.csv"
         try:
             fetch_parts = []
+            existing = pd.DataFrame()
 
             if path.exists():
-                existing = pd.read_csv(path, parse_dates=["date"]).sort_values("date")
+                existing_loaded, load_result = load_price_csv_frame(path, "KR", ticker)
+                if load_result.status == "malformed_csv":
+                    quarantine_path = quarantine_bad_price_csv(path, load_result.detail)
+                    print(
+                        f"  [{ticker}] WARN malformed CSV quarantined="
+                        f"{quarantine_path or 'unavailable'} reason={load_result.detail}"
+                    )
+                elif existing_loaded is not None:
+                    existing = existing_loaded.copy()
+                    existing["date"] = pd.to_datetime(existing["date"], errors="coerce")
+
+            if not existing.empty:
+                existing = existing.sort_values("date")
                 ex_min, ex_max = existing["date"].min(), existing["date"].max()
                 print(f"  [{ticker}] 기존: {ex_min.date()} ~ {ex_max.date()} ({len(existing)}일)")
                 gap_audit = _audit_csv_date_gaps(existing, "KR")
@@ -674,17 +759,34 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
         sym = p.stem[3:]  # "us_NVDA" → "NVDA"
         if sym not in all_tickers:
             all_tickers[sym] = sym
+    all_tickers = _prioritize_ticker_map(all_tickers, "US")
 
     print(f"  대상 종목: {len(all_tickers)}개 (US_TICKERS {len(US_TICKERS)} + 기존CSV 추가)")
     print(f"  데이터 소스: yfinance (장기 히스토리)")
 
+    expected_last, expected_source = _expected_last_trading_day("US", end_dt)
+    if expected_last is not None:
+        print(f"  expected_last_session={expected_last.date()} calendar={expected_source}")
+
     for ticker, name in all_tickers.items():
         path = PRICE_DIR / "us" / f"us_{ticker}.csv"
         try:
-            today_ts = pd.Timestamp(date.today())
+            existing = pd.DataFrame()
 
             if path.exists():
-                existing = pd.read_csv(path, parse_dates=["date"]).sort_values("date")
+                existing_loaded, load_result = load_price_csv_frame(path, "US", ticker)
+                if load_result.status == "malformed_csv":
+                    quarantine_path = quarantine_bad_price_csv(path, load_result.detail)
+                    print(
+                        f"  [{ticker}] WARN malformed CSV quarantined="
+                        f"{quarantine_path or 'unavailable'} reason={load_result.detail}"
+                    )
+                elif existing_loaded is not None:
+                    existing = existing_loaded.copy()
+                    existing["date"] = pd.to_datetime(existing["date"], errors="coerce")
+
+            if not existing.empty:
+                existing = existing.sort_values("date")
                 ex_min, ex_max = existing["date"].min(), existing["date"].max()
                 gap_audit = _audit_csv_date_gaps(existing, "US")
                 gap_ranges = _gap_ranges(gap_audit["gaps"])
@@ -701,11 +803,17 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
                     if gap_parts:
                         combined = pd.concat([existing] + gap_parts)
                         _save(path, combined, start_dt, end_dt, f"{name}({ticker})")
-                        existing = pd.read_csv(path, parse_dates=["date"]).sort_values("date")
-                        ex_min, ex_max = existing["date"].min(), existing["date"].max()
+                        existing_loaded, load_result = load_price_csv_frame(path, "US", ticker)
+                        if load_result.status == "ok" and existing_loaded is not None:
+                            existing = existing_loaded.copy()
+                            existing["date"] = pd.to_datetime(existing["date"], errors="coerce")
+                            existing = existing.sort_values("date")
+                            ex_min, ex_max = existing["date"].min(), existing["date"].max()
+                        else:
+                            print(f"  WARN  {name}({ticker}) reload after gap fill failed: {load_result.detail}")
                     else:
                         print(f"  WARN  {name}({ticker}) internal gap fetch failed")
-                already_fresh  = ex_max >= today_ts - timedelta(days=4)
+                already_fresh = expected_last is not None and ex_max.normalize() >= expected_last
                 already_covers = ex_min <= start_dt + timedelta(days=5)
                 if already_fresh and already_covers:
                     print(f"  [{ticker}] 이미 최신 — 스킵")
@@ -716,8 +824,13 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
             time.sleep(0.3)
 
             if not df_new.empty:
-                existing_df = pd.read_csv(path, parse_dates=["date"]) if path.exists() else pd.DataFrame()
-                combined = pd.concat([existing_df, df_new]) if not existing_df.empty else df_new
+                existing_df = None
+                if path.exists():
+                    loaded_df, load_result = load_price_csv_frame(path, "US", ticker)
+                    if loaded_df is not None and load_result.status == "ok":
+                        existing_df = loaded_df.copy()
+                        existing_df["date"] = pd.to_datetime(existing_df["date"], errors="coerce")
+                combined = pd.concat([existing_df, df_new]) if existing_df is not None and not existing_df.empty else df_new
                 _save(path, combined, start_dt, end_dt, f"{name}({ticker})")
             else:
                 print(f"  WARN  {name}({ticker}) 데이터 없음")
@@ -729,7 +842,7 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
 
 # ── 공통 저장 ─────────────────────────────────────────────────────────────────
 
-def _save(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Timestamp, label: str):
+def _save_legacy(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Timestamp, label: str):
     """중복 제거 + 기간 필터 + CSV 저장"""
     if df.empty or "date" not in df.columns:
         print(f"  WARN  {label}: no price rows returned")
@@ -750,6 +863,37 @@ def _save(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Times
 
 
 # ── 스크리너 풀 사전 수집 (Method 2) ──────────────────────────────────────────
+
+def _save(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Timestamp, label: str):
+    if df.empty or "date" not in df.columns:
+        print(f"  WARN  {label}: no price rows returned")
+        return
+    clean, errors = normalize_price_frame(df, start_dt, end_dt)
+    if clean.empty:
+        print(f"  WARN  {label}: no price rows inside requested window")
+        return
+    if errors:
+        quarantine_path = quarantine_bad_price_csv(path, ";".join(errors))
+        print(
+            f"  WARN  {label}: price CSV normalized errors={';'.join(errors)} "
+            f"quarantine={quarantine_path or 'none'}"
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    clean.to_csv(tmp_path, index=False, encoding="utf-8-sig")
+    market, ticker = price_csv_identity(path)
+    verified, verify_result = load_price_csv_frame(tmp_path, market, ticker)
+    if verified is None or verify_result.status != "ok":
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        print(f"  WARN  {label}: atomic save verification failed: {verify_result.detail}")
+        return
+    tmp_path.replace(path)
+    print(f"  OK {label}: {len(clean)} rows ({clean['date'].min()} ~ {clean['date'].max()})")
+
 
 def collect_screener_pool(market: str = "US", lookback_days: int = 90, top_n: int = 50, mode: str = "NEUTRAL"):
     """

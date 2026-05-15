@@ -18,6 +18,7 @@ import argparse
 import threading
 import schedule
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 from datetime import date, datetime, timedelta, time as dt_time
 from typing import Any, Optional
@@ -4226,6 +4227,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "evidence_data_state": live_pack.get("data_state"),
             "evidence_missing_fields": list(live_pack.get("missing_fields") or []),
             "evidence_action_ceiling": live_pack.get("action_ceiling"),
+            "evidence_fail_closed": bool(live_features.get("fail_closed")),
+            "evidence_fail_closed_reason": live_features.get("fail_closed_reason") or live_features.get("runtime_gate_reason"),
+            "evidence_provider": live_features.get("evidence_provider") or live_features.get("source"),
+            "evidence_requested": live_features.get("evidence_requested_count"),
+            "evidence_complete": live_features.get("evidence_complete_count"),
+            "evidence_coverage_ratio": live_features.get("evidence_coverage_ratio"),
             "evidence_pack": live_pack,
         }
         try:
@@ -5240,7 +5247,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         details = {
             "market": market_key,
             "permission": permission,
+            "permission_votes": list(consensus.get("new_buy_permission_votes", []) or []),
+            "permission_votes_by_role": dict(consensus.get("new_buy_permission_votes_by_role", {}) or {}),
             "max_gross_exposure_pct": consensus.get("max_gross_exposure_pct", 0),
+            "max_gross_exposure_pct_by_role": dict(consensus.get("max_gross_exposure_pct_by_role", {}) or {}),
             "source": "analyst_consensus",
         }
         if permission == "block":
@@ -5596,6 +5606,92 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.debug(f"[stop cluster alert failed] {market_key} {reason_key}: {exc}")
 
+    def _maybe_alert_new_buy_block(self, market: str, reason: str, scope: str, details: dict) -> None:
+        reason_key = str(reason or "").strip().upper()
+        if not reason_key:
+            return
+        default_reasons = {
+            "ANALYST_NEW_BUY_BLOCK",
+            "ANALYST_MAX_GROSS_EXPOSURE_REACHED",
+            "MAX_DAILY_ENTRIES",
+            "ORDER_UNKNOWN_UNRESOLVED",
+            "BROKER_SYNC_QUARANTINE",
+        }
+        configured = os.getenv("NEW_BUY_BLOCK_TG_ALERT_REASONS", "")
+        if configured.strip():
+            alert_reasons = {
+                str(part or "").strip().upper()
+                for part in configured.split(",")
+                if str(part or "").strip()
+            }
+        else:
+            alert_reasons = default_reasons
+        if reason_key not in alert_reasons:
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = datetime.now(KST).date().isoformat()
+        scope_key = str(scope or "market").strip() or "market"
+        alert_key = f"{market_key}:{session_date}:{reason_key}:{scope_key}"
+        now = time.time()
+        try:
+            cooldown_min = max(1.0, float(os.getenv("NEW_BUY_BLOCK_TG_ALERT_COOLDOWN_MINUTES", "15") or 15))
+        except Exception:
+            cooldown_min = 15.0
+        seen = getattr(self, "_new_buy_block_alert_keys", None)
+        if not isinstance(seen, dict):
+            self._new_buy_block_alert_keys = {}
+            seen = self._new_buy_block_alert_keys
+        if now - float(seen.get(alert_key, 0.0) or 0.0) < cooldown_min * 60.0:
+            return
+        seen[alert_key] = now
+
+        payload = dict(details or {})
+        ticker = str(payload.get("ticker") or "").strip()
+        strategy = str(payload.get("strategy") or "").strip()
+        votes_by_role = dict(payload.get("permission_votes_by_role") or {})
+        caps_by_role = dict(payload.get("max_gross_exposure_pct_by_role") or {})
+        consensus = dict(((getattr(self, "today_judgment", {}) or {}).get("consensus") or {}))
+        permission = str(payload.get("permission") or consensus.get("new_buy_permission") or "").strip()
+        mode = str(consensus.get("mode") or "").strip()
+        size = consensus.get("size", "")
+        lines = [
+            f"reason: {reason_key}",
+            f"scope: {scope_key}",
+        ]
+        if ticker:
+            lines.append(f"ticker: {ticker}")
+        if strategy:
+            lines.append(f"strategy: {strategy}")
+        if payload.get("daily_count") is not None or payload.get("max_daily_entries") is not None:
+            lines.append(f"daily entries: {payload.get('daily_count', '-')}/{payload.get('max_daily_entries', '-')}")
+        if payload.get("rate_key"):
+            lines.append(f"rate key: {payload.get('rate_key')}")
+        if permission:
+            lines.append(f"permission: {permission}")
+        if mode:
+            lines.append(f"mode: {mode}")
+        if size not in (None, ""):
+            lines.append(f"size: {size}%")
+        if votes_by_role:
+            vote_text = ", ".join(f"{role}={vote}" for role, vote in sorted(votes_by_role.items()))
+            lines.append(f"votes: {vote_text}")
+        elif payload.get("permission_votes"):
+            lines.append(f"votes: {', '.join(str(x) for x in payload.get('permission_votes') or [])}")
+        if caps_by_role:
+            cap_text = ", ".join(f"{role}={cap}" for role, cap in sorted(caps_by_role.items()))
+            lines.append(f"gross caps: {cap_text}")
+        if payload.get("max_gross_exposure_pct") not in (None, ""):
+            lines.append(f"resolved cap: {payload.get('max_gross_exposure_pct')}")
+        lines.append(f"manual: /claude {market_key}")
+        lines.append(f"manual: /rescreen {market_key}")
+        try:
+            block_alert("New-buy block", lines, market=market_key, icon="!", show_time=True)
+        except Exception as exc:
+            log.debug(f"[new buy block alert failed] {market_key} {reason_key}: {exc}")
+
     def _kr_recovery_micro_gate(self, now_dt: Optional[datetime] = None) -> dict:
         if not self._runtime_bool("KR_RECOVERY_MICRO_ENABLED", False):
             return {"allowed": False, "reason": "kr_recovery_micro_disabled"}
@@ -5815,6 +5911,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self._audit_link_signal_episode(_audit_signal_id, _episode_id, reason="ORDER_UNKNOWN_SIGNAL_BLOCKED")
         log.warning(f"[NEW_BUY_BLOCKED] {market_key} {ticker_key or '*'} {strategy} {reason} scope={scope}")
         self._maybe_alert_stop_cluster_block(market_key, reason, scope, details)
+        self._maybe_alert_new_buy_block(market_key, reason, scope, details)
         if signal_row is not None and _ML_DB_ENABLED:
             try:
                 _ml_write_eval(
@@ -8609,6 +8706,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         row["post_open_ret_10m_pct"] = features.get("ret_10m_pct")
         row["post_open_ret_30m_pct"] = features.get("ret_30m_pct")
         row["post_open_pullback_from_high_pct"] = features.get("pullback_from_high_pct")
+        row["post_open_data_quality"] = features.get("data_quality")
+        row["post_open_fail_closed"] = bool(features.get("fail_closed"))
+        row["post_open_fail_closed_reason"] = features.get("fail_closed_reason")
+        if bool(features.get("fail_closed")) and features.get("fail_closed_reason"):
+            row.setdefault("runtime_gate_reason", features.get("fail_closed_reason"))
     def _intraday_fail_closed_feature_map(
         self,
         market: str,
@@ -8653,6 +8755,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "source": "intraday_fail_closed",
                 "fail_closed": True,
                 "fail_closed_reason": str(reason or "coverage_below_threshold"),
+                "runtime_gate_reason": str(reason or "coverage_below_threshold"),
+                "evidence_data_state": "missing",
+                "evidence_action_ceiling": "WATCH",
             }
         return out
     def _intraday_avg_daily_volume_map(self, market: str, candidates: list[dict]) -> dict[str, float]:
@@ -8698,6 +8803,113 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             cache = IntradayMinuteCache()
             self._intraday_minute_cache = cache
         return cache
+    def _intraday_evidence_target_limit(self, market: str, phase: dict, base_max: int) -> tuple[int, str]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        phase_name = str((phase or {}).get("phase") or "unknown").strip().lower()
+        phase_defaults = {
+            "opening": 30,
+            "early": 24,
+            "mid": 20,
+            "late": 12,
+            "close_guard": 8,
+        }
+        phase_default = int(phase_defaults.get(phase_name, base_max))
+        limit_default = max(1, min(int(base_max or 1), phase_default))
+        env_phase = "".join(ch if ch.isalnum() else "_" for ch in phase_name.upper()).strip("_") or "UNKNOWN"
+        override = self._runtime_float(
+            f"{market_key}_INTRADAY_EVIDENCE_MAX_TICKERS_{env_phase}",
+            self._runtime_float(f"INTRADAY_EVIDENCE_MAX_TICKERS_{env_phase}", limit_default),
+        )
+        return max(1, min(int(base_max or 1), int(override or limit_default))), f"phase:{phase_name or 'unknown'}"
+    def _intraday_evidence_priority_tickers(
+        self,
+        market: str,
+        candidates: list[dict],
+        *,
+        limit: int,
+    ) -> tuple[list[str], dict[str, int]]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        seen: set[str] = set()
+        rows: list[tuple[tuple, str]] = []
+        counts = {
+            "entry_ready": 0,
+            "pathb_wait": 0,
+            "position": 0,
+            "watch_strengthening": 0,
+            "other": 0,
+        }
+
+        position_tickers: set[str] = set()
+        for pos in list(getattr(getattr(self, "risk", None), "positions", []) or []) + list(getattr(self, "positions", []) or []):
+            ticker = self._selection_ticker_key(market_key, (pos or {}).get("ticker"))
+            if ticker:
+                position_tickers.add(ticker)
+
+        for idx, candidate in enumerate(candidates or []):
+            row = candidate or {}
+            ticker = self._selection_ticker_key(market_key, row.get("ticker"))
+            if not ticker or ticker in seen:
+                continue
+            seen.add(ticker)
+            action = str(
+                row.get("candidate_action")
+                or row.get("final_action")
+                or row.get("action")
+                or row.get("claude_action")
+                or ""
+            ).strip().upper()
+            route = str(row.get("route") or row.get("path_type") or row.get("path") or "").strip().lower()
+            health_state = str(row.get("health_state") or row.get("candidate_health_state") or "").strip().upper()
+            confidence = self._positive_float_or_none(row.get("confidence") or row.get("score")) or 0.0
+            if action in {"BUY_READY", "PROBE_READY", "ADD_READY", "TRADE_READY"} or bool(row.get("trade_ready")):
+                bucket = "entry_ready"
+                group = 0
+            elif action == "PULLBACK_WAIT" or "pathb" in route or "path_b" in route:
+                bucket = "pathb_wait"
+                group = 1
+            elif ticker in position_tickers or bool(row.get("has_position")):
+                bucket = "position"
+                group = 2
+            elif health_state in {"WATCH_STRENGTHENING", "STRENGTHENING", "READYING"}:
+                bucket = "watch_strengthening"
+                group = 3
+            else:
+                bucket = "other"
+                group = 4
+            counts[bucket] = counts.get(bucket, 0) + 1
+            rows.append(((group, -float(confidence), idx), ticker))
+
+        ordered = [ticker for _score, ticker in sorted(rows, key=lambda item: item[0])]
+        return ordered[: max(1, int(limit or 1))], counts
+    def _mark_intraday_evidence_metadata(
+        self,
+        features_by_ticker: dict[str, dict],
+        *,
+        provider: str,
+        phase_name: str,
+        requested: int,
+        complete: int,
+        partial: int,
+        missing: int,
+        coverage_ratio: float,
+        fail_closed_reason: str = "",
+    ) -> None:
+        for features in (features_by_ticker or {}).values():
+            if not isinstance(features, dict):
+                continue
+            features["evidence_provider"] = provider
+            features["evidence_phase"] = phase_name
+            features["evidence_requested"] = True
+            features["evidence_requested_count"] = int(requested or 0)
+            features["evidence_complete_count"] = int(complete or 0)
+            features["evidence_partial_count"] = int(partial or 0)
+            features["evidence_missing_count"] = int(missing or 0)
+            features["evidence_coverage_ratio"] = round(float(coverage_ratio or 0.0), 4)
+            if fail_closed_reason or bool(features.get("fail_closed")):
+                reason = str(fail_closed_reason or features.get("fail_closed_reason") or "coverage_below_threshold")
+                features["fail_closed"] = True
+                features["fail_closed_reason"] = reason
+                features["runtime_gate_reason"] = reason
     def _prefetch_selection_intraday_evidence(self, market: str, candidates: list[dict], *, phase: dict) -> dict[str, dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if not self._runtime_bool("INTRADAY_EVIDENCE_ENABLED", False):
@@ -8711,15 +8923,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         fail_closed = self._runtime_bool("INTRADAY_EVIDENCE_FAIL_CLOSED", True)
         threshold = self._runtime_float(f"{market_key}_INTRADAY_EVIDENCE_MIN_COMPLETE_RATIO", 0.6 if market_key == "KR" else 0.5)
         max_tickers = max(1, int(self._runtime_float("INTRADAY_EVIDENCE_MAX_TICKERS", 30)))
-        tickers = []
-        for candidate in candidates or []:
-            ticker = self._selection_ticker_key(market_key, (candidate or {}).get("ticker"))
-            if ticker and ticker not in tickers:
-                tickers.append(ticker)
-            if len(tickers) >= max_tickers:
-                break
+        target_limit, target_rule = self._intraday_evidence_target_limit(market_key, phase or {}, max_tickers)
+        tickers, priority_counts = self._intraday_evidence_priority_tickers(
+            market_key,
+            candidates or [],
+            limit=target_limit,
+        )
         if not tickers:
             return {}
+        phase_name = str((phase or {}).get("phase") or "")
         if provider in {"disabled", "none", "off", "false"}:
             sentinel_map = (
                 self._intraday_fail_closed_feature_map(
@@ -8731,6 +8943,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if fail_closed
                 else {}
             )
+            self._mark_intraday_evidence_metadata(
+                sentinel_map,
+                provider=provider,
+                phase_name=phase_name,
+                requested=len(tickers),
+                complete=0,
+                partial=0,
+                missing=len(tickers),
+                coverage_ratio=0.0,
+                fail_closed_reason="provider_disabled" if sentinel_map else "",
+            )
             self._write_funnel_event(
                 "selection_intraday_evidence_coverage",
                 market_key,
@@ -8738,6 +8961,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "phase": (phase or {}).get("phase"),
                     "provider": provider,
                     "candidate_count": len(candidates or []),
+                    "target_limit": int(target_limit),
+                    "target_rule": target_rule,
+                    "priority_counts": priority_counts,
                     "requested": len(tickers),
                     "fetched": 0,
                     "complete": 0,
@@ -8770,6 +8996,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if fail_closed
                 else {}
             )
+            self._mark_intraday_evidence_metadata(
+                sentinel_map,
+                provider=provider,
+                phase_name=phase_name,
+                requested=len(tickers),
+                complete=0,
+                partial=0,
+                missing=len(tickers),
+                coverage_ratio=0.0,
+                fail_closed_reason="session_open_resolve_failed" if sentinel_map else "",
+            )
             self._write_funnel_event(
                 "selection_intraday_evidence_coverage",
                 market_key,
@@ -8777,6 +9014,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "phase": (phase or {}).get("phase"),
                     "provider": provider,
                     "candidate_count": len(candidates or []),
+                    "target_limit": int(target_limit),
+                    "target_rule": target_rule,
+                    "priority_counts": priority_counts,
                     "requested": len(tickers),
                     "fetched": 0,
                     "complete": 0,
@@ -8859,6 +9099,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 features = features_by_ticker.get(ticker)
                 if str((features or {}).get("data_quality")) != "minute_complete":
                     fail_closed_tickers.append(ticker)
+        self._mark_intraday_evidence_metadata(
+            features_by_ticker,
+            provider=provider,
+            phase_name=phase_name,
+            requested=requested,
+            complete=complete,
+            partial=partial,
+            missing=missing,
+            coverage_ratio=coverage_ratio,
+            fail_closed_reason="",
+        )
         retry_scheduled_at = ""
         if warmup and requested and complete < requested:
             retry_dt = regular_open + timedelta(minutes=opening_range_min + 1)
@@ -8872,6 +9123,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "phase": (phase or {}).get("phase"),
                 "provider": provider,
                 "candidate_count": len(candidates or []),
+                "target_limit": int(target_limit),
+                "target_rule": target_rule,
+                "priority_counts": priority_counts,
+                "target_tickers_sample": tickers[:10],
                 "requested": requested,
                 "fetched": len(features_by_ticker),
                 "complete": complete,
@@ -8917,6 +9172,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 )
             )
             features_by_ticker = complete_features
+            self._mark_intraday_evidence_metadata(
+                features_by_ticker,
+                provider=provider,
+                phase_name=phase_name,
+                requested=requested,
+                complete=complete,
+                partial=partial,
+                missing=missing,
+                coverage_ratio=coverage_ratio,
+                fail_closed_reason=fail_closed_reason,
+            )
         self._merge_last_post_open_features(market_key, features_by_ticker)
         return features_by_ticker
     def _annotate_selection_execution_features(self, market: str, candidates: list, mode: str = "") -> list:
@@ -17012,6 +17278,415 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.risk.daily_pnl = restored_pnl
         if restored_count > 0:
             log.info(f"[{market}] daily_pnl 복구: {restored_pnl:,.0f}원 ({restored_count}건)")
+    def _trade_ready_resume_precheck(
+        self,
+        saved: dict,
+        market: str,
+        trigger: str,
+        *,
+        now_dt: Optional[datetime] = None,
+    ) -> dict:
+        market_key = str(market or "").upper()
+        result = {
+            "ready_for_price_check": False,
+            "preserve": False,
+            "reason": "",
+            "market": market_key,
+            "trigger": str(trigger or ""),
+            "max_age_minutes": None,
+            "age_minutes": None,
+            "trade_ready": [],
+            "price_targets": {},
+            "session_date": "",
+            "saved_session_date": "",
+            "phase": "",
+        }
+        if str(trigger or "").strip() != "startup_mid_session":
+            result["reason"] = "not_startup_mid_session"
+            return result
+        if market_key not in {"KR", "US"} or not isinstance(saved, dict) or not saved:
+            result["reason"] = "invalid_saved_judgment"
+            return result
+        saved_market = str(saved.get("market") or "").strip().upper()
+        if not saved_market:
+            result["reason"] = "incomplete_saved_judgment:missing_market"
+            return result
+        if saved_market != market_key:
+            result["reason"] = "market_mismatch"
+            result["saved_market"] = saved_market
+            return result
+        saved_mode = str(saved.get("mode") or saved.get("runtime_mode") or "").strip().lower()
+        current_mode = "paper" if getattr(self, "is_paper", False) else "live"
+        if saved_mode in {"paper", "live"} and saved_mode != current_mode:
+            result["reason"] = "runtime_mode_mismatch"
+            result["saved_mode"] = saved_mode
+            result["current_mode"] = current_mode
+            return result
+        try:
+            current_session_date = self._current_session_date_str(market_key)
+        except Exception:
+            current_session_date = ""
+        saved_session_date = str(saved.get("session_date") or saved.get("date") or "").strip()[:10]
+        result["session_date"] = current_session_date
+        result["saved_session_date"] = saved_session_date
+        if not saved_session_date:
+            result["reason"] = "incomplete_saved_judgment:missing_session_date"
+            return result
+        if not current_session_date:
+            result["reason"] = "session_date_check_failed"
+            return result
+        if saved_session_date != current_session_date:
+            result["reason"] = "session_date_mismatch"
+            return result
+        try:
+            if not self._is_market_session_now(market_key):
+                result["reason"] = "market_session_not_open"
+                return result
+        except Exception as exc:
+            result["reason"] = "market_session_check_failed"
+            result["error"] = str(exc)[:160]
+            return result
+
+        max_age_min = max(1.0, self._runtime_float("TRADE_READY_RESTORE_MAX_AGE_MINUTES", 20.0))
+        result["max_age_minutes"] = max_age_min
+
+        meta = dict(saved.get("selection_meta") or {})
+        ready = list(dict.fromkeys(
+            list(saved.get("trade_ready_tickers") or [])
+            or list(meta.get("trade_ready") or [])
+        ))
+        result["trade_ready"] = ready
+        if not ready:
+            result["reason"] = "no_trade_ready"
+            return result
+
+        watchlist = list(dict.fromkeys(list(meta.get("watchlist") or []) or list(saved.get("tickers") or [])))
+        if not watchlist:
+            result["reason"] = "incomplete_saved_judgment:missing_watchlist"
+            return result
+        watch_keys = {self._selection_ticker_key(market_key, ticker) for ticker in watchlist}
+        ready_keys = [self._selection_ticker_key(market_key, ticker) for ticker in ready]
+        missing_watch = [ticker for ticker, key in zip(ready, ready_keys) if key not in watch_keys]
+        if missing_watch:
+            result["reason"] = "trade_ready_not_in_watchlist"
+            result["missing_watchlist"] = missing_watch
+            return result
+
+        basis = dict(saved.get("judgment_context_basis") or {})
+        phase = str(basis.get("phase") or "").strip()
+        result["phase"] = phase
+        if phase not in {_JUDGMENT_PHASE_OPENING, _JUDGMENT_PHASE_INTRADAY}:
+            result["reason"] = "non_executable_phase"
+            return result
+        if basis.get("live_index_context_ok") is not True:
+            result["reason"] = "live_index_context_not_confirmed"
+            return result
+
+        price_targets = dict(meta.get("price_targets") or {})
+        result["price_targets"] = price_targets
+        missing_price_targets = [
+            ticker
+            for ticker in ready
+            if not self._selection_price_target_for_ticker(market_key, price_targets, ticker)
+        ]
+        if missing_price_targets:
+            result["reason"] = "missing_price_targets"
+            result["missing_price_targets"] = missing_price_targets
+            return result
+
+        ts = ""
+        for key in ("selection_snapshot_ts", "_selection_snapshot_ts", "selected_at", "created_at", "updated_at"):
+            ts = str(meta.get(key) or "").strip()
+            if ts:
+                break
+        if not ts:
+            ts = str(basis.get("updated_at") or "").strip()
+        result["selection_snapshot_ts"] = ts
+        if not ts:
+            result["reason"] = "missing_selection_timestamp"
+            return result
+        try:
+            parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=KST)
+            now_value = now_dt or datetime.now(KST)
+            if now_value.tzinfo is None:
+                now_value = now_value.replace(tzinfo=KST)
+            age_min = max(0.0, (now_value.astimezone(KST) - parsed.astimezone(KST)).total_seconds() / 60.0)
+        except Exception:
+            result["reason"] = "invalid_selection_timestamp"
+            return result
+        result["age_minutes"] = round(age_min, 3)
+        if age_min > max_age_min:
+            result["reason"] = "selection_stale"
+            return result
+
+        result["ready_for_price_check"] = True
+        result["reason"] = "ready_for_price_check"
+        return result
+
+    def _hydrate_trade_ready_resume_prices(
+        self,
+        market: str,
+        trade_ready: list[str],
+        *,
+        max_tickers: Optional[int] = None,
+        timeout_sec: Optional[float] = None,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        started = time.time()
+        try:
+            max_count = int(max_tickers if max_tickers is not None else self._runtime_float("TRADE_READY_RESUME_HYDRATE_MAX_TICKERS", 5.0))
+        except Exception:
+            max_count = 5
+        max_count = max(1, max_count)
+        try:
+            budget_sec = float(timeout_sec if timeout_sec is not None else self._runtime_float("TRADE_READY_RESUME_HYDRATE_TIMEOUT_SEC", 10.0))
+        except Exception:
+            budget_sec = 10.0
+        budget_sec = max(0.5, budget_sec)
+        try:
+            workers = int(self._runtime_float("TRADE_READY_RESUME_HYDRATE_WORKERS", 2.0))
+        except Exception:
+            workers = 2
+        workers = max(1, min(workers, max_count))
+        result = {
+            "attempted": False,
+            "requested": [],
+            "hydrated": {},
+            "failed": {},
+            "skipped": {},
+            "elapsed_sec": 0.0,
+            "timeout_sec": budget_sec,
+            "max_tickers": max_count,
+            "workers": workers,
+        }
+        if not hasattr(self, "price_cache_raw") or not isinstance(self.price_cache_raw, dict):
+            self.price_cache_raw = {}
+        if not hasattr(self, "price_cache") or not isinstance(self.price_cache, dict):
+            self.price_cache = {}
+        raw_cache = self.price_cache_raw
+        krw_cache = self.price_cache
+
+        def _positive_float(value: Any) -> float:
+            try:
+                out = float(value or 0)
+            except Exception:
+                return 0.0
+            return out if out > 0 else 0.0
+
+        seen: set[str] = set()
+        to_fetch: list[str] = []
+        for raw_ticker in trade_ready or []:
+            ticker = str(raw_ticker or "").strip()
+            key = self._selection_ticker_key(market_key, ticker)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            cached = _positive_float(raw_cache.get(key) or raw_cache.get(ticker))
+            if cached <= 0 and market_key == "KR":
+                cached = _positive_float(krw_cache.get(key) or krw_cache.get(ticker))
+            if cached > 0:
+                result["skipped"][key] = "cached_price"
+                continue
+            to_fetch.append(key)
+
+        capped_fetch = to_fetch[:max_count]
+        capped_set = set(capped_fetch)
+        for key in to_fetch[max_count:]:
+            result["failed"][key] = "resume_price_hydration_cap_exceeded"
+        result["requested"] = list(capped_fetch)
+        if not capped_fetch:
+            result["elapsed_sec"] = round(time.time() - started, 3)
+            return result
+        result["attempted"] = True
+
+        try:
+            token = self._token_for_market(market_key)
+        except Exception as exc:
+            for key in capped_fetch:
+                result["failed"][key] = f"resume_price_hydration_failed:{str(exc)[:120]}"
+            result["elapsed_sec"] = round(time.time() - started, 3)
+            return result
+
+        def _fetch_price(ticker_key: str) -> tuple[str, float]:
+            price_info = get_price(ticker_key, token, market=market_key)
+            price_value = _positive_float((price_info or {}).get("price"))
+            if price_value <= 0:
+                raise RuntimeError("empty_price")
+            return ticker_key, price_value
+
+        executor = ThreadPoolExecutor(max_workers=min(workers, len(capped_fetch)))
+        future_to_ticker = {executor.submit(_fetch_price, key): key for key in capped_fetch}
+        try:
+            done, not_done = wait(list(future_to_ticker.keys()), timeout=budget_sec)
+            for future in done:
+                key = future_to_ticker[future]
+                try:
+                    ticker_key, raw_price = future.result()
+                    if ticker_key not in capped_set:
+                        continue
+                    raw_cache[ticker_key] = raw_price
+                    try:
+                        krw_cache[ticker_key] = self._price_to_krw(raw_price, market_key)
+                    except Exception:
+                        krw_cache[ticker_key] = raw_price
+                    result["hydrated"][ticker_key] = raw_price
+                except Exception as exc:
+                    result["failed"][key] = f"resume_price_hydration_failed:{str(exc)[:120]}"
+            for future in not_done:
+                key = future_to_ticker[future]
+                result["failed"][key] = "resume_price_hydration_timeout"
+                future.cancel()
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+            result["elapsed_sec"] = round(time.time() - started, 3)
+        return result
+
+    def _trade_ready_resume_guard(
+        self,
+        saved: dict,
+        market: str,
+        trigger: str,
+        *,
+        now_dt: Optional[datetime] = None,
+        precheck: Optional[dict] = None,
+        price_hydration: Optional[dict] = None,
+    ) -> dict:
+        market_key = str(market or "").upper()
+        result = dict(precheck or self._trade_ready_resume_precheck(saved, market_key, trigger, now_dt=now_dt))
+        result.setdefault("preserve", False)
+        result.setdefault("market", market_key)
+        result.setdefault("trigger", str(trigger or ""))
+        result["price_hydration"] = dict(price_hydration or {})
+        if not bool(result.get("ready_for_price_check")):
+            result["preserve"] = False
+            return result
+
+        try:
+            max_drift_pct = max(0.0, self._runtime_float("TRADE_READY_RESTORE_MAX_PRICE_DRIFT_PCT", 2.0))
+        except Exception:
+            max_drift_pct = 2.0
+        result["max_price_drift_pct"] = max_drift_pct
+        raw_cache = getattr(self, "price_cache_raw", {}) or {}
+        krw_cache = getattr(self, "price_cache", {}) or {}
+        drift_skipped: dict[str, str] = {}
+        price_unchecked: list[str] = []
+        ready = list(result.get("trade_ready") or [])
+        price_targets = dict(result.get("price_targets") or {})
+        require_price_check = self._runtime_bool("TRADE_READY_RESTORE_REQUIRE_PRICE_CHECK", True)
+        hydration_failed = dict((price_hydration or {}).get("failed") or {})
+        if hydration_failed and require_price_check:
+            result["reason"] = "resume_price_hydration_failed"
+            result["skipped"] = hydration_failed
+            result["preserve"] = False
+            return result
+
+        def _positive_float(value: Any) -> float:
+            try:
+                out = float(value or 0)
+            except Exception:
+                return 0.0
+            return out if out > 0 else 0.0
+
+        def _reference_price(target: dict) -> float:
+            for key in ("reference_price", "entry_reference_price", "anchor_price", "current_price"):
+                value = _positive_float((target or {}).get(key))
+                if value > 0:
+                    return value
+            zone = (target or {}).get("buy_zone")
+            if isinstance(zone, (list, tuple)) and zone:
+                values = [_positive_float(item) for item in zone]
+                values = [item for item in values if item > 0]
+                if values:
+                    return sum(values) / len(values)
+            return 0.0
+
+        for ticker in ready:
+            key = self._selection_ticker_key(market_key, ticker)
+            target = self._selection_price_target_for_ticker(market_key, price_targets, ticker)
+            ref_price = _reference_price(target)
+            current_price = _positive_float(raw_cache.get(key) or raw_cache.get(str(ticker or "").strip()))
+            if current_price <= 0 and market_key == "KR":
+                current_price = _positive_float(krw_cache.get(key) or krw_cache.get(str(ticker or "").strip()))
+            if current_price <= 0 or ref_price <= 0:
+                price_unchecked.append(ticker)
+                continue
+            drift_pct = abs(current_price / ref_price - 1.0) * 100.0
+            if drift_pct > max_drift_pct:
+                drift_skipped[ticker] = f"price_drift_exceeded:{drift_pct:.2f}%>{max_drift_pct:.2f}%"
+        if drift_skipped:
+            result["reason"] = "price_drift_exceeded"
+            result["skipped"] = drift_skipped
+            result["preserve"] = False
+            return result
+        if price_unchecked:
+            result["price_drift_unchecked"] = price_unchecked
+            if require_price_check:
+                result["reason"] = "resume_price_hydration_failed"
+                result["skipped"] = {ticker: "resume_price_hydration_failed" for ticker in price_unchecked}
+                result["preserve"] = False
+                return result
+
+        gate_blocked: dict[str, str] = {}
+        for ticker in ready:
+            try:
+                gate = self._new_buy_block_state(market_key, ticker, "trade_ready_resume")
+            except Exception as exc:
+                result["reason"] = "new_buy_gate_check_failed"
+                result["error"] = str(exc)[:160]
+                result["preserve"] = False
+                return result
+            if not bool((gate or {}).get("allowed", True)):
+                gate_blocked[ticker] = str((gate or {}).get("reason") or "NEW_BUY_BLOCKED")
+        if gate_blocked:
+            result["reason"] = "new_buy_gate_blocked"
+            result["skipped"] = gate_blocked
+            result["preserve"] = False
+            return result
+
+        result["preserve"] = True
+        result["reason"] = "preserve_recent_trade_ready"
+        result["restored"] = ready
+        result["skipped"] = {}
+        return result
+
+    def _should_rescreen_reused_judgment(
+        self,
+        trigger: str,
+        saved: Optional[dict] = None,
+        market: str = "",
+        *,
+        guard: Optional[dict] = None,
+    ) -> bool:
+        if str(trigger or "").strip() != "startup_mid_session":
+            return True
+        resolved_guard = guard
+        if resolved_guard is None:
+            resolved_guard = self._trade_ready_resume_guard(saved or getattr(self, "today_judgment", {}) or {}, market, trigger)
+        return not bool((resolved_guard or {}).get("preserve"))
+
+    def _record_trade_ready_restore_guard(self, market: str, trigger: str, guard: dict) -> bool:
+        if str(trigger or "").strip() != "startup_mid_session":
+            return False
+        if not isinstance(guard, dict) or not guard:
+            return False
+        if not isinstance(getattr(self, "today_judgment", None), dict):
+            return False
+        restored = list(guard.get("restored") or (guard.get("trade_ready") if guard.get("preserve") else []) or [])
+        self.today_judgment["trade_ready_resume_guard"] = dict(guard)
+        self.today_judgment["trade_ready_restore"] = {
+            "attempted": True,
+            "restored": restored,
+            "skipped": dict(guard.get("skipped") or {}),
+            "price_hydration": dict(guard.get("price_hydration") or {}),
+            "max_age_minutes": guard.get("max_age_minutes"),
+            "age_minutes": guard.get("age_minutes"),
+            "trigger": trigger,
+            "reason": guard.get("reason", ""),
+        }
+        return True
+
     def session_open(self, market: str, trigger: str = "schedule"):
         if not self._enter_market_task(market, "session_open"):
             return
@@ -17736,110 +18411,139 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if not _from_shared_cache:
                 shared_judgment_cache.save(market, today, self.today_judgment)
         else:
-            # 판단은 재사용하되 종목은 항상 새로 스크리닝한다.
-            # reused=True 때 전날 저장된 종목을 그대로 고정하는 문제를 막는다.
-            log.info(f"[종목 재스크리닝] {market} 판단 재사용 + 종목만 새로 선택 (mode={consensus['mode']})")
-            if market == "KR":
-                fresh_candidates = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
-                if fresh_candidates:
-                    self._last_kr_candidates = fresh_candidates
-            else:
-                fresh_candidates = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
-            fresh_pin_candidates = self._load_preopen_pin_candidates(market, "session_reuse_rescreen")
-            if fresh_candidates or fresh_pin_candidates:
-                fresh_candidates = self._merge_preopen_pin_candidates(
+            _resume_precheck = self._trade_ready_resume_precheck(self.today_judgment, market, trigger)
+            _price_hydration = {}
+            if _resume_precheck.get("ready_for_price_check"):
+                _price_hydration = self._hydrate_trade_ready_resume_prices(
                     market,
-                    fresh_candidates or [],
-                    "session_reuse_rescreen",
-                    pin_candidates=fresh_pin_candidates,
+                    list(_resume_precheck.get("trade_ready") or []),
                 )
-                fresh_raw_candidates = list(fresh_candidates or [])
-                self._log_screen_candidates(market, fresh_candidates, "session_reuse_rescreen")
-                fresh_candidates = self._prefill_history_sync(fresh_candidates, market)
-                fresh_candidates = self._filter_candidates_by_history(fresh_candidates, market)
-                fresh_allowed_universe = self._extend_universe_with_preopen_pins(
-                    market,
-                    (self.today_universe.get(market) or {}).get("tickers")
-                    or self.today_judgment.get("universe_tickers", []),
-                    fresh_pin_candidates,
-                )
-                fresh_candidates = self._restrict_candidates_to_universe(
-                    fresh_candidates,
-                    fresh_allowed_universe,
-                )
-                fresh_candidates = self._annotate_selection_execution_features(market, fresh_candidates, consensus.get("mode", "NEUTRAL"))
-                _fresh_intraday_ctx = self._build_intraday_context(market)
-                _fresh_lesson_context = self._load_lesson_candidate_summary(market)
-                fresh_selected, fresh_reasons = select_tickers(market, digest_prompt, consensus["mode"], fresh_candidates,
-                                                               lesson_context=_fresh_lesson_context,
-                                                               intraday_context=_fresh_intraday_ctx,
-                                                               market_change_pct=self._get_market_change_pct(market),
-                                                               secondary_change_pct=self._get_secondary_change_pct(market),
-                                                               execution_phase=self._current_judgment_phase(market),
-                                                               evidence_by_ticker=self._build_selection_evidence_pack(market, fresh_candidates))
-                fresh_meta = self._apply_selection_meta(
-                    market,
-                    fresh_selected,
-                    mode=consensus.get("mode", ""),
-                    source="session_reuse_rescreen",
-                )
-                self._record_preopen_rank_diff(
-                    market,
-                    fresh_selected,
-                    fresh_meta,
-                    fresh_reasons,
-                    phase="session_reuse_rescreen",
-                )
-                self._record_candidate_quality(
-                    market,
-                    "session_reuse_rescreen",
-                    fresh_raw_candidates,
-                    fresh_candidates,
-                    fresh_selected,
-                    fresh_meta,
-                    fresh_reasons,
-                )
-                self._update_candidate_health(
-                    market,
-                    "session_reuse_rescreen",
-                    fresh_selected,
-                    fresh_meta,
-                    fresh_candidates,
-                )
-                self.today_tickers[market] = fresh_selected
-                self._entry_timing_mark_candidates(market, fresh_selected, "session_reuse_rescreen")
-                self.today_ticker_reasons[market] = fresh_reasons or {}
-                self.today_judgment["tickers"] = fresh_selected
-                try:
-                    _tsdb_ids = tsdb.insert_batch(
-                        today, market, "rescreen", fresh_selected, fresh_candidates, fresh_reasons, consensus["mode"],
-                        selection_meta=fresh_meta,
-                    )
-                    self._tsdb_selection_ids[market].update(_tsdb_ids)
-                except Exception as _te:
-                    log.warning(f"[tsdb] insert_batch(rescreen) failed: {_te}")
-                self.today_judgment["universe_tickers"] = [
-                    c.get("ticker") for c in fresh_candidates if c.get("ticker")
-                ]
+            _resume_guard = self._trade_ready_resume_guard(
+                self.today_judgment,
+                market,
+                trigger,
+                precheck=_resume_precheck,
+                price_hydration=_price_hydration,
+            )
+            if not hasattr(self, "_last_trade_ready_resume_guard") or not isinstance(self._last_trade_ready_resume_guard, dict):
+                self._last_trade_ready_resume_guard = {}
+            self._last_trade_ready_resume_guard[market] = dict(_resume_guard)
+            self._record_trade_ready_restore_guard(market, trigger, _resume_guard)
+            if not self._should_rescreen_reused_judgment(trigger, guard=_resume_guard):
                 log.info(
-                    f"[종목 재선정 완료] {market}: watch={fresh_selected} "
-                    f"trade_ready={fresh_meta.get('trade_ready', [])}"
+                    f"[resume rescreen skipped] market={market} trigger={trigger} "
+                    f"reason={_resume_guard.get('reason', 'preserve_saved_selection')} "
+                    f"watch={self.today_tickers.get(market, [])} "
+                    f"trade_ready={self.trade_ready_tickers.get(market, [])}"
                 )
-                judgment_log.info(
-                    f"[rescreen {today} {market}] {fresh_selected}",
-                    extra={"extra": {
-                        "event": "ticker_rescreen",
-                        "date": today,
-                        "market": market,
-                        "selected": fresh_selected,
-                        "trade_ready": fresh_meta.get("trade_ready", []),
-                        "consensus_mode": consensus["mode"],
-                    }},
-                )
-                fresh_excluded = [c.get("ticker", "") for c in fresh_candidates if c.get("ticker", "") not in fresh_selected]
-                watchlist_alert(market, consensus["mode"], fresh_selected, fresh_reasons, fresh_excluded, trigger="rescreen")
             else:
-                log.warning(f"[종목 재스크리닝] 후보 없음 → 기존 종목 유지: {self.today_tickers.get(market, [])}")
+                # 판단은 재사용하되 종목은 항상 새로 스크리닝한다.
+                # reused=True 때 전날 저장된 종목을 그대로 고정하는 문제를 막는다.
+                log.info(
+                    f"[종목 재스크리닝] {market} 판단 재사용 + 종목만 새로 선택 "
+                    f"(mode={consensus['mode']}, resume_reason={_resume_guard.get('reason', '')})"
+                )
+                if market == "KR":
+                    fresh_candidates = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                    if fresh_candidates:
+                        self._last_kr_candidates = fresh_candidates
+                else:
+                    fresh_candidates = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
+                fresh_pin_candidates = self._load_preopen_pin_candidates(market, "session_reuse_rescreen")
+                if fresh_candidates or fresh_pin_candidates:
+                    fresh_candidates = self._merge_preopen_pin_candidates(
+                        market,
+                        fresh_candidates or [],
+                        "session_reuse_rescreen",
+                        pin_candidates=fresh_pin_candidates,
+                    )
+                    fresh_raw_candidates = list(fresh_candidates or [])
+                    self._log_screen_candidates(market, fresh_candidates, "session_reuse_rescreen")
+                    fresh_candidates = self._prefill_history_sync(fresh_candidates, market)
+                    fresh_candidates = self._filter_candidates_by_history(fresh_candidates, market)
+                    fresh_allowed_universe = self._extend_universe_with_preopen_pins(
+                        market,
+                        (self.today_universe.get(market) or {}).get("tickers")
+                        or self.today_judgment.get("universe_tickers", []),
+                        fresh_pin_candidates,
+                    )
+                    fresh_candidates = self._restrict_candidates_to_universe(
+                        fresh_candidates,
+                        fresh_allowed_universe,
+                    )
+                    fresh_candidates = self._annotate_selection_execution_features(market, fresh_candidates, consensus.get("mode", "NEUTRAL"))
+                    _fresh_intraday_ctx = self._build_intraday_context(market)
+                    _fresh_lesson_context = self._load_lesson_candidate_summary(market)
+                    fresh_selected, fresh_reasons = select_tickers(market, digest_prompt, consensus["mode"], fresh_candidates,
+                                                                   lesson_context=_fresh_lesson_context,
+                                                                   intraday_context=_fresh_intraday_ctx,
+                                                                   market_change_pct=self._get_market_change_pct(market),
+                                                                   secondary_change_pct=self._get_secondary_change_pct(market),
+                                                                   execution_phase=self._current_judgment_phase(market),
+                                                                   evidence_by_ticker=self._build_selection_evidence_pack(market, fresh_candidates))
+                    fresh_meta = self._apply_selection_meta(
+                        market,
+                        fresh_selected,
+                        mode=consensus.get("mode", ""),
+                        source="session_reuse_rescreen",
+                    )
+                    self._record_preopen_rank_diff(
+                        market,
+                        fresh_selected,
+                        fresh_meta,
+                        fresh_reasons,
+                        phase="session_reuse_rescreen",
+                    )
+                    self._record_candidate_quality(
+                        market,
+                        "session_reuse_rescreen",
+                        fresh_raw_candidates,
+                        fresh_candidates,
+                        fresh_selected,
+                        fresh_meta,
+                        fresh_reasons,
+                    )
+                    self._update_candidate_health(
+                        market,
+                        "session_reuse_rescreen",
+                        fresh_selected,
+                        fresh_meta,
+                        fresh_candidates,
+                    )
+                    self.today_tickers[market] = fresh_selected
+                    self._entry_timing_mark_candidates(market, fresh_selected, "session_reuse_rescreen")
+                    self.today_ticker_reasons[market] = fresh_reasons or {}
+                    self.today_judgment["tickers"] = fresh_selected
+                    try:
+                        _tsdb_ids = tsdb.insert_batch(
+                            today, market, "rescreen", fresh_selected, fresh_candidates, fresh_reasons, consensus["mode"],
+                            selection_meta=fresh_meta,
+                        )
+                        self._tsdb_selection_ids[market].update(_tsdb_ids)
+                    except Exception as _te:
+                        log.warning(f"[tsdb] insert_batch(rescreen) failed: {_te}")
+                    self.today_judgment["universe_tickers"] = [
+                        c.get("ticker") for c in fresh_candidates if c.get("ticker")
+                    ]
+                    log.info(
+                        f"[종목 재선정 완료] {market}: watch={fresh_selected} "
+                        f"trade_ready={fresh_meta.get('trade_ready', [])}"
+                    )
+                    judgment_log.info(
+                        f"[rescreen {today} {market}] {fresh_selected}",
+                        extra={"extra": {
+                            "event": "ticker_rescreen",
+                            "date": today,
+                            "market": market,
+                            "selected": fresh_selected,
+                            "trade_ready": fresh_meta.get("trade_ready", []),
+                            "consensus_mode": consensus["mode"],
+                        }},
+                    )
+                    fresh_excluded = [c.get("ticker", "") for c in fresh_candidates if c.get("ticker", "") not in fresh_selected]
+                    watchlist_alert(market, consensus["mode"], fresh_selected, fresh_reasons, fresh_excluded, trigger="rescreen")
+                else:
+                    log.warning(f"[종목 재스크리닝] 후보 없음 → 기존 종목 유지: {self.today_tickers.get(market, [])}")
         # 대시보드가 장 중에도 오늘 판단을 볼 수 있도록 session_open 직후 즉시 기록
         self._persist_live_judgment(market)
         # 장전 보유 포지션 리뷰는 당일 판단이 준비된 뒤에만 수행한다.
@@ -18118,12 +18822,49 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 horizons=(30, 60),
             )
             done.add(run_key)
+            status_store = getattr(self, "_candidate_audit_outcome_intraday_status", None)
+            if not isinstance(status_store, dict):
+                status_store = {}
+                self._candidate_audit_outcome_intraday_status = status_store
+            status_store[market_key] = dict(summary)
+            try:
+                self._write_funnel_event(
+                    "candidate_audit_outcome_update",
+                    market_key,
+                    {
+                        "session_date": session_date,
+                        "runtime_mode": getattr(self, "_mode", "live"),
+                        "elapsed_min": round(float(elapsed_min), 2),
+                        "candidate_rows": int(summary.get("candidate_rows") or 0),
+                        "outcome_rows": int(summary.get("outcome_rows") or 0),
+                        "status_counts": summary.get("status_counts") or {},
+                        "last_success_at": summary.get("last_success_at") or "",
+                        "next_due_at": summary.get("next_due_at") or "",
+                        "outcome_health": summary.get("outcome_health") or "",
+                    },
+                )
+            except Exception:
+                pass
             log.info(
                 f"[candidate audit outcomes] intraday updated {market_key} "
                 f"session={session_date} rows={summary.get('outcome_rows', 0)} "
                 f"status={summary.get('status_counts', {})}"
             )
         except Exception as exc:
+            try:
+                self._write_funnel_event(
+                    "candidate_audit_outcome_update",
+                    market_key,
+                    {
+                        "session_date": session_date if "session_date" in locals() else "",
+                        "runtime_mode": getattr(self, "_mode", "live"),
+                        "elapsed_min": round(float(elapsed_min or 0.0), 2),
+                        "outcome_health": "failed",
+                        "error": str(exc)[:240],
+                    },
+                )
+            except Exception:
+                pass
             log.warning(f"[candidate audit outcomes] intraday update failed {market_key}: {exc}")
     def run_housekeeping(self, market: str):
         if not self._enter_market_task(market, "housekeeping"):
@@ -21258,6 +21999,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 reason_code="MAX_DAILY_ENTRIES",
                                 payload={"message": "order rate limited", "rate_key": _rate_key},
                             )
+                            self._maybe_alert_new_buy_block(
+                                market,
+                                "MAX_DAILY_ENTRIES",
+                                "market",
+                                {
+                                    "market": market,
+                                    "ticker": _s_tk,
+                                    "strategy": _s_strat,
+                                    "rate_key": _rate_key,
+                                    "daily_count": self._v2_daily_entry_count(market),
+                                    "max_daily_entries": self._v2_max_daily_entries(),
+                                    "qty": qty,
+                                    "price_native": order_px,
+                                },
+                            )
                             log.warning(f"[V2 rate limit] {market} {_s_tk} buy order blocked")
                             continue
                     try:
@@ -22604,6 +23360,76 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if result.get("warning") and result.get("action") == "TIGHTEN":
             return True, f"튜너 경고: {result['warning']}"
         return False, ""
+    def _should_refresh_selection_after_reinvoke(
+        self,
+        old_consensus: dict,
+        new_consensus: dict,
+        old_basis: Optional[dict] = None,
+        new_basis: Optional[dict] = None,
+    ) -> tuple[bool, str]:
+        old_consensus = dict(old_consensus or {})
+        new_consensus = dict(new_consensus or {})
+        old_basis = dict(old_basis or {})
+        new_basis = dict(new_basis or {})
+
+        old_mode = str(old_consensus.get("mode") or "").upper()
+        new_mode = str(new_consensus.get("mode") or "").upper()
+        bear_modes = {"HALT", "DEFENSIVE", "CAUTIOUS_BEAR", "MILD_BEAR"}
+        bull_modes = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL"}
+        if old_mode and new_mode:
+            mode_flip = (old_mode in bear_modes and new_mode in bull_modes) or (
+                old_mode in bull_modes and new_mode in bear_modes
+            )
+            if mode_flip:
+                return True, f"mode_flip:{old_mode}->{new_mode}"
+            if old_mode != new_mode:
+                return True, f"mode_changed:{old_mode}->{new_mode}"
+
+        old_permission = str(old_consensus.get("new_buy_permission") or "").strip().lower()
+        new_permission = str(new_consensus.get("new_buy_permission") or "").strip().lower()
+        permission_rank = {"block": 0, "selective": 1, "allow": 2}
+        if (
+            old_permission in permission_rank
+            and new_permission in permission_rank
+            and permission_rank[new_permission] > permission_rank[old_permission]
+        ):
+            return True, f"new_buy_permission_relaxed:{old_permission}->{new_permission}"
+
+        def _float_value(payload: dict, key: str) -> float:
+            try:
+                return float(payload.get(key, 0) or 0)
+            except Exception:
+                return 0.0
+
+        old_size = _float_value(old_consensus, "size")
+        new_size = _float_value(new_consensus, "size")
+        if old_size <= 0 < new_size:
+            return True, f"size_unblocked:{old_size:g}->{new_size:g}"
+
+        old_cap = _float_value(old_consensus, "max_gross_exposure_pct")
+        new_cap = _float_value(new_consensus, "max_gross_exposure_pct")
+        try:
+            cap_threshold = max(
+                0.0,
+                float(os.getenv("REINVOKE_RESCREEN_CAP_INCREASE_THRESHOLD_PCT", "10") or 10),
+            )
+        except Exception:
+            cap_threshold = 10.0
+        if old_cap > 0 and new_cap > 0 and (new_cap - old_cap) >= cap_threshold:
+            return True, f"max_gross_cap_relaxed:{old_cap:g}->{new_cap:g}"
+
+        old_phase = str(old_basis.get("phase") or "").strip()
+        new_phase = str(new_basis.get("phase") or "").strip()
+        executable_phases = {"opening_confirm", "intraday_live"}
+        non_executable_phases = {"preopen_watch", "intraday_live_unconfirmed"}
+        if old_phase in non_executable_phases and new_phase in executable_phases:
+            return True, f"judgment_phase_executable:{old_phase}->{new_phase}"
+
+        if old_basis.get("live_index_context_ok") is False and new_basis.get("live_index_context_ok") is True:
+            return True, "live_index_context_confirmed"
+
+        return False, ""
+
     def _reinvoke_analysts(self, market: str, trigger: str):
         """이상 신호 감지 시 분석가 3명 긴급 재호출 → 판단·합의 갱신"""
         if not self.is_claude_reinvoke_enabled():
@@ -22670,13 +23496,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         new_consensus["size"] = max(0, int(_os * _vm))
                         new_consensus["vix_mult"] = _vm
                         log.info(f"[reinvoke VIX={_vix:.1f}] size {_os}% -> {new_consensus['size']}%")
-            old_mode = self.today_judgment.get("consensus", {}).get("mode", "?")
+            old_consensus = dict((self.today_judgment.get("consensus") or {}))
+            old_basis = dict((self.today_judgment.get("judgment_context_basis") or {}))
+            old_mode = old_consensus.get("mode", "?")
             debate_meta = new_judgments.pop("_debate", {})
-            self.today_judgment["judgments"] = new_judgments
-            self.today_judgment["consensus"] = new_consensus
-            self.today_judgment["round1_judgments"] = debate_meta.get("r1", {})
-            self.today_judgment["debate_changes"] = debate_meta.get("changes", [])
-            self.today_judgment["judgment_context_basis"] = {
+            new_basis = {
                 "source": "analyst_reinvoke",
                 "trigger": trigger,
                 "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
@@ -22685,6 +23509,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "phase": self._current_judgment_phase(market) if live_index_context_ok else "intraday_live_unconfirmed",
                 "intraday_context_included": bool(intraday_context),
             }
+            refresh_selection, refresh_reason = self._should_refresh_selection_after_reinvoke(
+                old_consensus,
+                new_consensus,
+                old_basis,
+                new_basis,
+            )
+            self.today_judgment["judgments"] = new_judgments
+            self.today_judgment["consensus"] = new_consensus
+            self.today_judgment["round1_judgments"] = debate_meta.get("r1", {})
+            self.today_judgment["debate_changes"] = debate_meta.get("changes", [])
+            self.today_judgment["judgment_context_basis"] = new_basis
             self._last_reinvoke_tuning = self.tuning_count
             self._last_reinvoke_result_mode = new_consensus.get("mode", "")
             judgment_log.info(
@@ -22697,6 +23532,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "new_mode": new_consensus["mode"],
                     "judgments": new_judgments,
                     "consensus": new_consensus,
+                    "selection_refresh": refresh_selection,
+                    "selection_refresh_reason": refresh_reason,
                 }},
             )
             log.warning(
@@ -22712,15 +23549,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "new_mode":      new_consensus["mode"],
                 "new_judgments": new_judgments,
                 "debate_meta":   debate_meta,
+                "selection_refresh": refresh_selection,
+                "selection_refresh_reason": refresh_reason,
             })
             # 모드가 바뀌면 종목도 재선택 (예: DEFENSIVE→MODERATE_BULL 시 인버스 ETF 제거)
-            BEAR_MODES  = {"HALT", "DEFENSIVE", "CAUTIOUS_BEAR", "MILD_BEAR"}
-            BULL_MODES  = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL"}
-            mode_flip = (old_mode in BEAR_MODES and new_consensus["mode"] in BULL_MODES) or \
-                        (old_mode in BULL_MODES and new_consensus["mode"] in BEAR_MODES)
-            if mode_flip or old_mode != new_consensus["mode"]:
+            if refresh_selection:
                 try:
-                    log.info(f"[selection refresh] mode changed {old_mode}->{new_consensus['mode']}; refreshing candidates")
+                    log.info(
+                        f"[selection refresh] {refresh_reason or 'reinvoke'} "
+                        f"{old_mode}->{new_consensus['mode']}; refreshing candidates"
+                    )
                     if market == "KR":
                         reinvoke_cands = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     else:

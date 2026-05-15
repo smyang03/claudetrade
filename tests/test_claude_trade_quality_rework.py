@@ -163,6 +163,30 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         self.assertEqual(decision.runtime_gate_reason, "evidence_action_ceiling")
         self.assertNotIn("soft_gate_override_validation", decision.runtime_gate)
 
+    def test_fail_closed_evidence_reason_is_preserved_in_runtime_gate(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "018880", "action": "BUY_READY", "confidence": 0.9},
+            market="KR",
+            execution_context={
+                "market": "KR",
+                "evidence_pack_ceiling_enabled": True,
+                "evidence_data_state": "missing",
+                "evidence_action_ceiling": "WATCH",
+                "evidence_fail_closed": True,
+                "evidence_fail_closed_reason": "coverage_below_threshold",
+                "evidence_provider": "kis",
+                "evidence_requested": 30,
+                "evidence_complete": 17,
+                "evidence_coverage_ratio": 0.5667,
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "data_fail_closed_watch_only")
+        self.assertEqual(decision.runtime_gate_reason, "coverage_below_threshold")
+        self.assertTrue(decision.runtime_gate["evidence_fail_closed"])
+        self.assertEqual(decision.runtime_gate["evidence_provider"], "kis")
+
     def test_partial_evidence_demotes_buy_to_probe_then_validates_soft_override(self) -> None:
         decision = route_candidate_action(
             {

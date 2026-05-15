@@ -94,19 +94,26 @@ def _dir_label_from_change(value) -> str:
     return "FLAT"
 
 
-def _analyst_new_buy_constraints(judgment_items: list[dict]) -> dict:
+def _analyst_new_buy_constraints(judgment_items: list[dict], roles=None) -> dict:
     permissions: list[str] = []
     caps: list[int] = []
-    for item in judgment_items:
+    permission_by_role: dict[str, str] = {}
+    cap_by_role: dict[str, int] = {}
+    role_names = list(roles or [])
+    for idx, item in enumerate(judgment_items):
+        role = role_names[idx] if idx < len(role_names) else str(idx)
         permission = str(item.get("new_buy_permission", "") or "").strip().lower()
         if permission in {"allow", "selective", "block"}:
             permissions.append(permission)
+            permission_by_role[role] = permission
         try:
             cap = int(float(item.get("max_gross_exposure_pct", 0) or 0))
         except Exception:
             cap = 0
         if cap > 0:
-            caps.append(max(0, min(100, cap)))
+            normalized_cap = max(0, min(100, cap))
+            caps.append(normalized_cap)
+            cap_by_role[role] = normalized_cap
     if "block" in permissions:
         resolved_permission = "block"
     elif permissions and all(p == "allow" for p in permissions):
@@ -116,7 +123,9 @@ def _analyst_new_buy_constraints(judgment_items: list[dict]) -> dict:
     return {
         "new_buy_permission": resolved_permission,
         "new_buy_permission_votes": permissions,
+        "new_buy_permission_votes_by_role": permission_by_role,
         "max_gross_exposure_pct": min(caps) if caps else 0,
+        "max_gross_exposure_pct_by_role": cap_by_role,
     }
 
 
@@ -369,7 +378,7 @@ def build_consensus(judgments: dict, check_minority: bool = True,
     }
 
     result = apply_unanimous_override(judgments, result)
-    new_buy_constraints = _analyst_new_buy_constraints([bull, bear, neut])
+    new_buy_constraints = _analyst_new_buy_constraints([bull, bear, neut], ["bull", "bear", "neutral"])
     result.update(new_buy_constraints)
     if new_buy_constraints.get("new_buy_permission") == "block":
         result["size_before_new_buy_block"] = result.get("size", 0)

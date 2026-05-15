@@ -160,6 +160,7 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(summary["path_b_live"]["active"][0]["ticker"], "005930")
         self.assertEqual(summary["path_b_live"]["metrics"]["target_hits"], 1)
         self.assertEqual(summary["path_b_live"]["metrics"]["target_hit_rate_pct"], 100.0)
+        self.assertEqual(summary["path_b_live"]["metrics"]["currency"], "KRW")
         self.assertIn("pnl", summary["path_b_live"]["charts"])
         self.assertEqual(summary["path_b_live"]["path_comparison"]["path_a"]["closed"], 1)
         self.assertEqual(summary["path_b_live"]["path_comparison"]["path_b"]["closed"], 1)
@@ -231,6 +232,25 @@ class V2Phase6Tests(unittest.TestCase):
             charts["pnl"]["point_close_reasons"],
             ["CLOSED_CLAUDE_PRICE_TARGET", "CLOSED_LOSS_CAP"],
         )
+
+    def test_pathb_metrics_marks_us_native_amounts_as_usd(self):
+        metrics = v2_ops_summary._path_b_metrics(
+            [
+                {
+                    "market": "US",
+                    "status": "CLOSED",
+                    "plan": {
+                        "actual_entry_price": 60.0,
+                        "filled_qty": 3,
+                        "pnl_pct": -2.0,
+                    },
+                }
+            ]
+        )
+
+        self.assertEqual(metrics["currency"], "USD")
+        self.assertEqual(metrics["deployed_value"], 180.0)
+        self.assertEqual(metrics["realized_pnl_value"], -3.6)
 
     def test_pathb_selection_summary_exposes_compact_validation_state(self):
         selection_meta = {

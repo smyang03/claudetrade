@@ -153,6 +153,48 @@ class PathBRuntimeTests(unittest.TestCase):
 
         self.assertEqual(_bot_token(bot, "US"), "legacy-only")
 
+    def test_record_blocked_max_daily_entries_sends_new_buy_alert(self) -> None:
+        lifecycle_events: list[tuple[tuple, dict]] = []
+        alerts: list[tuple] = []
+        bot = _Bot()
+        bot._v2_record_lifecycle_event = lambda *args, **kwargs: lifecycle_events.append((args, kwargs))
+        bot._maybe_alert_new_buy_block = lambda *args: alerts.append(args)
+        bot._audit_emit_signal = lambda *args, **kwargs: None
+
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.bot = bot
+        runtime._base_daily_entry_count = lambda market: 40
+        runtime._base_max_daily_entries = lambda market: 40
+
+        runtime._record_blocked(
+            "US",
+            "AAPL",
+            "decision-1",
+            "MAX_DAILY_ENTRIES",
+            {"gate": "daily_cap"},
+            "path-run-1",
+        )
+        runtime._record_blocked(
+            "US",
+            "MSFT",
+            "decision-2",
+            "MARKET_CLOSED",
+            {},
+            "path-run-2",
+        )
+
+        self.assertEqual(len(lifecycle_events), 2)
+        self.assertEqual(len(alerts), 1)
+        market, reason, scope, payload = alerts[0]
+        self.assertEqual(market, "US")
+        self.assertEqual(reason, "MAX_DAILY_ENTRIES")
+        self.assertEqual(scope, "market")
+        self.assertEqual(payload["ticker"], "AAPL")
+        self.assertEqual(payload["path_run_id"], "path-run-1")
+        self.assertEqual(payload["decision_id"], "decision-1")
+        self.assertEqual(payload["daily_count"], 40)
+        self.assertEqual(payload["max_daily_entries"], 40)
+
     def test_pathb_broker_truth_provider_passes_market_to_bot_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _MarketTokenBot()

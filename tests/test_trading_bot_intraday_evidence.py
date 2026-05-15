@@ -125,6 +125,37 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(bot._last_post_open_features_by_ticker["KR"]["005930"]["data_quality"], "minute_complete")
         self.assertEqual(bot._last_funnel_event[0], "selection_intraday_evidence_coverage")
 
+    def test_prefetch_uses_phase_target_limit_and_candidate_priority(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot.runtime_config.values["INTRADAY_EVIDENCE_MAX_TICKERS"] = 2
+
+        rows = TradingBot._annotate_selection_execution_features(
+            bot,
+            "KR",
+            [
+                {"ticker": "111111", "action": "WATCH", "confidence": 0.99},
+                {"ticker": "222222", "action": "BUY_READY", "confidence": 0.50},
+                {"ticker": "333333", "action": "PULLBACK_WAIT", "confidence": 0.40},
+            ],
+            "NEUTRAL",
+        )
+
+        event, market, payload = bot._last_funnel_event
+        self.assertEqual(event, "selection_intraday_evidence_coverage")
+        self.assertEqual(market, "KR")
+        self.assertEqual(payload["target_limit"], 2)
+        self.assertEqual(payload["target_tickers_sample"], ["222222", "333333"])
+        self.assertEqual(payload["priority_counts"]["entry_ready"], 1)
+        self.assertEqual(payload["priority_counts"]["pathb_wait"], 1)
+        requested_features = {
+            row["ticker"]: row.get("post_open_features")
+            for row in rows
+            if row.get("post_open_features")
+        }
+        self.assertIn("222222", requested_features)
+        self.assertEqual(requested_features["222222"]["evidence_requested_count"], 2)
+        self.assertNotIn("111111", requested_features)
+
     def test_prefetch_failure_does_not_erase_same_session_feature(self) -> None:
         def provider(**kwargs):
             raise RuntimeError("down")
@@ -270,6 +301,8 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(features["ticker"], "AAPL")
         self.assertEqual(features["data_quality"], "minute_missing")
         self.assertEqual(features["fail_closed_reason"], "provider_disabled")
+        self.assertEqual(features["runtime_gate_reason"], "provider_disabled")
+        self.assertEqual(features["evidence_provider"], "disabled")
         event, market, payload = bot._last_funnel_event
         self.assertEqual(event, "selection_intraday_evidence_coverage")
         self.assertEqual(market, "US")
