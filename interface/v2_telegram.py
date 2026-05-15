@@ -86,7 +86,7 @@ def _ko_control_reason(value: Any) -> str:
     return mapping.get(raw, raw or "")
 
 
-def handle_v2_command(text: str, bot: Any) -> str:
+def handle_v2_command(text: str, bot: Any, *, market_override: str | None = None) -> str:
     cmd = str(text or "").strip().split()[0].lower()
     summary = build_v2_ops_summary(bot=bot)
     if cmd == "/health":
@@ -112,7 +112,7 @@ def handle_v2_command(text: str, bot: Any) -> str:
     if cmd == "/pathb_kill":
         return _pathb_kill(bot)
     if cmd == "/pathb_closeall":
-        return _pathb_closeall(bot)
+        return _pathb_closeall(bot, market=market_override)
     return "지원하지 않는 V2 명령입니다. 사용 가능: " + ", ".join(V2_TELEGRAM_COMMANDS)
 
 
@@ -356,10 +356,10 @@ def _pathb_kill(bot: Any) -> str:
     return "KILL\nB플랜 긴급 중지가 설정되었습니다. 신규 진입 중지, 대기 플랜 취소, 보유 B플랜 포지션 청산 요청을 실행합니다."
 
 
-def _pathb_closeall(bot: Any) -> str:
+def _pathb_closeall(bot: Any, *, market: str | None = None) -> str:
     pathb = getattr(bot, "pathb", None)
     if pathb is None:
         return "B플랜 런타임을 사용할 수 없습니다."
-    market = getattr(bot, "current_market", None) or "KR"
-    count = pathb.close_all_open(str(market).upper(), reason="pathb_closeall")
-    return f"close-all\n{market} B플랜 전체 청산 요청: {count}개 포지션"
+    target_market = str(market or getattr(bot, "current_market", None) or "KR").upper()
+    count = pathb.close_all_open(target_market, reason="pathb_closeall")
+    return f"close-all\n{target_market} B플랜 전체 청산 요청: {count}개 포지션"

@@ -10,6 +10,7 @@ class _PathB:
         self.enabled = True
         self.killed = False
         self.closed = 0
+        self.closed_markets = []
 
     def status(self) -> dict:
         return {
@@ -33,6 +34,7 @@ class _PathB:
 
     def close_all_open(self, market: str, **kwargs) -> int:
         self.closed += 1
+        self.closed_markets.append(market)
         return 1
 
 
@@ -52,8 +54,18 @@ class PathBControlTests(unittest.TestCase):
         self.assertTrue(bot.pathb.enabled)
         self.assertIn("close-all", handle_v2_command("/pathb_closeall", bot))
         self.assertEqual(bot.pathb.closed, 1)
+        self.assertEqual(bot.pathb.closed_markets, ["KR"])
         self.assertIn("KILL", handle_v2_command("/pathb_kill", bot))
         self.assertTrue(bot.pathb.killed)
+
+    def test_pathb_closeall_uses_market_override(self) -> None:
+        bot = _Bot()
+        bot.current_market = "US"
+
+        response = handle_v2_command("/pathb_closeall", bot, market_override="KR")
+
+        self.assertIn("KR B플랜 전체 청산 요청", response)
+        self.assertEqual(bot.pathb.closed_markets, ["KR"])
 
 
 if __name__ == "__main__":

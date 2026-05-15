@@ -43,7 +43,7 @@ HELP_TEXT = """━━━━━━━━━━━━━━━━━━━━━�
 📋 <b>명령어 목록</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 <b>조회</b>
-  ? / /help      — 이 도움말
+  ? / /help /menu — 버튼 메뉴 및 도움말
   /s  /status    — 현재 상태 (모드·포지션·손익)
   /p  /pnl       — 오늘 손익 + 분석가 성과
   /trades        — 전체 매매내역 (기본 20건)
@@ -92,17 +92,129 @@ HELP_TEXT += """
 """
 
 
-def _send(text: str):
+MENU_CALLBACK_PREFIX = "ct:"
+
+_CALLBACK_COMMANDS: dict[str, str] = {
+    "status": "/status",
+    "health": "/health",
+    "pnl": "/pnl",
+    "positions": "/positions",
+    "picks": "/picks",
+    "errors": "/errors",
+    "credit": "/credit",
+    "judge": "/judge",
+    "trades": "/trades",
+    "trades_30": "/trades 30",
+    "brain": "/brain",
+    "brain_pending": "/brain_pending",
+    "mode": "/mode",
+    "risk": "/risk",
+    "claude_kr": "/claude KR",
+    "claude_us": "/claude US",
+    "rescreen_kr": "/rescreen KR",
+    "rescreen_us": "/rescreen US",
+    "review_kr": "/review KR",
+    "review_us": "/review US",
+    "halt": "/halt",
+    "resume": "/resume",
+    "pathb_status": "/pathb_status",
+    "pathb_on": "/pathb_on",
+    "pathb_off": "/pathb_off",
+    "stop_cluster_kr": "/stop_cluster KR",
+    "stop_cluster_us": "/stop_cluster US",
+    "stop_cluster_reset_kr": "/stop_cluster_reset KR",
+    "stop_cluster_reset_us": "/stop_cluster_reset US",
+    "setorder_100k": "/setorder 100000",
+    "setorder_200k": "/setorder 200000",
+    "setorder_300k": "/setorder 300000",
+    "setorder_500k": "/setorder 500000",
+    "setloss_3": "/setloss -3.0",
+    "setloss_5": "/setloss -5.0",
+    "setloss_7": "/setloss -7.0",
+    "setsl_2": "/setsl -2.0",
+    "setsl_3": "/setsl -3.0",
+    "setsl_5": "/setsl -5.0",
+    "settp_4": "/settp 4.0",
+    "settp_6": "/settp 6.0",
+    "settp_8": "/settp 8.0",
+    "trail_on": "/trail on",
+    "trail_off": "/trail off",
+    "trail_analyst_on": "/trail_analyst on",
+    "trail_analyst_off": "/trail_analyst off",
+    "trail_pct_1": "/trail_pct 1",
+    "trail_pct_2": "/trail_pct 2",
+    "trail_pct_3": "/trail_pct 3",
+    "entry_status": "/entry",
+    "entry_on": "/entry on",
+    "entry_off": "/entry off",
+    "entry_cutoff_02": "/entry cutoff 0.2",
+    "entry_cutoff_03": "/entry cutoff 0.3",
+    "entry_cutoff_05": "/entry cutoff 0.5",
+}
+
+
+def _send(text: str, reply_markup: dict | None = None):
     if not TOKEN or not CHAT_ID:
         return
     try:
+        payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"},
+            json=payload,
             timeout=10,
         )
     except Exception as e:
         log.error(f"[commander] 전송 실패: {mask_secrets(e)}")
+
+
+def _answer_callback_query(callback_id: str, text: str = "") -> None:
+    if not TOKEN or not callback_id:
+        return
+    try:
+        payload = {"callback_query_id": callback_id}
+        if text:
+            payload["text"] = text
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery",
+            json=payload,
+            timeout=10,
+        )
+    except Exception as e:
+        log.error(f"[commander] callback 응답 실패: {mask_secrets(e)}")
+
+
+def _edit_message_text(chat_id: str, message_id: int, text: str, reply_markup: dict | None = None) -> bool:
+    if not TOKEN or not chat_id or not message_id:
+        return False
+    try:
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "HTML",
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        resp = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/editMessageText",
+            json=payload,
+            timeout=10,
+        )
+        if resp.ok:
+            return True
+        try:
+            description = str(resp.json().get("description") or "")
+        except Exception:
+            description = resp.text
+        if "message is not modified" in description.lower():
+            return True
+        log.warning(f"[commander] callback 메시지 수정 실패: {mask_secrets(description)}")
+        return False
+    except Exception as e:
+        log.error(f"[commander] callback 메시지 수정 예외: {mask_secrets(e)}")
+        return False
 
 
 def _new_confirm_nonce() -> str:
@@ -195,18 +307,24 @@ def _store_danger_confirm(spec: dict) -> str:
     return nonce
 
 
-def _pop_danger_confirm(nonce: str) -> tuple[dict | None, str]:
+def _consume_danger_confirm(nonce: str, expected_key: str = "") -> tuple[dict | None, str]:
     key = str(nonce or "").strip().upper()
     with _pending_danger_lock:
-        record = _pending_danger_confirms.pop(key, None)
-    if not record:
-        return None, "확인 코드가 일치하지 않습니다. 다시 명령을 입력하세요."
-    if bool(record.get("used")):
-        return None, "이미 사용된 확인 코드입니다."
-    if time.monotonic() > float(record.get("expires_at", 0) or 0):
-        return None, "확인 시간이 만료되었습니다. 다시 명령을 입력하세요."
-    record["used"] = True
-    return record, ""
+        record = _pending_danger_confirms.get(key)
+        if not record:
+            return None, "확인 코드가 일치하지 않습니다. 다시 명령을 입력하세요."
+        if bool(record.get("used")):
+            _pending_danger_confirms.pop(key, None)
+            return None, "이미 사용된 확인 코드입니다."
+        if time.monotonic() > float(record.get("expires_at", 0) or 0):
+            _pending_danger_confirms.pop(key, None)
+            return None, "확인 시간이 만료되었습니다. 다시 명령을 입력하세요."
+        stored_key = str(record.get("key") or "")
+        if expected_key and str(expected_key or "") != stored_key:
+            return None, "확인 코드가 현재 명령과 일치하지 않습니다. 올바른 명령으로 다시 입력하세요."
+        _pending_danger_confirms.pop(key, None)
+        record["used"] = True
+        return record, ""
 
 
 def _format_danger_confirm_prompt(spec: dict, nonce: str) -> str:
@@ -217,9 +335,50 @@ def _format_danger_confirm_prompt(spec: dict, nonce: str) -> str:
         f"⚠️ <b>{spec.get('label', '위험 명령')} 확인 필요</b>\n\n"
         f"{spec.get('target_detail', '')}\n"
         f"유효시간: {DANGER_CONFIRM_TTL_SEC}초\n\n"
-        "실행하려면 아래 명령을 그대로 입력하세요.\n"
+        "실행하려면 확인 버튼을 누르거나 아래 명령을 그대로 입력하세요.\n"
         f"<code>{confirm_cmd}</code>"
     )
+
+
+def _current_position(bot, ticker: str) -> dict | None:
+    ticker_key = str(ticker or "").upper()
+    if not ticker_key:
+        return None
+    return next(
+        (
+            pos
+            for pos in list(getattr(getattr(bot, "risk", None), "positions", []) or [])
+            if str(pos.get("ticker", "") or "").upper() == ticker_key
+        ),
+        None,
+    )
+
+
+def _qty_change_warning(bot, ticker: str, before_qty: int) -> str:
+    if not before_qty:
+        return ""
+    current = _current_position(bot, ticker)
+    if not current:
+        return ""
+    current_qty = int(current.get("qty", 0) or 0)
+    if current_qty == before_qty:
+        return ""
+    return f"⚠️ 수량 변경 감지 {before_qty}주→{current_qty}주\n"
+
+
+def _cmd_close_snapshot(bot, ticker: str, snapshot: dict) -> str:
+    ticker_key = str(ticker or "").upper()
+    positions = list((snapshot or {}).get("positions") or [])
+    before = next(
+        (
+            item
+            for item in positions
+            if str(item.get("ticker", "") or "").upper() == ticker_key
+        ),
+        None,
+    )
+    before_qty = int((before or {}).get("qty", 0) or 0)
+    return _qty_change_warning(bot, ticker_key, before_qty) + _cmd_close(bot, ticker_key)
 
 
 def _cmd_closeall_snapshot(bot, snapshot: dict) -> str:
@@ -232,22 +391,11 @@ def _cmd_closeall_snapshot(bot, snapshot: dict) -> str:
         if not ticker:
             continue
         before_qty = int(item.get("qty", 0) or 0)
-        current = next(
-            (
-                pos
-                for pos in list(getattr(getattr(bot, "risk", None), "positions", []) or [])
-                if str(pos.get("ticker", "") or "").upper() == ticker.upper()
-            ),
-            None,
-        )
+        current = _current_position(bot, ticker)
         if not current:
             results.append(f"📌 {_display_symbol(ticker)} 포지션 없음")
             continue
-        current_qty = int(current.get("qty", 0) or 0)
-        prefix = ""
-        if before_qty and current_qty != before_qty:
-            prefix = f"⚠️ 수량 변경 감지 {before_qty}주→{current_qty}주\n"
-        results.append(prefix + _cmd_close(bot, ticker.upper()))
+        results.append(_qty_change_warning(bot, ticker, before_qty) + _cmd_close(bot, ticker.upper()))
     return "\n\n".join(results) + f"\n\n✅ 확인된 청산 요청 처리 완료 ({len(positions)}건)"
 
 
@@ -258,7 +406,7 @@ def _execute_danger_confirm(record: dict, bot) -> str:
     if cmd == "/close":
         if not args:
             return "❌ 종목코드를 확인할 수 없습니다."
-        return _cmd_close(bot, str(args[0]).upper())
+        return _cmd_close_snapshot(bot, str(args[0]).upper(), snapshot)
     if cmd == "/closeall":
         return _cmd_closeall_snapshot(bot, snapshot)
     if cmd == "/panic":
@@ -276,6 +424,9 @@ def _execute_danger_confirm(record: dict, bot) -> str:
         try:
             from interface.v2_telegram import handle_v2_command
 
+            if cmd == "/pathb_closeall":
+                market = str(snapshot.get("market") or "").upper() or None
+                return handle_v2_command(cmd, bot, market_override=market)
             return handle_v2_command(cmd, bot)
         except Exception as exc:
             return f"V2 명령 처리 실패: {exc}"
@@ -296,20 +447,330 @@ def _danger_confirm_gate(cmd: str, args: list[str], bot) -> tuple[bool, str | No
         return False, None
     nonce_arg = str(args[-1]).strip().upper() if args and _is_confirm_nonce(str(args[-1])) else ""
     if nonce_arg:
-        record, error = _pop_danger_confirm(nonce_arg)
+        current_key = str(spec.get("key") or "")
+        record, error = _consume_danger_confirm(nonce_arg, current_key)
         if error:
             return True, error
-        current_key = str(spec.get("key") or "")
-        stored_key = str(record.get("key") or "") if record else ""
-        if current_key != stored_key:
-            return True, "확인 코드가 현재 명령과 일치하지 않습니다. 다시 명령을 입력하세요."
         return True, _execute_danger_confirm(record, bot)
     snapshot = spec.get("snapshot") if isinstance(spec.get("snapshot"), dict) else {}
-    if cmd in {"/close", "/closeall", "/panic"} and not list((snapshot or {}).get("positions") or []):
+    if cmd in {"/close", "/closeall"} and not list((snapshot or {}).get("positions") or []):
         return True, "📌 실행 대상 포지션 없음"
     nonce = _store_danger_confirm(spec)
     log.warning(f"[commander] 위험 명령 확인 대기: {spec.get('key')} nonce={nonce}")
     return True, _format_danger_confirm_prompt(spec, nonce)
+
+
+def _callback_value(action: str, value: str = "") -> str:
+    value = str(value or "").strip()
+    return f"{MENU_CALLBACK_PREFIX}{action}:{value}" if value else f"{MENU_CALLBACK_PREFIX}{action}"
+
+
+def _inline_keyboard(rows: list[list[tuple[str, str]]]) -> dict:
+    keyboard = []
+    for row in rows:
+        buttons = [
+            {"text": str(label), "callback_data": str(callback_data)}
+            for label, callback_data in row
+            if label and callback_data
+        ]
+        if buttons:
+            keyboard.append(buttons)
+    return {"inline_keyboard": keyboard}
+
+
+def _safe_handle(command: str, bot) -> str:
+    try:
+        return _handle(command, bot)
+    except Exception as exc:
+        return f"{command} 처리 실패: {mask_secrets(exc)}"
+
+
+def _combine_command_outputs(bot, commands: list[str]) -> str:
+    return "\n\n".join(_safe_handle(command, bot) for command in commands)
+
+
+def _main_menu_keyboard() -> dict:
+    return _inline_keyboard(
+        [
+            [("상태/조회", _callback_value("menu", "info")), ("보유/매도", _callback_value("menu", "positions"))],
+            [("후보/Claude", _callback_value("menu", "ops")), ("PathB", _callback_value("menu", "pathb"))],
+            [("위험 제어", _callback_value("menu", "risk")), ("설정", _callback_value("menu", "settings"))],
+        ]
+    )
+
+
+def _positions_keyboard(bot) -> dict:
+    positions = _position_snapshot(bot)
+    rows: list[list[tuple[str, str]]] = []
+    for item in positions:
+        ticker = str(item.get("ticker") or "").upper()
+        if not ticker:
+            continue
+        label = f"매도 {_display_symbol(ticker, item.get('market', ''), item.get('name', ''))}"
+        rows.append([(label, _callback_value("danger", f"close:{ticker}"))])
+    if positions:
+        rows.append([("전체 청산", _callback_value("danger", "closeall"))])
+    rows.append([("새로고침", _callback_value("menu", "positions")), ("메인", _callback_value("menu", "main"))])
+    return _inline_keyboard(rows)
+
+
+def _danger_confirm_keyboard(nonce: str) -> dict:
+    return _inline_keyboard(
+        [
+            [("확인 실행", _callback_value("confirm", nonce)), ("취소", _callback_value("cancel", nonce))],
+            [("메인", _callback_value("menu", "main"))],
+        ]
+    )
+
+
+def _back_keyboard(menu_key: str) -> dict:
+    return _inline_keyboard([[("뒤로", _callback_value("menu", menu_key)), ("메인", _callback_value("menu", "main"))]])
+
+
+def _command_back_menu(command_key: str) -> str:
+    if command_key in {"claude_kr", "claude_us", "rescreen_kr", "rescreen_us", "review_kr", "review_us"}:
+        return "ops"
+    if command_key.startswith("pathb_"):
+        return "pathb"
+    if command_key in {"halt", "resume"}:
+        return "risk"
+    if command_key.startswith("stop_cluster"):
+        return "stop"
+    if command_key.startswith("setorder"):
+        return "order"
+    if command_key.startswith("setloss"):
+        return "loss"
+    if command_key.startswith("setsl") or command_key.startswith("settp"):
+        return "exits"
+    if command_key.startswith("trail"):
+        return "trail"
+    if command_key.startswith("entry"):
+        return "entry"
+    return "info"
+
+
+def _command_result_keyboard(command_key: str, bot) -> dict:
+    if command_key == "positions":
+        return _positions_keyboard(bot)
+    return _back_keyboard(_command_back_menu(command_key))
+
+
+def _menu_payload(menu_key: str, bot) -> tuple[str, dict]:
+    key = str(menu_key or "main").strip().lower()
+    if key == "main":
+        return (
+            "<b>운영 메뉴</b>\n원하는 기능을 선택하세요. 위험 명령은 실행 전 확인을 한 번 더 요구합니다.",
+            _main_menu_keyboard(),
+        )
+    if key == "info":
+        return (
+            "<b>상태/조회</b>\n계좌, 손익, 후보, 오류, 판단 정보를 조회합니다.",
+            _inline_keyboard(
+                [
+                    [("상태", _callback_value("cmd", "status")), ("헬스", _callback_value("cmd", "health"))],
+                    [("손익", _callback_value("cmd", "pnl")), ("보유", _callback_value("cmd", "positions"))],
+                    [("후보", _callback_value("cmd", "picks")), ("오류", _callback_value("cmd", "errors"))],
+                    [("판단", _callback_value("cmd", "judge")), ("매매내역", _callback_value("cmd", "trades"))],
+                    [("AI 크레딧", _callback_value("cmd", "credit")), ("학습", _callback_value("cmd", "brain"))],
+                    [("대기 작업", _callback_value("cmd", "brain_pending"))],
+                    [("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "ops":
+        return (
+            "<b>후보/Claude</b>\n시장별 재판단, 후보 재선정, 보유 포지션 리뷰를 실행합니다.",
+            _inline_keyboard(
+                [
+                    [("Claude KR", _callback_value("cmd", "claude_kr")), ("Claude US", _callback_value("cmd", "claude_us"))],
+                    [("Rescreen KR", _callback_value("cmd", "rescreen_kr")), ("Rescreen US", _callback_value("cmd", "rescreen_us"))],
+                    [("Review KR", _callback_value("cmd", "review_kr")), ("Review US", _callback_value("cmd", "review_us"))],
+                    [("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "positions":
+        return _safe_handle("/positions", bot), _positions_keyboard(bot)
+    if key == "pathb":
+        return (
+            "<b>PathB</b>\nB플랜 상태와 운영 스위치를 제어합니다.",
+            _inline_keyboard(
+                [
+                    [("상태", _callback_value("cmd", "pathb_status"))],
+                    [("ON", _callback_value("cmd", "pathb_on")), ("OFF", _callback_value("cmd", "pathb_off"))],
+                    [("긴급 중지", _callback_value("danger", "pathb_kill")), ("전체 청산", _callback_value("danger", "pathb_closeall"))],
+                    [("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "risk":
+        return (
+            "<b>위험 제어</b>\n거래 중지/재개와 전체 청산 계열 명령입니다.",
+            _inline_keyboard(
+                [
+                    [("거래 중지", _callback_value("cmd", "halt")), ("거래 재개", _callback_value("cmd", "resume"))],
+                    [("긴급 중지+청산", _callback_value("danger", "panic")), ("전체 청산", _callback_value("danger", "closeall"))],
+                    [("손실클러스터", _callback_value("menu", "stop"))],
+                    [("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "stop":
+        return (
+            "<b>손실클러스터</b>\n시장별 차단 상태 조회와 카운터 해제를 실행합니다.",
+            _inline_keyboard(
+                [
+                    [("KR 조회", _callback_value("cmd", "stop_cluster_kr")), ("US 조회", _callback_value("cmd", "stop_cluster_us"))],
+                    [("KR 리셋", _callback_value("cmd", "stop_cluster_reset_kr")), ("US 리셋", _callback_value("cmd", "stop_cluster_reset_us"))],
+                    [("위험 제어", _callback_value("menu", "risk")), ("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "settings":
+        return (
+            "<b>설정</b>\n주문 금액, 손실 한도, 손절/익절, 트레일링, 진입 임계값을 버튼으로 조정합니다.",
+            _inline_keyboard(
+                [
+                    [("리스크 보기", _callback_value("cmd", "risk"))],
+                    [("최대주문", _callback_value("menu", "order")), ("손실한도", _callback_value("menu", "loss"))],
+                    [("손절/익절", _callback_value("menu", "exits")), ("트레일링", _callback_value("menu", "trail"))],
+                    [("진입임계값", _callback_value("menu", "entry"))],
+                    [("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "order":
+        return (
+            _safe_handle("/setorder", bot),
+            _inline_keyboard(
+                [
+                    [("10만원", _callback_value("cmd", "setorder_100k")), ("20만원", _callback_value("cmd", "setorder_200k"))],
+                    [("30만원", _callback_value("cmd", "setorder_300k")), ("50만원", _callback_value("cmd", "setorder_500k"))],
+                    [("설정", _callback_value("menu", "settings")), ("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "loss":
+        return (
+            _safe_handle("/setloss", bot),
+            _inline_keyboard(
+                [
+                    [("-3%", _callback_value("cmd", "setloss_3")), ("-5%", _callback_value("cmd", "setloss_5")), ("-7%", _callback_value("cmd", "setloss_7"))],
+                    [("설정", _callback_value("menu", "settings")), ("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "exits":
+        return (
+            _combine_command_outputs(bot, ["/setsl", "/settp"]),
+            _inline_keyboard(
+                [
+                    [("손절 -2%", _callback_value("cmd", "setsl_2")), ("손절 -3%", _callback_value("cmd", "setsl_3")), ("손절 -5%", _callback_value("cmd", "setsl_5"))],
+                    [("익절 4%", _callback_value("cmd", "settp_4")), ("익절 6%", _callback_value("cmd", "settp_6")), ("익절 8%", _callback_value("cmd", "settp_8"))],
+                    [("설정", _callback_value("menu", "settings")), ("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "trail":
+        return (
+            _combine_command_outputs(bot, ["/trail", "/trail_pct", "/trail_analyst"]),
+            _inline_keyboard(
+                [
+                    [("트레일 ON", _callback_value("cmd", "trail_on")), ("트레일 OFF", _callback_value("cmd", "trail_off"))],
+                    [("폭 1%", _callback_value("cmd", "trail_pct_1")), ("폭 2%", _callback_value("cmd", "trail_pct_2")), ("폭 3%", _callback_value("cmd", "trail_pct_3"))],
+                    [("분석가 ON", _callback_value("cmd", "trail_analyst_on")), ("분석가 OFF", _callback_value("cmd", "trail_analyst_off"))],
+                    [("설정", _callback_value("menu", "settings")), ("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    if key == "entry":
+        return (
+            _safe_handle("/entry", bot),
+            _inline_keyboard(
+                [
+                    [("상태", _callback_value("cmd", "entry_status")), ("ON", _callback_value("cmd", "entry_on")), ("OFF", _callback_value("cmd", "entry_off"))],
+                    [("0.2", _callback_value("cmd", "entry_cutoff_02")), ("0.3", _callback_value("cmd", "entry_cutoff_03")), ("0.5", _callback_value("cmd", "entry_cutoff_05"))],
+                    [("설정", _callback_value("menu", "settings")), ("메인", _callback_value("menu", "main"))],
+                ]
+            ),
+        )
+    return f"알 수 없는 메뉴입니다: {key}", _main_menu_keyboard()
+
+
+def _danger_callback_payload(payload: str, bot) -> tuple[str, dict]:
+    kind, _, arg = str(payload or "").partition(":")
+    kind = kind.strip().lower()
+    if kind == "close":
+        spec = _danger_command_spec("/close", [arg], bot)
+    elif kind == "closeall":
+        spec = _danger_command_spec("/closeall", [], bot)
+    elif kind == "panic":
+        spec = _danger_command_spec("/panic", [], bot)
+    elif kind == "pathb_kill":
+        spec = _danger_command_spec("/pathb_kill", [], bot)
+    elif kind == "pathb_closeall":
+        spec = _danger_command_spec("/pathb_closeall", [], bot)
+    else:
+        spec = None
+
+    if spec is None:
+        return "실행 대상을 확인할 수 없습니다.", _main_menu_keyboard()
+    snapshot = spec.get("snapshot") if isinstance(spec.get("snapshot"), dict) else {}
+    if spec.get("cmd") in {"/close", "/closeall"} and not list((snapshot or {}).get("positions") or []):
+        return "📌 실행 대상 포지션 없음", _positions_keyboard(bot)
+    nonce = _store_danger_confirm(spec)
+    log.warning(f"[commander] 버튼 위험 명령 확인 대기: {spec.get('key')} nonce={nonce}")
+    return _format_danger_confirm_prompt(spec, nonce), _danger_confirm_keyboard(nonce)
+
+
+def _cancel_danger_callback(nonce: str) -> tuple[str, dict]:
+    key = str(nonce or "").strip().upper()
+    with _pending_danger_lock:
+        record = _pending_danger_confirms.pop(key, None)
+    if record:
+        return "위험 명령을 취소했습니다.", _main_menu_keyboard()
+    return "이미 처리되었거나 만료된 확인입니다.", _main_menu_keyboard()
+
+
+def _confirm_danger_callback(nonce: str, bot) -> tuple[str, dict]:
+    record, error = _consume_danger_confirm(nonce)
+    if error:
+        return error, _main_menu_keyboard()
+    return _execute_danger_confirm(record or {}, bot), _main_menu_keyboard()
+
+
+def _handle_callback_data(data: str, bot) -> tuple[str, dict]:
+    raw = str(data or "").strip()
+    if not raw.startswith(MENU_CALLBACK_PREFIX):
+        return "지원하지 않는 버튼입니다.", _main_menu_keyboard()
+    payload = raw[len(MENU_CALLBACK_PREFIX):]
+    action, _, rest = payload.partition(":")
+    action = action.strip().lower()
+
+    if action == "menu":
+        return _menu_payload(rest or "main", bot)
+    if action == "cmd":
+        key = str(rest or "").strip()
+        command = _CALLBACK_COMMANDS.get(key)
+        if not command:
+            return f"알 수 없는 명령 버튼입니다: {key}", _main_menu_keyboard()
+        return _safe_handle(command, bot), _command_result_keyboard(key, bot)
+    if action == "danger":
+        return _danger_callback_payload(rest, bot)
+    if action == "confirm":
+        return _confirm_danger_callback(rest, bot)
+    if action == "cancel":
+        return _cancel_danger_callback(rest)
+    return "지원하지 않는 버튼 동작입니다.", _main_menu_keyboard()
+
+
+def _reply_markup_for_text_command(text: str, bot) -> dict | None:
+    first = (str(text or "").strip().split() or [""])[0].lower()
+    if first in {"?", "/help", "/h", "/menu", "/start"}:
+        return _main_menu_keyboard()
+    if first in {"/pos", "/positions"}:
+        return _positions_keyboard(bot)
+    return None
 
 
 def _normalize_market_arg(value):
@@ -369,7 +830,7 @@ def _handle(text: str, bot) -> str:
         return response or ""
 
     # ── 도움말 ────────────────────────────────────────────────────────────────
-    if cmd in ("?", "/help", "/h"):
+    if cmd in ("?", "/help", "/h", "/menu", "/start"):
         return HELP_TEXT
 
     if cmd in ("/stop_cluster", "/cluster", "/losscluster"):
@@ -1537,6 +1998,10 @@ class TelegramCommander:
                 updates = self._get_updates()
                 for upd in updates:
                     self._offset = upd["update_id"] + 1
+                    callback = upd.get("callback_query")
+                    if callback:
+                        self._handle_callback_query(callback)
+                        continue
                     msg = upd.get("message") or upd.get("edited_message")
                     if not msg:
                         continue
@@ -1552,10 +2017,25 @@ class TelegramCommander:
                     if is_cmd:
                         log.info(f"[commander] 명령 수신: {text}")
                         response = _handle(text, self._bot)
-                        _send(response)
+                        _send(response, reply_markup=_reply_markup_for_text_command(text, self._bot))
             except Exception as e:
                 log.warning(f"[commander] 폴링 오류: {mask_secrets(e)}")
                 time.sleep(5)
+
+    def _handle_callback_query(self, callback: dict) -> None:
+        callback_id = str(callback.get("id") or "")
+        message = callback.get("message") or {}
+        chat_id = str((message.get("chat") or {}).get("id") or "")
+        if chat_id != CHAT_ID:
+            _answer_callback_query(callback_id, "권한이 없습니다.")
+            return
+        data = str(callback.get("data") or "")
+        _answer_callback_query(callback_id)
+        log.info(f"[commander] 버튼 수신: {data}")
+        response, reply_markup = _handle_callback_data(data, self._bot)
+        message_id = int(message.get("message_id") or 0)
+        if not _edit_message_text(chat_id, message_id, response, reply_markup=reply_markup):
+            _send(response, reply_markup=reply_markup)
 
     def _get_updates(self) -> list:
         if not TOKEN:
@@ -1563,7 +2043,7 @@ class TelegramCommander:
             return []
         resp = requests.get(
             f"https://api.telegram.org/bot{TOKEN}/getUpdates",
-            params={"offset": self._offset, "timeout": 30, "allowed_updates": ["message"]},
+            params={"offset": self._offset, "timeout": 30, "allowed_updates": ["message", "callback_query"]},
             timeout=35,
         )
         resp.raise_for_status()

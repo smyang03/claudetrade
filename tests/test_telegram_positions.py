@@ -7,6 +7,14 @@ from unittest.mock import patch
 import telegram_commander
 
 
+def _callback_values(markup: dict) -> list[str]:
+    return [
+        str(button.get("callback_data") or "")
+        for row in markup.get("inline_keyboard", [])
+        for button in row
+    ]
+
+
 class TelegramPositionsTests(unittest.TestCase):
     def test_positions_merges_local_fallback_for_missing_broker_market(self) -> None:
         bot = SimpleNamespace(
@@ -171,6 +179,44 @@ class TelegramPositionsTests(unittest.TestCase):
 
         self.assertIn("명령 시장 인자가 잘못되었습니다", message)
         self.assertNotIn("unsupported_market", message)
+
+    def test_main_menu_payload_exposes_hierarchical_buttons(self) -> None:
+        text, markup = telegram_commander._handle_callback_data("ct:menu:main", SimpleNamespace())
+        callbacks = _callback_values(markup)
+
+        self.assertIn("운영 메뉴", text)
+        self.assertIn("ct:menu:info", callbacks)
+        self.assertIn("ct:menu:positions", callbacks)
+        self.assertIn("ct:menu:ops", callbacks)
+        self.assertIn("ct:menu:settings", callbacks)
+
+    def test_command_callback_reuses_existing_handler(self) -> None:
+        bot = SimpleNamespace()
+        with patch("telegram_commander._handle", return_value="STATUS") as handle:
+            text, markup = telegram_commander._handle_callback_data("ct:cmd:status", bot)
+
+        self.assertEqual(text, "STATUS")
+        handle.assert_called_once_with("/status", bot)
+        self.assertIn("ct:menu:info", _callback_values(markup))
+
+    def test_positions_menu_adds_close_buttons(self) -> None:
+        bot = SimpleNamespace(
+            risk=SimpleNamespace(
+                positions=[
+                    {"ticker": "005930", "qty": 10, "name": "Samsung"},
+                    {"ticker": "AAPL", "qty": 2, "name": "Apple"},
+                ]
+            )
+        )
+
+        with patch("telegram_commander._safe_handle", return_value="POSITIONS"):
+            text, markup = telegram_commander._handle_callback_data("ct:menu:positions", bot)
+
+        callbacks = _callback_values(markup)
+        self.assertEqual(text, "POSITIONS")
+        self.assertIn("ct:danger:close:005930", callbacks)
+        self.assertIn("ct:danger:close:AAPL", callbacks)
+        self.assertIn("ct:danger:closeall", callbacks)
 
 
 if __name__ == "__main__":
