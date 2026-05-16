@@ -69,7 +69,7 @@ def _load_unknown_runs(
                 or run.get("execution_id")
                 or ""
             )
-            if order_id and run_order and run_order != str(order_id).strip():
+            if order_id and run_order != str(order_id).strip():
                 continue
             rows.append({**run, "_order_id": run_order})
     return rows
