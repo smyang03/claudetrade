@@ -40,6 +40,7 @@ def _load_unknown_runs(
     market: str = "ALL",
     ticker: str = "",
     order_id: str = "",
+    path_run_id: str = "",
 ) -> list[dict[str, Any]]:
     market_key = _normalize_market(market)
     markets = ["KR", "US"] if market_key == "ALL" else [market_key]
@@ -60,6 +61,8 @@ def _load_unknown_runs(
                 candidates.append(run)
         for run in candidates:
             plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+            if path_run_id and str(run.get("path_run_id") or "").strip() != str(path_run_id).strip():
+                continue
             if ticker and str(run.get("ticker") or "").strip().upper() != str(ticker).strip().upper():
                 continue
             run_order = str(
@@ -81,6 +84,8 @@ def reconcile_order_truth(
     market: str = "ALL",
     ticker: str = "",
     order_id: str = "",
+    path_run_id: str = "",
+    sell_order_id: str = "",
     dry_run: bool = True,
     resolution: str = "unresolved",
     operator: str = "",
@@ -88,7 +93,14 @@ def reconcile_order_truth(
     store_path: str | Path | None = None,
 ) -> dict[str, Any]:
     store = EventStore(store_path) if store_path else EventStore()
-    rows = _load_unknown_runs(store, date=date, market=market, ticker=ticker, order_id=order_id)
+    rows = _load_unknown_runs(
+        store,
+        date=date,
+        market=market,
+        ticker=ticker,
+        order_id=order_id,
+        path_run_id=path_run_id,
+    )
     resolution_key = str(resolution or "unresolved").strip().lower()
     if resolution_key not in EVENT_BY_RESOLUTION:
         resolution_key = "unresolved"
@@ -103,6 +115,8 @@ def reconcile_order_truth(
             "status_before": run.get("status"),
             "broker_truth": resolution_key,
             "would_event_type": EVENT_BY_RESOLUTION[resolution_key],
+            "sell_order_id": str(sell_order_id or "").strip(),
+            "sell_order_id_evidence_only": bool(str(sell_order_id or "").strip()),
             "applied": False,
         }
         if not dry_run:
@@ -114,6 +128,8 @@ def reconcile_order_truth(
                 "operator": operator,
                 "reason": reason or "manual_order_unknown_reconciliation",
                 "reconciled_at": _now(),
+                "sell_order_id": str(sell_order_id or "").strip(),
+                "sell_order_id_evidence_only": bool(str(sell_order_id or "").strip()),
             }
             store.append(
                 LifecycleEvent(
@@ -155,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--market", default="ALL", choices=["KR", "US", "ALL"])
     parser.add_argument("--ticker", default="")
     parser.add_argument("--order-id", default="")
+    parser.add_argument("--path-run-id", default="")
+    parser.add_argument("--sell-order-id", default="")
     parser.add_argument("--resolution", default="unresolved", choices=sorted(EVENT_BY_RESOLUTION))
     parser.add_argument("--operator", default="")
     parser.add_argument("--reason", default="")
@@ -168,6 +186,8 @@ def main(argv: list[str] | None = None) -> int:
         market=args.market,
         ticker=args.ticker,
         order_id=args.order_id,
+        path_run_id=args.path_run_id,
+        sell_order_id=args.sell_order_id,
         dry_run=not bool(args.apply),
         resolution=args.resolution,
         operator=args.operator,

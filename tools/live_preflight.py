@@ -1162,6 +1162,97 @@ def _token_checks(mode: str) -> list[CheckResult]:
     return checks
 
 
+def _position_market_from_ticker(ticker: str) -> str:
+    raw = str(ticker or "").strip().upper()
+    if not raw:
+        return ""
+    return "US" if raw.isalpha() else "KR"
+
+
+def _open_positions_market_metadata_check(mode: str) -> CheckResult:
+    path = get_runtime_path("state", f"{mode}_open_positions.json", make_parents=False)
+    data = {
+        "path": str(path),
+        "missing_market": [],
+        "conflicts": [],
+        "count": 0,
+    }
+    if not path.exists():
+        return CheckResult(
+            "state.open_positions_market_metadata",
+            "PASS",
+            "open positions file absent",
+            data,
+        )
+    try:
+        items = json.loads(path.read_text(encoding="utf-8")) or []
+    except Exception as exc:
+        return CheckResult(
+            "state.open_positions_market_metadata",
+            "FAIL",
+            f"open positions JSON unreadable: {exc}",
+            data,
+        )
+    if not isinstance(items, list):
+        data["root_type"] = type(items).__name__
+        return CheckResult(
+            "state.open_positions_market_metadata",
+            "FAIL",
+            "open positions root is not a list",
+            data,
+        )
+    data["count"] = len(items)
+    for idx, pos in enumerate(items):
+        if not isinstance(pos, dict):
+            data["conflicts"].append({"index": idx, "reason": "position_not_object"})
+            continue
+        ticker = str(pos.get("ticker") or "").strip()
+        declared = str(pos.get("market") or "").strip().upper()
+        inferred = _position_market_from_ticker(ticker)
+        currency = str(pos.get("display_currency") or "").strip().upper()
+        pathb_plan = pos.get("pathb_plan") if isinstance(pos.get("pathb_plan"), dict) else {}
+        pathb_market = str((pathb_plan or {}).get("market") or "").strip().upper()
+        row = {
+            "index": idx,
+            "ticker": ticker,
+            "market": declared,
+            "inferred_market": inferred,
+            "display_currency": currency,
+            "pathb_market": pathb_market,
+        }
+        if declared not in {"KR", "US"}:
+            data["missing_market"].append(row)
+            continue
+        if inferred and declared != inferred:
+            data["conflicts"].append({**row, "reason": "ticker_market_mismatch"})
+        if pathb_market in {"KR", "US"} and declared != pathb_market:
+            data["conflicts"].append({**row, "reason": "pathb_plan_market_mismatch"})
+        if currency == "USD" and declared != "US":
+            data["conflicts"].append({**row, "reason": "usd_currency_market_mismatch"})
+        if currency == "KRW" and declared != "KR":
+            data["conflicts"].append({**row, "reason": "krw_currency_market_mismatch"})
+    if data["conflicts"]:
+        return CheckResult(
+            "state.open_positions_market_metadata",
+            "FAIL",
+            f"open position market conflicts={len(data['conflicts'])}",
+            data,
+        )
+    if data["missing_market"]:
+        return CheckResult(
+            "state.open_positions_market_metadata",
+            "WARN",
+            f"open positions missing explicit market={len(data['missing_market'])}",
+            data,
+        )
+    return CheckResult(
+        "state.open_positions_market_metadata",
+        "PASS",
+        f"open positions market metadata valid rows={len(items)}",
+        data,
+    )
+
+
 def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
     checks: list[CheckResult] = []
     effective: dict[str, str] = config.get("effective", {})
@@ -1179,6 +1270,7 @@ def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
             expected_mode="dashboard_server",
         )
     )
+    checks.append(_open_positions_market_metadata_check(mode))
     brain_candidates = [
         ROOT / "state" / "brain.json",
         ROOT / "claude_memory" / "brain.json",
@@ -1831,6 +1923,28 @@ def _ops_summary_checks(mode: str) -> list[CheckResult]:
 
 def _price_csv_checks() -> list[CheckResult]:
     checks: list[CheckResult] = []
+    try:
+        import exchange_calendars as ec
+
+        ec.get_calendar("XKRX")
+        ec.get_calendar("XNYS")
+        checks.append(
+            CheckResult(
+                "calendar.exchange_calendars",
+                "PASS",
+                "ok XKRX/XNYS",
+                {"calendars": ["XKRX", "XNYS"]},
+            )
+        )
+    except Exception as exc:
+        checks.append(
+            CheckResult(
+                "calendar.exchange_calendars",
+                "WARN",
+                "weekday_fallback active; KR holiday freshness threshold relaxed",
+                {"error": str(exc)},
+            )
+        )
     try:
         from runtime.price_csv_health import price_csv_health_summary
     except Exception as exc:

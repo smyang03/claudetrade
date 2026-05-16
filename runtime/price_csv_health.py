@@ -47,6 +47,21 @@ def _normalize_timestamp(value: Any) -> pd.Timestamp:
     return ts.normalize()
 
 
+def _kst_now(now: datetime | pd.Timestamp | str | None = None) -> datetime:
+    tz = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
+    if now is None:
+        return datetime.now(tz)
+    if isinstance(now, pd.Timestamp):
+        value = now.to_pydatetime()
+    elif isinstance(now, str):
+        value = pd.Timestamp(now).to_pydatetime()
+    else:
+        value = now
+    if tz is not None and value.tzinfo is not None:
+        return value.astimezone(tz)
+    return value
+
+
 def expected_trading_days(
     market: str,
     start_dt: pd.Timestamp,
@@ -86,21 +101,100 @@ def expected_last_trading_day(
     """
     market_key = str(market or "").upper()
     end = _normalize_timestamp(end_dt)
-    if market_key == "US":
-        if now is None:
-            tz = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
-            now = datetime.now(tz)
-        now_ts = pd.Timestamp(now)
-        if now_ts.tzinfo is not None:
-            now_ts = now_ts.tz_convert(None)
-        local_today = pd.Timestamp(now.date()).normalize()
-        close_buffer_hour_kst = int(7)
-        latest_completed_local = local_today - pd.Timedelta(days=2 if now.time() < time(close_buffer_hour_kst, 0) else 1)
+    now_dt = _kst_now(now)
+    local_today = pd.Timestamp(now_dt.date()).normalize()
+    if market_key == "KR":
+        latest_completed_local = local_today - pd.Timedelta(days=1 if now_dt.time() < time(16, 0) else 0)
+        end = min(end, latest_completed_local)
+    elif market_key == "US":
+        latest_completed_local = local_today - pd.Timedelta(days=2 if now_dt.time() < time(7, 0) else 1)
         end = min(end, latest_completed_local)
     sessions, source = expected_trading_days(market_key, end - pd.Timedelta(days=21), end)
     if sessions:
         return sessions[-1], source
     return None, source
+
+
+def price_csv_freshness_threshold(market: str, calendar_source: str) -> int:
+    market_key = str(market or "").upper()
+    if calendar_source == "exchange_calendars":
+        return 2
+    if market_key == "KR":
+        # Weekday fallback cannot see KR holidays; this protects long Seollal/Chuseok breaks.
+        return 7
+    return 3
+
+
+def price_csv_freshness_status(
+    market: str,
+    last_date: pd.Timestamp | datetime | str,
+    *,
+    now: datetime | pd.Timestamp | str | None = None,
+) -> dict[str, Any]:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    try:
+        last = _normalize_timestamp(last_date)
+    except Exception as exc:
+        return {
+            "fresh": False,
+            "market": market_key,
+            "last_date": str(last_date or ""),
+            "latest_completed": "",
+            "missing_sessions": 999,
+            "threshold": price_csv_freshness_threshold(market_key, "invalid_last_date"),
+            "calendar_source": "invalid_last_date",
+            "error": str(exc),
+        }
+
+    now_dt = _kst_now(now)
+    latest_completed, latest_source = expected_last_trading_day(
+        market_key,
+        pd.Timestamp(now_dt.date()),
+        now=now_dt,
+    )
+    last_str = last.strftime("%Y-%m-%d")
+    if latest_completed is None:
+        threshold = price_csv_freshness_threshold(market_key, latest_source)
+        return {
+            "fresh": True,
+            "market": market_key,
+            "last_date": last_str,
+            "latest_completed": "",
+            "missing_sessions": 0,
+            "threshold": threshold,
+            "calendar_source": latest_source,
+        }
+
+    latest = _normalize_timestamp(latest_completed)
+    if last >= latest:
+        threshold = price_csv_freshness_threshold(market_key, latest_source)
+        return {
+            "fresh": True,
+            "market": market_key,
+            "last_date": last_str,
+            "latest_completed": latest.strftime("%Y-%m-%d"),
+            "missing_sessions": 0,
+            "threshold": threshold,
+            "calendar_source": latest_source,
+        }
+
+    missing_days, calendar_source = expected_trading_days(
+        market_key,
+        last + pd.Timedelta(days=1),
+        latest,
+    )
+    threshold = price_csv_freshness_threshold(market_key, calendar_source)
+    missing_count = len(missing_days)
+    return {
+        "fresh": missing_count <= threshold,
+        "market": market_key,
+        "last_date": last_str,
+        "latest_completed": latest.strftime("%Y-%m-%d"),
+        "missing_sessions": missing_count,
+        "threshold": threshold,
+        "calendar_source": calendar_source,
+        "missing_dates": [pd.Timestamp(day).strftime("%Y-%m-%d") for day in missing_days[:10]],
+    }
 
 
 def _date_series(series: pd.Series) -> pd.Series:
@@ -289,23 +383,42 @@ def price_csv_health_summary(
     samples: dict[str, list[dict[str, Any]]] = {key: [] for key in counts}
     last_dates: list[str] = []
 
+    policy_sources: dict[str, int] = {}
     for ticker, path in sorted(by_ticker.items()):
-        _df, result = load_price_csv_frame(path, market_key, ticker, expected_last_date=expected)
-        counts[result.status] = counts.get(result.status, 0) + 1
-        if result.status == "ok":
+        _df, result = load_price_csv_frame(path, market_key, ticker)
+        status = result.status
+        detail = result.detail
+        freshness: dict[str, Any] | None = None
+        if status == "ok" and result.last_date:
+            freshness = price_csv_freshness_status(market_key, result.last_date)
+            policy_sources[str(freshness.get("calendar_source") or "")] = (
+                policy_sources.get(str(freshness.get("calendar_source") or ""), 0) + 1
+            )
+            if not freshness.get("fresh"):
+                status = "stale_csv"
+                detail = (
+                    f"last_date={freshness.get('last_date')} "
+                    f"latest_completed={freshness.get('latest_completed')} "
+                    f"missing_sessions={freshness.get('missing_sessions')} "
+                    f"threshold={freshness.get('threshold')} "
+                    f"calendar={freshness.get('calendar_source')}"
+                )
+        counts[status] = counts.get(status, 0) + 1
+        if status == "ok":
             fresh_count += 1
         if result.last_date:
             last_dates.append(result.last_date)
-        bucket = samples.setdefault(result.status, [])
+        bucket = samples.setdefault(status, [])
         if len(bucket) < 30:
-            bucket.append(
-                {
-                    "ticker": ticker,
-                    "path": str(path),
-                    "detail": result.detail,
-                    "last_date": result.last_date,
-                }
-            )
+            sample = {
+                "ticker": ticker,
+                "path": str(path),
+                "detail": detail,
+                "last_date": result.last_date,
+            }
+            if freshness is not None:
+                sample["freshness"] = freshness
+            bucket.append(sample)
 
     fresh_ratio = (fresh_count / total) if total else 0.0
     expected_str = expected.strftime("%Y-%m-%d") if expected is not None else ""
@@ -318,6 +431,7 @@ def price_csv_health_summary(
         "counts": counts,
         "expected_last_date": expected_str,
         "calendar_source": source,
+        "freshness_policy_sources": policy_sources,
         "oldest_last_date": min(last_dates) if last_dates else "",
         "newest_last_date": max(last_dates) if last_dates else "",
         "samples": samples,

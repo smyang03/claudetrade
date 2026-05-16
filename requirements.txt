@@ -11,3 +11,4 @@ flask
 filelock
 yfinance
 psutil
+exchange-calendars

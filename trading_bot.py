@@ -12148,6 +12148,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self.risk.positions.append(pos)
             log.info(f"[포지션 복구] {[p['ticker'] for p in saved]} "
                      f"(총 {len(saved)}개 / 현금 잔여 {self.risk.cash:,.0f}원)")
+            try:
+                self._save_positions()
+            except Exception as save_exc:
+                log.warning(f"[포지션 복구] normalized position save failed: {save_exc}")
         except Exception as e:
             log.error(f"포지션 복구 실패: {e}")
     def _broker_reconcile_key(self, market: str, ticker: str) -> tuple[str, str]:
@@ -12478,7 +12482,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         integrity: str,
         management_protected: bool,
     ) -> dict:
-        current_session = self._current_session_date_str(market)
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        pos["market"] = market_key
+        current_session = self._current_session_date_str(market_key)
         entry_session = str(
             pos.get("entry_session_date")
             or pos.get("session_date")
@@ -12491,7 +12497,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         pos["position_origin"] = str(pos.get("position_origin") or origin)
         pos["position_integrity"] = str(pos.get("position_integrity") or integrity)
         pos["management_protected"] = bool(pos.get("management_protected", management_protected))
-        self._recover_position_mfe_state(pos, market, origin=origin)
+        self._recover_position_mfe_state(pos, market_key, origin=origin)
         if pos["management_protected"]:
             pos.setdefault("recovery_session_date", current_session)
         return pos
@@ -19563,16 +19569,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 df = df.sort_values("date").reset_index(drop=True)
                 # CSV가 너무 오래됐거나 행 수가 부족하면 on-demand fetch로 보완
                 _last = df["date"].max()
-                _today = _pd.Timestamp(datetime.now().date())
+                from runtime.price_csv_health import price_csv_freshness_status
+
+                freshness = price_csv_freshness_status(market, _last, now=now)
                 usable = 0
                 if len(df) >= self._MIN_SIGNAL_ROWS + 60:
                     usable = self._MIN_SIGNAL_ROWS
                 elif len(df) >= self._MIN_SIGNAL_ROWS:
                     usable = self._signal_usable_rows(df)
-                if (_today - _last).days <= 7 and usable >= self._MIN_SIGNAL_ROWS:
-                    self._ohlcv_cache[ticker] = df
-                    self._ohlcv_cache_time[ticker] = now
-                    return df
+                if usable >= self._MIN_SIGNAL_ROWS:
+                    if freshness.get("fresh"):
+                        self._ohlcv_cache[ticker] = df
+                        self._ohlcv_cache_time[ticker] = now
+                        return df
+                    log.info(
+                        "[OHLCV CSV stale] %s %s last=%s latest_completed=%s "
+                        "missing_sessions=%s threshold=%s calendar=%s",
+                        market,
+                        ticker,
+                        freshness.get("last_date"),
+                        freshness.get("latest_completed"),
+                        freshness.get("missing_sessions"),
+                        freshness.get("threshold"),
+                        freshness.get("calendar_source"),
+                    )
                 if usable < self._MIN_SIGNAL_ROWS:
                     log.debug(f"[OHLCV] {ticker} CSV {len(df)}행 부족 → on-demand 보완")
             except Exception:

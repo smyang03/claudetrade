@@ -67,11 +67,39 @@ class StateMixin:
         max_hold>1 장기 보유 뿐 아니라 당일 미청산 포지션(max_hold==1)도 저장:
         VTS 잔고 API 미반영 시 재시작 후 복구 가능하도록.
         """
-        carry = list(self.risk.positions)  # 보유 중인 모든 포지션 저장
+        carry = []
+        for pos in list(self.risk.positions):  # 보유 중인 모든 포지션 저장
+            if not isinstance(pos, dict):
+                carry.append(pos)
+                continue
+            item = dict(pos)
+            item["market"] = self._saved_position_market(item)
+            carry.append(item)
         _path = get_runtime_path("state", f"{self._mode}_open_positions.json")
         _atomic_json_dump(_path, carry, indent=2, default=str)
         if carry:
-            log.info(f"[포지션 저장] {[p['ticker'] for p in carry]} ({len(carry)}개) → {_path}")
+            tickers = [p.get("ticker", "") if isinstance(p, dict) else str(p) for p in carry]
+            log.info(f"[포지션 저장] {tickers} ({len(carry)}개) → {_path}")
+
+    def _saved_position_market(self, pos: dict) -> str:
+        raw_market = str((pos or {}).get("market") or "").strip().upper()
+        if raw_market in {"KR", "US"}:
+            return raw_market
+        ticker = str((pos or {}).get("ticker") or "").strip()
+        if ticker:
+            resolver = getattr(self, "_ticker_market", None)
+            if callable(resolver):
+                try:
+                    resolved = str(resolver(ticker) or "").strip().upper()
+                    if resolved in {"KR", "US"}:
+                        return resolved
+                except Exception:
+                    pass
+            return "US" if ticker.upper().isalpha() else "KR"
+        currency = str((pos or {}).get("display_currency") or "").strip().upper()
+        if currency == "USD":
+            return "US"
+        return "KR"
 
     def _save_pending_orders(self):
         self._normalize_pending_orders()

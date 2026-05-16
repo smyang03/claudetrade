@@ -1676,6 +1676,31 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
             "_debate": {"r1": r1, "changes": changes}}
 
 
+def _digest_news_excerpt(digest_prompt: str, max_chars: int = 600) -> str:
+    text = str(digest_prompt or "")
+    if not text:
+        return ""
+    marker_positions = [
+        pos
+        for pos in (
+            text.find("▶ 주요 뉴스"),
+            text.find("주요 뉴스 ("),
+            text.find("top_news"),
+        )
+        if pos >= 0
+    ]
+    if not marker_positions:
+        return ""
+    start = min(marker_positions)
+    end = text.find("\n▶", start + 1)
+    if end < 0:
+        end = len(text)
+    excerpt = text[start:end].strip()
+    if not excerpt:
+        return ""
+    return "\nDigest news excerpt:\n" + excerpt[: max(1, int(max_chars))].strip() + "\n"
+
+
 def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
                    intraday_context: str = "",
                    lesson_context: str = "",
@@ -1859,6 +1884,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         else "- Opening/intraday phase: trade_ready may be non-empty only when live execution context supports a new buy."
     )
 
+    digest_news_section = _digest_news_excerpt(digest_prompt)
     intraday_section = f"\n장중 컨텍스트:\n{intraday_context[:400]}\n" if intraday_context else ""
     brain_section = ""
     try:
@@ -1955,7 +1981,7 @@ execution_phase: {execution_phase or 'unspecified'}
 {evidence_section}
 
 시장 컨텍스트:
-{digest_prompt[:220]}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}{tuning_feedback_section}
+{digest_prompt[:220]}{digest_news_section}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}{tuning_feedback_section}
 {COMMON_DECISION_CONTRACT}
 {SELECTION_EXECUTION_PHASE_CONTRACT}
 {SIZING_DECISION_CONTRACT}
@@ -2044,7 +2070,7 @@ Candidates:
 {evidence_section}
 
 Market context:
-{digest_prompt[:220]}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}{tuning_feedback_section}
+{digest_prompt[:220]}{digest_news_section}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}{tuning_feedback_section}
 {COMMON_DECISION_CONTRACT}
 {HARD_SOFT_RULE_CONTRACT}
 {compact_output_contract(watch_max=compact_watch_max, trade_max=compact_trade_max)}
