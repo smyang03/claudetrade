@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from minority_report import analysts as analysts_module
 from minority_report.analysts import (
+    _digest_news_excerpt,
     _json_array_object_cap,
     _recover_compact_watch_selection,
 )
@@ -41,6 +46,57 @@ class SelectionPromptStabilityTests(unittest.TestCase):
         self.assertTrue(recovered["_parse_recovered"])
         self.assertEqual(recovered["_fallback_mode"], "compact_watch_recovered")
         self.assertEqual(recovered["_recovered_raw_trade_ready"], ["319400"])
+
+    def test_digest_news_excerpt_keeps_news_when_digest_head_is_truncated(self) -> None:
+        digest = (
+            "[2026-05-15 US 시장 데이터]\n"
+            "시장 mode 판단은 breadth 요약과 지수/매크로를 우선한다.\n"
+            + "x" * 500
+            + "\n▶ 주요 뉴스 (중요도 상위)\n"
+            "  • [TSLA] Tesla supplier headline\n"
+            "  • [NVDA] AI demand headline\n"
+            "\n▶ 전일 결과: NEUTRAL\n"
+        )
+
+        excerpt = _digest_news_excerpt(digest)
+
+        self.assertIn("Digest news excerpt:", excerpt)
+        self.assertIn("Tesla supplier headline", excerpt)
+        self.assertNotIn("전일 결과", excerpt)
+
+    def test_select_tickers_prompt_includes_digest_news_excerpt(self) -> None:
+        captured = {}
+
+        def fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":["TSLA"],"trade_ready":[],"reasons":{"TSLA":"watch"}}')],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        digest = (
+            "[2026-05-15 US 시장 데이터]\n"
+            "시장 mode 판단은 breadth 요약과 지수/매크로를 우선한다.\n"
+            + "x" * 500
+            + "\n▶ 주요 뉴스 (중요도 상위)\n"
+            "  • [TSLA] Tesla supplier headline\n"
+        )
+        candidates = [
+            {"ticker": "TSLA", "price": 100.0, "volume": 1_000_000, "change_rate": 1.2},
+        ]
+
+        env = {
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "CANDIDATE_QUALITY_TRAINER_ENABLED": "false",
+        }
+        with patch.dict(os.environ, env, clear=False), \
+             patch.object(analysts_module.client.messages, "create", side_effect=fake_create), \
+             patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None):
+            analysts_module.select_tickers("US", digest, "NEUTRAL", candidates)
+
+        self.assertIn("Digest news excerpt:", captured["prompt"])
+        self.assertIn("Tesla supplier headline", captured["prompt"])
 
 
 if __name__ == "__main__":

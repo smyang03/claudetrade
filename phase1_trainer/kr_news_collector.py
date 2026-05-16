@@ -19,6 +19,8 @@ kr_news_collector.py - 국내 뉴스/공시 수집
   BIGKINDS_KEY=...     ← bigkinds.or.kr 무료 발급 (선택)
 """
 
+from __future__ import annotations
+
 import os
 import json
 import time
@@ -37,11 +39,21 @@ load_dotenv()
 _LIVE_ENV_PATH = Path(__file__).parent.parent / ".env.live"
 if _LIVE_ENV_PATH.exists():
     _live_env_values = dotenv_values(_LIVE_ENV_PATH)
-    for _env_key in ("DART_API_KEY", "BIGKINDS_KEY"):
+    for _env_key in (
+        "DART_API_KEY",
+        "BIGKINDS_KEY",
+        "KIS_APP_KEY",
+        "KIS_APP_SECRET",
+        "KIS_ACCOUNT_NO",
+        "KIS_IS_PAPER",
+        "KIS_BASE_URL",
+    ):
         if not os.getenv(_env_key):
             _env_value = _live_env_values.get(_env_key)
             if _env_value:
                 os.environ[_env_key] = _env_value
+
+from kis_api import _headers, _kis_get, get_access_token, get_kis_market_profile
 
 log = get_collector_logger()
 
@@ -49,6 +61,8 @@ log = get_collector_logger()
 
 DART_KEY     = os.getenv("DART_API_KEY", "")
 BIGKINDS_KEY = os.getenv("BIGKINDS_KEY", "")
+ENABLE_NAVER_LEGACY = os.getenv("KR_NEWS_ENABLE_NAVER_LEGACY", "false").lower() == "true"
+ENABLE_PREOPEN_BIGKINDS = os.getenv("PREOPEN_NEWS_ENABLE_BIGKINDS", "false").lower() in {"1", "true", "yes", "on"}
 
 NEWS_DIR = Path(__file__).parent.parent / "data" / "news" / "kr"
 NEWS_DIR.mkdir(parents=True, exist_ok=True)
@@ -62,6 +76,85 @@ TARGET_CORPS = {
     "005380": "현대차",
     "051910": "LG화학",
 }
+
+
+def _normalize_kr_targets(targets: dict[str, str] | None) -> dict[str, str]:
+    raw_targets = targets if targets is not None else TARGET_CORPS
+    normalized: dict[str, str] = {}
+    for code, name in raw_targets.items():
+        digits = "".join(ch for ch in str(code or "") if ch.isdigit())
+        if not digits:
+            continue
+        ticker = digits.zfill(6)
+        if ticker not in normalized:
+            normalized[ticker] = str(name or ticker).strip() or ticker
+    return normalized
+
+
+def _read_news_file(path: Path) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_existing_if_reusable(path: Path, target_tickers: list[str], force: bool) -> dict | None:
+    if force or not path.exists():
+        return None
+    data = _read_news_file(path)
+    if not data:
+        return None
+    existing_tickers = data.get("target_tickers") or list((data.get("corp_news") or {}).keys())
+    existing_tickers = [str(t) for t in existing_tickers]
+    if not target_tickers or existing_tickers == target_tickers:
+        log.info(f"[SKIP] KR news file exists and force=False: {path.name}")
+        return data
+    log.warning(
+        f"KR news file target mismatch; recollecting {path.name} "
+        f"existing={len(existing_tickers)} requested={len(target_tickers)}"
+    )
+    return None
+
+
+def _provider_key(source: str) -> str:
+    text = str(source or "").strip()
+    if text.startswith("BigKinds"):
+        return "BigKinds"
+    if text.startswith("KIS"):
+        return "KIS"
+    if "Naver" in text or "네이버" in text:
+        return "Naver"
+    return text or "unknown"
+
+
+def _attach_collection_metadata(result: dict, targets: dict[str, str], target_source: str) -> None:
+    corp_news = result.get("corp_news") or {}
+    disclosures = result.get("disclosures") or {}
+    provider_counts: dict[str, int] = {}
+    for corp in corp_news.values():
+        for item in corp.get("items", []) or []:
+            key = _provider_key(item.get("source", ""))
+            provider_counts[key] = provider_counts.get(key, 0) + 1
+    dart_count = sum(len(items or []) for items in disclosures.values())
+    if dart_count:
+        provider_counts["DART"] = dart_count
+    target_tickers = list(targets.keys())
+    missing = [
+        ticker for ticker in target_tickers
+        if int((corp_news.get(ticker) or {}).get("count", 0) or 0) <= 0
+    ]
+    covered = len(target_tickers) - len(missing)
+    result["target_source"] = target_source
+    result["target_count"] = len(target_tickers)
+    result["target_tickers"] = target_tickers
+    result["provider_counts"] = provider_counts
+    result["news_coverage"] = {
+        "covered_ticker_count": covered,
+        "missing_tickers": missing,
+        "coverage_ratio": round(covered / len(target_tickers), 4) if target_tickers else 0.0,
+    }
 
 # DART 공시 유형 코드
 DART_REPORT_TYPES = {
@@ -170,6 +263,103 @@ def get_dart_corp_code(stock_code: str) -> str:
     log.info(f"DART 기업코드 {len(mapping)}개 캐시 저장")
 
     return mapping.get(stock_code, "")
+
+
+def _kis_date(value: str, fallback: str) -> str:
+    text = str(value or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    return fallback
+
+
+def _kis_related_values(item: dict, prefix: str) -> list[str]:
+    values = []
+    for idx in range(1, 11):
+        value = str(item.get(f"{prefix}{idx}") or "").strip()
+        if value:
+            values.append(value)
+    return values
+
+
+@log_retry(max_retries=2, delay=1.0, logger=log)
+def fetch_kis_news(stock_code: str, target_date: str, max_results: int = 20) -> list[dict]:
+    """
+    KIS domestic stock news-title.
+    Endpoint: /uapi/domestic-stock/v1/quotations/news-title
+    TR ID: FHKST01011800
+    """
+    target_ymd = target_date.replace("-", "")
+    profile = get_kis_market_profile("KR")
+    token = get_access_token(market="KR")
+    resp = _kis_get(
+        f"{profile.base_url}/uapi/domestic-stock/v1/quotations/news-title",
+        headers=_headers(token, "FHKST01011800", market="KR"),
+        params={
+            "FID_NEWS_OFER_ENTP_CODE": "",
+            "FID_COND_MRKT_CLS_CODE": "00",
+            "FID_INPUT_ISCD": stock_code,
+            "FID_TITL_CNTT": "",
+            "FID_INPUT_DATE_1": target_ymd,
+            "FID_INPUT_HOUR_1": "",
+            "FID_RANK_SORT_CLS_CODE": "01",
+            "FID_INPUT_SRNO": "",
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("rt_cd") != "0":
+        log.warning(f"KIS news response [{stock_code}]: {data.get('msg1') or data.get('msg_cd')}")
+        return []
+
+    raw_items = data.get("output") or data.get("outblock1") or []
+    if isinstance(raw_items, dict):
+        raw_items = [raw_items]
+
+    results = []
+    seen = set()
+    for item in raw_items:
+        published_ymd = str(item.get("data_dt") or "").strip()
+        if published_ymd and published_ymd != target_ymd:
+            continue
+
+        related_tickers = _kis_related_values(item, "iscd")
+        if related_tickers and stock_code not in related_tickers:
+            continue
+
+        title = str(item.get("hts_pbnt_titl_cntt") or "").strip()
+        if not title or title in seen:
+            continue
+        seen.add(title)
+
+        published_time = str(item.get("data_tm") or "").strip()
+        published_date = _kis_date(published_ymd, target_date)
+        published_at = published_date
+        if len(published_time) == 6 and published_time.isdigit():
+            published_at = (
+                f"{published_date}T{published_time[:2]}:"
+                f"{published_time[2:4]}:{published_time[4:6]}+09:00"
+            )
+
+        results.append({
+            "source": "KIS",
+            "provider": item.get("dorg", "") or "KIS",
+            "date": published_date,
+            "published_at": published_at,
+            "title": title,
+            "content": "",
+            "url": "",
+            "ticker": stock_code,
+            "related_tickers": related_tickers,
+            "related_names": _kis_related_values(item, "kor_isnm"),
+            "news_id": item.get("cntt_usiq_srno", ""),
+            "matched_by": "kis_iscd",
+        })
+        if len(results) >= max_results:
+            break
+
+    log.debug(f"KIS news [{stock_code}] {target_date}: {len(results)}건")
+    return results
 
 
 # ── 네이버 금융 뉴스 크롤링 ──────────────────────────────────────────────────
@@ -334,12 +524,15 @@ def fetch_market_news(target_date: str) -> list[dict]:
         soup = BeautifulSoup(resp.text, "html.parser")
 
         for item in soup.select("ul.newsList li")[:10]:
-            title_tag = item.select_one("a")
+            title_tag = next(
+                (a for a in item.select("a") if a.get_text(" ", strip=True)),
+                None,
+            )
             if not title_tag:
                 continue
-            title = title_tag.text.strip()
+            title = title_tag.get_text(" ", strip=True)
             # 시황 관련 키워드 필터
-            if any(kw in title for kw in ["코스피", "코스닥", "증시", "주가", "외국인", "반도체"]):
+            if any(kw in title for kw in INDEX_KEYWORDS):
                 results.append({
                     "source":  "네이버증권_시황",
                     "date":    target_date,
@@ -357,13 +550,30 @@ def fetch_market_news(target_date: str) -> list[dict]:
 # ── 하루치 전체 수집 ──────────────────────────────────────────────────────────
 
 @log_call(logger=log, level="INFO")
-def collect_day(target_date: str, fetch_content: bool = False) -> dict:
+def collect_day(
+    target_date: str,
+    targets: dict[str, str] | None = None,
+    fetch_content: bool = False,
+    *,
+    force: bool = True,
+    target_source: str | None = None,
+) -> dict:
     """
     특정 날짜 뉴스/공시 전체 수집
     target_date: 'YYYY-MM-DD'
     fetch_content: True면 본문도 수집 (시간 증가)
     반환: {날짜, 종목별 뉴스, 시황 뉴스, 공시}
     """
+    if isinstance(targets, bool):
+        fetch_content = bool(targets)
+        targets = None
+    normalized_targets = _normalize_kr_targets(targets)
+    target_source = target_source or ("explicit_targets" if targets is not None else "fallback_target_corps")
+    save_path = NEWS_DIR / f"{target_date}.json"
+    existing = _load_existing_if_reusable(save_path, list(normalized_targets.keys()), force)
+    if existing is not None:
+        return existing
+
     log.info(f"━━━ {target_date} 뉴스 수집 시작 ━━━")
     result = {
         "date":        target_date,
@@ -379,31 +589,42 @@ def collect_day(target_date: str, fetch_content: bool = False) -> dict:
 
     # 2. 종목별 뉴스 + 공시
     dart_date = target_date.replace("-", "")
-    for code, name in TARGET_CORPS.items():
+    use_bigkinds = bool(BIGKINDS_KEY) and (targets is None or ENABLE_PREOPEN_BIGKINDS)
+    for code, name in normalized_targets.items():
         corp_items = []
 
-        # 네이버 금융 뉴스
+        # KIS domestic news-title
         try:
-            news = fetch_naver_news(code, target_date)
-            if fetch_content:
-                for item in news[:5]:  # 상위 5개만 본문 수집
-                    try:
-                        item["content"] = fetch_naver_news_content(item["url"])
-                        time.sleep(0.3)
-                    except Exception as e:
-                        log.debug(f"본문 수집 실패 [{name}]: {e}")
+            news = fetch_kis_news(code, target_date)
             corp_items.extend(news)
-            time.sleep(0.5)
-        except Exception as e:
-            log.error(f"네이버 뉴스 수집 실패 [{name}]: {e}")
-
-        # BigKinds
-        try:
-            bk_news = fetch_bigkinds_news(name, target_date)
-            corp_items.extend(bk_news)
             time.sleep(0.3)
         except Exception as e:
-            log.debug(f"BigKinds 수집 실패 [{name}]: {e}")
+            log.error(f"KIS news collect failed [{name}]: {e}")
+
+        # Legacy Naver PC scraper is fragile; keep it opt-in only.
+        if ENABLE_NAVER_LEGACY and not corp_items:
+            try:
+                news = fetch_naver_news(code, target_date)
+                if fetch_content:
+                    for item in news[:5]:
+                        try:
+                            item["content"] = fetch_naver_news_content(item["url"])
+                            time.sleep(0.3)
+                        except Exception as e:
+                            log.debug(f"Naver content collect failed [{name}]: {e}")
+                corp_items.extend(news)
+                time.sleep(0.5)
+            except Exception as e:
+                log.error(f"Naver legacy news collect failed [{name}]: {e}")
+
+        # BigKinds
+        if use_bigkinds:
+            try:
+                bk_news = fetch_bigkinds_news(name, target_date)
+                corp_items.extend(bk_news)
+                time.sleep(0.3)
+            except Exception as e:
+                log.debug(f"BigKinds 수집 실패 [{name}]: {e}")
 
         # DART 공시
         try:
@@ -425,8 +646,9 @@ def collect_day(target_date: str, fetch_content: bool = False) -> dict:
         log.info(f"  [{name}] 뉴스 {len(corp_items)}건, "
                  f"공시 {len(result['disclosures'].get(code,[]))}건")
 
+    _attach_collection_metadata(result, normalized_targets, target_source)
+
     # 저장
-    save_path = NEWS_DIR / f"{target_date}.json"
     with open(save_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 

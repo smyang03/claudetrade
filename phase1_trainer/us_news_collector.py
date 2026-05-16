@@ -18,6 +18,8 @@ us_news_collector.py - 미국 뉴스/공시 수집
   FINNHUB_KEY=...        ← finnhub.io 무료 발급 (선택)
 """
 
+from __future__ import annotations
+
 import os
 import json
 import time
@@ -29,7 +31,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_collector_logger, log_retry, log_call, ProgressLogger
-from kis_api import get_access_token, _headers, _kis_get, _get_us_quote_codes, BASE_URL
+from kis_api import get_access_token, _headers, _kis_get, _get_us_quote_codes, get_kis_market_profile
 
 load_dotenv()
 
@@ -38,7 +40,10 @@ log = get_collector_logger()
 # ── 설정 ──────────────────────────────────────────────────────────────────────
 
 AV_KEY      = os.getenv("ALPHA_VANTAGE_KEY", "")
-FINNHUB_KEY = os.getenv("FINNHUB_KEY", "")
+FINNHUB_KEY = (
+    os.getenv("FINNHUB_API_KEY", "").strip()
+    or os.getenv("FINNHUB_KEY", "").strip()
+)
 
 # Alpha Vantage 무료 한도 초과 시 당일 재시도 중단
 _AV_EXHAUSTED_DATE = ""
@@ -66,6 +71,83 @@ TARGET_TICKERS = {
     "SPY":   "S&P500 ETF",
     "QQQ":   "나스닥100 ETF",
 }
+
+
+def _normalize_us_targets(targets: dict[str, str] | None) -> dict[str, str]:
+    raw_targets = targets if targets is not None else TARGET_TICKERS
+    normalized: dict[str, str] = {}
+    for ticker, name in raw_targets.items():
+        symbol = str(ticker or "").strip().upper()
+        if symbol and symbol not in normalized:
+            normalized[symbol] = str(name or symbol).strip() or symbol
+    return normalized
+
+
+def _read_news_file(path: Path) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_existing_if_reusable(path: Path, target_tickers: list[str], force: bool) -> dict | None:
+    if force or not path.exists():
+        return None
+    data = _read_news_file(path)
+    if not data:
+        return None
+    existing_tickers = data.get("target_tickers") or list((data.get("corp_news") or {}).keys())
+    existing_tickers = [str(t).upper() for t in existing_tickers]
+    if not target_tickers or existing_tickers == target_tickers:
+        log.info(f"[SKIP] US news file exists and force=False: {path.name}")
+        return data
+    log.warning(
+        f"US news file target mismatch; recollecting {path.name} "
+        f"existing={len(existing_tickers)} requested={len(target_tickers)}"
+    )
+    return None
+
+
+def _provider_key(source: str) -> str:
+    text = str(source or "").strip()
+    if text.startswith("KIS"):
+        return "KIS"
+    if text.startswith("Finnhub"):
+        return "Finnhub"
+    if text.startswith("SEC"):
+        return "SEC EDGAR"
+    if text.startswith("AlphaVantage"):
+        return "AlphaVantage"
+    return text or "unknown"
+
+
+def _attach_collection_metadata(result: dict, targets: dict[str, str], target_source: str) -> None:
+    corp_news = result.get("corp_news") or {}
+    provider_counts: dict[str, int] = {}
+    for corp in corp_news.values():
+        for item in corp.get("items", []) or []:
+            key = _provider_key(item.get("source", ""))
+            provider_counts[key] = provider_counts.get(key, 0) + 1
+    for item in result.get("market_news", []) or []:
+        key = _provider_key(item.get("source", ""))
+        provider_counts[key] = provider_counts.get(key, 0) + 1
+    target_tickers = list(targets.keys())
+    missing = [
+        ticker for ticker in target_tickers
+        if int((corp_news.get(ticker) or {}).get("count", 0) or 0) <= 0
+    ]
+    covered = len(target_tickers) - len(missing)
+    result["target_source"] = target_source
+    result["target_count"] = len(target_tickers)
+    result["target_tickers"] = target_tickers
+    result["provider_counts"] = provider_counts
+    result["news_coverage"] = {
+        "covered_ticker_count": covered,
+        "missing_tickers": missing,
+        "coverage_ratio": round(covered / len(target_tickers), 4) if target_tickers else 0.0,
+    }
 
 # FOMC 발표일 (2024~2026 주요 날짜 하드코딩 + API로 보완)
 FOMC_DATES = {
@@ -180,12 +262,20 @@ def fetch_finnhub_news(ticker: str, target_date: str) -> list[dict]:
 
     results = []
     for item in items[:15]:
+        published_at = ""
+        try:
+            published_at = datetime.fromtimestamp(int(item.get("datetime", 0))).isoformat()
+        except Exception:
+            published_at = target_date
         results.append({
             "source":  "Finnhub",
+            "provider": "Finnhub",
             "date":    target_date,
+            "published_at": published_at,
             "title":   item.get("headline", ""),
             "content": item.get("summary", "")[:500],
             "url":     item.get("url", ""),
+            "ticker": ticker.upper(),
             "sentiment_score": 0.0,
             "sentiment_label": "Neutral",
             "relevance": 1.0,
@@ -201,11 +291,12 @@ def fetch_kis_news(ticker: str, target_date: str) -> list[dict]:
     KIS 해외 뉴스 종합(제목)
     Finnhub 대체/보강용. 외부 뉴스 도메인 차단 환경에서도 동작 가능성이 높음.
     """
-    token = get_access_token()
+    profile = get_kis_market_profile("US")
+    token = get_access_token(market="US")
     _, quote_exch = _get_us_quote_codes(ticker, token)
     resp = _kis_get(
-        f"{BASE_URL}/uapi/overseas-price/v1/quotations/news-title",
-        headers=_headers(token, "HHPSTH60100C1"),
+        f"{profile.base_url}/uapi/overseas-price/v1/quotations/news-title",
+        headers=_headers(token, "HHPSTH60100C1", market="US"),
         params={
             "INFO_GB": "",
             "CLASS_CD": "",
@@ -224,12 +315,24 @@ def fetch_kis_news(ticker: str, target_date: str) -> list[dict]:
 
     results = []
     for item in items[:15]:
+        published_date = target_date
+        data_dt = str(item.get("data_dt") or "").strip()
+        if len(data_dt) == 8 and data_dt.isdigit():
+            published_date = f"{data_dt[:4]}-{data_dt[4:6]}-{data_dt[6:8]}"
+        published_time = str(item.get("data_tm") or "").strip()
+        published_at = published_date
+        if len(published_time) == 6 and published_time.isdigit():
+            published_at = f"{published_date}T{published_time[:2]}:{published_time[2:4]}:{published_time[4:6]}+09:00"
         results.append({
             "source": "KIS",
-            "date": target_date,
+            "provider": item.get("source", "") or "KIS",
+            "date": published_date,
+            "published_at": published_at,
             "title": item.get("title", "") or item.get("hts_pbnt_titl_cntt", ""),
             "content": "",
             "url": "",
+            "ticker": item.get("symb", "") or ticker.upper(),
+            "news_id": item.get("news_key", ""),
             "sentiment_score": 0.0,
             "sentiment_label": "Neutral",
             "relevance": 1.0,
@@ -245,10 +348,11 @@ def fetch_kis_market_news(target_date: str) -> list[dict]:
     KIS 해외 브로커 뉴스(제목)
     시장 전반 개요 뉴스 보강용.
     """
-    token = get_access_token()
+    profile = get_kis_market_profile("US")
+    token = get_access_token(market="US")
     resp = _kis_get(
-        f"{BASE_URL}/uapi/overseas-price/v1/quotations/brknews-title",
-        headers=_headers(token, "FHKST01011801"),
+        f"{profile.base_url}/uapi/overseas-price/v1/quotations/brknews-title",
+        headers=_headers(token, "FHKST01011801", market="US"),
         params={
             "FID_NEWS_OFER_ENTP_CODE": "0",
             "FID_COND_SCR_DIV_CODE": "11801",
@@ -273,6 +377,7 @@ def fetch_kis_market_news(target_date: str) -> list[dict]:
             continue
         results.append({
             "source": "KIS",
+            "provider": item.get("source", "") or "KIS",
             "date": target_date,
             "title": title,
             "content": "",
@@ -312,11 +417,13 @@ def fetch_sec_filings(ticker: str, target_date: str) -> list[dict]:
         src = hit.get("_source", {})
         results.append({
             "source":    "SEC EDGAR",
+            "provider":  "SEC EDGAR",
             "date":      target_date,
             "title":     f"[{src.get('form_type','')}] {src.get('display_names','')}",
             "content":   src.get("file_date", ""),
             "url":       f"https://www.sec.gov{src.get('file_date','')}",
             "form_type": src.get("form_type", ""),
+            "ticker":    ticker.upper(),
         })
 
     log.debug(f"SEC [{ticker}] {target_date}: {len(results)}건")
@@ -383,11 +490,28 @@ def fetch_market_overview(target_date: str) -> list[dict]:
 # ── 하루치 전체 수집 ──────────────────────────────────────────────────────────
 
 @log_call(logger=log, level="INFO")
-def collect_day(target_date: str) -> dict:
+def collect_day(
+    target_date: str,
+    targets: dict[str, str] | None = None,
+    *,
+    force: bool = True,
+    target_source: str | None = None,
+) -> dict:
     """
     특정 날짜 미국 뉴스/공시 전체 수집
     target_date: 'YYYY-MM-DD'
     """
+    normalized_targets = _normalize_us_targets(targets)
+    target_source = target_source or ("explicit_targets" if targets is not None else "fallback_target_tickers")
+    corp_tickers = {
+        k: v for k, v in normalized_targets.items()
+        if k not in ("SPY", "QQQ")
+    }
+    save_path = NEWS_DIR / f"{target_date}.json"
+    existing = _load_existing_if_reusable(save_path, list(corp_tickers.keys()), force)
+    if existing is not None:
+        return existing
+
     # 주말 체크
     dt = datetime.strptime(target_date, "%Y-%m-%d")
     if dt.weekday() >= 5:
@@ -408,9 +532,6 @@ def collect_day(target_date: str) -> dict:
     log.info(f"  시장뉴스: {len(result['market_news'])}건")
 
     # 2. 종목별 수집 (SPY/QQQ 제외)
-    corp_tickers = {k: v for k, v in TARGET_TICKERS.items()
-                    if k not in ("SPY", "QQQ")}
-
     for ticker, name in corp_tickers.items():
         items = []
 
@@ -465,8 +586,9 @@ def collect_day(target_date: str) -> dict:
         }
         log.info(f"  [{name}({ticker})] {len(items)}건")
 
+    _attach_collection_metadata(result, corp_tickers, target_source)
+
     # 저장
-    save_path = NEWS_DIR / f"{target_date}.json"
     with open(save_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 

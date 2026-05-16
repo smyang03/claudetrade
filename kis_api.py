@@ -37,7 +37,7 @@ IS_PAPER_US     = (_IS_PAPER_US_RAW.lower() == "true") if _IS_PAPER_US_RAW else 
 
 AV_KEY       = os.getenv("ALPHA_VANTAGE_KEY", "")
 AV_KEY_2     = os.getenv("ALPHA_VANTAGE_KEY_2", "")
-FINNHUB_KEY  = os.getenv("FINNHUB_API_KEY", "")
+FINNHUB_KEY  = os.getenv("FINNHUB_API_KEY", "").strip() or os.getenv("FINNHUB_KEY", "").strip()
 FMP_KEY      = os.getenv("FMP_API_KEY", "").strip()
 
 # 계좌번호 포맷 검증: "XXXXXXXXXX-XX" 형태여야 함
