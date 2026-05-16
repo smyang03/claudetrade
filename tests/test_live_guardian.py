@@ -60,6 +60,8 @@ class LiveGuardianTests(unittest.TestCase):
 
         self.assertEqual(current.classification, "hard_fail")
         self.assertEqual(previous.classification, "soft_fail")
+        self.assertIn("remediation_commands", current.data)
+        self.assertIn("tools.reconcile_order_truth", current.data["remediation_commands"][0])
 
     def test_telegram_fail_is_soft(self) -> None:
         finding = classify_preflight_check(
@@ -72,6 +74,18 @@ class LiveGuardianTests(unittest.TestCase):
         )
 
         self.assertEqual(finding.classification, "soft_fail")
+
+    def test_kr_cap40_confirmation_preflight_fail_is_hard(self) -> None:
+        finding = classify_preflight_check(
+            {
+                "name": "config.kr_cap40_confirmation_enforce",
+                "status": "FAIL",
+                "detail": "KR cap 40 requires confirmation enforce mode",
+                "data": {"KR_DAILY_ENTRY_CAP": 40, "KR_CONFIRMATION_GATE_SHADOW": True},
+            }
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
 
     def test_stale_pid_is_auto_fixable_and_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1880,13 +1880,21 @@ class PathBRuntime:
 
     @staticmethod
     def _pathb_sell_review_required(signal: ExitSignal) -> bool:
+        reason_key = str(signal.reason or "").strip().lower()
+        final_policy_exit_reasons = {
+            "policy_protective_stop",
+            "policy_hard_stop",
+            "policy_forced_sell",
+        }
+        if reason_key in final_policy_exit_reasons:
+            return False
         if _env_bool("CLAUDE_REVIEW_ALL_AUTOMATED_SELLS", False):
-            return str(signal.reason or "").strip().lower() not in {
+            return reason_key not in {
                 "pathb_kill",
                 "pathb_closeall",
                 "operator_kill",
             }
-        return str(signal.reason or "").strip().lower() not in {
+        return reason_key not in {
             "pathb_kill",
             "pathb_closeall",
             "operator_kill",

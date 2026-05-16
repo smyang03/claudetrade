@@ -50,6 +50,20 @@ LIVE_CONFIG_KEYS = {
     "V2_MAX_DAILY_ENTRIES",
     "KR_DAILY_ENTRY_CAP",
     "US_DAILY_ENTRY_CAP",
+    "KR_CONFIRMATION_GATE_ENABLED",
+    "KR_CONFIRMATION_GATE_SHADOW",
+    "KR_CONFIRMATION_GATE_MODE",
+    "KR_FAST_TRIGGER_WINDOW_MIN",
+    "WATCH_TRIGGER_INITIAL_THRESHOLD",
+    "KR_MICROSTRUCTURE_CONTEXT_ENABLED",
+    "KR_ORDERBOOK_TIMEOUT_SEC",
+    "KR_ORDERBOOK_MAX_RETRIES",
+    "KR_ORDERBOOK_RETRY_BACKOFF_SEC",
+    "KR_ORDERBOOK_CACHE_TTL_SEC",
+    "KR_VI_TIMEOUT_SEC",
+    "KR_VI_MAX_RETRIES",
+    "KR_VI_RETRY_BACKOFF_SEC",
+    "KR_VI_CACHE_TTL_SEC",
     "V2_LIFECYCLE_ENABLED",
     "V2_FIXED_SIZING_ENABLED",
     "V2_BRAIN_POLICY",
@@ -84,6 +98,33 @@ LIVE_CONFIG_KEYS = {
     "KR_LOSS_CAP_SHADOW_PCT",
     "PLANA_MFE_BREAKEVEN_ENABLED",
     "PATHB_MFE_BREAKEVEN_ENABLED",
+    "ACTIVE_LESSONS_ENABLED",
+    "ACTIVE_LESSONS_SHADOW",
+    "ACTIVE_LESSONS_MAX_ITEMS",
+    "ACTIVE_LESSONS_MAX_CHARS",
+    "ACTIVE_LESSONS_ANALYST_MAX_CHARS",
+    "ACTIVE_LESSONS_DEBATE_ENABLED",
+    "ACTIVE_LESSONS_DEBATE_MAX_CHARS",
+    "BULL_R1_MODEL",
+    "BEAR_R1_MODEL",
+    "NEUTRAL_R1_MODEL",
+    "CLAUDE_ANALYST_R1_MAX_TOKENS",
+    "CLAUDE_ANALYST_R2_MAX_TOKENS",
+    "ENABLE_KR_CANDIDATE_QUALITY_PROMPT",
+    "ENABLE_KR_CANDIDATE_QUALITY_SHADOW",
+    "ENABLE_KR_CANDIDATE_RS_INDEX_CACHE",
+    "KR_INDEX_CACHE_MAX_AGE_HOURS",
+    "KR_INDEX_CACHE_REQUIRE_PREWARM",
+    "ENABLE_KR_CANDIDATE_FLOW_SHADOW",
+    "ENABLE_KR_CANDIDATE_FLOW_PREFETCH",
+    "KR_CANDIDATE_FLOW_PREFETCH_MAX",
+    "KR_CANDIDATE_FLOW_PREFETCH_SLEEP_SEC",
+    "CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED",
+    "CANDIDATE_TRAINER_QUALITY_SCORE_WEIGHT",
+    "US_QUALITY_SHADOW_ENABLED",
+    "KR_CANDIDATE_POST_RANK_ENABLED",
+    "KR_CANDIDATE_POST_RANK_ENFORCE",
+    "US_DYNAMIC_LOSERS_QUOTA_ENABLED",
 }
 
 RUNTIME_CONFIG_DRIFT_KEYS = {
@@ -91,6 +132,20 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "V2_MAX_DAILY_ENTRIES",
     "KR_DAILY_ENTRY_CAP",
     "US_DAILY_ENTRY_CAP",
+    "KR_CONFIRMATION_GATE_ENABLED",
+    "KR_CONFIRMATION_GATE_SHADOW",
+    "KR_CONFIRMATION_GATE_MODE",
+    "KR_FAST_TRIGGER_WINDOW_MIN",
+    "WATCH_TRIGGER_INITIAL_THRESHOLD",
+    "KR_MICROSTRUCTURE_CONTEXT_ENABLED",
+    "KR_ORDERBOOK_TIMEOUT_SEC",
+    "KR_ORDERBOOK_MAX_RETRIES",
+    "KR_ORDERBOOK_RETRY_BACKOFF_SEC",
+    "KR_ORDERBOOK_CACHE_TTL_SEC",
+    "KR_VI_TIMEOUT_SEC",
+    "KR_VI_MAX_RETRIES",
+    "KR_VI_RETRY_BACKOFF_SEC",
+    "KR_VI_CACHE_TTL_SEC",
     "PATHB_ENABLED",
     "PATHB_KR_LIVE_ENABLED",
     "KR_CLAUDE_PRICE_LIVE_ENABLED",
@@ -102,6 +157,33 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_MAX_POSITIONS",
     "PATHB_MAX_DAILY_ENTRIES",
     "PATHB_FIXED_ORDER_KRW",
+    "ACTIVE_LESSONS_ENABLED",
+    "ACTIVE_LESSONS_SHADOW",
+    "ACTIVE_LESSONS_MAX_ITEMS",
+    "ACTIVE_LESSONS_MAX_CHARS",
+    "ACTIVE_LESSONS_ANALYST_MAX_CHARS",
+    "ACTIVE_LESSONS_DEBATE_ENABLED",
+    "ACTIVE_LESSONS_DEBATE_MAX_CHARS",
+    "BULL_R1_MODEL",
+    "BEAR_R1_MODEL",
+    "NEUTRAL_R1_MODEL",
+    "CLAUDE_ANALYST_R1_MAX_TOKENS",
+    "CLAUDE_ANALYST_R2_MAX_TOKENS",
+    "ENABLE_KR_CANDIDATE_QUALITY_PROMPT",
+    "ENABLE_KR_CANDIDATE_QUALITY_SHADOW",
+    "ENABLE_KR_CANDIDATE_RS_INDEX_CACHE",
+    "KR_INDEX_CACHE_MAX_AGE_HOURS",
+    "KR_INDEX_CACHE_REQUIRE_PREWARM",
+    "ENABLE_KR_CANDIDATE_FLOW_SHADOW",
+    "ENABLE_KR_CANDIDATE_FLOW_PREFETCH",
+    "KR_CANDIDATE_FLOW_PREFETCH_MAX",
+    "KR_CANDIDATE_FLOW_PREFETCH_SLEEP_SEC",
+    "CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED",
+    "CANDIDATE_TRAINER_QUALITY_SCORE_WEIGHT",
+    "US_QUALITY_SHADOW_ENABLED",
+    "KR_CANDIDATE_POST_RANK_ENABLED",
+    "KR_CANDIDATE_POST_RANK_ENFORCE",
+    "US_DYNAMIC_LOSERS_QUOTA_ENABLED",
 }
 
 REQUIRED_TABLE_COLUMNS = {
@@ -307,6 +389,39 @@ def _int_value(value: Any, default: int = 0) -> int:
         return default
 
 
+def _kr_cap40_confirmation_enforce_check(effective: dict[str, str]) -> CheckResult:
+    cap = _int_value(effective.get("KR_DAILY_ENTRY_CAP"), 0)
+    enabled = _truthy(effective.get("KR_CONFIRMATION_GATE_ENABLED"))
+    shadow = _truthy(effective.get("KR_CONFIRMATION_GATE_SHADOW"))
+    mode = str(effective.get("KR_CONFIRMATION_GATE_MODE") or "").strip().upper()
+    data = {
+        "KR_DAILY_ENTRY_CAP": cap,
+        "KR_CONFIRMATION_GATE_ENABLED": enabled,
+        "KR_CONFIRMATION_GATE_SHADOW": shadow,
+        "KR_CONFIRMATION_GATE_MODE": mode,
+        "required_mode": "FAST_TRIGGER_WITH_HARD_VETO",
+    }
+    if cap >= 40 and (not enabled or shadow or mode != "FAST_TRIGGER_WITH_HARD_VETO"):
+        data["remediation_required"] = True
+        data["operator_action"] = (
+            "set KR_CONFIRMATION_GATE_ENABLED=true, "
+            "KR_CONFIRMATION_GATE_SHADOW=false, "
+            "KR_CONFIRMATION_GATE_MODE=FAST_TRIGGER_WITH_HARD_VETO before operating KR cap 40"
+        )
+        return CheckResult(
+            "config.kr_cap40_confirmation_enforce",
+            "FAIL",
+            "KR cap 40 requires confirmation enforce mode",
+            data,
+        )
+    return CheckResult(
+        "config.kr_cap40_confirmation_enforce",
+        "PASS",
+        "KR cap 40 confirmation enforce is valid",
+        data,
+    )
+
+
 def _repo_text(*parts: str) -> str:
     path = ROOT.joinpath(*parts)
     try:
@@ -497,6 +612,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
 
     important = {key: effective.get(key, "") for key in sorted(LIVE_CONFIG_KEYS) if key in effective}
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
+    checks.append(_kr_cap40_confirmation_enforce_check(effective))
     checks.append(_runtime_config_drift_check(config, mode))
     if effective.get("PATHB_INTRADAY_ONLY", "").lower() != "true":
         checks.append(CheckResult("config.pathb_intraday_only", "WARN", "Path B is not forced intraday", {"value": effective.get("PATHB_INTRADAY_ONLY")}))

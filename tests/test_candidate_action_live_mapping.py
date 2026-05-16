@@ -24,6 +24,9 @@ class _RuntimeConfig:
     def get_float(self, key: str, default: float = 0.0) -> float:
         return float(self.values.get(key, default))
 
+    def get(self, key: str, default: object = "") -> object:
+        return self.values.get(key, default)
+
 
 class _DummyV2:
     def __init__(self) -> None:
@@ -77,6 +80,7 @@ def _make_bot() -> TradingBot:
             "ADD_SIZE_RATIO": 0.30,
             "PLANB_CANCEL_CONFIDENCE_MIN": 0.75,
             "KR_LATE_ENTRY_GATE_ENABLED": False,
+            "KR_MICROSTRUCTURE_CONTEXT_ENABLED": False,
         }
     )
     bot.selection_meta = {"US": {}, "KR": {}}
@@ -763,6 +767,232 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["final_action"], "BUY_READY")
         self.assertEqual(route["confirmation_state"], "CONFIRMED")
         self.assertEqual(route["confirmation_reason"], "")
+
+    def test_kr_fast_trigger_window_allows_ret_score_inside_window(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+                "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+                "KR_FAST_TRIGGER_WINDOW_MIN": 5,
+                "WATCH_TRIGGER_INITIAL_THRESHOLD": 2,
+            }
+        )
+
+        state = TradingBot._kr_confirmation_gate_state(
+            bot,
+            "KR",
+            "005930",
+            {
+                "current_price": 70000,
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": 0.3,
+                "data_quality": "good",
+                "market_open_elapsed_min": 3,
+            },
+        )
+
+        self.assertTrue(state["kr_confirmation_confirmed"])
+        self.assertEqual(state["kr_confirmation_score"], 2)
+        self.assertEqual(state["kr_confirmation_score_items"], ["ret_3m_ok", "ret_5m_ok"])
+        self.assertTrue(state["kr_confirmation_fast_window_ok"])
+
+    def test_kr_fast_trigger_window_excludes_ret_only_score_after_window(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+                "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+                "KR_FAST_TRIGGER_WINDOW_MIN": 5,
+                "WATCH_TRIGGER_INITIAL_THRESHOLD": 2,
+            }
+        )
+
+        state = TradingBot._kr_confirmation_gate_state(
+            bot,
+            "KR",
+            "005930",
+            {
+                "current_price": 70000,
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": 0.3,
+                "data_quality": "good",
+                "market_open_elapsed_min": 8,
+            },
+        )
+
+        self.assertFalse(state["kr_confirmation_confirmed"])
+        self.assertEqual(state["kr_confirmation_reason"], "kr_fast_trigger_not_confirmed")
+        self.assertEqual(state["kr_confirmation_score"], 0)
+        self.assertEqual(state["kr_confirmation_score_items"], [])
+        self.assertFalse(state["kr_confirmation_fast_window_ok"])
+
+    def test_kr_fast_trigger_elapsed_missing_enforce_fails_closed(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+                "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+                "WATCH_TRIGGER_INITIAL_THRESHOLD": 2,
+            }
+        )
+
+        state = TradingBot._kr_confirmation_gate_state(
+            bot,
+            "KR",
+            "005930",
+            {
+                "current_price": 70500,
+                "vwap": 70200,
+                "opening_range_high": 70400,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertFalse(state["kr_confirmation_confirmed"])
+        self.assertEqual(state["kr_confirmation_reason"], "kr_fast_window_elapsed_missing")
+        self.assertTrue(state["kr_confirmation_fast_window_elapsed_missing"])
+
+    def test_kr_fast_trigger_elapsed_missing_shadow_keeps_ready_with_warning(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": True,
+                "KR_CONFIRMATION_GATE_ENABLED": False,
+                "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+                "WATCH_TRIGGER_INITIAL_THRESHOLD": 2,
+            }
+        )
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": 0.2,
+                    "ret_5m_pct": 0.3,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(meta["trade_ready"], ["005930"])
+        self.assertEqual(route["final_action"], "BUY_READY")
+        self.assertEqual(route["confirmation_state"], "CONFIRMING")
+        self.assertTrue(route["confirmation_shadow"])
+        self.assertIn("kr_confirmation_required_shadow", route["warnings"])
+
+    def test_kr_fast_trigger_elapsed_missing_shadow_still_records_missing_reason_with_strong_triggers(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": True,
+                "KR_CONFIRMATION_GATE_ENABLED": False,
+                "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+                "WATCH_TRIGGER_INITIAL_THRESHOLD": 2,
+            }
+        )
+
+        state = TradingBot._kr_confirmation_gate_state(
+            bot,
+            "KR",
+            "005930",
+            {
+                "current_price": 70500,
+                "vwap": 70200,
+                "opening_range_high": 70400,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertFalse(state["kr_confirmation_confirmed"])
+        self.assertEqual(state["kr_confirmation_reason"], "kr_fast_window_elapsed_missing")
+        self.assertEqual(state["kr_confirmation_score_items"], ["vwap_reclaim", "or_high_reclaim"])
+
+    def test_kr_fast_trigger_blocks_active_vi(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+                "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+                "KR_FAST_TRIGGER_WINDOW_MIN": 5,
+                "WATCH_TRIGGER_INITIAL_THRESHOLD": 2,
+            }
+        )
+
+        state = TradingBot._kr_confirmation_gate_state(
+            bot,
+            "KR",
+            "005930",
+            {
+                "current_price": 70000,
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": 0.3,
+                "data_quality": "good",
+                "market_open_elapsed_min": 3,
+                "vi_active": True,
+                "vi_state": {"data_quality": "OK", "vi_active": True},
+            },
+        )
+
+        self.assertFalse(state["kr_confirmation_confirmed"])
+        self.assertEqual(state["kr_confirmation_reason"], "kr_vi_active_not_confirmed")
+        self.assertFalse(state["kr_confirmation_checks"]["vi_safe"])
+
+    def test_kr_execution_context_attaches_microstructure_snapshot(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_MICROSTRUCTURE_CONTEXT_ENABLED": True,
+                "KR_ORDERBOOK_CACHE_TTL_SEC": 2,
+                "KR_VI_CACHE_TTL_SEC": 2,
+            }
+        )
+        action = {
+            "ticker": "005930",
+            "action": "BUY_READY",
+            "post_open_features": {"current_price": 70000, "data_quality": "good"},
+        }
+
+        with patch("trading_bot.get_access_token", return_value="token"), patch(
+            "trading_bot.get_kr_orderbook_snapshot",
+            return_value={
+                "ticker": "005930",
+                "spread_pct": 0.1,
+                "imbalance": 0.2,
+                "data_quality": "OK",
+                "source": "kis_orderbook",
+            },
+        ), patch(
+            "trading_bot.get_kr_vi_state",
+            return_value={
+                "ticker": "005930",
+                "vi_active": False,
+                "data_quality": "OK",
+                "source": "kis_vi",
+            },
+        ):
+            context = TradingBot._candidate_action_runtime_execution_context(
+                bot,
+                "KR",
+                "005930",
+                action,
+                {},
+                {},
+            )
+
+        self.assertEqual(context["microstructure_data_quality"], "OK")
+        self.assertEqual(context["spread_bps"], 10.0)
+        self.assertTrue(context["orderbook_support"])
+        self.assertFalse(context["vi_active"])
 
     def test_soft_gate_validation_uses_local_stale_when_claude_omits_risk_tags(self) -> None:
         bot = _make_bot()

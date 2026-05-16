@@ -345,7 +345,7 @@ def build_active_lesson_context(
     item_limit = max_items if max_items is not None else _env_int("ACTIVE_LESSONS_MAX_ITEMS", 3, 0, 5)
     char_default = 400 if retry else 700
     char_env = "ACTIVE_LESSONS_RETRY_MAX_CHARS" if retry else "ACTIVE_LESSONS_MAX_CHARS"
-    char_limit = max_chars if max_chars is not None else _env_int(char_env, char_default, 120, 1200)
+    char_limit = max_chars if max_chars is not None else _env_int(char_env, char_default, 120, 3000)
     enabled = _env_bool("ACTIVE_LESSONS_ENABLED", False)
     shadow = _env_bool("ACTIVE_LESSONS_SHADOW", True)
     if not enabled:
@@ -359,9 +359,13 @@ def build_active_lesson_context(
                 "shadow": shadow,
                 "retry": bool(retry),
                 "injected": False,
+                "lesson_injected": False,
                 "ids": [],
                 "count": 0,
+                "lesson_count": 0,
                 "chars": 0,
+                "lesson_chars": 0,
+                "lesson_max_chars": char_limit,
                 "ignored_count": 0,
                 "disabled_skipped": True,
             },
@@ -375,9 +379,13 @@ def build_active_lesson_context(
         "shadow": shadow,
         "retry": bool(retry),
         "injected": injected,
+        "lesson_injected": injected,
         "ids": [str(item.get("id")) for item in selected],
         "count": len(selected),
+        "lesson_count": len(selected),
         "chars": len(preview),
+        "lesson_chars": len(preview),
+        "lesson_max_chars": char_limit,
         "ignored_count": len(ignored),
     }
     return {

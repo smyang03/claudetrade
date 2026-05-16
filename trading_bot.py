@@ -88,6 +88,8 @@ from kis_api import (
     get_daily_ohlcv,
     get_index_change,
     get_usd_krw,
+    get_kr_orderbook_snapshot,
+    get_kr_vi_state,
     screen_market_kr,
     screen_market_us,
     save_kr_screen_cache,
@@ -918,6 +920,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 장중 이벤트 기록 (튜닝/긴급재판단) — session_close 시 daily_judgment에 포함
         self._session_events: list = []
         self.decision_event_log: list = []
+        self._unanimous_override_events: list[dict] = []
         self._us_order_supported: set[str] = set()
         self._us_order_blocked: dict[str, str] = {}
         self.pending_orders: list[dict] = []
@@ -1744,6 +1747,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 or guarded.get("size") != (consensus or {}).get("size")
             )
         ):
+            event = {
+                "market": str(market or "").upper(),
+                "source": str(source or ""),
+                "unanimous_direction": guarded.get("unanimous_direction"),
+                "pre_unanimous_override_mode": guarded.get("pre_unanimous_override_mode"),
+                "post_mode": guarded.get("mode"),
+                "pre_unanimous_override_size": guarded.get("pre_unanimous_override_size"),
+                "post_size": guarded.get("size"),
+                "recorded_at": datetime.now(KST).isoformat(timespec="seconds"),
+            }
+            events = getattr(self, "_unanimous_override_events", None)
+            if not isinstance(events, list):
+                events = []
+                self._unanimous_override_events = events
+            events.append(event)
+            if isinstance(getattr(self, "today_judgment", None), dict):
+                self.today_judgment.setdefault("unanimous_override_events", [])
+                self.today_judgment["unanimous_override_events"].append(event)
+                self.today_judgment["unanimous_override_count"] = len(self.today_judgment["unanimous_override_events"])
             _src = f" source={source}" if source else ""
             log.warning(
                 f"[consensus guard {market}]{_src} "
@@ -1784,11 +1806,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             actual_result = raw.get("actual_result") or {}
             if not judgment_eval or actual_result.get("market_change") is None:
                 return
-            records.append({
+            record = {
                 "date": raw_date,
                 "judgment_eval": judgment_eval,
                 "actual_result": actual_result,
-            })
+            }
+            if isinstance(raw.get("unanimous_override_events"), list):
+                record["unanimous_override_events"] = list(raw.get("unanimous_override_events") or [])
+            elif raw.get("unanimous_override_count") is not None:
+                record["unanimous_override_count"] = raw.get("unanimous_override_count")
+            records.append(record)
             seen_dates.add(raw_date)
         _append_record(current_record)
         for fname in sorted(JUDGMENT_DIR.glob(f"{self._mode}_*_{market}.json"), reverse=True):
@@ -1836,10 +1863,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         analyst_hits = {"bull": 0, "bear": 0, "neutral": 0}
         consensus_hits = 0
         unanimous_mismatch_count = 0
+        unanimous_override_count = 0
         for row in judgment_rows:
             eval_row = row.get("judgment_eval") or {}
             consensus_hits += 1 if eval_row.get("consensus_hit") else 0
             unanimous_mismatch_count += 1 if eval_row.get("unanimous_consensus_mismatch") else 0
+            override_events = row.get("unanimous_override_events")
+            if isinstance(override_events, list):
+                unanimous_override_count += len(override_events)
+            else:
+                try:
+                    unanimous_override_count += int(row.get("unanimous_override_count") or 0)
+                except Exception:
+                    pass
             for analyst in analyst_hits:
                 analyst_hits[analyst] += 1 if (eval_row.get("analyst_hits") or {}).get(analyst) else 0
         consensus_hit_rate = _pct(consensus_hits, judgment_sample)
@@ -1952,6 +1988,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "consensus_directional_hit_rate": _metric(consensus_hit_rate, 45.0, sample=judgment_sample, min_sample=1, direction="lt"),
             "best_analyst_minus_consensus_hit_gap": _metric(best_analyst_gap, 10.0, sample=judgment_sample, min_sample=1, direction="ge"),
             "unanimous_mismatch_count": _metric(unanimous_mismatch_count, 1, sample=judgment_sample, min_sample=1, direction="ge"),
+            "unanimous_override_count": _metric(unanimous_override_count, 1, sample=judgment_sample, min_sample=1, direction="ge"),
             "trade_ready_signal_conversion": _metric(trade_ready_signal_conversion, signal_conversion_threshold, sample=selection_stats["trade_ready_rows"], min_sample=20, direction="lt"),
             "watch_only_missed_runup_ratio": _metric(watch_only_missed_runup_ratio, 30.0, sample=selection_stats["watch_only_forward_n"], min_sample=20, direction="ge"),
             "trade_ready_forward_3d_average": _metric(selection_stats["trade_ready_forward_avg"], 0.0, sample=selection_stats["trade_ready_forward_n"], min_sample=1, direction="lt"),
@@ -1982,6 +2019,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "low_consensus_hit_rate": metrics["consensus_directional_hit_rate"]["breached"],
                 "large_analyst_gap": metrics["best_analyst_minus_consensus_hit_gap"]["breached"],
                 "unanimous_mismatch": metrics["unanimous_mismatch_count"]["breached"],
+                "unanimous_override_seen": metrics["unanimous_override_count"]["breached"],
                 "low_trade_ready_conversion": metrics["trade_ready_signal_conversion"]["breached"],
                 "high_watch_only_missed_runup": metrics["watch_only_missed_runup_ratio"]["breached"],
                 "high_atr_blocked_missed_runup": metrics["atr_blocked_missed_runup"]["breached"],
@@ -3580,6 +3618,86 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "write_path": "shadow_only",
         }
 
+    def _kr_microstructure_context(self, ticker: str) -> dict:
+        key = self._selection_ticker_key("KR", ticker)
+
+        def _float_or_none(value: Any) -> Optional[float]:
+            try:
+                if value in (None, ""):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        cache = getattr(self, "_kr_microstructure_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            setattr(self, "_kr_microstructure_cache", cache)
+
+        now_ts = time.time()
+        token_holder: dict[str, str] = {}
+
+        def _token() -> str:
+            if "token" not in token_holder:
+                token_holder["token"] = get_access_token(market="KR")
+            return token_holder["token"]
+
+        def _missing(kind: str, reason: str) -> dict:
+            missing_field = "orderbook" if kind == "orderbook" else "vi"
+            return {
+                "ticker": key,
+                "source": f"kis_{kind}",
+                "data_quality": "DATA_MISSING",
+                "missing_fields": [missing_field],
+                "error": str(reason or f"{kind}_unavailable"),
+                "observed_at": datetime.now(KST).isoformat(timespec="seconds"),
+            }
+
+        def _cached(kind: str, ttl_sec: float, loader) -> dict:
+            cache_key = ("KR", key, kind)
+            cached = cache.get(cache_key)
+            if isinstance(cached, dict) and now_ts - float(cached.get("ts") or 0.0) <= ttl_sec:
+                data = dict(cached.get("data") or {})
+                data["cache_hit"] = True
+                return data
+            try:
+                data = loader()
+                if not isinstance(data, dict):
+                    data = _missing(kind, "invalid_payload")
+            except Exception as exc:
+                data = _missing(kind, str(exc))
+            data = dict(data)
+            data["cache_hit"] = False
+            cache[cache_key] = {"ts": now_ts, "data": dict(data)}
+            return data
+
+        orderbook_ttl = max(0.0, self._runtime_float("KR_ORDERBOOK_CACHE_TTL_SEC", 2.0))
+        vi_ttl = max(0.0, self._runtime_float("KR_VI_CACHE_TTL_SEC", 2.0))
+        orderbook = _cached("orderbook", orderbook_ttl, lambda: get_kr_orderbook_snapshot(_token(), key))
+        vi_state = _cached("vi", vi_ttl, lambda: get_kr_vi_state(_token(), key))
+
+        spread_pct = _float_or_none(orderbook.get("spread_pct"))
+        spread_bps = spread_pct * 100.0 if spread_pct is not None else None
+        imbalance = _float_or_none(orderbook.get("imbalance"))
+        orderbook_quality = str(orderbook.get("data_quality") or "").strip().upper()
+        vi_quality = str(vi_state.get("data_quality") or "").strip().upper()
+        orderbook_support = (
+            orderbook_quality == "OK"
+            and imbalance is not None
+            and imbalance >= self._runtime_float("KR_CONFIRMATION_MIN_ORDERBOOK_IMBALANCE", 0.0)
+        )
+        return {
+            "orderbook_snapshot": orderbook,
+            "orderbook_data_quality": orderbook_quality or "DATA_MISSING",
+            "orderbook_imbalance": imbalance,
+            "orderbook_support": bool(orderbook_support),
+            "vi_state": vi_state,
+            "vi_data_quality": vi_quality or "DATA_MISSING",
+            "vi_active": bool(vi_quality == "OK" and vi_state.get("vi_active")),
+            "microstructure_data_quality": "OK" if orderbook_quality == "OK" and vi_quality == "OK" else "DATA_MISSING",
+            **({"spread_bps": spread_bps} if spread_bps is not None else {}),
+        }
+
     def _kr_confirmation_gate_state(self, market: str, ticker: str, context: dict) -> dict:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if market_key != "KR":
@@ -3612,10 +3730,29 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         require_vwap = self._runtime_bool("KR_CONFIRMATION_REQUIRE_VWAP", False)
         require_or = self._runtime_bool("KR_CONFIRMATION_REQUIRE_OR_HIGH", False)
         require_volume = self._runtime_bool("KR_CONFIRMATION_REQUIRE_VOLUME", False)
+        gate_mode = str(self._runtime_value("KR_CONFIRMATION_GATE_MODE", "") or "").strip().upper()
+        try:
+            threshold = max(1, int(float(self._runtime_value("WATCH_TRIGGER_INITIAL_THRESHOLD", 2) or 2)))
+        except Exception:
+            threshold = 2
+        fast_window_min = self._runtime_float("KR_FAST_TRIGGER_WINDOW_MIN", 5.0)
         raw_data_quality = (context or {}).get("data_quality")
         data_quality_missing = bool((context or {}).get("data_quality_missing")) or raw_data_quality in (None, "")
         data_quality = "missing" if data_quality_missing else str(raw_data_quality).strip().lower()
         overextended = bool((context or {}).get("overextended"))
+        elapsed_min = _float_or_none((context or {}).get("market_open_elapsed_min"))
+        fast_window_elapsed_missing = elapsed_min is None
+        fast_window_ok = (not fast_window_elapsed_missing) and (fast_window_min <= 0 or elapsed_min <= fast_window_min)
+        vi_payload = (context or {}).get("vi_state")
+        vi_state = dict(vi_payload) if isinstance(vi_payload, dict) else {}
+        vi_active = bool((context or {}).get("vi_active") or vi_state.get("vi_active"))
+        orderbook_support = bool((context or {}).get("orderbook_support"))
+        if not orderbook_support:
+            try:
+                imbalance = float((context or {}).get("orderbook_imbalance"))
+                orderbook_support = imbalance >= self._runtime_float("KR_CONFIRMATION_MIN_ORDERBOOK_IMBALANCE", 0.0)
+            except Exception:
+                orderbook_support = False
 
         checks = {
             "data_quality_present": not data_quality_missing,
@@ -3629,22 +3766,65 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "opening_range_ok": (current is not None and or_high is not None and current >= or_high) if or_high is not None else not require_or,
             "volume_ok": (volume_accel is not None and volume_accel >= min_volume_accel) if volume_accel is not None else not require_volume,
             "spread_ok": (spread_bps is None or max_spread_bps <= 0 or spread_bps <= max_spread_bps),
+            "orderbook_support": orderbook_support,
+            "vi_safe": not vi_active,
+            "vi_active": vi_active,
+            "fast_window_ok": fast_window_ok,
+            "fast_window_elapsed_missing": fast_window_elapsed_missing,
+            "fast_window_elapsed_min": elapsed_min,
+            "fast_window_min": fast_window_min,
         }
         reason = ""
-        if not checks["data_quality_ok"]:
-            reason = "kr_data_quality_not_confirmed"
-        elif not checks["not_overextended"]:
-            reason = "kr_overextended_not_confirmed"
-        elif not checks["ret_3m_ok"] or not checks["ret_5m_ok"]:
-            reason = "kr_momentum_not_confirmed"
-        elif not checks["vwap_ok"]:
-            reason = "kr_vwap_not_confirmed"
-        elif not checks["opening_range_ok"]:
-            reason = "kr_or_not_confirmed"
-        elif not checks["volume_ok"]:
-            reason = "kr_volume_not_confirmed"
-        elif not checks["spread_ok"]:
-            reason = "kr_spread_not_confirmed"
+        score = 0
+        score_items: list[str] = []
+        if gate_mode == "FAST_TRIGGER_WITH_HARD_VETO":
+            hard_veto = {
+                "data_quality_ok": checks["data_quality_ok"],
+                "not_overextended": checks["not_overextended"],
+                "spread_ok": checks["spread_ok"],
+                "vi_safe": checks["vi_safe"],
+            }
+            score_candidates = {
+                "vwap_reclaim": checks["vwap_ok"] and vwap is not None,
+                "or_high_reclaim": checks["opening_range_ok"] and or_high is not None,
+                "volume_surge": checks["volume_ok"] and volume_accel is not None,
+                "orderbook_support": checks["orderbook_support"],
+            }
+            if fast_window_ok:
+                score_candidates = {
+                    "ret_3m_ok": checks["ret_3m_ok"],
+                    "ret_5m_ok": checks["ret_5m_ok"],
+                    **score_candidates,
+                }
+            score_items = [key for key, value in score_candidates.items() if value]
+            score = len(score_items)
+            if not hard_veto["data_quality_ok"]:
+                reason = "kr_data_quality_not_confirmed"
+            elif not hard_veto["not_overextended"]:
+                reason = "kr_overextended_not_confirmed"
+            elif not hard_veto["spread_ok"]:
+                reason = "kr_spread_not_confirmed"
+            elif not hard_veto["vi_safe"]:
+                reason = "kr_vi_active_not_confirmed"
+            elif fast_window_elapsed_missing:
+                reason = "kr_fast_window_elapsed_missing"
+            elif score < threshold:
+                reason = "kr_fast_trigger_not_confirmed"
+        else:
+            if not checks["data_quality_ok"]:
+                reason = "kr_data_quality_not_confirmed"
+            elif not checks["not_overextended"]:
+                reason = "kr_overextended_not_confirmed"
+            elif not checks["ret_3m_ok"] or not checks["ret_5m_ok"]:
+                reason = "kr_momentum_not_confirmed"
+            elif not checks["vwap_ok"]:
+                reason = "kr_vwap_not_confirmed"
+            elif not checks["opening_range_ok"]:
+                reason = "kr_or_not_confirmed"
+            elif not checks["volume_ok"]:
+                reason = "kr_volume_not_confirmed"
+            elif not checks["spread_ok"]:
+                reason = "kr_spread_not_confirmed"
         confirmed = not reason
         return {
             "kr_confirmation_gate_active": True,
@@ -3654,6 +3834,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "kr_confirmation_state": "CONFIRMED" if confirmed else "CONFIRMING",
             "kr_confirmation_reason": "" if confirmed else reason,
             "kr_confirmation_checks": checks,
+            "kr_confirmation_gate_mode": gate_mode,
+            "kr_confirmation_score": score,
+            "kr_confirmation_score_items": score_items,
+            "kr_confirmation_threshold": threshold,
+            "kr_confirmation_fast_window_ok": fast_window_ok,
+            "kr_confirmation_fast_window_elapsed_min": elapsed_min,
+            "kr_confirmation_fast_window_min": fast_window_min,
+            "kr_confirmation_fast_window_elapsed_missing": fast_window_elapsed_missing,
             "kr_confirmation_ticker": self._selection_ticker_key(market_key, ticker),
         }
 
@@ -3953,6 +4141,42 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "route_source": route_source,
                 }
             )
+        if self._runtime_bool("COUNTERFACTUAL_PATHS_ENABLED", False):
+            try:
+                from runtime.counterfactual_paths import build_counterfactual_rows, safe_write_counterfactual_paths
+
+                known_at = str(payload.get("known_at") or datetime.now(KST).isoformat(timespec="seconds"))
+                rows = build_counterfactual_rows(
+                    runtime_mode=str(getattr(self, "_mode", "live") or "live"),
+                    session_date=self._current_session_date_str(market_key),
+                    market=market_key,
+                    ticker=key,
+                    trade_ready_action=requested_action_text,
+                    known_at=known_at,
+                    signal_time=str((action or {}).get("created_at") or known_at),
+                    candidate_key=str(payload.get("candidate_trace_id") or ""),
+                    call_id=str((action or {}).get("source_prompt_id") or "") or None,
+                    actual_path="immediate" if final_action in {"BUY_READY", "PROBE_READY", "ADD_READY"} else "no_entry",
+                    context=runtime_gate,
+                )
+                result = safe_write_counterfactual_paths(rows)
+                runtime_gate["counterfactual_write_count"] = result.get("count", 0)
+                runtime_gate["counterfactual_write_duration_ms"] = result.get("duration_ms", 0.0)
+                if not result.get("ok"):
+                    warnings = list(payload.get("warnings") or [])
+                    warnings.append("counterfactual_write_failed")
+                    if result.get("errors"):
+                        warnings.append("counterfactual_write_row_errors")
+                    payload["warnings"] = warnings
+                try:
+                    if float(result.get("duration_ms") or 0.0) > self._runtime_float("COUNTERFACTUAL_WRITE_WARN_MS", 200.0):
+                        warnings = list(payload.get("warnings") or [])
+                        warnings.append("counterfactual_write_slow")
+                        payload["warnings"] = warnings
+                except Exception:
+                    pass
+            except Exception:
+                pass
         try:
             self._write_funnel_event(
                 "gate_evaluation",
@@ -4261,6 +4485,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "evidence_pack": live_pack,
         }
         requested_action = str((action or {}).get("action") or "").strip().upper()
+        if (
+            market_key == "KR"
+            and requested_action in {"PROBE_READY", "BUY_READY", "ADD_READY"}
+            and self._runtime_bool("KR_MICROSTRUCTURE_CONTEXT_ENABLED", True)
+        ):
+            try:
+                context.update(self._kr_microstructure_context(key))
+            except Exception as exc:
+                context.setdefault("microstructure_data_quality", "DATA_MISSING")
+                context.setdefault(
+                    "microstructure_error",
+                    str(exc or "kr_microstructure_context_failed"),
+                )
         pathb_waiting = bool((route_state or {}).get("waiting"))
         pathb_counter_key = f"{market_key}:{key}"
         pathb_counts = getattr(self, "_pathb_negative_watch_counts", None)
@@ -11147,6 +11384,86 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             _add_quality_gap("kr_candidate_quality_error")
             row["candidate_quality_error"] = str(exc)[:160]
             return row
+    def _prefetch_kr_candidate_flow(self, candidates: list, market: str) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if market_key != "KR" or not _env_bool("ENABLE_KR_CANDIDATE_FLOW_PREFETCH", False):
+            return {"enabled": False, "market": market_key}
+        tickers = [str((row or {}).get("ticker") or "").strip() for row in candidates or [] if isinstance(row, dict)]
+        try:
+            max_tickers = int(float(os.getenv("KR_CANDIDATE_FLOW_PREFETCH_MAX", "30") or 30))
+        except Exception:
+            max_tickers = 30
+        try:
+            sleep_sec = float(os.getenv("KR_CANDIDATE_FLOW_PREFETCH_SLEEP_SEC", "0.2") or 0.2)
+        except Exception:
+            sleep_sec = 0.2
+        summary = {
+            "enabled": True,
+            "market": market_key,
+            "requested": len([ticker for ticker in tickers if ticker]),
+            "max_tickers": max_tickers,
+        }
+        try:
+            from bot.kr_investor_flow_cache import update_candidate_flow_cache
+
+            cache = update_candidate_flow_cache(
+                tickers,
+                session_date=self._current_session_date_str(market_key),
+                token=self._token_for_market("KR"),
+                max_tickers=max_tickers,
+                sleep_sec=max(0.0, sleep_sec),
+            )
+            records = dict(cache.get("records") or {})
+            ok = sum(1 for record in records.values() if isinstance(record, dict) and record.get("status") == "ok")
+            error = sum(1 for record in records.values() if isinstance(record, dict) and record.get("status") == "error")
+            summary.update({
+                "records": len(records),
+                "ok": ok,
+                "error": error,
+                "updated_at": cache.get("updated_at", ""),
+            })
+        except Exception as exc:
+            summary.update({"error": str(exc)[:200], "records": 0, "ok": 0})
+            log.warning(f"[kr flow prefetch] failed: {exc}")
+        self._last_kr_flow_prefetch_summary = summary
+        return summary
+    def _enrich_us_candidate_quality_shadow(self, market: str, candidate: dict, candles) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        row = dict(candidate or {})
+        if market_key != "US" or not _env_bool("US_QUALITY_SHADOW_ENABLED", False):
+            return row
+        try:
+            from runtime.us_candidate_quality import enrich_us_quality_shadow
+
+            return enrich_us_quality_shadow(row, candles)
+        except Exception as exc:
+            gaps = row.get("us_quality_data_gaps")
+            if isinstance(gaps, list):
+                gap_list = list(gaps)
+            elif gaps:
+                gap_list = [str(gaps)]
+            else:
+                gap_list = []
+            gap_list.append("us_quality_shadow_error")
+            row["us_quality_data_gaps"] = sorted(set(gap_list))
+            row["us_quality_shadow_error"] = str(exc)[:160]
+            row["us_quality_shadow_only"] = True
+            return row
+    def _apply_candidate_post_rank_shadow(self, market: str, candidates: list[dict]) -> list[dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if market_key != "KR" or not _env_bool("KR_CANDIDATE_POST_RANK_ENABLED", False):
+            return list(candidates or [])
+        try:
+            from runtime.candidate_post_rank import apply_candidate_post_rank
+
+            enforce = _env_bool("KR_CANDIDATE_POST_RANK_ENFORCE", False)
+            ranked, meta = apply_candidate_post_rank(candidates or [], market=market_key, enforce=enforce)
+            self._last_candidate_post_rank_meta = meta
+            return ranked
+        except Exception as exc:
+            self._last_candidate_post_rank_meta = {"enabled": True, "error": str(exc)[:200]}
+            log.warning(f"[candidate post rank] failed {market_key}: {exc}")
+            return list(candidates or [])
     def _filter_candidates_by_history(self, candidates: list, market: str) -> list:
         """
         스크리너 후보 중 신호 계산에 필요한 히스토리가 부족한 종목 제거.
@@ -11161,6 +11478,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for c in product_removed
         ]
         market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if market_key == "KR":
+            self._prefetch_kr_candidate_flow(candidates, market_key)
         try:
             watch_min_usable = int(os.getenv("DATA_INSUFFICIENT_WATCH_MIN_USABLE", "40"))
         except ValueError:
@@ -11193,6 +11512,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if usable_rows >= watch_min_usable:
                         watch_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
                         watch_candidate = self._enrich_kr_candidate_quality(market_key, watch_candidate, candles)
+                        watch_candidate = self._enrich_us_candidate_quality_shadow(market_key, watch_candidate, candles)
                         watch_candidate["data_quality"] = "WATCH_DATA_INSUFFICIENT"
                         watch_candidate["history_status"] = "DATA_INSUFFICIENT"
                         watch_candidate["history_usable_rows"] = usable_rows
@@ -11226,6 +11546,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
                 enriched_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
                 enriched_candidate = self._enrich_kr_candidate_quality(market_key, enriched_candidate, candles)
+                enriched_candidate = self._enrich_us_candidate_quality_shadow(market_key, enriched_candidate, candles)
                 filtered_v2.append(enriched_candidate)
             except Exception as exc:
                 removed_v2.append((ticker, f"error:{exc}"))
@@ -11259,7 +11580,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"[history filter] {market_key} candidates {len(candidates)} -> "
             f"valid_or_watch {len(filtered_v2)} (removed {len(removed_v2)})"
         )
-        return filtered_v2
+        return self._apply_candidate_post_rank_shadow(market_key, filtered_v2)
         filtered = []
         removed = [
             (c.get("ticker", ""), c.get("blocked_reason", "product_blocked"))
@@ -12066,6 +12387,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "tp_price": float(template.get("tp_price", 0.0)),
             "decision_id": template.get("decision_id") or self._recover_decision_id(ticker, market),
         }
+        for key in (
+            "peak_pnl_pct",
+            "position_mfe_pct",
+            "trough_pnl_pct",
+            "position_mae_pct",
+            "peak_price",
+            "position_peak_price",
+            "peak_price_native",
+            "mfe_floor_active",
+            "mfe_floor_price_native",
+            "mfe_floor_source",
+            "mfe_state_updated_at",
+        ):
+            if key in template:
+                pos[key] = template.get(key)
         return self._normalize_position_metadata(
             pos,
             market,
@@ -12117,8 +12453,81 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         pos["position_origin"] = str(pos.get("position_origin") or origin)
         pos["position_integrity"] = str(pos.get("position_integrity") or integrity)
         pos["management_protected"] = bool(pos.get("management_protected", management_protected))
+        self._recover_position_mfe_state(pos, market, origin=origin)
         if pos["management_protected"]:
             pos.setdefault("recovery_session_date", current_session)
+        return pos
+    def _recover_position_mfe_state(self, pos: dict, market: str, *, origin: str = "") -> dict:
+        def _num(value, default: float = 0.0) -> float:
+            try:
+                return float(str(value or "").replace(",", ""))
+            except Exception:
+                return default
+
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        is_us = market_key == "US" or str(pos.get("display_currency") or "").upper() == "USD"
+        entry = _num(pos.get("display_avg_price") if is_us else pos.get("entry") or pos.get("avg_price"))
+        current = _num(pos.get("display_current_price") if is_us else pos.get("current_price"))
+        saved_mfe = max(0.0, _num(pos.get("position_mfe_pct")), _num(pos.get("peak_pnl_pct")))
+        saved_mae = min(0.0, _num(pos.get("position_mae_pct")), _num(pos.get("trough_pnl_pct")))
+        peak_price = max(
+            0.0,
+            _num(pos.get("peak_price_native")),
+            _num(pos.get("position_peak_price")),
+            _num(pos.get("peak_price")),
+            _num(pos.get("high_price")),
+            _num(pos.get("auto_sell_policy_peak_price")),
+        )
+        source = ""
+        if peak_price > 0:
+            source = "positions_file"
+            if entry > 0:
+                saved_mfe = max(saved_mfe, (peak_price / entry - 1.0) * 100.0)
+        elif saved_mfe > 0 and entry > 0:
+            peak_price = entry * (1.0 + saved_mfe / 100.0)
+            source = "positions_file"
+
+        if current > 0 and entry > 0:
+            current_mfe = max(0.0, (current / entry - 1.0) * 100.0)
+            if current_mfe > saved_mfe:
+                saved_mfe = current_mfe
+                peak_price = current
+                source = "broker_current"
+
+        if saved_mfe > 0 and entry > 0 and peak_price <= 0:
+            peak_price = entry * (1.0 + saved_mfe / 100.0)
+            source = source or "positions_file"
+
+        trigger = 2.5
+        buffer_pct = 0.001
+        try:
+            trigger = float(os.getenv("PLANA_MFE_BREAKEVEN_TRIGGER_PCT", "2.5") or 2.5)
+        except Exception:
+            trigger = 2.5
+        try:
+            buffer_pct = max(0.0, float(os.getenv("PLANA_MFE_BREAKEVEN_BUFFER_PCT", "0.001") or 0.001))
+        except Exception:
+            buffer_pct = 0.001
+
+        pos["position_mfe_pct"] = round(saved_mfe, 4)
+        pos["peak_pnl_pct"] = round(saved_mfe, 4)
+        pos["position_mae_pct"] = round(saved_mae, 4)
+        pos["trough_pnl_pct"] = round(saved_mae, 4)
+        if peak_price > 0:
+            pos["peak_price_native"] = round(peak_price, 6)
+            pos["position_peak_price"] = round(peak_price, 6)
+        floor_active = bool(saved_mfe >= trigger > 0 and entry > 0)
+        pos["mfe_floor_active"] = floor_active
+        pos["mfe_floor_price_native"] = round(entry * (1.0 + buffer_pct), 6) if floor_active else 0.0
+        pos["mfe_floor_source"] = "cap2_mfe_v1" if floor_active else ""
+        pos["mfe_recovery_source"] = source or "unavailable"
+        pos["mfe_recovery_conflict"] = False
+        pos["broker_position_confirmed"] = bool(
+            pos.get("broker_position_confirmed")
+            or str(origin or "").startswith("broker")
+            or str(pos.get("price_source") or "") == "broker_balance"
+        )
+        pos["mfe_state_updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
         return pos
     def _count_session_holding_days(self, market: str, entry_session_iso: str, current_session_iso: str) -> int:
         try:
@@ -15013,8 +15422,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     @staticmethod
     def _auto_sell_review_required(reason: str) -> bool:
+        reason_key = str(reason or "").strip().lower()
+        final_policy_exit_reasons = {
+            "policy_protective_stop",
+            "policy_hard_stop",
+            "policy_recheck_limit_sell",
+            "policy_revised_target",
+        }
+        if reason_key in final_policy_exit_reasons:
+            return False
         if _env_bool("CLAUDE_REVIEW_ALL_AUTOMATED_SELLS", False):
-            return str(reason or "").strip().lower() not in {
+            return reason_key not in {
                 "manual_sell",
                 "operator_kill",
                 "pathb_kill",
@@ -15022,7 +15440,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "daily_loss_stop",
                 "broker_mismatch",
             }
-        return str(reason or "").strip().lower() not in {
+        return reason_key not in {
             "manual_sell",
             "mfe_breakeven",
             "policy_protective_stop",

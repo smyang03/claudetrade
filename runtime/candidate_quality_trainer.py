@@ -57,6 +57,13 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _trainer_weight(name: str, default: float) -> float:
     return _env_float(f"CANDIDATE_TRAINER_{name}", default)
 
@@ -217,6 +224,21 @@ def score_candidate_for_trainer(
     trainer_config = _trainer_threshold_config()
 
     if market_key == "KR":
+        if _env_bool("CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED", False):
+            quality_score = _first_present(row, "candidate_quality_score", default=None)
+            if quality_score not in (None, ""):
+                gaps_raw = row.get("quality_data_gaps") or []
+                if isinstance(gaps_raw, str):
+                    gaps = {gaps_raw}
+                else:
+                    gaps = {str(item) for item in gaps_raw if str(item)}
+                weight = _env_float("CANDIDATE_TRAINER_QUALITY_SCORE_WEIGHT", 0.3)
+                gap_multiplier = 1.0
+                if "ohlcv_missing" in gaps:
+                    gap_multiplier = 0.0
+                elif "index_history_missing" in gaps or "flow_missing" in gaps:
+                    gap_multiplier = 0.5
+                components["kr_quality_score_bonus"] = (_as_float(quality_score, 50.0) - 50.0) * weight * gap_multiplier
         if "KOSDAQ" in market_type:
             components["kr_kosdaq_prior"] = _trainer_weight("KR_KOSDAQ_PRIOR", 12.0)
         elif "KOSPI" in market_type:

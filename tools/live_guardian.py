@@ -101,6 +101,40 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _order_unknown_remediation_commands(data: dict[str, Any]) -> list[str]:
+    rows: list[dict[str, Any]] = []
+    for key in ("current_session", "previous_session"):
+        value = data.get(key)
+        if isinstance(value, list):
+            rows.extend([row for row in value if isinstance(row, dict)])
+    commands: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        market = str(row.get("market") or data.get("market") or "ALL").upper()
+        ticker = str(row.get("ticker") or "").strip()
+        session_date = str(row.get("session_date") or row.get("date") or "").strip()
+        order_id = str(row.get("order_id") or row.get("order_no") or row.get("execution_id") or "").strip()
+        parts = [sys.executable, "-m", "tools.reconcile_order_truth"]
+        if session_date:
+            parts.extend(["--date", session_date])
+        if market in {"KR", "US"}:
+            parts.extend(["--market", market])
+        else:
+            parts.extend(["--market", "ALL"])
+        if ticker:
+            parts.extend(["--ticker", ticker])
+        if order_id:
+            parts.extend(["--order-id", order_id])
+        parts.append("--dry-run")
+        command = " ".join(parts)
+        if command not in seen:
+            seen.add(command)
+            commands.append(command)
+    if not commands:
+        commands.append(f"{sys.executable} -m tools.reconcile_order_truth --market ALL --dry-run")
+    return commands
+
+
 def classify_preflight_check(
     check: dict[str, Any],
     *,
@@ -131,7 +165,9 @@ def classify_preflight_check(
     if name == "db.order_unknown_unresolved":
         current = data.get("current_session") if isinstance(data.get("current_session"), list) else []
         classification = "hard_fail" if current else "soft_fail"
-        return GuardianFinding(name, status, classification, detail, data)
+        enriched = dict(data)
+        enriched["remediation_commands"] = _order_unknown_remediation_commands(enriched)
+        return GuardianFinding(name, status, classification, detail, enriched)
 
     if bool(data.get("accepted_exception")):
         return GuardianFinding(name, status, "accepted_exception", detail, data)
@@ -399,6 +435,8 @@ def _write_guardian_report(report: dict[str, Any]) -> tuple[Path, Path]:
             f"- {finding.get('classification')} `{finding.get('name')}` "
             f"({finding.get('status')}): {finding.get('detail')}"
         )
+        for command in (finding.get("data") or {}).get("remediation_commands") or []:
+            lines.append(f"  - remediation: `{command}`")
     lines.extend(["", "## Actions", ""])
     for action in report.get("actions", []):
         lines.append(f"- {action.get('status')} `{action.get('name')}`: {action.get('detail')}")

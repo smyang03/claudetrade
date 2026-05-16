@@ -29,6 +29,7 @@
 구현:
 
 - `KR_DAILY_ENTRY_CAP=1`, `US_DAILY_ENTRY_CAP=1`.
+- KR live 1회 주문 금액은 `MAX_ORDER_KRW=300000`, `KR_FIXED_ORDER_KRW=300000`, `PATHB_FIXED_ORDER_KRW=300000`으로 유지한다.
 - live `PATHB_KR_LIVE_ENABLED=false`.
 - legacy fallback `KR_CLAUDE_PRICE_LIVE_ENABLED=false`.
 - `.env.paper`의 KR PathB paper 관측은 유지.
@@ -36,6 +37,7 @@
 운영상 기대:
 
 - KR/US 신규 진입이 시장별 1회로 제한된다.
+- KR 신규 진입 1건의 주문 예산은 최대 30만원으로 제한된다.
 - KR `claude_price` live 신규 진입이 차단된다.
 
 ### B. Evidence timeout 완화

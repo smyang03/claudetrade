@@ -9,6 +9,7 @@ import risk_manager as risk_module
 from risk_manager import RiskManager
 from runtime.pathb_runtime import PathBRuntime
 from runtime.v2_lifecycle_runtime import v2_close_reason
+from trading_bot import TradingBot
 
 
 def _kr_position(**overrides):
@@ -30,6 +31,17 @@ def _kr_position(**overrides):
 
 class LossCapProfitFloorTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._env_patch = patch.dict(
+            "os.environ",
+            {
+                "KR_MAX_SINGLE_LOSS_PCT": "",
+                "US_MAX_SINGLE_LOSS_PCT": "",
+                "KR_LOSS_CAP_SHADOW_PCT": "",
+                "US_LOSS_CAP_SHADOW_PCT": "",
+                "LOSS_CAP_SHADOW_PCT": "",
+            },
+        )
+        self._env_patch.start()
         self._old_single_loss = risk_module.HARD_RULES["max_single_loss_pct"]
         self._old_session_cap = risk_module.POSITION_SESSION_LOSS_CAP_PCT
         self._old_auto_trail_pct_kr = risk_module.AUTO_TRAIL_PCT_KR
@@ -41,6 +53,7 @@ class LossCapProfitFloorTests(unittest.TestCase):
         risk_module.HARD_RULES["max_single_loss_pct"] = self._old_single_loss
         risk_module.POSITION_SESSION_LOSS_CAP_PCT = self._old_session_cap
         risk_module.AUTO_TRAIL_PCT_KR = self._old_auto_trail_pct_kr
+        self._env_patch.stop()
 
     def test_kr_loss_cap_overlays_wide_strategy_stop(self) -> None:
         risk = RiskManager(init_cash=1_000_000)
@@ -177,6 +190,48 @@ class LossCapProfitFloorTests(unittest.TestCase):
         stop = runtime._native_loss_cap_stop(_kr_position(), "KR")
 
         self.assertAlmostEqual(stop, 9_700.0)
+
+    def test_broker_recovered_position_keeps_saved_mfe_state(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.usd_krw_rate = 1350.0
+        bot._current_session_date_str = lambda market: "2026-05-16"
+        bot._lookup_ticker_name = lambda ticker, market: ""
+        bot._recover_decision_id = lambda ticker, market: None
+
+        pos = bot._make_runtime_position_from_broker(
+            "005930",
+            "KR",
+            {"avg_price": 100.0, "eval_price": 101.0, "qty": 3},
+            template={"peak_pnl_pct": 3.4, "trough_pnl_pct": -1.2, "entry_time": "2026-05-16T09:01:00"},
+        )
+
+        self.assertAlmostEqual(pos["position_mfe_pct"], 3.4)
+        self.assertAlmostEqual(pos["peak_price_native"], 103.4)
+        self.assertAlmostEqual(pos["position_mae_pct"], -1.2)
+        self.assertTrue(pos["mfe_floor_active"])
+        self.assertEqual(pos["mfe_floor_source"], "cap2_mfe_v1")
+        self.assertEqual(pos["mfe_recovery_source"], "positions_file")
+        self.assertTrue(pos["broker_position_confirmed"])
+
+    def test_broker_injected_position_uses_current_price_as_minimum_mfe_peak(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.usd_krw_rate = 1350.0
+        bot._current_session_date_str = lambda market: "2026-05-16"
+        bot._lookup_ticker_name = lambda ticker, market: ""
+        bot._recover_decision_id = lambda ticker, market: None
+
+        pos = bot._make_runtime_position_from_broker(
+            "AAPL",
+            "US",
+            {"avg_price": 100.0, "eval_price": 103.0, "qty": 1},
+        )
+
+        self.assertAlmostEqual(pos["position_mfe_pct"], 3.0)
+        self.assertAlmostEqual(pos["peak_price_native"], 103.0)
+        self.assertTrue(pos["mfe_floor_active"])
+        self.assertEqual(pos["mfe_recovery_source"], "broker_current")
+        self.assertTrue(pos["management_protected"])
+        self.assertTrue(pos["broker_position_confirmed"])
 
     def test_v2_close_reason_maps_new_exit_reasons(self) -> None:
         self.assertEqual(v2_close_reason("loss_cap"), "CLOSED_LOSS_CAP")

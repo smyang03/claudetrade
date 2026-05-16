@@ -215,6 +215,8 @@ def build_payload(
 
 
 def actual_live_payload(closed: list[dict[str, Any]], live_events: list[dict[str, Any]]) -> dict[str, Any]:
+    strategy_closed = [row for row in closed if not is_broker_sync(row)]
+    broker_sync_closed = [row for row in closed if is_broker_sync(row)]
     by_market = grouped_metrics(closed, lambda row: str(row.get("market") or ""), "_pnl_pct", pnl_key="_pnl_krw")
     by_date_market = grouped_metrics(
         closed,
@@ -223,7 +225,7 @@ def actual_live_payload(closed: list[dict[str, Any]], live_events: list[dict[str
         pnl_key="_pnl_krw",
     )
     by_strategy = grouped_metrics(
-        closed,
+        strategy_closed,
         lambda row: f"{row.get('market')}|{row.get('strategy') or '(blank)'}",
         "_pnl_pct",
         pnl_key="_pnl_krw",
@@ -246,11 +248,24 @@ def actual_live_payload(closed: list[dict[str, Any]], live_events: list[dict[str
         "by_market": by_market,
         "by_date_market": by_date_market,
         "by_strategy": by_strategy,
+        "broker_sync_operational": grouped_metrics(
+            broker_sync_closed,
+            lambda row: f"{row.get('market')}|broker_sync",
+            "_pnl_pct",
+            pnl_key="_pnl_krw",
+        ),
+        "broker_sync_count": len(broker_sync_closed),
         "by_exit_reason": by_exit,
         "buy_order_counts": order_counts,
         "worst_trades": compact_closed(sorted(closed, key=lambda row: row["_pnl_pct"])[:15]),
         "best_trades": compact_closed(sorted(closed, key=lambda row: row["_pnl_pct"], reverse=True)[:15]),
     }
+
+
+def is_broker_sync(row: dict[str, Any]) -> bool:
+    strategy = str(row.get("strategy") or row.get("strategy_name") or "").strip().lower()
+    reason = str(row.get("reason") or row.get("exit_reason") or "").strip().lower()
+    return strategy in {"broker_sync", "broker_balance"} or "broker_sync" in reason
 
 
 def candidate_quality_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -731,6 +746,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
     lines.extend(["", "## Actual Live Result", ""])
     lines.extend(metrics_table("By Market", payload["actual_live"]["by_market"], include_pnl=True))
     lines.extend(metrics_table("By Strategy", payload["actual_live"]["by_strategy"], include_pnl=True, limit=30))
+    lines.extend(metrics_table("Broker Sync Operational Cases", payload["actual_live"].get("broker_sync_operational", {}), include_pnl=True, limit=20))
     lines.extend(metrics_table("By Exit Reason", payload["actual_live"]["by_exit_reason"], include_pnl=True, limit=30))
     lines.append("")
     lines.append("### Buy Order Counts")

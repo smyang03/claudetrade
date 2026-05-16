@@ -38,6 +38,8 @@ MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 # R2 토론은 전원 Sonnet 유지
 R1_MODEL      = os.getenv("R1_MODEL", "claude-haiku-4-5-20251001")
 BULL_R1_MODEL = os.getenv("BULL_R1_MODEL", MODEL)
+BEAR_R1_MODEL = os.getenv("BEAR_R1_MODEL", R1_MODEL)
+NEUTRAL_R1_MODEL = os.getenv("NEUTRAL_R1_MODEL", R1_MODEL)
 
 
 def _env_int_bound(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -53,6 +55,52 @@ def _env_bool_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _r1_model_for(analyst_type: str) -> str:
+    role = str(analyst_type or "").strip().lower()
+    if role == "bull":
+        return os.getenv("BULL_R1_MODEL", BULL_R1_MODEL or R1_MODEL)
+    if role == "bear":
+        return os.getenv("BEAR_R1_MODEL", BEAR_R1_MODEL or R1_MODEL)
+    if role == "neutral":
+        return os.getenv("NEUTRAL_R1_MODEL", NEUTRAL_R1_MODEL or R1_MODEL)
+    return os.getenv("R1_MODEL", R1_MODEL)
+
+
+def _lesson_context_for_prompt(lesson_context: str, *, scope: str = "r1") -> tuple[str, dict]:
+    text = str(lesson_context or "").strip()
+    scope_key = str(scope or "r1").strip().lower()
+    if not text:
+        return "", {
+            "scope": scope_key,
+            "injected": False,
+            "chars": 0,
+            "max_chars": 0,
+            "omitted_chars": 0,
+        }
+    if scope_key == "r2":
+        if not _env_bool_flag("ACTIVE_LESSONS_DEBATE_ENABLED", True):
+            return "", {
+                "scope": scope_key,
+                "injected": False,
+                "chars": 0,
+                "max_chars": 0,
+                "omitted_chars": len(text),
+                "disabled": True,
+            }
+        max_chars = _env_int_bound("ACTIVE_LESSONS_DEBATE_MAX_CHARS", 1200, 120, 3000)
+    else:
+        default_limit = _env_int_bound("ACTIVE_LESSONS_MAX_CHARS", 3000, 120, 3000)
+        max_chars = _env_int_bound("ACTIVE_LESSONS_ANALYST_MAX_CHARS", default_limit, 120, 3000)
+    trimmed = text if len(text) <= max_chars else text[: max_chars - 3].rstrip() + "..."
+    return trimmed, {
+        "scope": scope_key,
+        "injected": bool(trimmed),
+        "chars": len(trimmed),
+        "max_chars": max_chars,
+        "omitted_chars": max(0, len(text) - len(trimmed)),
+    }
 
 
 def _json_array_object_cap(items: list[dict], max_chars: int) -> tuple[str, list[dict], int]:
@@ -689,6 +737,37 @@ def _candidate_quality_hint(candidate: dict) -> str:
     gaps = candidate.get("quality_data_gaps")
     if isinstance(gaps, list) and gaps:
         parts.append(f"qgap={len(gaps)}")
+    reliability = candidate.get("trainer_cohort_reliability")
+    try:
+        rel = float(reliability)
+        if rel >= 0.70:
+            rel_label = "high"
+        elif rel >= 0.45:
+            rel_label = "mid"
+        else:
+            rel_label = "low"
+        cohort_part = f"cohort={rel_label}"
+        for sample_key in (
+            "cohort_sample_n",
+            "trainer_cohort_sample_n",
+            "trainer_cohort_count",
+            "cohort_count",
+            "sample_count",
+        ):
+            sample = candidate.get(sample_key)
+            try:
+                if sample not in (None, ""):
+                    cohort_part += f" n={int(float(sample))}"
+                    break
+            except Exception:
+                continue
+        parts.append(cohort_part)
+    except Exception:
+        if candidate.get("trainer_cohort_key") or candidate.get("trainer_cohort_penalty") not in (None, ""):
+            parts.append("cohort=thin")
+    tier = str(candidate.get("trainer_tier") or candidate.get("trainer_candidate_state") or "").strip().upper()
+    if tier:
+        parts.append(f"tier={tier}")
     return "quality=" + ",".join(parts) if parts else ""
 
 
@@ -1026,7 +1105,8 @@ def _build_selection_retry_prompt(
     watch_max = min(selection_limits(market)["watch_max"], len(retry_candidates))
     trade_max = min(selection_limits(market)["trade_max"], len(retry_candidates))
     watch_floor = min(watch_max, 10 if len(retry_candidates) >= 15 else max(1, len(retry_candidates) // 2))
-    active_section = f"\n{active_lessons_context[:500]}\n" if active_lessons_context else ""
+    active_text, _active_meta = _lesson_context_for_prompt(active_lessons_context, scope="selection")
+    active_section = f"\n{active_text}\n" if active_text else ""
     return f"""이전 종목선정 응답이 잘려서 다시 묻습니다. 이번에는 watchlist/reasons 복구만 수행하고 trade_ready는 빈 배열로 반환하세요.
 시장: {market}
 모드: {consensus_mode}
@@ -1234,7 +1314,7 @@ PERSONAS = {
 [판단 기준]
 • 상승/하락 신호 균등 → 반드시 NEUTRAL
 • 한쪽으로 2:1 이상 기울 때만 MILD_BULL or MILD_BEAR
-• confidence는 절대 0.75 초과 금지 (불확실성은 항상 존재)
+• 신호가 불명확하면 confidence 0.75 초과 금지. 지표가 한쪽으로 명확하거나 데이터 불확실성이 판단의 핵심 근거일 때만 0.85까지 허용
 • 극단 판단(AGGRESSIVE, HALT) 원칙적 금지
 
 [절대 하지 말 것]
@@ -1286,10 +1366,10 @@ def call_analyst(analyst_type: str, digest_prompt: str,
                  market: str = "") -> dict:
     """1라운드 독립 판단 — stance/confidence/key_reason 3필드만 반환. 상세 분석은 R2에서."""
     feedback_section = f"\n[나의 과거 실적]\n{analyst_feedback}\n" if analyst_feedback else ""
-    lesson_section = f"\n[recent lesson candidates]\n{lesson_context[:500]}\n" if lesson_context else ""
+    lesson_text, lesson_meta = _lesson_context_for_prompt(lesson_context, scope="r1")
+    lesson_section = f"\n[recent lesson candidates]\n{lesson_text}\n" if lesson_text else ""
 
-    # bull은 방향 conviction 품질 확보를 위해 Sonnet 사용
-    _r1_model = BULL_R1_MODEL if analyst_type == "bull" else R1_MODEL
+    _r1_model = _r1_model_for(analyst_type)
 
     prompt = f"""{_persona_for(analyst_type, market)}
 
@@ -1322,7 +1402,8 @@ JSON으로만 응답 (다른 텍스트 없이):
   "key_reason":"핵심 근거 한 문장 (구체적 지표 수치 포함)"}}"""
 
     try:
-        resp = client.messages.create(model=_r1_model, max_tokens=400,
+        r1_max_tokens = _env_int_bound("CLAUDE_ANALYST_R1_MAX_TOKENS", 700, 200, 2000)
+        resp = client.messages.create(model=_r1_model, max_tokens=r1_max_tokens,
                                       messages=[{"role": "user", "content": prompt}])
         raw = resp.content[0].text.strip()
         result = _sanitize_analyst_result(_extract_json(raw), analyst_type)
@@ -1335,6 +1416,22 @@ JSON으로만 응답 (다른 텍스트 없이):
             market=market,
             model=_r1_model,
             prompt_version="market_judgment_v4_slim",
+            extra={
+                "lesson_context": lesson_meta,
+                "model_route": {
+                    "analyst": analyst_type,
+                    "r1_model": _r1_model,
+                    "fallback_model": os.getenv("R1_MODEL", R1_MODEL),
+                },
+                "token_budget": {
+                    "max_tokens": r1_max_tokens,
+                    "stop_reason": getattr(resp, "stop_reason", ""),
+                },
+                "persona": {
+                    "market": market,
+                    "us_bear_persona": bool(str(analyst_type).lower() == "bear" and str(market or "").upper() == "US"),
+                },
+            },
         )
         log.info(f"[{analyst_type} R1/{_r1_model.split('-')[1]}] {result.get('stance','-')} "
                  f"conf={result.get('confidence',0):.2f} | "
@@ -1360,7 +1457,8 @@ JSON으로만 응답 (다른 텍스트 없이):
 def call_analyst_debate(analyst_type: str, my_r1: dict,
                         others: dict, digest_prompt: str,
                         debate_history: str = "",
-                        market: str = "") -> dict:
+                        market: str = "",
+                        lesson_context: str = "") -> dict:
     """
     2라운드: 다른 분석가 의견 + 과거 토론 이력 보고 최종 판단 수정
     others: {analyst_type: r1_result, ...} (자신 제외)
@@ -1373,10 +1471,12 @@ def call_analyst_debate(analyst_type: str, my_r1: dict,
     )
 
     history_section = f"\n[과거 토론 이력]\n{debate_history}\n" if debate_history else ""
+    lesson_text, lesson_meta = _lesson_context_for_prompt(lesson_context, scope="r2")
+    lesson_section = f"\n[recent lesson candidates]\n{lesson_text}\n" if lesson_text else ""
 
     prompt = f"""{_persona_for(analyst_type, market)}
 {BREADTH_FIRST_CONTRACT}
-{history_section}
+{history_section}{lesson_section}
 [당신의 1라운드 판단]
 • stance: {my_r1['stance']}
 • 확신도: {my_r1.get('confidence', 0):.0%}
@@ -1405,7 +1505,8 @@ JSON으로만 응답:
   "change_reason":"변경했다면 설득된 논거, 유지했다면 null"}}"""
 
     try:
-        resp = client.messages.create(model=MODEL, max_tokens=700,
+        r2_max_tokens = _env_int_bound("CLAUDE_ANALYST_R2_MAX_TOKENS", 900, 300, 2500)
+        resp = client.messages.create(model=MODEL, max_tokens=r2_max_tokens,
                                       messages=[{"role": "user", "content": prompt}])
         raw = resp.content[0].text.strip()
         result = _extract_json(raw)
@@ -1419,6 +1520,21 @@ JSON으로만 응답:
             market=market,
             model=MODEL,
             prompt_version="market_debate_v3_sizing",
+            extra={
+                "lesson_context": lesson_meta,
+                "model_route": {
+                    "analyst": analyst_type,
+                    "r2_model": MODEL,
+                },
+                "token_budget": {
+                    "max_tokens": r2_max_tokens,
+                    "stop_reason": getattr(resp, "stop_reason", ""),
+                },
+                "persona": {
+                    "market": market,
+                    "us_bear_persona": bool(str(analyst_type).lower() == "bear" and str(market or "").upper() == "US"),
+                },
+            },
         )
 
         changed = merged.get("changed", False)
@@ -1478,8 +1594,15 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
     r2 = {}
     for atype in ("bull", "bear", "neutral"):
         others = {k: v for k, v in r1.items() if k != atype}
-        r2[atype] = call_analyst_debate(atype, r1[atype], others,
-                                        digest_prompt, debate_history, market=market)
+        r2[atype] = call_analyst_debate(
+            atype,
+            r1[atype],
+            others,
+            digest_prompt,
+            debate_history,
+            market=market,
+            lesson_context=lesson_context,
+        )
         time.sleep(delay)
 
     log.info(f"R2 완료 | Bull:{r2['bull']['stance']} "
@@ -1757,11 +1880,14 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         f"chars={active_lesson_meta.get('chars', 0)}"
     )
     active_lesson_section = str(active_lessons.get("section") or "")
+    fallback_lesson_text, fallback_lesson_meta = _lesson_context_for_prompt(lesson_context, scope="selection")
     lesson_section = (
         f"\n{active_lesson_section}\n"
         if active_lesson_section
-        else (f"\n{lesson_context[:500]}\n" if lesson_context else "")
+        else (f"\n{fallback_lesson_text}\n" if fallback_lesson_text else "")
     )
+    if fallback_lesson_text and not active_lesson_section:
+        active_lesson_meta.setdefault("fallback", fallback_lesson_meta)
     tuning_feedback_section, tuning_feedback_meta = _build_tuning_feedback_contract(
         market,
         evidence_items,

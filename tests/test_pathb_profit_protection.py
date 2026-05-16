@@ -288,7 +288,8 @@ class PathBProfitProtectionTests(unittest.TestCase):
         runtime = PathBRuntime.__new__(PathBRuntime)
         signal = ExitSignal(True, "profit_ladder", "CLOSED_PROFIT_LADDER", 101.5, "run1")
 
-        result = runtime._run_pathb_sell_review_gate(_plan(market="KR"), {}, signal)
+        with patch.dict("os.environ", {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "false"}, clear=False):
+            result = runtime._run_pathb_sell_review_gate(_plan(market="KR"), {}, signal)
 
         self.assertTrue(result["allowed"])
         self.assertTrue(result["bypassed"])

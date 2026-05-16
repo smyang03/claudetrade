@@ -872,6 +872,25 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             advisor.assert_not_called()
             precheck.assert_called_once()
 
+    def test_final_policy_exits_bypass_review_even_when_review_all_enabled(self) -> None:
+        from trading_bot import TradingBot
+        from runtime.pathb_runtime import ExitSignal, PathBRuntime
+
+        with patch.dict(os.environ, {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true"}):
+            self.assertFalse(TradingBot._auto_sell_review_required("policy_protective_stop"))
+            self.assertFalse(TradingBot._auto_sell_review_required("policy_hard_stop"))
+            self.assertFalse(TradingBot._auto_sell_review_required("policy_recheck_limit_sell"))
+            self.assertFalse(
+                PathBRuntime._pathb_sell_review_required(
+                    ExitSignal(True, "policy_protective_stop", "CLOSED_CLAUDE_PRICE_STOP", 100.0, "run1")
+                )
+            )
+            self.assertFalse(
+                PathBRuntime._pathb_sell_review_required(
+                    ExitSignal(True, "policy_hard_stop", "CLOSED_HARD_STOP", 100.0, "run1")
+                )
+            )
+
     def test_pathb_expired_policy_does_not_suppress_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan, pos = _pathb_runtime(tmp)

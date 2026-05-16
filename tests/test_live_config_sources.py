@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from tools.live_preflight import (
     _config_checks,
+    _kr_cap40_confirmation_enforce_check,
     _runtime_config_drift_check,
     _runtime_config_drift_payload,
     load_effective_config,
@@ -21,10 +22,10 @@ class LiveConfigSourceTests(unittest.TestCase):
         effective = config["effective"]
         self.assertEqual(effective.get("MAX_ORDER_KRW"), "300000")
         self.assertEqual(effective.get("KR_FIXED_ORDER_KRW"), "300000")
-        self.assertEqual(effective.get("KR_MAX_POSITIONS"), "15")
-        self.assertEqual(effective.get("US_MAX_POSITIONS"), "10")
+        self.assertEqual(effective.get("KR_MAX_POSITIONS"), "20")
+        self.assertEqual(effective.get("US_MAX_POSITIONS"), "20")
         self.assertEqual(effective.get("V2_MAX_DAILY_ENTRIES"), "40")
-        self.assertEqual(effective.get("KR_DAILY_ENTRY_CAP"), "2")
+        self.assertEqual(effective.get("KR_DAILY_ENTRY_CAP"), "40")
         self.assertEqual(effective.get("US_DAILY_ENTRY_CAP"), "40")
         self.assertEqual(effective.get("PATHB_MAX_POSITIONS"), "15")
         self.assertEqual(effective.get("PATHB_MAX_DAILY_ENTRIES"), "40")
@@ -46,6 +47,44 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertTrue(config["start_config_loaded"])
         self.assertIn("env_overrides", config["start_config"])
         self.assertEqual(config["effective"].get("PATHB_MODE"), "min_size_live")
+
+    def test_kr_cap40_requires_confirmation_enforce(self) -> None:
+        check = _kr_cap40_confirmation_enforce_check(
+            {
+                "KR_DAILY_ENTRY_CAP": "40",
+                "KR_CONFIRMATION_GATE_ENABLED": "true",
+                "KR_CONFIRMATION_GATE_SHADOW": "true",
+                "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+            }
+        )
+
+        self.assertEqual(check.status, "FAIL")
+        self.assertTrue(check.data["KR_CONFIRMATION_GATE_SHADOW"])
+
+    def test_kr_cap40_requires_confirmation_enabled(self) -> None:
+        check = _kr_cap40_confirmation_enforce_check(
+            {
+                "KR_DAILY_ENTRY_CAP": "40",
+                "KR_CONFIRMATION_GATE_ENABLED": "false",
+                "KR_CONFIRMATION_GATE_SHADOW": "false",
+                "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+            }
+        )
+
+        self.assertEqual(check.status, "FAIL")
+        self.assertFalse(check.data["KR_CONFIRMATION_GATE_ENABLED"])
+
+    def test_kr_cap40_confirmation_enforce_passes_when_gate_enforced(self) -> None:
+        check = _kr_cap40_confirmation_enforce_check(
+            {
+                "KR_DAILY_ENTRY_CAP": "40",
+                "KR_CONFIRMATION_GATE_ENABLED": "true",
+                "KR_CONFIRMATION_GATE_SHADOW": "false",
+                "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+            }
+        )
+
+        self.assertEqual(check.status, "PASS")
 
     def test_runtime_config_drift_payload_compares_operational_caps(self) -> None:
         config = {

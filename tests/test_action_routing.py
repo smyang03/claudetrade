@@ -129,6 +129,32 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.reason, "buy_ready_chase_blocked")
         self.assertEqual(decision.runtime_gate_reason, "chase_above_cancel")
 
+    def test_kr_confirmation_score_payload_is_preserved(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "005930", "action": "BUY_READY", "confidence": 0.9},
+            market="KR",
+            execution_context={
+                "current_price": 70000,
+                "data_quality": "good",
+                "kr_confirmation_gate_active": True,
+                "kr_confirmation_confirmed": True,
+                "kr_confirmation_state": "CONFIRMED",
+                "kr_confirmation_gate_mode": "FAST_TRIGGER_WITH_HARD_VETO",
+                "kr_confirmation_score": 2,
+                "kr_confirmation_score_items": ["ret_3m_ok", "ret_5m_ok"],
+                "kr_confirmation_threshold": 2,
+                "kr_confirmation_fast_window_ok": True,
+                "vi_active": False,
+                "orderbook_support": True,
+            },
+        )
+
+        self.assertEqual(decision.final_action, "BUY_READY")
+        self.assertEqual(decision.runtime_gate["kr_confirmation_score"], 2)
+        self.assertEqual(decision.runtime_gate["kr_confirmation_score_items"], ["ret_3m_ok", "ret_5m_ok"])
+        self.assertEqual(decision.runtime_gate["kr_confirmation_gate_mode"], "FAST_TRIGGER_WITH_HARD_VETO")
+        self.assertTrue(decision.runtime_gate["kr_confirmation_fast_window_ok"])
+
     def test_pathb_waiting_keeps_wait_when_buy_ready_is_inside_buy_zone(self) -> None:
         decision = route_candidate_action(
             {

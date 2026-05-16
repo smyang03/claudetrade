@@ -4081,7 +4081,8 @@ def _apply_current_session_realized_adjustment(
 def _empty_lifetime_realized_pnl_summary() -> dict:
     return {
         "basis": "broker_fills_fifo_excluding_cash_flow",
-        "source": "broker_trade_rows_with_pnl",
+        "source": "empty",
+        "has_realized_data": False,
         "KR": _realized_pnl_bucket_from_rows([]),
         "US": _realized_pnl_bucket_from_rows([]),
         "kr_pnl_krw": 0.0,
@@ -4133,6 +4134,7 @@ def _lifetime_realized_pnl_summary(mode: str = "live") -> dict:
         if any(str((summary.get(market, {}) or {}).get("source", "")).startswith("kis_") for market in ("KR", "US"))
         else "broker_trade_rows_with_pnl"
     )
+    summary["has_realized_data"] = True
     if summary["source"] == "kis_period_profit_direct":
         summary["basis"] = "kis_period_profit_excluding_cash_flow"
     return summary
@@ -9246,7 +9248,12 @@ function renderLifetimeRealized(today) {
   const statusEl = document.getElementById('lifetime-pnl-refresh-status');
   const source = String(lifetime.source || '');
   const basis = String(lifetime.basis || '');
-  if (source === 'summary_fast_no_broker_trade_refresh' || basis === 'cached_state_fast_path') {
+  const hasRealizedData = lifetime.has_realized_data === true;
+  const noRealizedData = !hasRealizedData
+    || source === 'empty'
+    || source === 'summary_fast_no_broker_trade_refresh'
+    || basis === 'cached_state_fast_path';
+  if (noRealizedData) {
     if (totalEl) {
       totalEl.textContent = '--';
       totalEl.className = 'card-value neutral-color';

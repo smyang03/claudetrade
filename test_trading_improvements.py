@@ -741,6 +741,7 @@ class TradingBotGateTests(unittest.TestCase):
         bot.selection_stages = {"KR": {}, "US": {}}
         bot.today_ticker_reasons = {"KR": {}, "US": {}}
         bot.today_judgment = {}
+        bot._unanimous_override_events = []
         bot._active_session_date = {"KR": None, "US": None}
         bot.entry_priority_cutoff_enabled = True
         bot.entry_priority_cutoff = 0.20
@@ -1135,6 +1136,9 @@ class TradingBotGateTests(unittest.TestCase):
 
         self.assertEqual(guarded["mode"], "CAUTIOUS_BEAR")
         self.assertTrue(guarded["unanimous_override_applied"])
+        self.assertEqual(bot.today_judgment["unanimous_override_count"], 1)
+        self.assertEqual(bot.today_judgment["unanimous_override_events"][0]["source"], "test")
+        self.assertEqual(bot.today_judgment["unanimous_override_events"][0]["post_mode"], "CAUTIOUS_BEAR")
 
     def test_apply_runtime_tuning_adjustments_updates_judgment_state(self):
         bot = self._make_bot()
@@ -1600,6 +1604,14 @@ class OpsReviewSnapshotTests(unittest.TestCase):
             current_record = {
                 "date": "2026-04-22",
                 "market": "KR",
+                "unanimous_override_events": [
+                    {
+                        "source": "test",
+                        "unanimous_direction": "bear",
+                        "pre_unanimous_override_mode": "MILD_BULL",
+                        "post_mode": "CAUTIOUS_BEAR",
+                    }
+                ],
                 "actual_result": {"market_change": 0.8},
                 "judgment_eval": {
                     "consensus_hit": True,
@@ -1620,6 +1632,7 @@ class OpsReviewSnapshotTests(unittest.TestCase):
         self.assertEqual(metrics["consensus_directional_hit_rate"]["value"], 50.0)
         self.assertEqual(metrics["best_analyst_minus_consensus_hit_gap"]["value"], 50.0)
         self.assertEqual(metrics["unanimous_mismatch_count"]["value"], 1)
+        self.assertEqual(metrics["unanimous_override_count"]["value"], 1)
         self.assertEqual(metrics["trade_ready_signal_conversion"]["value"], 66.7)
         self.assertEqual(metrics["watch_only_missed_runup_ratio"]["value"], 50.0)
         self.assertAlmostEqual(metrics["trade_ready_forward_3d_average"]["value"], 0.467, places=3)
@@ -1629,6 +1642,7 @@ class OpsReviewSnapshotTests(unittest.TestCase):
         self.assertEqual(metrics["continuation_average_pnl"]["value"], -4.2)
         self.assertTrue(snapshot["triggers"]["large_analyst_gap"])
         self.assertTrue(snapshot["triggers"]["unanimous_mismatch"])
+        self.assertTrue(snapshot["triggers"]["unanimous_override_seen"])
         self.assertTrue(snapshot["triggers"]["high_entry_blackout_ratio"])
         self.assertTrue(snapshot["triggers"]["high_watch_only_blocked_ratio"])
         self.assertFalse(snapshot["triggers"]["low_trade_ready_conversion"])
@@ -2338,9 +2352,11 @@ class DashboardLiveBrokerTruthTests(unittest.TestCase):
              patch.object(dashboard_server_module, "_is_fresh_live_status", return_value=False), \
              patch.object(dashboard_server_module, "_record_metrics", return_value={"pnl_krw": 0.0, "pnl_pct": 0.0, "win": False, "trades": 0}), \
              patch.object(dashboard_server_module, "_load_broker_positions", return_value=[{"ticker": "OKLO", "name": "Oklo", "qty": 1, "avg_price": 75.0, "current_price": 76.0, "pnl_pct": 1.33, "strategy": "broker_balance", "price_source": "broker_balance", "currency": "USD"}]), \
+             patch.object(dashboard_server_module, "_load_broker_positions_fast", return_value=[{"ticker": "OKLO", "name": "Oklo", "qty": 1, "avg_price": 75.0, "current_price": 76.0, "pnl_pct": 1.33, "strategy": "broker_balance", "price_source": "broker_balance", "currency": "USD"}]), \
              patch.object(dashboard_server_module, "_live_position_context_for_market", return_value=[{"ticker": "OKLO", "strategy": "gap_pullback"}]), \
              patch.object(dashboard_server_module, "_saved_positions_for_market", return_value=[{"ticker": "STALE", "strategy": "momentum"}]), \
              patch.object(dashboard_server_module, "_broker_snapshot", return_value={"source": "broker", "usd_krw": 1400.0, "kr_cash_effective": 1000000.0, "kr_cash": 1000000.0, "kr_eval": 0.0, "us_cash_krw": 0.0, "us_eval_krw": 106400.0, "us_cash_usd": 0.0, "us_eval_usd": 76.0, "unrealized_krw": {"US": 1400.0, "KR": 0.0}, "cumulative": 1_106_400.0}), \
+             patch.object(dashboard_server_module, "_broker_snapshot_fast", return_value={"source": "broker", "usd_krw": 1400.0, "kr_cash_effective": 1000000.0, "kr_cash": 1000000.0, "kr_eval": 0.0, "us_cash_krw": 0.0, "us_eval_krw": 106400.0, "us_cash_usd": 0.0, "us_eval_usd": 76.0, "unrealized_krw": {"US": 1400.0, "KR": 0.0}, "cumulative": 1_106_400.0}), \
              patch.object(dashboard_server_module, "_persist_broker_equity_snapshot", return_value=None), \
              patch.object(dashboard_server_module, "_broker_realized_pnl_krw", return_value=0.0), \
              patch.object(dashboard_server_module, "_ticker_name_map", return_value={}), \
@@ -2422,7 +2438,7 @@ class DashboardLiveBrokerTruthTests(unittest.TestCase):
              patch.object(dashboard_server_module, "_persist_broker_equity_snapshot", return_value=None), \
              patch.object(dashboard_server_module, "_load_broker_equity_snapshots", return_value=[]), \
              patch.object(dashboard_server_module, "_broker_trade_rows_with_pnl", return_value=broker_rows):
-            response = self.client.get("/api/history/equity?market=US&mode=live&period=month")
+            response = self.client.get("/api/history/equity?market=US&mode=live&period=month&refresh=true")
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()

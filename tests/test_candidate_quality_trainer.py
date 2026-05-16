@@ -168,6 +168,36 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertLess(stale["trainer_prompt_score"], base["trainer_prompt_score"])
         self.assertIn("repeated_failed_ready_count=3", analysts._candidate_trainer_hint(stale))
 
+    def test_kr_candidate_quality_score_bonus_is_env_gated_and_gap_adjusted(self) -> None:
+        candidate = {
+            "ticker": "123456",
+            "market": "KR",
+            "market_type": "KOSDAQ",
+            "primary_bucket": "liquidity_leader",
+            "liquidity_bucket": "mid",
+            "change_pct": 4.0,
+            "candidate_quality_score": 80,
+        }
+        disabled = score_candidate_for_trainer(candidate, market="KR")
+        with patch.dict(
+            "os.environ",
+            {
+                "CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED": "true",
+                "CANDIDATE_TRAINER_QUALITY_SCORE_WEIGHT": "0.3",
+            },
+            clear=False,
+        ):
+            enabled = score_candidate_for_trainer(candidate, market="KR")
+            partial = score_candidate_for_trainer(
+                {**candidate, "quality_data_gaps": ["flow_missing"]},
+                market="KR",
+            )
+
+        self.assertNotIn("kr_quality_score_bonus", disabled["trainer_score_components"]["prompt"])
+        self.assertEqual(enabled["trainer_score_components"]["prompt"]["kr_quality_score_bonus"], 9.0)
+        self.assertEqual(partial["trainer_score_components"]["prompt"]["kr_quality_score_bonus"], 4.5)
+        self.assertGreater(enabled["trainer_prompt_score"], disabled["trainer_prompt_score"])
+
     def test_prompt_pool_reorders_and_excludes_with_reason(self) -> None:
         result = build_trainer_prompt_pool(
             [

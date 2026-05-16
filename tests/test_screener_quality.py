@@ -166,6 +166,16 @@ class ScreenerQualityTests(unittest.TestCase):
             self.assertEqual(len(priority["items"]), len(rows))
             self.assertTrue({row["ticker"] for row in rows}.issubset(priority_tickers))
 
+    def test_kr_screen_score_uses_signed_change_for_momentum_rank(self) -> None:
+        import kis_api
+
+        up = {"price": 10_000, "volume": 100_000, "change_rate": 8.0, "vol_ratio": 2.0}
+        down = {"price": 10_000, "volume": 100_000, "change_rate": -8.0, "vol_ratio": 2.0}
+
+        self.assertGreater(kis_api._kr_screen_score(up), kis_api._kr_screen_score(down))
+        self.assertEqual(kis_api._kr_screen_move_metadata(up)["screen_move_bucket"], "momentum_up")
+        self.assertEqual(kis_api._kr_screen_move_metadata(down)["screen_move_bucket"], "reversal_watch")
+
     def test_us_screener_degraded_fresh_result_is_not_cached(self) -> None:
         import kis_api
 
@@ -187,6 +197,23 @@ class ScreenerQualityTests(unittest.TestCase):
             self.assertEqual(len(priority_files), 1)
             priority = json.loads(priority_files[0].read_text(encoding="utf-8"))
             self.assertEqual(priority["items"][0]["ticker"], rows[0]["ticker"])
+
+    def test_us_dynamic_losers_quota_is_env_gated_and_override_wins(self) -> None:
+        import kis_api
+
+        with patch.dict(os.environ, {"US_DYNAMIC_LOSERS_QUOTA_ENABLED": "true"}, clear=False):
+            aggressive = kis_api.get_screening_preset("US", "AGGRESSIVE")
+            defensive = kis_api.get_screening_preset("US", "DEFENSIVE")
+        self.assertLessEqual(aggressive["quota_losers"], 2)
+        self.assertGreaterEqual(defensive["quota_losers"], 5)
+
+        with patch.dict(
+            os.environ,
+            {"US_DYNAMIC_LOSERS_QUOTA_ENABLED": "true", "US_QUOTA_LOSERS": "9"},
+            clear=False,
+        ):
+            overridden = kis_api.get_screening_preset("US", "AGGRESSIVE")
+        self.assertEqual(overridden["quota_losers"], 9)
 
     def test_us_screener_low_quality_cache_is_not_reused(self) -> None:
         import kis_api
@@ -232,6 +259,30 @@ class ScreenerQualityTests(unittest.TestCase):
             self.assertEqual(len(rows), 30)
             self.assertFalse(rows[0]["screener_cache_used"])
             self.assertTrue(rows[0]["screener_cache_saved"])
+
+    def test_us_screener_degraded_state_is_not_cache_eligible_even_with_count(self) -> None:
+        import kis_api
+
+        self.assertFalse(
+            kis_api._us_screen_cache_eligible(
+                {
+                    "screener_quality_state": "DEGRADED_CATEGORY",
+                    "screener_degraded": True,
+                    "fresh_count": 40,
+                    "min_cache_count": 30,
+                }
+            )
+        )
+        self.assertTrue(
+            kis_api._us_screen_cache_eligible(
+                {
+                    "screener_quality_state": "OK",
+                    "screener_degraded": False,
+                    "fresh_count": 40,
+                    "min_cache_count": 30,
+                }
+            )
+        )
 
     def test_us_screener_sufficient_fresh_result_is_cached_and_reused(self) -> None:
         import kis_api

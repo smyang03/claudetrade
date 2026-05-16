@@ -3,6 +3,8 @@ kis_api.py
 KIS API (KR) + Finnhub/FMP/yfinance (US quote/candles/screener).
 """
 
+from __future__ import annotations
+
 import os
 import json
 import time
@@ -3270,9 +3272,27 @@ def _kr_screen_score(candidate: dict) -> float:
     price = max(0.0, _screen_num(candidate.get("price"), 0.0))
     volume = max(0.0, _screen_num(candidate.get("volume"), 0.0))
     turnover = price * volume
-    change_rate = abs(_screen_num(candidate.get("change_rate"), 0.0))
+    change_rate = _screen_num(candidate.get("change_rate"), 0.0)
+    positive_change_bonus = max(change_rate, 0.0)
     vol_ratio = max(0.0, _screen_num(candidate.get("vol_ratio"), 0.0))
-    return math.log1p(turnover) + (change_rate * 2.0) + (vol_ratio * 4.0)
+    return math.log1p(turnover) + (positive_change_bonus * 2.0) + (vol_ratio * 4.0)
+
+
+def _kr_screen_move_metadata(candidate: dict) -> dict:
+    change_rate = _screen_num(candidate.get("change_rate"), 0.0)
+    if change_rate > 0:
+        bucket = "momentum_up"
+    elif change_rate < 0:
+        bucket = "reversal_watch"
+    else:
+        bucket = "flat"
+    return {
+        "screen_move_bucket": bucket,
+        "screen_signed_change_pct": round(change_rate, 4),
+        "screen_positive_change_bonus_pct": round(max(change_rate, 0.0), 4),
+        "screen_downside_move_pct": round(abs(min(change_rate, 0.0)), 4),
+        "screen_volatility_move_pct": round(abs(change_rate), 4),
+    }
 
 
 def _kr_screen_brief(candidate: dict) -> dict:
@@ -3345,6 +3365,7 @@ def _merge_kr_market_buckets(kospi: list[dict], kosdaq: list[dict], top_n: int) 
                 continue
             item = dict(row)
             item["market_type"] = str(item.get("market_type") or board).upper()
+            item.update(_kr_screen_move_metadata(item))
             item["screen_score"] = _kr_screen_score(item)
             out.append(item)
         out.sort(key=lambda c: c.get("screen_score", 0.0), reverse=True)
@@ -3916,9 +3937,136 @@ def _annotate_us_screen_quality(candidates: list, quality: dict) -> list:
 
 def _us_screen_cache_eligible(quality: dict) -> bool:
     try:
+        state = str((quality or {}).get("screener_quality_state") or "").strip().upper()
+        if state and state != "OK":
+            return False
+        if bool((quality or {}).get("screener_degraded")):
+            return False
         return int(quality.get("fresh_count") or 0) >= int(quality.get("min_cache_count") or 0)
     except Exception:
         return False
+
+
+def _market_data_degraded(ticker: str, source: str, reason: str, *, missing_fields: list[str] | None = None) -> dict:
+    return {
+        "ticker": str(ticker or ""),
+        "source": source,
+        "data_quality": "DATA_MISSING" if reason in {"missing", "empty"} else "ERROR",
+        "missing_fields": list(missing_fields or []),
+        "reason": reason,
+        "observed_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _kis_market_data_get(
+    *,
+    token: str,
+    market: str,
+    path: str,
+    tr_id: str,
+    params: dict,
+    timeout_env: str,
+    retry_env: str,
+    backoff_env: str,
+):
+    timeout = float(os.getenv(timeout_env, "2.0") or 2.0)
+    max_retries = max(0, int(float(os.getenv(retry_env, "1") or 1)))
+    backoff = float(os.getenv(backoff_env, "1.0") or 1.0)
+    profile = get_kis_market_profile(market)
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            resp = _kis_get(
+                f"{profile.base_url}{path}",
+                headers=_headers(token, tr_id, market=market),
+                params=params,
+                timeout=timeout,
+            )
+            if getattr(resp, "status_code", 0) == 429:
+                raise RuntimeError("rate_limited")
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                time.sleep(backoff)
+    raise RuntimeError(str(last_exc or "kis_market_data_failed"))
+
+
+def get_kr_orderbook_snapshot(token: str, ticker: str) -> dict:
+    try:
+        payload = _kis_market_data_get(
+            token=token,
+            market="KR",
+            path="/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+            tr_id="FHKST01010200",
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+            timeout_env="KR_ORDERBOOK_TIMEOUT_SEC",
+            retry_env="KR_ORDERBOOK_MAX_RETRIES",
+            backoff_env="KR_ORDERBOOK_RETRY_BACKOFF_SEC",
+        )
+        out = payload.get("output1") or payload.get("output") or {}
+        bid1 = float(out.get("bidp1") or out.get("bidp") or 0)
+        ask1 = float(out.get("askp1") or out.get("askp") or 0)
+        bid_qty1 = float(out.get("bidp_rsqn1") or out.get("bidp_rsqn") or 0)
+        ask_qty1 = float(out.get("askp_rsqn1") or out.get("askp_rsqn") or 0)
+        mid = (bid1 + ask1) / 2.0 if bid1 > 0 and ask1 > 0 else 0.0
+        return {
+            "ticker": ticker,
+            "bid1": bid1,
+            "ask1": ask1,
+            "bid_qty1": bid_qty1,
+            "ask_qty1": ask_qty1,
+            "spread_pct": ((ask1 - bid1) / mid * 100.0) if mid > 0 else None,
+            "imbalance": ((bid_qty1 - ask_qty1) / (bid_qty1 + ask_qty1)) if (bid_qty1 + ask_qty1) > 0 else None,
+            "observed_at": datetime.now().isoformat(timespec="seconds"),
+            "source": "kis_orderbook",
+            "data_quality": "OK",
+            "missing_fields": [],
+        }
+    except Exception as exc:
+        return _market_data_degraded(ticker, "kis_orderbook", str(exc), missing_fields=["orderbook"])
+
+
+def get_kr_vi_state(token: str, ticker: str) -> dict:
+    try:
+        payload = _kis_market_data_get(
+            token=token,
+            market="KR",
+            path="/uapi/domestic-stock/v1/quotations/inquire-vi-status",
+            tr_id="FHKST01390000",
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+            timeout_env="KR_VI_TIMEOUT_SEC",
+            retry_env="KR_VI_MAX_RETRIES",
+            backoff_env="KR_VI_RETRY_BACKOFF_SEC",
+        )
+        out = payload.get("output") or payload.get("output1") or {}
+        vi_type = str(out.get("vi_cls_code") or out.get("vi_type") or "").strip()
+        trigger = out.get("vi_trg_prc") or out.get("vi_trigger_price") or None
+        return {
+            "ticker": ticker,
+            "vi_active": bool(vi_type and vi_type not in {"0", "N", "NONE"}),
+            "vi_type": vi_type,
+            "vi_trigger_price": float(trigger) if trigger not in (None, "") else None,
+            "observed_at": datetime.now().isoformat(timespec="seconds"),
+            "source": "kis_vi",
+            "data_quality": "OK",
+            "missing_fields": [],
+        }
+    except Exception as exc:
+        return _market_data_degraded(ticker, "kis_vi", str(exc), missing_fields=["vi"])
+
+
+def get_us_volume_surge_snapshot(*args, **kwargs) -> dict:
+    return _market_data_degraded(str(kwargs.get("ticker") or (args[1] if len(args) > 1 else "")), "us_volume_surge", "not_implemented", missing_fields=["volume_surge"])
+
+
+def get_us_new_high_low_snapshot(*args, **kwargs) -> dict:
+    return _market_data_degraded(str(kwargs.get("ticker") or (args[1] if len(args) > 1 else "")), "us_new_high_low", "not_implemented", missing_fields=["new_high_low"])
+
+
+def get_us_news_snapshot(*args, **kwargs) -> dict:
+    return _market_data_degraded(str(kwargs.get("ticker") or (args[1] if len(args) > 1 else "")), "us_news", "not_implemented", missing_fields=["news"])
 
 
 def _candidate_us_exchange_code(candidate: dict) -> Optional[str]:
@@ -3991,6 +4139,13 @@ def get_screening_preset(market: str, mode: str) -> dict:
             },
         }
         base = _presets.get(_mode, _presets["NEUTRAL"]).copy()
+        if str(os.getenv("US_DYNAMIC_LOSERS_QUOTA_ENABLED", "false")).strip().lower() in {"1", "true", "yes", "on"}:
+            if _mode == "AGGRESSIVE":
+                base["quota_losers"] = min(int(base.get("quota_losers", 0) or 0), 2)
+                base["quota_gainers"] = max(int(base.get("quota_gainers", 0) or 0), 12)
+            elif _mode == "DEFENSIVE":
+                base["quota_losers"] = max(int(base.get("quota_losers", 0) or 0), 5)
+                base["quota_actives"] = max(int(base.get("quota_actives", 0) or 0), 18)
         # 환경변수 override
         if os.getenv("US_SCREEN_MIN_PRICE"):
             base["min_price"] = float(os.getenv("US_SCREEN_MIN_PRICE"))

@@ -493,6 +493,13 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertNotIn(("live", "KR", "all", "", ""), dashboard_server._BROKER_TRADE_BUNDLE_CACHE)
         self.assertIn(("paper", "KR", "all", "", ""), dashboard_server._BROKER_TRADE_BUNDLE_CACHE)
 
+    def test_empty_lifetime_realized_summary_is_not_confirmed_zero(self) -> None:
+        summary = dashboard_server._empty_lifetime_realized_pnl_summary()
+
+        self.assertFalse(summary["has_realized_data"])
+        self.assertEqual(summary["source"], "empty")
+        self.assertEqual(summary["total_pnl_krw"], 0.0)
+
     def test_live_equity_endpoints_default_to_fast_payload(self) -> None:
         fast_payload = {
             "labels": ["2026-05-15"],

@@ -228,18 +228,28 @@ def load_cohorts(state_dir: Path) -> list[dict[str, Any]]:
 
 
 def closed_trade_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    strategy_rows = [row for row in rows if not is_broker_sync(row)]
+    broker_sync_rows = [row for row in rows if is_broker_sync(row)]
     live_metrics = metrics_by(rows, lambda row: row.get("market"), "pnl_pct")
-    by_strategy = metrics_by(rows, lambda row: f"{row.get('market')}|{row.get('strategy') or '(blank)'}", "pnl_pct")
+    by_strategy = metrics_by(strategy_rows, lambda row: f"{row.get('market')}|{row.get('strategy') or '(blank)'}", "pnl_pct")
     by_exit = metrics_by(rows, lambda row: f"{row.get('market')}|{row.get('exit_reason') or '(blank)'}", "pnl_pct")
     worst = sorted(rows, key=lambda row: safe_float(row.get("pnl_pct")))[:12]
     best = sorted(rows, key=lambda row: safe_float(row.get("pnl_pct")), reverse=True)[:12]
     return {
         "by_market": live_metrics,
         "by_strategy": by_strategy,
+        "broker_sync_operational": metrics_by(broker_sync_rows, lambda row: f"{row.get('market')}|broker_sync", "pnl_pct"),
+        "broker_sync_count": len(broker_sync_rows),
         "by_exit_reason": by_exit,
         "worst_trades": compact_trades(worst),
         "best_trades": compact_trades(best),
     }
+
+
+def is_broker_sync(row: dict[str, Any]) -> bool:
+    strategy = str(row.get("strategy") or row.get("strategy_name") or "").strip().lower()
+    reason = str(row.get("reason") or row.get("exit_reason") or "").strip().lower()
+    return strategy in {"broker_sync", "broker_balance"} or "broker_sync" in reason
 
 
 def selection_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -716,6 +726,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
 
     lines.extend(section_metrics("Closed Trades By Market", payload["closed_trade"]["by_market"]))
     lines.extend(section_metrics("Closed Trades By Strategy", payload["closed_trade"]["by_strategy"], limit=40))
+    lines.extend(section_metrics("Broker Sync Operational Cases", payload["closed_trade"].get("broker_sync_operational", {}), limit=20))
     lines.extend(section_metrics("Selection Live Traded By Ready", payload["selection_gate"]["live_traded_by_trade_ready"]))
     lines.extend(section_metrics("Selection Live Traded By Strategy", payload["selection_gate"]["live_traded_by_strategy"], limit=40))
     lines.extend(section_metrics("Selection Forward Max Runup By Ready", payload["selection_gate"]["live_forward_by_ready"]))
