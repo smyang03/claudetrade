@@ -103,6 +103,13 @@ def _lesson_context_for_prompt(lesson_context: str, *, scope: str = "r1") -> tup
     }
 
 
+def _merge_lesson_context_meta(prompt_meta: dict, source_meta: Optional[dict] = None) -> dict:
+    merged = dict(prompt_meta or {})
+    if source_meta:
+        merged["source_metadata"] = dict(source_meta)
+    return merged
+
+
 def _json_array_object_cap(items: list[dict], max_chars: int) -> tuple[str, list[dict], int]:
     """Serialize a JSON array without cutting any item in the middle."""
 
@@ -1363,6 +1370,7 @@ def call_analyst(analyst_type: str, digest_prompt: str,
                  analyst_feedback: str = "",
                  portfolio_info=None,
                  lesson_context: str = "",
+                 lesson_context_meta: Optional[dict] = None,
                  market: str = "") -> dict:
     """1라운드 독립 판단 — stance/confidence/key_reason 3필드만 반환. 상세 분석은 R2에서."""
     feedback_section = f"\n[나의 과거 실적]\n{analyst_feedback}\n" if analyst_feedback else ""
@@ -1417,7 +1425,7 @@ JSON으로만 응답 (다른 텍스트 없이):
             model=_r1_model,
             prompt_version="market_judgment_v4_slim",
             extra={
-                "lesson_context": lesson_meta,
+                "lesson_context": _merge_lesson_context_meta(lesson_meta, lesson_context_meta),
                 "model_route": {
                     "analyst": analyst_type,
                     "r1_model": _r1_model,
@@ -1458,7 +1466,8 @@ def call_analyst_debate(analyst_type: str, my_r1: dict,
                         others: dict, digest_prompt: str,
                         debate_history: str = "",
                         market: str = "",
-                        lesson_context: str = "") -> dict:
+                        lesson_context: str = "",
+                        lesson_context_meta: Optional[dict] = None) -> dict:
     """
     2라운드: 다른 분석가 의견 + 과거 토론 이력 보고 최종 판단 수정
     others: {analyst_type: r1_result, ...} (자신 제외)
@@ -1521,7 +1530,7 @@ JSON으로만 응답:
             model=MODEL,
             prompt_version="market_debate_v3_sizing",
             extra={
-                "lesson_context": lesson_meta,
+                "lesson_context": _merge_lesson_context_meta(lesson_meta, lesson_context_meta),
                 "model_route": {
                     "analyst": analyst_type,
                     "r2_model": MODEL,
@@ -1561,6 +1570,21 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
     """
     from claude_memory import brain as BrainDB
 
+    active_lesson_meta: Optional[dict] = None
+    try:
+        active_lessons = build_active_lesson_context(market)
+        active_lesson_meta = dict(active_lessons.get("metadata") or {})
+        lesson_context = str(active_lessons.get("section") or "")
+        log.info(
+            f"[active_lessons/judgment] {market} selected={active_lesson_meta.get('count', 0)} "
+            f"injected={active_lesson_meta.get('injected', False)} "
+            f"shadow={active_lesson_meta.get('shadow', True)} "
+            f"chars={active_lesson_meta.get('chars', 0)}"
+        )
+    except Exception as e:
+        active_lesson_meta = {"source": "fallback_param", "load_error": str(e)[:160]}
+        log.warning(f"[active_lessons/judgment] load failed; fallback lesson_context used: {e}")
+
     # ── 1라운드: 개별 적중률 피드백 포함 독립 판단 ──────────────────────────
     log.info("━━ Round 1: 독립 판단 ━━")
     r1 = {}
@@ -1577,6 +1601,7 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
             feedback,
             portfolio_info,
             lesson_context=lesson_context,
+            lesson_context_meta=active_lesson_meta,
             market=market,
         )
         time.sleep(delay)
@@ -1602,6 +1627,7 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
             debate_history,
             market=market,
             lesson_context=lesson_context,
+            lesson_context_meta=active_lesson_meta,
         )
         time.sleep(delay)
 

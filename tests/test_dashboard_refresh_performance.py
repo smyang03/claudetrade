@@ -613,6 +613,18 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertEqual(response.get_json()["labels"], ["refresh"])
         refresh.assert_called_once()
 
+    def test_header_refresh_button_renders_next_to_logs_nav(self) -> None:
+        header = dashboard_server._header_html("/")
+
+        self.assertIn('href="/logs" class="">로그</a><button id="dashboard-refresh-btn"', header)
+        self.assertIn('onclick="refreshDashboardPage(this)"', header)
+        self.assertIn("새로고침", header)
+
+        response = dashboard_server.app.test_client().get("/")
+        body = response.get_data(as_text=True)
+        self.assertIn("async function refreshDashboardPage", body)
+        self.assertIn("await Promise.resolve(loadAll());", body)
+
     def test_today_page_does_not_block_load_all_on_price_refresh(self) -> None:
         response = dashboard_server.app.test_client().get("/")
 

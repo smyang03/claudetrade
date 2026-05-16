@@ -1568,11 +1568,16 @@ class OpsReviewSnapshotTests(unittest.TestCase):
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
+                        ("live", "2026-04-21", "KR", "A", 1, 1, None, None, None),
+                        ("live", "2026-04-21", "KR", "A", 1, 1, None, 1.2, 2.0),
                         ("live", "2026-04-21", "KR", "A", 1, 1, None, 1.2, 2.0),
                         ("live", "2026-04-21", "KR", "B", 1, 0, None, -0.4, 1.0),
                         ("live", "2026-04-22", "KR", "C", 1, 1, "momentum_atr_too_high", 0.6, 5.5),
+                        ("live", "2026-04-22", "KR", "C", 1, 1, "momentum_atr_too_high", None, 5.5),
+                        ("live", "2026-04-22", "KR", "D", 0, 0, None, 1.0, 6.2),
                         ("live", "2026-04-22", "KR", "D", 0, 0, None, 1.0, 6.2),
                         ("live", "2026-04-22", "KR", "E", 0, 0, None, -0.2, 1.1),
+                        ("live", "2026-04-22", "KR", "F", 0, 0, None, None, 9.0),
                     ],
                 )
             with sqlite3.connect(decisions_db) as conn:
@@ -1635,6 +1640,9 @@ class OpsReviewSnapshotTests(unittest.TestCase):
         self.assertEqual(metrics["unanimous_override_count"]["value"], 1)
         self.assertEqual(metrics["trade_ready_signal_conversion"]["value"], 66.7)
         self.assertEqual(metrics["watch_only_missed_runup_ratio"]["value"], 50.0)
+        self.assertEqual(snapshot["samples"]["trade_ready_rows"], 3)
+        self.assertEqual(snapshot["samples"]["watch_only_forward_n"], 2)
+        self.assertEqual(snapshot["samples"]["atr_blocked_rows"], 1)
         self.assertAlmostEqual(metrics["trade_ready_forward_3d_average"]["value"], 0.467, places=3)
         self.assertEqual(metrics["atr_blocked_missed_runup"]["value"], 5.5)
         self.assertEqual(metrics["entry_blackout_ratio"]["value"], 50.0)
@@ -2012,6 +2020,35 @@ class LessonCandidateTests(unittest.TestCase):
         self.assertIn("affordability_fail_cluster", ids)
         self.assertIn("trade_ready_conversion_review", ids)
         self.assertEqual(saved["markets"]["US"], candidates)
+        affordability = next(item for item in candidates if item["id"] == "affordability_fail_cluster")
+        self.assertTrue(affordability["ops_flag"])
+        self.assertFalse(affordability["claude_actionable"])
+        self.assertEqual(affordability["action_hint"], "")
+        self.assertEqual(affordability["min_sample"], 2)
+        watch = next(item for item in candidates if item["id"] == "watch_only_missed_runup_review")
+        trade_ready = next(item for item in candidates if item["id"] == "trade_ready_conversion_review")
+        self.assertTrue(trade_ready["claude_actionable"])
+        self.assertTrue(watch["quality_conflict_suppressed"])
+        self.assertFalse(watch["claude_actionable"])
+
+    def test_watch_only_lesson_candidate_gets_action_hint_without_conflict(self):
+        bot = self._make_bot()
+        snapshot = {
+            "window_days": 14,
+            "metrics": {
+                "trade_ready_signal_conversion": {"value": 25.0, "sample": 24, "breached": False},
+                "watch_only_missed_runup_ratio": {"value": 66.5, "sample": 224, "breached": True},
+            },
+        }
+
+        candidates = bot._build_lesson_candidates("KR", snapshot)
+        watch = next(item for item in candidates if item["id"] == "watch_only_missed_runup_review")
+
+        self.assertTrue(watch["claude_actionable"])
+        self.assertFalse(watch["ops_flag"])
+        self.assertIn("66.5%", watch["action_hint"])
+        self.assertIn("+5% 이상 runup", watch["action_hint"])
+        self.assertEqual(watch["quality_version"], "active_lesson_quality.v1")
 
 
 class TunerRuntimeAdjustmentTests(unittest.TestCase):

@@ -140,6 +140,7 @@ from minority_report.consensus import (
     build_consensus,
     build_judgment_eval,
 )
+from minority_report.lesson_quality import apply_lesson_conflict_guards, lesson_quality_fields
 from minority_report.tuner import tune
 from minority_report.postmortem import run as run_postmortem
 from phase1_trainer.digest_builder import build_breadth_summary, build_kr_digest, build_us_digest, digest_to_prompt, get_market_vol_trend
@@ -1906,17 +1907,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     conn.row_factory = sqlite3.Row
                     row = conn.execute(
                         """
+                        WITH filtered AS (
+                            SELECT *
+                            FROM ticker_selection_log
+                            WHERE bot_mode=? AND market=? AND date>=? AND date<=?
+                        ),
+                        trade_ready_forward_dedup AS (
+                            SELECT ticker, date, AVG(forward_3d) AS forward_3d
+                            FROM filtered
+                            WHERE trade_ready=1 AND forward_3d IS NOT NULL
+                            GROUP BY ticker, date
+                        ),
+                        atr_dedup AS (
+                            SELECT ticker, date, MAX(max_runup_3d) AS max_runup_3d
+                            FROM filtered
+                            WHERE blocked_reason='momentum_atr_too_high' AND max_runup_3d IS NOT NULL
+                            GROUP BY ticker, date
+                        )
                         SELECT
-                            SUM(CASE WHEN trade_ready=1 THEN 1 ELSE 0 END) AS trade_ready_rows,
-                            SUM(CASE WHEN trade_ready=1 AND signal_fired=1 THEN 1 ELSE 0 END) AS trade_ready_signal_rows,
-                            SUM(CASE WHEN trade_ready=1 AND forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS trade_ready_forward_n,
-                            AVG(CASE WHEN trade_ready=1 THEN forward_3d END) AS trade_ready_forward_avg,
-                            SUM(CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS watch_only_forward_n,
-                            SUM(CASE WHEN trade_ready=0 AND max_runup_3d >= 5.0 THEN 1 ELSE 0 END) AS watch_only_missed_rows,
-                            SUM(CASE WHEN blocked_reason='momentum_atr_too_high' AND max_runup_3d IS NOT NULL THEN 1 ELSE 0 END) AS atr_blocked_rows,
-                            AVG(CASE WHEN blocked_reason='momentum_atr_too_high' THEN max_runup_3d END) AS atr_blocked_runup_avg
-                        FROM ticker_selection_log
-                        WHERE bot_mode=? AND market=? AND date>=? AND date<=?
+                            COUNT(DISTINCT CASE WHEN trade_ready=1 THEN ticker || '|' || date END) AS trade_ready_rows,
+                            COUNT(DISTINCT CASE WHEN trade_ready=1 AND signal_fired=1 THEN ticker || '|' || date END) AS trade_ready_signal_rows,
+                            (SELECT COUNT(*) FROM trade_ready_forward_dedup) AS trade_ready_forward_n,
+                            (SELECT AVG(forward_3d) FROM trade_ready_forward_dedup) AS trade_ready_forward_avg,
+                            COUNT(DISTINCT CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL THEN ticker || '|' || date END) AS watch_only_forward_n,
+                            COUNT(DISTINCT CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL AND max_runup_3d >= 5.0 THEN ticker || '|' || date END) AS watch_only_missed_rows,
+                            (SELECT COUNT(*) FROM atr_dedup) AS atr_blocked_rows,
+                            (SELECT AVG(max_runup_3d) FROM atr_dedup) AS atr_blocked_runup_avg
+                        FROM filtered
                         """,
                         (mode_value, market, start_date, as_of),
                     ).fetchone()
@@ -2265,7 +2282,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 return
             sample = int(metric.get("sample") or 0)
             breached = bool(metric.get("breached"))
-            candidates.append({
+            candidate = {
                 "id": candidate_id,
                 "market": market,
                 "scope": scope,
@@ -2280,7 +2297,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "confidence": _confidence(breached, sample),
                 "generated_at": now_iso,
                 "expires_at": expires_at,
-            })
+            }
+            candidate.update(lesson_quality_fields(metric_key, scope, value, sample))
+            candidates.append(candidate)
         _append(
             "trade_ready_signal_conversion",
             "trade_ready_conversion_review",
@@ -2315,19 +2334,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if event.get("market") == market and event.get("reason_family") == "affordability"
         ]
         if affordability_events:
-            candidates.append({
+            affordability_sample = len(affordability_events)
+            affordability_candidate = {
                 "id": "affordability_fail_cluster",
                 "market": market,
                 "scope": "execution",
                 "action": "prompt_hint",
-                "summary": "주문 가능 금액/수량 부족이 반복됐습니다. affordability fail 사유를 selection/entry 리뷰에 반영하세요.",
+                "summary": "주문 가능 금액/수량 부족이 반복됐습니다. fixed_order_krw, 고가주 필터, 최소 주문 금액 정책을 점검하세요.",
                 "metric_key": "affordability_fail_count",
-                "metric_value": len(affordability_events),
-                "sample_count": len(affordability_events),
+                "metric_value": affordability_sample,
+                "sample_count": affordability_sample,
                 "window_days": 1,
-                "breached": len(affordability_events) >= 2,
-                "severity": "medium" if len(affordability_events) >= 2 else "info",
-                "confidence": round(min(0.9, 0.3 + len(affordability_events) * 0.15), 2),
+                "breached": affordability_sample >= 2,
+                "severity": "medium" if affordability_sample >= 2 else "info",
+                "confidence": round(min(0.9, 0.3 + affordability_sample * 0.15), 2),
                 "generated_at": now_iso,
                 "expires_at": expires_at,
                 "examples": [
@@ -2338,7 +2358,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     }
                     for event in affordability_events[:5]
                 ],
-            })
+            }
+            affordability_candidate.update(
+                lesson_quality_fields("affordability_fail_count", "execution", affordability_sample, affordability_sample)
+            )
+            candidates.append(affordability_candidate)
+        apply_lesson_conflict_guards(candidates)
         order = {"high": 3, "medium": 2, "info": 1}
         candidates.sort(key=lambda item: (order.get(item.get("severity", "info"), 0), item.get("confidence", 0.0)), reverse=True)
         return candidates
@@ -2365,6 +2390,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
             if not bool(item.get("breached", False)):
                 continue
+            if bool(item.get("ops_flag", False)):
+                continue
+            if item.get("claude_actionable") is False:
+                continue
+            if str(item.get("scope") or "").lower() in {"execution", "consensus", "strategy"}:
+                continue
+            sample_count = int(item.get("sample_count", 0) or 0)
+            min_sample = int(item.get("min_sample", 3) or 3)
+            if sample_count < min_sample:
+                continue
+            action_hint = str(item.get("action_hint") or "").strip()
+            if not action_hint:
+                continue
             expires_at = str(item.get("expires_at") or "").strip()
             if expires_at and expires_at[:10] < today_iso:
                 continue
@@ -2380,7 +2418,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         lines = []
         for item in rows[:max_items]:
-            summary = str(item.get("summary") or "").strip()
+            summary = str(item.get("action_hint") or "").strip()
             if not summary:
                 continue
             sample_count = int(item.get("sample_count", 0) or 0)

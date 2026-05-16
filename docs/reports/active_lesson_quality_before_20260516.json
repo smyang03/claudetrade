@@ -1,0 +1,205 @@
+{
+  "generated_at": "2026-05-16T21:03:17",
+  "markets": {
+    "KR": {
+      "metadata": {
+        "enabled": true,
+        "shadow": false,
+        "retry": false,
+        "injected": true,
+        "lesson_injected": true,
+        "ids": [
+          "KR_lesson_candidates_watch_only_missed_runup_review",
+          "KR_lesson_candidates_affordability_fail_cluster",
+          "KR_recent_day_2026-05-14",
+          "KR_execution_lessons_0",
+          "KR_execution_lessons_1"
+        ],
+        "count": 5,
+        "lesson_count": 5,
+        "chars": 600,
+        "lesson_chars": 600,
+        "lesson_max_chars": 3000,
+        "ignored_count": 4
+      },
+      "items": [
+        {
+          "id": "KR_lesson_candidates_watch_only_missed_runup_review",
+          "market": "KR",
+          "source": "lesson_candidates",
+          "scope": "selection",
+          "text": "watch_only에서 놓친 상승 비율이 높습니다. 명확한 veto 없이 watch_only로만 두지 말고 trade_ready 전환 기준을 재검토하세요.",
+          "severity": "high",
+          "confidence": 0.95,
+          "sample_count": 224,
+          "generated_at": "2026-05-15T16:00:45+09:00",
+          "score": 577.5
+        },
+        {
+          "id": "KR_lesson_candidates_affordability_fail_cluster",
+          "market": "KR",
+          "source": "lesson_candidates",
+          "scope": "execution",
+          "text": "주문 가능 금액/수량 부족이 반복됐습니다. affordability fail 사유를 selection/entry 리뷰에 반영하세요.",
+          "severity": "medium",
+          "confidence": 0.9,
+          "sample_count": 7,
+          "generated_at": "2026-05-15T16:00:45+09:00",
+          "score": 508.8
+        },
+        {
+          "id": "KR_recent_day_2026-05-14",
+          "market": "KR",
+          "source": "recent_day",
+          "scope": "selection",
+          "text": "5d +10% 이상 급등 후 첫 세션에서 USD/KRW +1.3% 원약세 + RSI 과매수 13개 + VKOSPI 결측 3종 동시 발생 시, Breadth·GC 긍정 신호와 무관하게 CAUTIOUS_BEAR 또는 DEFENSIVE로 강제 하향 규칙 적용 필요. 강모멘텀 이후 차익실현 세션에서 MILD_BULL 유지는 반복적 오판 패턴임.",
+          "severity": "medium",
+          "confidence": 0.55,
+          "sample_count": 0,
+          "generated_at": "2026-05-14",
+          "score": 394.5
+        },
+        {
+          "id": "KR_execution_lessons_0",
+          "market": "KR",
+          "source": "execution_lessons",
+          "scope": "execution",
+          "text": "손실 매도 주요 사유: intraday_review_sell",
+          "severity": "medium",
+          "confidence": 0.5,
+          "sample_count": 0,
+          "generated_at": "",
+          "score": 325.0
+        },
+        {
+          "id": "KR_execution_lessons_1",
+          "market": "KR",
+          "source": "execution_lessons",
+          "scope": "execution",
+          "text": "수익 청산 유효 패턴: intraday_review_sell",
+          "severity": "medium",
+          "confidence": 0.5,
+          "sample_count": 0,
+          "generated_at": "",
+          "score": 325.0
+        }
+      ],
+      "ignored": [
+        {
+          "source": "lesson_candidates",
+          "reason": "not_breached"
+        },
+        {
+          "source": "lesson_candidates",
+          "reason": "not_breached"
+        },
+        {
+          "source": "recent_day",
+          "reason": "system_or_infra"
+        },
+        {
+          "source": "recent_day",
+          "reason": "system_or_infra"
+        }
+      ],
+      "section": "[active lessons]\n- selection: watch_only에서 놓친 상승 비율이 높습니다. 명확한 veto 없이 watch_only로만 두지 말고 trade_ready 전환 기준을 재검토하세요. (n=224, severity=high)\n- execution: 주문 가능 금액/수량 부족이 반복됐습니다. affordability fail 사유를 selection/entry 리뷰에 반영하세요. (n=7, severity=medium)\n- selection: 5d +10% 이상 급등 후 첫 세션에서 USD/KRW +1.3% 원약세 + RSI 과매수 13개 + VKOSPI 결측 3종 동시 발생 시, Breadth·GC 긍정 신호와 무관하게 CAUTIOUS_BEAR 또는 DEFENSIVE로 강제 하향 규칙 적용 필요. 강모멘텀 이후 차익실현 세션에서 MILD_BULL 유지는 반복적 오판 패턴임. (severity=medium)\n- execution: 손실 매도 주요 사유: intraday_review_sell (severity=medium)\n- execution: 수익 청산 유효 패턴: intraday_review_sell (severity=medium)",
+      "preview": "[active lessons]\n- selection: watch_only에서 놓친 상승 비율이 높습니다. 명확한 veto 없이 watch_only로만 두지 말고 trade_ready 전환 기준을 재검토하세요. (n=224, severity=high)\n- execution: 주문 가능 금액/수량 부족이 반복됐습니다. affordability fail 사유를 selection/entry 리뷰에 반영하세요. (n=7, severity=medium)\n- selection: 5d +10% 이상 급등 후 첫 세션에서 USD/KRW +1.3% 원약세 + RSI 과매수 13개 + VKOSPI 결측 3종 동시 발생 시, Breadth·GC 긍정 신호와 무관하게 CAUTIOUS_BEAR 또는 DEFENSIVE로 강제 하향 규칙 적용 필요. 강모멘텀 이후 차익실현 세션에서 MILD_BULL 유지는 반복적 오판 패턴임. (severity=medium)\n- execution: 손실 매도 주요 사유: intraday_review_sell (severity=medium)\n- execution: 수익 청산 유효 패턴: intraday_review_sell (severity=medium)"
+    },
+    "US": {
+      "metadata": {
+        "enabled": true,
+        "shadow": false,
+        "retry": false,
+        "injected": true,
+        "lesson_injected": true,
+        "ids": [
+          "US_lesson_candidates_watch_only_missed_runup_review",
+          "US_recent_day_2026-05-15",
+          "US_recent_day_2026-05-14",
+          "US_recent_day_2026-05-12",
+          "US_recent_day_2026-05-11"
+        ],
+        "count": 5,
+        "lesson_count": 5,
+        "chars": 1111,
+        "lesson_chars": 1111,
+        "lesson_max_chars": 3000,
+        "ignored_count": 2
+      },
+      "items": [
+        {
+          "id": "US_lesson_candidates_watch_only_missed_runup_review",
+          "market": "US",
+          "source": "lesson_candidates",
+          "scope": "selection",
+          "text": "watch_only에서 놓친 상승 비율이 높습니다. 명확한 veto 없이 watch_only로만 두지 말고 trade_ready 전환 기준을 재검토하세요.",
+          "severity": "high",
+          "confidence": 0.95,
+          "sample_count": 288,
+          "generated_at": "2026-05-16T05:02:04+09:00",
+          "score": 578.5
+        },
+        {
+          "id": "US_recent_day_2026-05-15",
+          "market": "US",
+          "source": "recent_day",
+          "scope": "selection",
+          "text": "NEUTRAL size=0% 합의에도 불구하고 시장은 +0.77% 상승 마감. 인트라데이 하락(-0.96%)을 근거로 한 방어적 합의가 세션 후반 반등을 완전히 놓쳤다. 아침 VIX+RSI 과매수 조합이 하락을 '확정'하는 신호가 아님을 재확인. 손실 종목(DXCM, HUBS)은 공통적으로 XLV/XLY 약세 섹터 소속으로, 섹터 정렬 필터 미적용이 직접 원인.",
+          "severity": "medium",
+          "confidence": 0.55,
+          "sample_count": 7,
+          "generated_at": "2026-05-15",
+          "score": 398.3
+        },
+        {
+          "id": "US_recent_day_2026-05-14",
+          "market": "US",
+          "source": "recent_day",
+          "scope": "selection",
+          "text": "CAUTIOUS 합의(size=38%)가 실제 +0.78% 강세 세션에서 수익 기회를 제한했으며, breadth 초반 47%·RSI 과매수 집중이 실제 추세 약화로 이어지지 않은 또 다른 사례 확인. 인트라데이 breadth 개선(+25%p 이상) 신호가 존재했음에도 아침 CAUTIOUS 기조가 세션 전체를 지배한 것은 비효율. CAUTIOUS 모드에서도 세션 30분 후 breadth ad...",
+          "severity": "medium",
+          "confidence": 0.55,
+          "sample_count": 4,
+          "generated_at": "2026-05-14",
+          "score": 396.1
+        },
+        {
+          "id": "US_recent_day_2026-05-12",
+          "market": "US",
+          "source": "recent_day",
+          "scope": "selection",
+          "text": "MODERATE_BULL 합의+세션 WIN 조합에서도 gap_pullback 전략 포지션 크기(1주)가 수익 규모를 극도로 제한한다. 방향 판단이 적중할 때 size 제약이 최대 병목임을 재확인. 또한 GOOGL auto_sell_review에서 trail_stop 근접 시 모멘텀 소멸 판단으로 매도 사유 유효 판정한 것은 적절한 리스크 관리였으나, 이후 시장이 소폭 반등한 점을 감안하면...",
+          "severity": "medium",
+          "confidence": 0.55,
+          "sample_count": 1,
+          "generated_at": "2026-05-12",
+          "score": 392.9
+        },
+        {
+          "id": "US_recent_day_2026-05-11",
+          "market": "US",
+          "source": "recent_day",
+          "scope": "selection",
+          "text": "MODERATE_BULL 합의 시 진입 종목은 당일 강세 섹터(XLK +3.44%) 내 종목에 집중해야 한다. 약세 섹터(XLE, XLF) 종목을 시장 강세 기대감만으로 진입하면 섹터 역풍으로 손실이 불가피하다. pre_close 청산 전략 특성상 당일 손익이 확정되므로 섹터 정렬이 진입 필터의 1순위가 되어야 한다.",
+          "severity": "medium",
+          "confidence": 0.55,
+          "sample_count": 2,
+          "generated_at": "2026-05-11",
+          "score": 392.3
+        }
+      ],
+      "ignored": [
+        {
+          "source": "lesson_candidates",
+          "reason": "not_breached"
+        },
+        {
+          "source": "lesson_candidates",
+          "reason": "not_breached"
+        }
+      ],
+      "section": "[active lessons]\n- selection: watch_only에서 놓친 상승 비율이 높습니다. 명확한 veto 없이 watch_only로만 두지 말고 trade_ready 전환 기준을 재검토하세요. (n=288, severity=high)\n- selection: NEUTRAL size=0% 합의에도 불구하고 시장은 +0.77% 상승 마감. 인트라데이 하락(-0.96%)을 근거로 한 방어적 합의가 세션 후반 반등을 완전히 놓쳤다. 아침 VIX+RSI 과매수 조합이 하락을 '확정'하는 신호가 아님을 재확인. 손실 종목(DXCM, HUBS)은 공통적으로 XLV/XLY 약세 섹터 소속으로, 섹터 정렬 필터 미적용이 직접 원인. (n=7, severity=medium)\n- selection: CAUTIOUS 합의(size=38%)가 실제 +0.78% 강세 세션에서 수익 기회를 제한했으며, breadth 초반 47%·RSI 과매수 집중이 실제 추세 약화로 이어지지 않은 또 다른 사례 확인. 인트라데이 breadth 개선(+25%p 이상) 신호가 존재했음에도 아침 CAUTIOUS 기조가 세션 전체를 지배한 것은 비효율. CAUTIOUS 모드에서도 세션 30분 후 breadth ad... (n=4, severity=medium)\n- selection: MODERATE_BULL 합의+세션 WIN 조합에서도 gap_pullback 전략 포지션 크기(1주)가 수익 규모를 극도로 제한한다. 방향 판단이 적중할 때 size 제약이 최대 병목임을 재확인. 또한 GOOGL auto_sell_review에서 trail_stop 근접 시 모멘텀 소멸 판단으로 매도 사유 유효 판정한 것은 적절한 리스크 관리였으나, 이후 시장이 소폭 반등한 점을 감안하면... (n=1, severity=medium)\n- selection: MODERATE_BULL 합의 시 진입 종목은 당일 강세 섹터(XLK +3.44%) 내 종목에 집중해야 한다. 약세 섹터(XLE, XLF) 종목을 시장 강세 기대감만으로 진입하면 섹터 역풍으로 손실이 불가피하다. pre_close 청산 전략 특성상 당일 손익이 확정되므로 섹터 정렬이 진입 필터의 1순위가 되어야 한다. (n=2, severity=medium)",
+      "preview": "[active lessons]\n- selection: watch_only에서 놓친 상승 비율이 높습니다. 명확한 veto 없이 watch_only로만 두지 말고 trade_ready 전환 기준을 재검토하세요. (n=288, severity=high)\n- selection: NEUTRAL size=0% 합의에도 불구하고 시장은 +0.77% 상승 마감. 인트라데이 하락(-0.96%)을 근거로 한 방어적 합의가 세션 후반 반등을 완전히 놓쳤다. 아침 VIX+RSI 과매수 조합이 하락을 '확정'하는 신호가 아님을 재확인. 손실 종목(DXCM, HUBS)은 공통적으로 XLV/XLY 약세 섹터 소속으로, 섹터 정렬 필터 미적용이 직접 원인. (n=7, severity=medium)\n- selection: CAUTIOUS 합의(size=38%)가 실제 +0.78% 강세 세션에서 수익 기회를 제한했으며, breadth 초반 47%·RSI 과매수 집중이 실제 추세 약화로 이어지지 않은 또 다른 사례 확인. 인트라데이 breadth 개선(+25%p 이상) 신호가 존재했음에도 아침 CAUTIOUS 기조가 세션 전체를 지배한 것은 비효율. CAUTIOUS 모드에서도 세션 30분 후 breadth ad... (n=4, severity=medium)\n- selection: MODERATE_BULL 합의+세션 WIN 조합에서도 gap_pullback 전략 포지션 크기(1주)가 수익 규모를 극도로 제한한다. 방향 판단이 적중할 때 size 제약이 최대 병목임을 재확인. 또한 GOOGL auto_sell_review에서 trail_stop 근접 시 모멘텀 소멸 판단으로 매도 사유 유효 판정한 것은 적절한 리스크 관리였으나, 이후 시장이 소폭 반등한 점을 감안하면... (n=1, severity=medium)\n- selection: MODERATE_BULL 합의 시 진입 종목은 당일 강세 섹터(XLK +3.44%) 내 종목에 집중해야 한다. 약세 섹터(XLE, XLF) 종목을 시장 강세 기대감만으로 진입하면 섹터 역풍으로 손실이 불가피하다. pre_close 청산 전략 특성상 당일 손익이 확정되므로 섹터 정렬이 진입 필터의 1순위가 되어야 한다. (n=2, severity=medium)"
+    }
+  }
+}

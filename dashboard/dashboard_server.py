@@ -8780,7 +8780,7 @@ header {{
 }}
 .logo span {{ color: var(--muted); font-weight: 300; }}
 
-nav {{ display: flex; gap: 4px; }}
+nav {{ display: flex; align-items: center; gap: 4px; }}
 nav a {{
   padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500;
   color: var(--muted); text-decoration: none; transition: all 0.15s;
@@ -8789,6 +8789,14 @@ nav a {{
 nav a:hover {{ color: var(--text); background: rgba(255,255,255,0.05); }}
 nav a.active {{ color: var(--cyan); background: rgba(6,182,212,0.12);
                 border: 1px solid rgba(6,182,212,0.25); }}
+.nav-refresh-btn {{
+  padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 600;
+  color: var(--cyan); border: 1px solid rgba(6,182,212,0.30);
+  background: rgba(6,182,212,0.08); cursor: pointer; transition: all 0.15s;
+  white-space: nowrap;
+}}
+.nav-refresh-btn:hover {{ color: var(--text); background: rgba(6,182,212,0.16); }}
+.nav-refresh-btn:disabled {{ opacity: 0.65; cursor: wait; }}
 
 .header-right {{ display: flex; align-items: center; gap: 10px; }}
 
@@ -9026,10 +9034,14 @@ def _header_html(active_page: str) -> str:
         f'<a href="{url}" class="{"active" if url == active_page else ""}">{label}</a>'
         for url, label in pages
     )
+    refresh_button = (
+        '<button id="dashboard-refresh-btn" class="nav-refresh-btn" type="button" '
+        'onclick="refreshDashboardPage(this)" title="현재 화면 데이터 새로고침">새로고침</button>'
+    )
     return f"""
 <header>
   <a href="/" class="logo">TRADING<span>BRAIN</span></a>
-  <nav>{nav_links}</nav>
+  <nav>{nav_links}{refresh_button}</nav>
   <div class="header-right">
     <span class="status-dot"></span>
     <button class="mkt-btn" data-group="market" id="btn-kr" onclick="setMarket('KR')">한국장 KR</button>
@@ -9118,6 +9130,33 @@ function applyCustomDate() {
   localStorage.setItem('period', 'custom');
   document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
   if (typeof loadAll === 'function') loadAll();
+}
+
+async function refreshDashboardPage(button) {
+  const btn = button || document.getElementById('dashboard-refresh-btn');
+  const originalText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '갱신 중...';
+  }
+  try {
+    if (typeof loadAll === 'function') {
+      await Promise.resolve(loadAll());
+    } else {
+      window.location.reload();
+      return;
+    }
+  } catch (e) {
+    window.location.reload();
+    return;
+  } finally {
+    if (btn) {
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = originalText || '새로고침';
+      }, 350);
+    }
+  }
 }
 
 function marketParam(extra = '') {

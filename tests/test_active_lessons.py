@@ -17,6 +17,10 @@ def _lesson_payload() -> dict:
                     "market": "US",
                     "scope": "selection",
                     "summary": "watch_only missed runup is high; reconsider trade_ready promotion when veto is weak.",
+                    "action_hint": "watch_only missed runup is high; promote when veto is weak.",
+                    "claude_actionable": True,
+                    "ops_flag": False,
+                    "min_sample": 20,
                     "breached": True,
                     "severity": "high",
                     "confidence": 0.92,
@@ -29,6 +33,10 @@ def _lesson_payload() -> dict:
                     "market": "US",
                     "scope": "execution",
                     "summary": "KIS token timeout and broker stale state should be checked.",
+                    "action_hint": "",
+                    "claude_actionable": False,
+                    "ops_flag": True,
+                    "min_sample": 1,
                     "breached": True,
                     "severity": "high",
                     "confidence": 0.95,
@@ -113,6 +121,83 @@ class ActiveLessonBuilderTests(unittest.TestCase):
         self.assertNotIn("실행오염", section)
         self.assertNotIn("브로커 동기화", section)
         self.assertNotIn("Legacy broad momentum", section)
+        self.assertEqual(result["metadata"]["ignored_reasons"]["ops_flag"], 1)
+        self.assertEqual(result["metadata"]["ignored_reasons"]["execution_scope_excluded"], 2)
+
+    def test_lesson_candidates_require_action_hint_and_use_500_char_limit(self) -> None:
+        marker = "TAIL_MARKER_AFTER_220"
+        payload = {
+            "markets": {
+                "US": [
+                    {
+                        "id": "long_hint",
+                        "market": "US",
+                        "scope": "selection",
+                        "summary": "summary should not appear",
+                        "action_hint": ("x" * 260) + marker,
+                        "claude_actionable": True,
+                        "ops_flag": False,
+                        "min_sample": 1,
+                        "breached": True,
+                        "severity": "high",
+                        "confidence": 0.8,
+                        "sample_count": 2,
+                        "generated_at": "2026-05-01T23:00:00",
+                        "expires_at": "2099-01-01T00:00:00",
+                    },
+                    {
+                        "id": "missing_hint",
+                        "market": "US",
+                        "scope": "selection",
+                        "summary": "missing hint should not appear",
+                        "claude_actionable": True,
+                        "ops_flag": False,
+                        "min_sample": 1,
+                        "breached": True,
+                        "severity": "high",
+                        "confidence": 0.8,
+                        "sample_count": 2,
+                        "generated_at": "2026-05-01T23:00:00",
+                        "expires_at": "2099-01-01T00:00:00",
+                    },
+                ]
+            }
+        }
+        with patch.object(active_lessons, "_load_lesson_candidates", return_value=payload), \
+             patch.object(active_lessons, "_load_brain", return_value={"markets": {"US": {}}}), \
+             patch.dict(os.environ, {"ACTIVE_LESSONS_ENABLED": "true", "ACTIVE_LESSONS_SHADOW": "false"}, clear=False):
+            result = active_lessons.build_active_lesson_context("US")
+
+        self.assertIn(marker, result["section"])
+        self.assertNotIn("summary should not appear", result["section"])
+        self.assertEqual(result["metadata"]["ignored_reasons"]["missing_action_hint"], 1)
+
+    def test_recent_day_cap_and_execution_excluded_flags(self) -> None:
+        brain = {
+            "markets": {
+                "US": {
+                    "recent_days": [
+                        {"date": "2026-05-01", "key_lesson": "First valid market lesson.", "trades": 5},
+                        {"date": "2026-05-02", "key_lesson": "Excluded execution contaminated lesson.", "trades": 5, "execution_learning_excluded": True},
+                        {"date": "2026-05-03", "key_lesson": "Second valid market lesson.", "trades": 4},
+                        {"date": "2026-05-04", "key_lesson": "Third valid market lesson should be capped.", "trades": 3},
+                    ],
+                    "execution_lessons": ["손실 매도 주요 사유: loss_cap"],
+                }
+            }
+        }
+        with patch.object(active_lessons, "_load_lesson_candidates", return_value={"markets": {"US": []}}), \
+             patch.object(active_lessons, "_load_brain", return_value=brain), \
+             patch.dict(os.environ, {"ACTIVE_LESSONS_ENABLED": "true", "ACTIVE_LESSONS_SHADOW": "false"}, clear=False):
+            result = active_lessons.build_active_lesson_context("US")
+
+        recent_items = [item for item in result["items"] if item["source"] == "recent_day"]
+        self.assertEqual(len(recent_items), 2)
+        self.assertNotIn("Excluded execution contaminated", result["section"])
+        self.assertNotIn("loss_cap", result["section"])
+        self.assertEqual(result["metadata"]["ignored_reasons"]["execution_learning_excluded"], 1)
+        self.assertEqual(result["metadata"]["ignored_reasons"]["execution_scope_excluded"], 1)
+        self.assertEqual(result["metadata"]["ignored_reasons"]["source_cap"], 1)
 
 
 class ActiveLessonSelectionPromptTests(unittest.TestCase):
@@ -178,6 +263,50 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
         self.assertEqual(raw_calls[0]["extra"]["token_budget"]["max_tokens"], 900)
         self.assertEqual(raw_calls[0]["extra"]["model_route"]["analyst"], "bear")
         self.assertTrue(raw_calls[0]["extra"]["persona"]["us_bear_persona"])
+
+    def test_get_three_judgments_uses_active_lesson_context_for_r1_and_r2(self) -> None:
+        from minority_report import analysts as analysts_module
+
+        r1_contexts: list[str] = []
+        r2_contexts: list[str] = []
+        r1_meta: list[dict] = []
+        r2_meta: list[dict] = []
+
+        def _fake_r1(*args, **kwargs):
+            r1_contexts.append(kwargs.get("lesson_context", ""))
+            r1_meta.append(kwargs.get("lesson_context_meta") or {})
+            return {"stance": "NEUTRAL", "confidence": 0.5, "key_reason": "mixed"}
+
+        def _fake_r2(*args, **kwargs):
+            r2_contexts.append(kwargs.get("lesson_context", ""))
+            r2_meta.append(kwargs.get("lesson_context_meta") or {})
+            return {"stance": "NEUTRAL", "confidence": 0.5, "key_reason": "mixed", "changed": False}
+
+        active = {
+            "section": "[active lessons]\n- selection: active action hint",
+            "metadata": {"enabled": True, "shadow": False, "injected": True, "count": 1, "ignored_reasons": {"ops_flag": 1}},
+        }
+        with patch.object(analysts_module, "build_active_lesson_context", return_value=active), \
+             patch.object(analysts_module, "call_analyst", side_effect=_fake_r1), \
+             patch.object(analysts_module, "call_analyst_debate", side_effect=_fake_r2), \
+             patch("claude_memory.brain.generate_analyst_summary", return_value=""), \
+             patch("claude_memory.brain.get_debate_summary", return_value=""), \
+             patch("claude_memory.brain.save_debate_result", return_value=None):
+            analysts_module.get_three_judgments(
+                "digest",
+                "brain",
+                "correction",
+                delay=0,
+                market="US",
+                lesson_context="legacy summary should not be used",
+            )
+
+        self.assertEqual(len(r1_contexts), 3)
+        self.assertEqual(len(r2_contexts), 3)
+        self.assertTrue(all("active action hint" in ctx for ctx in r1_contexts + r2_contexts))
+        self.assertTrue(all("legacy summary" not in ctx for ctx in r1_contexts + r2_contexts))
+        self.assertTrue(all(meta.get("injected") is True for meta in r1_meta + r2_meta))
+        self.assertEqual(r1_meta[0]["ignored_reasons"]["ops_flag"], 1)
 
     def test_r1_model_routes_are_role_specific_and_us_bear_persona_is_preserved(self) -> None:
         from minority_report import analysts as analysts_module

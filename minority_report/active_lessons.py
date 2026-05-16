@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -162,8 +163,9 @@ def _append_item(
     sample_count: int = 0,
     generated_at: Any = "",
     idx: int = 0,
+    text_limit: int = 220,
 ) -> None:
-    cleaned = _clean_text(text)
+    cleaned = _clean_text(text, limit=text_limit)
     if len(cleaned) < 8:
         ignored.append({"source": source, "reason": "empty_or_too_short"})
         return
@@ -195,6 +197,24 @@ def _collect_lesson_candidate_items(market: str, today: date, ignored: list[dict
         if not bool(row.get("breached", False)):
             ignored.append({"source": "lesson_candidates", "reason": "not_breached"})
             continue
+        if bool(row.get("ops_flag", False)):
+            ignored.append({"source": "lesson_candidates", "reason": "ops_flag"})
+            continue
+        if row.get("claude_actionable") is False:
+            ignored.append({"source": "lesson_candidates", "reason": "not_claude_actionable"})
+            continue
+        if str(row.get("scope") or "").lower() in {"execution", "consensus", "strategy"}:
+            ignored.append({"source": "lesson_candidates", "reason": "non_selection_scope"})
+            continue
+        action_hint = str(row.get("action_hint") or "").strip()
+        if not action_hint:
+            ignored.append({"source": "lesson_candidates", "reason": "missing_action_hint"})
+            continue
+        sample_count = _as_int(row.get("sample_count"), 0)
+        min_sample = _as_int(row.get("min_sample"), 3)
+        if sample_count < min_sample:
+            ignored.append({"source": "lesson_candidates", "reason": "below_min_sample"})
+            continue
         expires_at = _date_prefix(row.get("expires_at"))
         if expires_at:
             try:
@@ -209,13 +229,14 @@ def _collect_lesson_candidate_items(market: str, today: date, ignored: list[dict
             market=market,
             source="lesson_candidates",
             raw_id=row.get("id") or row.get("metric_key"),
-            text=row.get("summary"),
+            text=action_hint,
             scope=row.get("scope") or "selection",
             severity=row.get("severity") or "info",
             confidence=_as_float(row.get("confidence"), 0.0),
-            sample_count=_as_int(row.get("sample_count"), 0),
+            sample_count=sample_count,
             generated_at=row.get("generated_at"),
             idx=idx,
+            text_limit=500,
         )
     return items
 
@@ -230,6 +251,9 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
     recent_days = list(market_data.get("recent_days") or [])
     for idx, row in enumerate(reversed(recent_days[-5:])):
         if not isinstance(row, dict):
+            continue
+        if bool(row.get("execution_learning_excluded", False)):
+            ignored.append({"source": "recent_day", "reason": "execution_learning_excluded"})
             continue
         lesson = row.get("key_lesson")
         if not lesson:
@@ -249,21 +273,8 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
             idx=idx,
         )
 
-    for idx, lesson in enumerate(list(market_data.get("execution_lessons") or [])[-8:]):
-        _append_item(
-            items,
-            ignored,
-            market=market,
-            source="execution_lessons",
-            raw_id=idx,
-            text=lesson,
-            scope="execution",
-            severity="medium",
-            confidence=0.5,
-            sample_count=0,
-            generated_at="",
-            idx=idx,
-        )
+    for _idx, _lesson in enumerate(list(market_data.get("execution_lessons") or [])[-8:]):
+        ignored.append({"source": "execution_lessons", "reason": "execution_scope_excluded"})
 
     if _env_bool("ACTIVE_LESSONS_ALLOW_LEGACY_BRAIN", False):
         beliefs = market_data.get("current_beliefs") or {}
@@ -306,7 +317,20 @@ def _select_items(market: str, max_items: int) -> tuple[list[dict[str, Any]], li
         deduped.append(item)
 
     deduped.sort(key=lambda row: float(row.get("score") or 0.0), reverse=True)
-    return deduped[:max_items], ignored
+    source_caps = {"recent_day": 2}
+    source_counts: dict[str, int] = {}
+    selected: list[dict[str, Any]] = []
+    for item in deduped:
+        source = str(item.get("source") or "")
+        cap = source_caps.get(source)
+        if cap is not None and source_counts.get(source, 0) >= cap:
+            ignored.append({"source": source, "reason": "source_cap"})
+            continue
+        selected.append(item)
+        source_counts[source] = source_counts.get(source, 0) + 1
+        if len(selected) >= max_items:
+            break
+    return selected, ignored
 
 
 def _format_section(items: list[dict[str, Any]], max_chars: int) -> str:
@@ -367,6 +391,7 @@ def build_active_lesson_context(
                 "lesson_chars": 0,
                 "lesson_max_chars": char_limit,
                 "ignored_count": 0,
+                "ignored_reasons": {},
                 "disabled_skipped": True,
             },
         }
@@ -387,6 +412,7 @@ def build_active_lesson_context(
         "lesson_chars": len(preview),
         "lesson_max_chars": char_limit,
         "ignored_count": len(ignored),
+        "ignored_reasons": dict(Counter(str(item.get("reason") or "unknown") for item in ignored)),
     }
     return {
         "section": preview if injected else "",

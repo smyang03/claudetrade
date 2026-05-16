@@ -1,0 +1,3973 @@
+﻿{
+  "ok": true,
+  "mode": "live",
+  "generated_at": "2026-05-16T21:43:34+09:00",
+  "fail_count": 0,
+  "warn_count": 11,
+  "checks": [
+    {
+      "name": "config.env_file",
+      "status": "PASS",
+      "detail": "loaded E:\\code\\claudetrade\\.env.live",
+      "data": {}
+    },
+    {
+      "name": "config.duplicate_env_keys",
+      "status": "PASS",
+      "detail": "no duplicate env keys",
+      "data": {
+        "duplicates": {}
+      }
+    },
+    {
+      "name": "config.env_vs_start_config",
+      "status": "PASS",
+      "detail": "no live config conflicts",
+      "data": {
+        "conflicts": {}
+      }
+    },
+    {
+      "name": "config.start_config_internal",
+      "status": "PASS",
+      "detail": "start config is internally consistent",
+      "data": {
+        "conflicts": {}
+      }
+    },
+    {
+      "name": "config.effective_values",
+      "status": "PASS",
+      "detail": "effective live values captured",
+      "data": {
+        "values": {
+          "ACTIVE_LESSONS_ANALYST_MAX_CHARS": "3000",
+          "ACTIVE_LESSONS_DEBATE_ENABLED": "true",
+          "ACTIVE_LESSONS_DEBATE_MAX_CHARS": "1200",
+          "ACTIVE_LESSONS_ENABLED": "true",
+          "ACTIVE_LESSONS_MAX_CHARS": "3000",
+          "ACTIVE_LESSONS_MAX_ITEMS": "5",
+          "ACTIVE_LESSONS_SHADOW": "false",
+          "BEAR_R1_MODEL": "claude-sonnet-4-6",
+          "BULL_R1_MODEL": "claude-sonnet-4-6",
+          "CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED": "true",
+          "CANDIDATE_TRAINER_QUALITY_SCORE_WEIGHT": "0.3",
+          "CLAUDE_ANALYST_R1_MAX_TOKENS": "700",
+          "CLAUDE_ANALYST_R2_MAX_TOKENS": "900",
+          "DAILY_LOSS_LIMIT_PCT": "-2.0",
+          "ENABLED_MARKETS": "KR,US",
+          "ENABLE_KR_CANDIDATE_FLOW_PREFETCH": "true",
+          "ENABLE_KR_CANDIDATE_FLOW_SHADOW": "true",
+          "ENABLE_KR_CANDIDATE_QUALITY_PROMPT": "true",
+          "ENABLE_KR_CANDIDATE_QUALITY_SHADOW": "true",
+          "ENABLE_KR_CANDIDATE_RS_INDEX_CACHE": "true",
+          "KR_CANDIDATE_FLOW_PREFETCH_MAX": "30",
+          "KR_CANDIDATE_FLOW_PREFETCH_SLEEP_SEC": "0.2",
+          "KR_CANDIDATE_POST_RANK_ENABLED": "true",
+          "KR_CANDIDATE_POST_RANK_ENFORCE": "false",
+          "KR_CLAUDE_PRICE_LIVE_ENABLED": "false",
+          "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "true",
+          "KR_CONFIRMATION_GATE_ENABLED": "true",
+          "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+          "KR_CONFIRMATION_GATE_SHADOW": "false",
+          "KR_CONTINUATION_NEW_ENTRY_BLOCK": "true",
+          "KR_DAILY_ENTRY_CAP": "40",
+          "KR_FAST_TRIGGER_WINDOW_MIN": "5",
+          "KR_FIXED_ORDER_KRW": "300000",
+          "KR_INDEX_CACHE_MAX_AGE_HOURS": "24",
+          "KR_INDEX_CACHE_REQUIRE_PREWARM": "true",
+          "KR_LOSS_CAP_SHADOW_PCT": "1.5",
+          "KR_MAX_POSITIONS": "20",
+          "KR_MAX_SINGLE_LOSS_PCT": "-2.0",
+          "KR_MICROSTRUCTURE_CONTEXT_ENABLED": "true",
+          "KR_MIN_ORDER_KRW": "50000",
+          "KR_ORDERBOOK_CACHE_TTL_SEC": "2.0",
+          "KR_ORDERBOOK_MAX_RETRIES": "1",
+          "KR_ORDERBOOK_RETRY_BACKOFF_SEC": "1.0",
+          "KR_ORDERBOOK_TIMEOUT_SEC": "2.0",
+          "KR_REENTRY_COOLDOWN_MINUTES": "120",
+          "KR_VI_CACHE_TTL_SEC": "2.0",
+          "KR_VI_MAX_RETRIES": "1",
+          "KR_VI_RETRY_BACKOFF_SEC": "1.0",
+          "KR_VI_TIMEOUT_SEC": "2.0",
+          "NEUTRAL_R1_MODEL": "claude-sonnet-4-6",
+          "PATHB_ALLOW_SAME_TICKER_WITH_PATHA": "false",
+          "PATHB_ALLOW_STOP_LOSS_LOWERING": "false",
+          "PATHB_EMERGENCY_DISABLE": "false",
+          "PATHB_ENABLED": "true",
+          "PATHB_FIXED_ORDER_KRW": "300000",
+          "PATHB_INTRADAY_ONLY": "true",
+          "PATHB_KR_LIVE_ENABLED": "false",
+          "PATHB_KR_SLIPPAGE_CAP": "1.003",
+          "PATHB_MAX_DAILY_ENTRIES": "40",
+          "PATHB_MAX_POSITIONS": "15",
+          "PATHB_MFE_BREAKEVEN_ENABLED": "true",
+          "PATHB_MIN_CONFIDENCE": "0.5",
+          "PATHB_MODE": "min_size_live",
+          "PATHB_ORDER_UNKNOWN_HALTS_ENTRY": "true",
+          "PATHB_PRE_CLOSE_MARKET_FALLBACK": "true",
+          "PATHB_PRE_CLOSE_TIMEOUT_MINUTES": "5",
+          "PATHB_SELL_PARTIAL_WAIT_SEC": "10",
+          "PATHB_TELEGRAM_CONTROL_ENABLED": "true",
+          "PATHB_US_LIVE_ENABLED": "true",
+          "PATHB_US_SLIPPAGE_CAP": "1.002",
+          "PLANA_MFE_BREAKEVEN_ENABLED": "true",
+          "USD_KRW_RATE": "1350",
+          "US_DAILY_ENTRY_CAP": "40",
+          "US_DYNAMIC_LOSERS_QUOTA_ENABLED": "true",
+          "US_FIXED_ORDER_KRW": "300000",
+          "US_MAX_POSITIONS": "20",
+          "US_MIN_ORDER_KRW": "50000",
+          "US_QUALITY_SHADOW_ENABLED": "true",
+          "US_REENTRY_COOLDOWN_MINUTES": "90",
+          "V2_BRAIN_POLICY": "fresh_v2_reference_v1",
+          "V2_FIXED_SIZING_ENABLED": "true",
+          "V2_FRESH_BRAIN_START": "true",
+          "V2_LIFECYCLE_ENABLED": "true",
+          "V2_MAX_DAILY_ENTRIES": "40",
+          "WATCH_TRIGGER_INITIAL_THRESHOLD": "2"
+        }
+      }
+    },
+    {
+      "name": "config.kr_cap40_confirmation_enforce",
+      "status": "PASS",
+      "detail": "KR cap 40 confirmation enforce is valid",
+      "data": {
+        "KR_DAILY_ENTRY_CAP": 40,
+        "KR_CONFIRMATION_GATE_ENABLED": true,
+        "KR_CONFIRMATION_GATE_SHADOW": false,
+        "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+        "required_mode": "FAST_TRIGGER_WITH_HARD_VETO"
+      }
+    },
+    {
+      "name": "config.runtime_snapshot_drift",
+      "status": "WARN",
+      "detail": "latest runtime config snapshot differs from files",
+      "data": {
+        "snapshot_path": "E:\\code\\claudetrade\\logs\\config\\effective_config_20260516_021300_live.redacted.json",
+        "written_at": "2026-05-16T02:13:00",
+        "runtime_mode": "live",
+        "drift": {
+          "ACTIVE_LESSONS_ANALYST_MAX_CHARS": {
+            "file_effective": "3000",
+            "runtime_snapshot": ""
+          },
+          "ACTIVE_LESSONS_DEBATE_ENABLED": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "ACTIVE_LESSONS_DEBATE_MAX_CHARS": {
+            "file_effective": "1200",
+            "runtime_snapshot": ""
+          },
+          "ACTIVE_LESSONS_ENABLED": {
+            "file_effective": "true",
+            "runtime_snapshot": "false"
+          },
+          "ACTIVE_LESSONS_MAX_CHARS": {
+            "file_effective": "3000",
+            "runtime_snapshot": "700"
+          },
+          "ACTIVE_LESSONS_MAX_ITEMS": {
+            "file_effective": "5",
+            "runtime_snapshot": "3"
+          },
+          "ACTIVE_LESSONS_SHADOW": {
+            "file_effective": "false",
+            "runtime_snapshot": "true"
+          },
+          "BEAR_R1_MODEL": {
+            "file_effective": "claude-sonnet-4-6",
+            "runtime_snapshot": ""
+          },
+          "BULL_R1_MODEL": {
+            "file_effective": "claude-sonnet-4-6",
+            "runtime_snapshot": ""
+          },
+          "CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "CANDIDATE_TRAINER_QUALITY_SCORE_WEIGHT": {
+            "file_effective": "0.3",
+            "runtime_snapshot": ""
+          },
+          "CLAUDE_ANALYST_R1_MAX_TOKENS": {
+            "file_effective": "700",
+            "runtime_snapshot": ""
+          },
+          "CLAUDE_ANALYST_R2_MAX_TOKENS": {
+            "file_effective": "900",
+            "runtime_snapshot": ""
+          },
+          "ENABLE_KR_CANDIDATE_FLOW_PREFETCH": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "ENABLE_KR_CANDIDATE_FLOW_SHADOW": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "ENABLE_KR_CANDIDATE_QUALITY_PROMPT": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "ENABLE_KR_CANDIDATE_QUALITY_SHADOW": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "ENABLE_KR_CANDIDATE_RS_INDEX_CACHE": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "KR_CANDIDATE_FLOW_PREFETCH_MAX": {
+            "file_effective": "30",
+            "runtime_snapshot": ""
+          },
+          "KR_CANDIDATE_FLOW_PREFETCH_SLEEP_SEC": {
+            "file_effective": "0.2",
+            "runtime_snapshot": ""
+          },
+          "KR_CANDIDATE_POST_RANK_ENABLED": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "KR_CANDIDATE_POST_RANK_ENFORCE": {
+            "file_effective": "false",
+            "runtime_snapshot": ""
+          },
+          "KR_CONFIRMATION_GATE_ENABLED": {
+            "file_effective": "true",
+            "runtime_snapshot": "false"
+          },
+          "KR_CONFIRMATION_GATE_MODE": {
+            "file_effective": "FAST_TRIGGER_WITH_HARD_VETO",
+            "runtime_snapshot": ""
+          },
+          "KR_CONFIRMATION_GATE_SHADOW": {
+            "file_effective": "false",
+            "runtime_snapshot": "true"
+          },
+          "KR_DAILY_ENTRY_CAP": {
+            "file_effective": "40",
+            "runtime_snapshot": "2"
+          },
+          "KR_FAST_TRIGGER_WINDOW_MIN": {
+            "file_effective": "5",
+            "runtime_snapshot": ""
+          },
+          "KR_INDEX_CACHE_MAX_AGE_HOURS": {
+            "file_effective": "24",
+            "runtime_snapshot": ""
+          },
+          "KR_INDEX_CACHE_REQUIRE_PREWARM": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "KR_MICROSTRUCTURE_CONTEXT_ENABLED": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "KR_ORDERBOOK_CACHE_TTL_SEC": {
+            "file_effective": "2.0",
+            "runtime_snapshot": ""
+          },
+          "KR_ORDERBOOK_MAX_RETRIES": {
+            "file_effective": "1",
+            "runtime_snapshot": ""
+          },
+          "KR_ORDERBOOK_RETRY_BACKOFF_SEC": {
+            "file_effective": "1.0",
+            "runtime_snapshot": ""
+          },
+          "KR_ORDERBOOK_TIMEOUT_SEC": {
+            "file_effective": "2.0",
+            "runtime_snapshot": ""
+          },
+          "KR_VI_CACHE_TTL_SEC": {
+            "file_effective": "2.0",
+            "runtime_snapshot": ""
+          },
+          "KR_VI_MAX_RETRIES": {
+            "file_effective": "1",
+            "runtime_snapshot": ""
+          },
+          "KR_VI_RETRY_BACKOFF_SEC": {
+            "file_effective": "1.0",
+            "runtime_snapshot": ""
+          },
+          "KR_VI_TIMEOUT_SEC": {
+            "file_effective": "2.0",
+            "runtime_snapshot": ""
+          },
+          "NEUTRAL_R1_MODEL": {
+            "file_effective": "claude-sonnet-4-6",
+            "runtime_snapshot": ""
+          },
+          "US_DYNAMIC_LOSERS_QUOTA_ENABLED": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "US_QUALITY_SHADOW_ENABLED": {
+            "file_effective": "true",
+            "runtime_snapshot": ""
+          },
+          "WATCH_TRIGGER_INITIAL_THRESHOLD": {
+            "file_effective": "2",
+            "runtime_snapshot": ""
+          }
+        }
+      }
+    },
+    {
+      "name": "config.pathb_intraday_only",
+      "status": "PASS",
+      "detail": "Path B intraday-only is enabled",
+      "data": {}
+    },
+    {
+      "name": "config.pathb_market_live_gates",
+      "status": "WARN",
+      "detail": "Path B market live gates disabled: KR",
+      "data": {
+        "values": {
+          "KR": "false",
+          "US": "true"
+        }
+      }
+    },
+    {
+      "name": "config.kr_us_enabled",
+      "status": "PASS",
+      "detail": "ENABLED_MARKETS=KR,US",
+      "data": {
+        "enabled_markets": [
+          "KR",
+          "US"
+        ]
+      }
+    },
+    {
+      "name": "config.pathb_limits",
+      "status": "PASS",
+      "detail": "Path B live limits are usable",
+      "data": {
+        "values": {
+          "PATHB_ENABLED": "true",
+          "PATHB_MODE": "min_size_live",
+          "PATHB_KR_LIVE_ENABLED": "false",
+          "PATHB_US_LIVE_ENABLED": "true",
+          "PATHB_MAX_POSITIONS": "15",
+          "PATHB_MAX_DAILY_ENTRIES": "40",
+          "PATHB_INTRADAY_ONLY": "true",
+          "PATHB_EMERGENCY_DISABLE": "false",
+          "PATHB_FIXED_ORDER_KRW": "300000",
+          "PATHB_MIN_CONFIDENCE": "0.5"
+        }
+      }
+    },
+    {
+      "name": "config.us_sizing_fx",
+      "status": "PASS",
+      "detail": "US KRW sizing and FX fallback are present",
+      "data": {
+        "US_FIXED_ORDER_KRW": 300000.0,
+        "US_MIN_ORDER_KRW": 50000.0,
+        "USD_KRW_RATE": 1350.0
+      }
+    },
+    {
+      "name": "claude.max_tokens_sufficient",
+      "status": "PASS",
+      "detail": "Claude selection token limits are sufficient for price_targets",
+      "data": {
+        "CLAUDE_SELECTION_MAX_TOKENS": 6000,
+        "CLAUDE_SELECTION_RETRY_MAX_TOKENS": 3500
+      }
+    },
+    {
+      "name": "us.cash_sizing",
+      "status": "PASS",
+      "detail": "US KRW budget can be converted to USD sizing",
+      "data": {
+        "budget_krw": 300000.0,
+        "fx": 1350.0,
+        "approx_budget_usd": 222.22
+      }
+    },
+    {
+      "name": "us.pathb_intraday_only",
+      "status": "PASS",
+      "detail": "US Path B follows intraday-only policy via shared config",
+      "data": {
+        "PATHB_INTRADAY_ONLY": "true"
+      }
+    },
+    {
+      "name": "kis.us_credentials",
+      "status": "WARN",
+      "detail": "US-specific app key/secret missing; common key fallback will be used",
+      "data": {
+        "KIS_ACCOUNT_NO_US_present": true,
+        "KIS_APP_KEY_US_present": false,
+        "KIS_APP_SECRET_US_present": false,
+        "KIS_IS_PAPER_US": "false",
+        "credential_mode": "fallback_shared_kr",
+        "fallback_to_kr_allowed": true,
+        "fallback_accepted_by_policy": false,
+        "accepted_exception": false,
+        "remediation_required": true,
+        "operator_action": "set KIS_APP_KEY_US/KIS_APP_SECRET_US or KIS_US_CREDENTIAL_FALLBACK_ACCEPTED=true after policy approval"
+      }
+    },
+    {
+      "name": "network.kis_rest_python_socket.kr",
+      "status": "PASS",
+      "detail": "Python can open TCP connection to openapi.koreainvestment.com:9443",
+      "data": {
+        "url": "https://openapi.koreainvestment.com:9443",
+        "host": "openapi.koreainvestment.com",
+        "port": 9443,
+        "timeout_sec": 3.0,
+        "python_executable": "C:\\Users\\Unknown\\anaconda3\\python.exe",
+        "powershell_check": "Test-NetConnection openapi.koreainvestment.com -Port 9443",
+        "firewall_allow_rule": "New-NetFirewallRule -DisplayName \"Allow KIS API Python 9443\" -Direction Outbound -Program \"C:\\Users\\Unknown\\anaconda3\\python.exe\" -Action Allow -Protocol TCP -RemotePort 9443"
+      }
+    },
+    {
+      "name": "db.live_path",
+      "status": "PASS",
+      "detail": "live event store path resolved",
+      "data": {
+        "path": "E:\\code\\claudetrade\\data\\v2_event_store.db"
+      }
+    },
+    {
+      "name": "db.wal_mode",
+      "status": "PASS",
+      "detail": "journal_mode=wal",
+      "data": {}
+    },
+    {
+      "name": "db.schema.v2_decisions",
+      "status": "PASS",
+      "detail": "required columns present",
+      "data": {
+        "path": "E:\\code\\claudetrade\\data\\v2_event_store.db",
+        "missing": []
+      }
+    },
+    {
+      "name": "db.schema.lifecycle_events",
+      "status": "PASS",
+      "detail": "required columns present",
+      "data": {
+        "path": "E:\\code\\claudetrade\\data\\v2_event_store.db",
+        "missing": []
+      }
+    },
+    {
+      "name": "db.schema.v2_path_runs",
+      "status": "PASS",
+      "detail": "required columns present",
+      "data": {
+        "path": "E:\\code\\claudetrade\\data\\v2_event_store.db",
+        "missing": []
+      }
+    },
+    {
+      "name": "db.schema.phase_validation_runs",
+      "status": "PASS",
+      "detail": "required columns present",
+      "data": {
+        "path": "E:\\code\\claudetrade\\data\\v2_event_store.db",
+        "missing": []
+      }
+    },
+    {
+      "name": "db.event_store_schema",
+      "status": "PASS",
+      "detail": "required event-store tables are present",
+      "data": {
+        "missing": {}
+      }
+    },
+    {
+      "name": "db.path_run_json",
+      "status": "PASS",
+      "detail": "recent plan_json decode check",
+      "data": {
+        "invalid_recent_rows": 0
+      }
+    },
+    {
+      "name": "db.path_run_plan_json_valid",
+      "status": "PASS",
+      "detail": "recent Path B plan_json rows parse cleanly",
+      "data": {
+        "invalid_recent_rows": 0
+      }
+    },
+    {
+      "name": "db.order_unknown_unresolved",
+      "status": "WARN",
+      "detail": "unresolved ORDER_UNKNOWN rows=19",
+      "data": {
+        "current_session": [],
+        "previous_session": [
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-15",
+            "ticker": "SOFI",
+            "path_run_id": "path_20260515_US_SOFI_claude_price_14c464ed",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-15T20:00:03+00:00",
+            "order_unknown_phase": "UNKNOWN_PENDING",
+            "order_unknown_age_sec": 1,
+            "order_unknown_reconcile_attempts": 1
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "RAL",
+            "path_run_id": "path_20260512_US_RAL_claude_price_ef33a806",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:18+00:00",
+            "order_unknown_phase": "UNKNOWN_SOFT_TIMEOUT",
+            "order_unknown_age_sec": 3037,
+            "order_unknown_reconcile_attempts": 1
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "NOVT",
+            "path_run_id": "path_20260512_US_NOVT_claude_price_47cb6210",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:18+00:00",
+            "order_unknown_phase": "UNKNOWN_SOFT_TIMEOUT",
+            "order_unknown_age_sec": 3037,
+            "order_unknown_reconcile_attempts": 1
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "DKNG",
+            "path_run_id": "path_20260512_US_DKNG_claude_price_44c80ff5",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:18+00:00",
+            "order_unknown_phase": "UNKNOWN_SOFT_TIMEOUT",
+            "order_unknown_age_sec": 3037,
+            "order_unknown_reconcile_attempts": 1
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "ZBRA",
+            "path_run_id": "path_20260512_US_ZBRA_claude_price_823b3570",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:18+00:00",
+            "order_unknown_phase": "UNKNOWN_SOFT_TIMEOUT",
+            "order_unknown_age_sec": 3037,
+            "order_unknown_reconcile_attempts": 1
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "HALO",
+            "path_run_id": "path_20260512_US_HALO_claude_price_bc72d05a",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:17+00:00",
+            "order_unknown_phase": "UNKNOWN_SOFT_TIMEOUT",
+            "order_unknown_age_sec": 3036,
+            "order_unknown_reconcile_attempts": 1
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "ARMK",
+            "path_run_id": "path_20260512_US_ARMK_claude_price_705df51f",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:17+00:00",
+            "order_unknown_phase": "UNKNOWN_SOFT_TIMEOUT",
+            "order_unknown_age_sec": 3036,
+            "order_unknown_reconcile_attempts": 1
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-01",
+            "ticker": "QCOM",
+            "path_run_id": "path_20260501_US_QCOM_claude_price_68e49723",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T12:29:41+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-11",
+            "ticker": "AXTI",
+            "path_run_id": "path_20260511_US_AXTI_claude_price_3a4e2b9b",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-12T13:37:03+00:00",
+            "order_unknown_phase": "UNKNOWN_FINAL_BLOCKED",
+            "order_unknown_age_sec": 63405,
+            "order_unknown_reconcile_attempts": 3
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-11",
+            "ticker": "SMTC",
+            "path_run_id": "path_20260511_US_SMTC_claude_price_c34a3657",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-12T13:37:03+00:00",
+            "order_unknown_phase": "UNKNOWN_FINAL_BLOCKED",
+            "order_unknown_age_sec": 63405,
+            "order_unknown_reconcile_attempts": 3
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "GOOGL",
+            "path_run_id": "path_20260430_US_GOOGL_claude_price_70692603",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-01T13:20:03+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "QCOM",
+            "path_run_id": "path_20260430_US_QCOM_claude_price_04aece3e",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-01T13:20:03+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "VIAV",
+            "path_run_id": "path_20260430_US_VIAV_claude_price_36ea15fa",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-01T13:20:03+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "SNAP",
+            "path_run_id": "path_20260427_US_SNAP_claude_price_93e7291c",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-30T13:20:01+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "CLF",
+            "path_run_id": "path_20260427_US_CLF_claude_price_109160b2",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-30T13:20:01+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "AMZN",
+            "path_run_id": "path_20260427_US_AMZN_claude_price_489cb6e9",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-30T13:20:01+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          },
+          {
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-28",
+            "ticker": "002780",
+            "path_run_id": "path_20260428_KR_002780_claude_price_94ecc017",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-28T13:15:17+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          },
+          {
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "209640",
+            "path_run_id": "path_20260427_KR_209640_claude_price_9ceb3043",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-27T11:30:55+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          },
+          {
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "006340",
+            "path_run_id": "path_20260427_KR_006340_claude_price_cc6297f6",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-27T11:30:55+00:00",
+            "order_unknown_phase": "",
+            "order_unknown_age_sec": null,
+            "order_unknown_reconcile_attempts": null
+          }
+        ],
+        "current_session_count": 0,
+        "previous_session_count": 19,
+        "accepted_exception": false,
+        "remediation_required": true,
+        "auto_remediation": false,
+        "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
+        "operator_action": "verify broker open orders/fills first, then run the PathB legacy remediation report; do not override broker truth from local DB only"
+      }
+    },
+    {
+      "name": "db.pathb_stale_active_runs",
+      "status": "WARN",
+      "detail": "previous-session active Path B rows=23",
+      "data": {
+        "rows": [
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-15",
+            "ticker": "SOFI",
+            "path_run_id": "path_20260515_US_SOFI_claude_price_14c464ed",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-15T20:00:03+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-15",
+            "ticker": "MSFT",
+            "path_run_id": "path_20260515_US_MSFT_claude_price_c4bebf0f",
+            "status": "ORDER_ACKED",
+            "updated_at": "2026-05-15T15:29:12+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "RAL",
+            "path_run_id": "path_20260512_US_RAL_claude_price_ef33a806",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:18+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "NOVT",
+            "path_run_id": "path_20260512_US_NOVT_claude_price_47cb6210",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:18+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "DKNG",
+            "path_run_id": "path_20260512_US_DKNG_claude_price_44c80ff5",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:18+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "ZBRA",
+            "path_run_id": "path_20260512_US_ZBRA_claude_price_823b3570",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:18+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "HALO",
+            "path_run_id": "path_20260512_US_HALO_claude_price_bc72d05a",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:17+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-12",
+            "ticker": "ARMK",
+            "path_run_id": "path_20260512_US_ARMK_claude_price_705df51f",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T13:20:17+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-01",
+            "ticker": "QCOM",
+            "path_run_id": "path_20260501_US_QCOM_claude_price_68e49723",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-14T12:29:41+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-11",
+            "ticker": "AXTI",
+            "path_run_id": "path_20260511_US_AXTI_claude_price_3a4e2b9b",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-12T13:37:03+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-11",
+            "ticker": "SMTC",
+            "path_run_id": "path_20260511_US_SMTC_claude_price_c34a3657",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-12T13:37:03+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-07",
+            "ticker": "FTNT",
+            "path_run_id": "path_20260507_US_FTNT_claude_price_1d5d4028",
+            "status": "ORDER_ACKED",
+            "updated_at": "2026-05-07T13:43:35+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "GOOGL",
+            "path_run_id": "path_20260430_US_GOOGL_claude_price_70692603",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-01T13:20:03+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "QCOM",
+            "path_run_id": "path_20260430_US_QCOM_claude_price_04aece3e",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-01T13:20:03+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "VIAV",
+            "path_run_id": "path_20260430_US_VIAV_claude_price_36ea15fa",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-05-01T13:20:03+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "SNAP",
+            "path_run_id": "path_20260427_US_SNAP_claude_price_93e7291c",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-30T13:20:01+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "CLF",
+            "path_run_id": "path_20260427_US_CLF_claude_price_109160b2",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-30T13:20:01+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "AMZN",
+            "path_run_id": "path_20260427_US_AMZN_claude_price_489cb6e9",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-30T13:20:01+00:00"
+          },
+          {
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-28",
+            "ticker": "002780",
+            "path_run_id": "path_20260428_KR_002780_claude_price_94ecc017",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-28T13:15:17+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "INTC",
+            "path_run_id": "path_20260427_US_INTC_claude_price_e86aa442",
+            "status": "FILLED",
+            "updated_at": "2026-04-27T14:34:36+00:00"
+          },
+          {
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "NVDA",
+            "path_run_id": "path_20260427_US_NVDA_claude_price_6871ac92",
+            "status": "FILLED",
+            "updated_at": "2026-04-27T14:34:36+00:00"
+          },
+          {
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "209640",
+            "path_run_id": "path_20260427_KR_209640_claude_price_9ceb3043",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-27T11:30:55+00:00"
+          },
+          {
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "006340",
+            "path_run_id": "path_20260427_KR_006340_claude_price_cc6297f6",
+            "status": "ORDER_UNKNOWN",
+            "updated_at": "2026-04-27T11:30:55+00:00"
+          }
+        ],
+        "current_sessions": {
+          "KR": "2026-05-16",
+          "US": "2026-05-16"
+        },
+        "stale_active_count": 23,
+        "accepted_exception": false,
+        "remediation_required": true,
+        "auto_remediation": false,
+        "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
+        "operator_action": "verify broker positions/open orders/fills before closing, expiring, or backfilling any prior-session active row"
+      }
+    },
+    {
+      "name": "db.pathb_lifecycle_consistency",
+      "status": "WARN",
+      "detail": "Path B lifecycle consistency warnings",
+      "data": {
+        "missing_events": [
+          {
+            "path_run_id": "path_20260501_US_SFM_claude_price_2a38a884",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-01",
+            "ticker": "SFM",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260504_US_NBIS_claude_price_7e65084e",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-04",
+            "ticker": "NBIS",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260504_US_IREN_claude_price_51e6d0f8",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-04",
+            "ticker": "IREN",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260504_US_TEAM_claude_price_0ab591f2",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-04",
+            "ticker": "TEAM",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260504_US_AXSM_claude_price_f830270b",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-04",
+            "ticker": "AXSM",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260504_US_SOUN_claude_price_36dd78d8",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-04",
+            "ticker": "SOUN",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260504_US_NVDA_claude_price_c25820f1",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-04",
+            "ticker": "NVDA",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260501_US_RDDT_claude_price_ac2be8af",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-01",
+            "ticker": "RDDT",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260501_US_NOK_claude_price_6c1ca72a",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-01",
+            "ticker": "NOK",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260501_US_GKOS_claude_price_fdd019fd",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-01",
+            "ticker": "GKOS",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260501_US_TEAM_claude_price_b6afb3d7",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-01",
+            "ticker": "TEAM",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260501_US_NVT_claude_price_f6e1b624",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-01",
+            "ticker": "NVT",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260501_US_RIOT_claude_price_294f00d5",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-05-01",
+            "ticker": "RIOT",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260430_US_INTC_claude_price_7cbf7ab1",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "INTC",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260430_KR_006340_claude_price_b18a3505",
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "006340",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260430_KR_125020_claude_price_015782d4",
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "125020",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260430_KR_006910_claude_price_30d4bfa8",
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "006910",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260430_KR_088350_claude_price_6235b2b0",
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "088350",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260430_KR_432720_claude_price_52e1ed06",
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-30",
+            "ticker": "432720",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260429_US_INTC_claude_price_cc495c4f",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-29",
+            "ticker": "INTC",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260429_US_NXPI_claude_price_16327e61",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-29",
+            "ticker": "NXPI",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260429_US_BE_claude_price_3affa046",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-29",
+            "ticker": "BE",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260429_US_TEVA_claude_price_587fb1c1",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-29",
+            "ticker": "TEVA",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260429_US_BE_claude_price_ba257229",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-29",
+            "ticker": "BE",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260429_US_SANM_claude_price_c155e1be",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-29",
+            "ticker": "SANM",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260429_KR_138360_claude_price_6d3407cc",
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-29",
+            "ticker": "138360",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260429_KR_058430_claude_price_0efd0c08",
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-29",
+            "ticker": "058430",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260428_KR_001510_claude_price_37133fd1",
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-28",
+            "ticker": "001510",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260428_KR_001780_claude_price_92a9a74c",
+            "market": "KR",
+            "runtime_mode": "live",
+            "session_date": "2026-04-28",
+            "ticker": "001780",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          },
+          {
+            "path_run_id": "path_20260427_US_ORKA_claude_price_8ea5e1fc",
+            "market": "US",
+            "runtime_mode": "live",
+            "session_date": "2026-04-27",
+            "ticker": "ORKA",
+            "status": "CLOSED",
+            "missing_event": "CLOSED"
+          }
+        ],
+        "pathb_events_missing_path_run_id": [
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "ENPH"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "AXTI"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "FIG"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "ENPH"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "AXTI"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "FIG"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "IOT"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "GWRE"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "AXTI"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "DXCM"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "FIG"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "FIG"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "AXTI"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "CSCO"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "LUMN"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "MARA"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "SOFI"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "US",
+            "ticker": "IREN"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "ASTS"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "NVTS"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "MARA"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "HIMX"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "KR",
+            "ticker": "100790"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "KR",
+            "ticker": "086960"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "KR",
+            "ticker": "100790"
+          },
+          {
+            "event_type": "CLAUDE_PRICE_PLAN_GATE_WARNING",
+            "market": "KR",
+            "ticker": "144960"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "KR",
+            "ticker": "090710"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "MXL"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "LITE"
+          },
+          {
+            "event_type": "SAFETY_BLOCKED",
+            "market": "US",
+            "ticker": "TXN"
+          }
+        ],
+        "missing_events_count": 35,
+        "pathb_events_missing_path_run_id_count": 87,
+        "accepted_exception": false,
+        "remediation_required": true,
+        "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
+        "operator_action": "generate an audited lifecycle backfill plan before mutating production records"
+      }
+    },
+    {
+      "name": "db.market_runtime_isolation",
+      "status": "PASS",
+      "detail": "recent events use valid market/runtime values",
+      "data": {
+        "invalid": []
+      }
+    },
+    {
+      "name": "db.roundtrip_temp",
+      "status": "PASS",
+      "detail": "temp DB decision/event/path_run round trip",
+      "data": {}
+    },
+    {
+      "name": "db.agent_call_event_store_contamination",
+      "status": "PASS",
+      "detail": "agent_call_events has no known test contamination signatures",
+      "data": {
+        "db_path": "E:\\code\\claudetrade\\data\\audit\\agent_call_events.db",
+        "exists": true,
+        "matched_event_count": 0,
+        "matched_replay_count": 0,
+        "matched_call_ids": [],
+        "matched_samples": [],
+        "remediation_tool": "python tools/clean_agent_call_event_store.py --json",
+        "apply_command": "python tools/clean_agent_call_event_store.py --apply --json"
+      }
+    },
+    {
+      "name": "kis.token_expiry",
+      "status": "PASS",
+      "detail": "token expires_at=2026-05-17T02:13:05.208556, minutes_left=269.7",
+      "data": {
+        "path": "E:\\code\\claudetrade\\state\\live_kis_token.json",
+        "issued_at": "2026-05-16T02:13:05.208556",
+        "expires_at": "2026-05-17T02:13:05.208556",
+        "minutes_left": 269.7,
+        "context": {
+          "market": "KR",
+          "base_url": "https://openapi.koreainvestment.com:9443",
+          "app_key_fingerprint": "c11ee55f678f",
+          "is_paper": false,
+          "credential_mode": "primary"
+        }
+      }
+    },
+    {
+      "name": "kis.kr_token_refresh",
+      "status": "PASS",
+      "detail": "token valid and forced refresh helper is present",
+      "data": {
+        "minutes_left": 269.7,
+        "helper": true
+      }
+    },
+    {
+      "name": "kis.us_token_refresh",
+      "status": "PASS",
+      "detail": "token valid and forced refresh helper is present",
+      "data": {
+        "minutes_left": 269.7,
+        "helper": true
+      }
+    },
+    {
+      "name": "kis.balance_probe",
+      "status": "WARN",
+      "detail": "default preflight avoids direct balance APIs; broker-truth snapshot and live smoke cover read-only balance checks",
+      "data": {
+        "reason": "network/order side effects intentionally avoided in default preflight",
+        "read_only_check": "run live guardian/smoke or KIS read-only precheck before live trading",
+        "accepted_exception": true,
+        "remediation_required": false,
+        "operator_action": "none if live guardian smoke and broker-truth snapshots are passing"
+      }
+    },
+    {
+      "name": "runtime.bot_pid_lock",
+      "status": "WARN",
+      "detail": "pid lock is active; expected process appears alive",
+      "data": {
+        "path": "E:\\code\\claudetrade\\state\\live_trading_bot.pid",
+        "category": "runtime_pid_lock",
+        "pid": 37820,
+        "alive": true,
+        "state": {
+          "pid": 37820,
+          "mode": "live",
+          "started_at": "2026-05-16T02:13:00.025842+09:00",
+          "command": [
+            "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe",
+            "E:\\code\\claudetrade\\trading_bot.py",
+            "--live"
+          ]
+        },
+        "auto_fix": false,
+        "expected_mode": "live",
+        "accepted_exception": true,
+        "remediation_required": false,
+        "operator_action": "no action while the expected process is intentionally running",
+        "operational_interpretation": "expected process appears alive; treat as healthy unless starting a duplicate"
+      }
+    },
+    {
+      "name": "runtime.dashboard_pid_lock",
+      "status": "WARN",
+      "detail": "pid lock is active; expected process appears alive",
+      "data": {
+        "path": "E:\\code\\claudetrade\\state\\dashboard_server.pid",
+        "category": "runtime_pid_lock",
+        "pid": 38412,
+        "alive": true,
+        "state": {
+          "pid": 38412,
+          "process": "dashboard_server",
+          "started_at": "2026-05-16T21:12:07.634660+09:00",
+          "command": [
+            "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe",
+            "E:\\code\\claudetrade\\dashboard\\dashboard_server.py"
+          ]
+        },
+        "auto_fix": false,
+        "expected_mode": "dashboard_server",
+        "accepted_exception": true,
+        "remediation_required": false,
+        "operator_action": "no action while the expected process is intentionally running",
+        "operational_interpretation": "expected process appears alive; treat as healthy unless starting a duplicate"
+      }
+    },
+    {
+      "name": "state.brain_json_valid",
+      "status": "PASS",
+      "detail": "brain JSON candidates parse cleanly",
+      "data": {
+        "parsed": [
+          {
+            "path": "E:\\code\\claudetrade\\state\\brain.json",
+            "keys": [
+              "_rebuild_rule_version",
+              "_rebuilt_at",
+              "brain_history_dashboard_fix_at",
+              "correction_guide",
+              "cross_market",
+              "hold_advisor_performance",
+              "markets",
+              "meta"
+            ]
+          },
+          {
+            "path": "E:\\code\\claudetrade\\claude_memory\\brain.json",
+            "keys": [
+              "correction_guide",
+              "cross_market",
+              "markets",
+              "meta"
+            ]
+          }
+        ],
+        "errors": [],
+        "fresh_brain_start": true
+      }
+    },
+    {
+      "name": "runtime.pathb_control_state",
+      "status": "PASS",
+      "detail": "Path B runtime control file missing; default operator state is enabled",
+      "data": {
+        "path": "E:\\code\\claudetrade\\state\\live_pathb_control.json",
+        "default_enabled": true
+      }
+    },
+    {
+      "name": "broker_truth.snapshot_missing_or_present",
+      "status": "PASS",
+      "detail": "broker truth snapshot exists",
+      "data": {
+        "path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json"
+      }
+    },
+    {
+      "name": "broker_truth.snapshot_file_valid",
+      "status": "PASS",
+      "detail": "broker truth snapshot JSON parses",
+      "data": {
+        "path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json"
+      }
+    },
+    {
+      "name": "broker_truth.kr_stale_state",
+      "status": "PASS",
+      "detail": "KR snapshot available",
+      "data": {
+        "last_success_at": "2026-05-16T12:42:19+00:00",
+        "last_attempt_at": "2026-05-16T12:42:19+00:00",
+        "ttl_sec": 30,
+        "error": ""
+      }
+    },
+    {
+      "name": "broker_truth.us_stale_state",
+      "status": "PASS",
+      "detail": "US snapshot available",
+      "data": {
+        "last_success_at": "2026-05-16T12:42:19+00:00",
+        "last_attempt_at": "2026-05-16T12:42:19+00:00",
+        "ttl_sec": 60,
+        "error": ""
+      }
+    },
+    {
+      "name": "code.token_refresh_helper",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.pathb_startup_recovery",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.session_active_attribute",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.current_market_attribute",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.price_cache_clear_on_session_open",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.partial_buy_exit_runtime",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.partial_buy_exit_manager",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.cold_start_brain_fallback",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.cancel_if_open_above",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.pathb_runtime_ready",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.pathb_plan_registration",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.pathb_buy_scan",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.pathb_sell_scan",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.pathb_preclose_fallback",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.pathb_kill_switch",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.buy_partial_fill_exit_protected",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.sell_partial_fallback",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.order_acked_stuck_recovery",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.pending_order_session_close",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.path_a_entry_flow_present",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.path_arbiter_wired",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.same_day_reentry_guard_wired",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "claude.price_targets_required",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "claude.retry_prompt_omits_price_targets",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "claude.no_same_session_watch_chase",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "dashboard.path_comparison",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "dashboard.pathb_state_truth",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "dashboard.broker_truth_uses_snapshot",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "telegram.broker_truth_uses_snapshot",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "broker_truth.atomic_write_marker",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "broker_truth.positions_from_broker",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "broker_truth.open_orders_from_broker",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "broker_truth.today_fills_from_broker",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "order_unknown.path_a_b_disambiguation",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "order_unknown.in_memory_pending_checked",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "order_unknown.session_recheck_wired",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "order_unknown.session_end_unresolved_marking",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "dashboard.order_unknown_visibility",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "dashboard.candidate_funnel",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "telegram.path_label_alerts",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "telegram.timeout_nonblocking",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "session.us_session_date_logic_present",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "us.market_session_cutoff",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "us.order_unknown_scope",
+      "status": "PASS",
+      "detail": "marker found",
+      "data": {
+        "category": "code_marker",
+        "guardian_severity": "soft_fail"
+      }
+    },
+    {
+      "name": "code.wait_timing_recorded",
+      "status": "WARN",
+      "detail": "lifecycle enum supports WAIT_TIMING/TIMING_EXPIRED, but Path A runtime wiring is not proven",
+      "data": {
+        "runtime_markers": false,
+        "enum_markers": true,
+        "category": "code_marker",
+        "guardian_severity": "soft_fail",
+        "accepted_exception": false,
+        "remediation_required": true,
+        "operator_action": "add Path A WAIT_TIMING/TIMING_EXPIRED runtime wiring evidence or explicitly disable this lifecycle state"
+      }
+    },
+    {
+      "name": "code.kr_order_payload_normalized",
+      "status": "PASS",
+      "detail": "KR order qty/price payload is normalized",
+      "data": {}
+    },
+    {
+      "name": "code.kr_order_500_recovery_wired",
+      "status": "PASS",
+      "detail": "KR HTTP 500 uses broker truth then one retry",
+      "data": {
+        "blind_retry_in_place_order_kr": false
+      }
+    },
+    {
+      "name": "code.us_order_500_recovery_wired",
+      "status": "PASS",
+      "detail": "US HTTP 500 uses broker truth then one retry",
+      "data": {
+        "blind_retry_in_place_order_us": false
+      }
+    },
+    {
+      "name": "code.order_error_raw_response_logged",
+      "status": "PASS",
+      "detail": "order HTTP errors preserve raw response and masked payload",
+      "data": {}
+    },
+    {
+      "name": "broker_truth_query_available",
+      "status": "PASS",
+      "detail": "KR/US broker-truth query helpers are present",
+      "data": {}
+    },
+    {
+      "name": "us.order_price_format",
+      "status": "PASS",
+      "detail": "US order price uses two decimal places",
+      "data": {}
+    },
+    {
+      "name": "code.sell_partial_runtime_wiring",
+      "status": "PASS",
+      "detail": "sell partial marker wired",
+      "data": {
+        "mark_sell_partial_references": 3
+      }
+    },
+    {
+      "name": "code.us_exchange_map_coverage",
+      "status": "PASS",
+      "detail": "US fallback universe exchange mappings are complete",
+      "data": {
+        "missing": [],
+        "fallback_count": 17
+      }
+    },
+    {
+      "name": "us.exchange_map_coverage",
+      "status": "PASS",
+      "detail": "US fallback universe exchange mappings are complete",
+      "data": {
+        "missing": [],
+        "fallback_count": 17
+      }
+    },
+    {
+      "name": "market.session_calendar",
+      "status": "WARN",
+      "detail": "today is a weekend; verify next trading session before operation",
+      "data": {
+        "now_kst": "2026-05-16T21:43:22+09:00",
+        "weekday": 5,
+        "weekend": true,
+        "KR_session_date_guess": "2026-05-16",
+        "US_session_date_guess": "2026-05-16",
+        "accepted_exception": true,
+        "remediation_required": false,
+        "operator_action": "none; weekend/non-trading-day warning is expected"
+      }
+    },
+    {
+      "name": "pathb.cancel_if_open_above",
+      "status": "PASS",
+      "detail": "cancel_if_open_above",
+      "data": {}
+    },
+    {
+      "name": "pathb.limit_edge_guard",
+      "status": "PASS",
+      "detail": "limit below current should be blocked by check_entry",
+      "data": {
+        "computed_limit": 51000.0
+      }
+    },
+    {
+      "name": "pathb.qty_zero_blocks",
+      "status": "PASS",
+      "detail": "INVALID_PRICE",
+      "data": {}
+    },
+    {
+      "name": "pathb.partial_buy_exit_protected",
+      "status": "PASS",
+      "detail": "CLOSED_CLAUDE_PRICE_STOP",
+      "data": {}
+    },
+    {
+      "name": "telegram.core_commands",
+      "status": "PASS",
+      "detail": "core Telegram command markers are present",
+      "data": {
+        "missing": []
+      }
+    },
+    {
+      "name": "telegram.path_label_alerts",
+      "status": "PASS",
+      "detail": "A/B path labels render in alerts",
+      "data": {
+        "path_a": "A플랜 | Timing Adapter",
+        "path_b": "B플랜 | Claude 지정가"
+      }
+    },
+    {
+      "name": "telegram.pathb_commands",
+      "status": "PASS",
+      "detail": "V2/Path B Telegram commands responded",
+      "data": {
+        "failures": {}
+      }
+    },
+    {
+      "name": "telegram.positions_uses_broker_snapshot",
+      "status": "PASS",
+      "detail": "/positions uses broker truth snapshot first",
+      "data": {}
+    },
+    {
+      "name": "data.price_csv_freshness.kr",
+      "status": "PASS",
+      "detail": "total=652 fresh=649 fresh_ratio=99.5% stale=3 expected_last=2026-05-15 last_range=2026-04-30..2026-05-15",
+      "data": {
+        "market": "KR",
+        "price_dir": "E:\\code\\claudetrade\\data\\price\\kr",
+        "total": 652,
+        "fresh_count": 649,
+        "fresh_ratio": 0.995398773006135,
+        "counts": {
+          "ok": 649,
+          "missing_csv": 0,
+          "malformed_csv": 0,
+          "stale_csv": 3
+        },
+        "expected_last_date": "2026-05-15",
+        "calendar_source": "weekday_fallback",
+        "oldest_last_date": "2026-04-30",
+        "newest_last_date": "2026-05-15",
+        "samples": {
+          "ok": [
+            {
+              "ticker": "000020",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000020.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000040",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000040.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000050",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000050.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000070",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000070.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000080",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000080.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000087",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000087.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000100",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000100.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000105",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000105.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000120",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000120.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000140",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000140.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000145",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000145.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000150",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000150.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000155",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000155.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000157",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000157.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000180",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000180.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000210",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000210.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000215",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000215.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000220",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000220.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000225",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000225.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000227",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000227.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000230",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000230.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000240",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000240.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000250",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000250.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000270",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000270.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000300",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000300.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000320",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000320.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000400",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000400.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000440",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000440.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000490",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000490.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000660",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000660.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            }
+          ],
+          "missing_csv": [],
+          "malformed_csv": [],
+          "stale_csv": [
+            {
+              "ticker": "139050",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_139050.csv",
+              "detail": "last_date=2026-05-07 expected_last_date=2026-05-15",
+              "last_date": "2026-05-07"
+            },
+            {
+              "ticker": "152550",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_152550.csv",
+              "detail": "last_date=2026-04-30 expected_last_date=2026-05-15",
+              "last_date": "2026-04-30"
+            },
+            {
+              "ticker": "217620",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_217620.csv",
+              "detail": "last_date=2026-05-07 expected_last_date=2026-05-15",
+              "last_date": "2026-05-07"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data.price_csv_integrity.kr",
+      "status": "PASS",
+      "detail": "total=652 malformed=0 missing=0",
+      "data": {
+        "market": "KR",
+        "price_dir": "E:\\code\\claudetrade\\data\\price\\kr",
+        "total": 652,
+        "fresh_count": 649,
+        "fresh_ratio": 0.995398773006135,
+        "counts": {
+          "ok": 649,
+          "missing_csv": 0,
+          "malformed_csv": 0,
+          "stale_csv": 3
+        },
+        "expected_last_date": "2026-05-15",
+        "calendar_source": "weekday_fallback",
+        "oldest_last_date": "2026-04-30",
+        "newest_last_date": "2026-05-15",
+        "samples": {
+          "ok": [
+            {
+              "ticker": "000020",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000020.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000040",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000040.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000050",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000050.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000070",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000070.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000080",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000080.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000087",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000087.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000100",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000100.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000105",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000105.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000120",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000120.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000140",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000140.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000145",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000145.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000150",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000150.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000155",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000155.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000157",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000157.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000180",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000180.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000210",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000210.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000215",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000215.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000220",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000220.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000225",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000225.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000227",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000227.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000230",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000230.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000240",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000240.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000250",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000250.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000270",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000270.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000300",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000300.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000320",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000320.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000400",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000400.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000440",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000440.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000490",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000490.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "000660",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_000660.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            }
+          ],
+          "missing_csv": [],
+          "malformed_csv": [],
+          "stale_csv": [
+            {
+              "ticker": "139050",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_139050.csv",
+              "detail": "last_date=2026-05-07 expected_last_date=2026-05-15",
+              "last_date": "2026-05-07"
+            },
+            {
+              "ticker": "152550",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_152550.csv",
+              "detail": "last_date=2026-04-30 expected_last_date=2026-05-15",
+              "last_date": "2026-04-30"
+            },
+            {
+              "ticker": "217620",
+              "path": "E:\\code\\claudetrade\\data\\price\\kr\\kr_217620.csv",
+              "detail": "last_date=2026-05-07 expected_last_date=2026-05-15",
+              "last_date": "2026-05-07"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data.price_csv_freshness.us",
+      "status": "PASS",
+      "detail": "total=912 fresh=903 fresh_ratio=99.0% stale=9 expected_last=2026-05-15 last_range=2026-04-07..2026-05-15",
+      "data": {
+        "market": "US",
+        "price_dir": "E:\\code\\claudetrade\\data\\price\\us",
+        "total": 912,
+        "fresh_count": 903,
+        "fresh_ratio": 0.9901315789473685,
+        "counts": {
+          "ok": 903,
+          "missing_csv": 0,
+          "malformed_csv": 0,
+          "stale_csv": 9
+        },
+        "expected_last_date": "2026-05-15",
+        "calendar_source": "weekday_fallback",
+        "oldest_last_date": "2026-04-07",
+        "newest_last_date": "2026-05-15",
+        "samples": {
+          "ok": [
+            {
+              "ticker": "AA",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AA.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAL",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAL.csv",
+              "detail": "rows=343 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAOI",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAOI.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAON",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAON.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAP",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAP.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAPL",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAPL.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ABBV",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ABBV.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ABNB",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ABNB.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ABT",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ABT.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ABVX",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ABVX.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACHC",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACHC.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACHR",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACHR.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACLS",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACLS.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACLX",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACLX.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACM",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACM.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACN",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACN.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AD",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AD.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ADBE",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ADBE.csv",
+              "detail": "rows=365 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ADEA",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ADEA.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ADPT",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ADPT.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ADT",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ADT.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AEIS",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AEIS.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AEO",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AEO.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AEON",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AEON.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AEP",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AEP.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AFRM",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AFRM.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AG",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AG.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AGCO",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AGCO.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AGIO",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AGIO.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AGO",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AGO.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            }
+          ],
+          "missing_csv": [],
+          "malformed_csv": [],
+          "stale_csv": [
+            {
+              "ticker": "AIEV",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AIEV.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "BLIV",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_BLIV.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "CTRA",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_CTRA.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "CUK",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_CUK.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "HOLX",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_HOLX.csv",
+              "detail": "last_date=2026-04-07 expected_last_date=2026-05-15",
+              "last_date": "2026-04-07"
+            },
+            {
+              "ticker": "INTJ",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_INTJ.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "QH",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_QH.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "SPEGR",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_SPEGR.csv",
+              "detail": "last_date=2026-05-07 expected_last_date=2026-05-15",
+              "last_date": "2026-05-07"
+            },
+            {
+              "ticker": "TPH",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_TPH.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data.price_csv_integrity.us",
+      "status": "PASS",
+      "detail": "total=912 malformed=0 missing=0",
+      "data": {
+        "market": "US",
+        "price_dir": "E:\\code\\claudetrade\\data\\price\\us",
+        "total": 912,
+        "fresh_count": 903,
+        "fresh_ratio": 0.9901315789473685,
+        "counts": {
+          "ok": 903,
+          "missing_csv": 0,
+          "malformed_csv": 0,
+          "stale_csv": 9
+        },
+        "expected_last_date": "2026-05-15",
+        "calendar_source": "weekday_fallback",
+        "oldest_last_date": "2026-04-07",
+        "newest_last_date": "2026-05-15",
+        "samples": {
+          "ok": [
+            {
+              "ticker": "AA",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AA.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAL",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAL.csv",
+              "detail": "rows=343 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAOI",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAOI.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAON",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAON.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAP",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAP.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AAPL",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AAPL.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ABBV",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ABBV.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ABNB",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ABNB.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ABT",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ABT.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ABVX",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ABVX.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACHC",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACHC.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACHR",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACHR.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACLS",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACLS.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACLX",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACLX.csv",
+              "detail": "rows=332 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACM",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACM.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ACN",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ACN.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AD",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AD.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ADBE",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ADBE.csv",
+              "detail": "rows=365 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ADEA",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ADEA.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ADPT",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ADPT.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "ADT",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_ADT.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AEIS",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AEIS.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AEO",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AEO.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AEON",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AEON.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AEP",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AEP.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AFRM",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AFRM.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AG",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AG.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AGCO",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AGCO.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AGIO",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AGIO.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            },
+            {
+              "ticker": "AGO",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AGO.csv",
+              "detail": "rows=344 last_date=2026-05-15",
+              "last_date": "2026-05-15"
+            }
+          ],
+          "missing_csv": [],
+          "malformed_csv": [],
+          "stale_csv": [
+            {
+              "ticker": "AIEV",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_AIEV.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "BLIV",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_BLIV.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "CTRA",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_CTRA.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "CUK",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_CUK.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "HOLX",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_HOLX.csv",
+              "detail": "last_date=2026-04-07 expected_last_date=2026-05-15",
+              "last_date": "2026-04-07"
+            },
+            {
+              "ticker": "INTJ",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_INTJ.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "QH",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_QH.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            },
+            {
+              "ticker": "SPEGR",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_SPEGR.csv",
+              "detail": "last_date=2026-05-07 expected_last_date=2026-05-15",
+              "last_date": "2026-05-07"
+            },
+            {
+              "ticker": "TPH",
+              "path": "E:\\code\\claudetrade\\data\\price\\us\\us_TPH.csv",
+              "detail": "last_date=2026-05-14 expected_last_date=2026-05-15",
+              "last_date": "2026-05-14"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "candidate_audit.outcome_update",
+      "status": "PASS",
+      "detail": "outcome_rows=29716 latest_label_generated_at=2026-05-15T17:18:05+00:00",
+      "data": {
+        "path": "E:\\code\\claudetrade\\data\\audit\\candidate_audit.db",
+        "rows": 29716,
+        "latest": "2026-05-15T17:18:05+00:00"
+      }
+    },
+    {
+      "name": "kr.today_order_unknown_review",
+      "status": "PASS",
+      "detail": "KR has no ORDER_UNKNOWN rows in ops summary",
+      "data": {
+        "rows": []
+      }
+    },
+    {
+      "name": "kr.broker_truth_summary",
+      "status": "PASS",
+      "detail": "KR broker truth summary exposed",
+      "data": {
+        "market_data": {
+          "missing": false,
+          "stale": true,
+          "last_success_at": "2026-05-16T12:42:19+00:00",
+          "last_attempt_at": "2026-05-16T12:42:19+00:00",
+          "ttl_sec": 30,
+          "error": "",
+          "account_summary": {
+            "cash": 1941524.0,
+            "currency": "KRW",
+            "orderable_cash": 1941524.0,
+            "profit_rate": 0.0,
+            "total_eval": 0.0,
+            "total_profit": 0.0
+          },
+          "positions": [],
+          "open_orders": [],
+          "today_fills": [
+            {
+              "avg_price": 9050.0,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "152555",
+              "filled_qty": 11,
+              "market": "KR",
+              "name": "",
+              "order_no": "0037040000",
+              "order_qty": 11,
+              "order_status": "filled",
+              "order_time": "152555",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 11,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "209640"
+            },
+            {
+              "avg_price": 3420.0,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "142722",
+              "filled_qty": 30,
+              "market": "KR",
+              "name": "",
+              "order_no": "0033708900",
+              "order_qty": 30,
+              "order_status": "filled",
+              "order_time": "142722",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 30,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "452260"
+            },
+            {
+              "avg_price": 8100.0,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "141400",
+              "filled_qty": 13,
+              "market": "KR",
+              "name": "",
+              "order_no": "0033025500",
+              "order_qty": 13,
+              "order_status": "filled",
+              "order_time": "141400",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 13,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "452190"
+            },
+            {
+              "avg_price": 5060.0,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "133836",
+              "filled_qty": 20,
+              "market": "KR",
+              "name": "",
+              "order_no": "0031060500",
+              "order_qty": 20,
+              "order_status": "filled",
+              "order_time": "133836",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 20,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "001250"
+            },
+            {
+              "avg_price": 10235.0,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "123941",
+              "filled_qty": 10,
+              "market": "KR",
+              "name": "",
+              "order_no": "0027675700",
+              "order_qty": 10,
+              "order_status": "filled",
+              "order_time": "123941",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 10,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "006340"
+            },
+            {
+              "avg_price": 9230.0,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "121935",
+              "filled_qty": 11,
+              "market": "KR",
+              "name": "",
+              "order_no": "0026560100",
+              "order_qty": 11,
+              "order_status": "filled",
+              "order_time": "121935",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 11,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "209640"
+            },
+            {
+              "avg_price": 10220.0,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "115835",
+              "filled_qty": 11,
+              "market": "KR",
+              "name": "",
+              "order_no": "0025413200",
+              "order_qty": 11,
+              "order_status": "filled",
+              "order_time": "115835",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 11,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "006340"
+            },
+            {
+              "avg_price": 5190.0,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "110219",
+              "filled_qty": 20,
+              "market": "KR",
+              "name": "",
+              "order_no": "0021622800",
+              "order_qty": 20,
+              "order_status": "filled",
+              "order_time": "110219",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 20,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "001250"
+            },
+            {
+              "avg_price": 9990.0,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "095928",
+              "filled_qty": 11,
+              "market": "KR",
+              "name": "",
+              "order_no": "0016170400",
+              "order_qty": 11,
+              "order_status": "filled",
+              "order_time": "095928",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 11,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "006340"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "kr.closed_positions_review",
+      "status": "PASS",
+      "detail": "KR closed rows=0",
+      "data": {
+        "rows": []
+      }
+    },
+    {
+      "name": "kr.pathb_no_closed_explained",
+      "status": "PASS",
+      "detail": "Path B closed count is derived from v2_path_runs/path_comparison",
+      "data": {
+        "path_b_closed": 0,
+        "comparison": {
+          "basis": "실현 청산 기준",
+          "path_a": {
+            "label": "Path A - Timing Adapter",
+            "closed": 0,
+            "wins": 0,
+            "win_rate_pct": 0.0,
+            "avg_pnl_pct": 0.0,
+            "realized_pnl_value": 0.0
+          },
+          "path_b": {
+            "label": "Path B - Claude Price",
+            "closed": 0,
+            "wins": 0,
+            "win_rate_pct": 0.0,
+            "avg_pnl_pct": 0.0,
+            "realized_pnl_value": 0.0
+          },
+          "delta": {
+            "avg_pnl_pct": 0.0,
+            "realized_pnl_value": 0.0
+          },
+          "chart": {
+            "labels": [
+              "Path A",
+              "Path B"
+            ],
+            "data": [
+              0.0,
+              0.0
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "us.today_order_unknown_review",
+      "status": "PASS",
+      "detail": "US has no ORDER_UNKNOWN rows in ops summary",
+      "data": {
+        "rows": []
+      }
+    },
+    {
+      "name": "us.broker_truth_summary",
+      "status": "PASS",
+      "detail": "US broker truth summary exposed",
+      "data": {
+        "market_data": {
+          "missing": false,
+          "stale": true,
+          "last_success_at": "2026-05-16T12:42:19+00:00",
+          "last_attempt_at": "2026-05-16T12:42:19+00:00",
+          "ttl_sec": 60,
+          "error": "",
+          "account_summary": {
+            "cash": 2030.82,
+            "currency": "USD",
+            "orderable_cash": 1646.19,
+            "profit_rate": -0.03030727,
+            "total_eval": 609.24,
+            "total_profit": -0.18
+          },
+          "positions": [
+            {
+              "avg_price": 423.4847,
+              "current_price": 421.92,
+              "eval_amount": 421.92,
+              "market": "US",
+              "name": "마이크로소프트",
+              "pnl": -1.5647,
+              "pnl_pct": -0.37,
+              "qty": 1,
+              "source": "broker",
+              "ticker": "MSFT"
+            },
+            {
+              "avg_price": 15.495,
+              "current_price": 15.61,
+              "eval_amount": 187.32,
+              "market": "US",
+              "name": "소파이 테크놀로지스",
+              "pnl": 1.38,
+              "pnl_pct": 0.74,
+              "qty": 12,
+              "source": "broker",
+              "ticker": "SOFI"
+            }
+          ],
+          "open_orders": [],
+          "today_fills": [
+            {
+              "avg_price": 347.29,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "222408",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030181266",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "222408",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "AMD"
+            },
+            {
+              "avg_price": 347.27,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "222417",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030181374",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "222417",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "AMD"
+            },
+            {
+              "avg_price": 264.22,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "222432",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030181493",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "222432",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "AMZN"
+            },
+            {
+              "avg_price": 229.23,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "222434",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030181509",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "222434",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "ARM"
+            },
+            {
+              "avg_price": 263.18,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "222921",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030184435",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "222921",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "AMZN"
+            },
+            {
+              "avg_price": 225.08,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "222947",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030184756",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "222947",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "ARM"
+            },
+            {
+              "avg_price": 158.24,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "223621",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030197347",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "223621",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "QCOM"
+            },
+            {
+              "avg_price": 152.71,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "225618",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030231429",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "225618",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "QCOM"
+            },
+            {
+              "avg_price": 83.84,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "233254",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030276503",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "233254",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "INTC"
+            },
+            {
+              "avg_price": 207.49,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "233255",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030276524",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "233255",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "NVDA"
+            },
+            {
+              "avg_price": 83.3,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "003122",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030323970",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "003122",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "INTC"
+            },
+            {
+              "avg_price": 10.575,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "003747",
+              "filled_qty": 7,
+              "market": "US",
+              "name": "",
+              "order_no": "0030327991",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "003747",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "CLF"
+            },
+            {
+              "avg_price": 6.075,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "003748",
+              "filled_qty": 12,
+              "market": "US",
+              "name": "",
+              "order_no": "0030328006",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "003748",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "SNAP"
+            },
+            {
+              "avg_price": 213.04,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "013546",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030353872",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "013546",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "NVDA"
+            },
+            {
+              "avg_price": 261.99,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "024006",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030375656",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "024006",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "AMZN"
+            },
+            {
+              "avg_price": 74.905,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "043744",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030410431",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "043744",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "buy",
+              "source": "broker",
+              "ticker": "ORKA"
+            },
+            {
+              "avg_price": 10.69,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "045324",
+              "filled_qty": 7,
+              "market": "US",
+              "name": "",
+              "order_no": "0030416034",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "045324",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "CLF"
+            },
+            {
+              "avg_price": 260.95,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "045413",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030416303",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "045413",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "AMZN"
+            },
+            {
+              "avg_price": 76.055,
+              "current_price": 0.0,
+              "eval_amount": 0.0,
+              "fill_time": "045416",
+              "filled_qty": 1,
+              "market": "US",
+              "name": "",
+              "order_no": "0030416328",
+              "order_qty": 0,
+              "order_status": "filled",
+              "order_time": "045416",
+              "pnl": 0.0,
+              "pnl_pct": 0.0,
+              "qty": 0,
+              "remaining_qty": 0,
+              "side": "sell",
+              "source": "broker",
+              "ticker": "ORKA"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "us.closed_positions_review",
+      "status": "PASS",
+      "detail": "US closed rows=0",
+      "data": {
+        "rows": []
+      }
+    }
+  ],
+  "effective_config": {
+    "ACTIVE_LESSONS_ANALYST_MAX_CHARS": "3000",
+    "ACTIVE_LESSONS_DEBATE_ENABLED": "true",
+    "ACTIVE_LESSONS_DEBATE_MAX_CHARS": "1200",
+    "ACTIVE_LESSONS_ENABLED": "true",
+    "ACTIVE_LESSONS_MAX_CHARS": "3000",
+    "ACTIVE_LESSONS_MAX_ITEMS": "5",
+    "ACTIVE_LESSONS_SHADOW": "false",
+    "BEAR_R1_MODEL": "claude-sonnet-4-6",
+    "BULL_R1_MODEL": "claude-sonnet-4-6",
+    "CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED": "true",
+    "CANDIDATE_TRAINER_QUALITY_SCORE_WEIGHT": "0.3",
+    "CLAUDE_ANALYST_R1_MAX_TOKENS": "700",
+    "CLAUDE_ANALYST_R2_MAX_TOKENS": "900",
+    "DAILY_LOSS_LIMIT_PCT": "-2.0",
+    "ENABLED_MARKETS": "KR,US",
+    "ENABLE_KR_CANDIDATE_FLOW_PREFETCH": "true",
+    "ENABLE_KR_CANDIDATE_FLOW_SHADOW": "true",
+    "ENABLE_KR_CANDIDATE_QUALITY_PROMPT": "true",
+    "ENABLE_KR_CANDIDATE_QUALITY_SHADOW": "true",
+    "ENABLE_KR_CANDIDATE_RS_INDEX_CACHE": "true",
+    "KR_CANDIDATE_FLOW_PREFETCH_MAX": "30",
+    "KR_CANDIDATE_FLOW_PREFETCH_SLEEP_SEC": "0.2",
+    "KR_CANDIDATE_POST_RANK_ENABLED": "true",
+    "KR_CANDIDATE_POST_RANK_ENFORCE": "false",
+    "KR_CLAUDE_PRICE_LIVE_ENABLED": "false",
+    "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "true",
+    "KR_CONFIRMATION_GATE_ENABLED": "true",
+    "KR_CONFIRMATION_GATE_MODE": "FAST_TRIGGER_WITH_HARD_VETO",
+    "KR_CONFIRMATION_GATE_SHADOW": "false",
+    "KR_CONTINUATION_NEW_ENTRY_BLOCK": "true",
+    "KR_DAILY_ENTRY_CAP": "40",
+    "KR_FAST_TRIGGER_WINDOW_MIN": "5",
+    "KR_FIXED_ORDER_KRW": "300000",
+    "KR_INDEX_CACHE_MAX_AGE_HOURS": "24",
+    "KR_INDEX_CACHE_REQUIRE_PREWARM": "true",
+    "KR_LOSS_CAP_SHADOW_PCT": "1.5",
+    "KR_MAX_POSITIONS": "20",
+    "KR_MAX_SINGLE_LOSS_PCT": "-2.0",
+    "KR_MICROSTRUCTURE_CONTEXT_ENABLED": "true",
+    "KR_MIN_ORDER_KRW": "50000",
+    "KR_ORDERBOOK_CACHE_TTL_SEC": "2.0",
+    "KR_ORDERBOOK_MAX_RETRIES": "1",
+    "KR_ORDERBOOK_RETRY_BACKOFF_SEC": "1.0",
+    "KR_ORDERBOOK_TIMEOUT_SEC": "2.0",
+    "KR_REENTRY_COOLDOWN_MINUTES": "120",
+    "KR_VI_CACHE_TTL_SEC": "2.0",
+    "KR_VI_MAX_RETRIES": "1",
+    "KR_VI_RETRY_BACKOFF_SEC": "1.0",
+    "KR_VI_TIMEOUT_SEC": "2.0",
+    "NEUTRAL_R1_MODEL": "claude-sonnet-4-6",
+    "PATHB_ALLOW_SAME_TICKER_WITH_PATHA": "false",
+    "PATHB_ALLOW_STOP_LOSS_LOWERING": "false",
+    "PATHB_EMERGENCY_DISABLE": "false",
+    "PATHB_ENABLED": "true",
+    "PATHB_FIXED_ORDER_KRW": "300000",
+    "PATHB_INTRADAY_ONLY": "true",
+    "PATHB_KR_LIVE_ENABLED": "false",
+    "PATHB_KR_SLIPPAGE_CAP": "1.003",
+    "PATHB_MAX_DAILY_ENTRIES": "40",
+    "PATHB_MAX_POSITIONS": "15",
+    "PATHB_MFE_BREAKEVEN_ENABLED": "true",
+    "PATHB_MIN_CONFIDENCE": "0.5",
+    "PATHB_MODE": "min_size_live",
+    "PATHB_ORDER_UNKNOWN_HALTS_ENTRY": "true",
+    "PATHB_PRE_CLOSE_MARKET_FALLBACK": "true",
+    "PATHB_PRE_CLOSE_TIMEOUT_MINUTES": "5",
+    "PATHB_SELL_PARTIAL_WAIT_SEC": "10",
+    "PATHB_TELEGRAM_CONTROL_ENABLED": "true",
+    "PATHB_US_LIVE_ENABLED": "true",
+    "PATHB_US_SLIPPAGE_CAP": "1.002",
+    "PLANA_MFE_BREAKEVEN_ENABLED": "true",
+    "USD_KRW_RATE": "1350",
+    "US_DAILY_ENTRY_CAP": "40",
+    "US_DYNAMIC_LOSERS_QUOTA_ENABLED": "true",
+    "US_FIXED_ORDER_KRW": "300000",
+    "US_MAX_POSITIONS": "20",
+    "US_MIN_ORDER_KRW": "50000",
+    "US_QUALITY_SHADOW_ENABLED": "true",
+    "US_REENTRY_COOLDOWN_MINUTES": "90",
+    "V2_BRAIN_POLICY": "fresh_v2_reference_v1",
+    "V2_FIXED_SIZING_ENABLED": "true",
+    "V2_FRESH_BRAIN_START": "true",
+    "V2_LIFECYCLE_ENABLED": "true",
+    "V2_MAX_DAILY_ENTRIES": "40",
+    "WATCH_TRIGGER_INITIAL_THRESHOLD": "2"
+  }
+}
