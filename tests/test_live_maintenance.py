@@ -108,6 +108,42 @@ class LiveMaintenanceTests(unittest.TestCase):
             self.assertTrue((backup_dir / "v2_event_store.db").exists())
             self.assertTrue((backup_dir / "live_open_positions.json").exists())
 
+    def test_create_live_backup_tolerates_locked_sqlite_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = EventStore(root / "data" / "v2_event_store.db")
+            _create_run(store, path_run_id="path_msft", ticker="MSFT")
+            original_backup = live_maintenance._backup_sqlite_db
+            original_copy2 = live_maintenance.shutil.copy2
+
+            def backup_and_create_sidecar(source, target):
+                original_backup(source, target)
+                Path(str(source) + "-shm").write_text("locked", encoding="utf-8")
+
+            def copy2(source, target, *args, **kwargs):
+                if str(source).endswith(".db-shm"):
+                    raise OSError(22, "Invalid argument", str(target))
+                return original_copy2(source, target, *args, **kwargs)
+
+            with patch("tools.live_maintenance.get_runtime_path", side_effect=_runtime_path(root)), patch.object(
+                live_maintenance,
+                "_backup_sqlite_db",
+                side_effect=backup_and_create_sidecar,
+            ), patch.object(
+                live_maintenance.shutil,
+                "copy2",
+                side_effect=copy2,
+            ):
+                backup_dir = live_maintenance.create_live_backup(
+                    "before_reconcile",
+                    backup_root=root / "backups",
+                )
+
+            manifest = json.loads((backup_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertTrue((backup_dir / "v2_event_store.db").exists())
+            self.assertEqual(manifest["optional_errors"][0]["role"], "sqlite-shm")
+            self.assertFalse(manifest["optional_errors"][0]["copied"])
+
     def test_broker_truth_report_reads_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "broker_truth.json"

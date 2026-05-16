@@ -195,6 +195,26 @@ def _copy_optional_file(source: Path, backup_dir: Path, *, role: str, manifest: 
     manifest.append(_manifest_entry(source, target, role=role))
 
 
+def _copy_best_effort_file(source: Path, backup_dir: Path, *, role: str, optional: bool = True) -> dict[str, Any] | None:
+    if not source.exists():
+        return None
+    target = backup_dir / source.name
+    try:
+        shutil.copy2(source, target)
+        return _manifest_entry(source, target, role=role)
+    except OSError as exc:
+        if not optional:
+            raise
+        return {
+            "role": role,
+            "source": str(source),
+            "backup": str(target),
+            "optional": True,
+            "copied": False,
+            "error": str(exc),
+        }
+
+
 def _backup_sqlite_db(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(source)) as src, sqlite3.connect(str(target)) as dst:
@@ -222,11 +242,17 @@ def create_live_backup(
         raise FileNotFoundError(f"event store DB not found: {source_db}")
 
     manifest: list[dict[str, Any]] = []
+    optional_errors: list[dict[str, Any]] = []
     db_target = backup_dir / source_db.name
     _backup_sqlite_db(source_db, db_target)
     manifest.append(_manifest_entry(source_db, db_target, role="sqlite_backup"))
     for suffix in ("-wal", "-shm"):
-        _copy_optional_file(Path(str(source_db) + suffix), backup_dir, role=f"sqlite{suffix}", manifest=manifest)
+        entry = _copy_best_effort_file(Path(str(source_db) + suffix), backup_dir, role=f"sqlite{suffix}")
+        if entry is None:
+            continue
+        if entry.get("copied") is False:
+            optional_errors.append(entry)
+        manifest.append(entry)
 
     for name in BACKUP_STATE_FILES:
         _copy_optional_file(
@@ -241,6 +267,7 @@ def create_live_backup(
         "mode": mode_key,
         "label": label,
         "files": manifest,
+        "optional_errors": optional_errors,
     }
     (backup_dir / "manifest.json").write_text(
         json.dumps(manifest_payload, ensure_ascii=False, indent=2, sort_keys=True),
