@@ -47,6 +47,7 @@ KST = ZoneInfo("Asia/Seoul")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from runtime_paths import get_runtime_path
+from runtime.market_resolver import infer_ticker_market, resolve_position_market
 from bot.session_date import resolve_session_date
 try:
     from interface.v2_ops_summary import build_v2_ops_summary
@@ -822,8 +823,7 @@ def _parse_date(s: str):
 
 
 def _ticker_market(ticker: str) -> str:
-    ticker = (ticker or "").strip().upper()
-    return "US" if ticker.isalpha() else "KR"
+    return infer_ticker_market(ticker, unknown="KR")
 
 
 def _normalized_trades(rec: dict, market: str) -> list:
@@ -2036,15 +2036,14 @@ def _load_live_status(market: str, mode: str = "paper") -> dict:
     positions = []
     for pos in data.get("positions", []) or []:
         ticker = str(pos.get("ticker", "") or "")
-        if ticker and _ticker_market(ticker) == market:
+        if ticker and resolve_position_market(pos, unknown="") == market:
             positions.append(pos)
         else:
             changed = True
     pending_orders = []
     for order in data.get("pending_orders", []) or []:
         ticker = str(order.get("ticker", "") or "")
-        order_market = str(order.get("market", "") or "")
-        inferred_market = order_market or _ticker_market(ticker)
+        inferred_market = resolve_position_market(order, unknown="")
         if ticker and inferred_market == market:
             order["market"] = market
             pending_orders.append(order)
@@ -2617,7 +2616,7 @@ def _saved_positions_for_market(market: str, mode: str = "paper") -> list:
 
     for pos in _load_open_positions(mode):
         ticker = str(pos.get("ticker", "") or "").strip().upper()
-        if ticker and _ticker_market(ticker) == market:
+        if ticker and resolve_position_market(pos, unknown="") == market:
             merged[ticker] = dict(pos)
 
     for source in (
@@ -2626,7 +2625,7 @@ def _saved_positions_for_market(market: str, mode: str = "paper") -> list:
     ):
         for pos in source.get("positions", []) or []:
             ticker = str(pos.get("ticker", "") or "").strip().upper()
-            if ticker and _ticker_market(ticker) == market:
+            if ticker and resolve_position_market(pos, unknown="") == market:
                 base = merged.get(ticker)
                 merged[ticker] = _merge_position_context(base or {}, pos) if base else dict(pos)
 
@@ -4231,7 +4230,7 @@ def _filter_items_for_market(items: list, market: str) -> list:
     filtered = []
     for item in items or []:
         ticker = (item.get("ticker", "") or "").strip().upper()
-        if ticker and _ticker_market(ticker) == market:
+        if ticker and resolve_position_market(item, unknown="") == market:
             filtered.append(item)
     return filtered
 
@@ -6227,7 +6226,7 @@ def _enrich_bucket_monitor_tickers(summary: dict, *, market: Optional[str], mode
             continue
         row_market = requested_market or str(row.get("market") or "").upper()
         if row_market not in {"KR", "US"}:
-            row_market = "US" if str(row.get("ticker") or "").strip().upper().isalpha() else "KR"
+            row_market = _ticker_market(str(row.get("ticker") or ""))
         if row_market not in name_maps:
             try:
                 name_maps[row_market] = _ticker_name_map(row_market, include_broker=True, mode=mode)

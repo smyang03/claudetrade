@@ -16,6 +16,7 @@ import requests
 from credit_tracker import summary as credit_summary
 from logger import get_trading_logger
 from bot.log_sanitizer import mask_secrets
+from runtime.market_resolver import infer_ticker_market, resolve_position_market
 
 log = get_trading_logger()
 KST = ZoneInfo("Asia/Seoul")
@@ -429,7 +430,7 @@ def tuning_report(elapsed_min: int, tuning_result: dict, prev_mode: str, positio
     new_mode_disp = _ko_mode(new_mode)
     pos_txt = "\n".join(
         [
-            f"  {_display_ticker(p.get('ticker', '-'), 'US' if str(p.get('ticker', '')).replace('.', '').isalpha() else 'KR', p.get('name', '') or '')} "
+            f"  {_display_ticker(p.get('ticker', '-'), resolve_position_market(p, unknown='KR'), p.get('name', '') or '')} "
             f"{p.get('qty', 0)}주 현재 {int(float(p.get('current_price', 0) or 0)):,}원"
             for p in positions
         ]
@@ -1032,7 +1033,7 @@ def pnl_alert(
     buy_path: str = "",
 ) -> str:
     icon = "🟢" if pnl_krw > 0 else "🔴"
-    market = market or ("US" if str(ticker or "").replace(".", "").isalpha() else "KR")
+    market = market or infer_ticker_market(ticker, unknown="KR")
     ticker_disp = _display_ticker(ticker, market, name)
     rate = float(usd_krw or 0) or _env_usd_krw_rate()
     if market == "US":

@@ -28,6 +28,7 @@ from kis_api import cancel_order, get_balance, get_price, place_order, precheck_
 from lifecycle.event_store import EventStore
 from logger import get_trading_logger
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
+from runtime.market_resolver import infer_ticker_market
 from runtime.pathb_reasons import (
     ORDER_UNKNOWN_HARD_TIMEOUT_SEC_DEFAULT,
     ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS_DEFAULT,
@@ -6296,7 +6297,7 @@ class PathBRuntime:
         try:
             return str(self.bot._ticker_market(ticker))
         except Exception:
-            return "US" if str(ticker or "").isalpha() else "KR"
+            return infer_ticker_market(ticker, unknown="KR")
 
     def _ticker_key(self, market: str, ticker: str) -> str:
         raw = str(ticker or "").strip()

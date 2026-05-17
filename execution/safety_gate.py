@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from config.v2 import DEFAULT_V2_CONFIG, V2Config, SAFETY_REASON_CODES
+from runtime.market_resolver import infer_ticker_market, normalize_market, resolve_position_market
 
 
 @dataclass(frozen=True)
@@ -201,28 +202,27 @@ def _normalize_ticker(market: str, ticker: str) -> str:
 
 
 def _infer_market(ticker: str) -> str:
-    raw = str(ticker or "").strip()
-    return "US" if raw.replace(".", "").isalpha() else "KR"
+    return infer_ticker_market(ticker, unknown="KR")
 
 
 def _market_position_count(market: str, positions: list[dict[str, Any]]) -> int:
-    return sum(1 for pos in positions if _infer_market(str(pos.get("ticker", ""))) == market)
+    return sum(1 for pos in positions if resolve_position_market(pos, unknown="") == market)
 
 
 def _has_position(market: str, ticker: str, positions: list[dict[str, Any]]) -> bool:
     return any(
-        _infer_market(str(pos.get("ticker", ""))) == market
+        resolve_position_market(pos, unknown="") == market
         and _normalize_ticker(market, str(pos.get("ticker", ""))) == ticker
         for pos in positions
     )
 
 
 def _has_pending(market: str, ticker: str, pending_orders: list[dict[str, Any]]) -> bool:
-    return any(
-        str(order.get("market", market) or market).upper() == market
-        and _normalize_ticker(market, str(order.get("ticker", ""))) == ticker
-        for order in pending_orders
-    )
+    for order in pending_orders:
+        order_market = normalize_market(order.get("market")) or market
+        if order_market == market and _normalize_ticker(market, str(order.get("ticker", ""))) == ticker:
+            return True
+    return False
 
 
 def _is_stale(raw_ts: str | None, now: datetime | None, max_age_minutes: int) -> bool:

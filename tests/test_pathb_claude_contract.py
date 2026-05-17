@@ -9,6 +9,7 @@ from bot.candidate_policy import normalize_selection_result
 from config.v2 import V2Config
 from lifecycle.event_store import EventStore
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
+from runtime.market_resolver import infer_ticker_market
 from runtime.pathb_runtime import PathBControlState, PathBRuntime
 
 
@@ -65,7 +66,7 @@ class _Bot:
         return 120.0
 
     def _ticker_market(self, ticker: str) -> str:
-        return "US" if str(ticker).isalpha() else "KR"
+        return infer_ticker_market(ticker, unknown="KR")
 
     def _add_pending_order(self, order: dict) -> None:
         self.pending_orders.append(order)

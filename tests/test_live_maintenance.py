@@ -78,6 +78,64 @@ class LiveMaintenanceTests(unittest.TestCase):
             live_maintenance.assert_writer_freeze(processes)
         live_maintenance.assert_writer_freeze([item for item in processes if item["kind"] == "dashboard"])
 
+    def test_process_discovery_accepts_equals_mode_live(self) -> None:
+        processes = live_maintenance.discover_live_processes(
+            [
+                {
+                    "pid": 10,
+                    "name": "python",
+                    "cmdline": ["python", "tools/live_guardian.py", "--watch", "--mode=live"],
+                },
+                {
+                    "pid": 11,
+                    "name": "python",
+                    "cmdline": ["python", "tools/preopen_scheduler.py", "--mode=live"],
+                },
+            ]
+        )
+
+        self.assertEqual({item["pid"]: item["kind"] for item in processes}, {10: "guardian", 11: "preopen_scheduler"})
+        with self.assertRaises(RuntimeError):
+            live_maintenance.assert_writer_freeze(processes)
+
+    def test_process_discovery_treats_omitted_mode_as_live_default(self) -> None:
+        processes = live_maintenance.discover_live_processes(
+            [
+                {
+                    "pid": 12,
+                    "name": "python",
+                    "cmdline": ["python", "tools/live_guardian.py", "--watch"],
+                },
+                {
+                    "pid": 13,
+                    "name": "python",
+                    "cmdline": ["python", "tools/preopen_scheduler.py", "--loop"],
+                },
+            ]
+        )
+
+        self.assertEqual({item["pid"]: item["kind"] for item in processes}, {12: "guardian", 13: "preopen_scheduler"})
+        with self.assertRaises(RuntimeError):
+            live_maintenance.assert_writer_freeze(processes)
+
+    def test_process_discovery_excludes_explicit_paper_sidecars(self) -> None:
+        processes = live_maintenance.discover_live_processes(
+            [
+                {
+                    "pid": 14,
+                    "name": "python",
+                    "cmdline": ["python", "tools/live_guardian.py", "--watch", "--mode", "paper"],
+                },
+                {
+                    "pid": 15,
+                    "name": "python",
+                    "cmdline": ["python", "tools/preopen_scheduler.py", "--mode=paper", "--loop"],
+                },
+            ]
+        )
+
+        self.assertEqual(processes, [])
+
     def test_parser_uses_required_subcommands(self) -> None:
         args = live_maintenance.build_parser().parse_args(
             ["reconcile-position", "--mode", "live", "--market", "US", "--ticker", "MSFT", "--dry-run"]

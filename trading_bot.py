@@ -158,6 +158,7 @@ import strategy.param_tuner as _param_tuner
 from claude_memory import brain as BrainDB
 from runtime_paths import get_runtime_path
 from config.runtime_config import EffectiveRuntimeConfig
+from runtime.market_resolver import infer_ticker_market, resolve_position_market
 from runtime.funnel_observability import append_funnel_event, candidate_trace_id
 from runtime.gate_evaluation import (
     apply_size_cap_once,
@@ -8857,8 +8858,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = "US" if str(market).upper() == "US" else "KR"
         count = 0
         for pos in getattr(self.risk, "positions", []) or []:
-            ticker = str(pos.get("ticker", "") or "")
-            pos_market = "US" if ticker.replace(".", "").isalpha() else "KR"
+            pos_market = resolve_position_market(pos, unknown="")
             if pos_market == market_key:
                 count += 1
         return count
@@ -14218,7 +14218,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 log.warning(f"[{market_key}] cached KIS token fallback failed: {fallback_exc}")
             raise
     def _ticker_market(self, ticker: str) -> str:
-        return "US" if ticker.isalpha() else "KR"
+        return infer_ticker_market(ticker, unknown="KR")
     def _price_to_krw(self, price: float, market: str) -> float:
         return price if market == "KR" else price * self.usd_krw_rate
     def _compute_order_price(self, side: str, market: str, raw_price: float) -> float:

@@ -8,6 +8,7 @@ from unittest.mock import patch
 from execution.safety_gate import SafetyContext, SafetyGate
 import risk_manager as risk_module
 from risk_manager import RiskManager
+from runtime.market_resolver import infer_ticker_market
 from runtime.v2_lifecycle_runtime import V2LifecycleRuntime
 from trading_bot import TradingBot
 
@@ -78,7 +79,7 @@ class EntryRiskControlTests(unittest.TestCase):
                 {"market": "US", "ticker": "MSFT"},
             ],
             pathb=_PathB(),
-            _ticker_market=lambda ticker: "US" if str(ticker).isalpha() else "KR",
+            _ticker_market=lambda ticker: infer_ticker_market(ticker, unknown="KR"),
         )
 
         self.assertEqual(runtime.daily_entry_count("KR"), 3)
@@ -176,6 +177,34 @@ class EntryRiskControlTests(unittest.TestCase):
         self.assertEqual(decision.reason_code, "BROKER_SYNC_QUARANTINE")
         self.assertEqual(decision.details["broker_trust_level"], "degraded")
         self.assertEqual(decision.details["policy_name"], "us_broker_trust_quarantine")
+
+    def test_safety_gate_uses_position_market_for_hyphenated_us_ticker(self) -> None:
+        decision = SafetyGate().evaluate(
+            _safety_ctx(
+                ticker="BRK-B",
+                positions=[{"ticker": "BRK-B", "market": "US", "qty": 1}],
+            )
+        )
+
+        self.assertFalse(decision.passed)
+        self.assertEqual(decision.reason_code, "ALREADY_HOLDING")
+
+    def test_risk_manager_uses_position_market_for_hyphenated_us_ticker(self) -> None:
+        risk = RiskManager(init_cash=1_000_000, market="US")
+        risk.positions = [{"ticker": "BRK-B", "market": "US", "qty": 1, "current_price": 10.0}]
+
+        with patch.dict(risk_module.HARD_RULES, {"max_pyramid": 1}, clear=False):
+            ok, reason = risk.can_open("BRK-B", 10.0, market="US")
+
+        self.assertFalse(ok)
+        self.assertEqual(reason, "already holding")
+
+    def test_trading_bot_market_position_count_uses_position_market(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.risk = SimpleNamespace(positions=[{"ticker": "BRK-B", "market": "US", "qty": 1}])
+
+        self.assertEqual(TradingBot._market_position_count(bot, "US"), 1)
+        self.assertEqual(TradingBot._market_position_count(bot, "KR"), 0)
 
     def test_trading_bot_new_buy_gate_blocks_us_broker_quarantine(self) -> None:
         bot = TradingBot.__new__(TradingBot)

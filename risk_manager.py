@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, time as dt_time
 from typing import Optional
 from dotenv import load_dotenv
 from logger import get_trading_logger
+from runtime.market_resolver import normalize_market, resolve_position_market
 
 load_dotenv()
 log = get_trading_logger()
@@ -188,24 +189,22 @@ class RiskManager:
     def can_open(self, ticker: str, price: float, mode_size_pct: int = 70, market: str = ""):
         if self.halted:
             return False, self.halt_reason or "daily loss limit"
+        market_key = normalize_market(market)
         # 마켓별 포지션 수 제한 (market 지정 시 해당 마켓만, 미지정 시 전체)
-        if market:
+        if market_key:
             def _is_same_market(p: dict) -> bool:
-                tk = p.get("ticker", "")
-                pos_mkt = "US" if tk.replace(".", "").isalpha() else "KR"
-                return pos_mkt == market
+                return resolve_position_market(p, unknown="") == market_key
             mkt_count = sum(1 for p in self.positions if _is_same_market(p))
         else:
             mkt_count = len(self.positions)
         if mkt_count >= HARD_RULES["max_positions"]:
             return False, f"max positions {HARD_RULES['max_positions']} ({market or 'total'})"
         # 동일 티커 피라미딩 제한 — market 구분 (KR/US 간 티커명 충돌 방지)
-        def _ticker_mkt(tk: str) -> str:
-            return "US" if tk.replace(".", "").isalpha() else "KR"
+        target_ticker = str(ticker or "").strip().upper() if market_key == "US" else str(ticker or "").strip()
         same = sum(
             1 for p in self.positions
-            if p["ticker"] == ticker
-            and (not market or _ticker_mkt(p["ticker"]) == market)
+            if (str(p.get("ticker", "") or "").strip().upper() if market_key == "US" else str(p.get("ticker", "") or "").strip()) == target_ticker
+            and (not market_key or resolve_position_market(p, unknown="") == market_key)
         )
         if same >= HARD_RULES["max_pyramid"]:
             return False, "already holding"

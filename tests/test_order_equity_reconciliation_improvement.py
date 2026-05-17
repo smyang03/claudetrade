@@ -10,6 +10,7 @@ import unittest
 
 from bot import market_utils
 from execution.order_state import OrderUnknownEscalator
+from runtime.market_resolver import infer_ticker_market
 import trading_bot
 
 
@@ -194,7 +195,7 @@ class EquityReferenceTests(unittest.TestCase):
         bot.current_market = market
         bot._recent_sell_proceeds_by_market = {"KR": [], "US": []}
         bot._current_session_date_str = lambda _market: "2026-04-29"
-        bot._ticker_market = lambda ticker: "US" if str(ticker).replace(".", "").isalpha() else "KR"
+        bot._ticker_market = lambda ticker: infer_ticker_market(ticker, unknown="KR")
         return bot
 
     def test_kr_uses_internal_session_equity_when_broker_cash_is_stale(self) -> None:

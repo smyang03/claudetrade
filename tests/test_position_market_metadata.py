@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from bot.state import StateMixin
+from runtime.market_resolver import infer_ticker_market
 from tools import live_preflight
 from trading_bot import TradingBot
 
@@ -19,7 +20,7 @@ class _StateBot(StateMixin):
         self.risk = SimpleNamespace(positions=[])
 
     def _ticker_market(self, ticker: str) -> str:
-        return "US" if str(ticker or "").strip().isalpha() else "KR"
+        return infer_ticker_market(ticker, unknown="KR")
 
 
 class PositionMarketMetadataTests(unittest.TestCase):
@@ -46,6 +47,38 @@ class PositionMarketMetadataTests(unittest.TestCase):
 
         self.assertEqual(saved[0]["market"], "US")
         self.assertEqual(saved[1]["market"], "KR")
+
+    def test_save_positions_uses_currency_before_dotted_ticker_heuristic(self) -> None:
+        bot = _StateBot()
+        bot.risk.positions = [{"ticker": "BRK.B", "qty": 1, "display_currency": "USD"}]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_runtime_path(*parts: str, make_parents: bool = True) -> Path:
+                path = root.joinpath(*parts)
+                if make_parents:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                return path
+
+            with patch("bot.state.get_runtime_path", side_effect=fake_runtime_path):
+                bot._save_positions()
+
+            saved = json.loads((root / "state" / "live_open_positions.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(saved[0]["market"], "US")
+
+    def test_dotted_us_ticker_market_inference_is_us(self) -> None:
+        self.assertEqual(TradingBot._ticker_market(object(), "BRK.B"), "US")  # type: ignore[arg-type]
+        self.assertEqual(live_preflight._position_market_from_ticker("BRK.B"), "US")
+        self.assertEqual(live_preflight._position_market_from_ticker("005930"), "KR")
+
+    def test_preflight_accepts_dotted_us_ticker_with_us_market(self) -> None:
+        check = self._open_position_check(
+            [{"ticker": "BRK.B", "market": "US", "qty": 1, "display_currency": "USD"}]
+        )
+
+        self.assertEqual(check.status, "PASS")
 
     def test_normalize_position_metadata_sets_explicit_market(self) -> None:
         bot = SimpleNamespace(
@@ -77,7 +110,7 @@ class PositionMarketMetadataTests(unittest.TestCase):
                 _mode="live",
                 risk=SimpleNamespace(cash=1000.0, positions=[]),
                 _verify_live_positions=lambda saved: saved,
-                _ticker_market=lambda ticker: "US" if str(ticker).isalpha() else "KR",
+                _ticker_market=lambda ticker: infer_ticker_market(ticker, unknown="KR"),
                 _current_session_date_str=lambda market: "2026-05-15",
                 _normalize_position_metadata=lambda pos, market, **_: pos.update({"market": market}) or pos,
                 _save_positions=save_positions,

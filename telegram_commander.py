@@ -16,6 +16,7 @@ import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from logger import get_trading_logger
+from runtime.market_resolver import infer_ticker_market, resolve_position_market
 from telegram_reporter import (
     _display_ticker,
     _ko_action,
@@ -1046,14 +1047,14 @@ def _fmt_price_for_market(value: float, market: str) -> str:
 
 def _display_symbol(ticker: str, market: str = "", name: str = "") -> str:
     raw_ticker = str(ticker or "").strip().upper()
-    inferred_market = market or ("US" if raw_ticker.replace(".", "").isalpha() else "KR")
+    inferred_market = market or infer_ticker_market(raw_ticker, unknown="KR")
     return _display_ticker(raw_ticker, inferred_market, name or "")
 
 
 def _status_positions(bot) -> list[str]:
     lines = []
     for p in bot.risk.positions:
-        market = "US" if str(p.get("ticker", "")).replace(".", "").isalpha() else "KR"
+        market = resolve_position_market(p, unknown="KR")
         ticker_disp = _display_symbol(p.get("ticker", "-"), market, p.get("name", "") or "")
         entry = float(p.get("display_avg_price", p.get("avg_price", p.get("entry", 0))) or 0)
         current = float(p.get("display_current_price", p.get("current_price", entry)) or 0)
@@ -1365,7 +1366,7 @@ def _cmd_positions(bot) -> str:
     lines = ["📦 <b>보유 포지션</b>", "━━━━━━━━"]
 
     for p in pos:
-        market = "US" if str(p.get("ticker", "")).replace(".", "").isalpha() else "KR"
+        market = resolve_position_market(p, unknown="KR")
         is_us = market == "US"
         ticker_disp = _display_symbol(p.get("ticker", "-"), market, p.get("name", "") or "")
         entry = float(p.get("display_avg_price", p.get("entry", 0)) or 0)
@@ -1508,7 +1509,7 @@ def _cmd_positions_from_broker_truth(bot) -> str:
             continue
         local_market = str(local.get("market", "") or "").upper()
         if not local_market:
-            local_market = "US" if str(local.get("ticker", "")).replace(".", "").isalpha() else "KR"
+            local_market = resolve_position_market(local, unknown="KR")
         if local_market not in fallback_markets:
             continue
         ticker = str(local.get("ticker", "") or "")
@@ -1926,7 +1927,7 @@ def _cmd_trades(bot, args: list) -> str:
         for t in grouped[day]:
             side   = t.get("side", "-")
             ticker = t.get("ticker", "-")
-            mkt    = "US" if str(ticker).isalpha() and len(str(ticker)) <= 5 else "KR"
+            mkt    = resolve_position_market(t, unknown="KR")
             ticker_disp = _display_symbol(ticker, mkt, t.get("name", "") or "")
             qty    = t.get("qty", 0)
             price  = t.get("price", 0)

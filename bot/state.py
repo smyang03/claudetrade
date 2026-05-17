@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover - python<3.9 fallback
 
 from runtime_paths import get_runtime_path
 from logger import get_trading_logger
+from runtime.market_resolver import resolve_position_market
 
 log = get_trading_logger()
 KST = ZoneInfo("Asia/Seoul")
@@ -82,24 +83,7 @@ class StateMixin:
             log.info(f"[포지션 저장] {tickers} ({len(carry)}개) → {_path}")
 
     def _saved_position_market(self, pos: dict) -> str:
-        raw_market = str((pos or {}).get("market") or "").strip().upper()
-        if raw_market in {"KR", "US"}:
-            return raw_market
-        ticker = str((pos or {}).get("ticker") or "").strip()
-        if ticker:
-            resolver = getattr(self, "_ticker_market", None)
-            if callable(resolver):
-                try:
-                    resolved = str(resolver(ticker) or "").strip().upper()
-                    if resolved in {"KR", "US"}:
-                        return resolved
-                except Exception:
-                    pass
-            return "US" if ticker.upper().isalpha() else "KR"
-        currency = str((pos or {}).get("display_currency") or "").strip().upper()
-        if currency == "USD":
-            return "US"
-        return "KR"
+        return resolve_position_market(pos, unknown="KR")
 
     def _save_pending_orders(self):
         self._normalize_pending_orders()
@@ -301,15 +285,14 @@ class StateMixin:
         positions = []
         for pos in data.get("positions", []) or []:
             ticker = str(pos.get("ticker", "") or "")
-            if ticker and self._ticker_market(ticker) == market:
+            if ticker and resolve_position_market(pos, unknown="") == market:
                 positions.append(pos)
             else:
                 changed = True
         pending_orders = []
         for order in data.get("pending_orders", []) or []:
             ticker = str(order.get("ticker", "") or "")
-            order_market = str(order.get("market", "") or "")
-            inferred_market = order_market or self._ticker_market(ticker)
+            inferred_market = resolve_position_market(order, unknown="")
             if ticker and inferred_market == market:
                 order["market"] = market
                 pending_orders.append(order)

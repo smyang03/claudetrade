@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import trading_bot
+from runtime.market_resolver import infer_ticker_market
 
 
 class _PathB:
@@ -26,7 +27,7 @@ def _bot_with_pending(order: dict) -> SimpleNamespace:
     bot.v2_partial_fill_policy = None
     bot.pathb = _PathB()
     bot._funnel = {"KR": {"filled": 0}, "US": {"filled": 0}}
-    bot._ticker_market = lambda ticker: "US" if str(ticker).replace(".", "").isalpha() else "KR"
+    bot._ticker_market = lambda ticker: infer_ticker_market(ticker, unknown="KR")
     bot._local_filled_qty_for_order = (
         lambda market, ticker, order_no: trading_bot.TradingBot._local_filled_qty_for_order(
             bot,

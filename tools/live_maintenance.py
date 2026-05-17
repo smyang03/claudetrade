@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
+from runtime.market_resolver import resolve_position_market
 from runtime_paths import get_runtime_path
 
 
@@ -101,15 +102,35 @@ def _cmdline_text(cmdline: Iterable[str]) -> str:
     return " ".join(str(item) for item in cmdline).replace("\\", "/")
 
 
+def _cmdline_has_option_value(cmdline: Iterable[str], option: str, value: str) -> bool:
+    tokens = [str(item).strip().strip("\"'").lower() for item in cmdline if str(item or "").strip()]
+    option_key = str(option or "").strip().lower()
+    expected = str(value or "").strip().lower()
+    for idx, token in enumerate(tokens):
+        if token == option_key:
+            if idx + 1 < len(tokens) and tokens[idx + 1].strip("\"'").lower() == expected:
+                return True
+            continue
+        if token.startswith(f"{option_key}=") and token.split("=", 1)[1].strip("\"'").lower() == expected:
+            return True
+    text = _cmdline_text(tokens).lower()
+    pattern = rf"(?:^|\s){re.escape(option_key)}(?:=|\s+){re.escape(expected)}(?:\s|$)"
+    return bool(re.search(pattern, text))
+
+
+def _cmdline_is_live_mode(cmdline: Iterable[str]) -> bool:
+    return not _cmdline_has_option_value(cmdline, "--mode", "paper")
+
+
 def _classify_process(cmdline: Iterable[str]) -> str:
     text = _cmdline_text(cmdline).lower()
     if "trading_bot.py" in text and "--live" in text:
         return "live_bot"
-    if "live_guardian.py" in text and "--watch" in text and "--mode" in text and " live" in f" {text} ":
+    if "live_guardian.py" in text and "--watch" in text and _cmdline_is_live_mode(cmdline):
         return "guardian"
     if "dashboard_server.py" in text:
         return "dashboard"
-    if "preopen_scheduler.py" in text and "--mode" in text and " live" in f" {text} ":
+    if "preopen_scheduler.py" in text and _cmdline_is_live_mode(cmdline):
         return "preopen_scheduler"
     return ""
 
@@ -309,24 +330,14 @@ def _path_run_id_from_position(pos: dict[str, Any]) -> str:
 
 
 def _infer_position_market(pos: dict[str, Any]) -> str:
-    raw = str(pos.get("market") or "").strip().upper()
-    if raw in {"KR", "US"}:
-        return raw
+    resolved = resolve_position_market(pos, unknown="")
+    if resolved:
+        return resolved
     path_run_id = _path_run_id_from_position(pos)
     if "_US_" in path_run_id:
         return "US"
     if "_KR_" in path_run_id:
         return "KR"
-    currency = str(pos.get("display_currency") or pos.get("currency") or "").strip().upper()
-    if currency == "USD":
-        return "US"
-    if currency == "KRW":
-        return "KR"
-    ticker = str(pos.get("ticker") or "").strip()
-    if ticker.isdigit():
-        return "KR"
-    if ticker and ticker.upper() == ticker and any(ch.isalpha() for ch in ticker):
-        return "US"
     return ""
 
 

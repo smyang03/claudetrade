@@ -36,6 +36,7 @@ if str(ROOT) not in sys.path:
 KST = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
 
 from bot.session_date import resolve_session_date
+from runtime.market_resolver import infer_ticker_market
 from runtime_paths import get_runtime_path
 
 LIVE_CONFIG_KEYS = {
@@ -1759,10 +1760,7 @@ def _token_checks(mode: str) -> list[CheckResult]:
 
 
 def _position_market_from_ticker(ticker: str) -> str:
-    raw = str(ticker or "").strip().upper()
-    if not raw:
-        return ""
-    return "US" if raw.isalpha() else "KR"
+    return infer_ticker_market(ticker, unknown="")
 
 
 def _open_positions_market_metadata_check(mode: str) -> CheckResult:

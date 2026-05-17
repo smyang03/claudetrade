@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import Mock, patch
 
+from runtime.market_resolver import infer_ticker_market
 from trading_bot import TradingBot
 
 
@@ -54,7 +55,7 @@ class _Risk:
             }
             event = {
                 "side": "sell",
-                "market": "US" if ticker.isalpha() else "KR",
+                "market": infer_ticker_market(ticker, unknown="KR"),
                 "ticker": ticker,
                 "qty": close_qty,
                 "price": float(exit_price or 0),
@@ -100,7 +101,7 @@ class _Risk:
             }
             event = {
                 "side": "sell",
-                "market": "US" if ticker.isalpha() else "KR",
+                "market": infer_ticker_market(ticker, unknown="KR"),
                 "ticker": ticker,
                 "qty": qty,
                 "price": float(exit_price or 0),

@@ -12,6 +12,7 @@ from config.v2 import DEFAULT_V2_CONFIG
 from learning.approval_queue import BrainApprovalQueue
 from lifecycle.event_store import EventStore
 from runtime.broker_truth_snapshot import load_broker_truth_snapshot
+from runtime.market_resolver import resolve_position_market
 from runtime_paths import get_runtime_path
 from bot.entry_timing import build_entry_timing_summary
 
@@ -228,9 +229,7 @@ def _positions_from_bot(
     for pos in raw_positions:
         if not isinstance(pos, dict):
             continue
-        pos_market = str(pos.get("market", "") or "")
-        if not pos_market:
-            pos_market = "US" if str(pos.get("ticker", "")).replace(".", "").isalpha() else "KR"
+        pos_market = resolve_position_market(pos, unknown="KR")
         pos_ticker = str(pos.get("ticker", "") or "")
         key = (pos_market.upper(), pos_ticker.upper() if pos_market.upper() == "US" else pos_ticker)
         local_by_key[key] = pos
@@ -246,9 +245,7 @@ def _positions_from_bot(
         pathb_plan = pos.get("pathb_plan") if isinstance(pos, dict) else {}
         if not isinstance(pathb_plan, dict):
             pathb_plan = {}
-        market = str(pos.get("market", "") or "")
-        if not market:
-            market = "US" if str(pos.get("ticker", "")).replace(".", "").isalpha() else "KR"
+        market = resolve_position_market(pos, unknown="KR")
         ticker = str(pos.get("ticker", "") or "")
         name = str(pos.get("name", "") or pathb_plan.get("name", "") or "").strip()
         if not name and bot is not None and hasattr(bot, "_lookup_ticker_name"):

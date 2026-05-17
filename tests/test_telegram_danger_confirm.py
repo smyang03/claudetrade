@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import telegram_commander
+from runtime.market_resolver import infer_ticker_market
 
 
 class _Bot:
@@ -17,7 +18,7 @@ class _Bot:
         self.current_market = "KR"
 
     def _ticker_market(self, ticker):
-        return "US" if str(ticker).isalpha() else "KR"
+        return infer_ticker_market(ticker, unknown="KR")
 
 
 def _nonce(text: str) -> str:
