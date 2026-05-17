@@ -4136,6 +4136,11 @@ class PathBRuntime:
         if callable(saver):
             saver()
 
+    def _save_pending_orders_if_possible(self) -> None:
+        saver = getattr(self.bot, "_save_pending_orders", None)
+        if callable(saver):
+            saver()
+
     def reconcile_order_unknowns(
         self,
         market: str,
@@ -5672,6 +5677,10 @@ class PathBRuntime:
             kept.append(order)
         if removed:
             orders[:] = kept
+            try:
+                self._save_pending_orders_if_possible()
+            except Exception:
+                pass
             try:
                 self._save_positions_if_possible()
             except Exception:

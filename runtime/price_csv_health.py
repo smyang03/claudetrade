@@ -506,11 +506,21 @@ def price_csv_health_summary(
         market_key,
         pd.Timestamp(datetime.now().date()),
     )
+    def _summary_ticker_key(value: Any) -> str:
+        text = str(value or "").strip()
+        return text.upper() if market_key == "US" else text
+
     files = sorted(price_dir.glob(f"{market_key.lower()}_*.csv")) if price_dir.exists() else []
-    by_ticker = {price_csv_identity(path, market_key)[1]: path for path in files}
+    by_ticker: dict[str, Path] = {}
+    for path in files:
+        ticker_key = _summary_ticker_key(price_csv_identity(path, market_key)[1])
+        if ticker_key:
+            by_ticker[ticker_key] = path
     if include_tickers:
         for ticker in include_tickers:
-            by_ticker.setdefault(str(ticker), price_dir / f"{market_key.lower()}_{ticker}.csv")
+            ticker_key = _summary_ticker_key(ticker)
+            if ticker_key:
+                by_ticker.setdefault(ticker_key, price_dir / f"{market_key.lower()}_{ticker_key}.csv")
 
     total = len(by_ticker)
     counts = {
@@ -531,6 +541,7 @@ def price_csv_health_summary(
     }
     fresh_count = 0
     samples: dict[str, list[dict[str, Any]]] = {key: [] for key in counts}
+    status_tickers: dict[str, list[str]] = {key: [] for key in counts}
     last_dates: list[str] = []
     quality_tickers: dict[str, list[str]] = {
         "ohlc_logic_error": [],
@@ -588,6 +599,7 @@ def price_csv_health_summary(
                     f"calendar={freshness.get('calendar_source')}"
                 )
         counts[status] = counts.get(status, 0) + 1
+        status_tickers.setdefault(status, []).append(ticker)
         if status == "ok":
             fresh_count += 1
         if result.last_date:
@@ -636,5 +648,6 @@ def price_csv_health_summary(
         "oldest_last_date": min(last_dates) if last_dates else "",
         "newest_last_date": max(last_dates) if last_dates else "",
         "quality_tickers": quality_tickers,
+        "status_tickers": {key: sorted(value) for key, value in status_tickers.items()},
         "samples": samples,
     }

@@ -90,6 +90,31 @@ class LivePreflightPathBConflictTests(unittest.TestCase):
         self.assertTrue(conflicts[0]["do_not_start"])
         self.assertTrue(conflicts[0]["manual_reconciliation_required"])
 
+    def test_broker_conflict_remediation_tool_uses_conflict_identity(self) -> None:
+        tool = live_preflight._pathb_broker_conflict_remediation_tool(
+            [
+                {
+                    "market": "KR",
+                    "ticker": "005930",
+                    "path_run_id": "path_kr_005930",
+                    "do_not_start": True,
+                }
+            ],
+            [
+                {
+                    "market": "US",
+                    "ticker": "SOFI",
+                    "path_run_id": "path_sofi",
+                    "do_not_start": False,
+                }
+            ],
+        )
+
+        self.assertEqual(
+            tool,
+            "python -m tools.reconcile_live_truth --market KR --ticker 005930 --path-run-id path_kr_005930 --dry-run",
+        )
+
     def test_acked_entry_with_matching_local_and_broker_position_is_recoverable(self) -> None:
         item = {
             "market": "US",

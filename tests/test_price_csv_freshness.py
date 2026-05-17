@@ -304,6 +304,23 @@ class PriceCsvFreshnessTests(unittest.TestCase):
         self.assertEqual(summary["counts"]["too_few_rows_csv"], 1)
         self.assertTrue(summary["samples"]["ok"][0]["quality"]["too_few_rows"])
 
+    def test_health_summary_include_tickers_reports_all_missing_status_tickers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tickers = [f"MISS{i:02d}" for i in range(35)]
+
+            summary = price_csv_health.price_csv_health_summary(
+                root,
+                "US",
+                expected_date=pd.Timestamp("2026-05-15"),
+                include_tickers=tickers,
+            )
+
+        self.assertEqual(summary["total"], 35)
+        self.assertEqual(summary["counts"]["missing_csv"], 35)
+        self.assertEqual(summary["status_tickers"]["missing_csv"], tickers)
+        self.assertEqual(len(summary["samples"]["missing_csv"]), 30)
+
 
 if __name__ == "__main__":
     unittest.main()

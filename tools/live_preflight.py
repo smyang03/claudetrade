@@ -648,6 +648,25 @@ def _pathb_broker_truth_conflicts(
     return conflicts
 
 
+def _pathb_broker_conflict_remediation_tool(
+    broker_conflict_blockers: list[dict[str, Any]],
+    broker_conflicts: list[dict[str, Any]],
+) -> str:
+    conflict = (broker_conflict_blockers or broker_conflicts or [{}])[0]
+    market = str(conflict.get("market") or "").upper()
+    ticker = str(conflict.get("ticker") or "").strip()
+    path_run_id = str(conflict.get("path_run_id") or "").strip()
+    parts = ["python", "-m", "tools.reconcile_live_truth"]
+    if market:
+        parts.extend(["--market", market])
+    if ticker:
+        parts.extend(["--ticker", ticker])
+    if path_run_id:
+        parts.extend(["--path-run-id", path_run_id])
+    parts.append("--dry-run")
+    return subprocess.list2cmdline(parts)
+
+
 @dataclass
 class CheckResult:
     name: str
@@ -1446,7 +1465,10 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                     "accepted_exception": False,
                     "remediation_required": bool(broker_conflicts),
                     "auto_remediation": bool(broker_conflict_recoverable) and not bool(broker_conflict_blockers),
-                    "remediation_tool": "python -m tools.reconcile_live_truth --market US --ticker SOFI --dry-run",
+                    "remediation_tool": _pathb_broker_conflict_remediation_tool(
+                        broker_conflict_blockers,
+                        broker_conflicts,
+                    ),
                     "operator_action": (
                         "verify broker positions/open orders/today fills and reconcile local Path B state before live start"
                         if broker_conflicts
@@ -2594,9 +2616,18 @@ def _price_csv_checks() -> list[CheckResult]:
         rows = samples.get(key) if isinstance(samples.get(key), list) else []
         return {str(item.get("ticker") or "").strip() for item in rows if isinstance(item, dict) and item.get("ticker")}
 
+    def _status_tickers(summary: dict[str, Any], key: str) -> set[str]:
+        status_tickers = summary.get("status_tickers") if isinstance(summary.get("status_tickers"), dict) else {}
+        rows = status_tickers.get(key)
+        if isinstance(rows, list):
+            return {str(item or "").strip() for item in rows if str(item or "").strip()}
+        return _sample_tickers(summary, key)
+
     for market in ("KR", "US"):
+        active_universe = _price_csv_active_universe(market)
+        active_tickers = set(active_universe.get("tickers") or [])
         try:
-            summary = price_csv_health_summary(ROOT, market)
+            summary = price_csv_health_summary(ROOT, market, include_tickers=active_tickers)
         except Exception as exc:
             checks.append(CheckResult(f"price_csv.{market.lower()}", "FAIL", f"price CSV health failed: {exc}"))
             continue
@@ -2611,8 +2642,6 @@ def _price_csv_checks() -> list[CheckResult]:
         flat_zero_rows = int(counts.get("flat_ohlc_zero_volume_rows", 0))
         latest_flat_zero_csv = int(counts.get("latest_flat_ohlc_zero_volume_csv", 0))
         too_few_rows_csv = int(counts.get("too_few_rows_csv", 0))
-        active_universe = _price_csv_active_universe(market)
-        active_tickers = set(active_universe.get("tickers") or [])
         quality_tickers = summary.get("quality_tickers") if isinstance(summary.get("quality_tickers"), dict) else {}
         active_latest_flat_zero = sorted(
             active_tickers & {str(item) for item in (quality_tickers.get("latest_flat_ohlc_zero_volume") or [])}
@@ -2620,10 +2649,12 @@ def _price_csv_checks() -> list[CheckResult]:
         active_too_few_rows = sorted(
             active_tickers & {str(item) for item in (quality_tickers.get("too_few_rows") or [])}
         )
-        active_missing = sorted(active_tickers & _sample_tickers(summary, "missing_csv"))
-        active_malformed = sorted(active_tickers & _sample_tickers(summary, "malformed_csv"))
-        active_stale = sorted(active_tickers & _sample_tickers(summary, "stale_csv"))
-        active_ohlc_error = sorted(active_tickers & _sample_tickers(summary, "ohlc_logic_error_csv"))
+        active_missing = sorted(active_tickers & _status_tickers(summary, "missing_csv"))
+        active_malformed = sorted(active_tickers & _status_tickers(summary, "malformed_csv"))
+        active_stale = sorted(active_tickers & _status_tickers(summary, "stale_csv"))
+        active_ohlc_error = sorted(
+            active_tickers & {str(item) for item in (quality_tickers.get("ohlc_logic_error") or [])}
+        )
         active_latest_ohlc_error = sorted(
             active_tickers & {str(item) for item in (quality_tickers.get("latest_ohlc_logic_error") or [])}
         )

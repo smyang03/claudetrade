@@ -45,6 +45,7 @@ class _Bot:
         self.price_cache_raw: dict[str, float] = {}
         self.price_cache: dict[str, float] = {}
         self.saved = False
+        self.pending_saved = False
 
     def _current_session_date_str(self, market: str) -> str:
         return "2026-04-27"
@@ -57,6 +58,9 @@ class _Bot:
 
     def _save_positions(self) -> None:
         self.saved = True
+
+    def _save_pending_orders(self) -> None:
+        self.pending_saved = True
 
 
 class _Control:
@@ -321,6 +325,7 @@ class PathBSellReconcileTests(unittest.TestCase):
             self.assertNotIn("pathb_pending_sell_order_no", pos)
             self.assertEqual(runtime.bot.pending_orders, [])
             self.assertTrue(runtime.bot.saved)
+            self.assertTrue(runtime.bot.pending_saved)
             self.assertEqual(runtime.bot.risk.positions[0]["qty"], 12)
 
     def test_session_end_exit_unknown_partial_sell_stays_retryable(self) -> None:

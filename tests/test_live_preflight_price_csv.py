@@ -7,6 +7,38 @@ from tools import live_preflight
 
 
 class LivePreflightPriceCsvTests(unittest.TestCase):
+    def _healthy_summary(self, market: str) -> dict:
+        return {
+            "market": market,
+            "total": 1,
+            "fresh_count": 1,
+            "fresh_ratio": 1.0,
+            "counts": {
+                "ok": 1,
+                "missing_csv": 0,
+                "malformed_csv": 0,
+                "stale_csv": 0,
+                "ohlc_logic_error_csv": 0,
+                "ohlc_logic_error_rows": 0,
+                "latest_ohlc_logic_error_csv": 0,
+                "flat_ohlc_zero_volume_csv": 0,
+                "flat_ohlc_zero_volume_rows": 0,
+                "latest_flat_ohlc_zero_volume_csv": 0,
+                "too_few_rows_csv": 0,
+            },
+            "quality_tickers": {
+                "ohlc_logic_error": [],
+                "latest_ohlc_logic_error": [],
+                "latest_flat_ohlc_zero_volume": [],
+                "too_few_rows": [],
+            },
+            "status_tickers": {},
+            "expected_last_date": "2026-05-15",
+            "oldest_last_date": "2026-05-15",
+            "newest_last_date": "2026-05-15",
+            "samples": {},
+        }
+
     def test_active_latest_flat_zero_volume_promotes_integrity_to_fail(self) -> None:
         summary = {
             "market": "US",
@@ -94,6 +126,43 @@ class LivePreflightPriceCsvTests(unittest.TestCase):
         self.assertEqual(integrity.data["active_blocking_issues"], {})
         self.assertEqual(integrity.data["active_quality_issues"]["latest_ohlc_logic_error"], [])
         self.assertIn("active_blocking_issues=0", integrity.detail)
+
+    def test_active_missing_csv_is_blocking_even_when_not_in_sample(self) -> None:
+        seen_include_tickers: dict[str, set[str]] = {}
+
+        def fake_summary(root, market, *, include_tickers=None):
+            seen_include_tickers[market] = set(include_tickers or [])
+            summary = self._healthy_summary(market)
+            if market == "US" and "MISSING" in seen_include_tickers[market]:
+                summary.update(
+                    {
+                        "total": 1,
+                        "fresh_count": 0,
+                        "fresh_ratio": 0.0,
+                        "counts": {**summary["counts"], "ok": 0, "missing_csv": 1},
+                        "status_tickers": {"missing_csv": ["MISSING"]},
+                        "samples": {"missing_csv": []},
+                    }
+                )
+            return summary
+
+        def fake_active_universe(market):
+            if market == "US":
+                return {"market": "US", "tickers": ["MISSING"], "sources": {}, "selection_date": "2026-05-15"}
+            return {"market": market, "tickers": [], "sources": {}, "selection_date": "2026-05-15"}
+
+        with patch("runtime.price_csv_health.price_csv_health_summary", side_effect=fake_summary), patch.object(
+            live_preflight,
+            "_price_csv_active_universe",
+            side_effect=fake_active_universe,
+        ):
+            checks = live_preflight._price_csv_checks()
+
+        integrity = next(item for item in checks if item.name == "data.price_csv_integrity.us")
+        self.assertEqual(seen_include_tickers["US"], {"MISSING"})
+        self.assertEqual(integrity.status, "FAIL")
+        self.assertEqual(integrity.data["active_quality_issues"]["missing_csv"], ["MISSING"])
+        self.assertEqual(integrity.data["active_blocking_issues"]["missing_csv"], ["MISSING"])
 
 
 if __name__ == "__main__":
