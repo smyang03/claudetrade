@@ -4562,11 +4562,17 @@ def _ml_db_digest(market: str) -> dict:
         "enabled": False,
         "exists": db_path.exists(),
         "total": 0,
+        "total_all": 0,
+        "total_live_non_sim": 0,
+        "simulated_rows": 0,
+        "known_gap_ranges": [],
+        "gap_excluded": True,
         "today": 0,
         "buy_signal": 0,
         "filled": 0,
         "with_outcome": 0,
         "forward_ready": 0,
+        "forward_ready_all": 0,
         "forward_ready_rate": 0.0,
         "last_ts": "",
         "recent_days": [],
@@ -4575,29 +4581,67 @@ def _ml_db_digest(market: str) -> dict:
         return digest
     try:
         import sqlite3
+        from ml.decision_gap_policy import (
+            known_unrecoverable_decision_ranges,
+            live_training_data_sources,
+            verified_recovery_data_sources,
+        )
+
         session_date = _session_trade_date(market).isoformat()
+        known_ranges = known_unrecoverable_decision_ranges()
+        live_sources = live_training_data_sources()
+        live_source_placeholders = ",".join("?" for _ in live_sources)
+        recovery_sources = verified_recovery_data_sources()
+        recovery_source_placeholders = ",".join("?" for _ in recovery_sources)
+        gap_clauses = []
+        gap_params = []
+        for item in known_ranges:
+            if recovery_sources:
+                gap_clauses.append(
+                    "AND (NOT (session_date BETWEEN ? AND ?) "
+                    f"OR COALESCE(data_source, 'live') IN ({recovery_source_placeholders}))"
+                )
+                gap_params.extend([item["start"], item["end"], *recovery_sources])
+            else:
+                gap_clauses.append("AND NOT (session_date BETWEEN ? AND ?)")
+                gap_params.extend([item["start"], item["end"]])
+        gap_clause = " ".join(gap_clauses)
+        live_safe_clause = (
+            f"market=? AND COALESCE(data_source, 'live') IN ({live_source_placeholders}) "
+            "AND COALESCE(is_simulated, 0)=0 "
+            f"{gap_clause}"
+        )
+        live_safe_params = [market, *live_sources, *gap_params]
         with sqlite3.connect(db_path) as conn:
             digest["enabled"] = True
-            digest["total"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=?", (market,)).fetchone()[0] or 0)
-            digest["today"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND session_date=?", (market, session_date)).fetchone()[0] or 0)
-            digest["buy_signal"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND session_date=? AND decision='BUY_SIGNAL'", (market, session_date)).fetchone()[0] or 0)
-            digest["filled"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND session_date=? AND filled=1", (market, session_date)).fetchone()[0] or 0)
-            digest["with_outcome"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND pnl_pct IS NOT NULL", (market,)).fetchone()[0] or 0)
-            digest["forward_ready"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND forward_1d IS NOT NULL", (market,)).fetchone()[0] or 0)
+            digest["known_gap_ranges"] = known_ranges
+            digest["total_all"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=?", (market,)).fetchone()[0] or 0)
+            digest["simulated_rows"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND COALESCE(is_simulated, 0) != 0", (market,)).fetchone()[0] or 0)
+            digest["total_live_non_sim"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause}", live_safe_params).fetchone()[0] or 0)
+            digest["total"] = digest["total_live_non_sim"]
+            digest["today"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause} AND session_date=?", [*live_safe_params, session_date]).fetchone()[0] or 0)
+            digest["buy_signal"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause} AND session_date=? AND decision='BUY_SIGNAL'", [*live_safe_params, session_date]).fetchone()[0] or 0)
+            digest["filled"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause} AND session_date=? AND filled=1", [*live_safe_params, session_date]).fetchone()[0] or 0)
+            digest["with_outcome"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause} AND pnl_pct IS NOT NULL", live_safe_params).fetchone()[0] or 0)
+            digest["forward_ready_all"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND forward_1d IS NOT NULL", (market,)).fetchone()[0] or 0)
+            digest["forward_ready"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause} AND forward_1d IS NOT NULL", live_safe_params).fetchone()[0] or 0)
             if digest["total"] > 0:
                 digest["forward_ready_rate"] = round((digest["forward_ready"] / digest["total"]) * 100.0, 1)
-            row = conn.execute("SELECT ts FROM decisions WHERE market=? ORDER BY id DESC LIMIT 1", (market,)).fetchone()
+            row = conn.execute(
+                f"SELECT ts FROM decisions WHERE {live_safe_clause} ORDER BY id DESC LIMIT 1",
+                live_safe_params,
+            ).fetchone()
             digest["last_ts"] = str(row[0]) if row and row[0] else ""
             day_rows = conn.execute(
-                """
+                f"""
                 SELECT session_date, COUNT(*) as n
                 FROM decisions
-                WHERE market=?
+                WHERE {live_safe_clause}
                 GROUP BY session_date
                 ORDER BY session_date DESC
                 LIMIT 7
                 """,
-                (market,),
+                live_safe_params,
             ).fetchall()
             digest["recent_days"] = [
                 {"date": str(r[0]), "count": int(r[1] or 0)}
@@ -7639,6 +7683,8 @@ def api_candidate_audit_summary():
         return jsonify({"ok": False, "error": "market must be KR or US"}), 400
     requested_session_date = str(request.args.get("date") or "").strip()
     session_date = _candidate_audit_date(market, mode)
+    latest_only = str(request.args.get("latest_only", "true")).lower() not in {"0", "false", "no", "raw"}
+    row_source = "audit_candidate_latest_rows" if latest_only else "audit_candidate_rows"
     try:
         horizon_min = int(request.args.get("horizon_min", "60") or 60)
     except Exception:
@@ -7683,11 +7729,11 @@ def api_candidate_audit_summary():
             params,
         ).fetchone() or {})
         totals = dict(conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS candidate_rows,
                    COUNT(DISTINCT ticker) AS unique_tickers,
                    COUNT(DISTINCT CASE WHEN filled_count > 0 THEN ticker END) AS filled_tickers
-            FROM audit_candidate_rows
+            FROM {row_source}
             WHERE session_date=? AND market=? AND runtime_mode=?
             """,
             params,
@@ -7695,13 +7741,13 @@ def api_candidate_audit_summary():
         classifications = [
             dict(row)
             for row in conn.execute(
-                """
+                f"""
                 SELECT COALESCE(classification, 'unknown') AS classification,
                        COUNT(*) AS rows,
                        COUNT(DISTINCT ticker) AS unique_tickers,
                        COUNT(DISTINCT CASE WHEN filled_count > 0 THEN ticker END) AS filled_tickers,
                        ROUND(AVG(CASE WHEN pnl_pct IS NOT NULL THEN pnl_pct END), 4) AS avg_pnl_pct
-                FROM audit_candidate_rows
+                FROM {row_source}
                 WHERE session_date=? AND market=? AND runtime_mode=?
                 GROUP BY COALESCE(classification, 'unknown')
                 ORDER BY rows DESC
@@ -7712,12 +7758,12 @@ def api_candidate_audit_summary():
         route_matrix = [
             dict(row)
             for row in conn.execute(
-                """
+                f"""
                 SELECT COALESCE(claude_action, '') AS claude_action,
                        COALESCE(route_final_action, '') AS route_final_action,
                        COUNT(*) AS rows,
                        COUNT(DISTINCT ticker) AS unique_tickers
-                FROM audit_candidate_rows
+                FROM {row_source}
                 WHERE session_date=? AND market=? AND runtime_mode=?
                 GROUP BY COALESCE(claude_action, ''), COALESCE(route_final_action, '')
                 ORDER BY rows DESC
@@ -7737,6 +7783,7 @@ def api_candidate_audit_summary():
                 runtime_mode=mode,
                 horizon_min=horizon_min,
                 limit=10,
+                latest_only=latest_only,
             )
             outcome_buckets = analysis.get("buckets", [])
             outcome_coverage = analysis.get("outcome_coverage", {})
@@ -7768,6 +7815,7 @@ def api_candidate_audit_summary():
             "session_date_fallback": bool(requested_session_date and requested_session_date != session_date),
             "market": market,
             "runtime_mode": mode,
+            "latest_only": latest_only,
             "calls": calls,
             "totals": totals,
             "classifications": classifications,
@@ -7800,6 +7848,8 @@ def api_candidate_audit_rows():
         return jsonify({"ok": False, "error": "market must be KR or US"}), 400
     requested_session_date = str(request.args.get("date") or "").strip()
     session_date = _candidate_audit_date(market, mode)
+    latest_only = str(request.args.get("latest_only", "true")).lower() not in {"0", "false", "no", "raw"}
+    row_source = "audit_candidate_latest_rows" if latest_only else "audit_candidate_rows"
     classification = str(request.args.get("classification") or "").strip()
     ticker = str(request.args.get("ticker") or "").strip().upper()
     try:
@@ -7864,7 +7914,7 @@ def api_candidate_audit_rows():
                        o.max_drawdown_pct AS outcome_max_drawdown_pct,
                        o.observed_at AS outcome_observed_at,
                        o.observed_price AS outcome_observed_price
-                FROM audit_candidate_rows r
+                FROM {row_source} r
                 LEFT JOIN audit_candidate_outcomes o
                   ON o.candidate_key = r.candidate_key
                  AND o.horizon_min = ?
@@ -7896,6 +7946,7 @@ def api_candidate_audit_rows():
             "session_date_fallback": bool(requested_session_date and requested_session_date != session_date),
             "market": market,
             "runtime_mode": mode,
+            "latest_only": latest_only,
             "outcome_horizon_min": outcome_horizon,
             "rows": rows,
         })
@@ -13044,10 +13095,10 @@ async function loadPathB() {
     ? `<table><thead><tr><th>종목</th><th>매수 경로</th><th>상태</th><th>매수 존</th><th>진입</th><th>청산</th><th>수익률</th><th>결과</th><th>Claude 근거</th><th>진입 태그</th><th>무효 조건</th></tr></thead><tbody>${recentRows}</tbody></table>`
     : '<div class="muted">오늘 클로드 가격 플랜 기록이 없습니다.</div>';
   const unknownRows = (b.order_unknown || []).map(r => `
-    <tr><td>${r.market || ''}</td><td>${r.display_ticker || r.ticker || ''}</td><td>${koPathBStatus(r.status || '')}</td><td>${koOrderUnknownResolution(r.order_unknown_resolution || '')}</td><td>${r.broker_position_evidence ? '있음' : '없음'}</td><td>${r.broker_today_fill_evidence ? '있음' : '없음'}</td><td>${r.path_a_origin_possible ? '가능' : '-'}</td><td>${r.broker_truth_last_success_at || ''}</td><td>${r.path_run_id || ''}</td></tr>
+    <tr><td>${r.market || ''}</td><td>${r.display_ticker || r.ticker || ''}</td><td>${koPathBStatus(r.status || '')}</td><td>${koOrderUnknownResolution(r.order_unknown_resolution || '')}</td><td>${r.manual_reconciliation_required ? '필요' : '-'}</td><td>${r.broker_position_evidence ? '있음' : '없음'}</td><td>${r.broker_today_fill_evidence ? '있음' : '없음'}</td><td>${r.path_a_origin_possible ? '가능' : '-'}</td><td>${r.broker_truth_last_success_at || ''}</td><td>${r.path_run_id || ''}</td></tr>
   `).join('');
   document.getElementById('pathb-unknown-table').innerHTML = unknownRows
-    ? `<table><thead><tr><th>시장</th><th>종목</th><th>상태</th><th>재판정</th><th>계좌보유</th><th>당일체결</th><th>A기인 가능</th><th>계좌조회</th><th>플랜ID</th></tr></thead><tbody>${unknownRows}</tbody></table>`
+    ? `<table><thead><tr><th>시장</th><th>종목</th><th>상태</th><th>재판정</th><th>수동확인</th><th>계좌보유</th><th>당일체결</th><th>A기인 가능</th><th>계좌조회</th><th>플랜ID</th></tr></thead><tbody>${unknownRows}</tbody></table>`
     : '<div class="muted">주문상태 불명 없음</div>';
   const counts = b.status_counts || {};
   document.getElementById('pathb-status').textContent = Object.keys(counts).length

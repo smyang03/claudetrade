@@ -61,6 +61,9 @@ def collect_preopen_candidate_news(
     limit: int | None = None,
     max_age_min: int | None = None,
     force: bool = False,
+    min_coverage_ratio: float = 0.0,
+    min_corp_news_total: int = 0,
+    fail_on_empty: bool = False,
 ) -> dict[str, Any]:
     market_key = market.upper()
     if market_key not in {"KR", "US"}:
@@ -106,19 +109,38 @@ def collect_preopen_candidate_news(
 
     elapsed = round(time.monotonic() - started, 2)
     coverage = (news_payload or {}).get("news_coverage", {}) if isinstance(news_payload, dict) else {}
+    corp_news_total = _corp_news_total(news_payload or {})
+    coverage_ratio = float(coverage.get("coverage_ratio", 0.0) or 0.0)
+    flags: list[str] = []
+    if corp_news_total <= 0:
+        flags.append(f"{market_key.lower()}_news_empty")
+    if coverage_ratio < float(min_coverage_ratio or 0.0):
+        flags.append(f"{market_key.lower()}_news_coverage_low")
+    if corp_news_total < int(min_corp_news_total or 0):
+        flags.append(f"{market_key.lower()}_corp_news_total_low")
+    if market_key == "KR" and len((news_payload or {}).get("market_news") or []) <= 0:
+        flags.append("kr_market_news_missing")
+    coverage_status = "empty" if corp_news_total <= 0 else "low_coverage" if flags else "ok"
+    ok = not (fail_on_empty and coverage_status == "empty")
     return {
+        "ok": ok,
         "market": market_key,
         "session_date": day,
         "mode": mode,
         "target_source": target_source,
         "target_count": len(targets),
-        "corp_news_total": _corp_news_total(news_payload or {}),
+        "corp_news_total": corp_news_total,
         "covered_ticker_count": coverage.get("covered_ticker_count", 0),
-        "coverage_ratio": coverage.get("coverage_ratio", 0.0),
+        "coverage_ratio": coverage_ratio,
+        "coverage_status": coverage_status,
+        "data_quality_flags": flags,
         "top_news_count": len((digest or {}).get("top_news", [])),
         "digest_path": str(ROOT / "data" / "daily_digest" / f"{day}_{market_key}.json"),
         "elapsed_sec": elapsed,
         "force": bool(force),
+        "min_coverage_ratio": float(min_coverage_ratio or 0.0),
+        "min_corp_news_total": int(min_corp_news_total or 0),
+        "fail_on_empty": bool(fail_on_empty),
     }
 
 
@@ -130,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--max-age-min", type=int, default=None)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--min-coverage-ratio", type=float, default=0.0)
+    parser.add_argument("--min-corp-news-total", type=int, default=0)
+    parser.add_argument("--fail-on-empty", action="store_true")
     args = parser.parse_args(argv)
 
     summary = collect_preopen_candidate_news(
@@ -139,9 +164,12 @@ def main(argv: list[str] | None = None) -> int:
         limit=args.limit,
         max_age_min=args.max_age_min,
         force=args.force,
+        min_coverage_ratio=args.min_coverage_ratio,
+        min_corp_news_total=args.min_corp_news_total,
+        fail_on_empty=args.fail_on_empty,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
+    return 0 if summary.get("ok", True) else 2
 
 
 if __name__ == "__main__":

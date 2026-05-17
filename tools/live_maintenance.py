@@ -252,6 +252,7 @@ def create_live_backup(
             continue
         if entry.get("copied") is False:
             optional_errors.append(entry)
+            continue
         manifest.append(entry)
 
     for name in BACKUP_STATE_FILES:

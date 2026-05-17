@@ -61,6 +61,20 @@ def _ticker_map(market: str, universe_tickers: Optional[List[str]] = None,
         result = {k: v for k, v in result.items() if k not in _INVERSE_TICKERS}
     return result
 
+
+def _external_data_production_ready() -> bool:
+    try:
+        from phase1_trainer.external_data_store import DEFAULT_DB_PATH, ExternalDataStore
+
+        return bool(ExternalDataStore(DEFAULT_DB_PATH).readiness_summary(initialize=False).get("production_ready"))
+    except Exception:
+        return False
+
+
+def _append_flag(flags: list[str], flag: str) -> None:
+    if flag and flag not in flags:
+        flags.append(flag)
+
 KR_TICKERS = {
     "005930": "삼성전자",
     "068270": "셀트리온",
@@ -1348,6 +1362,14 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     # VKOSPI 20+ 이면 인버스 ETF 포함 (결측(None)은 0으로 처리)
     _vkospi = float(_vkospi_val or 0)
     ticker_map = _ticker_map("KR", universe_tickers, include_inverse=_vkospi >= 20)
+    if not news.get("market_news"):
+        _append_flag(layer_a["data_quality_flags"], "kr_market_news_missing")
+    corp_news = news.get("corp_news") if isinstance(news.get("corp_news"), dict) else {}
+    covered_corp = sum(1 for ticker in ticker_map if int((corp_news.get(ticker) or {}).get("count", 0) or 0) > 0)
+    if ticker_map and covered_corp / len(ticker_map) < 0.5:
+        _append_flag(layer_a["data_quality_flags"], "kr_corp_news_coverage_low")
+    if not _external_data_production_ready():
+        _append_flag(layer_a["data_quality_flags"], "external_data_empty")
     layer_b = {}
 
     for ticker, name in ticker_map.items():
@@ -1542,6 +1564,8 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     # VIX 25+ 이상이면 인버스 ETF 포함 (약세 헤지 구간)
     _vix = _us_vix or 0
     ticker_map = _ticker_map("US", universe_tickers, include_inverse=float(_vix) >= 25)
+    if not _external_data_production_ready():
+        _append_flag(layer_a["data_quality_flags"], "external_data_empty")
     layer_b = {}
     shadow_rows = []
     pead_prompt_allowed = _pead_surprise_prompt_allowed("US", target_date)

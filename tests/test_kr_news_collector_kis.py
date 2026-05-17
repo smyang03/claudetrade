@@ -121,7 +121,7 @@ class KrNewsCollectorKisTests(unittest.TestCase):
         existing = {
             "date": "2026-05-15",
             "market_news": [],
-            "corp_news": {"005930": {"name": "Samsung", "items": [], "count": 0}},
+            "corp_news": {"005930": {"name": "Samsung", "items": [{"title": "x"}], "count": 1}},
             "disclosures": {},
             "target_tickers": ["005930"],
         }
@@ -143,6 +143,39 @@ class KrNewsCollectorKisTests(unittest.TestCase):
 
         self.assertEqual(result["target_tickers"], ["005930"])
         kis_news.assert_not_called()
+
+    def test_collect_day_force_false_recollects_matching_empty_existing_file(self) -> None:
+        existing = {
+            "date": "2026-05-15",
+            "market_news": [],
+            "corp_news": {"005930": {"name": "Samsung", "items": [], "count": 0}},
+            "disclosures": {},
+            "target_tickers": ["005930"],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            news_dir = Path(tmpdir)
+            (news_dir / "2026-05-15.json").write_text(
+                json.dumps(existing, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            kis_news = Mock(return_value=[])
+            with patch.object(collector, "NEWS_DIR", news_dir), \
+                 patch.object(collector, "TARGET_CORPS", {"005930": "Samsung"}), \
+                 patch.object(collector, "fetch_market_news", return_value=[]), \
+                 patch.object(collector, "fetch_kis_news", kis_news), \
+                 patch.object(collector, "fetch_naver_news", return_value=[]), \
+                 patch.object(collector, "fetch_bigkinds_news", return_value=[]), \
+                 patch.object(collector, "get_dart_corp_code", return_value=""), \
+                 patch.object(collector.time, "sleep", lambda *_args, **_kwargs: None), \
+                 patch.dict(collector.os.environ, {"KR_NEWS_ALLOW_EMPTY_REUSE": ""}, clear=False):
+                collector.collect_day(
+                    "2026-05-15",
+                    targets={"005930": "Samsung"},
+                    force=False,
+                )
+
+        kis_news.assert_called_once()
 
 
 if __name__ == "__main__":

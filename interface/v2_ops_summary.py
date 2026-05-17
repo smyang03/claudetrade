@@ -1483,6 +1483,7 @@ def _compact_path_runs(
                 "broker_open_order_count": broker_evidence.get("broker_open_order_count", 0),
                 "broker_today_fill_count": broker_evidence.get("broker_today_fill_count", 0),
                 "session_end_unresolved": bool(plan.get("session_end_unresolved", False)),
+                "manual_reconciliation_required": bool(plan.get("manual_reconciliation_required", False)),
                 "created_at": run.get("created_at", ""),
                 "updated_at": run.get("updated_at", ""),
             }

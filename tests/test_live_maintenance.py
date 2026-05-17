@@ -143,6 +143,7 @@ class LiveMaintenanceTests(unittest.TestCase):
             self.assertTrue((backup_dir / "v2_event_store.db").exists())
             self.assertEqual(manifest["optional_errors"][0]["role"], "sqlite-shm")
             self.assertFalse(manifest["optional_errors"][0]["copied"])
+            self.assertNotIn("sqlite-shm", {item["role"] for item in manifest["files"]})
 
     def test_broker_truth_report_reads_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -33,6 +33,12 @@ _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # ── logger ────────────────────────────────────────────────────────────────────
 sys.path.insert(0, str(_ROOT))
+from ml.decision_gap_policy import (
+    known_unrecoverable_decision_ranges,
+    live_training_data_sources,
+    verified_recovery_data_sources,
+)
+
 try:
     from logger import get_collector_logger
     _log = get_collector_logger()
@@ -267,6 +273,9 @@ def load_for_ml(
     with_forward_return: bool = False,
     start_date: str = None,
     end_date: str = None,
+    live_only: bool = True,
+    exclude_simulated: bool = True,
+    exclude_known_gaps: bool = True,
 ) -> "pd.DataFrame":
     """
     ML 학습용 데이터 로드.
@@ -300,6 +309,26 @@ def load_for_ml(
     if end_date:
         conditions.append("session_date <= ?")
         params.append(end_date)
+    if live_only:
+        live_sources = live_training_data_sources()
+        live_source_placeholders = ",".join("?" for _ in live_sources)
+        conditions.append(f"COALESCE(data_source, 'live') IN ({live_source_placeholders})")
+        params.extend(live_sources)
+        if exclude_simulated:
+            conditions.append("COALESCE(is_simulated, 0)=0")
+        if exclude_known_gaps:
+            recovery_sources = verified_recovery_data_sources()
+            recovery_source_placeholders = ",".join("?" for _ in recovery_sources)
+            for item in known_unrecoverable_decision_ranges():
+                if recovery_sources:
+                    conditions.append(
+                        "(NOT (session_date BETWEEN ? AND ?) "
+                        f"OR COALESCE(data_source, 'live') IN ({recovery_source_placeholders}))"
+                    )
+                    params.extend([item["start"], item["end"], *recovery_sources])
+                else:
+                    conditions.append("NOT (session_date BETWEEN ? AND ?)")
+                    params.extend([item["start"], item["end"]])
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = f"SELECT * FROM decisions {where} ORDER BY id"

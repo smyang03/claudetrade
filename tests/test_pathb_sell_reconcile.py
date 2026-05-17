@@ -275,6 +275,54 @@ class PathBSellReconcileTests(unittest.TestCase):
             self.assertFalse(run["plan"]["broker_today_sell_fill_evidence"])
             self.assertEqual(len(runtime.bot.risk.positions), 1)
 
+    def test_exit_order_unknown_still_held_without_sell_evidence_recovers_to_filled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": [{"ticker": "SNAP", "qty": 12, "avg_price": 6.0, "current_price": 6.1}]},
+                ccld_provider=lambda market, day: [],
+            )
+            pos = runtime.bot.risk.positions[0]
+            pos["pathb_closing"] = datetime.now(KST).isoformat(timespec="seconds")
+            pos["pathb_pending_sell_order_no"] = "sell1"
+            pos["pathb_pending_sell_qty"] = 12
+            pos["pathb_pending_close_reason"] = "CLOSED_CLAUDE_PRICE_PRE_CLOSE"
+            pos["pathb_pending_sell_price"] = 6.1
+            runtime.bot.pending_orders.append(
+                {
+                    "market": "US",
+                    "ticker": "SNAP",
+                    "side": "sell",
+                    "pathb_path_run_id": plan.path_run_id,
+                    "order_no": "sell1",
+                }
+            )
+
+            runtime.finalize_sell_pending_at_session_close("US")
+            before = runtime.store.find_path_run(plan.path_run_id)
+            self.assertEqual(before["status"], "ORDER_UNKNOWN")
+            self.assertIn("session_end_unresolved", before["plan"]["order_unknown_detail"])
+
+            summary = runtime.reconcile_order_unknowns("US", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_position"], 1)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "exit_sell_missing_still_held")
+            self.assertTrue(run["plan"]["exit_sell_missing_still_held"])
+            self.assertFalse(run["plan"]["manual_reconciliation_required"])
+            self.assertFalse(run["plan"]["session_end_unresolved"])
+            self.assertEqual(run["plan"]["stale_exit_execution_id"], "sell1")
+            self.assertEqual(run["plan"]["exit_execution_id"], "")
+            self.assertEqual(run["plan"]["sell_order_sent_at"], "")
+            self.assertEqual(run["plan"]["exit_qty"], 0)
+            self.assertFalse(PathBRuntime._pathb_sell_in_flight(run, pos))
+            self.assertNotIn("pathb_closing", pos)
+            self.assertNotIn("pathb_pending_sell_order_no", pos)
+            self.assertEqual(runtime.bot.pending_orders, [])
+            self.assertTrue(runtime.bot.saved)
+            self.assertEqual(runtime.bot.risk.positions[0]["qty"], 12)
+
     def test_session_end_exit_unknown_partial_sell_stays_retryable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan = _runtime(

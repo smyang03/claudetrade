@@ -65,6 +65,7 @@ LIVE_CONFIG_KEYS = {
     "KR_VI_RETRY_BACKOFF_SEC",
     "KR_VI_CACHE_TTL_SEC",
     "V2_LIFECYCLE_ENABLED",
+    "PATHA_TIMING_LIFECYCLE_ENABLED",
     "V2_FIXED_SIZING_ENABLED",
     "V2_BRAIN_POLICY",
     "V2_FRESH_BRAIN_START",
@@ -229,6 +230,422 @@ REQUIRED_TABLE_COLUMNS = {
     },
     "phase_validation_runs": {"id", "phase", "ok", "qa", "simulation_report", "report_json", "created_at"},
 }
+
+PATHB_ACTIVE_ISH_STATUSES = {
+    "ORDER_UNKNOWN",
+    "ORDER_ACKED",
+    "ORDER_SENT",
+    "PARTIAL_FILLED",
+    "FILLED",
+    "SELL_SENT",
+    "SELL_ACKED",
+    "SELL_PARTIAL_FILLED",
+}
+PATHB_TERMINAL_EVENT_BY_STATUS = {
+    "FILLED": "FILLED",
+    "PARTIAL_FILLED": "FILLED",
+    "CLOSED": "CLOSED",
+}
+PATHB_PRE_RUN_EVENT_TYPES = {"CLAUDE_PRICE_PLAN_GATE_WARNING", "SAFETY_BLOCKED"}
+
+
+def _safe_json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        data = json.loads(str(value or "{}"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _ticker_key(market: str, ticker: Any) -> str:
+    text = str(ticker or "").strip()
+    return text.upper() if str(market or "").upper() == "US" else text
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(str(value or "").replace(",", "")))
+    except Exception:
+        return int(default)
+
+
+def _read_json_list(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "[]")
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _path_run_id_from_payload(payload: dict[str, Any]) -> str:
+    return str(payload.get("path_run_id") or payload.get("pathb_path_run_id") or "").strip()
+
+
+def _pathb_like_missing_path_run_id_rows(
+    event_rows: list[sqlite3.Row] | list[dict[str, Any]],
+    decision_ids_with_runs: set[str],
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    pre_run: list[dict[str, Any]] = []
+    post_run: list[dict[str, Any]] = []
+    linkable = 0
+    unlinkable = 0
+    for row in event_rows:
+        payload = _safe_json_object(row["payload_json"] if "payload_json" in row.keys() else row.get("payload_json"))
+        event_type = str(row["event_type"] if "event_type" in row.keys() else row.get("event_type") or "")
+        path_run_id = _path_run_id_from_payload(payload)
+        path_type = str(payload.get("path_type") or payload.get("buy_path") or "")
+        if not ((event_type.startswith("CLAUDE_PRICE") or path_type in {"claude_price", "path_b"}) and not path_run_id):
+            continue
+        decision_id = str(row["decision_id"] if "decision_id" in row.keys() else row.get("decision_id") or "")
+        item = {
+            "event_type": event_type,
+            "market": row["market"] if "market" in row.keys() else row.get("market"),
+            "ticker": row["ticker"] if "ticker" in row.keys() else row.get("ticker"),
+            "decision_id": decision_id,
+        }
+        rows.append(item)
+        if decision_id and decision_id in decision_ids_with_runs:
+            linkable += 1
+        else:
+            unlinkable += 1
+        if event_type in PATHB_PRE_RUN_EVENT_TYPES:
+            pre_run.append(item)
+        else:
+            post_run.append(item)
+    return {
+        "rows": rows,
+        "pre_run": pre_run,
+        "post_run": post_run,
+        "decision_id_linkable_count": linkable,
+        "decision_id_unlinkable_count": unlinkable,
+    }
+
+
+def _pathb_terminal_missing_events(
+    run_rows: list[sqlite3.Row] | list[dict[str, Any]],
+    event_rows: list[sqlite3.Row] | list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    event_by_path_and_type: set[tuple[str, str]] = set()
+    for row in event_rows:
+        payload = _safe_json_object(row["payload_json"] if "payload_json" in row.keys() else row.get("payload_json"))
+        path_run_id = _path_run_id_from_payload(payload)
+        if path_run_id:
+            event_type = str(row["event_type"] if "event_type" in row.keys() else row.get("event_type") or "")
+            event_by_path_and_type.add((path_run_id, event_type))
+    missing: list[dict[str, Any]] = []
+    for row in run_rows:
+        status = str(row["status"] if "status" in row.keys() else row.get("status") or "")
+        expected = PATHB_TERMINAL_EVENT_BY_STATUS.get(status)
+        if not expected:
+            continue
+        path_run_id = str(row["path_run_id"] if "path_run_id" in row.keys() else row.get("path_run_id") or "")
+        if (path_run_id, expected) in event_by_path_and_type:
+            continue
+        missing.append(
+            {
+                "path_run_id": path_run_id,
+                "market": row["market"] if "market" in row.keys() else row.get("market"),
+                "runtime_mode": row["runtime_mode"] if "runtime_mode" in row.keys() else row.get("runtime_mode"),
+                "session_date": row["session_date"] if "session_date" in row.keys() else row.get("session_date"),
+                "ticker": row["ticker"] if "ticker" in row.keys() else row.get("ticker"),
+                "status": status,
+                "missing_event": expected,
+            }
+        )
+    return missing
+
+
+def _pathb_local_exposure_index(mode: str) -> tuple[dict[str, dict[str, Any]], dict[tuple[str, str], list[dict[str, Any]]]]:
+    positions = _read_json_list(get_runtime_path("state", f"{mode}_open_positions.json", make_parents=False))
+    pending_orders = _read_json_list(get_runtime_path("state", f"{mode}_pending_orders.json", make_parents=False))
+    by_path: dict[str, dict[str, Any]] = {}
+    by_ticker: dict[tuple[str, str], list[dict[str, Any]]] = {}
+
+    def add(item: dict[str, Any], source: str) -> None:
+        plan = item.get("pathb_plan") if isinstance(item.get("pathb_plan"), dict) else {}
+        market = str(item.get("market") or plan.get("market") or "").strip().upper()
+        ticker = _ticker_key(market, item.get("ticker") or plan.get("ticker"))
+        if not market or not ticker:
+            return
+        path_run_id = str(
+            item.get("pathb_path_run_id")
+            or item.get("path_run_id")
+            or plan.get("path_run_id")
+            or ""
+        ).strip()
+        sell_order_id = str(
+            item.get("pathb_pending_sell_order_no")
+            or item.get("pending_sell_order_no")
+            or item.get("sell_order_id")
+            or ""
+        ).strip()
+        exposure = {
+            "source": source,
+            "sources": [source],
+            "market": market,
+            "ticker": ticker,
+            "path_run_id": path_run_id,
+            "qty": _safe_int(item.get("qty", item.get("pathb_pending_sell_qty", item.get("order_qty", 0)))),
+            "local_position_qty": _safe_int(item.get("qty", 0)) if source == "local_position" else 0,
+            "local_pending_sell_order_id": sell_order_id if source == "local_pending_order" else "",
+            "local_sell_order_id": sell_order_id,
+            "raw": item,
+        }
+        by_ticker.setdefault((market, ticker), []).append(exposure)
+        if path_run_id:
+            existing = by_path.get(path_run_id)
+            if existing:
+                existing["sources"] = sorted(set(list(existing.get("sources") or []) + [source]))
+                existing["qty"] = max(_safe_int(existing.get("qty")), _safe_int(exposure.get("qty")))
+                existing["local_position_qty"] = max(
+                    _safe_int(existing.get("local_position_qty")),
+                    _safe_int(exposure.get("local_position_qty")),
+                )
+                if exposure.get("local_pending_sell_order_id"):
+                    existing["local_pending_sell_order_id"] = exposure.get("local_pending_sell_order_id")
+                if exposure.get("local_sell_order_id"):
+                    existing["local_sell_order_id"] = exposure.get("local_sell_order_id")
+            else:
+                by_path[path_run_id] = exposure
+
+    for pos in positions:
+        if pos.get("pathb_path_run_id") or pos.get("path_run_id") or pos.get("pathb_pending_sell_order_no"):
+            add(pos, "local_position")
+    for order in pending_orders:
+        if order.get("pathb_path_run_id") or order.get("path_run_id") or order.get("pathb_pending_sell_order_no"):
+            add(order, "local_pending_order")
+    return by_path, by_ticker
+
+
+def _broker_evidence_for_ticker(
+    broker_snapshot: dict[str, Any],
+    market: str,
+    ticker: str,
+    *,
+    local_sell_order_id: str = "",
+) -> dict[str, Any]:
+    markets = broker_snapshot.get("markets") if isinstance(broker_snapshot, dict) else {}
+    market_data = markets.get(market) if isinstance(markets, dict) else {}
+    if not isinstance(market_data, dict) or bool(market_data.get("missing")) or bool(market_data.get("stale")) or str(market_data.get("error") or ""):
+        return {
+            "broker_truth_unavailable": True,
+            "broker_position_qty": None,
+            "broker_open_order_evidence": False,
+            "broker_sell_fill_evidence": False,
+            "broker_truth_last_success_at": str(market_data.get("last_success_at") or "") if isinstance(market_data, dict) else "",
+        }
+    positions = _broker_rows_for_ticker(list(market_data.get("positions") or []), market, ticker)
+    open_orders = _broker_rows_for_ticker(list(market_data.get("open_orders") or []), market, ticker)
+    fills = _broker_rows_for_ticker(list(market_data.get("today_fills") or []), market, ticker)
+    open_sell = [
+        row for row in open_orders
+        if (not local_sell_order_id or _broker_order_id(row) == local_sell_order_id)
+        and (not _row_side(row) or _row_side(row) == "sell")
+        and _safe_int(row.get("remaining_qty", row.get("order_qty", row.get("qty", 0)))) > 0
+    ]
+    sell_fills = [
+        row for row in fills
+        if (not local_sell_order_id or _broker_order_id(row) == local_sell_order_id)
+        and (not _row_side(row) or _row_side(row) == "sell")
+        and _safe_int(row.get("filled_qty", row.get("qty", 0))) > 0
+    ]
+    return {
+        "broker_truth_unavailable": False,
+        "broker_position_qty": sum(_safe_int(row.get("qty")) for row in positions),
+        "broker_open_order_evidence": bool(open_sell),
+        "broker_sell_fill_evidence": bool(sell_fills),
+        "broker_truth_last_success_at": str(market_data.get("last_success_at") or ""),
+    }
+
+
+def _db_broker_truth_ttl_sec() -> int:
+    try:
+        return max(30, int(os.getenv("PREFLIGHT_DB_BROKER_TRUTH_TTL_SEC", "300") or 300))
+    except Exception:
+        return 300
+
+
+def _load_broker_truth_snapshot_for_db(mode: str) -> dict[str, Any]:
+    from runtime.broker_truth_snapshot import BrokerTruthSnapshot
+
+    ttl = _db_broker_truth_ttl_sec()
+    return BrokerTruthSnapshot(runtime_mode=mode).load_snapshot(ttl_by_market={"KR": ttl, "US": ttl})
+
+
+def _attach_exposure_evidence(
+    item: dict[str, Any],
+    exposure_by_path: dict[str, dict[str, Any]],
+    broker_snapshot: dict[str, Any],
+) -> None:
+    path_run_id = str(item.get("path_run_id") or "")
+    exposure = exposure_by_path.get(path_run_id) if path_run_id else None
+    item["local_exposure"] = bool(exposure)
+    item["local_position_qty"] = _safe_int((exposure or {}).get("local_position_qty"))
+    item["local_pending_sell_order_id"] = str((exposure or {}).get("local_pending_sell_order_id") or "")
+    item["local_sell_order_id"] = str((exposure or {}).get("local_sell_order_id") or "")
+    item["local_exposure_sources"] = list((exposure or {}).get("sources") or [])
+    market = str(item.get("market") or (exposure or {}).get("market") or "").upper()
+    ticker = _ticker_key(market, item.get("ticker") or (exposure or {}).get("ticker"))
+    item.update(
+        _broker_evidence_for_ticker(
+            broker_snapshot,
+            market,
+            ticker,
+            local_sell_order_id=item["local_sell_order_id"],
+        )
+    )
+    item["pathb_recoverable_still_held"] = _pathb_recoverable_still_held(item)
+    item["pathb_recoverable_entry_holding"] = _pathb_recoverable_entry_holding(item)
+
+
+def _pathb_recoverable_still_held(item: dict[str, Any]) -> bool:
+    status = str(item.get("status") or "").upper()
+    if status != "ORDER_UNKNOWN":
+        return False
+    if bool(item.get("broker_truth_unavailable")):
+        return False
+    local_qty = _safe_int(item.get("local_position_qty"))
+    broker_qty = _safe_int(item.get("broker_position_qty"))
+    if local_qty <= 0 or broker_qty <= 0 or local_qty != broker_qty:
+        return False
+    if bool(item.get("broker_open_order_evidence")) or bool(item.get("broker_sell_fill_evidence")):
+        return False
+    local_sell_order_id = str(item.get("local_sell_order_id") or item.get("local_pending_sell_order_id") or "").strip()
+    return bool(local_sell_order_id)
+
+
+def _pathb_recoverable_entry_holding(item: dict[str, Any]) -> bool:
+    status = str(item.get("status") or "").upper()
+    if status not in {"ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED"}:
+        return False
+    if bool(item.get("broker_truth_unavailable")):
+        return False
+    local_qty = _safe_int(item.get("local_position_qty"))
+    broker_qty = _safe_int(item.get("broker_position_qty"))
+    return bool(local_qty > 0 and broker_qty > 0 and local_qty == broker_qty)
+
+
+def _broker_rows_for_ticker(rows: list[Any], market: str, ticker: str) -> list[dict[str, Any]]:
+    key = _ticker_key(market, ticker)
+    out = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if _ticker_key(market, row.get("ticker")) == key:
+            out.append(row)
+    return out
+
+
+def _broker_order_id(row: dict[str, Any]) -> str:
+    return str(row.get("order_no") or row.get("order_id") or row.get("execution_id") or "").strip()
+
+
+def _row_side(row: dict[str, Any]) -> str:
+    return str(row.get("side") or row.get("order_side") or "").strip().lower()
+
+
+def _pathb_broker_truth_conflicts(
+    mode: str,
+    runs_by_id: dict[str, dict[str, Any]],
+    *,
+    broker_snapshot: dict[str, Any] | None = None,
+    exposure_by_path: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    if broker_snapshot is None:
+        try:
+            broker_snapshot = _load_broker_truth_snapshot_for_db(mode)
+        except Exception:
+            broker_snapshot = {}
+    if exposure_by_path is None:
+        exposure_by_path, _by_ticker = _pathb_local_exposure_index(mode)
+    markets = broker_snapshot.get("markets") if isinstance(broker_snapshot, dict) else {}
+    conflicts: list[dict[str, Any]] = []
+    for path_run_id, exposure in sorted((exposure_by_path or {}).items()):
+        run = runs_by_id.get(path_run_id)
+        if not run:
+            continue
+        status = str(run.get("status") or "")
+        if status not in PATHB_ACTIVE_ISH_STATUSES:
+            continue
+        market = str(run.get("market") or exposure.get("market") or "").upper()
+        ticker = _ticker_key(market, run.get("ticker") or exposure.get("ticker"))
+        market_data = markets.get(market) if isinstance(markets, dict) else {}
+        if not isinstance(market_data, dict) or bool(market_data.get("missing")) or bool(market_data.get("stale")) or str(market_data.get("error") or ""):
+            continue
+        positions = _broker_rows_for_ticker(list(market_data.get("positions") or []), market, ticker)
+        open_orders = _broker_rows_for_ticker(list(market_data.get("open_orders") or []), market, ticker)
+        fills = _broker_rows_for_ticker(list(market_data.get("today_fills") or []), market, ticker)
+        broker_qty = sum(_safe_int(row.get("qty")) for row in positions)
+        local_qty = _safe_int(exposure.get("qty"))
+        local_sell_order_id = str(exposure.get("local_sell_order_id") or "").strip()
+        open_sell = [
+            row for row in open_orders
+            if (not local_sell_order_id or _broker_order_id(row) == local_sell_order_id)
+            and (not _row_side(row) or _row_side(row) == "sell")
+            and _safe_int(row.get("remaining_qty", row.get("order_qty", row.get("qty", 0)))) > 0
+        ]
+        sell_fills = [
+            row for row in fills
+            if (not local_sell_order_id or _broker_order_id(row) == local_sell_order_id)
+            and (not _row_side(row) or _row_side(row) == "sell")
+            and _safe_int(row.get("filled_qty", row.get("qty", 0))) > 0
+        ]
+        reasons: list[str] = []
+        if local_sell_order_id and not open_sell and not sell_fills:
+            reasons.append("local_sell_order_missing_from_broker_truth")
+        if local_qty > 0 and broker_qty > 0 and local_qty != broker_qty:
+            reasons.append("local_broker_qty_mismatch")
+        if broker_qty > 0 and status in {"ORDER_UNKNOWN", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED"} and not open_sell and not sell_fills:
+            reasons.append("broker_position_without_sell_order_or_fill_evidence")
+        if not reasons:
+            continue
+        plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        recoverable_still_held = bool(
+            status == "ORDER_UNKNOWN"
+            and local_sell_order_id
+            and local_qty > 0
+            and broker_qty > 0
+            and local_qty == broker_qty
+            and not open_sell
+            and not sell_fills
+        )
+        conflicts.append(
+            {
+                "market": market,
+                "ticker": ticker,
+                "path_run_id": path_run_id,
+                "status": status,
+                "session_date": str(run.get("session_date") or ""),
+                "local_qty": local_qty,
+                "broker_qty": broker_qty,
+                "local_sell_order_id": local_sell_order_id,
+                "broker_open_order_evidence": bool(open_sell),
+                "broker_sell_fill_evidence": bool(sell_fills),
+                "session_end_unresolved": bool(plan.get("session_end_unresolved")),
+                "manual_reconciliation_required": not recoverable_still_held,
+                "pathb_recoverable_still_held": recoverable_still_held,
+                "suggested_action": (
+                    "recover_still_held"
+                    if recoverable_still_held
+                    else "close_path_run"
+                    if sell_fills
+                    else "restore_pending_sell"
+                    if open_sell
+                    else "manual_review"
+                ),
+                "do_not_start": not recoverable_still_held,
+                "reasons": reasons,
+                "broker_truth_last_success_at": str(market_data.get("last_success_at") or ""),
+            }
+        )
+    return conflicts
 
 
 @dataclass
@@ -755,7 +1172,12 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
         cred_notes.append("US app key/secret missing and no KR app fallback")
     elif not us_app or not us_secret:
         cred_status = "WARN" if cred_status != "FAIL" else cred_status
-        cred_notes.append("US-specific app key/secret missing; common key fallback will be used")
+        app_state = "present" if us_app else "missing"
+        secret_state = "present" if us_secret else "missing"
+        cred_notes.append(
+            f"US-specific credential incomplete: app_key={app_state}, "
+            f"app_secret={secret_state}; common key fallback will be used"
+        )
     if is_paper_us == "true" and mode == "live":
         cred_status = "FAIL"
         cred_notes.append("KIS_IS_PAPER_US=true in live mode")
@@ -852,6 +1274,11 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
         checks.append(CheckResult("db.path_run_json", "FAIL" if invalid_json else "PASS", "recent plan_json decode check", {"invalid_recent_rows": invalid_json}))
         checks.append(CheckResult("db.path_run_plan_json_valid", "FAIL" if invalid_json else "PASS", "recent Path B plan_json rows parse cleanly", {"invalid_recent_rows": invalid_json}))
 
+        exposure_by_path, _exposure_by_ticker = _pathb_local_exposure_index(mode)
+        try:
+            broker_snapshot = _load_broker_truth_snapshot_for_db(mode)
+        except Exception:
+            broker_snapshot = {}
         unknown_rows = conn.execute(
             """
             SELECT market, runtime_mode, session_date, ticker, path_run_id, status, updated_at, plan_json
@@ -873,11 +1300,21 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             item["order_unknown_phase"] = str(plan.get("order_unknown_phase") or "")
             item["order_unknown_age_sec"] = plan.get("order_unknown_age_sec")
             item["order_unknown_reconcile_attempts"] = plan.get("order_unknown_reconcile_attempts")
+            _attach_exposure_evidence(item, exposure_by_path, broker_snapshot)
             session_for_market = current_sessions.get(str(item.get("market") or ""))
             if item.get("session_date") == session_for_market:
                 current_unknown.append(item)
             else:
                 previous_unknown.append(item)
+        previous_recoverable_still_held = [
+            item for item in previous_unknown if bool(item.get("pathb_recoverable_still_held"))
+        ]
+        previous_with_local_exposure = [
+            item
+            for item in previous_unknown
+            if bool(item.get("local_exposure")) and not bool(item.get("pathb_recoverable_still_held"))
+        ]
+        previous_no_local_exposure = [item for item in previous_unknown if not bool(item.get("local_exposure"))]
         checks.append(
             CheckResult(
                 "db.order_unknown_unresolved",
@@ -886,11 +1323,17 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                 {
                     "current_session": current_unknown,
                     "previous_session": previous_unknown,
+                    "previous_session_with_local_exposure": previous_with_local_exposure,
+                    "previous_session_no_local_exposure": previous_no_local_exposure,
+                    "previous_session_recoverable_still_held": previous_recoverable_still_held,
                     "current_session_count": len(current_unknown),
                     "previous_session_count": len(previous_unknown),
+                    "previous_session_with_local_exposure_count": len(previous_with_local_exposure),
+                    "previous_session_no_local_exposure_count": len(previous_no_local_exposure),
+                    "previous_session_recoverable_still_held_count": len(previous_recoverable_still_held),
                     "accepted_exception": False,
                     "remediation_required": bool(unknown_rows),
-                    "auto_remediation": False,
+                    "auto_remediation": bool(previous_recoverable_still_held),
                     "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
                     "operator_action": (
                         "verify broker open orders/fills first, then run the PathB legacy remediation report; do not override broker truth from local DB only"
@@ -903,7 +1346,7 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
 
         stale_rows = conn.execute(
             f"""
-            SELECT market, runtime_mode, session_date, ticker, path_run_id, status, updated_at
+            SELECT market, runtime_mode, session_date, ticker, path_run_id, status, updated_at, plan_json
             FROM v2_path_runs
             WHERE runtime_mode=? AND status IN ({','.join('?' for _ in active_statuses)})
             ORDER BY updated_at DESC
@@ -912,11 +1355,30 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             (mode, *sorted(active_statuses)),
         ).fetchall()
         stale_active: list[dict[str, Any]] = []
+        active_runs_by_id: dict[str, dict[str, Any]] = {}
         for row in stale_rows:
             item = dict(row)
+            item["plan"] = _safe_json_object(item.pop("plan_json", ""))
+            _attach_exposure_evidence(item, exposure_by_path, broker_snapshot)
+            if item.get("path_run_id"):
+                active_runs_by_id[str(item.get("path_run_id"))] = item
             session_for_market = current_sessions.get(str(item.get("market") or ""))
             if item.get("session_date") != session_for_market:
                 stale_active.append(item)
+        stale_recoverable_still_held = [
+            item for item in stale_active if bool(item.get("pathb_recoverable_still_held"))
+        ]
+        stale_recoverable_entry_holding = [
+            item for item in stale_active if bool(item.get("pathb_recoverable_entry_holding"))
+        ]
+        stale_with_local_exposure = [
+            item
+            for item in stale_active
+            if bool(item.get("local_exposure"))
+            and not bool(item.get("pathb_recoverable_still_held"))
+            and not bool(item.get("pathb_recoverable_entry_holding"))
+        ]
+        stale_no_local_exposure = [item for item in stale_active if not bool(item.get("local_exposure"))]
         checks.append(
             CheckResult(
                 "db.pathb_stale_active_runs",
@@ -924,11 +1386,19 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                 f"previous-session active Path B rows={len(stale_active)}" if stale_active else "no previous-session active Path B rows",
                 {
                     "rows": stale_active[:30],
+                    "previous_session_with_local_exposure": stale_with_local_exposure[:30],
+                    "previous_session_no_local_exposure": stale_no_local_exposure[:30],
+                    "previous_session_recoverable_still_held": stale_recoverable_still_held[:30],
+                    "previous_session_recoverable_entry_holding": stale_recoverable_entry_holding[:30],
                     "current_sessions": current_sessions,
                     "stale_active_count": len(stale_active),
+                    "previous_session_with_local_exposure_count": len(stale_with_local_exposure),
+                    "previous_session_no_local_exposure_count": len(stale_no_local_exposure),
+                    "previous_session_recoverable_still_held_count": len(stale_recoverable_still_held),
+                    "previous_session_recoverable_entry_holding_count": len(stale_recoverable_entry_holding),
                     "accepted_exception": False,
                     "remediation_required": bool(stale_active),
-                    "auto_remediation": False,
+                    "auto_remediation": bool(stale_recoverable_still_held or stale_recoverable_entry_holding),
                     "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
                     "operator_action": (
                         "verify broker positions/open orders/fills before closing, expiring, or backfilling any prior-session active row"
@@ -939,9 +1409,56 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             )
         )
 
+        broker_conflicts = _pathb_broker_truth_conflicts(
+            mode,
+            active_runs_by_id,
+            broker_snapshot=broker_snapshot,
+            exposure_by_path=exposure_by_path,
+        )
+        broker_conflict_blockers = [
+            item for item in broker_conflicts if bool(item.get("do_not_start", True))
+        ]
+        broker_conflict_recoverable = [
+            item for item in broker_conflicts if bool(item.get("pathb_recoverable_still_held"))
+        ]
+        broker_conflict_status = (
+            "FAIL"
+            if broker_conflict_blockers
+            else "WARN"
+            if broker_conflicts
+            else "PASS"
+        )
+        checks.append(
+            CheckResult(
+                "db.pathb_broker_truth_conflict",
+                broker_conflict_status,
+                (
+                    f"Path B broker truth conflicts={len(broker_conflicts)} blockers={len(broker_conflict_blockers)} "
+                    f"recoverable_still_held={len(broker_conflict_recoverable)}"
+                    if broker_conflicts
+                    else "no Path B broker truth conflicts"
+                ),
+                {
+                    "conflicts": broker_conflicts[:30],
+                    "conflict_count": len(broker_conflicts),
+                    "blocking_conflict_count": len(broker_conflict_blockers),
+                    "recoverable_still_held_count": len(broker_conflict_recoverable),
+                    "accepted_exception": False,
+                    "remediation_required": bool(broker_conflicts),
+                    "auto_remediation": bool(broker_conflict_recoverable) and not bool(broker_conflict_blockers),
+                    "remediation_tool": "python -m tools.reconcile_live_truth --market US --ticker SOFI --dry-run",
+                    "operator_action": (
+                        "verify broker positions/open orders/today fills and reconcile local Path B state before live start"
+                        if broker_conflicts
+                        else "none"
+                    ),
+                },
+            )
+        )
+
         recent_events = conn.execute(
             """
-            SELECT event_type, market, runtime_mode, session_date, ticker, payload_json
+            SELECT event_type, market, runtime_mode, session_date, ticker, decision_id, payload_json
             FROM lifecycle_events
             WHERE runtime_mode=?
             ORDER BY event_id DESC
@@ -949,22 +1466,9 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             """,
             (mode,),
         ).fetchall()
-        event_by_path_and_type: set[tuple[str, str]] = set()
-        pathb_events_missing_id = []
         invalid_event_market_runtime = []
         for row in recent_events:
-            payload: dict[str, Any] = {}
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except Exception:
-                payload = {}
-            path_run_id = str(payload.get("path_run_id") or "").strip()
             event_type = str(row["event_type"] or "")
-            if path_run_id:
-                event_by_path_and_type.add((path_run_id, event_type))
-            path_type = str(payload.get("path_type") or payload.get("buy_path") or "")
-            if (event_type.startswith("CLAUDE_PRICE") or path_type in {"claude_price", "path_b"}) and not path_run_id:
-                pathb_events_missing_id.append({"event_type": event_type, "market": row["market"], "ticker": row["ticker"]})
             if row["market"] not in {"KR", "US"} or row["runtime_mode"] not in {"live", "paper"}:
                 invalid_event_market_runtime.append(
                     {
@@ -985,29 +1489,99 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             """,
             (mode,),
         ).fetchall()
-        inconsistent_runs = []
-        for row in recent_runs:
-            status = str(row["status"] or "")
-            if status in {"FILLED", "PARTIAL_FILLED"} and (row["path_run_id"], "FILLED") not in event_by_path_and_type:
-                inconsistent_runs.append({**dict(row), "missing_event": "FILLED"})
-            if status == "CLOSED" and (row["path_run_id"], "CLOSED") not in event_by_path_and_type:
-                inconsistent_runs.append({**dict(row), "missing_event": "CLOSED"})
+        decision_ids_with_runs = {
+            str(row["decision_id"] or "")
+            for row in conn.execute(
+                """
+                SELECT DISTINCT decision_id
+                FROM v2_path_runs
+                WHERE runtime_mode=? AND path_type='claude_price' AND decision_id IS NOT NULL AND decision_id<>''
+                """,
+                (mode,),
+            ).fetchall()
+        }
+        inconsistent_runs = _pathb_terminal_missing_events(list(recent_runs), list(recent_events))
+        window_missing_path = _pathb_like_missing_path_run_id_rows(list(recent_events), decision_ids_with_runs)
         checks.append(
             CheckResult(
-                "db.pathb_lifecycle_consistency",
-                "WARN" if inconsistent_runs or pathb_events_missing_id else "PASS",
-                "Path B lifecycle consistency warnings" if inconsistent_runs or pathb_events_missing_id else "recent Path B lifecycle rows are internally consistent",
+                "db.pathb_lifecycle_window_consistency",
+                "WARN" if inconsistent_runs or window_missing_path["rows"] else "PASS",
+                (
+                    "recent-window Path B lifecycle diagnostic warnings: "
+                    f"recent_window_missing_events_count={len(inconsistent_runs)} "
+                    "recent_window_size_events=1000 recent_window_size_runs=500; "
+                    f"PathB-like lifecycle events missing payload_json.path_run_id={len(window_missing_path['rows'])}"
+                )
+                if inconsistent_runs or window_missing_path["rows"]
+                else "recent-window Path B lifecycle rows are internally consistent",
                 {
                     "missing_events": inconsistent_runs[:30],
-                    "pathb_events_missing_path_run_id": pathb_events_missing_id[:30],
+                    "pathb_events_missing_path_run_id": window_missing_path["rows"][:30],
+                    "pathb_pre_run_events_missing_path_run_id": window_missing_path["pre_run"][:30],
+                    "pathb_post_run_events_missing_path_run_id": window_missing_path["post_run"][:30],
                     "missing_events_count": len(inconsistent_runs),
-                    "pathb_events_missing_path_run_id_count": len(pathb_events_missing_id),
+                    "recent_window_missing_events_count": len(inconsistent_runs),
+                    "recent_window_size_events": 1000,
+                    "recent_window_size_runs": 500,
+                    "pathb_events_missing_path_run_id_count": len(window_missing_path["rows"]),
+                    "pathb_pre_run_events_missing_path_run_id_count": len(window_missing_path["pre_run"]),
+                    "pathb_post_run_events_missing_path_run_id_count": len(window_missing_path["post_run"]),
+                    "decision_id_linkable_count": window_missing_path["decision_id_linkable_count"],
+                    "decision_id_unlinkable_count": window_missing_path["decision_id_unlinkable_count"],
                     "accepted_exception": False,
-                    "remediation_required": bool(inconsistent_runs or pathb_events_missing_id),
+                    "remediation_required": bool(inconsistent_runs or window_missing_path["rows"]),
+                    "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
+                    "operator_action": (
+                        "review recent-window lifecycle diagnostics before mutating production records"
+                        if inconsistent_runs or window_missing_path["rows"]
+                        else "none"
+                    ),
+                },
+            )
+        )
+        full_events = conn.execute(
+            """
+            SELECT event_type, market, runtime_mode, session_date, ticker, decision_id, payload_json
+            FROM lifecycle_events
+            WHERE runtime_mode=?
+            ORDER BY event_id
+            """,
+            (mode,),
+        ).fetchall()
+        full_runs = conn.execute(
+            """
+            SELECT path_run_id, market, runtime_mode, session_date, ticker, status
+            FROM v2_path_runs
+            WHERE runtime_mode=? AND path_type='claude_price'
+            ORDER BY updated_at DESC
+            """,
+            (mode,),
+        ).fetchall()
+        full_missing = _pathb_terminal_missing_events(list(full_runs), list(full_events))
+        full_detail = (
+            "full terminal lifecycle event check passed; recent window has diagnostic warnings"
+            if not full_missing and (inconsistent_runs or window_missing_path["rows"])
+            else "full terminal lifecycle event check passed"
+            if not full_missing
+            else f"full terminal lifecycle missing events={len(full_missing)}"
+        )
+        checks.append(
+            CheckResult(
+                "db.pathb_lifecycle_full_consistency",
+                "WARN" if full_missing else "PASS",
+                full_detail,
+                {
+                    "missing_events": full_missing[:30],
+                    "missing_events_count": len(full_missing),
+                    "full_terminal_missing_events_count": len(full_missing),
+                    "checked_runs": len(full_runs),
+                    "checked_events": len(full_events),
+                    "accepted_exception": False,
+                    "remediation_required": bool(full_missing),
                     "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
                     "operator_action": (
                         "generate an audited lifecycle backfill plan before mutating production records"
-                        if inconsistent_runs or pathb_events_missing_id
+                        if full_missing
                         else "none"
                     ),
                 },
@@ -1370,7 +1944,7 @@ def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
     return checks
 
 
-def _static_code_checks() -> list[CheckResult]:
+def _static_code_checks(effective: dict[str, str] | None = None) -> list[CheckResult]:
     checks: list[CheckResult] = []
     trading = _repo_text("trading_bot.py")
     kis = _repo_text("kis_api.py")
@@ -1460,23 +2034,35 @@ def _static_code_checks() -> list[CheckResult]:
             )
         )
 
+    effective = effective or {}
+    patha_timing_enabled = _truthy(effective.get("PATHA_TIMING_LIFECYCLE_ENABLED", "true"))
     timing_runtime_present = "WAIT_TIMING" in trading and "TIMING_EXPIRED" in trading
     timing_enum_present = "WAIT_TIMING" in _repo_text("lifecycle", "models.py") and "TIMING_EXPIRED" in _repo_text("lifecycle", "models.py")
+    timing_status = "PASS" if timing_runtime_present or not patha_timing_enabled else ("WARN" if timing_enum_present else "FAIL")
+    timing_detail = (
+        "Path A WAIT_TIMING/TIMING_EXPIRED runtime markers found"
+        if timing_runtime_present
+        else "Path A timing lifecycle is explicitly disabled"
+        if not patha_timing_enabled
+        else ("lifecycle enum supports WAIT_TIMING/TIMING_EXPIRED, but Path A runtime wiring is not proven" if timing_enum_present else "timing lifecycle markers missing")
+    )
     checks.append(
         CheckResult(
             "code.wait_timing_recorded",
-            "PASS" if timing_runtime_present else ("WARN" if timing_enum_present else "FAIL"),
-            "Path A WAIT_TIMING/TIMING_EXPIRED runtime markers found"
-            if timing_runtime_present
-            else ("lifecycle enum supports WAIT_TIMING/TIMING_EXPIRED, but Path A runtime wiring is not proven" if timing_enum_present else "timing lifecycle markers missing"),
+            timing_status,
+            timing_detail,
             {
                 "runtime_markers": timing_runtime_present,
                 "enum_markers": timing_enum_present,
+                "PATHA_TIMING_LIFECYCLE_ENABLED": patha_timing_enabled,
                 "category": "code_marker",
                 "guardian_severity": "soft_fail",
-                "accepted_exception": False,
-                "remediation_required": not timing_runtime_present,
+                "accepted_exception": not timing_runtime_present and not patha_timing_enabled,
+                "remediation_required": patha_timing_enabled and not timing_runtime_present,
                 "operator_action": (
+                    "none; Path A timing lifecycle is explicitly disabled"
+                    if not timing_runtime_present and not patha_timing_enabled
+                    else
                     "add Path A WAIT_TIMING/TIMING_EXPIRED runtime wiring evidence or explicitly disable this lifecycle state"
                     if not timing_runtime_present
                     else "none"
@@ -1921,6 +2507,59 @@ def _ops_summary_checks(mode: str) -> list[CheckResult]:
     return checks
 
 
+def _price_csv_active_universe(market: str, mode: str = "live") -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    tickers: set[str] = set()
+    sources: dict[str, list[str]] = {"trade_ready": [], "open_positions": [], "pending_orders": []}
+    selection_date = ""
+    db_path = ROOT / "data" / "ticker_selection_log.db"
+    if db_path.exists():
+        conn = None
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=5)
+            row = conn.execute(
+                "SELECT MAX(date) FROM ticker_selection_log WHERE market=?",
+                (market_key,),
+            ).fetchone()
+            selection_date = str((row or [""])[0] or "")
+            if selection_date:
+                rows = conn.execute(
+                    """
+                    SELECT ticker FROM ticker_selection_log
+                    WHERE market=? AND date=? AND COALESCE(trade_ready, 0)=1
+                    """,
+                    (market_key, selection_date),
+                ).fetchall()
+                for row in rows:
+                    ticker = _ticker_key(market_key, row[0])
+                    if ticker:
+                        tickers.add(ticker)
+                        sources["trade_ready"].append(ticker)
+        except Exception:
+            pass
+        finally:
+            if conn is not None:
+                conn.close()
+    for source_name, filename in (
+        ("open_positions", f"{mode}_open_positions.json"),
+        ("pending_orders", f"{mode}_pending_orders.json"),
+    ):
+        for item in _read_json_list(get_runtime_path("state", filename, make_parents=False)):
+            item_market = str(item.get("market") or "").upper()
+            if item_market and item_market != market_key:
+                continue
+            ticker = _ticker_key(market_key, item.get("ticker"))
+            if ticker:
+                tickers.add(ticker)
+                sources[source_name].append(ticker)
+    return {
+        "market": market_key,
+        "selection_date": selection_date,
+        "tickers": sorted(tickers),
+        "sources": {key: sorted(set(value)) for key, value in sources.items()},
+    }
+
+
 def _price_csv_checks() -> list[CheckResult]:
     checks: list[CheckResult] = []
     try:
@@ -1950,6 +2589,11 @@ def _price_csv_checks() -> list[CheckResult]:
     except Exception as exc:
         return [CheckResult("price_csv.import", "FAIL", f"price CSV health import failed: {exc}")]
 
+    def _sample_tickers(summary: dict[str, Any], key: str) -> set[str]:
+        samples = summary.get("samples") if isinstance(summary.get("samples"), dict) else {}
+        rows = samples.get(key) if isinstance(samples.get(key), list) else []
+        return {str(item.get("ticker") or "").strip() for item in rows if isinstance(item, dict) and item.get("ticker")}
+
     for market in ("KR", "US"):
         try:
             summary = price_csv_health_summary(ROOT, market)
@@ -1960,6 +2604,45 @@ def _price_csv_checks() -> list[CheckResult]:
         malformed = int(counts.get("malformed_csv", 0))
         missing = int(counts.get("missing_csv", 0))
         stale = int(counts.get("stale_csv", 0))
+        ohlc_error_csv = int(counts.get("ohlc_logic_error_csv", 0))
+        ohlc_error_rows = int(counts.get("ohlc_logic_error_rows", 0))
+        latest_ohlc_error_csv = int(counts.get("latest_ohlc_logic_error_csv", 0))
+        flat_zero_csv = int(counts.get("flat_ohlc_zero_volume_csv", 0))
+        flat_zero_rows = int(counts.get("flat_ohlc_zero_volume_rows", 0))
+        latest_flat_zero_csv = int(counts.get("latest_flat_ohlc_zero_volume_csv", 0))
+        too_few_rows_csv = int(counts.get("too_few_rows_csv", 0))
+        active_universe = _price_csv_active_universe(market)
+        active_tickers = set(active_universe.get("tickers") or [])
+        quality_tickers = summary.get("quality_tickers") if isinstance(summary.get("quality_tickers"), dict) else {}
+        active_latest_flat_zero = sorted(
+            active_tickers & {str(item) for item in (quality_tickers.get("latest_flat_ohlc_zero_volume") or [])}
+        )
+        active_too_few_rows = sorted(
+            active_tickers & {str(item) for item in (quality_tickers.get("too_few_rows") or [])}
+        )
+        active_missing = sorted(active_tickers & _sample_tickers(summary, "missing_csv"))
+        active_malformed = sorted(active_tickers & _sample_tickers(summary, "malformed_csv"))
+        active_stale = sorted(active_tickers & _sample_tickers(summary, "stale_csv"))
+        active_ohlc_error = sorted(active_tickers & _sample_tickers(summary, "ohlc_logic_error_csv"))
+        active_latest_ohlc_error = sorted(
+            active_tickers & {str(item) for item in (quality_tickers.get("latest_ohlc_logic_error") or [])}
+        )
+        summary["active_universe"] = active_universe
+        summary["active_quality_issues"] = {
+            "missing_csv": active_missing,
+            "malformed_csv": active_malformed,
+            "stale_csv": active_stale,
+            "ohlc_logic_error": active_ohlc_error,
+            "latest_ohlc_logic_error": active_latest_ohlc_error,
+            "latest_flat_ohlc_zero_volume": active_latest_flat_zero,
+            "too_few_rows": active_too_few_rows,
+        }
+        active_blocking_issues = {
+            key: value
+            for key, value in summary["active_quality_issues"].items()
+            if value
+        }
+        summary["active_blocking_issues"] = active_blocking_issues
         total = int(summary.get("total", 0))
         fresh_ratio = float(summary.get("fresh_ratio", 0.0))
         freshness_detail = (
@@ -1970,8 +2653,22 @@ def _price_csv_checks() -> list[CheckResult]:
         )
         freshness_status = "PASS" if total and fresh_ratio >= 0.95 else "WARN"
         checks.append(CheckResult(f"data.price_csv_freshness.{market.lower()}", freshness_status, freshness_detail, summary))
-        integrity_detail = f"total={total} malformed={malformed} missing={missing}"
-        integrity_status = "PASS" if total and not malformed and not missing else "WARN"
+        integrity_detail = (
+            f"total={total} malformed={malformed} missing={missing} "
+            f"ohlc_error_csv={ohlc_error_csv} ohlc_error_rows={ohlc_error_rows} "
+            f"latest_ohlc_error_csv={latest_ohlc_error_csv} "
+            f"flat_ohlc_zero_volume_csv={flat_zero_csv} flat_ohlc_zero_volume_rows={flat_zero_rows} "
+            f"latest_flat_ohlc_zero_volume_csv={latest_flat_zero_csv} too_few_rows_csv={too_few_rows_csv} "
+            f"active_blocking_issues={sum(len(value) for value in active_blocking_issues.values())} "
+            f"active_latest_flat_zero={len(active_latest_flat_zero)} active_too_few_rows={len(active_too_few_rows)}"
+        )
+        integrity_status = (
+            "FAIL"
+            if total == 0 or active_blocking_issues
+            else "WARN"
+            if malformed or missing or ohlc_error_csv or flat_zero_csv or too_few_rows_csv
+            else "PASS"
+        )
         checks.append(CheckResult(f"data.price_csv_integrity.{market.lower()}", integrity_status, integrity_detail, summary))
     return checks
 
@@ -2003,6 +2700,54 @@ def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
     return [CheckResult("candidate_audit.outcome_update", status, detail, {"path": str(path), "rows": int(total or 0), "latest": latest or ""})]
 
 
+def _ml_db_health_checks() -> list[CheckResult]:
+    path = ROOT / "data" / "ml" / "decisions.db"
+    try:
+        from ml import db_health
+
+        result = db_health.check_db_health(path, read_only=True)
+    except Exception as exc:
+        return [CheckResult("ml.decisions_db_health", "FAIL", f"ML DB health check failed: {exc}", {"path": str(path)})]
+    if not result.get("exists"):
+        return [CheckResult("ml.decisions_db_health", "WARN", "decisions.db missing", {"path": str(path)})]
+    gaps = result.get("gaps", {}) if isinstance(result.get("gaps"), dict) else {}
+    warnings = [str(item) for item in result.get("warnings", [])]
+    errors = [str(item) for item in result.get("errors", [])]
+    status = "FAIL" if errors else ("WARN" if warnings else "PASS")
+    detail = (
+        f"rows={result.get('total_rows')} live={result.get('live_rows')} "
+        f"known_gaps={len(gaps.get('known_unrecoverable_ranges') or [])} "
+        f"rows_inside_known_gap={gaps.get('rows_inside_known_gap', 0)}"
+    )
+    if errors:
+        detail = f"{detail}; errors={', '.join(errors)}"
+    elif warnings:
+        detail = f"{detail}; warnings={', '.join(warnings)}"
+    return [CheckResult("ml.decisions_db_health", status, detail, result)]
+
+
+def _external_data_readiness_checks(config: dict[str, Any]) -> list[CheckResult]:
+    effective = config.get("effective", {}) if isinstance(config, dict) else {}
+    required = _truthy(effective.get("EXTERNAL_DATA_REQUIRED") or os.getenv("EXTERNAL_DATA_REQUIRED", ""))
+    try:
+        from phase1_trainer.external_data_store import DEFAULT_DB_PATH, ExternalDataStore
+
+        summary = ExternalDataStore(DEFAULT_DB_PATH).readiness_summary(initialize=False)
+    except Exception as exc:
+        status = "FAIL" if required else "WARN"
+        return [CheckResult("external_data.readiness", status, f"external data readiness check failed: {exc}", {"required": required})]
+    ready = bool(summary.get("production_ready"))
+    status = "PASS" if ready else ("FAIL" if required else "WARN")
+    detail = (
+        f"production_ready={ready} total_data_rows={summary.get('total_data_rows', 0)} "
+        f"latest_api_run_at={summary.get('latest_api_run_at', '')}"
+    )
+    data = dict(summary)
+    data["required"] = required
+    data["data_quality_flags"] = [] if ready else ["external_data_empty"]
+    return [CheckResult("external_data.readiness", status, detail, data)]
+
+
 def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, include_dashboard: bool = True) -> dict[str, Any]:
     checks: list[CheckResult] = []
     config_checks, config = _config_checks(mode, allow_config_conflicts)
@@ -2011,12 +2756,14 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     checks.extend(_db_checks(mode))
     checks.extend(_token_checks(mode))
     checks.extend(_state_checks(config, mode))
-    checks.extend(_static_code_checks())
+    checks.extend(_static_code_checks(config.get("effective", {})))
     checks.extend(_pathb_feature_checks())
     if include_dashboard:
         checks.extend(_dashboard_checks())
     checks.extend(_telegram_checks())
     checks.extend(_price_csv_checks())
+    checks.extend(_ml_db_health_checks())
+    checks.extend(_external_data_readiness_checks(config))
     checks.extend(_candidate_audit_outcome_checks(mode))
     checks.extend(_ops_summary_checks(mode))
     fail_count = sum(1 for check in checks if check.status == "FAIL")

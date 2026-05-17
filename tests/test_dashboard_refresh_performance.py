@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 from contextlib import ExitStack
 from datetime import date
@@ -10,6 +11,10 @@ import unittest
 from unittest.mock import patch
 
 from dashboard import dashboard_server
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ML_SCHEMA = ROOT / "ml" / "schema.sql"
 
 
 class DashboardRefreshPerformanceTests(unittest.TestCase):
@@ -350,6 +355,50 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertEqual(second["_state_cache_source"], "state_parse_error_stale_cache")
         self.assertTrue(third["fallback"])
         self.assertEqual(third["_state_cache_source"], "state_parse_error_no_cache")
+
+    def test_ml_db_digest_recent_fields_use_live_safe_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "data" / "ml" / "decisions.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conn.executescript(ML_SCHEMA.read_text(encoding="utf-8"))
+                rows = [
+                    ("2026-04-10T09:00:00", "RECOVERY", "2026-04-10", "NO_SIGNAL", "live_verified_recovery", 0),
+                    ("2026-05-12T09:00:00", "LIVE", "2026-05-12", "BUY_SIGNAL", "live", 0),
+                    ("2026-05-13T09:00:00", "BACKFILL", "2026-05-13", "NO_SIGNAL", "backfill", 0),
+                    ("2026-05-14T09:00:00", "SIM", "2026-05-14", "NO_SIGNAL", "live", 1),
+                ]
+                for ts, ticker, session_date, decision, data_source, is_simulated in rows:
+                    conn.execute(
+                        """
+                        INSERT INTO decisions (
+                            ts, market, ticker, session_date, mode, decision, data_source, is_simulated
+                        ) VALUES (
+                            ?, 'KR', ?, ?, 'NEUTRAL', ?, ?, ?
+                        )
+                        """,
+                        (ts, ticker, session_date, decision, data_source, is_simulated),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with patch.object(dashboard_server, "BASE_DIR", root), patch.object(
+                dashboard_server, "_session_trade_date", return_value=date(2026, 5, 12)
+            ):
+                digest = dashboard_server._ml_db_digest("KR")
+
+        self.assertEqual(digest["total_all"], 4)
+        self.assertEqual(digest["total"], 2)
+        self.assertEqual(digest["today"], 1)
+        self.assertEqual(digest["buy_signal"], 1)
+        self.assertEqual(digest["last_ts"], "2026-05-12T09:00:00")
+        self.assertEqual(
+            digest["recent_days"],
+            [{"date": "2026-04-10", "count": 1}, {"date": "2026-05-12", "count": 1}],
+        )
 
     def test_live_summary_uses_cached_read_path_without_blocking_broker_calls(self) -> None:
         session = date(2026, 5, 15)

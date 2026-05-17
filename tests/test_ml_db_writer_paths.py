@@ -63,6 +63,45 @@ class MLDbWriterPathTests(unittest.TestCase):
             with patch.dict(os.environ, {"ML_DECISIONS_DB_PATH": str(rel)}):
                 self.assertEqual(db_writer._resolve_db_path(), rel.expanduser().resolve())
 
+    def test_load_for_ml_defaults_to_live_non_sim_outside_known_gap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_db = Path(tmp) / "decisions.db"
+            _create_schema(temp_db)
+            conn = sqlite3.connect(str(temp_db))
+            try:
+                rows = [
+                    ("KR", "LIVE", "2026-05-12", "live", 0),
+                    ("KR", "BACKFILL", "2026-05-12", "backfill", 0),
+                    ("KR", "SIM", "2026-05-12", "live", 1),
+                    ("KR", "GAP", "2026-04-10", "live", 0),
+                    ("KR", "RECOVERY", "2026-04-10", "live_verified_recovery", 0),
+                    ("KR", "RECOVERY_SIM", "2026-04-10", "live_verified_recovery", 1),
+                ]
+                for market, ticker, session_date, data_source, is_simulated in rows:
+                    conn.execute(
+                        """
+                        INSERT INTO decisions (
+                            ts, market, ticker, session_date, mode, decision, data_source, is_simulated
+                        ) VALUES (
+                            '2026-05-12T09:00:00', ?, ?, ?, 'NEUTRAL', 'NO_SIGNAL', ?, ?
+                        )
+                        """,
+                        (market, ticker, session_date, data_source, is_simulated),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with patch.dict(os.environ, {"ML_DECISIONS_DB_PATH": str(temp_db)}):
+                safe = db_writer.load_for_ml(market="KR")
+                all_rows = db_writer.load_for_ml(market="KR", live_only=False)
+
+            self.assertEqual(safe["ticker"].tolist(), ["LIVE", "RECOVERY"])
+            self.assertEqual(
+                set(all_rows["ticker"]),
+                {"LIVE", "BACKFILL", "SIM", "GAP", "RECOVERY", "RECOVERY_SIM"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

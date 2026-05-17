@@ -877,6 +877,51 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(bot.risk.positions[0]["pathb_path_run_id"], plan.path_run_id)
             self.assertTrue(bot.saved_positions)
 
+    def test_recover_on_startup_promotes_acked_run_with_local_position_to_filled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            plan = make_price_plan(
+                decision_id="dec1",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_order_sent(
+                plan.path_run_id,
+                execution_id="ord1",
+                price=52_200,
+                qty=2,
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+            )
+            runtime.adapter.mark_order_acked(
+                plan.path_run_id,
+                execution_id="ord1",
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+            )
+            bot.risk.positions.append({"ticker": "005930", "qty": 2, "entry": 52_200})
+
+            summary = runtime.recover_on_startup()
+            run = store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_positions"], 1)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(run["plan"]["entry_pending_resolution"], "local_pathb_holding_recovered")
+            self.assertEqual(run["plan"]["filled_qty"], 2)
+            self.assertEqual(run["plan"]["actual_entry_price"], 52_200)
+            self.assertEqual(bot.risk.positions[0]["pathb_path_run_id"], plan.path_run_id)
+
     def test_recover_on_startup_escalates_sent_order_without_local_truth(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()

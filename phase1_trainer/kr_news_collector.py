@@ -109,6 +109,15 @@ def _load_existing_if_reusable(path: Path, target_tickers: list[str], force: boo
     existing_tickers = data.get("target_tickers") or list((data.get("corp_news") or {}).keys())
     existing_tickers = [str(t) for t in existing_tickers]
     if not target_tickers or existing_tickers == target_tickers:
+        market_news_count = len(data.get("market_news") or [])
+        corp_total = sum(
+            int((item or {}).get("count", len((item or {}).get("items", []))) or 0)
+            for item in (data.get("corp_news") or {}).values()
+            if isinstance(item, dict)
+        )
+        if market_news_count <= 0 and corp_total <= 0 and os.getenv("KR_NEWS_ALLOW_EMPTY_REUSE", "").lower() not in {"1", "true", "yes", "on"}:
+            log.warning(f"KR news file is empty; recollecting instead of reusing: {path.name}")
+            return None
         log.info(f"[SKIP] KR news file exists and force=False: {path.name}")
         return data
     log.warning(

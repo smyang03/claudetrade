@@ -52,9 +52,29 @@ class LivePreflightCredentialModeTests(unittest.TestCase):
         )
 
         self.assertEqual(check.status, "WARN")
+        self.assertIn("app_key=missing", check.detail)
+        self.assertIn("app_secret=missing", check.detail)
         self.assertEqual(check.data["credential_mode"], "fallback_shared_kr")
         self.assertTrue(check.data["fallback_to_kr_allowed"])
         self.assertFalse(check.data["accepted_exception"])
+        self.assertTrue(check.data["remediation_required"])
+
+    def test_us_credentials_reports_secret_only_missing(self) -> None:
+        check = _credential_check(
+            {
+                "KIS_ACCOUNT_NO": "11111111-01",
+                "KIS_APP_KEY": "kr-key",
+                "KIS_APP_SECRET": "kr-secret",
+                "KIS_ACCOUNT_NO_US": "22222222-01",
+                "KIS_APP_KEY_US": "us-key",
+                "KIS_APP_SECRET_US": "",
+            }
+        )
+
+        self.assertEqual(check.status, "WARN")
+        self.assertIn("app_key=present", check.detail)
+        self.assertIn("app_secret=missing", check.detail)
+        self.assertEqual(check.data["credential_mode"], "fallback_shared_kr")
         self.assertTrue(check.data["remediation_required"])
 
     def test_us_credentials_can_mark_shared_fallback_as_accepted_exception(self) -> None:
@@ -90,6 +110,13 @@ class LivePreflightCredentialModeTests(unittest.TestCase):
         self.assertEqual(check.status, "PASS")
         self.assertEqual(check.data["credential_mode"], "separate_us")
         self.assertFalse(check.data["fallback_to_kr_allowed"])
+        self.assertFalse(check.data["remediation_required"])
+
+    def test_patha_timing_lifecycle_can_be_explicitly_disabled(self) -> None:
+        checks = live_preflight._static_code_checks({"PATHA_TIMING_LIFECYCLE_ENABLED": "false"})
+        check = next(item for item in checks if item.name == "code.wait_timing_recorded")
+
+        self.assertEqual(check.status, "PASS")
         self.assertFalse(check.data["remediation_required"])
 
 

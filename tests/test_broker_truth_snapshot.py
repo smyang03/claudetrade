@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -93,6 +94,38 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             self.assertEqual(calls["n"], 1)
             snapshot.refresh_market("KR", force=True, ttl_sec=60)
             self.assertEqual(calls["n"], 2)
+
+    def test_load_snapshot_ttl_override_recomputes_staleness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            last_success = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat(timespec="seconds")
+            path.write_text(
+                json.dumps(
+                    {
+                        "runtime_mode": "live",
+                        "schema_version": 1,
+                        "markets": {
+                            "US": {
+                                "missing": False,
+                                "last_success_at": last_success,
+                                "last_attempt_at": last_success,
+                                "ttl_sec": 30,
+                                "error": "",
+                                "positions": [{"ticker": "SOFI", "qty": 12}],
+                                "open_orders": [],
+                                "today_fills": [],
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = BrokerTruthSnapshot(runtime_mode="live", path=path).load_snapshot(ttl_by_market={"US": 300})
+
+            self.assertEqual(loaded["markets"]["US"]["ttl_sec"], 300)
+            self.assertFalse(loaded["markets"]["US"]["stale"])
+            self.assertEqual(loaded["markets"]["US"]["positions"][0]["ticker"], "SOFI")
 
     def test_date_provider_controls_trade_date(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

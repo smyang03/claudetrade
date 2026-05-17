@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import codecs
 import json
 import sqlite3
 import subprocess
@@ -102,6 +103,36 @@ def check_execution_lessons(data: Any | None) -> CheckResult:
         "PASS",
         f"checked {lesson_count} execution_lessons entries",
     )
+
+
+def check_json_strict_parse(root: Path) -> CheckResult:
+    active_errors: list[str] = []
+    archive_errors: list[str] = []
+    bom_files: list[str] = []
+    checked = 0
+    for pattern in ("state/**/*.json", "config/**/*.json"):
+        for path in root.glob(pattern):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            checked += 1
+            try:
+                raw = path.read_bytes()
+                if raw.startswith(codecs.BOM_UTF8):
+                    bom_files.append(rel)
+                json.loads(raw.decode("utf-8-sig"))
+            except Exception as exc:
+                target = archive_errors if "archive" in path.parts or "corrupt" in path.name.lower() else active_errors
+                target.append(f"{rel}: {exc}")
+    detail = (
+        f"checked={checked} active_errors={len(active_errors)} "
+        f"archive_errors={len(archive_errors)} bom_files={len(bom_files)}"
+    )
+    if active_errors:
+        return CheckResult("json.strict_parse", "FAIL", f"{detail}; samples={active_errors[:5]}")
+    if archive_errors or bom_files:
+        return CheckResult("json.strict_parse", "WARN", f"{detail}; archive_samples={archive_errors[:5]} bom_samples={bom_files[:5]}")
+    return CheckResult("json.strict_parse", "PASS", detail)
 
 
 def _load_trading_bot_ast(root: Path) -> tuple[ast.Module | None, str | None]:
@@ -274,12 +305,18 @@ def check_ml_db_health(root: Path) -> CheckResult:
 
     fixture_rows = result.get("contamination", {}).get("fixture_rows")
     seq = result.get("sqlite_sequence", {}).get("decisions")
+    gaps = result.get("gaps", {}) if isinstance(result.get("gaps"), dict) else {}
+    warnings = [str(item) for item in result.get("warnings", [])]
     detail = (
         f"rows={result.get('total_rows')} live={result.get('live_rows')} "
         f"latest={result.get('latest_session_date')} fixture_rows={fixture_rows} "
-        f"seq={seq} recent_live={result.get('last_3_trading_days_live_rows')}"
+        f"seq={seq} recent_live={result.get('last_3_trading_days_live_rows')} "
+        f"known_gaps={len(gaps.get('known_unrecoverable_ranges') or [])} "
+        f"rows_inside_known_gap={gaps.get('rows_inside_known_gap', 0)}"
     )
     if result.get("ok"):
+        if warnings:
+            return CheckResult("ml.decisions_db_health", "WARN", f"{detail}; warnings={', '.join(warnings)}")
         return CheckResult("ml.decisions_db_health", "PASS", detail)
     errors = ", ".join(str(e) for e in result.get("errors", []))
     return CheckResult("ml.decisions_db_health", "FAIL", f"{detail}; errors={errors}")
@@ -327,6 +364,13 @@ def check_price_csv_health(root: Path, market: str, trigger: str = "manual") -> 
     malformed = int(counts.get("malformed_csv", 0))
     missing = int(counts.get("missing_csv", 0))
     stale = int(counts.get("stale_csv", 0))
+    ohlc_error_csv = int(counts.get("ohlc_logic_error_csv", 0))
+    ohlc_error_rows = int(counts.get("ohlc_logic_error_rows", 0))
+    latest_ohlc_error_csv = int(counts.get("latest_ohlc_logic_error_csv", 0))
+    flat_zero_csv = int(counts.get("flat_ohlc_zero_volume_csv", 0))
+    flat_zero_rows = int(counts.get("flat_ohlc_zero_volume_rows", 0))
+    latest_flat_zero_csv = int(counts.get("latest_flat_ohlc_zero_volume_csv", 0))
+    too_few_rows_csv = int(counts.get("too_few_rows_csv", 0))
     total = int(summary.get("total", 0))
     fresh_ratio = float(summary.get("fresh_ratio", 0.0))
     trigger_key = str(trigger or "").upper()
@@ -342,9 +386,17 @@ def check_price_csv_health(root: Path, market: str, trigger: str = "manual") -> 
         f"last_range={summary.get('oldest_last_date', '')}..{summary.get('newest_last_date', '')}"
     )
     integrity_status = "PASS"
-    if total == 0 or malformed or missing:
+    if total == 0 or latest_ohlc_error_csv:
+        integrity_status = "FAIL"
+    elif malformed or missing or ohlc_error_csv or flat_zero_csv or too_few_rows_csv:
         integrity_status = "FAIL" if is_postclose and (malformed or missing) else "WARN"
-    integrity_detail = f"total={total} malformed={malformed} missing={missing}"
+    integrity_detail = (
+        f"total={total} malformed={malformed} missing={missing} "
+        f"ohlc_error_csv={ohlc_error_csv} ohlc_error_rows={ohlc_error_rows} "
+        f"latest_ohlc_error_csv={latest_ohlc_error_csv} "
+        f"flat_ohlc_zero_volume_csv={flat_zero_csv} flat_ohlc_zero_volume_rows={flat_zero_rows} "
+        f"latest_flat_ohlc_zero_volume_csv={latest_flat_zero_csv} too_few_rows_csv={too_few_rows_csv}"
+    )
     return [
         CheckResult(f"data.price_csv_freshness.{market.lower()}", freshness_status, freshness_detail),
         CheckResult(f"data.price_csv_integrity.{market.lower()}", integrity_status, integrity_detail),
@@ -356,6 +408,7 @@ def run_checks(root: Path, include_git: bool, trigger: str = "manual") -> list[C
     results.append(check_py_compile(root))
     brain_result, brain_data = check_brain_json(root)
     results.append(brain_result)
+    results.append(check_json_strict_parse(root))
     results.append(check_execution_lessons(brain_data))
     tree, ast_error = _load_trading_bot_ast(root)
     if ast_error:

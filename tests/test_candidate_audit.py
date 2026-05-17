@@ -9,13 +9,63 @@ from unittest.mock import patch
 
 from audit import candidate_audit_store as audit_store_module
 from audit.candidate_audit_store import CandidateAuditStore, candidate_key
-from tools.analyze_candidate_audit import analyze_candidate_audit, classify_strategy_match, watch_trigger_funnel_summary
+from tools.analyze_candidate_audit import (
+    analyze_candidate_audit,
+    classify_strategy_match,
+    normalize_candidate_action,
+    watch_trigger_funnel_summary,
+)
 from tools.backfill_candidate_audit import backfill_candidate_audit
 from tools.candidate_audit_outcome_catchup import build_catchup_plan, run_catchup
 from tools.update_candidate_audit_outcomes import update_candidate_audit_outcomes
 
 
 class CandidateAuditBackfillTests(unittest.TestCase):
+    def test_normalize_candidate_action_groups_action_families(self) -> None:
+        self.assertEqual(normalize_candidate_action("BUY_READY"), "trade_ready_family")
+        self.assertEqual(normalize_candidate_action("ADD_READY"), "trade_ready_family")
+        self.assertEqual(normalize_candidate_action("PULLBACK_WAIT"), "watch_family")
+
+    def test_analyze_candidate_audit_uses_latest_rows_and_reports_consistency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            base = {
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-05-15",
+                "ticker": "AAPL",
+                "price": 100.0,
+                "in_prompt": True,
+                "input_to_claude_reported": True,
+                "claude_trade_ready": True,
+                "claude_action": "BUY_READY",
+            }
+            store.upsert_candidate({**base, "call_id": "old", "known_at": "2026-05-15T09:00:00+09:00"})
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "new",
+                    "known_at": "2026-05-15T09:05:00+09:00",
+                    "price": 0,
+                    "in_prompt": False,
+                    "claude_action": "WATCH",
+                }
+            )
+
+            result = analyze_candidate_audit(
+                db_path=db_path,
+                session_date="2026-05-15",
+                market="US",
+            )
+
+        self.assertEqual(result["candidate_rows"], 1)
+        self.assertEqual(result["row_uniqueness"]["call_level_rows"], 2)
+        self.assertEqual(result["row_uniqueness"]["latest_session_ticker_rows"], 1)
+        self.assertEqual(result["consistency"]["input_reported_not_in_prompt_count"], 1)
+        self.assertEqual(result["consistency"]["trade_ready_family_mismatch_count"], 1)
+        self.assertEqual(result["consistency"]["invalid_price_count"], 1)
+
     def test_candidate_audit_additive_trainer_columns_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
@@ -702,6 +752,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                 session_date=session_date,
                 market="KR",
                 horizon_min=30,
+                latest_only=False,
             )
 
             not_in_prompt = next(

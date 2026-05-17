@@ -16,6 +16,9 @@ from typing import Any, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from ml.decision_gap_policy import live_training_data_sources
+
 DEFAULT_BACKUP_PATH = ROOT / "data" / "ml" / "decisions_before_backfill_refresh_20260403_221805.db"
 DEFAULT_CURRENT_PATH = ROOT / "data" / "ml" / "decisions.db"
 
@@ -82,6 +85,10 @@ def _max_session_date(conn: sqlite3.Connection) -> str | None:
     return conn.execute("SELECT MAX(session_date) FROM decisions").fetchone()[0]
 
 
+def _live_source_values() -> tuple[str, ...]:
+    return tuple(live_training_data_sources())
+
+
 def _db_diag(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"path": str(path), "exists": False}
@@ -92,9 +99,16 @@ def _db_diag(path: Path) -> dict[str, Any]:
         min_date, max_date = conn.execute(
             "SELECT MIN(session_date), MAX(session_date) FROM decisions"
         ).fetchone()
+        live_sources = _live_source_values()
+        source_placeholders = ",".join("?" for _ in live_sources)
         live = int(
             conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE COALESCE(data_source, 'live')='live'"
+                f"""
+                SELECT COUNT(*)
+                FROM decisions
+                WHERE COALESCE(data_source, 'live') IN ({source_placeholders})
+                """,
+                live_sources,
             ).fetchone()[0]
         )
         fixture = int(
@@ -145,7 +159,7 @@ def _is_live_recoverable(row: sqlite3.Row, backup_max_session: str | None) -> bo
     if _is_fixture_row(row):
         return False
     data_source = str(row["data_source"] or "live").lower()
-    if data_source not in ("", "live"):
+    if data_source not in ("", *_live_source_values()):
         return False
     try:
         if int(row["is_simulated"] or 0) != 0:

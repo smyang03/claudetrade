@@ -64,6 +64,7 @@
     "US_DAILY_ENTRY_CAP": "40",
     "V2_BRAIN_POLICY": "fresh_v2_reference_v1",
     "V2_FRESH_BRAIN_START": "true",
+    "PATHA_TIMING_LIFECYCLE_ENABLED": "false",
     "CLAUDE_SELECTION_MAX_TOKENS": "6000",
     "CLAUDE_SELECTION_RETRY_MAX_TOKENS": "3500",
     "R1_MODEL": "claude-haiku-4-5-20251001",

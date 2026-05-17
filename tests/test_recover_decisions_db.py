@@ -130,6 +130,37 @@ class RecoverDecisionsDbTests(unittest.TestCase):
                 conn.close()
             self.assertEqual(rows, [(26, "BACK", "2026-04-03"), (86371, "LIVE", "2026-05-12")])
 
+    def test_verified_recovery_source_counts_as_live_for_diag_and_merge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            backup = temp / "backup.db"
+            current = temp / "current.db"
+            output = temp / "recovered.db"
+            _create_schema(backup)
+            _create_schema(current)
+
+            _insert_row(backup, row_id=26, ticker="BACK", session_date="2026-04-03")
+            _insert_row(
+                current,
+                row_id=86371,
+                ticker="RECOVERY",
+                session_date="2026-05-12",
+                data_source="live_verified_recovery",
+            )
+
+            report = recover_decisions_db.recover(
+                backup_path=backup,
+                current_path=current,
+                output_path=output,
+                apply=True,
+                skip_forward_update=True,
+            )
+
+            self.assertEqual(report["current_diag"]["live_rows"], 1)
+            self.assertEqual(report["current_rows_merged"], 1)
+            rows = _decision_rows(output)
+            self.assertEqual([(row[2], row[3]) for row in rows], [("BACK", "2026-04-03"), ("RECOVERY", "2026-05-12")])
+
     def test_dry_run_does_not_create_output_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             temp = Path(tmp)

@@ -348,6 +348,7 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             run = runtime.store.find_path_run(plan.path_run_id)
             self.assertEqual(run["status"], "ORDER_UNKNOWN")
             self.assertTrue(run["plan"]["session_end_unresolved"])
+            self.assertTrue(run["plan"]["manual_reconciliation_required"])
             self.assertEqual(run["plan"]["order_unknown_resolution"], "session_end_unresolved")
 
     def test_permanent_order_reject_does_not_schedule_retry(self) -> None:
@@ -436,6 +437,51 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
                 state["orders"]["KR:ord1"]["resolution"],
                 "AUTO_CLEARED_NO_BROKER_EVIDENCE",
             )
+
+    def test_session_open_does_not_auto_clear_manual_reconciliation_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+            runtime.bot._current_session_date_str = lambda market: "2026-04-28"  # type: ignore[method-assign]
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "session_end_unresolved": True,
+                    "manual_reconciliation_required": True,
+                    "order_unknown_resolution": "session_end_unresolved",
+                },
+                merge_plan=True,
+            )
+
+            summary = runtime.reconcile_order_unknowns_at_open("KR")
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["manual_reconciliation_required"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "manual_reconciliation_required")
+            self.assertTrue(run["plan"]["auto_clear_no_evidence_blocked"])
+            self.assertTrue(run["plan"]["manual_reconciliation_required"])
+
+    def test_session_open_treats_legacy_session_end_unresolved_as_manual_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+            runtime.bot._current_session_date_str = lambda market: "2026-04-28"  # type: ignore[method-assign]
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "session_end_unresolved": True,
+                    "order_unknown_resolution": "session_end_unresolved",
+                },
+                merge_plan=True,
+            )
+
+            summary = runtime.reconcile_order_unknowns_at_open("KR")
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["manual_reconciliation_required"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "manual_reconciliation_required")
+            self.assertTrue(run["plan"]["auto_clear_no_evidence_blocked"])
+            self.assertTrue(run["plan"]["manual_reconciliation_required"])
 
     def test_external_close_updates_pathb_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

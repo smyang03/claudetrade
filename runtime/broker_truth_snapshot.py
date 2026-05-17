@@ -207,7 +207,11 @@ class BrokerTruthSnapshot:
             existing = data["markets"].get(market)
             if not isinstance(existing, dict):
                 existing = _market_template((ttl_by_market or {}).get(market, 60), missing=True)
-            existing.setdefault("ttl_sec", int((ttl_by_market or {}).get(market, existing.get("ttl_sec", 60)) or 60))
+            ttl_override = (ttl_by_market or {}).get(market)
+            if ttl_override is not None:
+                existing["ttl_sec"] = int(ttl_override or 60)
+            else:
+                existing.setdefault("ttl_sec", int(existing.get("ttl_sec", 60) or 60))
             existing.setdefault("positions", [])
             existing.setdefault("open_orders", [])
             existing.setdefault("today_fills", [])

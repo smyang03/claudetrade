@@ -1247,6 +1247,11 @@ class PathBRuntime:
                 if recovered_run is None:
                     continue
                 run = recovered_run
+            elif str(run.get("status", "")) in {"ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED"}:
+                recovered_run = self._recover_entry_pending_local_holding(run, plan, pos)
+                if recovered_run is None:
+                    continue
+                run = recovered_run
             if str(run.get("status", "")) not in {"FILLED", "PARTIAL_FILLED"}:
                 continue
             self._clear_stale_pathb_closing_lock(pos, market, plan.path_run_id)
@@ -1640,6 +1645,8 @@ class PathBRuntime:
                     pos = self._find_position(market, plan.ticker)
                 if pos is not None:
                     self._attach_pathb_position_metadata(pos, plan)
+                    if status in {"ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED"}:
+                        self._recover_entry_pending_local_holding(run, plan, pos)
                     summary["recovered_positions"] += 1
                     continue
 
@@ -4155,6 +4162,7 @@ class PathBRuntime:
             "ambiguous_broker_truth": 0,
             "permanent_order_reject": 0,
             "session_end_unresolved": 0,
+            "manual_reconciliation_required": 0,
             "skipped": 0,
             "errors": [],
         }
@@ -4268,6 +4276,9 @@ class PathBRuntime:
 
         ticker = self._ticker_key(market, plan.ticker)
         plan_json = run.get("plan") or {}
+        manual_reconciliation_required = bool(
+            plan_json.get("manual_reconciliation_required") or plan_json.get("session_end_unresolved")
+        )
         exit_unknown = self._order_unknown_is_exit_side(run)
         closed_lifecycle = self._pathb_closed_lifecycle_evidence(
             market,
@@ -4417,7 +4428,7 @@ class PathBRuntime:
                 self._set_order_unknown_resolution(
                     path_run_id,
                     "session_end_unresolved",
-                    {"session_end_unresolved": True},
+                    {"session_end_unresolved": True, "manual_reconciliation_required": True},
                     next_retry=False,
                 )
                 return "session_end_unresolved"
@@ -4514,11 +4525,23 @@ class PathBRuntime:
             self._set_order_unknown_resolution(
                 path_run_id,
                 "session_end_unresolved",
-                {"session_end_unresolved": True},
+                {"session_end_unresolved": True, "manual_reconciliation_required": True},
                 next_retry=False,
             )
             return "session_end_unresolved"
         if auto_clear_no_evidence:
+            if manual_reconciliation_required:
+                self._set_order_unknown_resolution(
+                    path_run_id,
+                    "manual_reconciliation_required",
+                    {
+                        **evidence_payload,
+                        "manual_reconciliation_required": True,
+                        "auto_clear_no_evidence_blocked": True,
+                    },
+                    next_retry=True,
+                )
+                return "manual_reconciliation_required"
             self._set_order_unknown_resolution(
                 path_run_id,
                 "auto_cleared_no_broker_evidence",
@@ -4709,7 +4732,12 @@ class PathBRuntime:
                 self._set_order_unknown_resolution(
                     path_run_id,
                     "session_end_unresolved",
-                    {**evidence, "session_end_partial_sell_fill": True, "remaining_qty": int(remaining)},
+                    {
+                        **evidence,
+                        "session_end_partial_sell_fill": True,
+                        "remaining_qty": int(remaining),
+                        "manual_reconciliation_required": True,
+                    },
                     next_retry=True,
                 )
                 return "session_end_unresolved"
@@ -4730,7 +4758,7 @@ class PathBRuntime:
                 self._set_order_unknown_resolution(
                     path_run_id,
                     "session_end_unresolved",
-                    {**evidence, "session_end_open_sell_order": True},
+                    {**evidence, "session_end_open_sell_order": True, "manual_reconciliation_required": True},
                     next_retry=True,
                 )
                 return "session_end_unresolved"
@@ -4748,10 +4776,21 @@ class PathBRuntime:
             self._set_order_unknown_resolution(
                 path_run_id,
                 "session_end_unresolved",
-                {**evidence, "session_end_unresolved": True},
+                {**evidence, "session_end_unresolved": True, "manual_reconciliation_required": True},
                 next_retry=False,
             )
             return "session_end_unresolved"
+
+        if self._recover_exit_order_unknown_still_held(
+            path_run_id,
+            plan,
+            run,
+            requested_qty=requested_qty,
+            broker_position_qty=remaining_balance_qty,
+            execution_id=execution_id,
+            evidence=evidence,
+        ):
+            return "recovered_position"
 
         self._set_order_unknown_resolution(
             path_run_id,
@@ -4760,6 +4799,82 @@ class PathBRuntime:
             next_retry=True,
         )
         return "ambiguous_broker_truth"
+
+    def _recover_exit_order_unknown_still_held(
+        self,
+        path_run_id: str,
+        plan: PricePlan,
+        run: dict[str, Any],
+        *,
+        requested_qty: int,
+        broker_position_qty: int,
+        execution_id: str,
+        evidence: dict[str, Any],
+    ) -> bool:
+        """Recover a stale sell ORDER_UNKNOWN when broker truth proves the position is still held."""
+        if broker_position_qty <= 0:
+            return False
+        pos = self._find_position(plan.market, plan.ticker, path_run_id=path_run_id)
+        if pos is None:
+            return False
+        try:
+            local_qty = int(float(pos.get("qty", 0) or 0))
+        except Exception:
+            local_qty = 0
+        if local_qty <= 0:
+            return False
+        expected_qty = int(requested_qty or local_qty)
+        if expected_qty > 0 and (broker_position_qty < expected_qty or local_qty < expected_qty):
+            return False
+        if broker_position_qty != local_qty:
+            return False
+
+        plan_json = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        archived_position_fields = self._clear_pathb_sell_evidence_from_position(
+            pos,
+            market=plan.market,
+            path_run_id=path_run_id,
+            execution_id=execution_id,
+            reason="broker_position_still_held_no_sell_evidence",
+        )
+        removed_pending_orders = self._remove_pathb_pending_sell_orders(
+            plan.market,
+            plan.ticker,
+            path_run_id=path_run_id,
+            execution_id=execution_id,
+        )
+        payload = {
+            **evidence,
+            "exit_sell_missing_still_held": True,
+            "manual_reconciliation_required": False,
+            "session_end_unresolved": False,
+            "broker_position_qty_after_sell": int(broker_position_qty),
+            "local_position_qty_after_recovery": int(local_qty),
+            "stale_exit_execution_id": str(execution_id or ""),
+            "stale_exit_qty": int(requested_qty or 0),
+            "stale_sell_order_sent_at": str(plan_json.get("sell_order_sent_at", "") or ""),
+            "stale_pending_close_reason": str(plan_json.get("pending_close_reason", "") or ""),
+            "stale_pathb_position_fields": archived_position_fields,
+            "stale_pending_orders_removed": int(removed_pending_orders),
+            "exit_execution_id": "",
+            "exit_qty": 0,
+            "sell_order_sent_at": "",
+            "pending_close_reason": "",
+            "exit_order_price": 0,
+        }
+        self._set_order_unknown_resolution(
+            path_run_id,
+            "exit_sell_missing_still_held",
+            payload,
+            next_retry=False,
+        )
+        self.store.update_path_run(path_run_id, status="FILLED", plan={"recovered_to_filled_still_held": True}, merge_plan=True)
+        self._release_pathb_sell_attempt_lock(plan.market, plan.ticker, path_run_id)
+        log.warning(
+            f"[PathB ORDER_UNKNOWN sell recovered as still held] {plan.market} {plan.ticker} "
+            f"qty={local_qty} run={path_run_id} stale_order={execution_id or '-'}"
+        )
+        return True
 
     def _pathb_closed_lifecycle_evidence(
         self,
@@ -5365,6 +5480,51 @@ class PathBRuntime:
         )
         return self.store.find_path_run(plan.path_run_id)
 
+    def _recover_entry_pending_local_holding(
+        self,
+        run: dict[str, Any],
+        plan: PricePlan,
+        pos: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        status = str(run.get("status", "") or "").upper()
+        if status not in {"ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED"}:
+            return None
+        try:
+            qty = int(float(pos.get("qty", 0) or 0))
+        except Exception:
+            qty = 0
+        if qty <= 0:
+            return None
+        entry_price = self._position_entry_native(pos, plan.market)
+        if entry_price <= 0:
+            entry_price = float(plan.buy_zone_high or plan.buy_zone_low or 0)
+        plan_json = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        execution_id = str(
+            pos.get("pathb_entry_execution_id", "")
+            or pos.get("v2_execution_id", "")
+            or pos.get("order_no", "")
+            or pos.get("buy_order_no", "")
+            or plan_json.get("entry_execution_id", "")
+            or ""
+        )
+        payload: dict[str, Any] = {
+            "entry_pending_resolution": "local_pathb_holding_recovered",
+            "entry_pending_recovered_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "entry_pending_previous_status": status,
+            "actual_entry_price": float(entry_price or 0),
+            "filled_qty": qty,
+        }
+        if execution_id:
+            payload["entry_execution_id"] = execution_id
+        else:
+            payload["local_recovery_missing_execution_id"] = True
+        self.store.update_path_run(plan.path_run_id, status="FILLED", plan=payload, merge_plan=True)
+        log.warning(
+            f"[PathB entry pending local holding recovered] {plan.market} {plan.ticker} "
+            f"status={status} qty={qty} entry={float(entry_price or 0):g} run={plan.path_run_id}"
+        )
+        return self.store.find_path_run(plan.path_run_id)
+
     def _position_entry_native(self, pos: dict[str, Any], market: str) -> float:
         market_key = str(market or "").upper()
         if market_key == "US":
@@ -5417,6 +5577,28 @@ class PathBRuntime:
         if qty <= 0:
             return False
 
+        archived = self._clear_pathb_sell_evidence_from_position(
+            pos,
+            market=str(market or "").upper(),
+            path_run_id=path_run_id,
+            execution_id="",
+            reason="still_held_no_pending_order",
+        )
+        log.warning(
+            f"[PathB stale closing cleared] {market} {ticker} age_sec={age_sec:.0f} "
+            f"run={path_run_id}"
+        )
+        return bool(archived)
+
+    def _clear_pathb_sell_evidence_from_position(
+        self,
+        pos: dict[str, Any],
+        *,
+        market: str,
+        path_run_id: str,
+        execution_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
         archived: dict[str, Any] = {}
         for field in (
             "pathb_closing",
@@ -5427,16 +5609,74 @@ class PathBRuntime:
         ):
             if field in pos:
                 archived[field] = pos.pop(field)
-        pos["pathb_stale_closing_cleared_at"] = datetime.now(KST).isoformat(timespec="seconds")
-        pos["pathb_stale_closing_clear_reason"] = "still_held_no_pending_order"
+
+        generic_order_no = str(pos.get("pending_sell_order_no", "") or "").strip()
+        if generic_order_no and (not execution_id or generic_order_no == str(execution_id or "").strip()):
+            for field in (
+                "pending_sell_order_no",
+                "pending_sell_qty",
+                "pending_close_reason",
+                "pending_sell_price",
+            ):
+                if field in pos:
+                    archived[field] = pos.pop(field)
+
         if archived:
+            pos["pathb_stale_closing_cleared_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            pos["pathb_stale_closing_clear_reason"] = str(reason or "still_held_no_pending_order")
             pos["pathb_stale_closing_cleared_fields"] = archived
-        self._save_positions_if_possible()
-        log.warning(
-            f"[PathB stale closing cleared] {market} {ticker} age_sec={age_sec:.0f} "
-            f"run={path_run_id}"
-        )
-        return True
+            try:
+                self._save_positions_if_possible()
+            except Exception:
+                pass
+        return archived
+
+    def _remove_pathb_pending_sell_orders(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        path_run_id: str,
+        execution_id: str,
+    ) -> int:
+        orders = getattr(self.bot, "pending_orders", None)
+        if not isinstance(orders, list) or not orders:
+            return 0
+        market_key = str(market or "").upper()
+        ticker_key = self._ticker_key(market_key, ticker)
+        execution_key = str(execution_id or "").strip()
+        kept: list[dict[str, Any]] = []
+        removed = 0
+        for order in orders:
+            if not isinstance(order, dict):
+                kept.append(order)
+                continue
+            order_market = str(order.get("market", market_key) or market_key).upper()
+            order_ticker = self._ticker_key(market_key, str(order.get("ticker", "") or ""))
+            order_path_run_id = str(order.get("pathb_path_run_id") or order.get("path_run_id") or "").strip()
+            order_no = str(
+                order.get("order_no")
+                or order.get("execution_id")
+                or order.get("pathb_pending_sell_order_no")
+                or order.get("pending_sell_order_no")
+                or ""
+            ).strip()
+            side = str(order.get("side") or order.get("order_side") or order.get("action") or "").lower()
+            same_order = bool(execution_key and order_no == execution_key)
+            same_path = bool(path_run_id and order_path_run_id == path_run_id)
+            same_ticker = order_market == market_key and order_ticker == ticker_key
+            sell_like = not side or "sell" in side or side in {"s", "ask"}
+            if same_ticker and sell_like and (same_path or same_order):
+                removed += 1
+                continue
+            kept.append(order)
+        if removed:
+            orders[:] = kept
+            try:
+                self._save_positions_if_possible()
+            except Exception:
+                pass
+        return removed
 
     def _find_position(self, market: str, ticker: str, *, path_run_id: str = "") -> dict[str, Any] | None:
         key = self._ticker_key(market, ticker)

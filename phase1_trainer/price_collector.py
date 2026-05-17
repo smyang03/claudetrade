@@ -873,11 +873,7 @@ def _save(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Times
         print(f"  WARN  {label}: no price rows inside requested window")
         return
     if errors:
-        quarantine_path = quarantine_bad_price_csv(path, ";".join(errors))
-        print(
-            f"  WARN  {label}: price CSV normalized errors={';'.join(errors)} "
-            f"quarantine={quarantine_path or 'none'}"
-        )
+        print(f"  WARN  {label}: price CSV normalized errors={';'.join(errors)}")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -885,11 +881,15 @@ def _save(path: Path, df: pd.DataFrame, start_dt: pd.Timestamp, end_dt: pd.Times
     market, ticker = price_csv_identity(path)
     verified, verify_result = load_price_csv_frame(tmp_path, market, ticker)
     if verified is None or verify_result.status != "ok":
+        quarantine_path = quarantine_bad_price_csv(tmp_path, verify_result.detail)
         try:
             tmp_path.unlink()
         except Exception:
             pass
-        print(f"  WARN  {label}: atomic save verification failed: {verify_result.detail}")
+        print(
+            f"  WARN  {label}: atomic save verification failed: {verify_result.detail} "
+            f"quarantine={quarantine_path or 'none'}"
+        )
         return
     tmp_path.replace(path)
     print(f"  OK {label}: {len(clean)} rows ({clean['date'].min()} ~ {clean['date'].max()})")

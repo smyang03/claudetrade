@@ -23,6 +23,19 @@ MISSED_WINNER_MFE_PCT = 2.0
 MISSED_WINNER_MIN_DRAWDOWN_PCT = -2.0
 
 
+def normalize_candidate_action(action: str) -> str:
+    key = str(action or "").strip().upper()
+    if key in {"BUY_READY", "PROBE_READY", "ADD_READY"}:
+        return "trade_ready_family"
+    if key in {"WATCH", "PULLBACK_WAIT"}:
+        return "watch_family"
+    if key in {"AVOID", "SKIP", "DO_NOT_TRADE"}:
+        return "avoid_family"
+    if key in {"HARD_BLOCK", "BLOCKED"}:
+        return "blocked_family"
+    return "unknown_family" if not key else "other_family"
+
+
 def _to_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -194,9 +207,11 @@ def _load_outcome_rows(
     market: str,
     runtime_mode: str,
     horizon_min: int,
+    latest_only: bool = True,
 ) -> list[dict[str, Any]]:
     where, params = _where_clause(session_date=session_date, market=market, runtime_mode=runtime_mode)
     params.append(int(horizon_min))
+    row_source = "audit_candidate_latest_rows" if latest_only else "audit_candidate_rows"
     return [
         dict(row)
         for row in conn.execute(
@@ -209,7 +224,7 @@ def _load_outcome_rows(
                    o.horizon_min, o.status,
                    o.return_pct, o.max_runup_pct, o.max_drawdown_pct,
                    o.observed_at, o.observed_price, o.payload_json
-            FROM audit_candidate_rows r
+            FROM {row_source} r
             LEFT JOIN audit_candidate_outcomes o
               ON o.candidate_key = r.candidate_key
              AND o.horizon_min = ?
@@ -455,6 +470,62 @@ def _outcome_coverage(
         item["maturity"] = _coverage_maturity(coverage_rate)
         item["interpretation"] = _coverage_interpretation(coverage_rate)
     return by_horizon
+
+
+def _candidate_consistency_summary(
+    conn: sqlite3.Connection,
+    *,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+) -> dict[str, Any]:
+    where, params = _where_clause(session_date=session_date, market=market, runtime_mode=runtime_mode)
+    rows = [
+        dict(row)
+        for row in conn.execute(
+            f"""
+            SELECT candidate_key, session_date, market, ticker, price,
+                   input_to_claude_reported, in_prompt, claude_trade_ready,
+                   claude_action, route_final_action
+            FROM audit_candidate_latest_rows r
+            WHERE {where}
+            """,
+            params,
+        )
+    ]
+    input_reported_not_in_prompt: list[dict[str, Any]] = []
+    trade_ready_family_mismatch: list[dict[str, Any]] = []
+    invalid_price: list[dict[str, Any]] = []
+    action_family_counts: Counter[str] = Counter()
+    for row in rows:
+        action = str(row.get("route_final_action") or row.get("claude_action") or "")
+        family = normalize_candidate_action(action)
+        action_family_counts[family] += 1
+        item = {
+            "candidate_key": row.get("candidate_key"),
+            "session_date": row.get("session_date"),
+            "market": row.get("market"),
+            "ticker": row.get("ticker"),
+            "action": action,
+            "action_family": family,
+        }
+        if int(row.get("input_to_claude_reported") or 0) == 1 and int(row.get("in_prompt") or 0) == 0:
+            input_reported_not_in_prompt.append(item)
+        if int(row.get("claude_trade_ready") or 0) == 1 and family != "trade_ready_family":
+            trade_ready_family_mismatch.append(item)
+        price = _to_float(row.get("price"))
+        if price is None or price <= 0:
+            invalid_price.append({**item, "price": row.get("price")})
+    return {
+        "latest_rows_checked": len(rows),
+        "action_family_counts": dict(action_family_counts),
+        "input_reported_not_in_prompt": input_reported_not_in_prompt[:30],
+        "input_reported_not_in_prompt_count": len(input_reported_not_in_prompt),
+        "trade_ready_family_mismatch": trade_ready_family_mismatch[:30],
+        "trade_ready_family_mismatch_count": len(trade_ready_family_mismatch),
+        "invalid_price": invalid_price[:30],
+        "invalid_price_count": len(invalid_price),
+    }
 
 
 def _coverage_maturity(coverage_rate: float | None) -> str:
@@ -874,6 +945,7 @@ def analyze_candidate_audit(
     runtime_mode: str = "live",
     horizon_min: int = 60,
     limit: int = 10,
+    latest_only: bool = True,
 ) -> dict[str, Any]:
     target = Path(db_path) if db_path else get_runtime_path("data", "audit", "candidate_audit.db")
     conn = sqlite3.connect(str(target), timeout=5)
@@ -885,6 +957,7 @@ def analyze_candidate_audit(
             market=market,
             runtime_mode=runtime_mode,
             horizon_min=horizon_min,
+            latest_only=latest_only,
         )
         coverage = _outcome_coverage(
             conn,
@@ -899,6 +972,12 @@ def analyze_candidate_audit(
             runtime_mode=runtime_mode,
         )
         row_uniqueness = _row_uniqueness_summary(
+            conn,
+            session_date=session_date,
+            market=market,
+            runtime_mode=runtime_mode,
+        )
+        consistency = _candidate_consistency_summary(
             conn,
             session_date=session_date,
             market=market,
@@ -922,7 +1001,9 @@ def analyze_candidate_audit(
         "runtime_mode": str(runtime_mode or "live").lower(),
         "horizon_min": int(horizon_min),
         "candidate_rows": len(rows),
+        "latest_only": bool(latest_only),
         "row_uniqueness": row_uniqueness,
+        "consistency": consistency,
         "freshness": freshness,
         "outcome_coverage": coverage,
         "buckets": buckets,
@@ -965,6 +1046,7 @@ def main() -> int:
     parser.add_argument("--runtime-mode", default="live")
     parser.add_argument("--horizon-min", type=int, default=60)
     parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--call-level", action="store_true", help="use raw call-level rows instead of latest session/ticker rows")
     args = parser.parse_args()
     result = analyze_candidate_audit(
         db_path=args.db or None,
@@ -973,6 +1055,7 @@ def main() -> int:
         runtime_mode=args.runtime_mode,
         horizon_min=args.horizon_min,
         limit=args.limit,
+        latest_only=not bool(args.call_level),
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

@@ -63,6 +63,70 @@ class LiveGuardianTests(unittest.TestCase):
         self.assertIn("remediation_commands", current.data)
         self.assertIn("tools.reconcile_order_truth", current.data["remediation_commands"][0])
 
+    def test_previous_session_order_unknown_with_local_exposure_is_hard(self) -> None:
+        finding = classify_preflight_check(
+            {
+                "name": "db.order_unknown_unresolved",
+                "status": "WARN",
+                "detail": "unresolved ORDER_UNKNOWN rows=1",
+                "data": {
+                    "current_session": [],
+                    "previous_session": [{"ticker": "005930"}],
+                    "previous_session_with_local_exposure": [{"ticker": "005930", "local_position_qty": 3}],
+                },
+            }
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
+
+    def test_pathb_broker_truth_conflict_is_hard(self) -> None:
+        finding = classify_preflight_check(
+            {
+                "name": "db.pathb_broker_truth_conflict",
+                "status": "FAIL",
+                "detail": "PathB broker truth conflicts=1",
+                "data": {"conflicts": [{"ticker": "SOFI", "do_not_start": True}]},
+            }
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
+
+    def test_recoverable_still_held_pathb_broker_truth_conflict_is_soft(self) -> None:
+        finding = classify_preflight_check(
+            {
+                "name": "db.pathb_broker_truth_conflict",
+                "status": "WARN",
+                "detail": "PathB broker truth conflicts=1 blockers=0 recoverable_still_held=1",
+                "data": {
+                    "conflicts": [
+                        {
+                            "ticker": "SOFI",
+                            "do_not_start": False,
+                            "suggested_action": "recover_still_held",
+                            "pathb_recoverable_still_held": True,
+                        }
+                    ]
+                },
+            }
+        )
+
+        self.assertEqual(finding.classification, "soft_fail")
+
+    def test_stale_active_with_local_exposure_is_hard(self) -> None:
+        finding = classify_preflight_check(
+            {
+                "name": "db.pathb_stale_active_runs",
+                "status": "WARN",
+                "detail": "previous-session active Path B rows=1",
+                "data": {
+                    "previous_session_with_local_exposure": [{"ticker": "005930", "local_position_qty": 3}],
+                    "previous_session_no_local_exposure": [],
+                },
+            }
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
+
     def test_telegram_fail_is_soft(self) -> None:
         finding = classify_preflight_check(
             {

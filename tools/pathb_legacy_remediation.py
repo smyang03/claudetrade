@@ -39,6 +39,7 @@ TERMINAL_EVENT_BY_STATUS = {
     "PARTIAL_FILLED": "PARTIAL_FILLED",
     "CLOSED": "CLOSED",
 }
+PRE_RUN_EVENT_TYPES = {"CLAUDE_PRICE_PLAN_GATE_WARNING", "SAFETY_BLOCKED"}
 
 
 def _now_kst() -> datetime:
@@ -65,6 +66,70 @@ def _load_plan(value: Any) -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _path_run_id_from_payload(payload: dict[str, Any]) -> str:
+    return str(payload.get("path_run_id") or payload.get("pathb_path_run_id") or "").strip()
+
+
+def _terminal_missing_events(
+    runs: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    event_by_path_and_type: set[tuple[str, str]] = set()
+    for row in events:
+        payload = _load_plan(row.get("payload_json", ""))
+        path_run_id = _path_run_id_from_payload(payload)
+        if path_run_id:
+            event_by_path_and_type.add((path_run_id, str(row.get("event_type") or "")))
+    missing: list[dict[str, Any]] = []
+    for row in runs:
+        status = str(row.get("status") or "")
+        expected = TERMINAL_EVENT_BY_STATUS.get(status)
+        if expected and (str(row.get("path_run_id") or ""), expected) not in event_by_path_and_type:
+            missing.append({**row, "missing_event": expected})
+    return missing
+
+
+def _pathb_like_events_missing_path_run_id(
+    events: list[dict[str, Any]],
+    decision_ids_with_runs: set[str],
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    pre_run: list[dict[str, Any]] = []
+    post_run: list[dict[str, Any]] = []
+    linkable = 0
+    unlinkable = 0
+    for row in events:
+        payload = _load_plan(row.get("payload_json", ""))
+        path_run_id = _path_run_id_from_payload(payload)
+        event_type = str(row.get("event_type") or "")
+        path_type = str(payload.get("path_type") or payload.get("buy_path") or "")
+        if not ((event_type.startswith("CLAUDE_PRICE") or path_type in {"claude_price", "path_b"}) and not path_run_id):
+            continue
+        decision_id = str(row.get("decision_id") or "")
+        item = {
+            "event_type": event_type,
+            "market": row.get("market"),
+            "ticker": row.get("ticker"),
+            "decision_id": decision_id,
+        }
+        rows.append(item)
+        if decision_id and decision_id in decision_ids_with_runs:
+            linkable += 1
+        else:
+            unlinkable += 1
+        if event_type in PRE_RUN_EVENT_TYPES:
+            pre_run.append(item)
+        else:
+            post_run.append(item)
+    return {
+        "rows": rows,
+        "pre_run": pre_run,
+        "post_run": post_run,
+        "decision_id_linkable_count": linkable,
+        "decision_id_unlinkable_count": unlinkable,
+    }
 
 
 def _status_action(status: str) -> str:
@@ -197,7 +262,7 @@ def build_report(
         ).fetchall()
         recent_events = conn.execute(
             """
-            SELECT event_type, market, runtime_mode, session_date, ticker, payload_json
+            SELECT event_type, market, runtime_mode, session_date, ticker, decision_id, payload_json
             FROM lifecycle_events
             WHERE runtime_mode=?
             ORDER BY event_id DESC
@@ -214,6 +279,32 @@ def build_report(
             LIMIT ?
             """,
             (mode, limit),
+        ).fetchall()
+        full_events = conn.execute(
+            """
+            SELECT event_type, market, runtime_mode, session_date, ticker, decision_id, payload_json
+            FROM lifecycle_events
+            WHERE runtime_mode=?
+            ORDER BY event_id
+            """,
+            (mode,),
+        ).fetchall()
+        full_runs = conn.execute(
+            """
+            SELECT path_run_id, market, runtime_mode, session_date, ticker, status
+            FROM v2_path_runs
+            WHERE runtime_mode=? AND path_type='claude_price'
+            ORDER BY updated_at DESC
+            """,
+            (mode,),
+        ).fetchall()
+        decision_id_rows = conn.execute(
+            """
+            SELECT DISTINCT decision_id
+            FROM v2_path_runs
+            WHERE runtime_mode=? AND path_type='claude_price' AND decision_id IS NOT NULL AND decision_id<>''
+            """,
+            (mode,),
         ).fetchall()
 
     current_unknown: list[dict[str, Any]] = []
@@ -238,26 +329,15 @@ def build_report(
         item["recommended_action"] = _status_action(str(item.get("status") or ""))
         stale_active.append(item)
 
-    event_by_path_and_type: set[tuple[str, str]] = set()
-    events_missing_path_run_id: list[dict[str, Any]] = []
-    for row in recent_events:
-        payload = _load_plan(row["payload_json"])
-        path_run_id = str(payload.get("path_run_id") or "").strip()
-        event_type = str(row["event_type"] or "")
-        if path_run_id:
-            event_by_path_and_type.add((path_run_id, event_type))
-        path_type = str(payload.get("path_type") or payload.get("buy_path") or "")
-        if (event_type.startswith("CLAUDE_PRICE") or path_type in {"claude_price", "path_b"}) and not path_run_id:
-            events_missing_path_run_id.append(
-                {"event_type": event_type, "market": row["market"], "ticker": row["ticker"]}
-            )
-
-    missing_events: list[dict[str, Any]] = []
-    for row in recent_runs:
-        status = str(row["status"] or "")
-        expected = TERMINAL_EVENT_BY_STATUS.get(status)
-        if expected and (row["path_run_id"], expected) not in event_by_path_and_type:
-            missing_events.append({**_row_dict(row), "missing_event": expected})
+    recent_events_dict = [_row_dict(row) for row in recent_events]
+    recent_runs_dict = [_row_dict(row) for row in recent_runs]
+    full_events_dict = [_row_dict(row) for row in full_events]
+    full_runs_dict = [_row_dict(row) for row in full_runs]
+    decision_ids_with_runs = {str(row["decision_id"] or "") for row in decision_id_rows}
+    missing_events = _terminal_missing_events(recent_runs_dict, recent_events_dict)
+    events_missing = _pathb_like_events_missing_path_run_id(recent_events_dict, decision_ids_with_runs)
+    events_missing_path_run_id = events_missing["rows"]
+    full_missing_events = _terminal_missing_events(full_runs_dict, full_events_dict)
 
     status_counts = Counter(str(item.get("status") or "") for item in stale_active)
     market_counts = Counter(str(item.get("market") or "") for item in stale_active)
@@ -287,9 +367,33 @@ def build_report(
             "by_market": dict(sorted(market_counts.items())),
             "rows": stale_active,
         },
-        "lifecycle_consistency": {
+        "lifecycle_window_consistency": {
             "missing_events_count": len(missing_events),
             "events_missing_path_run_id_count": len(events_missing_path_run_id),
+            "recent_window_missing_events_count": len(missing_events),
+            "recent_window_size_events": limit * 5,
+            "recent_window_size_runs": limit,
+            "missing_events": missing_events,
+            "events_missing_path_run_id": events_missing_path_run_id,
+            "pathb_pre_run_events_missing_path_run_id": events_missing["pre_run"],
+            "pathb_post_run_events_missing_path_run_id": events_missing["post_run"],
+            "pathb_pre_run_events_missing_path_run_id_count": len(events_missing["pre_run"]),
+            "pathb_post_run_events_missing_path_run_id_count": len(events_missing["post_run"]),
+            "decision_id_linkable_count": events_missing["decision_id_linkable_count"],
+            "decision_id_unlinkable_count": events_missing["decision_id_unlinkable_count"],
+        },
+        "lifecycle_full_consistency": {
+            "missing_events_count": len(full_missing_events),
+            "full_terminal_missing_events_count": len(full_missing_events),
+            "missing_events": full_missing_events,
+            "checked_runs": len(full_runs_dict),
+            "checked_events": len(full_events_dict),
+        },
+        "lifecycle_consistency": {
+            "basis": "recent_window",
+            "missing_events_count": len(missing_events),
+            "events_missing_path_run_id_count": len(events_missing_path_run_id),
+            "full_terminal_missing_events_count": len(full_missing_events),
             "missing_events": missing_events,
             "events_missing_path_run_id": events_missing_path_run_id,
         },
@@ -318,8 +422,9 @@ def _to_markdown(report: dict[str, Any]) -> str:
         f"- current ORDER_UNKNOWN: {report['order_unknown']['current_count']}",
         f"- previous ORDER_UNKNOWN: {report['order_unknown']['previous_count']}",
         f"- stale active rows: {report['stale_active']['count']}",
-        f"- missing lifecycle events: {report['lifecycle_consistency']['missing_events_count']}",
-        f"- events missing path_run_id: {report['lifecycle_consistency']['events_missing_path_run_id_count']}",
+        f"- recent-window missing lifecycle events: {report['lifecycle_window_consistency']['missing_events_count']}",
+        f"- full terminal missing lifecycle events: {report['lifecycle_full_consistency']['missing_events_count']}",
+        f"- events missing payload_json.path_run_id: {report['lifecycle_window_consistency']['events_missing_path_run_id_count']}",
         f"- remediation plan dry-run only: {report['remediation_plan']['dry_run_only']}",
         "",
         "## Stale Active By Status",

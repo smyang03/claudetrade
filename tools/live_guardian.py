@@ -164,10 +164,30 @@ def classify_preflight_check(
 
     if name == "db.order_unknown_unresolved":
         current = data.get("current_session") if isinstance(data.get("current_session"), list) else []
-        classification = "hard_fail" if current else "soft_fail"
+        previous_with_exposure = (
+            data.get("previous_session_with_local_exposure")
+            if isinstance(data.get("previous_session_with_local_exposure"), list)
+            else []
+        )
+        classification = "hard_fail" if current or previous_with_exposure else "soft_fail"
         enriched = dict(data)
         enriched["remediation_commands"] = _order_unknown_remediation_commands(enriched)
         return GuardianFinding(name, status, classification, detail, enriched)
+
+    if name == "db.pathb_broker_truth_conflict" and status != "PASS":
+        conflicts = data.get("conflicts") if isinstance(data.get("conflicts"), list) else []
+        blockers = [item for item in conflicts if isinstance(item, dict) and bool(item.get("do_not_start", True))]
+        classification = "hard_fail" if blockers else "soft_fail"
+        return GuardianFinding(name, status, classification, detail, data)
+
+    if name == "db.pathb_stale_active_runs":
+        previous_with_exposure = (
+            data.get("previous_session_with_local_exposure")
+            if isinstance(data.get("previous_session_with_local_exposure"), list)
+            else []
+        )
+        classification = "hard_fail" if previous_with_exposure else "soft_fail"
+        return GuardianFinding(name, status, classification, detail, data)
 
     if bool(data.get("accepted_exception")):
         return GuardianFinding(name, status, "accepted_exception", detail, data)

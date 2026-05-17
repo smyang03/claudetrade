@@ -125,6 +125,21 @@ class V2Phase6Tests(unittest.TestCase):
                     "entry_basis_tags": ["support"],
                 },
             )
+            store.create_path_run(
+                path_run_id="pathb_unknown",
+                decision_id=decision_id,
+                path_type="claude_price",
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-04-26",
+                ticker="051910",
+                status="ORDER_UNKNOWN",
+                plan={
+                    "order_unknown_resolution": "session_end_unresolved",
+                    "session_end_unresolved": True,
+                    "manual_reconciliation_required": True,
+                },
+            )
             base = {
                 "market": "KR",
                 "runtime_mode": "live",
@@ -167,6 +182,7 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(summary["path_b_live"]["path_comparison"]["path_a"]["avg_pnl_pct"], 1.25)
         self.assertEqual(summary["path_b_live"]["path_comparison"]["path_b"]["avg_pnl_pct"], 3.73)
         self.assertEqual(summary["lifecycle"]["event_counts"]["ORDER_UNKNOWN"], 1)
+        self.assertTrue(summary["path_b_live"]["order_unknown"][0]["manual_reconciliation_required"])
 
     def test_ops_summary_counts_carried_pathb_close_in_today_comparison(self):
         with tempfile.TemporaryDirectory() as tmp:

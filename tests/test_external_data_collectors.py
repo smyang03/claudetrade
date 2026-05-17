@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from phase1_trainer.external_data_collectors import collect_ready_sources_dry_run, _truncate_error
 from phase1_trainer.external_data_store import ExternalDataStore
+from tools.promote_external_data import promote_external_data
 
 
 class FakeResponse:
@@ -189,6 +190,106 @@ class ExternalDataCollectorsTest(unittest.TestCase):
             self.assertEqual(summary["total_data_rows"], 1)
             self.assertEqual(summary["latest_fetched_at_by_table"]["public_stock_quotes"], "2026-05-10T13:00:00+09:00")
             self.assertEqual(summary["latest_api_run_at"], "2026-05-10T13:00:05+09:00")
+
+    def test_promote_external_data_rejects_empty_source_and_applies_ready_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            empty_source = root / "empty.sqlite"
+            ExternalDataStore(empty_source).init_schema()
+            rejected = promote_external_data(
+                source_db=empty_source,
+                target_db=root / "prod.sqlite",
+                backup_dir=root / "backups",
+                apply=False,
+            )
+            self.assertFalse(rejected["ok"])
+            self.assertIn("source_not_production_ready", rejected["errors"])
+
+            ready_source = root / "ready.sqlite"
+            store = ExternalDataStore(ready_source)
+            store.init_schema()
+            store.upsert_public_stock_quotes(
+                [
+                    {
+                        "base_date": "20260508",
+                        "stock_code": "005930",
+                        "market": "KOSPI",
+                        "item_name": "Samsung Electronics",
+                        "close": 70500,
+                        "fetched_at": "2026-05-10T13:00:00+09:00",
+                    }
+                ]
+            )
+            store.record_run(
+                source="data_go_kr",
+                endpoint="stock_quotes",
+                status="ok",
+                row_count=1,
+                fetched_at="2026-05-10T13:00:05+09:00",
+            )
+
+            applied = promote_external_data(
+                source_db=ready_source,
+                target_db=root / "prod.sqlite",
+                backup_dir=root / "backups",
+                apply=True,
+            )
+
+            self.assertTrue(applied["ok"])
+            self.assertTrue(applied["applied"])
+            self.assertEqual(applied["promotion_mode"], "atomic_replace")
+            self.assertEqual(applied["table_level_merge"], "deferred")
+            self.assertEqual(applied["source_rows"]["public_stock_quotes"], 1)
+            self.assertEqual(applied["target_rows_before"], {})
+            self.assertEqual(applied["target_counts_after"]["public_stock_quotes"], 1)
+            self.assertEqual(applied["target_rows_after"]["public_stock_quotes"], 1)
+            self.assertEqual(applied["delta_rows"]["public_stock_quotes"], 1)
+
+    def test_promote_external_data_uses_sqlite_backup_for_wal_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ready_source = root / "ready_wal.sqlite"
+            target = root / "prod.sqlite"
+            ExternalDataStore(ready_source).init_schema()
+            conn = sqlite3.connect(str(ready_source))
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute(
+                    """
+                    INSERT INTO public_stock_quotes (
+                        base_date, stock_code, market, item_name, close, fetched_at
+                    ) VALUES (
+                        '20260508', '005930', 'KOSPI', 'Samsung Electronics',
+                        70500, '2026-05-10T13:00:00+09:00'
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO external_api_runs (
+                        source, endpoint, status, row_count, fetched_at
+                    ) VALUES (
+                        'data_go_kr', 'stock_quotes', 'ok', 1, '2026-05-10T13:00:05+09:00'
+                    )
+                    """
+                )
+                conn.commit()
+                self.assertTrue(ready_source.with_name(ready_source.name + "-wal").exists())
+
+                applied = promote_external_data(
+                    source_db=ready_source,
+                    target_db=target,
+                    backup_dir=root / "backups",
+                    apply=True,
+                )
+            finally:
+                conn.close()
+
+            self.assertTrue(applied["ok"])
+            self.assertTrue(applied["applied"])
+            self.assertEqual(applied["source_rows"]["public_stock_quotes"], 1)
+            self.assertEqual(applied["target_rows_after"]["public_stock_quotes"], 1)
+            self.assertEqual(ExternalDataStore(target).table_counts()["public_stock_quotes"], 1)
 
     def test_dry_run_normalizes_and_stores_ready_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

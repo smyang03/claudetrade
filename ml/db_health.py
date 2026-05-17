@@ -9,6 +9,11 @@ from typing import Any
 
 import pandas as pd
 
+from ml.decision_gap_policy import (
+    known_unrecoverable_decision_ranges,
+    live_training_data_sources,
+    verified_recovery_data_sources,
+)
 from ml.db_writer import _resolve_db_path
 
 
@@ -100,14 +105,16 @@ def _last_trading_days_live_rows(conn: sqlite3.Connection, latest_session_date: 
         placeholders = ",".join("?" for _ in days)
         rows = 0
         if days:
-            params = [market, *days]
+            live_sources = live_training_data_sources()
+            source_placeholders = ",".join("?" for _ in live_sources)
+            params = [market, *live_sources, *days]
             rows = int(
                 conn.execute(
                     f"""
                     SELECT COUNT(*)
                     FROM decisions
                     WHERE market=?
-                      AND COALESCE(data_source, 'live')='live'
+                      AND COALESCE(data_source, 'live') IN ({source_placeholders})
                       AND session_date IN ({placeholders})
                     """,
                     params,
@@ -119,22 +126,46 @@ def _last_trading_days_live_rows(conn: sqlite3.Connection, latest_session_date: 
 
 
 def _known_unrecoverable_ranges(conn: sqlite3.Connection) -> list[dict[str, str]]:
-    rows = conn.execute(
-        """
-        SELECT COUNT(*)
-        FROM decisions
-        WHERE session_date BETWEEN '2026-04-04' AND '2026-05-11'
-        """
-    ).fetchone()[0]
-    if int(rows) > 0:
-        return []
-    return [
-        {
-            "start": "2026-04-04",
-            "end": "2026-05-11",
-            "status": "unrecoverable_without_original_decision_rows",
-        }
-    ]
+    return known_unrecoverable_decision_ranges()
+
+
+def _rows_inside_known_gap(conn: sqlite3.Connection) -> dict[str, int]:
+    totals = {
+        "rows_inside_known_gap": 0,
+        "verified_recovery_rows_inside_known_gap": 0,
+        "unexpected_rows_inside_known_gap": 0,
+    }
+    recovery_sources = verified_recovery_data_sources()
+    recovery_source_placeholders = ",".join("?" for _ in recovery_sources)
+    for item in known_unrecoverable_decision_ranges():
+        rows = int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM decisions
+                WHERE session_date BETWEEN ? AND ?
+                """,
+                (item["start"], item["end"]),
+            ).fetchone()[0]
+        )
+        recovery_rows = 0
+        if recovery_sources:
+            recovery_rows = int(
+                conn.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM decisions
+                    WHERE session_date BETWEEN ? AND ?
+                      AND COALESCE(data_source, 'live') IN ({recovery_source_placeholders})
+                      AND COALESCE(is_simulated, 0)=0
+                    """,
+                    (item["start"], item["end"], *recovery_sources),
+                ).fetchone()[0]
+            )
+        totals["rows_inside_known_gap"] += rows
+        totals["verified_recovery_rows_inside_known_gap"] += recovery_rows
+        totals["unexpected_rows_inside_known_gap"] += max(rows - recovery_rows, 0)
+    return totals
 
 
 def check_db_health(
@@ -150,6 +181,7 @@ def check_db_health(
         "read_only": read_only,
         "ok": False,
         "errors": [],
+        "warnings": [],
     }
     if not path.exists():
         result["errors"].append("db_missing")
@@ -167,9 +199,16 @@ def check_db_health(
                 return result
 
             total = int(conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0])
+            live_sources = live_training_data_sources()
+            live_source_placeholders = ",".join("?" for _ in live_sources)
             live = int(
                 conn.execute(
-                    "SELECT COUNT(*) FROM decisions WHERE COALESCE(data_source, 'live')='live'"
+                    f"""
+                    SELECT COUNT(*)
+                    FROM decisions
+                    WHERE COALESCE(data_source, 'live') IN ({live_source_placeholders})
+                    """,
+                    live_sources,
                 ).fetchone()[0]
             )
             simulated = int(
@@ -183,6 +222,10 @@ def check_db_health(
             min_id, max_id = conn.execute("SELECT MIN(id), MAX(id) FROM decisions").fetchone()
             seq = _sequence_value(conn, "decisions")
             fixture_rows = _fixture_count(conn)
+            known_ranges = _known_unrecoverable_ranges(conn)
+            gap_rows = _rows_inside_known_gap(conn)
+            rows_inside_known_gap = gap_rows["rows_inside_known_gap"]
+            unexpected_rows_inside_known_gap = gap_rows["unexpected_rows_inside_known_gap"]
             recent_live, recent_detail = _last_trading_days_live_rows(
                 conn, latest_date, recent_trading_days
             )
@@ -205,10 +248,21 @@ def check_db_health(
                     "contamination": {"fixture_rows": fixture_rows},
                     "suspicious_sequence_gap": suspicious_sequence_gap,
                     "single_session_only": single_session_only,
-                    "gaps": {"known_unrecoverable_ranges": _known_unrecoverable_ranges(conn)},
+                    "gaps": {
+                        "known_unrecoverable_ranges": known_ranges,
+                        "rows_inside_known_gap": rows_inside_known_gap,
+                        "verified_recovery_rows_inside_known_gap": gap_rows[
+                            "verified_recovery_rows_inside_known_gap"
+                        ],
+                        "unexpected_rows_inside_known_gap": unexpected_rows_inside_known_gap,
+                    },
                 }
             )
 
+            if known_ranges:
+                result["warnings"].append("accepted_known_gap")
+            if unexpected_rows_inside_known_gap:
+                result["warnings"].append("unexpected_rows_inside_known_gap")
             if fixture_rows:
                 result["errors"].append("fixture_contamination_found")
             if suspicious_sequence_gap:

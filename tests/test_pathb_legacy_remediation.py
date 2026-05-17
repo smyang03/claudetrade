@@ -131,8 +131,12 @@ class PathBLegacyRemediationTests(unittest.TestCase):
             self.assertEqual(report["stale_active"]["count"], 2)
             self.assertEqual(report["stale_active"]["by_status"]["FILLED"], 1)
             self.assertEqual(report["stale_active"]["by_status"]["ORDER_UNKNOWN"], 1)
+            self.assertIn("lifecycle_window_consistency", report)
+            self.assertIn("lifecycle_full_consistency", report)
             self.assertGreaterEqual(report["lifecycle_consistency"]["missing_events_count"], 2)
             self.assertEqual(report["lifecycle_consistency"]["events_missing_path_run_id_count"], 1)
+            self.assertEqual(report["lifecycle_window_consistency"]["pathb_pre_run_events_missing_path_run_id_count"], 1)
+            self.assertEqual(report["lifecycle_full_consistency"]["missing_events_count"], 2)
             order_unknown_ids = {
                 item["path_run_id"]
                 for item in report["order_unknown"]["current_session"] + report["order_unknown"]["previous_session"]
