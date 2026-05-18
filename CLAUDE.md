@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Encoding Safety Rules
 
 - Keep all source, docs, JSON, and scripts as UTF-8.
@@ -7,6 +9,31 @@
 - Do not use shell redirection, `Out-File`, or `Set-Content` to rewrite source files unless UTF-8 is explicitly controlled.
 - Before committing Korean text, run `python tools/check_mojibake.py --staged`.
 - If mojibake appears in existing lines, fix it from git history instead of guessing the intended Korean text.
+
+## Repository Development Rules
+
+This repository is a Python-based KR/US automated trading system. `trading_bot.py` is the main loop, while `kis_api.py`, `risk_manager.py`, and `ticker_selection_db.py` support broker integration, risk management, and ticker selection.
+
+### Project Layout
+
+- Core runtime and domain code lives in `runtime/`, `execution/`, `strategy/`, `bot/`, `minority_report/`, `audit/`, `lifecycle/`, `ml/`, `preopen/`, and `learning/`.
+- Operational tools live in `tools/`, the Flask dashboard lives in `dashboard/`, and docs/reports live in `docs/`.
+- Tests primarily live in `tests/`; legacy tests may exist at repo root as `test_*.py` or under `test/audit_lab/`.
+- `data/`, `state/`, and `logs/` are runtime output locations. Do not commit generated DBs, PID files, caches, local reports, or policy-memory artifacts unless a human explicitly asks for that exact artifact.
+
+### Coding and Testing Standards
+
+- Use 4-space indentation for Python. Functions and variables use `snake_case`, classes use `PascalCase`, and module names should describe their behavior.
+- Prefer existing local patterns over new abstractions, especially for runtime config, broker truth, audit stores, and safety gates.
+- Keep comments short and use them only when trading safety or recovery logic is not obvious from the code.
+- Add or update tests close to the behavior being changed. New test files should use `tests/test_<feature>.py`; test functions should use `test_<expected_behavior>`.
+- When changing `trading_bot.py`, order execution, live config, audit stores, DB schemas, orchestrators, or dashboard behavior, run the focused tests first and then broaden to `py_compile` and wider pytest coverage.
+
+### Commit, PR, and Security Standards
+
+- Commit units should be one behavior change at a time. Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short Korean or English summaries.
+- PR notes should include change summary, risk areas, test commands run, config/env impact, and dashboard or Telegram screenshots when UI output changes.
+- Never commit real `.env`, `.env.live`, `.env.paper`, token files, broker credentials, or local `*API*.txt` notes. Document configuration examples in `.env.example`.
 
 ## PEAD Input Policy (2026-04-24)
 
@@ -272,10 +299,6 @@ until more data is available or a human explicitly approves the change.
 - history auto-fill expansion for repeated insufficient-history names
   - keep as a later reliability pass, not a live-behavior change
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
----
-
 ## 프로젝트 철학
 
 - Claude는 시장 판단, 종목 selection, 보유 재량 판단을 맡는다.
@@ -373,24 +396,62 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 실행 명령
 
 ```bash
+# 의존성 설치
+python -m pip install -r requirements.txt
+
 # 봇 실행 — 모의투자
 python trading_bot.py --paper
 
 # 봇 실행 — 실거래
 python trading_bot.py --live
 
+# 대시보드 서버
+python dashboard/dashboard_server.py
+
 # 배포 전 구문 검사
 python -m py_compile trading_bot.py dashboard/dashboard_server.py claude_memory/brain.py
 
-# 핵심 회귀 테스트
-python -m unittest test_trading_improvements.py
-python -m unittest test_broker_sync_cash.py
+# 모의투자 preflight 검증
+python tools/live_preflight.py --mode paper --skip-dashboard --json
+
+# 실거래 전 preflight 검증
+python tools/live_preflight.py --mode live --skip-dashboard --json
+
+# 전체 회귀 테스트
+python -m pytest -q
+
+# 전체 테스트 (tests/ 디렉토리)
+python -m pytest tests/ -q
+
+# 특정 테스트 파일
+python -m pytest tests/test_candidate_audit.py -q
+
+# action routing 집중 테스트
+python -m pytest tests/test_action_routing.py -q
+
+# 키워드로 특정 케이스만
+python -m pytest tests/test_candidate_audit.py -k "payload_fallback" -q
+
+# 루트 레벨 레거시 회귀 테스트
+python -m pytest test_trading_improvements.py test_broker_sync_cash.py -q
 
 # ML DB 검증
 python -m unittest ml.test_full
 ```
 
+Windows 환경에서 일부 파일(`tests/test_live_order_safety.py` 등)에 CRLF 관련 git 경고가 표시되지만 동작에는 무관하다.
+
 ## 아키텍처 — 큰 그림
+
+### 환경 파일 로딩 순서
+
+`trading_bot.py` 시작 시:
+
+1. `--live` 플래그에 따라 `.env.live` 또는 `.env.paper` 로드 (없으면 `.env` fallback)
+2. `config/v2_start_config.json`의 `env_overrides` 키를 `os.environ`에 덮어씀 (live 모드 전용)
+3. 따라서 live 환경 설정은 `.env.live` + `config/v2_start_config.json` 두 곳에서 결정된다.
+
+KIS 브로커 API(`kis_api.py`)는 `KIS_APP_KEY_US` / `KIS_APP_SECRET_US`가 비어 있으면 KR 키로 fallback한다. 한투 KIS는 하나의 계정으로 KR/US 모두 접근 가능하므로 이것이 정상 운영 정책이다. `.env.live`에 `KIS_US_CREDENTIAL_FALLBACK_ACCEPTED=true`를 설정하면 preflight 경고가 제거된다.
 
 ### 실행 흐름
 
@@ -401,15 +462,37 @@ python -m unittest ml.test_full
 5. 주문/체결/복구
 6. 성과 기록 및 lesson candidate 적재
 
+### 서브패키지 구조
+
+| 패키지 | 역할 |
+|---|---|
+| `execution/` | 주문 실행: `claude_price_adapter.py`(PathB 가격), `safety_gate.py`(PathB 안전 게이트), `sizing.py`, `path_arbiter.py`(same-day reentry 차단) |
+| `decision/` | Claude 판단 구조체: `claude_price_plan.py`(B플랜 파싱), `registry.py` |
+| `runtime/` | 실행 시 판단 로직: `pathb_runtime.py`(PathB 메인), `action_routing.py`(RouteDecision), `gate_evaluation.py`, `candidate_pool_runtime.py`, `live_evidence_pack.py` |
+| `lifecycle/` | 사이클 생명주기: `event_store.py`, `quality.py`, `path_context.py` |
+| `preopen/` | 장 시작 전 후보 뉴스/점수: `scheduler.py`, `scorer.py`, `storage.py` |
+| `audit/` | 감사 DB: `candidate_audit_store.py`(upsert + payload merge), `shadow_audit_store.py`, `agent_call_event_store.py` |
+| `ml/` | 의사결정 성과 DB: `db_writer.py`, `forward_updater.py`, `db_health.py` |
+| `config/` | 런타임 설정: `runtime_config.py`(EffectiveRuntimeConfig), `v2.py`(V2Config), `v2_start_config.json` |
+| `claude_memory/` | brain 메모리: `brain.py`(읽기/쓰기/요약), `brain.json`(실제 정책 메모리는 `state/brain.json`으로 오버라이드) |
+| `interface/` | 요약/Telegram 포맷: `v2_ops_summary.py`, `v2_telegram.py` |
+| `tools/` | 운영 도구: `live_preflight.py`, `live_guardian.py`, `live_maintenance.py`, `reconcile_*.py`, `analyze_*.py` |
+
+### 두 실행 경로 (Path A / Path B)
+
+- **Path A**: `TradingBot` 클래스(`trading_bot.py`) — Claude selection → 전략 신호 → 주문
+- **Path B**: `PathBRuntime`(`runtime/pathb_runtime.py`) — Claude 가격 플랜 기반 진입/청산, `PATHB_US_LIVE_ENABLED=true`일 때 활성
+
+두 경로는 `runtime/action_routing.py`의 `RouteDecision`으로 합류한다. PathB는 KR live가 꺼져 있고 US live만 활성 상태이다 (`PATHB_KR_LIVE_ENABLED=false`, `PATHB_US_LIVE_ENABLED=true`).
+
 ### 진입 결정 파이프라인
 
-- 후보 풀 생성
-- selection raw
-- normalized trade_ready
-- applied trade_ready
-- 전략 신호 검사
-- affordability / 리스크 검사
-- 주문 생성
+- 후보 풀 생성 → `runtime/candidate_pool_runtime.py`
+- selection raw → Claude 응답
+- normalized trade_ready → applied trade_ready
+- 전략 신호 검사 → `runtime/action_routing.py`
+- affordability / 리스크 검사 → `risk_manager.py`
+- 주문 생성 → `kis_api.py`
 
 ### 판단 재사용 로직 — 봇 재시작 시 주의
 
@@ -435,8 +518,9 @@ python -m unittest ml.test_full
 
 ### 주요 데이터 흐름
 
-- `state/brain.json`: Claude 정책 메모리
+- `state/brain.json`: Claude 정책 메모리 (런타임 경로는 `runtime_paths.py`가 결정)
 - `state/lesson_candidates.json`: 자동 점수화된 교훈 후보
+- `data/audit/candidate_audit.db`: 후보 감사 DB (source_file / payload merge 포함)
 - `data/ml/decisions.db`: 의사결정/성과 데이터
 - `data/ticker_selection_log.db`: selection 로그
 - `logs/pead/*.json`: surprise shadow 기록
