@@ -443,7 +443,10 @@ def _path_b_selection_snapshot(
     applied_trade_ready = _unique_list(meta.get("trade_ready") or rec.get("trade_ready_tickers") or [])
     runtime_filtered = meta.get("_runtime_filtered_trade_ready") or normalized_stage.get("runtime_filtered") or {}
     runtime_filtered = runtime_filtered if isinstance(runtime_filtered, dict) else {}
-    price_targets = meta.get("price_targets") if isinstance(meta.get("price_targets"), dict) else {}
+    price_targets = {
+        **(meta.get("price_targets") if isinstance(meta.get("price_targets"), dict) else {}),
+        **(meta.get("_pathb_price_targets") if isinstance(meta.get("_pathb_price_targets"), dict) else {}),
+    }
     reasons = meta.get("reasons") if isinstance(meta.get("reasons"), dict) else {}
     recommended = meta.get("recommended_strategy") if isinstance(meta.get("recommended_strategy"), dict) else {}
     adaptive = meta.get("_adaptive_live_condition") if isinstance(meta.get("_adaptive_live_condition"), dict) else {}

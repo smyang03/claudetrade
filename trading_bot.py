@@ -11020,7 +11020,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for item in excluded_rows:
                 if not isinstance(item, dict):
                     continue
-                row = dict(item.get("candidate") or item)
+                _inner = item.get("candidate")
+                if isinstance(_inner, dict):
+                    row = dict(_inner)
+                    for _wk in ("trainer_score_rank", "raw_rank", "prompt_excluded_reason"):
+                        if row.get(_wk) is None and item.get(_wk) is not None:
+                            row[_wk] = item[_wk]
+                else:
+                    row = dict(item)
                 key = self._selection_ticker_key(market_key, row.get("ticker") or item.get("ticker"))
                 if not key or key in watch_keys or key in prompt_keys:
                     continue
@@ -11814,8 +11821,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ticker = str(pending.get("ticker", "") or "").strip()
         source = str(pending.get("source", "dashboard_review") or "dashboard_review")
         try:
-            if not ticker:
-                raise ValueError("ticker missing")
+            # Blank ticker is valid for telegram "/review KR|US": review all positions in the market.
             self._intraday_position_review(market, force=True, ticker_filter=ticker)
             self.claude_control["last_result_status"] = "success"
             self.claude_control["last_error"] = ""
