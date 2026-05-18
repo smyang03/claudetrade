@@ -161,6 +161,7 @@ def normalize_order(market: str, row: dict[str, Any]) -> dict[str, Any]:
         "eval_amount": _safe_float(row.get("eval_amount", 0)),
         "pnl": _safe_float(row.get("pnl", 0)),
         "pnl_pct": _safe_float(row.get("pnl_pct", 0)),
+        "order_date": str(row.get("order_date") or "").strip(),
         "order_time": str(row.get("order_time") or "").strip(),
         "fill_time": str(row.get("fill_time") or row.get("order_time") or "").strip(),
         "source": "broker",
@@ -346,7 +347,9 @@ class BrokerTruthSnapshot:
 
     def _get_today_orders(self, market: str) -> list[dict[str, Any]]:
         if self.ccld_provider is not None:
-            return [normalize_order(market, row) for row in self.ccld_provider(market, self._trade_date_yyyymmdd(market))]
+            today = self._trade_date_yyyymmdd(market)
+            rows = self.ccld_provider(market, today)
+            return self._filter_orders_for_query_date([normalize_order(market, row) for row in rows], today)
         import kis_api
 
         token = self._token(market)
@@ -355,7 +358,20 @@ class BrokerTruthSnapshot:
             rows = kis_api.inquire_ccnl_us(token, start_date=today, end_date=today, filled_code="00")
         else:
             rows = kis_api.inquire_daily_ccld_kr(token, start_date=today, end_date=today, filled_code="00")
-        return [normalize_order(market, row) for row in rows]
+        return self._filter_orders_for_query_date([normalize_order(market, row) for row in rows], today)
+
+    @staticmethod
+    def _filter_orders_for_query_date(rows: list[dict[str, Any]], query_date: str) -> list[dict[str, Any]]:
+        query_digits = re.sub(r"[^0-9]", "", str(query_date or ""))[:8]
+        if not query_digits:
+            return rows
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            order_digits = re.sub(r"[^0-9]", "", str(row.get("order_date") or ""))[:8]
+            if order_digits and order_digits != query_digits:
+                continue
+            filtered.append(row)
+        return filtered
 
     def _token(self, market: str = "KR") -> str:
         if self.token_provider is not None:

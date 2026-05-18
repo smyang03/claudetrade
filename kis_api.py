@@ -2219,6 +2219,7 @@ def _normalize_kr_daily_ccld_row(row: dict) -> dict:
         "filled_qty": filled_qty,
         "order_qty": order_qty,
         "fill_price": fill_price,
+        "order_date": str(_pick_first(row, ["ord_dt", "ORD_DT", "ord_date"], "") or "").strip(),
         "order_time": str(_pick_first(row, ["ord_tmd", "ORD_TMD"], "") or "").strip(),
         "raw": row,
     }
@@ -2364,6 +2365,7 @@ def _normalize_us_inquire_ccnl_row(row: dict) -> dict:
         "filled_qty": filled_qty,
         "order_qty": order_qty,
         "fill_price": fill_price,
+        "order_date": str(_pick_first(row, ["ord_dt", "ORD_DT", "ord_date"], "") or "").strip(),
         "order_time": str(_pick_first(row, ["ord_tmd", "ORD_TMD", "ord_time"], "") or "").strip(),
         "raw": row,
     }

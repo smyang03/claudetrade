@@ -140,6 +140,49 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             snapshot.refresh_market("US", force=True, ttl_sec=30)
             self.assertEqual(seen, ["20260426"])
 
+    def test_refresh_filters_orders_outside_query_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "snapshot.json",
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "AMD",
+                        "side": "buy",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "order_no": "old",
+                        "order_date": "20260427",
+                    },
+                    {
+                        "ticker": "D",
+                        "side": "buy",
+                        "order_qty": 2,
+                        "filled_qty": 2,
+                        "remaining_qty": 0,
+                        "order_no": "current",
+                        "order_date": "20260518",
+                    },
+                    {
+                        "ticker": "SOFI",
+                        "side": "sell",
+                        "order_qty": 12,
+                        "filled_qty": 12,
+                        "remaining_qty": 0,
+                        "order_no": "no-date",
+                    },
+                ],
+                date_provider=lambda market: "20260518",
+            )
+
+            data = snapshot.refresh_market("US", force=True, ttl_sec=30)
+
+            fills = data["markets"]["US"]["today_fills"]
+            self.assertEqual([row["order_no"] for row in fills], ["current", "no-date"])
+            self.assertEqual(fills[0]["order_date"], "20260518")
+
     def test_token_provider_receives_market_argument(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             seen: list[str] = []

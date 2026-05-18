@@ -1,6 +1,6 @@
 {
   "meta": {
-    "version": 3491,
+    "version": 3492,
     "created": "2026-03-19",
     "last_updated": "2026-05-19",
     "trained_days_kr": 40,
@@ -5336,13 +5336,13 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
-          "count": 73,
+          "count": 74,
           "correct": 8,
-          "rate": 0.11,
-          "insight": "Below-average precision (11% over 73 trials); use with caution. (Context: 지수 -0.04% 횡보·30분 기울기 -0.20%p 하락으로 아침 CAUTIOUS 방향과 일치하며, breadth universe 확대(28→6)",
-          "last_seen": "2026-05-18",
+          "rate": 0.108,
+          "insight": "지수 -0.29% 약세이나 30분 기울기 +0.03%p 반등 중, breadth advance_ratio +23%p 개선(adv/dec=30/37)으로 아침 하락 우위 thesis 일부 완화되나 GC/DC=0/0·RSI_OB/OS=0/0은 external_data_empty 기인 신뢰 불가, 매크로 경고 없음·보유 포지션 없음·mid-session 진행 중으로 CAUTIOUS 모드 및 현행 파라미터 유지가 적절",
+          "last_seen": "2026-05-19",
           "adjusted": 8,
-          "adjusted_rate": 0.11,
+          "adjusted_rate": 0.108,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "90min_tune": {
