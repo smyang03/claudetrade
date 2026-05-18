@@ -1223,11 +1223,18 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
         else "missing"
     )
     accepted_exception = cred_status == "WARN" and us_credential_mode == "fallback_shared_kr" and fallback_accepted
+    display_status = "PASS" if accepted_exception else cred_status
     checks.append(
         CheckResult(
             "kis.us_credentials",
-            cred_status,
-            "; ".join(cred_notes) if cred_notes else "US live credentials/fallbacks are explicit",
+            display_status,
+            (
+                "shared KR/US KIS credential fallback is explicitly accepted by policy"
+                if accepted_exception
+                else "; ".join(cred_notes)
+                if cred_notes
+                else "US live credentials/fallbacks are explicit"
+            ),
             {
                 "KIS_ACCOUNT_NO_US_present": bool(us_account),
                 "KIS_APP_KEY_US_present": bool(us_app),
@@ -1237,7 +1244,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
                 "fallback_to_kr_allowed": us_credential_mode == "fallback_shared_kr",
                 "fallback_accepted_by_policy": fallback_accepted,
                 "accepted_exception": accepted_exception,
-                "remediation_required": cred_status != "PASS" and not accepted_exception,
+                "remediation_required": display_status != "PASS",
                 "operator_action": (
                     "shared KR/US KIS credential fallback is explicitly accepted by policy"
                     if accepted_exception

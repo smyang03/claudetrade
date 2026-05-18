@@ -90,7 +90,8 @@ class LivePreflightCredentialModeTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(check.status, "WARN")
+        self.assertEqual(check.status, "PASS")
+        self.assertIn("explicitly accepted", check.detail)
         self.assertEqual(check.data["credential_mode"], "fallback_shared_kr")
         self.assertTrue(check.data["accepted_exception"])
         self.assertFalse(check.data["remediation_required"])
