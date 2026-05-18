@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -77,6 +78,17 @@ def _command_for_job(job: PreopenJob) -> list[str]:
     return [sys.executable, str(ROOT / job.script), *job.args]
 
 
+def _job_timeout_sec(job: PreopenJob, default_timeout_sec: int) -> int:
+    timeout = max(10, int(default_timeout_sec))
+    if job.kind != "news":
+        return timeout
+    try:
+        news_timeout = int(os.getenv("PREOPEN_NEWS_TIMEOUT_SEC", "1200"))
+    except Exception:
+        news_timeout = 1200
+    return max(timeout, news_timeout)
+
+
 def _run_job(job: PreopenJob, *, timeout_sec: int, dry_run: bool) -> dict[str, Any]:
     command = _command_for_job(job)
     if dry_run:
@@ -87,13 +99,14 @@ def _run_job(job: PreopenJob, *, timeout_sec: int, dry_run: bool) -> dict[str, A
             "stderr": "",
             "command": command,
         }
+    job_timeout = _job_timeout_sec(job, timeout_sec)
     kwargs: dict[str, Any] = {
         "cwd": str(ROOT),
         "capture_output": True,
         "text": True,
         "encoding": "utf-8",
         "errors": "replace",
-        "timeout": max(10, int(timeout_sec)),
+        "timeout": job_timeout,
     }
     if sys.platform.startswith("win"):
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -111,7 +124,7 @@ def _run_job(job: PreopenJob, *, timeout_sec: int, dry_run: bool) -> dict[str, A
             "status": "timeout",
             "returncode": None,
             "stdout": _tail(exc.stdout or ""),
-            "stderr": _tail(exc.stderr or f"timeout after {timeout_sec}s"),
+            "stderr": _tail(exc.stderr or f"timeout after {job_timeout}s"),
             "command": command,
         }
     except Exception as exc:

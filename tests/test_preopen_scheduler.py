@@ -8,9 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot.session_date import KST
-from preopen.scheduler import default_outcome_offsets_min, due_jobs, regular_open_dt
+from preopen.scheduler import PreopenJob, default_outcome_offsets_min, due_jobs, regular_open_dt
 from preopen.storage import load_preopen_dashboard, load_preopen_scheduler_state
-from tools.preopen_scheduler import run_scheduler_once
+from tools.preopen_scheduler import _run_job, run_scheduler_once
 
 
 def _runtime_path(root: Path):
@@ -87,6 +87,25 @@ class PreopenSchedulerTests(unittest.TestCase):
 
         self.assertTrue(any(job.kind == "collector" for job in jobs))
         self.assertFalse(any(job.kind == "outcome" for job in jobs))
+
+    def test_news_job_runs_from_preopen_targets_before_regular_open(self) -> None:
+        now = datetime(2026, 5, 4, 8, 41, tzinfo=KST)
+
+        with patch("preopen.scheduler.is_trading_day", return_value=True):
+            jobs = due_jobs(
+                now_dt=now,
+                markets=["KR"],
+                mode="live",
+                completed_job_ids={"live:2026-05-04:KR:collector:002"},
+            )
+
+        news_jobs = [job for job in jobs if job.kind == "news"]
+        self.assertEqual(len(news_jobs), 1)
+        job = news_jobs[0]
+        self.assertEqual(job.job_id, "live:2026-05-04:KR:news")
+        self.assertEqual(job.due_at, "2026-05-04T08:40:00+09:00")
+        self.assertEqual(job.script, "tools/collect_preopen_candidate_news.py")
+        self.assertEqual(job.args, ("--market", "KR", "--session-date", "2026-05-04", "--mode", "live"))
 
     def test_us_outcome_catchup_after_kst_midnight_keeps_us_session_date(self) -> None:
         now = datetime(2026, 5, 5, 1, 0, tzinfo=KST)
@@ -189,6 +208,24 @@ class PreopenSchedulerTests(unittest.TestCase):
         self.assertEqual(run_mock.call_args.kwargs["encoding"], "utf-8")
         self.assertEqual(run_mock.call_args.kwargs["errors"], "replace")
 
+    def test_news_job_gets_extended_timeout(self) -> None:
+        job = PreopenJob(
+            market="KR",
+            session_date="2026-05-04",
+            kind="news",
+            job_id="live:2026-05-04:KR:news",
+            due_at="2026-05-04T08:55:00+09:00",
+            script="tools/collect_preopen_candidate_news.py",
+            args=("--market", "KR", "--session-date", "2026-05-04", "--mode", "live"),
+        )
+
+        with patch("tools.preopen_scheduler.subprocess.run") as run_mock:
+            run_mock.return_value = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="ok", stderr="")
+            result = _run_job(job, timeout_sec=120, dry_run=False)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], 1200)
+
     def test_dashboard_payload_includes_scheduler_status(self) -> None:
         now = datetime(2026, 5, 4, 17, 5, tzinfo=KST)
         with tempfile.TemporaryDirectory() as tmp:
@@ -222,6 +259,7 @@ class PreopenSchedulerTests(unittest.TestCase):
         self.assertTrue(all("--mode live" not in command for command in payload["scheduler_guidance"]["commands"]))
         self.assertTrue(any("--mode paper" in action for action in payload["next_actions"] if "preopen_" in action))
         self.assertTrue(all("--mode paper" in job.display_command for job in jobs if job.kind == "outcome"))
+        self.assertTrue(all("--mode paper" in job.display_command for job in jobs if job.kind == "news"))
 
 
 if __name__ == "__main__":

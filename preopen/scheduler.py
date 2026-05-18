@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, time as dt_time, timedelta
+import os
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,13 @@ def _parse_hhmm(value: str, default: dt_time) -> dt_time:
     try:
         hh, mm = str(value or "").split(":", 1)
         return dt_time(int(hh), int(mm))
+    except Exception:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
     except Exception:
         return default
 
@@ -242,6 +250,22 @@ def due_jobs(
                 ))
 
         open_dt = regular_open_dt(mkt, session_date)
+        news_lead_min = max(1, _env_int("PREOPEN_NEWS_LEAD_MIN", 20))
+        news_due_dt = open_dt - timedelta(minutes=news_lead_min)
+        news_late_by = (now_dt - news_due_dt).total_seconds() / 60.0
+        if 0 <= news_late_by <= max(0, int(outcome_catchup_min)):
+            job_id = f"{runtime_mode}:{session_date}:{mkt}:news"
+            if force or job_id not in completed:
+                jobs.append(PreopenJob(
+                    market=mkt,
+                    session_date=session_date,
+                    kind="news",
+                    job_id=job_id,
+                    due_at=news_due_dt.isoformat(timespec="seconds"),
+                    script="tools/collect_preopen_candidate_news.py",
+                    args=("--market", mkt, "--session-date", session_date, "--mode", runtime_mode),
+                ))
+
         offsets = outcome_offsets_min if outcome_offsets_min is not None else default_outcome_offsets_min(mkt, session_date)
         for offset in offsets:
             due_dt = open_dt + timedelta(minutes=int(offset))

@@ -238,6 +238,27 @@ class PreSessionSellQueueTests(unittest.TestCase):
         self.assertEqual(bot.risk.positions[0]["pending_next_open_sell_recheck_status"], "reviewing")
         bot._save_positions.assert_called_once()
 
+    def test_pending_position_review_without_ticker_reviews_market_positions(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.claude_control = {
+            "pending_position_review": {
+                "market": "US",
+                "ticker": "",
+                "source": "telegram_review",
+            }
+        }
+        bot._refresh_claude_control = Mock()  # type: ignore[method-assign]
+        bot._save_claude_control = Mock()  # type: ignore[method-assign]
+        bot._intraday_position_review = Mock()  # type: ignore[method-assign]
+
+        bot._consume_pending_position_review("US")
+
+        bot._intraday_position_review.assert_called_once_with("US", force=True, ticker_filter="")
+        self.assertIsNone(bot.claude_control["pending_position_review"])
+        self.assertEqual(bot.claude_control["last_result_market"], "US")
+        self.assertEqual(bot.claude_control["last_result_status"], "success")
+        self.assertEqual(bot.claude_control["last_error"], "")
+
     def test_max_hold_final_flag_still_requires_claude_sell_decision(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         pos = {"ticker": "QCOM", "entry": 100.0, "qty": 1, "max_hold": 2}
