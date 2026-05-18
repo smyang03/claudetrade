@@ -310,6 +310,60 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertIn("CANDIDATE_ACTIONS_MISSING_CONTRACT", selection["no_plan_reasons"])
         self.assertIn("SELECTION_TRUNCATED", selection["no_plan_reasons"])
 
+    def test_pathb_selection_summary_uses_candidate_action_price_targets(self):
+        selection_meta = {
+            "watchlist": ["ZS", "RBLX"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "ZS",
+                    "market": "US",
+                    "action": "PULLBACK_WAIT",
+                    "reason": "WAIT_FOR_PULLBACK",
+                    "price_targets": {
+                        "buy_zone_low": 168.5,
+                        "buy_zone_high": 175.5,
+                        "sell_target": 180.0,
+                        "stop_loss": 166.0,
+                        "confidence": 0.52,
+                    },
+                },
+                {
+                    "ticker": "RBLX",
+                    "market": "US",
+                    "action": "PULLBACK_WAIT",
+                    "price_targets": {
+                        "buy_zone_low": 44.5,
+                        "buy_zone_high": 48.5,
+                        "sell_target": 51.0,
+                        "stop_loss": 43.0,
+                        "confidence": 0.48,
+                    },
+                },
+            ],
+        }
+
+        with patch.object(
+            v2_ops_summary,
+            "_load_judgment_record",
+            return_value={"selection_meta": selection_meta, "universe_tickers": ["ZS", "RBLX"]},
+        ):
+            selection = v2_ops_summary._path_b_selection_snapshot(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-18",
+                pathb_runs=[],
+                config={"enabled": True},
+                control={"enabled": True},
+            )
+
+        rows = {row["ticker"]: row for row in selection["watch_rows"]}
+        self.assertEqual(selection["counts"]["price_targets"], 2)
+        self.assertEqual(rows["ZS"]["buy_zone_low"], 168.5)
+        self.assertEqual(rows["ZS"]["sell_target"], 180.0)
+        self.assertEqual(rows["ZS"]["stop_loss"], 166.0)
+        self.assertEqual(rows["ZS"]["confidence"], 0.52)
+
     def test_telegram_v2_halt_resume_and_health(self):
         bot = _Bot()
         health = handle_v2_command("/health", bot)

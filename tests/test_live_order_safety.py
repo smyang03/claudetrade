@@ -92,6 +92,30 @@ class LiveOrderSafetyTests(unittest.TestCase):
         self.assertEqual(runtime._pathb_qty("KR", 50_000, cash_krw=2_700_000), 2)
         self.assertEqual(runtime._pathb_qty("KR", 60_000, cash_krw=2_700_000), 0)
 
+    def test_pathb_qty_applies_us_early_entry_soft_gate(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.config = V2Config(
+            pathb_fixed_order_krw=100_000,
+            us_min_order_krw=30_000,
+            pathb_allow_one_share_over_budget=False,
+        )
+        runtime.bot = type(
+            "Bot",
+            (),
+            {
+                "usd_krw_rate": 1000,
+                "_us_early_entry_soft_gate": lambda self, market: {
+                    "active": True,
+                    "size_mult": 0.5,
+                    "elapsed_min": 30.0,
+                },
+            },
+        )()
+
+        qty = runtime._pathb_qty("US", 10_000, cash_krw=2_700_000)
+
+        self.assertEqual(qty, 5)
+
     def test_duplicate_pathb_plan_is_visible_as_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")

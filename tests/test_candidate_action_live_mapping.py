@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from audit.candidate_audit_store import CandidateAuditStore
+from runtime.candidate_quality_trainer import score_candidate_for_trainer
 from trading_bot import KST, TradingBot, _mode_family
 
 
@@ -109,6 +111,28 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
     def test_balanced_mode_family_is_not_risk_off(self) -> None:
         self.assertEqual(_mode_family("BALANCED"), "BALANCED")
         self.assertEqual(_mode_family("NEUTRAL"), "BALANCED")
+
+    def test_us_early_entry_soft_gate_uses_elapsed_minutes_not_kst_hour(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "US_EARLY_ENTRY_SOFT_GATE_ENABLED": True,
+                "US_EARLY_ENTRY_SOFT_GATE_START_MIN": 0.0,
+                "US_EARLY_ENTRY_SOFT_GATE_END_MIN": 60.0,
+                "US_EARLY_ENTRY_SIZE_MULT": 0.5,
+            }
+        )
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 30.0
+
+        gate = TradingBot._us_early_entry_soft_gate(bot, "US")
+
+        self.assertTrue(gate["active"])
+        self.assertEqual(gate["elapsed_min"], 30.0)
+        self.assertEqual(gate["size_mult"], 0.5)
+
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 75.0
+        self.assertFalse(TradingBot._us_early_entry_soft_gate(bot, "US")["active"])
+        self.assertFalse(TradingBot._us_early_entry_soft_gate(bot, "KR")["active"])
 
     def test_probe_ready_maps_to_trade_ready_with_probe_cap(self) -> None:
         bot = _make_bot()
@@ -1344,6 +1368,31 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         raw_meta = {
             "watchlist": ["AAPL"],
             "candidate_actions": [{"ticker": "AAPL", "action": "BUY_READY", "confidence": 0.9, "reason": "ready"}],
+            "_final_prompt_pool": [
+                {
+                    "ticker": "AAPL",
+                    "market": "US",
+                    "prompt_rank": 1,
+                    "change_pct": 5.0,
+                    "trainer_score_rank": 1,
+                    "trainer_prompt_score": 88.0,
+                    "trainer_plan_a_score": 76.0,
+                    "trainer_pathb_wait_score": 92.0,
+                    "trainer_risk_score": 24.0,
+                    "trainer_candidate_state": "PLAN_A",
+                    "trainer_score_components": {
+                        "version": "trainer_quality_v1",
+                        "config": {"plan_a_score_min": 62.0},
+                    },
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "source_tags": ["US:momentum_now", "US:high"],
+                    "candidate_quality_score": 81.0,
+                    "quality_data_gaps": ["flow_missing"],
+                    "candidate_pool_version": "trainer_quality_v1",
+                    "prompt_pool_version": "trainer_prompt_pool_v1",
+                }
+            ],
         }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1362,12 +1411,114 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
             store = CandidateAuditStore(db_path)
             summary = store.summary(session_date="2026-05-07", market="US", runtime_mode="live")
             rows = store.rows(session_date="2026-05-07", market="US", runtime_mode="live")
+            conn = store.connect()
+            try:
+                audit_row = conn.execute(
+                    """
+                    SELECT candidate_quality_score, quality_data_gaps_json,
+                           scorer_input_snapshot_json, scorer_config_hash,
+                           source_tags_json, trainer_candidate_state
+                    FROM audit_candidate_rows
+                    WHERE ticker='AAPL'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
 
         self.assertEqual(summary["calls"]["call_count"], 1)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["ticker"], "AAPL")
         self.assertEqual(rows[0]["claude_action"], "BUY_READY")
         self.assertEqual(rows[0]["route_final_action"], "BUY_READY")
+        self.assertEqual(audit_row["candidate_quality_score"], 81.0)
+        self.assertIn("flow_missing", json.loads(audit_row["quality_data_gaps_json"]))
+        snapshot = json.loads(audit_row["scorer_input_snapshot_json"])
+        self.assertEqual(snapshot["primary_bucket"], "momentum_now")
+        replay = score_candidate_for_trainer(snapshot, market="US")
+        self.assertEqual(replay["trainer_candidate_state"], audit_row["trainer_candidate_state"])
+        self.assertTrue(str(audit_row["scorer_config_hash"] or ""))
+        self.assertIn("US:momentum_now", json.loads(audit_row["source_tags_json"]))
+
+    def test_decision_event_updates_candidate_audit_entry_snapshot(self) -> None:
+        bot = _make_bot()
+        bot.is_paper = False
+        bot.decision_event_log = []
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_entry",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-05-07",
+                    "known_at": "2026-05-07T09:10:00+09:00",
+                    "ticker": "005930",
+                    "source_file": "trading_bot.selection_meta",
+                }
+            )
+            decisions_path = Path(tmp) / "decisions.jsonl"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False), patch(
+                "trading_bot.DECISIONS_FILE",
+                decisions_path,
+            ), patch("trading_bot.decision_event_alert"):
+                TradingBot._record_decision_event(
+                    bot,
+                    "KR",
+                    "buy_order",
+                    "005930",
+                    strategy="momentum",
+                    qty=1,
+                    price_native=70_000,
+                    price_krw=70_000,
+                    entry_timing_snapshot={
+                        "candidate_to_order_delay_min": 14.0,
+                        "price_change_candidate_to_order_pct": 2.4,
+                        "price_change_signal_to_order_pct": -0.3,
+                    },
+                    candidate_health_snapshot={"health_state": "STABLE_READY"},
+                    post_open_features={"ret_5m_pct": 0.7},
+                    us_early_entry_gate={
+                        "active": True,
+                        "elapsed_min": 30.0,
+                        "size_mult": 0.5,
+                        "policy": "us_early_entry_soft_size",
+                    },
+                )
+
+            conn = store.connect()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT entry_timing_snapshot_json, candidate_health_snapshot_json,
+                           post_open_features_json, entry_delay_min,
+                           entry_price_vs_first_seen_pct,
+                           entry_price_vs_first_ready_pct,
+                           us_early_entry_window,
+                           us_early_entry_elapsed_min,
+                           us_early_entry_size_mult,
+                           us_early_entry_confirmation_reason,
+                           us_early_entry_gate_json
+                    FROM audit_candidate_rows
+                    WHERE ticker='005930'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+        self.assertIn("candidate_to_order_delay_min", row["entry_timing_snapshot_json"])
+        self.assertIn("STABLE_READY", row["candidate_health_snapshot_json"])
+        self.assertIn("ret_5m_pct", row["post_open_features_json"])
+        self.assertEqual(row["entry_delay_min"], 14.0)
+        self.assertEqual(row["entry_price_vs_first_seen_pct"], 2.4)
+        self.assertEqual(row["entry_price_vs_first_ready_pct"], -0.3)
+        self.assertEqual(row["us_early_entry_window"], "active")
+        self.assertEqual(row["us_early_entry_elapsed_min"], 30.0)
+        self.assertEqual(row["us_early_entry_size_mult"], 0.5)
+        self.assertEqual(row["us_early_entry_confirmation_reason"], "us_early_entry_soft_size")
+        self.assertIn("size_mult", row["us_early_entry_gate_json"])
 
 
 if __name__ == "__main__":

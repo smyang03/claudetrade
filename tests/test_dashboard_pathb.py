@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
-from datetime import date
+from datetime import date, datetime
 import unittest
 from unittest.mock import patch
 
@@ -495,6 +495,39 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(pending["market"], "US")
         self.assertTrue(pending["keep_stopped_tickers"])
         self.assertEqual(payload["updated_by"], "dashboard")
+
+    def test_claude_status_payload_marks_previous_day_error_stale(self) -> None:
+        payload = dashboard_server._normalize_claude_status_payload(
+            {
+                "last_result_at": "2026-05-18T11:55:30+09:00",
+                "last_result_status": "error",
+                "last_error": "ticker missing",
+                "pending_trigger": None,
+                "pending_position_review": None,
+                "pending_sell": None,
+            },
+            now_dt=datetime(2026, 5, 19, 11, 52, tzinfo=dashboard_server.KST),
+        )
+
+        self.assertEqual(payload["last_result_status"], "stale_error")
+        self.assertEqual(payload["last_error"], "")
+        self.assertTrue(payload["last_result_stale"])
+        self.assertEqual(payload["stale_last_error"], "ticker missing")
+
+    def test_claude_status_payload_keeps_current_day_error_visible(self) -> None:
+        payload = dashboard_server._normalize_claude_status_payload(
+            {
+                "last_result_at": "2026-05-19T11:55:30+09:00",
+                "last_result_status": "error",
+                "last_error": "ticker missing",
+                "pending_trigger": None,
+            },
+            now_dt=datetime(2026, 5, 19, 12, 1, tzinfo=dashboard_server.KST),
+        )
+
+        self.assertEqual(payload["last_result_status"], "error")
+        self.assertEqual(payload["last_error"], "ticker missing")
+        self.assertFalse(payload["last_result_stale"])
 
     def test_lifetime_realized_pnl_summary_splits_markets_and_excludes_unknown_cost_basis(self) -> None:
         def fake_rows(market, period, start, end, mode="paper"):

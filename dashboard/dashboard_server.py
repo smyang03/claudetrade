@@ -2104,6 +2104,45 @@ def _load_claude_control(mode: str = "paper") -> dict:
     return data
 
 
+def _parse_kst_datetime(value: str) -> Optional[datetime]:
+    try:
+        if not value:
+            return None
+        parsed = datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=KST)
+        return parsed.astimezone(KST)
+    except Exception:
+        return None
+
+
+def _normalize_claude_status_payload(payload: dict, *, now_dt: Optional[datetime] = None) -> dict:
+    normalized = dict(payload or {})
+    status = str(normalized.get("last_result_status", "idle") or "idle").lower()
+    pending_keys = ("pending_trigger", "pending_position_review", "pending_sell")
+    has_pending = any(bool(normalized.get(key)) for key in pending_keys)
+    now_kst = now_dt or datetime.now(KST)
+    if now_kst.tzinfo is None:
+        now_kst = now_kst.replace(tzinfo=KST)
+    else:
+        now_kst = now_kst.astimezone(KST)
+    result_dt = _parse_kst_datetime(
+        str(normalized.get("last_result_at") or normalized.get("last_trigger_at") or "")
+    )
+    stale_error = (
+        status in {"error", "failed"}
+        and not has_pending
+        and result_dt is not None
+        and result_dt.date() < now_kst.date()
+    )
+    normalized["last_result_stale"] = bool(stale_error)
+    normalized["stale_last_error"] = str(normalized.get("last_error", "") or "") if stale_error else ""
+    if stale_error:
+        normalized["last_result_status"] = "stale_error"
+        normalized["last_error"] = ""
+    return normalized
+
+
 def _load_broker_positions(market: str, mode: str = "paper"):
     """KIS 브로커 잔고에서 현재 보유 포지션을 직접 읽어 대시보드에 표시한다."""
     runtime_mode = _normalize_mode(mode)
@@ -6249,7 +6288,7 @@ def api_claude_status():
     live = _load_live_status(market, mode=mode)
     claude = live.get("claude", {}) if isinstance(live, dict) else {}
     stats = _claude_reinvoke_stats_today(market, mode=mode)
-    return jsonify({
+    payload = {
         "market": market,
         "mode": mode,
         "enabled": bool(control.get("enabled", True)),
@@ -6263,9 +6302,12 @@ def api_claude_status():
         "last_result_status": control.get("last_result_status", "idle") or claude.get("last_result_status", "idle"),
         "last_error": control.get("last_error", "") or claude.get("last_error", ""),
         "pending_trigger": control.get("pending_trigger"),
+        "pending_position_review": control.get("pending_position_review"),
+        "pending_sell": control.get("pending_sell"),
         "session": session,
         "stats": stats,
-    })
+    }
+    return jsonify(_normalize_claude_status_payload(payload))
 
 
 @app.route("/api/claude/toggle", methods=["POST"])
@@ -9554,6 +9596,7 @@ const RESULT_KO = {
   failed: '실패',
   success: '성공',
   running: '실행중',
+  stale_error: '이전 오류',
   stopped: '중지',
   pending: '대기',
   changed: '변경',

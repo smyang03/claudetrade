@@ -443,7 +443,9 @@ def _path_b_selection_snapshot(
     applied_trade_ready = _unique_list(meta.get("trade_ready") or rec.get("trade_ready_tickers") or [])
     runtime_filtered = meta.get("_runtime_filtered_trade_ready") or normalized_stage.get("runtime_filtered") or {}
     runtime_filtered = runtime_filtered if isinstance(runtime_filtered, dict) else {}
+    candidate_actions = meta.get("candidate_actions") if isinstance(meta.get("candidate_actions"), list) else []
     price_targets = {
+        **_candidate_action_price_targets(candidate_actions, market_key),
         **(meta.get("price_targets") if isinstance(meta.get("price_targets"), dict) else {}),
         **(meta.get("_pathb_price_targets") if isinstance(meta.get("_pathb_price_targets"), dict) else {}),
     }
@@ -454,7 +456,6 @@ def _path_b_selection_snapshot(
     live_evidence = meta.get("_live_evidence") if isinstance(meta.get("_live_evidence"), dict) else {}
     live_evidence_packs = live_evidence.get("packs") if isinstance(live_evidence.get("packs"), dict) else {}
     compact_validation = meta.get("_compact_validation") if isinstance(meta.get("_compact_validation"), dict) else {}
-    candidate_actions = meta.get("candidate_actions") if isinstance(meta.get("candidate_actions"), list) else []
     missing_strategy_count = sum(1 for ticker in watchlist if not _selection_lookup(recommended, ticker, market_key))
 
     run_by_ticker = {str(run.get("ticker", "") or "").upper() if market_key == "US" else str(run.get("ticker", "") or ""): run for run in pathb_runs}
@@ -595,6 +596,25 @@ def _path_b_selection_snapshot(
         "live_evidence": {key: value for key, value in live_evidence.items() if key != "packs"},
         "watch_rows": watch_rows,
     }
+
+
+def _candidate_action_price_targets(candidate_actions: list[Any], market: str) -> dict[str, dict[str, Any]]:
+    targets: dict[str, dict[str, Any]] = {}
+    market_key = str(market or "").upper()
+    for action in candidate_actions or []:
+        if not isinstance(action, dict):
+            continue
+        action_market = str(action.get("market", "") or "").upper()
+        if action_market and market_key and action_market != market_key:
+            continue
+        ticker = str(action.get("ticker", "") or "").strip()
+        if not ticker:
+            continue
+        key = ticker.upper() if market_key == "US" else ticker
+        target = action.get("price_targets") if isinstance(action.get("price_targets"), dict) else {}
+        if target:
+            targets[key] = dict(target)
+    return targets
 
 
 def _load_judgment_record(market: str, runtime_mode: str | None, session_date: str) -> dict[str, Any]:

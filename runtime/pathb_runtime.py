@@ -6242,6 +6242,9 @@ class PathBRuntime:
             return 0
         cash = max(0.0, float(cash_krw or 0))
         budget = float(self.config.pathb_fixed_order_krw)
+        early_gate = self._us_early_entry_soft_gate(market)
+        if early_gate.get("active"):
+            budget *= max(0.1, min(1.0, float(early_gate.get("size_mult") or 0.5)))
         min_order = self._pathb_min_order_krw(market)
         decision = calculate_order_quantity(
             price=price,
@@ -6259,6 +6262,18 @@ class PathBRuntime:
             if max_notional > 0 and float(decision.notional or 0) > max_notional:
                 return 0
         return max(0, int(decision.qty or 0))
+
+    def _us_early_entry_soft_gate(self, market: str) -> dict[str, Any]:
+        if str(market or "").upper() != "US":
+            return {"active": False, "market": str(market or "").upper()}
+        try:
+            gate = getattr(getattr(self, "bot", None), "_us_early_entry_soft_gate", None)
+            if callable(gate):
+                result = gate("US")
+                return dict(result or {})
+        except Exception:
+            pass
+        return {"active": False, "market": "US"}
 
     def _pathb_total_equity_krw(self, market: str, *, fallback_cash_krw: float) -> float:
         try:

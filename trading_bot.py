@@ -4632,6 +4632,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             return None
 
+    def _us_early_entry_soft_gate(self, market: str, now_dt: Optional[datetime] = None) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if market_key != "US":
+            return {"active": False, "market": market_key}
+        enabled = self._runtime_bool("US_EARLY_ENTRY_SOFT_GATE_ENABLED", True)
+        elapsed = self._market_open_elapsed_min("US", now_dt=now_dt)
+        start_min = self._runtime_float("US_EARLY_ENTRY_SOFT_GATE_START_MIN", 0.0)
+        end_min = self._runtime_float("US_EARLY_ENTRY_SOFT_GATE_END_MIN", 60.0)
+        size_mult = self._runtime_float("US_EARLY_ENTRY_SIZE_MULT", 0.5)
+        size_mult = max(0.1, min(1.0, float(size_mult or 0.5)))
+        active = bool(
+            enabled
+            and elapsed is not None
+            and float(elapsed) >= float(start_min)
+            and float(elapsed) < float(end_min)
+        )
+        return {
+            "active": active,
+            "market": market_key,
+            "elapsed_min": float(elapsed) if elapsed is not None else None,
+            "start_min": float(start_min),
+            "end_min": float(end_min),
+            "size_mult": float(size_mult),
+            "policy": "us_early_entry_soft_size",
+        }
+
     def _candidate_entry_timing_context(
         self,
         market: str,
@@ -10813,10 +10839,86 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if call_screener_quality:
                     break
 
+        _scorer_snapshot_keys = (
+            "ticker",
+            "market",
+            "name",
+            "price",
+            "current_price",
+            "change_pct",
+            "change_rate",
+            "volume_ratio",
+            "vol_ratio",
+            "turnover",
+            "market_type",
+            "primary_bucket",
+            "category",
+            "liquidity_bucket",
+            "secondary_buckets",
+            "source",
+            "candidate_source",
+            "source_tags",
+            "candidate_quality_score",
+            "candidate_quality_grade",
+            "quality_data_gaps",
+            "candidate_quality_error",
+            "candidate_quality_index_error",
+            "candidate_quality_flow_error",
+            "candidate_age_min",
+            "candidate_detected_at",
+            "first_seen_at",
+            "detected_at",
+            "price_change_since_first_seen_pct",
+            "from_high_pct",
+            "from_high_bucket",
+            "freshness_verdict",
+            "trainer_tier",
+            "data_quality",
+            "data_quality_flags",
+            "history_status",
+            "screen_quality",
+            "status",
+            "stale_cycle",
+            "stale_cycle_count",
+            "repeated_failed_ready_count",
+            "post_open_features",
+            "post_open_momentum_state",
+        )
+
+        def _scorer_input_snapshot(row: dict) -> dict:
+            snapshot: dict = {}
+            for key in _scorer_snapshot_keys:
+                value = row.get(key)
+                if value in (None, "", [], {}):
+                    continue
+                snapshot[key] = value
+            return snapshot
+
+        def _scorer_config_hash(row: dict, components: dict) -> str:
+            env = {
+                key: os.getenv(key)
+                for key in sorted(os.environ)
+                if key.startswith("CANDIDATE_TRAINER_") or key.startswith("TRAINER_")
+            }
+            seed = {
+                "candidate_pool_version": row.get("candidate_pool_version") or (meta or {}).get("_candidate_quality_trainer_version", ""),
+                "prompt_pool_version": row.get("prompt_pool_version") or (meta or {}).get("_prompt_pool_version", ""),
+                "score_version": (components or {}).get("version", ""),
+                "threshold_config": (components or {}).get("config") or {},
+                "trainer_env": env,
+            }
+            try:
+                return hashlib.sha1(
+                    json.dumps(seed, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+                ).hexdigest()[:20]
+            except Exception:
+                return ""
+
         def _trainer_audit_fields(row: dict, *, included: bool, excluded_reason: str = "") -> dict:
             components = row.get("trainer_score_components")
             if not isinstance(components, dict):
                 components = row.get("trainer_score_components_json") if isinstance(row.get("trainer_score_components_json"), dict) else {}
+            quality_gaps = row.get("quality_data_gaps") or []
             return {
                 "final_prompt_included": bool(included),
                 "raw_rank": row.get("raw_rank"),
@@ -10829,7 +10931,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "trainer_score_components_json": components,
                 "trainer_candidate_state": row.get("trainer_candidate_state"),
                 "source_tags_json": row.get("source_tags") or [],
-                "data_quality_flags_json": row.get("data_quality_flags") or row.get("quality_data_gaps") or [],
+                "data_quality_flags_json": row.get("data_quality_flags") or quality_gaps,
+                "candidate_quality_score": row.get("candidate_quality_score"),
+                "quality_data_gaps_json": quality_gaps,
+                "scorer_input_snapshot_json": _scorer_input_snapshot(row),
+                "scorer_config_hash": _scorer_config_hash(row, components),
                 "candidate_pool_version": row.get("candidate_pool_version") or (meta or {}).get("_candidate_quality_trainer_version", ""),
                 "prompt_pool_version": row.get("prompt_pool_version") or (meta or {}).get("_prompt_pool_version", ""),
                 "candidate_source": row.get("candidate_source") or row.get("source") or "",
@@ -21765,6 +21871,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         f"{_before_unconfirmed_cap}% -> {effective_size}%"
                     )
                 # ── 신호 수집 → 사이클 완료 후 score 정렬 후 주문 실행 ────────
+                _us_early_gate = self._us_early_entry_soft_gate(market)
+                if _us_early_gate.get("active"):
+                    _before_us_early = int(effective_size)
+                    _us_mult = float(_us_early_gate.get("size_mult") or 0.5)
+                    effective_size = max(1, min(100, int(round(effective_size * _us_mult))))
+                    _us_early_gate.update(
+                        {
+                            "effective_size_before": _before_us_early,
+                            "effective_size_after": int(effective_size),
+                        }
+                    )
+                    self._write_funnel_event(
+                        "gate_evaluation",
+                        market,
+                        {
+                            "candidate_trace_id": self._candidate_trace_id(market, ticker),
+                            "event_source": "us_early_entry_soft_gate",
+                            "ticker": ticker,
+                            "passed": True,
+                            "reason": "us_early_entry_soft_size",
+                            **_us_early_gate,
+                        },
+                    )
+                    log.info(
+                        f"  [{ticker}] US early-entry size soft gate: "
+                        f"{_before_us_early}% -> {effective_size}% "
+                        f"(elapsed={float(_us_early_gate.get('elapsed_min') or 0.0):.1f}min)"
+                    )
                 _partial_signal_decision = self._partial_data_execution_decision(market, ticker, strategy_name)
                 if _partial_signal_decision.get("partial"):
                     if not _partial_signal_decision.get("allowed"):
@@ -21821,6 +21955,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     payload={
                         "entry_priority_detail": _ep_detail,
                         "entry_timing": _entry_timing_snapshot,
+                        "us_early_entry_gate": _us_early_gate,
                         "selected_reason": (self.today_ticker_reasons.get(market, {}) or {}).get(ticker, ""),
                         "market_mode": mode,
                     },
@@ -21843,6 +21978,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "elapsed_min":      float(_ep_elapsed),
                     "tsdb_id":         (self._tsdb_selection_ids.get(market) or {}).get(ticker),
                     "entry_timing":    _entry_timing_snapshot,
+                    "us_early_entry_gate": dict(_us_early_gate or {}),
                     "partial_data":    dict(_partial_signal_decision or {}),
         # ── 수집된 신호 정렬 후 주문 실행 ───────────────────────────────────
                 })
@@ -21934,6 +22070,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         arbiter_shadow=getattr(_v2_arb, "shadow", {}) if _v2_arb is not None else {},
                         reentry_shadow=getattr(_v2_reentry, "shadow", {}) if _v2_reentry is not None else {},
                     )
+                    _us_early_gate_payload = dict(_sig.get("us_early_entry_gate") or {})
+                    if _us_early_gate_payload.get("active"):
+                        _v2_late_payload["us_early_entry_gate"] = _us_early_gate_payload
                     _hybrid_gate_payload = self._hybrid_gap_pullback_gate_payload(
                         market,
                         _s_tk,
@@ -22752,6 +22891,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         strategy=_s_strat,
                         qty=int(qty),
                     )
+                    try:
+                        _candidate_health_order_snapshot = self._candidate_health_tracker(market).state_for(_s_tk)
+                    except Exception:
+                        _candidate_health_order_snapshot = {}
+                    _post_open_order_features = _s_row.get("post_open_features") if isinstance(_s_row.get("post_open_features"), dict) else {}
+                    if not _post_open_order_features:
+                        _post_open_order_features = {
+                            key: _s_row.get(key)
+                            for key in (
+                                "ret_3m_pct",
+                                "ret_5m_pct",
+                                "vwap",
+                                "opening_range_high",
+                                "volume_acceleration",
+                                "post_open_momentum_state",
+                            )
+                            if _s_row.get(key) not in (None, "")
+                        }
                     log.info(
                         f"[{'PAPER' if self.is_paper else 'LIVE'} BUY] "
                         f"{_s_tk} {qty}@{_s_px:,} | {_s_strat} | "
@@ -22770,6 +22927,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         recovery_micro=bool(_recovery_micro_meta),
                         recovery_micro_reason=_recovery_micro_meta.get("recovery_micro_reason", ""),
                         recovery_micro_source_strategy=_recovery_micro_meta.get("recovery_micro_source_strategy", ""),
+                        entry_timing_snapshot=_entry_timing_order_snapshot,
+                        candidate_health_snapshot=_candidate_health_order_snapshot,
+                        post_open_features=_post_open_order_features,
+                        us_early_entry_gate=_us_early_gate_payload,
                         **{
                             k: v
                             for k, v in _recovery_micro_meta.items()
@@ -24291,6 +24452,78 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 실행 오류/상태 이벤트는 decisions.jsonl 제외
     # 실행 오류(sell_failed 등)는 decisions.jsonl에 기록하지 않음
     _DECISION_TYPES = {"entry", "closed", "hold_outcome"}
+
+    def _candidate_audit_update_from_decision_event(self, event: dict, kwargs: dict) -> None:
+        store = self._candidate_audit_store()
+        if store is None:
+            return
+        action = str((event or {}).get("action") or "")
+        market = str((event or {}).get("market") or "").upper()
+        ticker = str((event or {}).get("ticker") or "").strip()
+        if not market or not ticker:
+            return
+        values: dict[str, Any] = {"execution_link_source": "trading_bot.decision_event"}
+        if action in {"buy_order", "buy_signal"}:
+            entry_timing = (
+                kwargs.get("entry_timing_snapshot")
+                or kwargs.get("entry_timing")
+                or kwargs.get("entry_timing_snapshot_json")
+                or {}
+            )
+            if isinstance(entry_timing, dict) and entry_timing:
+                values["entry_timing_snapshot_json"] = entry_timing
+                delay = entry_timing.get("candidate_to_order_delay_min")
+                if delay is None:
+                    delay = entry_timing.get("candidate_to_signal_delay_min")
+                values["entry_delay_min"] = delay
+                values["entry_price_vs_first_seen_pct"] = entry_timing.get("price_change_candidate_to_order_pct")
+                values["entry_price_vs_first_ready_pct"] = entry_timing.get("price_change_signal_to_order_pct")
+            for source_key, audit_key in (
+                ("post_open_features", "post_open_features_json"),
+                ("kr_confirmation_snapshot", "kr_confirmation_snapshot_json"),
+                ("candidate_health_snapshot", "candidate_health_snapshot_json"),
+            ):
+                payload = kwargs.get(source_key)
+                if isinstance(payload, dict) and payload:
+                    values[audit_key] = payload
+            us_gate = kwargs.get("us_early_entry_gate")
+            if isinstance(us_gate, dict) and us_gate:
+                values["us_early_entry_gate_json"] = us_gate
+                values["us_early_entry_window"] = "active" if us_gate.get("active") else "inactive"
+                values["us_early_entry_elapsed_min"] = us_gate.get("elapsed_min")
+                values["us_early_entry_size_mult"] = us_gate.get("size_mult")
+                values["us_early_entry_confirmation_reason"] = us_gate.get("confirmation_reason") or us_gate.get("policy", "")
+            values.update(
+                {
+                    "first_signal_at": event.get("timestamp", ""),
+                    "entry_price": event.get("price_krw") or event.get("price_native"),
+                    "strategy_used": event.get("strategy", ""),
+                }
+            )
+        elif action in {"sell_filled", "sell_executed"}:
+            values.update(
+                {
+                    "exit_price": event.get("price_krw") or event.get("price_native"),
+                    "pnl_pct": event.get("pnl_pct"),
+                    "exit_reason": event.get("reason", ""),
+                    "position_mfe_pct": event.get("position_mfe_pct"),
+                    "position_mae_pct": event.get("position_mae_pct"),
+                }
+            )
+        else:
+            return
+        try:
+            store.update_execution_by_ticker(
+                session_date=str(event.get("session_date") or ""),
+                market=market,
+                runtime_mode=getattr(self, "_mode", "live"),
+                ticker=ticker,
+                values=values,
+                latest_only=True,
+            )
+        except Exception as exc:
+            log.debug(f"[candidate audit] decision event update failed {market} {ticker}: {exc}")
+
     def _record_decision_event(self, market: str, action: str, ticker: str, **kwargs):
         # 실행 오류/상태 이벤트는 decisions.jsonl 제외
         # System execution events are kept out of decisions.jsonl.
@@ -24382,6 +24615,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         }
         self.decision_event_log.append(event)
         self.decision_event_log = self.decision_event_log[-200:]
+        self._candidate_audit_update_from_decision_event(event, kwargs)
         # Claude 판단 이벤트만 decisions.jsonl 기록
         if action not in _SKIP_ACTIONS:
             # Normalize decision event types for decisions.jsonl.

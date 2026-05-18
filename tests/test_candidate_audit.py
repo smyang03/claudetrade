@@ -89,6 +89,14 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                     "trainer_candidate_state": "PLAN_A",
                     "trainer_score_components_json": {"version": "trainer_quality_v1"},
                     "source_tags_json": ["US:momentum_now", "US:high"],
+                    "candidate_quality_score": 82.5,
+                    "quality_data_gaps_json": ["flow_missing"],
+                    "scorer_input_snapshot_json": {
+                        "ticker": "NVDA",
+                        "primary_bucket": "momentum_now",
+                        "liquidity_bucket": "high",
+                    },
+                    "scorer_config_hash": "hash123",
                     "stale_cycle": True,
                     "stale_cycle_count": 3,
                     "repeated_failed_ready_count": 2,
@@ -107,6 +115,8 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                     SELECT final_prompt_included, raw_rank, trainer_score_rank,
                            trainer_prompt_score, trainer_candidate_state,
                            trainer_score_components_json, source_tags_json,
+                           candidate_quality_score, quality_data_gaps_json,
+                           scorer_input_snapshot_json, scorer_config_hash,
                            stale_cycle, stale_cycle_count,
                            repeated_failed_ready_count, no_fill_cycle_count,
                            failed_ready_reasons_json
@@ -124,11 +134,187 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(row["trainer_candidate_state"], "PLAN_A")
             self.assertIn("trainer_quality_v1", row["trainer_score_components_json"])
             self.assertIn("momentum_now", row["source_tags_json"])
+            self.assertEqual(row["candidate_quality_score"], 82.5)
+            self.assertIn("flow_missing", row["quality_data_gaps_json"])
+            self.assertIn("momentum_now", row["scorer_input_snapshot_json"])
+            self.assertEqual(row["scorer_config_hash"], "hash123")
             self.assertEqual(row["stale_cycle"], 1)
             self.assertEqual(row["stale_cycle_count"], 3)
             self.assertEqual(row["repeated_failed_ready_count"], 2)
             self.assertEqual(row["no_fill_cycle_count"], 1)
             self.assertIn("soft_gate_override_failed", row["failed_ready_reasons_json"])
+
+    def test_candidate_audit_preserves_prompt_stage_source_json_and_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            base = {
+                "call_id": "call_prompt",
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-05-19",
+                "known_at": "2026-05-19T22:31:00+09:00",
+                "ticker": "ABCD",
+            }
+            store.upsert_candidate(
+                {
+                    **base,
+                    "source_file": "trading_bot.prompt_pool_excluded",
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "source_tags_json": ["US:momentum_now", "US:high"],
+                    "quality_data_gaps_json": ["flow_missing"],
+                    "payload": {
+                        "selection_stage": "trainer_prompt_pool_excluded",
+                        "prompt_pool_audit": True,
+                        "excluded_reason": "hard_cap_cutoff",
+                        "screener_quality": {"screener_quality_state": "ok"},
+                    },
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "known_at": "2026-05-19T22:40:00+09:00",
+                    "source_file": "trading_bot.runtime_filter",
+                    "primary_bucket": "later_bucket",
+                    "liquidity_bucket": "mid",
+                    "route_final_action": "HARD_BLOCK",
+                    "route_runtime_gate_reason": "runtime_filtered",
+                    "payload": {
+                        "runtime_filtered": True,
+                        "runtime_filter_reason": "runtime_filtered",
+                    },
+                }
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT source_file, primary_bucket, liquidity_bucket,
+                           source_tags_json, quality_data_gaps_json,
+                           route_final_action, route_runtime_gate_reason,
+                           payload_json
+                    FROM audit_candidate_rows
+                    WHERE ticker='ABCD'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+            payload = json.loads(row["payload_json"])
+            self.assertEqual(row["source_file"], "trading_bot.prompt_pool_excluded")
+            self.assertEqual(row["primary_bucket"], "later_bucket")
+            self.assertEqual(row["liquidity_bucket"], "mid")
+            self.assertIn("US:momentum_now", json.loads(row["source_tags_json"]))
+            self.assertIn("flow_missing", json.loads(row["quality_data_gaps_json"]))
+            self.assertEqual(row["route_final_action"], "HARD_BLOCK")
+            self.assertEqual(row["route_runtime_gate_reason"], "runtime_filtered")
+            self.assertTrue(payload["runtime_filtered"])
+            self.assertEqual(payload["selection_stage"], "trainer_prompt_pool_excluded")
+            self.assertTrue(payload["prompt_pool_audit"])
+            self.assertEqual(payload["excluded_reason"], "hard_cap_cutoff")
+            self.assertEqual(payload["screener_quality"]["screener_quality_state"], "ok")
+
+    def test_candidate_audit_payload_json_fallback_when_payload_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+
+            store.upsert_candidate(
+                {
+                    "call_id": "call_prompt",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-19",
+                    "known_at": "2026-05-19T22:31:00+09:00",
+                    "ticker": "ABCD",
+                    "source_file": "trading_bot.prompt_pool",
+                    "payload": None,
+                    "payload_json": json.dumps({"selection_stage": "trainer_prompt_pool"}),
+                }
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT payload_json
+                    FROM audit_candidate_rows
+                    WHERE ticker='ABCD'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+            payload = json.loads(row["payload_json"])
+            self.assertEqual(payload["selection_stage"], "trainer_prompt_pool")
+
+    def test_candidate_audit_reverse_runtime_then_prompt_preserves_runtime_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            base = {
+                "call_id": "call_prompt",
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-05-19",
+                "known_at": "2026-05-19T22:31:00+09:00",
+                "ticker": "ABCD",
+            }
+
+            store.upsert_candidate(
+                {
+                    **base,
+                    "source_file": "trading_bot.runtime_filter",
+                    "route_final_action": "HARD_BLOCK",
+                    "route_runtime_gate_reason": "runtime_filtered",
+                    "payload": {
+                        "runtime_filtered": True,
+                        "runtime_filter_reason": "runtime_filtered",
+                    },
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "source_file": "trading_bot.prompt_pool",
+                    "source_tags_json": ["US:momentum_now"],
+                    "payload": {
+                        "selection_stage": "trainer_prompt_pool",
+                        "prompt_pool_audit": True,
+                        "screener_quality": {"screener_quality_state": "ok"},
+                    },
+                }
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT source_file, source_tags_json, route_final_action,
+                           route_runtime_gate_reason, payload_json
+                    FROM audit_candidate_rows
+                    WHERE ticker='ABCD'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+            payload = json.loads(row["payload_json"])
+            self.assertEqual(row["source_file"], "trading_bot.prompt_pool")
+            self.assertIn("US:momentum_now", json.loads(row["source_tags_json"]))
+            self.assertEqual(row["route_final_action"], "HARD_BLOCK")
+            self.assertEqual(row["route_runtime_gate_reason"], "runtime_filtered")
+            self.assertTrue(payload["runtime_filtered"])
+            self.assertEqual(payload["runtime_filter_reason"], "runtime_filtered")
+            self.assertEqual(payload["selection_stage"], "trainer_prompt_pool")
+            self.assertTrue(payload["prompt_pool_audit"])
+            self.assertEqual(payload["screener_quality"]["screener_quality_state"], "ok")
 
     def test_upsert_candidate_rolls_back_base_row_when_extra_update_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -978,6 +1164,18 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                     "execution_link_source": "v2_event_store.lifecycle_events",
                     "execution_decision_id": "decision_new",
                     "execution_event_id": 42,
+                    "entry_timing_snapshot_json": {"candidate_to_order_delay_min": 12.5},
+                    "candidate_health_snapshot_json": {"health_state": "STABLE_READY"},
+                    "entry_delay_min": 12.5,
+                    "entry_price_vs_first_seen_pct": 1.2,
+                    "entry_price_vs_first_ready_pct": -0.4,
+                    "position_mfe_pct": 2.1,
+                    "position_mae_pct": -1.3,
+                    "us_early_entry_window": "active",
+                    "us_early_entry_elapsed_min": 30.0,
+                    "us_early_entry_size_mult": 0.5,
+                    "us_early_entry_confirmation_reason": "us_early_entry_soft_size",
+                    "us_early_entry_gate_json": {"active": True, "size_mult": 0.5},
                 },
                 latest_only=True,
             )
@@ -988,7 +1186,14 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                 rows = conn.execute(
                     """
                     SELECT call_id, filled_count, execution_link_source,
-                           execution_decision_id, execution_event_id
+                           execution_decision_id, execution_event_id,
+                           entry_timing_snapshot_json, candidate_health_snapshot_json,
+                           entry_delay_min, entry_price_vs_first_seen_pct,
+                           entry_price_vs_first_ready_pct, position_mfe_pct,
+                           position_mae_pct, us_early_entry_window,
+                           us_early_entry_elapsed_min, us_early_entry_size_mult,
+                           us_early_entry_confirmation_reason,
+                           us_early_entry_gate_json
                     FROM audit_candidate_rows
                     WHERE ticker='AAPL'
                     ORDER BY known_at
@@ -1006,6 +1211,18 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(rows[1]["execution_link_source"], "v2_event_store.lifecycle_events")
             self.assertEqual(rows[1]["execution_decision_id"], "decision_new")
             self.assertEqual(rows[1]["execution_event_id"], 42)
+            self.assertIn("candidate_to_order_delay_min", rows[1]["entry_timing_snapshot_json"])
+            self.assertIn("STABLE_READY", rows[1]["candidate_health_snapshot_json"])
+            self.assertEqual(rows[1]["entry_delay_min"], 12.5)
+            self.assertEqual(rows[1]["entry_price_vs_first_seen_pct"], 1.2)
+            self.assertEqual(rows[1]["entry_price_vs_first_ready_pct"], -0.4)
+            self.assertEqual(rows[1]["position_mfe_pct"], 2.1)
+            self.assertEqual(rows[1]["position_mae_pct"], -1.3)
+            self.assertEqual(rows[1]["us_early_entry_window"], "active")
+            self.assertEqual(rows[1]["us_early_entry_elapsed_min"], 30.0)
+            self.assertEqual(rows[1]["us_early_entry_size_mult"], 0.5)
+            self.assertEqual(rows[1]["us_early_entry_confirmation_reason"], "us_early_entry_soft_size")
+            self.assertIn("size_mult", rows[1]["us_early_entry_gate_json"])
 
     def test_analyze_candidate_audit_includes_row_uniqueness_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

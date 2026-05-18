@@ -13,7 +13,9 @@ def _utc_now() -> str:
 
 
 def _json(data: Any) -> str:
-    return json.dumps(data or {}, ensure_ascii=False, sort_keys=True, default=str)
+    if data is None:
+        data = {}
+    return json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def _int_bool(value: Any) -> int:
@@ -90,6 +92,10 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "trainer_candidate_state": "TEXT",
     "source_tags_json": "TEXT",
     "data_quality_flags_json": "TEXT",
+    "candidate_quality_score": "REAL",
+    "quality_data_gaps_json": "TEXT",
+    "scorer_input_snapshot_json": "TEXT",
+    "scorer_config_hash": "TEXT",
     "stale_cycle": "INTEGER",
     "stale_cycle_count": "INTEGER",
     "repeated_failed_ready_count": "INTEGER",
@@ -100,10 +106,39 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "execution_link_source": "TEXT",
     "execution_decision_id": "TEXT",
     "execution_event_id": "INTEGER",
+    "entry_timing_snapshot_json": "TEXT",
+    "post_open_features_json": "TEXT",
+    "kr_confirmation_snapshot_json": "TEXT",
+    "candidate_health_snapshot_json": "TEXT",
+    "entry_delay_min": "REAL",
+    "entry_price_vs_first_seen_pct": "REAL",
+    "entry_price_vs_first_ready_pct": "REAL",
+    "position_mfe_pct": "REAL",
+    "position_mae_pct": "REAL",
+    "us_early_entry_window": "TEXT",
+    "us_early_entry_elapsed_min": "REAL",
+    "us_early_entry_size_mult": "REAL",
+    "us_early_entry_confirmation_reason": "TEXT",
+    "us_early_entry_gate_json": "TEXT",
     "evidence_data_state": "TEXT",
     "evidence_missing_fields_json": "TEXT",
     "evidence_action_ceiling": "TEXT",
     "evidence_ceiling_applied": "INTEGER",
+}
+
+_MISSING = object()
+_JSON_TEXT_COLUMNS = {"soft_gate_overrides", "hard_blocks", "soft_gates"}
+_PROMPT_STAGE_SOURCE_FILES = {
+    "trading_bot.prompt_pool_excluded",
+    "trading_bot.prompt_pool",
+    "trading_bot.selection_meta",
+}
+_RUNTIME_FILTER_SOURCE_FILE = "trading_bot.runtime_filter"
+_PROMPT_PAYLOAD_KEYS_TO_PRESERVE = {
+    "selection_stage",
+    "prompt_pool_audit",
+    "excluded_reason",
+    "screener_quality",
 }
 
 
@@ -118,15 +153,82 @@ def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}")
 
 
+def _decode_json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if not value:
+        return {}
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return {}
+        return dict(parsed) if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _row_payload(row: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    if "payload" in row and row.get("payload") is not None:
+        return True, _decode_json_object(row.get("payload"))
+    if "payload_json" in row and row.get("payload_json") is not None:
+        return True, _decode_json_object(row.get("payload_json"))
+    return False, {}
+
+
+def _merge_source_file(existing: str, incoming: str) -> str:
+    existing_text = str(existing or "")
+    incoming_text = str(incoming or "")
+    if not incoming_text:
+        return existing_text
+    if not existing_text:
+        return incoming_text
+    if (
+        existing_text in _PROMPT_STAGE_SOURCE_FILES
+        and incoming_text == _RUNTIME_FILTER_SOURCE_FILE
+    ):
+        return existing_text
+    return incoming_text
+
+
+def _merge_payload(
+    *,
+    existing_source_file: str,
+    incoming_source_file: str,
+    existing_payload_json: str,
+    row: dict[str, Any],
+) -> dict[str, Any]:
+    incoming_present, incoming_payload = _row_payload(row)
+    existing_payload = _decode_json_object(existing_payload_json)
+    if not incoming_present:
+        return existing_payload
+    existing_source = str(existing_source_file or "")
+    incoming_source = str(incoming_source_file or "")
+    existing_is_prompt = existing_source in _PROMPT_STAGE_SOURCE_FILES
+    incoming_is_prompt = incoming_source in _PROMPT_STAGE_SOURCE_FILES
+    existing_is_runtime = existing_source == _RUNTIME_FILTER_SOURCE_FILE
+    incoming_is_runtime = incoming_source == _RUNTIME_FILTER_SOURCE_FILE
+    if (existing_is_prompt and incoming_is_runtime) or (existing_is_runtime and incoming_is_prompt):
+        prompt_payload = existing_payload if existing_is_prompt else incoming_payload
+        runtime_payload = incoming_payload if incoming_is_runtime else existing_payload
+        merged = dict(runtime_payload)
+        for key in _PROMPT_PAYLOAD_KEYS_TO_PRESERVE:
+            if key in prompt_payload:
+                merged[key] = prompt_payload[key]
+        return merged
+    return incoming_payload
+
+
 def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
-    value = row.get(column)
+    value = row[column] if column in row else _MISSING
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-    if value is None and isinstance(payload, dict):
+    if value is _MISSING and isinstance(payload, dict) and column in payload:
         value = payload.get(column)
-    if column.endswith("_json") or column in {"soft_gate_overrides", "hard_blocks", "soft_gates"}:
+    if value is _MISSING or value is None:
+        return None
+    if column.endswith("_json") or column in _JSON_TEXT_COLUMNS:
         if isinstance(value, str):
             return value
-        return _json(value or [])
+        return _json(value)
     if column in {
         "was_trade_ready_before",
         "legacy_auto_ready_promoted",
@@ -415,6 +517,24 @@ class CandidateAuditStore:
         conn = self.connect()
         try:
             with conn:
+                existing = conn.execute(
+                    """
+                    SELECT source_file, payload_json
+                    FROM audit_candidate_rows
+                    WHERE candidate_key=?
+                    """,
+                    (key,),
+                ).fetchone()
+                existing_source_file = str(existing["source_file"] or "") if existing is not None else ""
+                existing_payload_json = str(existing["payload_json"] or "") if existing is not None else ""
+                incoming_source_file = str(row.get("source_file") or "")
+                effective_source_file = _merge_source_file(existing_source_file, incoming_source_file)
+                effective_payload = _merge_payload(
+                    existing_source_file=existing_source_file,
+                    incoming_source_file=incoming_source_file,
+                    existing_payload_json=existing_payload_json,
+                    row=row,
+                )
                 conn.execute(
                     """
                     INSERT INTO audit_candidate_rows (
@@ -482,7 +602,7 @@ class CandidateAuditStore:
                         session_date,
                         row.get("known_at", ""),
                         ticker,
-                        row.get("source_file", ""),
+                        effective_source_file,
                         row.get("prompt_rank"),
                         _int_bool(row.get("in_prompt")),
                         _int_bool(row.get("screener_seen")),
@@ -515,7 +635,7 @@ class CandidateAuditStore:
                         _int_bool(row.get("route_suspend_pathb")),
                         _json(row.get("route_warnings") or []),
                         row.get("classification", ""),
-                        _json(row.get("payload") or {}),
+                        _json(effective_payload),
                         now,
                         now,
                     ),
@@ -622,8 +742,25 @@ class CandidateAuditStore:
             "execution_link_source",
             "execution_decision_id",
             "execution_event_id",
+            "entry_timing_snapshot_json",
+            "post_open_features_json",
+            "kr_confirmation_snapshot_json",
+            "candidate_health_snapshot_json",
+            "entry_delay_min",
+            "entry_price_vs_first_seen_pct",
+            "entry_price_vs_first_ready_pct",
+            "position_mfe_pct",
+            "position_mae_pct",
+            "us_early_entry_window",
+            "us_early_entry_elapsed_min",
+            "us_early_entry_size_mult",
+            "us_early_entry_confirmation_reason",
+            "us_early_entry_gate_json",
         }
         updates = {k: v for k, v in values.items() if k in allowed and v is not None}
+        for key, value in list(updates.items()):
+            if key.endswith("_json") and not isinstance(value, str):
+                updates[key] = _json(value)
         if not updates:
             return 0
         updates["updated_at"] = _utc_now()
