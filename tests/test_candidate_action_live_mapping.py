@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from audit.candidate_audit_store import CandidateAuditStore
+from execution.sizing import FixedSizingResult
 from runtime.candidate_quality_trainer import score_candidate_for_trainer
 from trading_bot import KST, TradingBot, _mode_family
 
@@ -133,6 +134,46 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         bot._market_open_elapsed_min = lambda market, now_dt=None: 75.0
         self.assertFalse(TradingBot._us_early_entry_soft_gate(bot, "US")["active"])
         self.assertFalse(TradingBot._us_early_entry_soft_gate(bot, "KR")["active"])
+
+    def test_v2_fixed_sizing_applies_us_early_entry_budget_multiplier(self) -> None:
+        fixed = FixedSizingResult(
+            market="US",
+            qty=10,
+            budget_krw=100_000,
+            order_cost_krw=100_000,
+            min_order_krw=30_000,
+            price_krw=10_000,
+        )
+
+        qty, budget, order_cost = TradingBot._v2_fixed_size_order_values(
+            fixed,
+            10_000,
+            budget_multiplier=0.5,
+        )
+
+        self.assertEqual(qty, 5)
+        self.assertEqual(budget, 50_000)
+        self.assertEqual(order_cost, 50_000)
+
+    def test_v2_fixed_sizing_soft_gate_does_not_reexpand_to_min_order(self) -> None:
+        fixed = FixedSizingResult(
+            market="US",
+            qty=2,
+            budget_krw=70_000,
+            order_cost_krw=56_000,
+            min_order_krw=42_000,
+            price_krw=28_000,
+        )
+
+        qty, budget, order_cost = TradingBot._v2_fixed_size_order_values(
+            fixed,
+            28_000,
+            budget_multiplier=0.5,
+        )
+
+        self.assertEqual(qty, 1)
+        self.assertEqual(budget, 35_000)
+        self.assertEqual(order_cost, 28_000)
 
     def test_probe_ready_maps_to_trade_ready_with_probe_cap(self) -> None:
         bot = _make_bot()
@@ -1519,6 +1560,69 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(row["us_early_entry_size_mult"], 0.5)
         self.assertEqual(row["us_early_entry_confirmation_reason"], "us_early_entry_soft_size")
         self.assertIn("size_mult", row["us_early_entry_gate_json"])
+
+    def test_us_decision_event_updates_candidate_audit_with_native_prices(self) -> None:
+        bot = _make_bot()
+        bot.is_paper = False
+        bot.decision_event_log = []
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_us_entry",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-07",
+                    "known_at": "2026-05-07T23:10:00+09:00",
+                    "ticker": "NVDA",
+                    "source_file": "trading_bot.selection_meta",
+                }
+            )
+            decisions_path = Path(tmp) / "decisions.jsonl"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False), patch(
+                "trading_bot.DECISIONS_FILE",
+                decisions_path,
+            ), patch("trading_bot.decision_event_alert"):
+                TradingBot._record_decision_event(
+                    bot,
+                    "US",
+                    "buy_order",
+                    "NVDA",
+                    strategy="momentum",
+                    qty=1,
+                    price_native=125.5,
+                    price_krw=175_700,
+                )
+                TradingBot._record_decision_event(
+                    bot,
+                    "US",
+                    "sell_filled",
+                    "NVDA",
+                    strategy="momentum",
+                    qty=1,
+                    price_native=129.25,
+                    price_krw=180_950,
+                    reason="take_profit",
+                    pnl_pct=3.0,
+                )
+
+            conn = store.connect()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT entry_price, exit_price
+                    FROM audit_candidate_rows
+                    WHERE ticker='NVDA'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+        self.assertEqual(row["entry_price"], 125.5)
+        self.assertEqual(row["exit_price"], 129.25)
 
 
 if __name__ == "__main__":

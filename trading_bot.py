@@ -5658,6 +5658,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
     def _v2_fixed_size_entry(self, market: str, risk_price_krw: float):
         return self.v2.fixed_size_entry(market, risk_price_krw) if getattr(self, "v2", None) is not None else None
+
+    @staticmethod
+    def _v2_fixed_size_order_values(
+        fixed_size,
+        risk_price_krw: float,
+        *,
+        budget_multiplier: float = 1.0,
+    ) -> tuple[int, float, float]:
+        budget = max(0.0, float(getattr(fixed_size, "budget_krw", 0.0) or 0.0))
+        qty = max(0, int(getattr(fixed_size, "qty", 0) or 0))
+        order_cost = max(0.0, float(getattr(fixed_size, "order_cost_krw", 0.0) or 0.0))
+        try:
+            mult = float(budget_multiplier or 1.0)
+        except Exception:
+            mult = 1.0
+        mult = max(0.1, min(1.0, mult))
+        if mult >= 1.0:
+            return qty, budget, order_cost
+        price = float(risk_price_krw or getattr(fixed_size, "price_krw", 0.0) or 0.0)
+        budget *= mult
+        qty = int(budget // price) if price > 0 and budget > 0 else 0
+        order_cost = max(0, qty) * price
+        return max(0, qty), budget, order_cost
+
     def _v2_daily_entry_count(self, market: str) -> int:
         return self.v2.daily_entry_count(market) if getattr(self, "v2", None) is not None else 0
     def _v2_max_daily_entries(self) -> Optional[int]:
@@ -22012,6 +22036,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _sig_at  = datetime.now(KST).isoformat()
                 _audit_signal_id = str(_sig.get("audit_signal_id") or "")
                 try:
+                    _us_early_gate_payload = dict(_sig.get("us_early_entry_gate") or {})
+                    _v2_fixed_budget_multiplier = 1.0
+                    if _us_early_gate_payload.get("active"):
+                        try:
+                            _v2_fixed_budget_multiplier = float(_us_early_gate_payload.get("size_mult") or 0.5)
+                        except Exception:
+                            _v2_fixed_budget_multiplier = 0.5
+                        _v2_fixed_budget_multiplier = max(0.1, min(1.0, _v2_fixed_budget_multiplier))
                     avail = self._market_budget_available(market)
                     order_budget = self.risk.calc_order_budget(
                         _s_esz,
@@ -22025,9 +22057,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     order_cost = qty * _s_rpx if qty > 0 else 0.0
                     _v2_fixed = self._v2_fixed_size_entry(market, _s_rpx)
                     if _v2_fixed is not None:
-                        qty = int(_v2_fixed.qty)
-                        order_budget = float(_v2_fixed.budget_krw)
-                        order_cost = float(_v2_fixed.order_cost_krw)
+                        _v2_fixed_budget_before = float(getattr(_v2_fixed, "budget_krw", 0.0) or 0.0)
+                        qty, order_budget, order_cost = self._v2_fixed_size_order_values(
+                            _v2_fixed,
+                            _s_rpx,
+                            budget_multiplier=_v2_fixed_budget_multiplier,
+                        )
+                        if _v2_fixed_budget_multiplier < 1.0 and _us_early_gate_payload.get("active"):
+                            _us_early_gate_payload.update(
+                                {
+                                    "v2_fixed_budget_mult_applied": float(_v2_fixed_budget_multiplier),
+                                    "v2_fixed_budget_before_krw": _v2_fixed_budget_before,
+                                    "v2_fixed_budget_after_krw": float(order_budget),
+                                }
+                            )
                     _v2_min_order_krw = (
                         float(_v2_fixed.min_order_krw)
                         if _v2_fixed is not None
@@ -22070,7 +22113,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         arbiter_shadow=getattr(_v2_arb, "shadow", {}) if _v2_arb is not None else {},
                         reentry_shadow=getattr(_v2_reentry, "shadow", {}) if _v2_reentry is not None else {},
                     )
-                    _us_early_gate_payload = dict(_sig.get("us_early_entry_gate") or {})
                     if _us_early_gate_payload.get("active"):
                         _v2_late_payload["us_early_entry_gate"] = _us_early_gate_payload
                     _hybrid_gate_payload = self._hybrid_gap_pullback_gate_payload(
@@ -24463,6 +24505,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not market or not ticker:
             return
         values: dict[str, Any] = {"execution_link_source": "trading_bot.decision_event"}
+        event_price_native = event.get("price_native") or event.get("price_krw")
         if action in {"buy_order", "buy_signal"}:
             entry_timing = (
                 kwargs.get("entry_timing_snapshot")
@@ -24496,14 +24539,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             values.update(
                 {
                     "first_signal_at": event.get("timestamp", ""),
-                    "entry_price": event.get("price_krw") or event.get("price_native"),
+                    "entry_price": event_price_native,
                     "strategy_used": event.get("strategy", ""),
                 }
             )
         elif action in {"sell_filled", "sell_executed"}:
             values.update(
                 {
-                    "exit_price": event.get("price_krw") or event.get("price_native"),
+                    "exit_price": event_price_native,
                     "pnl_pct": event.get("pnl_pct"),
                     "exit_reason": event.get("reason", ""),
                     "position_mfe_pct": event.get("position_mfe_pct"),
