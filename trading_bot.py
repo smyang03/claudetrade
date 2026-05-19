@@ -10913,6 +10913,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if key:
                 excluded_prompt_tickers.append(key)
 
+        def _normalized_meta_tickers(value) -> list[str]:
+            values = value if isinstance(value, list) else []
+            tickers: list[str] = []
+            for item in values:
+                raw = item.get("ticker") if isinstance(item, dict) else item
+                key = self._selection_ticker_key(market_key, raw)
+                if key and key not in tickers:
+                    tickers.append(key)
+            return tickers
+
+        overlay_mode = str((meta or {}).get("_prompt_overlay_mode") or "current_only").strip().lower()
+        if overlay_mode not in {"current_only", "shadow", "live"}:
+            overlay_mode = "current_only"
+        overlay_added_tickers = _normalized_meta_tickers((meta or {}).get("_overlay_added_tickers"))
+        overlay_removed_tickers = _normalized_meta_tickers((meta or {}).get("_overlay_removed_tickers"))
+        shadow_overlay_tickers = _normalized_meta_tickers(
+            (meta or {}).get("_shadow_overlay_tickers")
+            or (meta or {}).get("_shadow_overlay_prompt_pool")
+        )
+        shadow_overlay_added_tickers = _normalized_meta_tickers((meta or {}).get("_shadow_overlay_added_tickers"))
+        shadow_overlay_removed_tickers = _normalized_meta_tickers((meta or {}).get("_shadow_overlay_removed_tickers"))
+        overlay_plan_b_used = bool((meta or {}).get("_overlay_plan_b_used"))
+        plan_a_in_prompt = sum(
+            1 for row in prompt_rows
+            if str(row.get("trainer_candidate_state") or "").upper() == "PLAN_A"
+        )
+
         def _candidate_row_value(row: dict, *keys: str, default=None):
             for key in keys:
                 value = row.get(key)
@@ -11105,6 +11132,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "excluded_prompt_tickers": excluded_prompt_tickers,
                         "actual_prompt_count": len(actual_prompt_tickers),
                         "excluded_prompt_count": len(excluded_prompt_tickers),
+                        "plan_a_in_prompt": plan_a_in_prompt,
+                        "overlay_mode": overlay_mode,
+                        "overlay_candidate_state": str((meta or {}).get("_prompt_overlay_candidate_state") or "current_only"),
+                        "overlay_added_tickers": overlay_added_tickers,
+                        "overlay_removed_tickers": overlay_removed_tickers,
+                        "overlay_plan_a_available": int((meta or {}).get("_overlay_plan_a_available") or 0),
+                        "overlay_plan_a_added": int((meta or {}).get("_overlay_plan_a_added") or 0),
+                        "overlay_keep_current": (meta or {}).get("_overlay_keep_current"),
+                        "overlay_plan_a_max": (meta or {}).get("_overlay_plan_a_max"),
+                        "overlay_plan_b_used": overlay_plan_b_used,
+                        "shadow_overlay_tickers": shadow_overlay_tickers,
+                        "shadow_overlay_added_tickers": shadow_overlay_added_tickers,
+                        "shadow_overlay_removed_tickers": shadow_overlay_removed_tickers,
+                        "shadow_overlay_plan_a_available": int((meta or {}).get("_shadow_overlay_plan_a_available") or 0),
+                        "shadow_overlay_plan_a_added": int((meta or {}).get("_shadow_overlay_plan_a_added") or 0),
                         "screener_quality_state": call_screener_quality.get("screener_quality_state", ""),
                         "screener_quality": call_screener_quality,
                         "shadow_only": self._runtime_bool("ENABLE_CANDIDATE_AUDIT_SHADOW", False)
@@ -11112,6 +11154,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     },
                 }
             )
+            prompt_ticker_keys = {
+                self._selection_ticker_key(market_key, row.get("ticker"))
+                for row in prompt_rows
+            }
             for rank, ticker in enumerate(watchlist, start=1):
                 key = self._selection_ticker_key(market_key, ticker)
                 action = action_by_ticker.get(key, {})
@@ -11135,7 +11181,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "prompt_rank": prompt_row.get("prompt_rank") or rank,
                         "in_prompt": True,
                         "screener_seen": True,
-                        "input_to_claude_reported": True,
+                        "input_to_claude_reported": key in prompt_ticker_keys,
                         "name": _candidate_row_value(prompt_row, "name", default=""),
                         "price": _candidate_row_value(prompt_row, "price", "current_price"),
                         "change_pct": _candidate_row_value(prompt_row, "change_pct", "change_rate"),
@@ -11199,6 +11245,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "evidence_tickers": list((meta or {}).get("evidence_tickers") or []),
                             "tuning_feedback": tuning_feedback,
                             "selection_stage": "live_selection_meta",
+                            "overlay_mode": overlay_mode,
+                            "prompt_overlay_added": bool(prompt_row.get("prompt_overlay_added")),
+                            "overlay_plan_b_used": overlay_plan_b_used,
                             "screener_quality": _screener_quality_payload(prompt_row, action, meta or {}),
                         },
                     }
@@ -11244,6 +11293,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "payload": {
                             "selection_stage": "trainer_prompt_pool",
                             "prompt_pool_audit": True,
+                            "overlay_mode": overlay_mode,
+                            "prompt_overlay_added": bool(row.get("prompt_overlay_added")),
+                            "overlay_plan_b_used": overlay_plan_b_used,
                             "screener_quality": _screener_quality_payload(row, meta or {}),
                         },
                     }
@@ -11298,6 +11350,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "selection_stage": "trainer_prompt_pool_excluded",
                             "prompt_pool_audit": True,
                             "excluded_reason": excluded_reason,
+                            "overlay_mode": overlay_mode,
+                            "overlay_removed": key in overlay_removed_tickers or key in shadow_overlay_removed_tickers,
+                            "overlay_plan_b_used": overlay_plan_b_used,
                             "screener_quality": _screener_quality_payload(row, item, meta or {}),
                         },
                     }

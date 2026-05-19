@@ -77,6 +77,116 @@ def _excluded_reason(row: dict[str, Any], *, cap_excluded: bool = False) -> str:
     return "not_prompt_eligible"
 
 
+def _ticker_key(row: dict[str, Any], market_key: str) -> str:
+    return normalize_ticker((row or {}).get("ticker"), market_key)
+
+
+def _dedupe_by_ticker(rows: list[dict[str, Any]], *, market_key: str) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        key = _ticker_key(row, market_key)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(dict(row))
+    return deduped
+
+
+def build_plan_a_overlay_prompt_pool(
+    current_prompt_pool: list[dict[str, Any]],
+    scored_pool: list[dict[str, Any]],
+    *,
+    market: str,
+    cap: int,
+    keep_current: int = 15,
+    plan_a_max: int = 4,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    market_default_cap = 24 if market_key == "US" else 28
+    try:
+        effective_cap = min(max(0, int(cap or 0)), market_default_cap)
+    except Exception:
+        effective_cap = market_default_cap
+    try:
+        keep_count = max(0, int(keep_current or 0))
+    except Exception:
+        keep_count = 15
+    try:
+        plan_a_limit = max(0, int(plan_a_max or 0))
+    except Exception:
+        plan_a_limit = 4
+
+    current_rows = _dedupe_by_ticker([dict(row or {}) for row in current_prompt_pool or []], market_key=market_key)
+    scored_rows = _dedupe_by_ticker([dict(row or {}) for row in scored_pool or []], market_key=market_key)
+    current_top = current_rows[:keep_count]
+    current_top_keys = {_ticker_key(row, market_key) for row in current_top}
+    current_fill_source = current_rows[keep_count:]
+
+    plan_a_candidates = sorted(
+        [
+            row for row in scored_rows
+            if str(row.get("trainer_candidate_state") or "").upper() == "PLAN_A"
+            and _ticker_key(row, market_key) not in current_top_keys
+        ],
+        key=_sort_key,
+    )
+
+    base_meta = {
+        "overlay_plan_a_available": len(plan_a_candidates),
+        "overlay_keep_current": keep_count,
+        "overlay_plan_a_max": plan_a_limit,
+        "overlay_plan_b_used": False,
+    }
+    if not plan_a_candidates or plan_a_limit <= 0 or effective_cap <= 0:
+        result = [dict(row) for row in current_rows[:effective_cap]]
+        for rank, row in enumerate(result, start=1):
+            row["prompt_rank"] = rank
+            row["prompt_overlay_added"] = False
+        result_keys = {_ticker_key(row, market_key) for row in result}
+        return result, {
+            **base_meta,
+            "overlay_candidate_state": "current_only",
+            "overlay_plan_a_added": 0,
+            "overlay_added_tickers": [],
+            "overlay_removed_tickers": [
+                _ticker_key(row, market_key)
+                for row in current_rows
+                if _ticker_key(row, market_key) not in result_keys
+            ],
+        }
+
+    overlay_added = plan_a_candidates[:plan_a_limit]
+    overlay_added_keys = {_ticker_key(row, market_key) for row in overlay_added}
+    result = _dedupe_by_ticker(current_top + overlay_added + current_fill_source, market_key=market_key)
+    result = result[:effective_cap]
+    result_keys = {_ticker_key(row, market_key) for row in result}
+    overlay_added_tickers = [
+        _ticker_key(row, market_key)
+        for row in overlay_added
+        if _ticker_key(row, market_key) in result_keys
+    ]
+    overlay_removed_tickers = [
+        _ticker_key(row, market_key)
+        for row in current_rows
+        if _ticker_key(row, market_key) not in result_keys
+    ]
+    for rank, row in enumerate(result, start=1):
+        key = _ticker_key(row, market_key)
+        row["prompt_rank"] = rank
+        row["prompt_overlay_added"] = bool(key in overlay_added_tickers)
+
+    return result, {
+        **base_meta,
+        "overlay_candidate_state": "overlay_candidate" if overlay_added_tickers else "current_only",
+        "overlay_plan_a_added": len(overlay_added_tickers),
+        "overlay_added_tickers": overlay_added_tickers,
+        "overlay_removed_tickers": overlay_removed_tickers,
+    }
+
+
 def build_trainer_prompt_pool(
     candidates: list[dict[str, Any]],
     *,

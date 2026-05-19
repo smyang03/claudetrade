@@ -952,6 +952,116 @@ def _trainer_prompt_hard_cap(market: str, fallback: int) -> int:
     )
 
 
+def _prompt_overlay_mode() -> str:
+    mode = str(os.getenv("PROMPT_OVERLAY_MODE", "off") or "off").strip().lower()
+    return mode if mode in {"off", "shadow", "live"} else "off"
+
+
+def _prompt_overlay_keep_current() -> int:
+    return _env_int_bound("PROMPT_OVERLAY_KEEP_CURRENT", 15, 0, 100)
+
+
+def _prompt_overlay_plan_a_max() -> int:
+    return _env_int_bound("PROMPT_OVERLAY_PLAN_A_MAX", 4, 0, 100)
+
+
+def _prompt_ticker_key(market: str, ticker: object) -> str:
+    value = str(ticker or "").strip()
+    return value.upper() if str(market or "").upper() == "US" else value
+
+
+def _prompt_tickers_from_rows(rows: list[dict], market: str) -> list[str]:
+    tickers: list[str] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        ticker = _prompt_ticker_key(market, row.get("ticker"))
+        if ticker and ticker not in tickers:
+            tickers.append(ticker)
+    return tickers
+
+
+def _apply_plan_a_prompt_overlay(
+    prompt_candidates: list[dict],
+    prompt_pool_meta: dict,
+    market: str,
+) -> tuple[list[dict], dict]:
+    mode = _prompt_overlay_mode()
+    enriched_meta = dict(prompt_pool_meta or {})
+    base_overlay_meta = {
+        "_prompt_overlay_requested_mode": mode,
+        "_prompt_overlay_mode": "current_only",
+        "_prompt_overlay_candidate_state": "current_only",
+        "_overlay_plan_a_available": 0,
+        "_overlay_plan_a_added": 0,
+        "_overlay_added_tickers": [],
+        "_overlay_removed_tickers": [],
+        "_overlay_keep_current": _prompt_overlay_keep_current(),
+        "_overlay_plan_a_max": _prompt_overlay_plan_a_max(),
+        "_overlay_plan_b_used": False,
+    }
+    enriched_meta.update(base_overlay_meta)
+    if mode == "off":
+        return prompt_candidates, enriched_meta
+
+    scored_pool = [dict(row or {}) for row in list(enriched_meta.get("scored_pool") or []) if isinstance(row, dict)]
+    if not scored_pool:
+        return prompt_candidates, enriched_meta
+
+    try:
+        from runtime.candidate_prompt_pool import build_plan_a_overlay_prompt_pool
+
+        overlay_pool, overlay_meta = build_plan_a_overlay_prompt_pool(
+            [dict(row or {}) for row in prompt_candidates or []],
+            scored_pool,
+            market=market,
+            cap=int(enriched_meta.get("hard_cap") or len(prompt_candidates or [])),
+            keep_current=base_overlay_meta["_overlay_keep_current"],
+            plan_a_max=base_overlay_meta["_overlay_plan_a_max"],
+        )
+    except Exception as exc:
+        log.warning(f"[ticker-selection] prompt overlay failed {market}: {exc}")
+        enriched_meta["_prompt_overlay_error"] = str(exc)
+        return prompt_candidates, enriched_meta
+
+    overlay_added = list(overlay_meta.get("overlay_added_tickers") or [])
+    overlay_removed = list(overlay_meta.get("overlay_removed_tickers") or [])
+    overlay_candidate_state = str(overlay_meta.get("overlay_candidate_state") or "current_only")
+    effective_mode = mode if overlay_candidate_state == "overlay_candidate" and overlay_added else "current_only"
+    enriched_meta.update(
+        {
+            "_prompt_overlay_mode": effective_mode,
+            "_prompt_overlay_candidate_state": overlay_candidate_state,
+            "_overlay_plan_a_available": int(overlay_meta.get("overlay_plan_a_available") or 0),
+            "_overlay_plan_a_added": int(overlay_meta.get("overlay_plan_a_added") or 0),
+            "_overlay_added_tickers": overlay_added,
+            "_overlay_removed_tickers": overlay_removed,
+            "_overlay_keep_current": int(overlay_meta.get("overlay_keep_current") or base_overlay_meta["_overlay_keep_current"]),
+            "_overlay_plan_a_max": int(overlay_meta.get("overlay_plan_a_max") or base_overlay_meta["_overlay_plan_a_max"]),
+            "_overlay_plan_b_used": bool(overlay_meta.get("overlay_plan_b_used")),
+        }
+    )
+    if mode == "shadow":
+        enriched_meta["_shadow_overlay_prompt_pool"] = [dict(row or {}) for row in overlay_pool]
+        enriched_meta["_shadow_overlay_tickers"] = _prompt_tickers_from_rows(overlay_pool, market)
+        enriched_meta["_shadow_overlay_added_tickers"] = overlay_added
+        enriched_meta["_shadow_overlay_removed_tickers"] = overlay_removed
+        enriched_meta["_shadow_overlay_plan_a_available"] = int(overlay_meta.get("overlay_plan_a_available") or 0)
+        enriched_meta["_shadow_overlay_plan_a_added"] = int(overlay_meta.get("overlay_plan_a_added") or 0)
+        return prompt_candidates, enriched_meta
+
+    if mode == "live" and effective_mode == "live":
+        live_pool = [dict(row or {}) for row in overlay_pool]
+        enriched_meta["prompt_pool"] = live_pool
+        enriched_meta["prompt_pool_count"] = len(live_pool)
+        metrics = dict(enriched_meta.get("metrics") or {})
+        metrics["prompt_overlay"] = dict(overlay_meta)
+        enriched_meta["metrics"] = metrics
+        return live_pool, enriched_meta
+
+    return prompt_candidates, enriched_meta
+
+
 def _build_selection_prompt_pool(candidates: list[dict], market: str, prompt_cap: int) -> tuple[list[dict], dict]:
     if not _trainer_prompt_pool_enabled():
         prompt_candidates = _curate_selection_candidates(candidates, market, prompt_cap)
@@ -1752,6 +1862,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
     limits = selection_limits(market)
     prompt_cap = _selection_candidate_cap(market, limits["watch_max"], limits["trade_max"])
     prompt_candidates, prompt_pool_meta = _build_selection_prompt_pool(candidates, market, prompt_cap)
+    prompt_candidates, prompt_pool_meta = _apply_plan_a_prompt_overlay(prompt_candidates, prompt_pool_meta, market)
     if len(candidates) > len(prompt_candidates):
         log.info(f"[ticker-selection] {market} prompt candidates trimmed: {len(candidates)} -> {len(prompt_candidates)}")
     if prompt_pool_meta.get("enabled"):
@@ -2114,6 +2225,25 @@ Rules:
         enriched["_safe_empty_prompt_pool"] = bool(prompt_pool_meta.get("safe_empty_prompt_pool"))
         enriched["_prompt_pool_empty_reason"] = str(prompt_pool_meta.get("prompt_pool_empty_reason") or "")
         enriched["_trainer_all_quarantined"] = bool(prompt_pool_meta.get("trainer_all_quarantined"))
+        enriched["_prompt_overlay_requested_mode"] = str(prompt_pool_meta.get("_prompt_overlay_requested_mode") or "off")
+        enriched["_prompt_overlay_mode"] = str(prompt_pool_meta.get("_prompt_overlay_mode") or "current_only")
+        enriched["_prompt_overlay_candidate_state"] = str(prompt_pool_meta.get("_prompt_overlay_candidate_state") or "current_only")
+        enriched["_overlay_plan_a_available"] = int(prompt_pool_meta.get("_overlay_plan_a_available") or 0)
+        enriched["_overlay_plan_a_added"] = int(prompt_pool_meta.get("_overlay_plan_a_added") or 0)
+        enriched["_overlay_added_tickers"] = list(prompt_pool_meta.get("_overlay_added_tickers") or [])
+        enriched["_overlay_removed_tickers"] = list(prompt_pool_meta.get("_overlay_removed_tickers") or [])
+        enriched["_overlay_keep_current"] = prompt_pool_meta.get("_overlay_keep_current")
+        enriched["_overlay_plan_a_max"] = prompt_pool_meta.get("_overlay_plan_a_max")
+        enriched["_overlay_plan_b_used"] = bool(prompt_pool_meta.get("_overlay_plan_b_used"))
+        if prompt_pool_meta.get("_shadow_overlay_prompt_pool") is not None:
+            enriched["_shadow_overlay_prompt_pool"] = list(prompt_pool_meta.get("_shadow_overlay_prompt_pool") or [])
+            enriched["_shadow_overlay_tickers"] = list(prompt_pool_meta.get("_shadow_overlay_tickers") or [])
+            enriched["_shadow_overlay_added_tickers"] = list(prompt_pool_meta.get("_shadow_overlay_added_tickers") or [])
+            enriched["_shadow_overlay_removed_tickers"] = list(prompt_pool_meta.get("_shadow_overlay_removed_tickers") or [])
+            enriched["_shadow_overlay_plan_a_available"] = int(prompt_pool_meta.get("_shadow_overlay_plan_a_available") or 0)
+            enriched["_shadow_overlay_plan_a_added"] = int(prompt_pool_meta.get("_shadow_overlay_plan_a_added") or 0)
+        if prompt_pool_meta.get("_prompt_overlay_error"):
+            enriched["_prompt_overlay_error"] = str(prompt_pool_meta.get("_prompt_overlay_error") or "")
         return enriched
 
     fallback_meta = _attach_prompt_pool_meta(fallback_meta)

@@ -1706,6 +1706,132 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertTrue(str(audit_row["scorer_config_hash"] or ""))
         self.assertIn("US:momentum_now", json.loads(audit_row["source_tags_json"]))
 
+    def test_candidate_audit_marks_only_actual_prompt_as_input_to_claude(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        meta = {
+            "selection_snapshot_ts": "2026-05-07T09:00:00+09:00",
+            "watchlist": ["AAPL", "MSFT"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {"ticker": "AAPL", "action": "WATCH", "reason": "watch"},
+                {"ticker": "MSFT", "action": "WATCH", "reason": "watch"},
+            ],
+            "_final_prompt_pool": [
+                {"ticker": "AAPL", "market": "US", "prompt_rank": 1, "trainer_candidate_state": "PLAN_A"},
+                {"ticker": "NVDA", "market": "US", "prompt_rank": 2, "trainer_candidate_state": "PLAN_A"},
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                TradingBot._write_candidate_audit_live(
+                    bot,
+                    "US",
+                    selected=["AAPL", "MSFT"],
+                    meta=meta,
+                    stages={},
+                )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = {
+                    row["ticker"]: row
+                    for row in conn.execute(
+                        """
+                        SELECT ticker, input_to_claude_reported, classification
+                        FROM audit_candidate_rows
+                        """
+                    ).fetchall()
+                }
+                call_payload = json.loads(
+                    conn.execute("SELECT payload_json FROM audit_claude_calls").fetchone()["payload_json"]
+                )
+            finally:
+                conn.close()
+
+        self.assertEqual(rows["AAPL"]["input_to_claude_reported"], 1)
+        self.assertEqual(rows["MSFT"]["input_to_claude_reported"], 0)
+        self.assertEqual(rows["NVDA"]["input_to_claude_reported"], 1)
+        self.assertEqual(rows["NVDA"]["classification"], "in_prompt_not_selected")
+        self.assertEqual(call_payload["actual_prompt_tickers"], ["AAPL", "NVDA"])
+        self.assertEqual(call_payload["actual_prompt_count"], 2)
+        self.assertEqual(call_payload["plan_a_in_prompt"], 2)
+        self.assertEqual(call_payload["overlay_mode"], "current_only")
+
+    def test_candidate_audit_records_shadow_and_live_overlay_payloads(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        shadow_meta = {
+            "selection_snapshot_ts": "2026-05-07T09:00:00+09:00",
+            "watchlist": ["AAPL"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "AAPL", "action": "WATCH", "reason": "watch"}],
+            "_final_prompt_pool": [{"ticker": "AAPL", "market": "US", "prompt_rank": 1}],
+            "_prompt_overlay_mode": "shadow",
+            "_shadow_overlay_tickers": ["AAPL", "PA1"],
+            "_shadow_overlay_added_tickers": ["PA1"],
+            "_shadow_overlay_removed_tickers": ["DROP1"],
+            "_shadow_overlay_plan_a_available": 1,
+            "_shadow_overlay_plan_a_added": 1,
+            "_overlay_plan_b_used": False,
+        }
+        live_meta = {
+            "selection_snapshot_ts": "2026-05-07T09:01:00+09:00",
+            "watchlist": ["AAPL", "PA1"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "PA1", "action": "WATCH", "reason": "watch"}],
+            "_final_prompt_pool": [
+                {"ticker": "AAPL", "market": "US", "prompt_rank": 1, "prompt_overlay_added": False},
+                {"ticker": "PA1", "market": "US", "prompt_rank": 2, "trainer_candidate_state": "PLAN_A", "prompt_overlay_added": True},
+            ],
+            "_prompt_overlay_mode": "live",
+            "_overlay_added_tickers": ["PA1"],
+            "_overlay_removed_tickers": ["DROP1"],
+            "_overlay_plan_a_available": 1,
+            "_overlay_plan_a_added": 1,
+            "_overlay_plan_b_used": False,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                TradingBot._write_candidate_audit_live(bot, "US", selected=["AAPL"], meta=shadow_meta, stages={})
+                TradingBot._write_candidate_audit_live(bot, "US", selected=["AAPL", "PA1"], meta=live_meta, stages={})
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                payloads = [
+                    json.loads(row["payload_json"])
+                    for row in conn.execute(
+                        "SELECT payload_json FROM audit_claude_calls ORDER BY called_at"
+                    ).fetchall()
+                ]
+                live_row_payload = json.loads(
+                    conn.execute(
+                        """
+                        SELECT payload_json
+                        FROM audit_candidate_rows
+                        WHERE ticker='PA1'
+                        ORDER BY known_at DESC
+                        LIMIT 1
+                        """
+                    ).fetchone()["payload_json"]
+                )
+            finally:
+                conn.close()
+
+        self.assertEqual(payloads[0]["overlay_mode"], "shadow")
+        self.assertEqual(payloads[0]["actual_prompt_tickers"], ["AAPL"])
+        self.assertEqual(payloads[0]["shadow_overlay_tickers"], ["AAPL", "PA1"])
+        self.assertEqual(payloads[0]["shadow_overlay_added_tickers"], ["PA1"])
+        self.assertEqual(payloads[1]["overlay_mode"], "live")
+        self.assertEqual(payloads[1]["actual_prompt_tickers"], ["AAPL", "PA1"])
+        self.assertEqual(payloads[1]["overlay_added_tickers"], ["PA1"])
+        self.assertTrue(live_row_payload["prompt_overlay_added"])
+        self.assertFalse(payloads[1]["overlay_plan_b_used"])
+
     def test_strength_capture_shadow_fields_are_kr_neutral_only_and_require_ma60(self) -> None:
         bot = _make_bot()
 
