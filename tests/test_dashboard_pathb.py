@@ -204,6 +204,64 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(quotes["INTC"]["price"], 108.29)
         self.assertEqual(quotes["INTC"]["ts"], "2026-05-06T00:02:00+09:00")
 
+    def test_realtime_quote_cache_accepts_pathb_ttl(self) -> None:
+        key = ("live", "US", "INTC")
+        dashboard_server._DASHBOARD_QUOTE_CACHE.clear()
+        dashboard_server._DASHBOARD_QUOTE_CACHE[key] = {
+            "cached_at": dashboard_server._time.time() - 30,
+            "ts": "2026-05-06T00:02:00+09:00",
+            "ticker": "INTC",
+            "price": 108.29,
+            "source": "realtime_quote",
+        }
+        try:
+            with patch.object(dashboard_server, "get_price", side_effect=AssertionError("cache should be used")):
+                quotes = dashboard_server._dashboard_realtime_quotes("US", ["INTC"], "live", ttl_sec=60)
+        finally:
+            dashboard_server._DASHBOARD_QUOTE_CACHE.clear()
+
+        self.assertEqual(quotes["INTC"]["price"], 108.29)
+        self.assertGreaterEqual(quotes["INTC"]["age_sec"], 29)
+
+    def test_pathb_watch_price_enrichment_adds_realtime_price(self) -> None:
+        summary = {
+            "market": "US",
+            "path_b_live": {
+                "selection": {
+                    "watch_rows": [
+                        {"ticker": "INTC", "buy_zone_low": 100.0, "buy_zone_high": 110.0}
+                    ]
+                }
+            },
+        }
+
+        with patch.object(dashboard_server, "_dashboard_pathb_quote_cache_sec", return_value=60), patch.object(
+            dashboard_server,
+            "_dashboard_realtime_quotes",
+            return_value={
+                "INTC": {
+                    "ticker": "INTC",
+                    "price": 105.25,
+                    "ts": "2026-05-06T00:02:00+09:00",
+                    "source": "realtime_quote",
+                    "age_sec": 4,
+                    "change_rate": 1.23,
+                    "volume": 12345,
+                }
+            },
+        ) as quotes, patch.object(dashboard_server, "_is_live_market", return_value=True):
+            dashboard_server._enrich_pathb_watch_prices(summary, market="US", mode="live")
+
+        quotes.assert_called_once_with("US", ["INTC"], "live", ttl_sec=60)
+        selection = summary["path_b_live"]["selection"]
+        row = selection["watch_rows"][0]
+        self.assertEqual(selection["quote_refresh_interval_sec"], 60)
+        self.assertEqual(selection["quote_updated_count"], 1)
+        self.assertEqual(row["current_price"], 105.25)
+        self.assertEqual(row["current_price_at"], "2026-05-06T00:02:00+09:00")
+        self.assertEqual(row["current_change_rate"], 1.23)
+        self.assertEqual(row["current_buy_zone_state"], "inside_buy_zone")
+
     def test_preopen_page_keeps_current_session_dynamic_and_escapes_tables(self) -> None:
         res = app.test_client().get("/preopen")
 

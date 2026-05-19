@@ -5634,6 +5634,7 @@ def api_v2_ops():
     session_date = _session_trade_date(market).isoformat() if market in {"KR", "US"} else None
     mode = _request_mode()
     summary = build_v2_ops_summary(market=market, runtime_mode=mode, session_date=session_date)
+    _enrich_pathb_watch_prices(summary, market=market, mode=mode)
     _enrich_bucket_monitor_tickers(summary, market=market, mode=mode)
     return jsonify(summary)
 
@@ -6101,6 +6102,10 @@ _PREOPEN_CANDIDATE_FIELDS = {
     "extended_volume",
     "extended_dollar_volume",
     "spread_pct",
+    "news_or_earnings_flag",
+    "news_or_earnings_count",
+    "news_or_earnings_sources",
+    "news_or_earnings_sample_title",
     "reason",
     "reasons",
     "risk_tags",
@@ -8016,6 +8021,13 @@ def _dashboard_quote_cache_sec() -> int:
         return 15
 
 
+def _dashboard_pathb_quote_cache_sec() -> int:
+    try:
+        return max(int(os.getenv("DASHBOARD_PATHB_QUOTE_CACHE_SEC", "60") or 60), 0)
+    except Exception:
+        return 60
+
+
 def _num_or_zero(value) -> float:
     try:
         return float(value or 0)
@@ -8023,7 +8035,13 @@ def _num_or_zero(value) -> float:
         return 0.0
 
 
-def _dashboard_realtime_quotes(market: str, tickers: list[str], mode: str) -> dict[str, dict]:
+def _dashboard_realtime_quotes(
+    market: str,
+    tickers: list[str],
+    mode: str,
+    *,
+    ttl_sec: Optional[int] = None,
+) -> dict[str, dict]:
     market_key = "US" if str(market or "").upper() == "US" else "KR"
     runtime_mode = _normalize_mode(mode)
     unique = []
@@ -8036,7 +8054,7 @@ def _dashboard_realtime_quotes(market: str, tickers: list[str], mode: str) -> di
     if not unique:
         return {}
 
-    ttl_sec = _dashboard_quote_cache_sec()
+    ttl_sec = _dashboard_quote_cache_sec() if ttl_sec is None else max(int(ttl_sec or 0), 0)
     now_ts = _time.time()
     result: dict[str, dict] = {}
     to_fetch: list[str] = []
@@ -8105,6 +8123,61 @@ def _dashboard_realtime_quotes(market: str, tickers: list[str], mode: str) -> di
     except Exception:
         return result
     return result
+
+
+def _pathb_price_zone_state(price: float, low: float, high: float) -> tuple[str, Optional[float]]:
+    if price <= 0 or (low <= 0 and high <= 0):
+        return "", None
+    if low > 0 and price < low:
+        return "below_buy_zone", round((price / low - 1.0) * 100.0, 4)
+    if high > 0 and price > high:
+        return "above_buy_zone", round((price / high - 1.0) * 100.0, 4)
+    return "inside_buy_zone", 0.0
+
+
+def _enrich_pathb_watch_prices(summary: dict, *, market: Optional[str], mode: str) -> None:
+    if not isinstance(summary, dict):
+        return
+    market_key = str(market or summary.get("market") or "").strip().upper()
+    if market_key not in {"KR", "US"}:
+        return
+    pathb = summary.get("path_b_live") if isinstance(summary.get("path_b_live"), dict) else {}
+    selection = pathb.get("selection") if isinstance(pathb.get("selection"), dict) else {}
+    rows = selection.get("watch_rows") if isinstance(selection.get("watch_rows"), list) else []
+    if not rows:
+        selection["quote_refresh_interval_sec"] = _dashboard_pathb_quote_cache_sec()
+        selection["quote_live_market"] = _is_live_market(market_key)
+        return
+
+    ttl_sec = _dashboard_pathb_quote_cache_sec()
+    tickers = [str(row.get("ticker") or "").strip() for row in rows if isinstance(row, dict)]
+    quotes = _dashboard_realtime_quotes(market_key, tickers, mode, ttl_sec=ttl_sec)
+    selection["quote_refresh_interval_sec"] = ttl_sec
+    selection["quote_live_market"] = _is_live_market(market_key)
+    selection["quote_ticker_count"] = len({t.upper() for t in tickers if t})
+    selection["quote_updated_count"] = sum(1 for quote in quotes.values() if _num_or_zero(quote.get("price")) > 0)
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ticker = str(row.get("ticker") or "").strip()
+        key = ticker.upper()
+        quote = quotes.get(key) or quotes.get(ticker) or {}
+        price = _num_or_zero(quote.get("price"))
+        if price <= 0:
+            continue
+        low = _num_or_zero(row.get("buy_zone_low"))
+        high = _num_or_zero(row.get("buy_zone_high"))
+        zone_state, zone_distance = _pathb_price_zone_state(price, low, high)
+        row["current_price"] = round(price, 6)
+        row["current_price_at"] = str(quote.get("ts") or "")
+        row["current_price_source"] = str(quote.get("source") or "")
+        row["current_price_age_sec"] = int(_num_or_zero(quote.get("age_sec")))
+        row["current_price_stale"] = bool(quote.get("stale", False))
+        row["current_change_rate"] = _num_or_zero(quote.get("change_rate"))
+        row["current_volume"] = int(_num_or_zero(quote.get("volume")))
+        row["current_buy_zone_state"] = zone_state
+        row["current_buy_zone_distance_pct"] = zone_distance
 
 
 def _current_session_trade_price(recent_trade: dict, market: str) -> float:
@@ -12857,7 +12930,7 @@ PAGE_PATHB_HTML = """
       </div>
     </div>
     <div class="card" style="margin-top:12px;">
-      <div class="card-title">B플랜 관찰 / 미동작 사유</div>
+      <div class="card-title">B플랜 관찰 / 미동작 사유 <span id="pathb-watch-price-interval" style="font-size:11px;color:var(--text-dim);font-weight:400;margin-left:8px"></span></div>
       <div id="pathb-watch" class="table-wrap"></div>
     </div>
     <div class="card" style="margin-top:12px;">
@@ -13052,11 +13125,19 @@ async function loadPathB() {
   document.getElementById('pathb-broker-truth').innerHTML =
     `<div class="pathb-broker-grid">${['KR', 'US'].map(mkt => renderBrokerTruthCard(mkt, brokerMarkets[mkt] || {})).join('')}</div>`;
   renderPathComparison(b.path_comparison || {});
+  const quoteInterval = fmtPathBQuoteInterval(sel.quote_refresh_interval_sec || 0);
+  const intervalEl = document.getElementById('pathb-watch-price-interval');
+  if (intervalEl) {
+    intervalEl.textContent = quoteInterval
+      ? `현재가 ${quoteInterval} 갱신${sel.quote_live_market ? '' : ' · 장외 캐시'}`
+      : '';
+  }
   const watchRows = (sel.watch_rows || []).map(r => `
     <tr>
       <td>${r.display_ticker || r.ticker || ''}</td>
       <td>${koPathBWatchCategory(r.category || '')}</td>
       <td>${koPathBWatchState(r.state || '')}</td>
+      <td>${pathbQuoteCell(r, market)}</td>
       <td>${r.buy_zone_low || ''}${r.buy_zone_high ? ' ~ ' + r.buy_zone_high : ''}</td>
       <td>${r.sell_target || ''}</td>
       <td>${r.stop_loss || ''}</td>
@@ -13068,7 +13149,7 @@ async function loadPathB() {
     </tr>
   `).join('');
   document.getElementById('pathb-watch').innerHTML = watchRows
-    ? `<table><thead><tr><th>종목</th><th>구분</th><th>B플랜 상태</th><th>매수 존</th><th>목표</th><th>손절</th><th>신뢰도</th><th>차단 사유</th><th>Claude 선택 이유</th><th>진입 근거</th><th>청산 근거</th></tr></thead><tbody>${watchRows}</tbody></table>`
+    ? `<table><thead><tr><th>종목</th><th>구분</th><th>B플랜 상태</th><th>현재가</th><th>매수 존</th><th>목표</th><th>손절</th><th>신뢰도</th><th>차단 사유</th><th>Claude 선택 이유</th><th>진입 근거</th><th>청산 근거</th></tr></thead><tbody>${watchRows}</tbody></table>`
     : '<div class="muted">오늘 B플랜 관찰 대상이 없습니다.</div>';
   const posRows = (d.positions || []).map(p => {
     const pMarket = String(p.market || market || '').toUpperCase();
@@ -13174,6 +13255,44 @@ function fmtPathBMoney(v, currency) {
   }
   if (key === 'MIXED') return fmtMoney(n) + ' (혼합)';
   return fmtMoney(n) + '원';
+}
+
+function fmtPathBPrice(v, market) {
+  const n = Number(v || 0);
+  if (!(n > 0)) return '-';
+  const key = String(market || '').toUpperCase();
+  return key === 'US' ? '$' + n.toFixed(2) : fmtMoney(n) + '원';
+}
+
+function fmtPathBQuoteInterval(sec) {
+  const n = Number(sec || 0);
+  if (!(n > 0)) return '';
+  if (n >= 60 && n % 60 === 0) return `${Math.round(n / 60)}분`;
+  return `${Math.round(n)}초`;
+}
+
+function koPathBZoneState(v) {
+  const m = {
+    below_buy_zone: '매수존 아래',
+    inside_buy_zone: '매수존 안',
+    above_buy_zone: '매수존 위'
+  };
+  return m[v] || '';
+}
+
+function pathbQuoteCell(row, market) {
+  const px = Number(row.current_price || 0);
+  if (!(px > 0)) return '<span style="color:var(--text-dim)">-</span>';
+  const bits = [];
+  const change = Number(row.current_change_rate || 0);
+  if (Number.isFinite(change) && change !== 0) bits.push(`${change > 0 ? '+' : ''}${change.toFixed(2)}%`);
+  const age = Number(row.current_price_age_sec || 0);
+  if (Number.isFinite(age) && age > 0) bits.push(age >= 60 ? `${Math.floor(age / 60)}분전` : `${Math.round(age)}초전`);
+  if (row.current_price_stale) bits.push('캐시');
+  const zone = koPathBZoneState(row.current_buy_zone_state || '');
+  if (zone) bits.push(zone);
+  return `<div style="font-family:var(--mono);font-size:12px;color:var(--text)">${fmtPathBPrice(px, market)}</div>`
+    + (bits.length ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">${bits.map(pathbEscapeHtml).join(' · ')}</div>` : '');
 }
 
 function listText(v) {
