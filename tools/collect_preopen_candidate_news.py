@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from phase1_trainer.digest_builder import build_kr_digest, build_us_digest
 from phase1_trainer.preopen_news_targets import load_preopen_news_targets
+from preopen.news_enrichment import enrich_preopen_state, save_preopen_news_snapshot
 
 
 def _env_int(name: str, default: int) -> int:
@@ -107,6 +108,23 @@ def collect_preopen_candidate_news(
         )
         digest = build_us_digest(day, universe_tickers=list(targets))
 
+    snapshot_path = ""
+    try:
+        if isinstance(news_payload, dict) and news_payload:
+            snapshot_path = str(save_preopen_news_snapshot(market_key, day, news_payload))
+    except Exception:
+        snapshot_path = ""
+    try:
+        state_enrichment = enrich_preopen_state(
+            market_key,
+            day,
+            mode=mode,
+            news_payload=news_payload if isinstance(news_payload, dict) else {},
+            news_path=snapshot_path,
+        )
+    except Exception as exc:
+        state_enrichment = {"status": "error", "error": str(exc)[:240], "flagged_count": 0}
+
     elapsed = round(time.monotonic() - started, 2)
     coverage = (news_payload or {}).get("news_coverage", {}) if isinstance(news_payload, dict) else {}
     corp_news_total = _corp_news_total(news_payload or {})
@@ -136,6 +154,9 @@ def collect_preopen_candidate_news(
         "data_quality_flags": flags,
         "top_news_count": len((digest or {}).get("top_news", [])),
         "digest_path": str(ROOT / "data" / "daily_digest" / f"{day}_{market_key}.json"),
+        "preopen_news_snapshot_path": snapshot_path,
+        "state_enrichment": state_enrichment,
+        "state_news_flagged_count": int((state_enrichment or {}).get("flagged_count", 0) or 0),
         "elapsed_sec": elapsed,
         "force": bool(force),
         "min_coverage_ratio": float(min_coverage_ratio or 0.0),

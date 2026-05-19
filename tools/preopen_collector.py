@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from bot.session_date import KST, resolve_session_date_str
 from preopen.models import normalize_candidate
+from preopen.news_enrichment import enrich_candidates_with_news
 from preopen.scorer import score_candidates
 from preopen.storage import save_candidate_records, save_preopen_state
 from runtime_paths import get_runtime_path
@@ -335,6 +336,15 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
                 stale = True
 
     candidates = score_candidates(market, raw_candidates)
+    try:
+        candidates, news_enrichment = enrich_candidates_with_news(
+            market,
+            candidates,
+            session_date=session_date,
+            allow_rank_reorder=True,
+        )
+    except Exception as exc:
+        news_enrichment = {"status": "error", "error": str(exc)[:240], "flagged_count": 0}
     collector_status = "ok" if candidates else "no_candidates"
     if token_status in {"token_unavailable", "token_expired", "token_invalid"} and not candidates:
         collector_status = token_status
@@ -356,6 +366,7 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
         "screen_top_n": top_n,
         "candidate_count": len(candidates),
         "excluded_count": sum(1 for c in candidates if c.get("preopen_grade") == "X"),
+        "news_enrichment": news_enrichment,
         "candidates": candidates,
         "notes": [
             "shadow-only collector",
