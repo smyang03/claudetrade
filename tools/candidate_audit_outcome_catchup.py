@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--days", type=int, default=5, help="recent calendar days when no date range is supplied")
     parser.add_argument("--market", default="", help="KR, US, or empty for both")
     parser.add_argument("--runtime-mode", default="live")
-    parser.add_argument("--horizons", default="30,60", help="comma-separated minute horizons")
+    parser.add_argument("--horizons", default="30,60", help="comma-separated minute horizons, e.g. 30,60,1440,2880,4320")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     summary = run_catchup(

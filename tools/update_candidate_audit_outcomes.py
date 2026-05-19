@@ -14,10 +14,12 @@ if str(ROOT) not in sys.path:
 
 from audit.candidate_audit_store import CandidateAuditStore
 from runtime_paths import get_runtime_path
+import ticker_selection_db as _selection_price_db
 
 
 DEFAULT_HORIZONS = (30, 60)
 MIN_SAMPLES_BY_HORIZON = {30: 2, 60: 3}
+DAILY_FORWARD_HORIZONS = {1440: 1, 2880: 2, 4320: 3}
 
 
 def _utc_now() -> str:
@@ -95,7 +97,8 @@ def _load_candidate_rows(
         for row in conn.execute(
             f"""
             SELECT candidate_key, call_id, runtime_mode, market, session_date,
-                   known_at, ticker, price, classification
+                   known_at, ticker, price, classification,
+                   consensus_mode, strength_capture_shadow, strength_capture_rules
             FROM audit_candidate_rows
             WHERE {where}
             ORDER BY session_date, market, ticker, known_at
@@ -154,6 +157,8 @@ def _build_outcome_row(
     label_generated_at: str,
     min_samples: int,
 ) -> dict[str, Any]:
+    if int(horizon_min) in DAILY_FORWARD_HORIZONS:
+        raise ValueError("daily forward horizons must use _build_daily_forward_outcome_row")
     base_at = _parse_dt(candidate.get("known_at"))
     base_price = _to_float(candidate.get("price"))
     target_at = base_at + timedelta(minutes=horizon_min) if base_at else None
@@ -217,6 +222,105 @@ def _build_outcome_row(
     }
 
 
+def _build_daily_forward_outcome_row(
+    *,
+    candidate: dict[str, Any],
+    horizon_min: int,
+    label_generated_at: str,
+) -> dict[str, Any]:
+    horizon_key = int(horizon_min)
+    offset = DAILY_FORWARD_HORIZONS.get(horizon_key)
+    session_date = str(candidate.get("session_date") or "")
+    market = str(candidate.get("market") or "").upper()
+    ticker = str(candidate.get("ticker") or "").upper()
+    payload: dict[str, Any] = {
+        "horizon_kind": "trading_day_close",
+        "trading_day_offset": offset,
+        "base_session_date": session_date,
+        "base_price_source": "price_csv_close",
+        "target_price_source": "price_csv_close",
+        "strength_capture_shadow": bool(candidate.get("strength_capture_shadow")),
+        "strength_capture_rules": candidate.get("strength_capture_rules") or "[]",
+    }
+    base = {
+        "candidate_key": candidate.get("candidate_key"),
+        "horizon_min": horizon_key,
+        "target_at": "",
+        "observed_at": "",
+        "observed_price": None,
+        "return_pct": None,
+        "max_runup_pct": None,
+        "max_drawdown_pct": None,
+        "status": "daily_pending",
+        "source": "audit_candidate_rows_daily_forward",
+        "label_generated_at": label_generated_at,
+        "payload": payload,
+    }
+    if offset is None:
+        payload["reason"] = "unsupported_daily_horizon"
+        return {**base, "status": "daily_unsupported_horizon"}
+
+    price_data = _selection_price_db._load_price(market, ticker)
+    if price_data is None:
+        payload["reason"] = "missing_price_csv"
+        return {**base, "status": "daily_missing_csv"}
+
+    base_idx = (price_data.get("index") or {}).get(session_date)
+    if base_idx is None:
+        payload["reason"] = "session_date_not_in_price_csv"
+        return {**base, "status": "daily_missing_base"}
+
+    closes = list(price_data.get("closes") or [])
+    dates = list(price_data.get("dates") or [])
+    target_idx = int(base_idx) + int(offset)
+    if base_idx >= len(closes) or base_idx >= len(dates):
+        payload["reason"] = "invalid_base_index"
+        return {**base, "status": "daily_missing_base"}
+
+    try:
+        base_close = float(closes[base_idx])
+    except Exception:
+        base_close = 0.0
+    if base_close <= 0:
+        payload["reason"] = "invalid_base_close"
+        return {**base, "status": "daily_missing_base"}
+
+    payload["base_close"] = base_close
+    if target_idx >= len(closes) or target_idx >= len(dates):
+        payload["reason"] = "target_session_not_available"
+        return {**base, "status": "daily_pending"}
+
+    try:
+        target_close = float(closes[target_idx])
+    except Exception:
+        target_close = 0.0
+    if target_close <= 0:
+        payload["reason"] = "invalid_target_close"
+        return {**base, "status": "daily_pending"}
+
+    target_session_date = str(dates[target_idx])
+    return_pct = _selection_price_db._calc_forward_return(price_data, session_date, int(offset))
+    max_runup, max_drawdown = _selection_price_db._calc_window_excursion(price_data, session_date, int(offset))
+    payload.update(
+        {
+            "reason": "",
+            "target_session_date": target_session_date,
+            "target_close": target_close,
+        }
+    )
+    return {
+        **base,
+        "target_at": target_session_date,
+        "observed_at": target_session_date,
+        "observed_price": target_close,
+        "return_pct": return_pct,
+        "max_runup_pct": max_runup,
+        "max_drawdown_pct": max_drawdown,
+        "status": "daily_forward",
+        "payload": payload,
+    }
+
+
 def update_candidate_audit_outcomes(
     *,
     db_path: str | Path | None = None,
@@ -262,13 +366,21 @@ def update_candidate_audit_outcomes(
         )
         ticker_observations = observations.get(key, [])
         for horizon in horizons:
-            row = _build_outcome_row(
-                candidate=candidate,
-                horizon_min=int(horizon),
-                observations=ticker_observations,
-                label_generated_at=label_generated_at,
-                min_samples=int(min_samples.get(int(horizon), 1)),
-            )
+            horizon_key = int(horizon)
+            if horizon_key in DAILY_FORWARD_HORIZONS:
+                row = _build_daily_forward_outcome_row(
+                    candidate=candidate,
+                    horizon_min=horizon_key,
+                    label_generated_at=label_generated_at,
+                )
+            else:
+                row = _build_outcome_row(
+                    candidate=candidate,
+                    horizon_min=horizon_key,
+                    observations=ticker_observations,
+                    label_generated_at=label_generated_at,
+                    min_samples=int(min_samples.get(horizon_key, 1)),
+                )
             outcome_rows.append(row)
             status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
 

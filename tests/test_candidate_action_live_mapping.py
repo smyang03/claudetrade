@@ -1628,6 +1628,155 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertTrue(str(audit_row["scorer_config_hash"] or ""))
         self.assertIn("US:momentum_now", json.loads(audit_row["source_tags_json"]))
 
+    def test_strength_capture_shadow_fields_are_kr_neutral_only_and_require_ma60(self) -> None:
+        bot = _make_bot()
+
+        chg = TradingBot._strength_capture_shadow_fields(
+            bot,
+            {"change_pct": 25.0, "volume_ratio": 20.0},
+            market="KR",
+            consensus_mode="NEUTRAL",
+        )
+        self.assertTrue(chg["strength_capture_shadow"])
+        self.assertEqual(chg["strength_capture_rules"], ["strength_v1_chg25_vol20"])
+
+        near_bucket = TradingBot._strength_capture_shadow_fields(
+            bot,
+            {"from_high_bucket": "at_high"},
+            market="KR",
+            consensus_mode="CAUTIOUS",
+        )
+        self.assertEqual(near_bucket["strength_capture_rules"], ["strength_v1_near_high_bucket"])
+
+        near_pct = TradingBot._strength_capture_shadow_fields(
+            bot,
+            {"from_high_pct": -1.0},
+            market="KR",
+            consensus_mode="NEUTRAL",
+        )
+        self.assertEqual(near_pct["strength_capture_rules"], ["strength_v1_near_high_pct"])
+
+        pullback = TradingBot._strength_capture_shadow_fields(
+            bot,
+            {"from_high_pct": -5.0, "above_ma60": True},
+            market="KR",
+            consensus_mode="NEUTRAL",
+        )
+        self.assertEqual(pullback["strength_capture_rules"], ["strength_v1_pullback_strength"])
+
+        missing_ma60 = TradingBot._strength_capture_shadow_fields(
+            bot,
+            {"from_high_pct": -5.0},
+            market="KR",
+            consensus_mode="NEUTRAL",
+        )
+        self.assertFalse(missing_ma60["strength_capture_shadow"])
+        self.assertEqual(missing_ma60["strength_capture_rules"], [])
+
+        defensive = TradingBot._strength_capture_shadow_fields(
+            bot,
+            {"change_pct": 30.0, "volume_ratio": 50.0},
+            market="KR",
+            consensus_mode="DEFENSIVE",
+        )
+        self.assertFalse(defensive["strength_capture_shadow"])
+
+        us = TradingBot._strength_capture_shadow_fields(
+            bot,
+            {"change_pct": 30.0, "volume_ratio": 50.0},
+            market="US",
+            consensus_mode="NEUTRAL",
+        )
+        self.assertFalse(us["strength_capture_shadow"])
+
+    def test_candidate_audit_live_write_records_strength_shadow_without_trade_ready_changes(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        meta = {
+            "selection_snapshot_ts": "2026-05-07T09:00:00+09:00",
+            "consensus_mode": "NEUTRAL",
+            "watchlist": ["111111"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "111111", "action": "WATCH", "reason": "observe"}],
+            "_final_prompt_pool": [
+                {
+                    "ticker": "111111",
+                    "market": "KR",
+                    "prompt_rank": 1,
+                    "price": 1000,
+                    "change_pct": 25.0,
+                    "volume_ratio": 20.0,
+                    "from_high_pct": -1.0,
+                    "from_high_bucket": "near_high",
+                    "above_ma60": True,
+                },
+                {
+                    "ticker": "222222",
+                    "market": "KR",
+                    "prompt_rank": 2,
+                    "price": 2000,
+                    "change_pct": 3.0,
+                    "volume_ratio": 2.0,
+                    "from_high_pct": -5.0,
+                    "above_ma60": True,
+                },
+            ],
+            "_excluded_from_prompt": [
+                {
+                    "candidate": {
+                        "ticker": "333333",
+                        "market": "KR",
+                        "price": 3000,
+                        "change_pct": 1.0,
+                        "volume_ratio": 1.0,
+                        "from_high_pct": -5.0,
+                        "above_ma60": True,
+                    },
+                    "prompt_excluded_reason": "hard_cap_cutoff",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                TradingBot._write_candidate_audit_live(
+                    bot,
+                    "KR",
+                    selected=["111111"],
+                    meta=meta,
+                    stages={},
+                )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = {
+                    row["ticker"]: row
+                    for row in conn.execute(
+                        """
+                        SELECT ticker, classification, claude_trade_ready,
+                               consensus_mode, from_high_pct,
+                               strength_capture_shadow, strength_capture_rules
+                        FROM audit_candidate_rows
+                        ORDER BY ticker
+                        """
+                    )
+                }
+            finally:
+                conn.close()
+
+        self.assertEqual(rows["111111"]["claude_trade_ready"], 0)
+        self.assertEqual(rows["111111"]["consensus_mode"], "NEUTRAL")
+        self.assertEqual(rows["111111"]["from_high_pct"], -1.0)
+        rules = set(json.loads(rows["111111"]["strength_capture_rules"]))
+        self.assertIn("strength_v1_chg25_vol20", rules)
+        self.assertIn("strength_v1_near_high_bucket", rules)
+        self.assertIn("strength_v1_near_high_pct", rules)
+        self.assertEqual(rows["222222"]["classification"], "in_prompt_not_selected")
+        self.assertEqual(json.loads(rows["222222"]["strength_capture_rules"]), ["strength_v1_pullback_strength"])
+        self.assertEqual(rows["333333"]["classification"], "not_in_prompt")
+        self.assertEqual(json.loads(rows["333333"]["strength_capture_rules"]), ["strength_v1_pullback_strength"])
+
     def test_decision_event_updates_candidate_audit_entry_snapshot(self) -> None:
         bot = _make_bot()
         bot.is_paper = False

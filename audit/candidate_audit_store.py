@@ -128,10 +128,14 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "evidence_missing_fields_json": "TEXT",
     "evidence_action_ceiling": "TEXT",
     "evidence_ceiling_applied": "INTEGER",
+    "from_high_pct": "REAL",
+    "consensus_mode": "TEXT",
+    "strength_capture_shadow": "INTEGER",
+    "strength_capture_rules": "TEXT",
 }
 
 _MISSING = object()
-_JSON_TEXT_COLUMNS = {"soft_gate_overrides", "hard_blocks", "soft_gates"}
+_JSON_TEXT_COLUMNS = {"soft_gate_overrides", "hard_blocks", "soft_gates", "strength_capture_rules"}
 _PROMPT_STAGE_SOURCE_FILES = {
     "trading_bot.prompt_pool_excluded",
     "trading_bot.prompt_pool",
@@ -243,6 +247,7 @@ def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
         "final_prompt_included",
         "stale_cycle",
         "evidence_ceiling_applied",
+        "strength_capture_shadow",
     }:
         if value is None:
             return None
@@ -410,6 +415,12 @@ class CandidateAuditStore:
                 """
             )
             _ensure_columns(conn, "audit_candidate_rows", EXTRA_CANDIDATE_COLUMNS)
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_audit_candidate_rows_strength_shadow
+                    ON audit_candidate_rows(runtime_mode, market, session_date, strength_capture_shadow);
+                """
+            )
             conn.commit()
         finally:
             conn.close()

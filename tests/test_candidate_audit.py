@@ -18,6 +18,7 @@ from tools.analyze_candidate_audit import (
 from tools.backfill_candidate_audit import backfill_candidate_audit
 from tools.candidate_audit_outcome_catchup import build_catchup_plan, run_catchup
 from tools.update_candidate_audit_outcomes import update_candidate_audit_outcomes
+import ticker_selection_db
 
 
 class CandidateAuditBackfillTests(unittest.TestCase):
@@ -104,6 +105,10 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                     "failed_ready_reasons_json": ["soft_gate_override_failed"],
                     "candidate_pool_version": "trainer_quality_v1",
                     "prompt_pool_version": "trainer_prompt_pool_v1",
+                    "from_high_pct": -1.25,
+                    "consensus_mode": "NEUTRAL",
+                    "strength_capture_shadow": True,
+                    "strength_capture_rules": ["strength_v1_near_high_pct"],
                 }
             )
 
@@ -119,7 +124,9 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                            scorer_input_snapshot_json, scorer_config_hash,
                            stale_cycle, stale_cycle_count,
                            repeated_failed_ready_count, no_fill_cycle_count,
-                           failed_ready_reasons_json
+                           failed_ready_reasons_json,
+                           from_high_pct, consensus_mode,
+                           strength_capture_shadow, strength_capture_rules
                     FROM audit_candidate_rows
                     WHERE ticker='NVDA'
                     """
@@ -143,6 +150,10 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(row["repeated_failed_ready_count"], 2)
             self.assertEqual(row["no_fill_cycle_count"], 1)
             self.assertIn("soft_gate_override_failed", row["failed_ready_reasons_json"])
+            self.assertEqual(row["from_high_pct"], -1.25)
+            self.assertEqual(row["consensus_mode"], "NEUTRAL")
+            self.assertEqual(row["strength_capture_shadow"], 1)
+            self.assertEqual(json.loads(row["strength_capture_rules"]), ["strength_v1_near_high_pct"])
 
     def test_candidate_audit_preserves_prompt_stage_source_json_and_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -850,6 +861,78 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertAlmostEqual(base_30["return_pct"], 2.0)
             self.assertAlmostEqual(base_30["max_runup_pct"], 3.0)
             self.assertEqual(late_30["status"], "insufficient_samples")
+
+    def test_outcome_labeler_adds_daily_forward_horizons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "candidate_audit.db"
+            price_dir = root / "price"
+            kr_dir = price_dir / "kr"
+            kr_dir.mkdir(parents=True)
+            (kr_dir / "kr_AAA.csv").write_text(
+                "\n".join(
+                    [
+                        "date,open,high,low,close,volume",
+                        "2026-05-07,100,105,95,100,1000",
+                        "2026-05-08,101,112,98,110,1000",
+                        "2026-05-11,111,116,109,115,1000",
+                        "2026-05-12,116,121,114,120,1000",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "daily_0",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-05-07",
+                    "known_at": "2026-05-07T09:00:00",
+                    "ticker": "AAA",
+                    "price": 100.0,
+                    "strength_capture_shadow": True,
+                    "strength_capture_rules": ["strength_v1_chg25_vol20"],
+                }
+            )
+
+            ticker_selection_db._price_cache.clear()
+            with patch.object(ticker_selection_db, "PRICE_DIR", str(price_dir)):
+                summary = update_candidate_audit_outcomes(
+                    db_path=db_path,
+                    session_date="2026-05-07",
+                    market="KR",
+                    horizons=(1440, 2880, 4320),
+                )
+
+            self.assertEqual(summary["outcome_rows"], 3)
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = {
+                    row["horizon_min"]: row
+                    for row in conn.execute(
+                        """
+                        SELECT horizon_min, status, observed_at, observed_price,
+                               return_pct, max_runup_pct, max_drawdown_pct, payload_json
+                        FROM audit_candidate_outcomes
+                        ORDER BY horizon_min
+                        """
+                    )
+                }
+            finally:
+                conn.close()
+
+            self.assertEqual(rows[1440]["status"], "daily_forward")
+            self.assertEqual(rows[1440]["observed_at"], "2026-05-08")
+            self.assertAlmostEqual(rows[1440]["return_pct"], 10.0)
+            self.assertAlmostEqual(rows[2880]["return_pct"], 15.0)
+            self.assertAlmostEqual(rows[4320]["return_pct"], 20.0)
+            payload = json.loads(rows[2880]["payload_json"])
+            self.assertEqual(payload["horizon_kind"], "trading_day_close")
+            self.assertEqual(payload["trading_day_offset"], 2)
+            self.assertEqual(payload["target_session_date"], "2026-05-11")
+            self.assertTrue(payload["strength_capture_shadow"])
 
     def test_candidate_audit_outcome_catchup_builds_market_date_plan(self) -> None:
         plan = build_catchup_plan(from_date="2026-05-08", to_date="2026-05-09", market="")

@@ -6755,6 +6755,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if route_source and not str(meta.get("_entry_route_source") or "").strip():
             meta["_entry_route_source"] = route_source
         mode = str(mode or (self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
+        meta["consensus_mode"] = mode
         candidate_actions, candidate_actions_source = self._normalize_candidate_actions_for_meta(market, meta)
         meta["candidate_actions"] = candidate_actions
         meta["_candidate_actions_source"] = candidate_actions_source
@@ -10766,6 +10767,59 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             out[ticker.upper() if market_key == "US" else ticker] = value
         return out
 
+    @staticmethod
+    def _strength_capture_float(value: Any) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            return float(str(value).replace(",", ""))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _strength_capture_above_ma60_ok(value: Any) -> bool:
+        if value is True:
+            return True
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value) == 1.0
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _strength_capture_shadow_fields(
+        self,
+        row: dict,
+        *,
+        market: str,
+        consensus_mode: str,
+    ) -> dict:
+        source = row if isinstance(row, dict) else {}
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        mode_key = str(consensus_mode or "").strip().upper()
+        change_pct = self._strength_capture_float(source.get("change_pct") or source.get("change_rate"))
+        volume_ratio = self._strength_capture_float(source.get("volume_ratio") or source.get("vol_ratio"))
+        from_high_pct = self._strength_capture_float(source.get("from_high_pct"))
+        from_high_bucket = str(source.get("from_high_bucket") or "").strip().lower()
+        above_ma60_ok = self._strength_capture_above_ma60_ok(source.get("above_ma60"))
+        rules: list[str] = []
+        if (
+            self._runtime_bool("STRENGTH_CAPTURE_SHADOW_ENABLED", True)
+            and market_key == "KR"
+            and mode_key in {"CAUTIOUS", "NEUTRAL"}
+        ):
+            if change_pct is not None and volume_ratio is not None and change_pct >= 25.0 and volume_ratio >= 20.0:
+                rules.append("strength_v1_chg25_vol20")
+            if from_high_bucket in {"at_high", "near_high"}:
+                rules.append("strength_v1_near_high_bucket")
+            if from_high_pct is not None and -2.0 <= from_high_pct <= 1.0:
+                rules.append("strength_v1_near_high_pct")
+            if from_high_pct is not None and -10.0 <= from_high_pct <= -3.0 and above_ma60_ok:
+                rules.append("strength_v1_pullback_strength")
+        return {
+            "from_high_pct": from_high_pct,
+            "consensus_mode": mode_key,
+            "strength_capture_shadow": bool(rules),
+            "strength_capture_rules": rules,
+        }
+
     def _write_candidate_audit_live(
         self,
         market: str,
@@ -10784,6 +10838,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             session_date = date.today().isoformat()
         call_id = self._candidate_audit_call_id(market_key, meta)
         known_at = str((meta or {}).get("selection_snapshot_ts") or datetime.now(KST).isoformat(timespec="seconds"))
+        consensus_mode = str(
+            (meta or {}).get("consensus_mode")
+            or ((getattr(self, "today_judgment", {}) or {}).get("consensus", {}) or {}).get("mode")
+            or ""
+        )
         watchlist = list(dict.fromkeys((meta or {}).get("watchlist") or selected or []))
         trade_ready = {
             self._selection_ticker_key(market_key, ticker)
@@ -11102,6 +11161,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "tuning_rule_version": str(tuning_feedback.get("rule_version") or ""),
                         "tuning_feedback_applied": bool((meta or {}).get("tuning_feedback_applied", False)),
                         **_trainer_audit_fields(prompt_row, included=True),
+                        **self._strength_capture_shadow_fields(
+                            prompt_row,
+                            market=market_key,
+                            consensus_mode=consensus_mode,
+                        ),
                         **_stale_cycle_audit_fields(key, prompt_row),
                         "payload": {
                             "confirmation_state": route.get("confirmation_state") or runtime_gate.get("kr_confirmation_state", ""),
@@ -11147,6 +11211,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "secondary_buckets": list(row.get("secondary_buckets") or []),
                         "classification": "in_prompt_not_selected",
                         **_trainer_audit_fields(row, included=True),
+                        **self._strength_capture_shadow_fields(
+                            row,
+                            market=market_key,
+                            consensus_mode=consensus_mode,
+                        ),
                         **_stale_cycle_audit_fields(key, row),
                         "payload": {
                             "selection_stage": "trainer_prompt_pool",
@@ -11195,6 +11264,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "secondary_buckets": list(row.get("secondary_buckets") or []),
                         "classification": "not_in_prompt",
                         **_trainer_audit_fields(row, included=False, excluded_reason=excluded_reason),
+                        **self._strength_capture_shadow_fields(
+                            row,
+                            market=market_key,
+                            consensus_mode=consensus_mode,
+                        ),
                         **_stale_cycle_audit_fields(key, row),
                         "payload": {
                             "selection_stage": "trainer_prompt_pool_excluded",
