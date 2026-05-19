@@ -6332,7 +6332,7 @@ class PathBRuntime:
             cash_available=cash,
             min_order=min_order,
             size_intent="normal",
-            allow_one_share_over_budget=bool(self.config.pathb_allow_one_share_over_budget),
+            allow_one_share_over_budget=bool(self.config.pathb_allow_one_share_over_budget) and not early_gate.get("active"),
             one_share_max_account_pct=float(self.config.pathb_one_share_over_budget_max_account_pct),
             total_equity=self._pathb_total_equity_krw(market, fallback_cash_krw=cash),
         )

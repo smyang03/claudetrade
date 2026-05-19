@@ -2129,11 +2129,12 @@ def _normalize_claude_status_payload(payload: dict, *, now_dt: Optional[datetime
     result_dt = _parse_kst_datetime(
         str(normalized.get("last_result_at") or normalized.get("last_trigger_at") or "")
     )
+    _stale_hours = max(1, int(os.getenv("CLAUDE_STATUS_STALE_ERROR_HOURS", "8") or 8))
     stale_error = (
         status in {"error", "failed"}
         and not has_pending
         and result_dt is not None
-        and result_dt.date() < now_kst.date()
+        and (now_kst - result_dt) > timedelta(hours=_stale_hours)
     )
     normalized["last_result_stale"] = bool(stale_error)
     normalized["stale_last_error"] = str(normalized.get("last_error", "") or "") if stale_error else ""
