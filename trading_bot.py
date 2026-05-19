@@ -828,6 +828,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._vix_refresh_at: float = 0.0          # VIX 장중 갱신 타임스탬프
         self._task_start_time: dict[str, float] = {"KR": 0.0, "US": 0.0}  # 작업 지연 감지
         self._live_status_written_at: dict[str, float] = {"KR": 0.0, "US": 0.0}  # 중복 쓰기 방지
+        self._broker_truth_refresh_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._ticker_no_signal_minutes: dict = {}  # ticker -> 누적 무신호 시간(분), KR 교체 임계에 사용
         self._pathb_negative_watch_counts: dict[str, int] = {}
         self.usd_krw_rate = float(getattr(self, "usd_krw_rate", 0) or os.getenv("USD_KRW_RATE", "1350"))
@@ -10023,11 +10024,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         new_mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "NEUTRAL") or "NEUTRAL")
                         if rejudged and new_mode == old_mode:
                             try:
-                                self.manual_rescreen(market)
+                                self.manual_rescreen(
+                                    market,
+                                    source_type="opening_fresh_rescreen",
+                                    trigger="opening_fresh_quality",
+                                )
                             except Exception as rescreen_exc:
                                 log.warning(f"[opening_fresh_quality] {market} same-mode rescreen failed: {rescreen_exc}")
                 if not rejudged and not rejudge_busy:
-                    self.manual_rescreen(market)
+                    self.manual_rescreen(
+                        market,
+                        source_type="opening_fresh_rescreen",
+                        trigger="opening_fresh_quality",
+                    )
         except Exception as exc:
             log.warning(f"[opening_fresh_quality] {market} failed: {exc}")
     def _build_current_breadth_summary(self, market: str, mode: str) -> dict:
@@ -11198,6 +11207,110 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.debug(f"[candidate audit] live write failed {market_key}: {exc}")
 
+    def _write_candidate_audit_screener_filter(
+        self,
+        market: str,
+        *,
+        phase: str = "",
+        rows: list[dict] | None = None,
+        reasons: dict[str, str] | None = None,
+    ) -> None:
+        store = self._candidate_audit_store()
+        if store is None or not rows:
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = date.today().isoformat()
+        now_dt = datetime.now(KST)
+        known_at = now_dt.isoformat(timespec="seconds")
+        runtime_mode = str(getattr(self, "_mode", "live") or "live")
+        phase_key = str(phase or "history_filter").strip() or "history_filter"
+        phase_key = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in phase_key)[:48]
+        day_key = session_date.replace("-", "")
+        call_id = (
+            f"{runtime_mode}_live_{market_key}_{day_key}_"
+            f"screener_filter_{phase_key}_{now_dt.strftime('%H%M%S%f')}"
+        )
+        reason_map = dict(reasons or {})
+        try:
+            store.upsert_call(
+                {
+                    "call_id": call_id,
+                    "runtime_mode": runtime_mode,
+                    "market": market_key,
+                    "session_date": session_date,
+                    "called_at": known_at,
+                    "label": "screener_filter",
+                    "source_file": "trading_bot.screener_filter",
+                    "prompt_candidate_count": 0,
+                    "watchlist_count": 0,
+                    "trade_ready_count": 0,
+                    "candidate_action_count": 0,
+                    "payload": {
+                        "phase": phase_key,
+                        "audit_source": "history_filter",
+                        "filtered_count": len(rows or []),
+                    },
+                }
+            )
+            for row in list(rows or []):
+                if not isinstance(row, dict):
+                    continue
+                ticker = self._selection_ticker_key(market_key, row.get("ticker"))
+                if not ticker:
+                    continue
+                reason = (
+                    reason_map.get(ticker)
+                    or reason_map.get(str(row.get("ticker") or ""))
+                    or str(row.get("history_status") or "data_insufficient")
+                )
+                payload = {
+                    "phase": phase_key,
+                    "audit_source": "history_filter",
+                    "filter_reason": reason,
+                    "selection_bias": row.get("selection_bias") or "shadow_only",
+                    "trade_policy": row.get("trade_policy") or "",
+                    "data_quality": row.get("data_quality") or "",
+                    "history_status": row.get("history_status") or "",
+                    "history_usable_rows": row.get("history_usable_rows"),
+                    "history_required_rows": row.get("history_required_rows"),
+                }
+                store.upsert_candidate(
+                    {
+                        "call_id": call_id,
+                        "runtime_mode": runtime_mode,
+                        "market": market_key,
+                        "session_date": session_date,
+                        "known_at": known_at,
+                        "ticker": ticker,
+                        "source_file": "trading_bot.screener_filter",
+                        "in_prompt": False,
+                        "screener_seen": True,
+                        "input_to_claude_reported": False,
+                        "name": row.get("name") or "",
+                        "price": row.get("price") or row.get("current_price"),
+                        "change_pct": row.get("change_pct") or row.get("change_rate"),
+                        "volume_ratio": row.get("volume_ratio") or row.get("vol_ratio"),
+                        "turnover": row.get("turnover"),
+                        "market_type": row.get("market_type") or "",
+                        "liquidity_bucket": row.get("liquidity_bucket") or "",
+                        "primary_bucket": row.get("primary_bucket") or "",
+                        "secondary_buckets": list(row.get("secondary_buckets") or []),
+                        "classification": "data_insufficient",
+                        "prompt_excluded_reason": reason,
+                        "data_quality": row.get("data_quality") or "",
+                        "history_status": row.get("history_status") or "",
+                        "history_usable_rows": row.get("history_usable_rows"),
+                        "history_required_rows": row.get("history_required_rows"),
+                        "final_prompt_included": False,
+                        "payload": payload,
+                    }
+                )
+        except Exception as exc:
+            log.debug(f"[candidate audit] screener filter write failed {market_key}: {exc}")
+
     def _write_candidate_audit_runtime_filter(self, market: str, ticker: str, reason: str, meta: dict) -> None:
         store = self._candidate_audit_store()
         if store is None:
@@ -11308,7 +11421,60 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "selected": 0, "signaled": 0, "ordered": 0, "filled": 0,
             "rejection_reasons": {}, "volume_states": {},
         }
-    def manual_rescreen(self, market: Optional[str] = None) -> list[str]:
+    def _ticker_selection_batch_id(
+        self,
+        session_date: str,
+        market: str,
+        source_type: str,
+        *,
+        now_dt: Optional[datetime] = None,
+    ) -> str:
+        stamp = (now_dt or datetime.now(KST)).strftime("%H%M%S%f")
+        source_key = str(source_type or "selection").strip() or "selection"
+        source_key = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in source_key)[:48]
+        return f"{session_date}_{str(market or '').upper()}_{source_key}_{stamp}"
+    def _record_ticker_selection_batch(
+        self,
+        session_date: str,
+        market: str,
+        source_type: str,
+        selected: list,
+        candidates: list,
+        sel_reasons: dict,
+        consensus_mode: str,
+        selection_meta: dict,
+    ) -> dict:
+        selected_rows = list(selected or [])
+        if not selected_rows:
+            return {}
+        market_key = str(market or "").upper()
+        source_key = str(source_type or "selection").strip() or "selection"
+        batch_id = self._ticker_selection_batch_id(session_date, market_key, source_key)
+        try:
+            row_ids = tsdb.insert_batch(
+                session_date,
+                market_key,
+                source_key,
+                selected_rows,
+                list(candidates or []),
+                dict(sel_reasons or {}),
+                str(consensus_mode or ""),
+                batch_id=batch_id,
+                selection_meta=dict(selection_meta or {}),
+            )
+            self._tsdb_selection_ids.setdefault(market_key, {}).update(row_ids)
+            return row_ids
+        except Exception as exc:
+            log.warning(f"[tsdb] insert_batch({source_key}) failed: {exc}")
+            self._tsdb_selection_ids.setdefault(market_key, {})
+            return {}
+    def manual_rescreen(
+        self,
+        market: Optional[str] = None,
+        *,
+        source_type: str = "manual_rescreen",
+        trigger: str = "telegram_manual",
+    ) -> list[str]:
         """텔레그램 수동 명령으로 현재 시장 종목만 즉시 재선택."""
         target_market = market or self.current_market or self.today_judgment.get("market")
         if target_market not in ("KR", "US"):
@@ -11320,6 +11486,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             current = self._market_task_owner.get(target_market) or "-"
             raise RuntimeError(f"{target_market} 시장 작업 진행 중: {current}")
         try:
+            source_type_key = str(source_type or "manual_rescreen").strip() or "manual_rescreen"
             consensus = dict((self.today_judgment or {}).get("consensus") or {})
             mode = consensus.get("mode", "NEUTRAL")
             digest_prompt = (self.today_judgment or {}).get("digest_prompt", "")
@@ -11330,19 +11497,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self._last_kr_candidates = candidates
             else:
                 candidates = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
-            manual_pin_candidates = self._load_preopen_pin_candidates(target_market, "manual_rescreen")
+            manual_pin_candidates = self._load_preopen_pin_candidates(target_market, source_type_key)
             if not candidates and not manual_pin_candidates:
                 raise RuntimeError("재스크리닝 후보가 없습니다.")
             candidates = self._merge_preopen_pin_candidates(
                 target_market,
                 candidates or [],
-                "manual_rescreen",
+                source_type_key,
                 pin_candidates=manual_pin_candidates,
             )
             raw_candidates = list(candidates or [])
-            self._log_screen_candidates(target_market, candidates, "manual_rescreen")
+            self._log_screen_candidates(target_market, candidates, source_type_key)
             candidates = self._prefill_history_sync(candidates, target_market)
-            candidates = self._filter_candidates_by_history(candidates, target_market)
+            candidates = self._filter_candidates_by_history(
+                candidates,
+                target_market,
+                phase=source_type_key,
+            )
             _manual_cooldown = self._get_cooldown_excluded(target_market)
             candidates = [c for c in candidates if c.get("ticker") not in _manual_cooldown]
             if not candidates:
@@ -11359,10 +11530,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                evidence_by_ticker=self._build_selection_evidence_pack(target_market, candidates))
             if not selected:
                 raise RuntimeError("최종 선택 종목이 없습니다.")
-            sel_meta = self._apply_selection_meta(target_market, selected, mode=mode, source="manual_rescreen")
+            sel_meta = self._apply_selection_meta(target_market, selected, mode=mode, source=source_type_key)
             self._record_candidate_quality(
                 target_market,
-                "manual_rescreen",
+                source_type_key,
                 raw_candidates,
                 candidates,
                 selected,
@@ -11371,13 +11542,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
             self._update_candidate_health(
                 target_market,
-                "manual_rescreen",
+                source_type_key,
                 selected,
                 sel_meta,
                 candidates,
             )
+            self._record_ticker_selection_batch(
+                today,
+                target_market,
+                source_type_key,
+                selected,
+                candidates,
+                reasons,
+                mode,
+                sel_meta,
+            )
             self.today_tickers[target_market] = selected
-            self._entry_timing_mark_candidates(target_market, selected, "manual_rescreen")
+            self._entry_timing_mark_candidates(target_market, selected, source_type_key)
             self.today_ticker_reasons[target_market] = reasons or {}
             self.today_judgment["tickers"] = selected
             self.today_judgment["universe_tickers"] = [
@@ -11396,13 +11577,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "selected": selected,
                     "trade_ready": sel_meta.get("trade_ready", []),
                     "consensus_mode": mode,
-                    "trigger": "telegram_manual",
+                    "trigger": trigger,
+                    "source_type": source_type_key,
                 }},
             )
             excluded = [c.get("ticker", "") for c in candidates if c.get("ticker", "") not in selected]
             _mode_size = self.today_judgment.get("consensus", {}).get("size", 50)
             _mode_order_limit = self.risk.calc_order_budget(_mode_size)
-            watchlist_alert(target_market, mode, selected, reasons, excluded, trigger="manual_rescreen",
+            watchlist_alert(target_market, mode, selected, reasons, excluded, trigger=source_type_key,
                             mode_order_limit_krw=_mode_order_limit)
             self._persist_live_judgment(target_market)
             return selected
@@ -11639,7 +11821,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._last_candidate_post_rank_meta = {"enabled": True, "error": str(exc)[:200]}
             log.warning(f"[candidate post rank] failed {market_key}: {exc}")
             return list(candidates or [])
-    def _filter_candidates_by_history(self, candidates: list, market: str) -> list:
+    def _filter_candidates_by_history(self, candidates: list, market: str, *, phase: str = "") -> list:
         """
         스크리너 후보 중 신호 계산에 필요한 히스토리가 부족한 종목 제거.
         - 계좌/전략에서 매매하지 않을 파생/레버리지/인버스 ETF 후보를 먼저 제거
@@ -11663,6 +11845,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         insufficient_watch: list[dict] = []
         insufficient_shadow: list[dict] = []
         insufficient_watch_keys: set[str] = set()
+        insufficient_shadow_reasons: dict[str, str] = {}
         for candidate in candidates:
             ticker = candidate.get("ticker", "")
             if not ticker:
@@ -11670,7 +11853,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             try:
                 candles = self._get_ohlcv_cached(ticker, market)
                 if candles.empty:
-                    removed_v2.append((ticker, "no_candles"))
+                    reason = "no_candles"
+                    removed_v2.append((ticker, reason))
                     shadow_candidate = dict(candidate or {})
                     shadow_candidate["data_quality"] = "HISTORY_UNAVAILABLE"
                     shadow_candidate["history_status"] = "NO_CANDLES"
@@ -11678,6 +11862,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     shadow_candidate["history_required_rows"] = self._MIN_SIGNAL_ROWS
                     shadow_candidate["selection_bias"] = "shadow_only"
                     insufficient_shadow.append(shadow_candidate)
+                    insufficient_shadow_reasons[self._selection_ticker_key(market_key, ticker)] = reason
                     self._hist_fill_enqueue(ticker, market)
                     continue
                 sig_df = calc_all(candles)
@@ -11717,7 +11902,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     shadow_candidate["history_required_rows"] = self._MIN_SIGNAL_ROWS
                     shadow_candidate["selection_bias"] = "shadow_only"
                     insufficient_shadow.append(shadow_candidate)
-                    removed_v2.append((ticker, f"data_insufficient({usable_rows}usable)"))
+                    reason = f"data_insufficient({usable_rows}usable)"
+                    removed_v2.append((ticker, reason))
+                    insufficient_shadow_reasons[self._selection_ticker_key(market_key, ticker)] = reason
                     continue
                 enriched_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
                 enriched_candidate = self._enrich_kr_candidate_quality(market_key, enriched_candidate, candles)
@@ -11728,6 +11915,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
         self._last_data_insufficient_candidates[market_key] = list(insufficient_watch) + list(insufficient_shadow)
         self._data_insufficient_watch_tickers[market_key] = set(insufficient_watch_keys)
+        if insufficient_shadow:
+            self._write_candidate_audit_screener_filter(
+                market_key,
+                phase=phase or "history_filter",
+                rows=insufficient_shadow,
+                reasons=insufficient_shadow_reasons,
+            )
         if insufficient_watch:
             sample = ", ".join(
                 f"{c.get('ticker')}({c.get('history_usable_rows')}/{c.get('history_required_rows')})"
@@ -12334,6 +12528,63 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except TypeError:
                 pathb.refresh_broker_truth(market_key, force=True)
         return dict(pathb.broker_truth.market_snapshot(market_key, ttl_sec=ttl_sec))
+    @staticmethod
+    def _iso_age_seconds(raw_ts: str) -> Optional[float]:
+        text = str(raw_ts or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return max(0.0, time.time() - parsed.timestamp())
+        except Exception:
+            return None
+    def _maybe_refresh_broker_truth_snapshot(
+        self,
+        market: str,
+        *,
+        reason: str = "",
+        force: bool = False,
+    ) -> bool:
+        pathb = getattr(self, "pathb", None)
+        broker_truth = getattr(pathb, "broker_truth", None)
+        if pathb is None or broker_truth is None:
+            return False
+        market_key = str(market or "").upper()
+        if market_key not in {"KR", "US"}:
+            return False
+        try:
+            interval_sec = int(os.getenv("BROKER_TRUTH_REFRESH_INTERVAL_SEC", "60"))
+        except Exception:
+            interval_sec = 60
+        interval_sec = max(0, interval_sec)
+        now_ts = time.time()
+        refresh_at = getattr(self, "_broker_truth_refresh_at", None)
+        if not isinstance(refresh_at, dict):
+            refresh_at = {"KR": 0.0, "US": 0.0}
+            self._broker_truth_refresh_at = refresh_at
+        if not force and interval_sec > 0:
+            last_local = float(refresh_at.get(market_key, 0.0) or 0.0)
+            if last_local and now_ts - last_local < interval_sec:
+                return False
+            try:
+                market_data = dict(broker_truth.market_snapshot(market_key, ttl_sec=max(30, interval_sec)))
+            except Exception:
+                market_data = {}
+            age_sec = self._iso_age_seconds(str(market_data.get("last_success_at") or ""))
+            if age_sec is not None and age_sec < interval_sec:
+                refresh_at[market_key] = now_ts
+                return False
+        ttl = max(30, interval_sec or 30)
+        try:
+            try:
+                pathb.refresh_broker_truth(market_key, force=True, ttl_sec=ttl)
+            except TypeError:
+                pathb.refresh_broker_truth(market_key, force=True)
+            refresh_at[market_key] = time.time()
+            return True
+        except Exception as exc:
+            log.warning(f"[broker truth refresh] {market_key} failed reason={reason or '-'}: {exc}")
+            return False
     def _reconcile_broker_open_orders(self, market: str, *, reason: str = "", force: bool = False) -> dict:
         market_key = str(market or "").upper()
         summary = {
@@ -13537,6 +13788,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     trust_level="trusted",
                     snapshot=self._broker_snapshot_from_balance("KR", bal_kr),
                 )
+                self._maybe_refresh_broker_truth_snapshot("KR", reason="broker_sync")
             except KISTokenExpiredError as e:
                 log.warning(f"[브로커 런타임 동기화] KR 토큰 만료 감지 → 강제 갱신 후 재시도: {e}")
                 try:
@@ -13546,6 +13798,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         trust_level="trusted",
                         snapshot=self._broker_snapshot_from_balance("KR", bal_kr),
                     )
+                    self._maybe_refresh_broker_truth_snapshot("KR", reason="broker_sync_retry")
                     log.info("[브로커 런타임 동기화] KR 토큰 갱신 성공")
                 except Exception as retry_e:
                     _kr_fails = self._broker_state.get("KR", {}).get("consecutive_failures", 0) + 1
@@ -13575,6 +13828,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     trust_level="trusted",
                     snapshot=self._broker_snapshot_from_balance("US", bal_us),
                 )
+                self._maybe_refresh_broker_truth_snapshot("US", reason="broker_sync")
             except KISTokenExpiredError as e:
                 log.warning(f"[브로커 런타임 동기화] US 토큰 만료 감지 → 강제 갱신 후 재시도: {e}")
                 try:
@@ -13586,6 +13840,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         trust_level="trusted",
                         snapshot=self._broker_snapshot_from_balance("US", bal_us),
                     )
+                    self._maybe_refresh_broker_truth_snapshot("US", reason="broker_sync_retry")
                     log.info("[브로커 런타임 동기화] US 토큰 갱신 성공")
                 except Exception as retry_e:
                     self._set_broker_state("US", trust_level="untrusted", error=str(retry_e))
@@ -18719,7 +18974,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self._last_kr_candidates = candidates
                 self._log_screen_candidates(market, candidates, "preopen_watch")
                 candidates = self._prefill_history_sync(candidates, market)
-                candidates = self._filter_candidates_by_history(candidates, market)
+                candidates = self._filter_candidates_by_history(candidates, market, phase="preopen_watch")
                 candidates = self._restrict_candidates_to_universe(candidates, universe_tickers)
                 candidates = self._annotate_selection_execution_features(market, candidates, "PREOPEN_WATCH")
                 lesson_context = self._load_lesson_candidate_summary(market)
@@ -19068,7 +19323,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             raw_candidates = list(candidates or [])
             self._log_screen_candidates(market, candidates, "session_open")
             candidates = self._prefill_history_sync(candidates, market)
-            candidates = self._filter_candidates_by_history(candidates, market)
+            candidates = self._filter_candidates_by_history(candidates, market, phase="session_open")
             candidates = self._restrict_candidates_to_universe(candidates, universe_tickers)
             candidates = self._annotate_selection_execution_features(market, candidates, consensus.get("mode", "NEUTRAL"))
             _intraday_ctx = self._build_intraday_context(market)
@@ -19221,7 +19476,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     fresh_raw_candidates = list(fresh_candidates or [])
                     self._log_screen_candidates(market, fresh_candidates, "session_reuse_rescreen")
                     fresh_candidates = self._prefill_history_sync(fresh_candidates, market)
-                    fresh_candidates = self._filter_candidates_by_history(fresh_candidates, market)
+                    fresh_candidates = self._filter_candidates_by_history(
+                        fresh_candidates,
+                        market,
+                        phase="session_reuse_rescreen",
+                    )
                     fresh_allowed_universe = self._extend_universe_with_preopen_pins(
                         market,
                         (self.today_universe.get(market) or {}).get("tickers")
@@ -19676,7 +19935,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         self._last_rescreen_at[market] = now_ts
         try:
-            selected = self.manual_rescreen(market)
+            selected = self.manual_rescreen(market, source_type="rescreen", trigger="scheduled")
             log.info(f"[{market} 정시 재스크리닝] {selected}")
         except Exception as e:
             log.info(f"[{market} 정시 재스크리닝 스킵] {e}")
@@ -23650,7 +23909,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             pin_candidates=tune_pin_candidates,
                         )
                         self._log_screen_candidates(market, tune_cands, "tuning_rescreen")
-                        tune_cands = self._filter_candidates_by_history(tune_cands, market)
+                        tune_cands = self._filter_candidates_by_history(
+                            tune_cands,
+                            market,
+                            phase="tuning_rescreen",
+                        )
                         tune_allowed_universe = self._extend_universe_with_preopen_pins(
                             market,
                             (self.today_universe.get(market) or {}).get("tickers")
@@ -23999,7 +24262,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         if not new_cands:
             return
-        new_cands = self._filter_candidates_by_history(new_cands, market)
+        new_cands = self._filter_candidates_by_history(new_cands, market, phase="partial_reselect")
         # 유지 종목 + 쿨다운 제외
         keep_set = set(current_tickers) - set(replace_out)
         cooldown_set = self._get_cooldown_excluded(market)
@@ -24413,7 +24676,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         reinvoke_cands = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     if reinvoke_cands:
                         self._log_screen_candidates(market, reinvoke_cands, "analyst_reinvoke_rescreen")
-                        reinvoke_cands = self._filter_candidates_by_history(reinvoke_cands, market)
+                        reinvoke_cands = self._filter_candidates_by_history(
+                            reinvoke_cands,
+                            market,
+                            phase="analyst_reinvoke_rescreen",
+                        )
                         _ri_cooldown = self._get_cooldown_excluded(market)
                         reinvoke_cands = [c for c in reinvoke_cands
                                           if c.get("ticker") not in _ri_cooldown]

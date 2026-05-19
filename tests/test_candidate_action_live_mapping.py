@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 import tempfile
@@ -48,6 +49,7 @@ class _DummyPathB:
         self.registered_meta: dict | None = None
         self.active_run = active_run
         self.cancelled: list[tuple[str, str, str]] = []
+        self.broker_truth = None
 
     def register_from_selection_meta(self, market: str, meta: dict) -> list[str]:
         self.registered_meta = dict(meta)
@@ -68,6 +70,26 @@ class _HealthTracker:
     def state_for(self, ticker: str) -> dict:
         key = str(ticker).upper()
         return dict(self.states.get(key, {"ticker": key, "health_state": "OBSERVE"}))
+
+
+class _BrokerTruthProbe:
+    def __init__(self, last_success_at: str) -> None:
+        self.last_success_at = last_success_at
+        self.snapshots: list[tuple[str, int | None]] = []
+
+    def market_snapshot(self, market: str, ttl_sec: int | None = None) -> dict:
+        self.snapshots.append((market, ttl_sec))
+        return {"last_success_at": self.last_success_at}
+
+
+class _PathBRefreshProbe:
+    def __init__(self, last_success_at: str) -> None:
+        self.broker_truth = _BrokerTruthProbe(last_success_at)
+        self.refresh_calls: list[tuple[str, bool, int | None]] = []
+
+    def refresh_broker_truth(self, market: str, *, force: bool = False, ttl_sec: int | None = None) -> dict:
+        self.refresh_calls.append((market, force, ttl_sec))
+        return {}
 
 
 def _make_bot() -> TradingBot:
@@ -134,6 +156,132 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         bot._market_open_elapsed_min = lambda market, now_dt=None: 75.0
         self.assertFalse(TradingBot._us_early_entry_soft_gate(bot, "US")["active"])
         self.assertFalse(TradingBot._us_early_entry_soft_gate(bot, "KR")["active"])
+
+    def test_record_ticker_selection_batch_uses_rescreen_source_and_consensus_mode(self) -> None:
+        bot = _make_bot()
+        bot._tsdb_selection_ids = {"KR": {}}
+
+        with patch("trading_bot.tsdb.insert_batch", return_value={"005930": 17}) as insert_batch:
+            row_ids = TradingBot._record_ticker_selection_batch(
+                bot,
+                "2026-05-19",
+                "KR",
+                "rescreen",
+                ["005930"],
+                [{"ticker": "005930", "change_pct": 1.2}],
+                {"005930": "strong"},
+                "DEFENSIVE",
+                {"trade_ready": ["005930"]},
+            )
+
+        self.assertEqual(row_ids, {"005930": 17})
+        self.assertEqual(bot._tsdb_selection_ids["KR"]["005930"], 17)
+        args, kwargs = insert_batch.call_args
+        self.assertEqual(args[:7], (
+            "2026-05-19",
+            "KR",
+            "rescreen",
+            ["005930"],
+            [{"ticker": "005930", "change_pct": 1.2}],
+            {"005930": "strong"},
+            "DEFENSIVE",
+        ))
+        self.assertTrue(str(kwargs["batch_id"]).startswith("2026-05-19_KR_rescreen_"))
+        self.assertEqual(kwargs["selection_meta"], {"trade_ready": ["005930"]})
+
+    def test_run_rescreen_records_scheduled_source_type(self) -> None:
+        bot = _make_bot()
+        bot.session_active = True
+        bot.current_market = "KR"
+        bot._last_rescreen_at = {"KR": 0.0}
+        calls: list[tuple[str, str, str]] = []
+
+        def manual_rescreen(market: str, *, source_type: str, trigger: str) -> list[str]:
+            calls.append((market, source_type, trigger))
+            return ["005930"]
+
+        bot.manual_rescreen = manual_rescreen
+
+        TradingBot.run_rescreen(bot, "KR")
+
+        self.assertEqual(calls, [("KR", "rescreen", "scheduled")])
+
+    def test_broker_truth_refresh_skips_fresh_snapshot_and_refreshes_stale_once(self) -> None:
+        bot = _make_bot()
+        bot._broker_truth_refresh_at = {"KR": 0.0, "US": 0.0}
+
+        fresh_pathb = _PathBRefreshProbe(datetime.now(KST).isoformat(timespec="seconds"))
+        bot.pathb = fresh_pathb
+        with patch.dict(os.environ, {"BROKER_TRUTH_REFRESH_INTERVAL_SEC": "120"}):
+            refreshed = TradingBot._maybe_refresh_broker_truth_snapshot(bot, "KR", reason="test")
+
+        self.assertFalse(refreshed)
+        self.assertEqual(fresh_pathb.refresh_calls, [])
+        self.assertEqual(fresh_pathb.broker_truth.snapshots, [("KR", 120)])
+
+        stale_pathb = _PathBRefreshProbe("2026-01-01T00:00:00+09:00")
+        bot.pathb = stale_pathb
+        bot._broker_truth_refresh_at = {"KR": 0.0, "US": 0.0}
+        with patch.dict(os.environ, {"BROKER_TRUTH_REFRESH_INTERVAL_SEC": "120"}):
+            refreshed = TradingBot._maybe_refresh_broker_truth_snapshot(bot, "KR", reason="test")
+            throttled = TradingBot._maybe_refresh_broker_truth_snapshot(bot, "KR", reason="test")
+
+        self.assertTrue(refreshed)
+        self.assertFalse(throttled)
+        self.assertEqual(stale_pathb.refresh_calls, [("KR", True, 120)])
+
+    def test_screener_filter_audit_writes_data_insufficient_shadow_row(self) -> None:
+        bot = _make_bot()
+        bot.is_paper = False
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        bot._current_session_date_str = lambda market: "2026-05-19"
+        bot._candidate_audit_store_cache = None
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"CANDIDATE_AUDIT_DB_PATH": str(Path(tmp) / "candidate_audit.db")},
+        ):
+            TradingBot._write_candidate_audit_screener_filter(
+                bot,
+                "KR",
+                phase="session_open",
+                rows=[
+                    {
+                        "ticker": "439960",
+                        "name": "shadow",
+                        "price": 1210.0,
+                        "data_quality": "DATA_INSUFFICIENT_SHADOW",
+                        "history_status": "DATA_INSUFFICIENT",
+                        "history_usable_rows": 23,
+                        "history_required_rows": 65,
+                        "selection_bias": "shadow_only",
+                    }
+                ],
+                reasons={"439960": "data_insufficient(23usable)"},
+            )
+
+            conn = sqlite3.connect(Path(tmp) / "candidate_audit.db")
+            conn.row_factory = sqlite3.Row
+            try:
+                call = conn.execute("SELECT * FROM audit_claude_calls").fetchone()
+                row = conn.execute("SELECT * FROM audit_candidate_rows").fetchone()
+            finally:
+                conn.close()
+
+        self.assertIsNotNone(call)
+        self.assertEqual(call["label"], "screener_filter")
+        self.assertEqual(call["source_file"], "trading_bot.screener_filter")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["ticker"], "439960")
+        self.assertEqual(row["source_file"], "trading_bot.screener_filter")
+        self.assertEqual(row["classification"], "data_insufficient")
+        self.assertEqual(row["in_prompt"], 0)
+        self.assertEqual(row["input_to_claude_reported"], 0)
+        self.assertEqual(row["prompt_excluded_reason"], "data_insufficient(23usable)")
+        self.assertEqual(row["data_quality"], "DATA_INSUFFICIENT_SHADOW")
+        self.assertEqual(row["history_status"], "DATA_INSUFFICIENT")
+        self.assertEqual(row["history_usable_rows"], 23)
+        self.assertEqual(row["history_required_rows"], 65)
 
     def test_v2_fixed_sizing_applies_us_early_entry_budget_multiplier(self) -> None:
         fixed = FixedSizingResult(
@@ -1254,7 +1402,7 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
             {"ticker": "010", "entry_priority_score": 2.0},
             {"ticker": "020", "entry_priority_score": 2.0},
         ]
-        bot._filter_candidates_by_history = lambda candidates, market: list(candidates)
+        bot._filter_candidates_by_history = lambda candidates, market, **kwargs: list(candidates)
         bot._annotate_selection_execution_features = lambda market, candidates, mode: list(candidates)
         bot._build_intraday_context = lambda market: ""
         bot._load_lesson_candidate_summary = lambda market: ""
@@ -1343,7 +1491,7 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         bot._last_post_open_features_by_ticker = {"KR": {}}
         bot._partial_replace_score = lambda market, ticker, protected=None: {"001": 5.0, "002": 4.0}.get(ticker, 0.0)
         bot._screen_market_candidates = lambda market, mode: [{"ticker": "010", "entry_priority_score": 0.0}]
-        bot._filter_candidates_by_history = lambda candidates, market: list(candidates)
+        bot._filter_candidates_by_history = lambda candidates, market, **kwargs: list(candidates)
         bot._annotate_selection_execution_features = lambda market, candidates, mode: list(candidates)
         bot._build_intraday_context = lambda market: ""
         bot._load_lesson_candidate_summary = lambda market: ""

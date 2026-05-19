@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +11,23 @@ from unittest.mock import Mock, patch
 import pandas as pd
 
 import trading_bot
+
+
+class _RuntimeConfig:
+    def __init__(self, values: dict[str, object] | None = None) -> None:
+        self.values = values or {}
+
+    def get_bool(self, key: str, default: bool = False) -> bool:
+        return bool(self.values.get(key, default))
+
+    def get_int(self, key: str, default: int = 0) -> int:
+        return int(self.values.get(key, default))
+
+    def get_float(self, key: str, default: float = 0.0) -> float:
+        return float(self.values.get(key, default))
+
+    def get(self, key: str, default: object = "") -> object:
+        return self.values.get(key, default)
 
 
 def _daily_frame(rows: int = 140) -> pd.DataFrame:
@@ -29,8 +48,12 @@ def _daily_frame(rows: int = 140) -> pd.DataFrame:
 class KrOhlcvFallbackTests(unittest.TestCase):
     def _bot(self) -> trading_bot.TradingBot:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.runtime_config = _RuntimeConfig()
+        bot.is_paper = False
         bot._token_for_market = lambda market: f"token-{market}"
         bot._hist_fill_enqueue = lambda ticker, market: None
+        bot._current_session_date_str = lambda market: "2026-05-19"
+        bot._candidate_audit_store_cache = None
         bot._last_data_insufficient_candidates = {"KR": [], "US": []}
         bot._data_insufficient_watch_tickers = {"KR": set(), "US": set()}
         bot._ohlcv_cache = {}
@@ -83,6 +106,41 @@ class KrOhlcvFallbackTests(unittest.TestCase):
         self.assertEqual([row["ticker"] for row in filtered], ["005930"])
         self.assertEqual(fetch_results[0][1], "yfinance")
         self.assertGreaterEqual(fetch_results[0][0], bot._MIN_SIGNAL_ROWS)
+
+    def test_history_filter_writes_shadow_audit_for_data_insufficient_candidate(self) -> None:
+        bot = self._bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        bot._get_ohlcv_cached = lambda ticker, market: _daily_frame(20)
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "CANDIDATE_AUDIT_DB_PATH": str(Path(tmp) / "candidate_audit.db"),
+                "DATA_INSUFFICIENT_WATCH_MIN_USABLE": "40",
+            },
+        ):
+            filtered = bot._filter_candidates_by_history(
+                [{"ticker": "439960", "price": 120.0}],
+                "KR",
+                phase="session_open",
+            )
+
+            conn = sqlite3.connect(Path(tmp) / "candidate_audit.db")
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute("SELECT * FROM audit_candidate_rows WHERE ticker='439960'").fetchone()
+                payload = json.loads(row["payload_json"])
+            finally:
+                conn.close()
+
+        self.assertEqual(filtered, [])
+        self.assertIsNotNone(row)
+        self.assertEqual(row["classification"], "data_insufficient")
+        self.assertEqual(row["source_file"], "trading_bot.screener_filter")
+        self.assertEqual(row["in_prompt"], 0)
+        self.assertEqual(row["data_quality"], "DATA_INSUFFICIENT_SHADOW")
+        self.assertEqual(row["history_status"], "DATA_INSUFFICIENT")
+        self.assertEqual(payload["phase"], "session_open")
 
     def test_get_ohlcv_cached_uses_fresh_csv_without_on_demand(self) -> None:
         bot = self._bot()
