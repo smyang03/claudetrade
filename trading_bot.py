@@ -134,7 +134,12 @@ from telegram_reporter import (
     signal_state_alert,
 )
 from telegram_commander import commander as tg_commander
-from minority_report.analysts import get_last_selection_meta, get_three_judgments, select_tickers
+from minority_report.analysts import (
+    get_last_selection_meta,
+    get_three_judgments,
+    prepare_selection_prompt_pool,
+    select_tickers,
+)
 from minority_report.consensus import (
     apply_unanimous_override,
     build_consensus,
@@ -4865,6 +4870,183 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             }
         return evidence
 
+    def _prompt_exec_evidence_counts(self, rows: list[dict]) -> dict[str, float | int]:
+        missing = 0
+        formed = 0
+        forming = 0
+        for row in rows or []:
+            row_dict = row if isinstance(row, dict) else {}
+            features = row_dict.get("post_open_features") if isinstance(row_dict, dict) else {}
+            if not isinstance(features, dict):
+                features = {}
+            quality = str(
+                features.get("data_quality")
+                or row_dict.get("post_open_data_quality")
+                or row_dict.get("evidence_data_state")
+                or ""
+            ).strip().lower()
+            if not features or quality in {"minute_missing", "missing", "unknown"}:
+                missing += 1
+            elif quality in {"minute_complete", "confirmed", "good"}:
+                formed += 1
+            else:
+                forming += 1
+        total = max(1, len(rows or []))
+        return {
+            "prompt_exec_missing_count": missing,
+            "prompt_exec_missing_pct": round(float(missing) / total, 4),
+            "prompt_exec_formed_count": formed,
+            "prompt_exec_forming_count": forming,
+        }
+
+    def _evidence_fetch_success_metrics(
+        self,
+        market: str,
+        prompt_rows: list[dict],
+        evidence_requested_tickers: list[str],
+    ) -> dict[str, Any]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = datetime.now(KST).date().isoformat()
+        row_by_ticker = {
+            self._selection_ticker_key(market_key, row.get("ticker")): row
+            for row in list(prompt_rows or [])
+            if isinstance(row, dict) and self._selection_ticker_key(market_key, row.get("ticker"))
+        }
+        requested = [
+            self._selection_ticker_key(market_key, ticker)
+            for ticker in list(evidence_requested_tickers or [])
+            if self._selection_ticker_key(market_key, ticker)
+        ]
+        success_tickers: list[str] = []
+        for ticker in requested:
+            row = row_by_ticker.get(ticker) or {}
+            features = row.get("post_open_features") if isinstance(row, dict) else {}
+            if not isinstance(features, dict) or not features:
+                continue
+            quality = str(features.get("data_quality") or "").strip().lower()
+            if quality in {"minute_missing", "missing", "unknown"} or bool(features.get("fail_closed")):
+                continue
+            if not self._post_open_feature_matches_session(features, session_date):
+                continue
+            success_tickers.append(ticker)
+        denominator = max(1, len(requested))
+        return {
+            "evidence_fetch_success_tickers": success_tickers,
+            "evidence_fetch_success_count": len(success_tickers),
+            "evidence_fetch_success_ratio": round(float(len(success_tickers)) / denominator, 4),
+        }
+
+    def _prepare_selection_prompt_pool_with_evidence(
+        self,
+        market: str,
+        candidates: list[dict],
+        mode: str,
+    ) -> tuple[list[dict], list[dict], dict, dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        alignment_enabled = self._runtime_bool("FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED", True)
+        try:
+            candidates_with_features = self._annotate_selection_execution_features(
+                market_key,
+                candidates,
+                mode,
+                prefetch_intraday_evidence=not alignment_enabled,
+            )
+        except TypeError as exc:
+            if "prefetch_intraday_evidence" not in str(exc):
+                raise
+            candidates_with_features = self._annotate_selection_execution_features(market_key, candidates, mode)
+        prompt_rows, prompt_meta = prepare_selection_prompt_pool(market_key, candidates_with_features)
+        prompt_meta = dict(prompt_meta or {})
+        prompt_tickers = [
+            self._selection_ticker_key(market_key, row.get("ticker"))
+            for row in list(prompt_rows or [])
+            if isinstance(row, dict) and self._selection_ticker_key(market_key, row.get("ticker"))
+        ]
+        evidence_prefetch_source = "final_prompt_pool" if alignment_enabled else "legacy_candidates"
+        evidence_requested_tickers: list[str] = []
+        if alignment_enabled:
+            phase = self._selection_session_phase(market_key)
+            prefetched = self._prefetch_selection_intraday_evidence(market_key, prompt_rows, phase=phase)
+            evidence_requested_tickers = [
+                self._selection_ticker_key(market_key, key)
+                for key in (prefetched or {}).keys()
+                if self._selection_ticker_key(market_key, key)
+            ]
+            prompt_rows = self._apply_cached_intraday_evidence_to_rows(market_key, prompt_rows)
+            candidates_with_features = self._apply_cached_intraday_evidence_to_rows(market_key, candidates_with_features)
+            evidence_by_ticker = self._build_selection_evidence_pack(market_key, prompt_rows)
+            evidence_pack_source = "final_prompt_pool"
+        else:
+            evidence_by_ticker = self._build_selection_evidence_pack(market_key, candidates_with_features)
+            evidence_requested_tickers = list((evidence_by_ticker or {}).keys())
+            evidence_pack_source = "legacy_candidates"
+
+        evidence_pack_tickers = [
+            self._selection_ticker_key(market_key, key)
+            for key in (evidence_by_ticker or {}).keys()
+            if self._selection_ticker_key(market_key, key)
+        ]
+        prompt_set = set(prompt_tickers)
+        requested_set = set(evidence_requested_tickers)
+        overlap_count = len(prompt_set & requested_set)
+        overlap_ratio = (overlap_count / max(1, len(prompt_set))) if prompt_set else 1.0
+        exec_counts = self._prompt_exec_evidence_counts(prompt_rows)
+        fetch_success = self._evidence_fetch_success_metrics(market_key, prompt_rows, evidence_requested_tickers)
+        prompt_meta.update(
+            {
+                "evidence_prefetch_source": evidence_prefetch_source,
+                "evidence_requested_tickers": evidence_requested_tickers,
+                "evidence_requested_count": len(evidence_requested_tickers),
+                "evidence_prompt_overlap_count": overlap_count,
+                "evidence_prompt_overlap_ratio": round(float(overlap_ratio), 4),
+                "evidence_pack_source": evidence_pack_source,
+                "evidence_pack_tickers": evidence_pack_tickers,
+                "evidence_pack_count": len(evidence_pack_tickers),
+                **fetch_success,
+                **exec_counts,
+            }
+        )
+        try:
+            self._write_funnel_event(
+                "selection_final_prompt_evidence_alignment",
+                market_key,
+                {
+                    "alignment_enabled": bool(alignment_enabled),
+                    "prompt_tickers": prompt_tickers,
+                    "prompt_count": len(prompt_tickers),
+                    "evidence_prefetch_source": evidence_prefetch_source,
+                    "evidence_requested_tickers": evidence_requested_tickers,
+                    "evidence_requested_count": len(evidence_requested_tickers),
+                    "evidence_prompt_overlap_ratio": round(float(overlap_ratio), 4),
+                    "evidence_pack_source": evidence_pack_source,
+                    "evidence_pack_tickers": evidence_pack_tickers,
+                    "evidence_pack_count": len(evidence_pack_tickers),
+                    **fetch_success,
+                    **exec_counts,
+                },
+            )
+        except Exception:
+            pass
+
+        intraday_enabled = self._runtime_bool("INTRADAY_EVIDENCE_ENABLED", False)
+        if alignment_enabled and intraday_enabled:
+            warn_overlap = self._runtime_float("FINAL_PROMPT_EVIDENCE_ALIGNMENT_WARN_OVERLAP_MIN", 0.80)
+            warn_missing = self._runtime_float("FINAL_PROMPT_EVIDENCE_ALIGNMENT_WARN_EXEC_MISSING_MAX", 0.50)
+            if prompt_tickers and overlap_ratio < warn_overlap:
+                log.warning(
+                    f"[final prompt evidence alignment] {market_key} overlap={overlap_ratio:.2f} "
+                    f"< {warn_overlap:.2f} prompt={len(prompt_tickers)} requested={len(evidence_requested_tickers)}"
+                )
+            if prompt_tickers and float(exec_counts.get("prompt_exec_missing_pct") or 0.0) >= warn_missing:
+                log.warning(
+                    f"[final prompt evidence alignment] {market_key} exec_missing="
+                    f"{float(exec_counts.get('prompt_exec_missing_pct') or 0.0):.2f} >= {warn_missing:.2f}"
+                )
+        return candidates_with_features, prompt_rows, prompt_meta, evidence_by_ticker
+
     def _kr_late_entry_gate_state(
         self,
         ticker: str,
@@ -9188,6 +9370,90 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         row["post_open_fail_closed_reason"] = features.get("fail_closed_reason")
         if bool(features.get("fail_closed")) and features.get("fail_closed_reason"):
             row.setdefault("runtime_gate_reason", features.get("fail_closed_reason"))
+    def _clear_post_open_features_from_row(self, row: dict) -> None:
+        for key in (
+            "post_open_features",
+            "post_open_momentum_state",
+            "post_open_ret_3m_pct",
+            "post_open_ret_5m_pct",
+            "post_open_ret_10m_pct",
+            "post_open_ret_30m_pct",
+            "post_open_pullback_from_high_pct",
+            "post_open_data_quality",
+            "post_open_fail_closed",
+            "post_open_fail_closed_reason",
+        ):
+            row.pop(key, None)
+
+    def _post_open_feature_matches_session(self, features: dict, session_date: str) -> bool:
+        if not isinstance(features, dict) or not str(session_date or "").strip():
+            return False
+        expected = str(session_date).strip()
+        compact = expected.replace("-", "")
+        for key in ("session_date", "market_session_date"):
+            value = str(features.get(key) or "").strip()
+            if value == expected:
+                return True
+        for key in ("anchor_at", "known_at"):
+            value = str(features.get(key) or "").strip()
+            if value[:10] == expected:
+                return True
+        snapshot_id = str(features.get("snapshot_id") or "").strip()
+        if snapshot_id.startswith(compact):
+            return True
+        return False
+
+    def _stale_cached_evidence_missing_feature(self, market: str, ticker: str, session_date: str) -> dict:
+        try:
+            session_dt = datetime.fromisoformat(f"{str(session_date)[:10]}T00:00:00")
+        except Exception:
+            session_dt = datetime.now(KST).replace(tzinfo=None)
+        missing = self._intraday_fail_closed_feature_map(
+            market,
+            [ticker],
+            known_at=session_dt,
+            anchor_at=session_dt,
+            reason="stale_cached_feature",
+        )
+        return dict(missing.get(self._selection_ticker_key(market, ticker)) or {})
+
+    def _apply_cached_intraday_evidence_to_rows(self, market: str, rows: list[dict]) -> list[dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = datetime.now(KST).date().isoformat()
+        store_root = getattr(self, "_last_post_open_features_by_ticker", None)
+        if not isinstance(store_root, dict):
+            store_root = {"KR": {}, "US": {}}
+            self._last_post_open_features_by_ticker = store_root
+        feature_store = dict(store_root.get(market_key) or {})
+        cleaned_store = dict(feature_store)
+        out: list[dict] = []
+        for row in rows or []:
+            next_row = dict(row or {})
+            key = self._selection_ticker_key(market_key, next_row.get("ticker"))
+            row_features = next_row.get("post_open_features") if isinstance(next_row.get("post_open_features"), dict) else {}
+            had_stale_row_features = bool(row_features) and not self._post_open_feature_matches_session(row_features, session_date)
+            if had_stale_row_features:
+                self._clear_post_open_features_from_row(next_row)
+            features = cleaned_store.get(key)
+            if isinstance(features, dict):
+                if self._post_open_feature_matches_session(features, session_date):
+                    self._apply_post_open_features_to_row(next_row, features)
+                else:
+                    cleaned_store.pop(key, None)
+                    if had_stale_row_features:
+                        stale_missing = self._stale_cached_evidence_missing_feature(market_key, key, session_date)
+                        self._apply_post_open_features_to_row(next_row, stale_missing)
+            elif had_stale_row_features and key:
+                stale_missing = self._stale_cached_evidence_missing_feature(market_key, key, session_date)
+                self._apply_post_open_features_to_row(next_row, stale_missing)
+            out.append(next_row)
+        if cleaned_store != feature_store:
+            store_root[market_key] = cleaned_store
+            self._last_post_open_features_by_ticker = store_root
+        return out
     def _intraday_fail_closed_feature_map(
         self,
         market: str,
@@ -9662,7 +9928,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         self._merge_last_post_open_features(market_key, features_by_ticker)
         return features_by_ticker
-    def _annotate_selection_execution_features(self, market: str, candidates: list, mode: str = "") -> list:
+    def _annotate_selection_execution_features(
+        self,
+        market: str,
+        candidates: list,
+        mode: str = "",
+        *,
+        prefetch_intraday_evidence: bool = True,
+    ) -> list:
         market_key = "US" if str(market).upper() == "US" else "KR"
         if not candidates:
             return []
@@ -9698,9 +9971,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 return "high", atr_pct
             return "extreme", atr_pct
         enriched_rows = []
-        post_open_features_by_ticker: dict[str, dict] = dict(
-            self._prefetch_selection_intraday_evidence(market_key, candidates, phase=phase)
-        )
+        post_open_features_by_ticker: dict[str, dict] = {}
+        if prefetch_intraday_evidence:
+            post_open_features_by_ticker = dict(
+                self._prefetch_selection_intraday_evidence(market_key, candidates, phase=phase)
+            )
         candidate_keys = [
             self._selection_ticker_key(market_key, (candidate or {}).get("ticker"))
             for candidate in candidates or []
@@ -11142,6 +11417,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "overlay_keep_current": (meta or {}).get("_overlay_keep_current"),
                         "overlay_plan_a_max": (meta or {}).get("_overlay_plan_a_max"),
                         "overlay_plan_b_used": overlay_plan_b_used,
+                        "evidence_prefetch_source": (meta or {}).get("evidence_prefetch_source", ""),
+                        "evidence_requested_tickers": list((meta or {}).get("evidence_requested_tickers") or []),
+                        "evidence_requested_count": int((meta or {}).get("evidence_requested_count") or 0),
+                        "evidence_prompt_overlap_count": int((meta or {}).get("evidence_prompt_overlap_count") or 0),
+                        "evidence_prompt_overlap_ratio": (meta or {}).get("evidence_prompt_overlap_ratio"),
+                        "evidence_fetch_success_tickers": list((meta or {}).get("evidence_fetch_success_tickers") or []),
+                        "evidence_fetch_success_count": int((meta or {}).get("evidence_fetch_success_count") or 0),
+                        "evidence_fetch_success_ratio": (meta or {}).get("evidence_fetch_success_ratio"),
+                        "evidence_pack_source": (meta or {}).get("evidence_pack_source", ""),
+                        "evidence_pack_tickers": list((meta or {}).get("evidence_pack_tickers") or []),
+                        "evidence_pack_count": int((meta or {}).get("evidence_pack_count") or 0),
+                        "prompt_exec_missing_count": int((meta or {}).get("prompt_exec_missing_count") or 0),
+                        "prompt_exec_missing_pct": (meta or {}).get("prompt_exec_missing_pct"),
+                        "prompt_exec_formed_count": int((meta or {}).get("prompt_exec_formed_count") or 0),
+                        "prompt_exec_forming_count": int((meta or {}).get("prompt_exec_forming_count") or 0),
                         "shadow_overlay_tickers": shadow_overlay_tickers,
                         "shadow_overlay_added_tickers": shadow_overlay_added_tickers,
                         "shadow_overlay_removed_tickers": shadow_overlay_removed_tickers,
@@ -11671,7 +11961,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             candidates = [c for c in candidates if c.get("ticker") not in _manual_cooldown]
             if not candidates:
                 raise RuntimeError("히스토리 필터 통과 후보가 없습니다.")
-            candidates = self._annotate_selection_execution_features(target_market, candidates, mode)
+            candidates, prompt_rows, prompt_meta, evidence_by_ticker = self._prepare_selection_prompt_pool_with_evidence(
+                target_market,
+                candidates,
+                mode,
+            )
             intraday_ctx = self._build_intraday_context(target_market)
             lesson_context = self._load_lesson_candidate_summary(target_market)
             selected, reasons = select_tickers(target_market, digest_prompt, mode, candidates,
@@ -11680,7 +11974,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                market_change_pct=self._get_market_change_pct(target_market),
                                                secondary_change_pct=self._get_secondary_change_pct(target_market),
                                                execution_phase=self._current_judgment_phase(target_market),
-                                               evidence_by_ticker=self._build_selection_evidence_pack(target_market, candidates))
+                                               evidence_by_ticker=evidence_by_ticker,
+                                               prompt_pool_override=prompt_rows,
+                                               prompt_pool_meta_override=prompt_meta)
             if not selected:
                 raise RuntimeError("최종 선택 종목이 없습니다.")
             sel_meta = self._apply_selection_meta(target_market, selected, mode=mode, source=source_type_key)
@@ -19135,7 +19431,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 candidates = self._prefill_history_sync(candidates, market)
                 candidates = self._filter_candidates_by_history(candidates, market, phase="preopen_watch")
                 candidates = self._restrict_candidates_to_universe(candidates, universe_tickers)
-                candidates = self._annotate_selection_execution_features(market, candidates, "PREOPEN_WATCH")
+                candidates, prompt_rows, prompt_meta, evidence_by_ticker = self._prepare_selection_prompt_pool_with_evidence(
+                    market,
+                    candidates,
+                    "PREOPEN_WATCH",
+                )
                 lesson_context = self._load_lesson_candidate_summary(market)
                 selected, sel_reasons = select_tickers(
                     market,
@@ -19146,7 +19446,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     market_change_pct=self._get_market_change_pct(market, digest),
                     secondary_change_pct=self._get_secondary_change_pct(market, digest),
                     execution_phase=_JUDGMENT_PHASE_PREOPEN,
-                    evidence_by_ticker=self._build_selection_evidence_pack(market, candidates),
+                    evidence_by_ticker=evidence_by_ticker,
+                    prompt_pool_override=prompt_rows,
+                    prompt_pool_meta_override=prompt_meta,
                 )
                 sel_meta = self._apply_selection_meta(market, selected, mode="PREOPEN_WATCH", source=_JUDGMENT_PHASE_PREOPEN)
                 sel_meta = self._force_preopen_watch_only(market, sel_meta)
@@ -19484,7 +19786,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             candidates = self._prefill_history_sync(candidates, market)
             candidates = self._filter_candidates_by_history(candidates, market, phase="session_open")
             candidates = self._restrict_candidates_to_universe(candidates, universe_tickers)
-            candidates = self._annotate_selection_execution_features(market, candidates, consensus.get("mode", "NEUTRAL"))
+            candidates, prompt_rows, prompt_meta, evidence_by_ticker = self._prepare_selection_prompt_pool_with_evidence(
+                market,
+                candidates,
+                consensus.get("mode", "NEUTRAL"),
+            )
             _intraday_ctx = self._build_intraday_context(market)
             _lesson_context = self._load_lesson_candidate_summary(market)
             log.info(f"[스크리너] {market} 후보 {len(candidates)}개 → Claude 선택 중...")
@@ -19494,7 +19800,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     market_change_pct=self._get_market_change_pct(market, digest),
                                                     secondary_change_pct=self._get_secondary_change_pct(market, digest),
                                                     execution_phase=self._current_judgment_phase(market),
-                                                    evidence_by_ticker=self._build_selection_evidence_pack(market, candidates))
+                                                    evidence_by_ticker=evidence_by_ticker,
+                                                    prompt_pool_override=prompt_rows,
+                                                    prompt_pool_meta_override=prompt_meta)
             sel_meta = self._apply_selection_meta(market, selected, mode=consensus.get("mode", ""), source="session_open")
             self._record_preopen_rank_diff(
                 market,
@@ -19650,7 +19958,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         fresh_candidates,
                         fresh_allowed_universe,
                     )
-                    fresh_candidates = self._annotate_selection_execution_features(market, fresh_candidates, consensus.get("mode", "NEUTRAL"))
+                    fresh_candidates, prompt_rows, prompt_meta, evidence_by_ticker = self._prepare_selection_prompt_pool_with_evidence(
+                        market,
+                        fresh_candidates,
+                        consensus.get("mode", "NEUTRAL"),
+                    )
                     _fresh_intraday_ctx = self._build_intraday_context(market)
                     _fresh_lesson_context = self._load_lesson_candidate_summary(market)
                     fresh_selected, fresh_reasons = select_tickers(market, digest_prompt, consensus["mode"], fresh_candidates,
@@ -19659,7 +19971,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                    market_change_pct=self._get_market_change_pct(market),
                                                                    secondary_change_pct=self._get_secondary_change_pct(market),
                                                                    execution_phase=self._current_judgment_phase(market),
-                                                                   evidence_by_ticker=self._build_selection_evidence_pack(market, fresh_candidates))
+                                                                   evidence_by_ticker=evidence_by_ticker,
+                                                                   prompt_pool_override=prompt_rows,
+                                                                   prompt_pool_meta_override=prompt_meta)
                     fresh_meta = self._apply_selection_meta(
                         market,
                         fresh_selected,
@@ -24083,7 +24397,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             tune_cands,
                             tune_allowed_universe,
                         )
-                        tune_cands = self._annotate_selection_execution_features(market, tune_cands, new_mode)
+                        tune_cands, prompt_rows, prompt_meta, evidence_by_ticker = self._prepare_selection_prompt_pool_with_evidence(
+                            market,
+                            tune_cands,
+                            new_mode,
+                        )
                         digest_p = self.today_judgment.get("digest_prompt", "")
                         _tune_intraday_ctx = self._build_intraday_context(market)
                         _tune_lesson_context = self._load_lesson_candidate_summary(market)
@@ -24093,7 +24411,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                     market_change_pct=self._get_market_change_pct(market),
                                                                     secondary_change_pct=self._get_secondary_change_pct(market),
                                                                     execution_phase=self._current_judgment_phase(market),
-                                                                    evidence_by_ticker=self._build_selection_evidence_pack(market, tune_cands))
+                                                                    evidence_by_ticker=evidence_by_ticker,
+                                                                    prompt_pool_override=prompt_rows,
+                                                                    prompt_pool_meta_override=prompt_meta)
                         tune_meta = self._apply_selection_meta(
                             market,
                             tune_tickers,
@@ -24435,7 +24755,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         mode = self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL")
         digest_p = self.today_judgment.get("digest_prompt", "")
-        new_cands = self._annotate_selection_execution_features(market, new_cands, mode)
+        new_cands, prompt_rows, prompt_meta, evidence_by_ticker = self._prepare_selection_prompt_pool_with_evidence(
+            market,
+            new_cands,
+            mode,
+        )
         _partial_intraday_ctx = self._build_intraday_context(market)
         _partial_lesson_context = self._load_lesson_candidate_summary(market)
         new_selected, new_reasons = select_tickers(market, digest_p, mode, new_cands,
@@ -24444,7 +24768,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     market_change_pct=self._get_market_change_pct(market),
                                                     secondary_change_pct=self._get_secondary_change_pct(market),
                                                     execution_phase=self._current_judgment_phase(market),
-                                                    evidence_by_ticker=self._build_selection_evidence_pack(market, new_cands))
+                                                    evidence_by_ticker=evidence_by_ticker,
+                                                    prompt_pool_override=prompt_rows,
+                                                    prompt_pool_meta_override=prompt_meta)
         new_meta = dict(get_last_selection_meta() or {})
         new_meta.setdefault("watchlist", list(new_selected or []))
         new_meta["_entry_route_source"] = "partial_reselect"
@@ -24844,7 +25170,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         reinvoke_cands = [c for c in reinvoke_cands
                                           if c.get("ticker") not in _ri_cooldown]
                         digest_p = self.today_judgment.get("digest_prompt", "")
-                        reinvoke_cands = self._annotate_selection_execution_features(market, reinvoke_cands, new_consensus["mode"])
+                        reinvoke_cands, prompt_rows, prompt_meta, evidence_by_ticker = self._prepare_selection_prompt_pool_with_evidence(
+                            market,
+                            reinvoke_cands,
+                            new_consensus["mode"],
+                        )
                         _reinvoke_intraday_ctx = self._build_intraday_context(market)
                         _reinvoke_lesson_context = self._load_lesson_candidate_summary(market)
                         new_tickers, new_ticker_reasons = select_tickers(market, digest_p,
@@ -24854,7 +25184,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                      market_change_pct=self._get_market_change_pct(market),
                                                      secondary_change_pct=self._get_secondary_change_pct(market),
                                                      execution_phase=self._current_judgment_phase(market),
-                                                     evidence_by_ticker=self._build_selection_evidence_pack(market, reinvoke_cands))
+                                                     evidence_by_ticker=evidence_by_ticker,
+                                                     prompt_pool_override=prompt_rows,
+                                                     prompt_pool_meta_override=prompt_meta)
                         reinvoke_meta = self._apply_selection_meta(
                             market,
                             new_tickers,

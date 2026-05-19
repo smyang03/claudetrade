@@ -1121,6 +1121,26 @@ def _build_selection_prompt_pool(candidates: list[dict], market: str, prompt_cap
         }
 
 
+def prepare_selection_prompt_pool(market: str, candidates: list[dict]) -> tuple[list[dict], dict]:
+    """Return the exact prompt pool and metadata select_tickers() will use."""
+    limits = selection_limits(market)
+    prompt_cap = _selection_candidate_cap(market, limits["watch_max"], limits["trade_max"])
+    prompt_candidates, prompt_pool_meta = _build_selection_prompt_pool(
+        [dict(row or {}) for row in list(candidates or []) if isinstance(row, dict)],
+        market,
+        prompt_cap,
+    )
+    prompt_candidates, prompt_pool_meta = _apply_plan_a_prompt_overlay(
+        prompt_candidates,
+        prompt_pool_meta,
+        market,
+    )
+    prompt_pool_meta = dict(prompt_pool_meta or {})
+    prompt_pool_meta["prompt_pool"] = [dict(row or {}) for row in list(prompt_candidates or [])]
+    prompt_pool_meta["prompt_pool_count"] = len(prompt_pool_meta["prompt_pool"])
+    return [dict(row or {}) for row in list(prompt_candidates or [])], prompt_pool_meta
+
+
 def _safe_watch_fallback(candidates: list[dict], market: str) -> list[str]:
     limits = selection_limits(market)
     safe_max = min(limits["watch_max"], 12 if market == "US" else 8)
@@ -1817,7 +1837,9 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                    market_change_pct: Optional[float] = None,
                    secondary_change_pct: Optional[float] = None,
                    execution_phase: str = "",
-                   evidence_by_ticker: Optional[dict] = None) -> list:
+                   evidence_by_ticker: Optional[dict] = None,
+                   prompt_pool_override: Optional[list[dict]] = None,
+                   prompt_pool_meta_override: Optional[dict] = None) -> list:
     """Claude가 WATCH와 TRADE_READY를 분리 선택한다."""
     global _LAST_SELECTION_META
     if not candidates:
@@ -1860,9 +1882,45 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
     )
 
     limits = selection_limits(market)
-    prompt_cap = _selection_candidate_cap(market, limits["watch_max"], limits["trade_max"])
-    prompt_candidates, prompt_pool_meta = _build_selection_prompt_pool(candidates, market, prompt_cap)
-    prompt_candidates, prompt_pool_meta = _apply_plan_a_prompt_overlay(prompt_candidates, prompt_pool_meta, market)
+    if prompt_pool_override is not None:
+        source_keys = {
+            _prompt_ticker_key(market, row.get("ticker"))
+            for row in list(candidates or [])
+            if isinstance(row, dict) and str(row.get("ticker") or "").strip()
+        }
+        override_rows = [
+            dict(row or {})
+            for row in list(prompt_pool_override or [])
+            if isinstance(row, dict) and str((row or {}).get("ticker") or "").strip()
+        ]
+        unknown_override_tickers = [
+            _prompt_ticker_key(market, row.get("ticker"))
+            for row in override_rows
+            if source_keys and _prompt_ticker_key(market, row.get("ticker")) not in source_keys
+        ]
+        if unknown_override_tickers:
+            log.warning(
+                f"[ticker-selection] {market} prompt override removed non-candidate tickers: "
+                f"{unknown_override_tickers[:10]}"
+            )
+            override_rows = [
+                row for row in override_rows
+                if _prompt_ticker_key(market, row.get("ticker")) not in set(unknown_override_tickers)
+            ]
+        prompt_candidates = override_rows
+        prompt_pool_meta = dict(prompt_pool_meta_override or {})
+        prompt_pool_meta["prompt_pool"] = [dict(row or {}) for row in prompt_candidates]
+        prompt_pool_meta["prompt_pool_count"] = len(prompt_candidates)
+        prompt_pool_meta.setdefault("full_pool_count", len(candidates or []))
+        prompt_pool_meta.setdefault("scored_pool_count", prompt_pool_meta.get("full_pool_count", len(candidates or [])))
+        prompt_pool_meta.setdefault("version", "prompt_pool_override")
+        prompt_pool_meta["_prompt_pool_override_used"] = True
+        if unknown_override_tickers:
+            prompt_pool_meta["_prompt_pool_override_unknown_tickers"] = unknown_override_tickers[:20]
+    else:
+        prompt_candidates, prompt_pool_meta = prepare_selection_prompt_pool(market, candidates)
+        prompt_pool_meta = dict(prompt_pool_meta or {})
+        prompt_pool_meta["_prompt_pool_override_used"] = False
     if len(candidates) > len(prompt_candidates):
         log.info(f"[ticker-selection] {market} prompt candidates trimmed: {len(candidates)} -> {len(prompt_candidates)}")
     if prompt_pool_meta.get("enabled"):
@@ -1937,18 +1995,42 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         cand_lines.append(" ".join([part for part in parts if part]))
 
     cand_text = "\n".join(cand_lines)
-    evidence_map = evidence_by_ticker if isinstance(evidence_by_ticker, dict) else {}
+    raw_evidence_map = evidence_by_ticker if isinstance(evidence_by_ticker, dict) else {}
+    prompt_keys = {
+        _prompt_ticker_key(market, row.get("ticker"))
+        for row in list(prompt_candidates or [])
+        if isinstance(row, dict) and str(row.get("ticker") or "").strip()
+    }
+    evidence_map: dict[str, dict] = {}
+    dropped_evidence_keys: list[str] = []
+    for raw_key, raw_value in raw_evidence_map.items():
+        key = _prompt_ticker_key(market, raw_key)
+        if not key:
+            continue
+        if key not in prompt_keys:
+            dropped_evidence_keys.append(key)
+            continue
+        if isinstance(raw_value, dict):
+            evidence_map[key] = dict(raw_value)
+    if dropped_evidence_keys:
+        prompt_pool_meta["_evidence_non_prompt_count"] = len(dropped_evidence_keys)
+        prompt_pool_meta["_evidence_non_prompt_tickers_sample"] = dropped_evidence_keys[:10]
+        log.debug(
+            f"[ticker-selection] {market} dropped non-prompt evidence "
+            f"count={len(dropped_evidence_keys)} sample={dropped_evidence_keys[:10]}"
+        )
     evidence_items: list[dict] = []
     if evidence_map:
         for candidate in prompt_candidates:
-            ticker = str(candidate.get("ticker", "") or "").strip()
+            ticker = _prompt_ticker_key(market, candidate.get("ticker"))
             if not ticker:
                 continue
-            keys = [ticker, ticker.upper()]
-            evidence = next((evidence_map.get(k) for k in keys if isinstance(evidence_map.get(k), dict)), None)
+            evidence = evidence_map.get(ticker)
             if not evidence:
                 continue
-            evidence_items.append(dict(evidence))
+            evidence_item = dict(evidence)
+            evidence_item["ticker"] = _prompt_ticker_key(market, evidence_item.get("ticker") or ticker)
+            evidence_items.append(evidence_item)
             if len(evidence_items) >= int(os.getenv("SELECTION_FULL_EVIDENCE_MAX", "8")):
                 break
     evidence_section = ""
@@ -2235,6 +2317,29 @@ Rules:
         enriched["_overlay_keep_current"] = prompt_pool_meta.get("_overlay_keep_current")
         enriched["_overlay_plan_a_max"] = prompt_pool_meta.get("_overlay_plan_a_max")
         enriched["_overlay_plan_b_used"] = bool(prompt_pool_meta.get("_overlay_plan_b_used"))
+        for key in (
+            "_prompt_pool_override_used",
+            "_prompt_pool_override_unknown_tickers",
+            "_evidence_non_prompt_count",
+            "_evidence_non_prompt_tickers_sample",
+            "evidence_prefetch_source",
+            "evidence_requested_tickers",
+            "evidence_requested_count",
+            "evidence_prompt_overlap_count",
+            "evidence_prompt_overlap_ratio",
+            "evidence_fetch_success_tickers",
+            "evidence_fetch_success_count",
+            "evidence_fetch_success_ratio",
+            "evidence_pack_source",
+            "evidence_pack_tickers",
+            "evidence_pack_count",
+            "prompt_exec_missing_count",
+            "prompt_exec_missing_pct",
+            "prompt_exec_formed_count",
+            "prompt_exec_forming_count",
+        ):
+            if key in prompt_pool_meta:
+                enriched[key] = prompt_pool_meta.get(key)
         if prompt_pool_meta.get("_shadow_overlay_prompt_pool") is not None:
             enriched["_shadow_overlay_prompt_pool"] = list(prompt_pool_meta.get("_shadow_overlay_prompt_pool") or [])
             enriched["_shadow_overlay_tickers"] = list(prompt_pool_meta.get("_shadow_overlay_tickers") or [])
@@ -2338,6 +2443,27 @@ Rules:
             selection_meta["tuning_feedback"] = dict(tuning_feedback_meta)
             selection_meta["tuning_feedback_applied"] = True
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers", model=MODEL)
+        evidence_alignment_extra = {
+            key: selection_meta.get(key)
+            for key in (
+                "evidence_prefetch_source",
+                "evidence_requested_tickers",
+                "evidence_requested_count",
+                "evidence_prompt_overlap_count",
+                "evidence_prompt_overlap_ratio",
+                "evidence_fetch_success_tickers",
+                "evidence_fetch_success_count",
+                "evidence_fetch_success_ratio",
+                "evidence_pack_source",
+                "evidence_pack_tickers",
+                "evidence_pack_count",
+                "prompt_exec_missing_count",
+                "prompt_exec_missing_pct",
+                "prompt_exec_formed_count",
+                "prompt_exec_forming_count",
+            )
+            if key in selection_meta
+        }
         save_raw_call(
             label="select_tickers",
             prompt=prompt,
@@ -2362,6 +2488,7 @@ Rules:
                 "compact_schema_enabled": bool(compact_selection_enabled),
                 "selection_reference_prices": selection_reference_prices,
                 "prompt_contract": "selection_compact.v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
+                **evidence_alignment_extra,
             },
         )
         if result.get("_fallback_mode") == "selection_partial" and not compact_selection_enabled:

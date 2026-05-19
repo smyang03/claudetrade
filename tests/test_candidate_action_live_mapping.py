@@ -1721,6 +1721,21 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
                 {"ticker": "AAPL", "market": "US", "prompt_rank": 1, "trainer_candidate_state": "PLAN_A"},
                 {"ticker": "NVDA", "market": "US", "prompt_rank": 2, "trainer_candidate_state": "PLAN_A"},
             ],
+            "evidence_prefetch_source": "final_prompt_pool",
+            "evidence_requested_tickers": ["AAPL", "NVDA"],
+            "evidence_requested_count": 2,
+            "evidence_prompt_overlap_count": 2,
+            "evidence_prompt_overlap_ratio": 1.0,
+            "evidence_fetch_success_tickers": ["AAPL", "NVDA"],
+            "evidence_fetch_success_count": 2,
+            "evidence_fetch_success_ratio": 1.0,
+            "evidence_pack_source": "final_prompt_pool",
+            "evidence_pack_tickers": ["AAPL"],
+            "evidence_pack_count": 1,
+            "prompt_exec_missing_count": 0,
+            "prompt_exec_missing_pct": 0.0,
+            "prompt_exec_formed_count": 1,
+            "prompt_exec_forming_count": 1,
         }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1759,6 +1774,12 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(call_payload["actual_prompt_count"], 2)
         self.assertEqual(call_payload["plan_a_in_prompt"], 2)
         self.assertEqual(call_payload["overlay_mode"], "current_only")
+        self.assertEqual(call_payload["evidence_prefetch_source"], "final_prompt_pool")
+        self.assertEqual(call_payload["evidence_requested_tickers"], ["AAPL", "NVDA"])
+        self.assertEqual(call_payload["evidence_prompt_overlap_ratio"], 1.0)
+        self.assertEqual(call_payload["evidence_fetch_success_ratio"], 1.0)
+        self.assertEqual(call_payload["evidence_pack_tickers"], ["AAPL"])
+        self.assertEqual(call_payload["prompt_exec_missing_pct"], 0.0)
 
     def test_candidate_audit_records_shadow_and_live_overlay_payloads(self) -> None:
         bot = _make_bot()

@@ -335,6 +335,150 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertTrue(payload["fail_closed_applied"])
         self.assertIn("provider_timeout", payload["errors_sample"][0])
 
+    def test_annotation_without_prefetch_still_applies_same_session_cache(self) -> None:
+        def provider(**_kwargs):
+            raise AssertionError("prefetch should be skipped")
+
+        bot = _make_bot(provider)
+        bot.runtime_config.values["ENABLE_POST_OPEN_FEATURES_SHADOW"] = False
+        bot._last_post_open_features_by_ticker = {
+            "KR": {
+                "005930": {
+                    "ticker": "005930",
+                    "known_at": "2026-05-13T09:06:00",
+                    "data_quality": "minute_complete",
+                    "ret_5m_pct": 5.0,
+                }
+            },
+            "US": {},
+        }
+
+        rows = TradingBot._annotate_selection_execution_features(
+            bot,
+            "KR",
+            [{"ticker": "005930", "price": 100.0}],
+            "NEUTRAL",
+            prefetch_intraday_evidence=False,
+        )
+
+        self.assertEqual(rows[0]["post_open_features"]["data_quality"], "minute_complete")
+        self.assertEqual(rows[0]["post_open_ret_5m_pct"], 5.0)
+
+    def test_final_prompt_alignment_prefetches_trainer_prompt_ticker(self) -> None:
+        events: list[tuple[str, str, dict]] = []
+        bot = _make_bot(lambda **kwargs: _candles())
+        session_day = datetime(2026, 5, 13).date()
+        bot._current_session_date_str = lambda _market: "2026-05-13"
+        bot._market_regular_open_dt = lambda _market, session_date=None, now_dt=None: datetime(
+            session_day.year,
+            session_day.month,
+            session_day.day,
+            9,
+            0,
+            tzinfo=KST,
+        )
+        bot.runtime_config.values.update(
+            {
+                "FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED": True,
+                "EVIDENCE_PACK_ENABLED": True,
+                "SELECTION_FULL_EVIDENCE_MAX": 5,
+            }
+        )
+        bot._write_funnel_event = lambda event, market_key, payload: events.append((event, market_key, payload))
+        bot._candidate_runtime_gate_info = lambda *_args, **_kwargs: {}
+        bot._candidate_entry_timing_context = lambda *_args, **_kwargs: {"entry_timing_snapshot": {}}
+        prompt_row = {"ticker": "333333", "market": "KR", "price": 107.0, "volume": 700, "vol_ratio": 3.0}
+
+        with patch(
+            "trading_bot.prepare_selection_prompt_pool",
+            return_value=([dict(prompt_row)], {"prompt_pool": [dict(prompt_row)], "prompt_pool_count": 1}),
+        ):
+            candidates, prompt_rows, prompt_meta, evidence = TradingBot._prepare_selection_prompt_pool_with_evidence(
+                bot,
+                "KR",
+                [
+                    {"ticker": "111111", "market": "KR", "price": 100.0},
+                    {"ticker": "222222", "market": "KR", "price": 100.0},
+                    {"ticker": "333333", "market": "KR", "price": 107.0, "volume": 700, "vol_ratio": 3.0},
+                ],
+                "NEUTRAL",
+            )
+
+        coverage = next(payload for event, _market, payload in events if event == "selection_intraday_evidence_coverage")
+        alignment = next(payload for event, _market, payload in events if event == "selection_final_prompt_evidence_alignment")
+        self.assertEqual(coverage["target_tickers_sample"], ["333333"])
+        self.assertEqual(alignment["prompt_tickers"], ["333333"])
+        self.assertEqual(prompt_meta["evidence_prefetch_source"], "final_prompt_pool")
+        self.assertEqual(prompt_meta["evidence_requested_tickers"], ["333333"])
+        self.assertEqual(prompt_meta["evidence_prompt_overlap_ratio"], 1.0)
+        self.assertEqual(prompt_meta["evidence_fetch_success_ratio"], 1.0)
+        self.assertEqual(prompt_meta["evidence_fetch_success_tickers"], ["333333"])
+        self.assertEqual([row["ticker"] for row in prompt_rows], ["333333"])
+        self.assertEqual(prompt_rows[0]["post_open_features"]["data_quality"], "minute_complete")
+        self.assertIn("333333", evidence)
+        self.assertEqual(set(evidence), {"333333"})
+        feature_by_ticker = {row["ticker"]: row.get("post_open_features") for row in candidates}
+        self.assertEqual(feature_by_ticker["333333"]["data_quality"], "minute_complete")
+
+    def test_cached_intraday_evidence_replaces_stale_row_feature_with_missing_state(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot._current_session_date_str = lambda _market: "2026-05-13"
+        rows = TradingBot._apply_cached_intraday_evidence_to_rows(
+            bot,
+            "KR",
+            [
+                {
+                    "ticker": "005930",
+                    "post_open_features": {
+                        "ticker": "005930",
+                        "known_at": "2026-05-12T09:06:00",
+                        "data_quality": "minute_complete",
+                        "ret_5m_pct": 5.0,
+                    },
+                    "post_open_data_quality": "minute_complete",
+                    "post_open_ret_5m_pct": 5.0,
+                }
+            ],
+        )
+
+        features = rows[0]["post_open_features"]
+        self.assertEqual(features["data_quality"], "minute_missing")
+        self.assertEqual(features["fail_closed_reason"], "stale_cached_feature")
+        self.assertIsNone(rows[0].get("post_open_ret_5m_pct"))
+
+    def test_final_prompt_alignment_disabled_keeps_legacy_candidate_prefetch(self) -> None:
+        events: list[tuple[str, str, dict]] = []
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot.runtime_config.values.update(
+            {
+                "FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED": False,
+                "INTRADAY_EVIDENCE_MAX_TICKERS": 1,
+                "EVIDENCE_PACK_ENABLED": True,
+            }
+        )
+        bot._write_funnel_event = lambda event, market_key, payload: events.append((event, market_key, payload))
+        bot._candidate_runtime_gate_info = lambda *_args, **_kwargs: {}
+        bot._candidate_entry_timing_context = lambda *_args, **_kwargs: {"entry_timing_snapshot": {}}
+        prompt_row = {"ticker": "333333", "market": "KR", "price": 107.0}
+
+        with patch(
+            "trading_bot.prepare_selection_prompt_pool",
+            return_value=([dict(prompt_row)], {"prompt_pool": [dict(prompt_row)], "prompt_pool_count": 1}),
+        ):
+            _candidates, _prompt_rows, prompt_meta, _evidence = TradingBot._prepare_selection_prompt_pool_with_evidence(
+                bot,
+                "KR",
+                [
+                    {"ticker": "111111", "market": "KR", "price": 100.0},
+                    {"ticker": "333333", "market": "KR", "price": 107.0},
+                ],
+                "NEUTRAL",
+            )
+
+        coverage = next(payload for event, _market, payload in events if event == "selection_intraday_evidence_coverage")
+        self.assertEqual(coverage["target_tickers_sample"], ["111111"])
+        self.assertEqual(prompt_meta["evidence_prefetch_source"], "legacy_candidates")
+
 
 if __name__ == "__main__":
     unittest.main()

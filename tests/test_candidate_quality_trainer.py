@@ -264,6 +264,9 @@ class CandidateQualityTrainerTests(unittest.TestCase):
 
         self.assertEqual(config["env_overrides"]["SELECTION_FULL_EVIDENCE_MAX"], "5")
         self.assertEqual(config["env_overrides"]["SELECTION_EVIDENCE_MAX_CHARS"], "3500")
+        self.assertEqual(config["env_overrides"]["FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED"], "true")
+        self.assertEqual(config["env_overrides"]["FINAL_PROMPT_EVIDENCE_ALIGNMENT_WARN_OVERLAP_MIN"], "0.80")
+        self.assertEqual(config["env_overrides"]["FINAL_PROMPT_EVIDENCE_ALIGNMENT_WARN_EXEC_MISSING_MAX"], "0.50")
 
     def test_select_tickers_evidence_pack_honors_item_count_cap(self) -> None:
         from minority_report import analysts
@@ -353,6 +356,96 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         meta = analysts.get_last_selection_meta()
         self.assertTrue(meta["_candidate_quality_trainer_enabled"])
         self.assertEqual(meta["_prompt_pool_count"], 2)
+
+    def test_prepare_selection_prompt_pool_matches_select_tickers_order(self) -> None:
+        from minority_report import analysts
+
+        captured: dict[str, str] = {}
+
+        def fake_create(**kwargs):
+            captured["prompt"] = kwargs["messages"][0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":["GOOD","BAD"],"trade_ready":[],"reasons":{},"veto":{}}')],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+        candidates = [
+            {"ticker": "BAD", "market": "US", "primary_bucket": "unclassified", "liquidity_bucket": "mid", "change_pct": 1.0},
+            {"ticker": "GOOD", "market": "US", "primary_bucket": "momentum_now", "liquidity_bucket": "high", "change_pct": 5.0},
+        ]
+        env = {
+            "CANDIDATE_QUALITY_TRAINER_ENABLED": "true",
+            "CANDIDATE_PROMPT_POOL_REORDER_ENABLED": "true",
+            "CANDIDATE_PROMPT_POOL_TARGET_US": "2",
+            "CANDIDATE_PROMPT_POOL_HARD_CAP_US": "2",
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW": "false",
+        }
+
+        with patch.dict("os.environ", env, clear=False), \
+             patch.object(analysts.client.messages, "create", side_effect=fake_create), \
+             patch.object(analysts, "save_raw_call", lambda **_kwargs: None), \
+             patch.object(analysts, "build_active_lesson_context", return_value={"section": "", "metadata": {}}):
+            prompt_rows, prompt_meta = analysts.prepare_selection_prompt_pool("US", candidates)
+            analysts.select_tickers("US", "digest", "NEUTRAL", candidates)
+
+        self.assertEqual([row["ticker"] for row in prompt_rows], ["GOOD", "BAD"])
+        self.assertLess(captured["prompt"].find("GOOD"), captured["prompt"].find("BAD"))
+        meta = analysts.get_last_selection_meta()
+        self.assertEqual([row["ticker"] for row in meta["_final_prompt_pool"]], ["GOOD", "BAD"])
+        self.assertEqual(prompt_meta["prompt_pool_count"], 2)
+
+    def test_select_tickers_override_skips_builder_and_filters_non_prompt_evidence(self) -> None:
+        from minority_report import analysts
+
+        captured: dict[str, str] = {}
+
+        def fake_create(**kwargs):
+            captured["prompt"] = kwargs["messages"][0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":["GOOD"],"trade_ready":[],"reasons":{},"veto":{}}')],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+        candidates = [
+            {"ticker": "GOOD", "market": "US", "primary_bucket": "momentum_now", "liquidity_bucket": "high"},
+            {"ticker": "BAD", "market": "US", "primary_bucket": "momentum_now", "liquidity_bucket": "high"},
+        ]
+        prompt_rows = [{"ticker": "GOOD", "market": "US", "prompt_rank": 1}]
+        evidence = {
+            "GOOD": {"ticker": "GOOD", "evidence_id": "evidence_good"},
+            "BAD": {"ticker": "BAD", "evidence_id": "evidence_bad"},
+        }
+        env = {
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW": "false",
+            "SELECTION_FULL_EVIDENCE_MAX": "5",
+        }
+
+        with patch.dict("os.environ", env, clear=False), \
+             patch.object(analysts, "_build_selection_prompt_pool", side_effect=AssertionError("builder should not run")), \
+             patch.object(analysts.client.messages, "create", side_effect=fake_create), \
+             patch.object(analysts, "save_raw_call", lambda **_kwargs: None), \
+             patch.object(analysts, "build_active_lesson_context", return_value={"section": "", "metadata": {}}):
+            analysts.select_tickers(
+                "US",
+                "digest",
+                "NEUTRAL",
+                candidates,
+                evidence_by_ticker=evidence,
+                prompt_pool_override=prompt_rows,
+                prompt_pool_meta_override={"enabled": False, "prompt_pool": prompt_rows},
+            )
+
+        self.assertIn("evidence_good", captured["prompt"])
+        self.assertNotIn("evidence_bad", captured["prompt"])
+        meta = analysts.get_last_selection_meta()
+        self.assertEqual([row["ticker"] for row in meta["_final_prompt_pool"]], ["GOOD"])
+        self.assertEqual(meta["evidence_tickers"], ["GOOD"])
 
     def test_select_tickers_does_not_legacy_fallback_when_all_candidates_quarantined(self) -> None:
         from minority_report import analysts
