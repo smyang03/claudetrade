@@ -9,6 +9,7 @@ from decision.registry import DecisionRegistry
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent
 from tools.v2_quality_audit import build_lifecycle_reconciliation, build_stop_loss_forensics
+from trading_bot import TradingBot
 
 
 class V2QualityAuditTests(unittest.TestCase):
@@ -186,6 +187,45 @@ class V2QualityAuditTests(unittest.TestCase):
             self.assertEqual(item["path"], "claude_price")
             self.assertEqual(item["planned_stop_loss"], 1400.0)
             self.assertEqual(item["stop_slippage_pct"], -0.9286)
+
+    def test_trading_bot_quality_marker_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-04",
+                ticker="NVDA",
+                prompt_version="v2",
+                brain_snapshot_id="brain_us",
+            )
+            for event_type in ("ORDER_SENT", "FILLED", "CLOSED", "FORWARD_MEASURED"):
+                store.append(
+                    LifecycleEvent(
+                        event_type=event_type,
+                        market="US",
+                        runtime_mode="live",
+                        session_date="2026-05-04",
+                        ticker="NVDA",
+                        decision_id=decision_id,
+                        execution_id="order1",
+                        prompt_version="v2",
+                        brain_snapshot_id="brain_us",
+                        payload={"close_reason": "CLOSED_CLAUDE_PRICE_TARGET"} if event_type == "CLOSED" else {},
+                    )
+                )
+            bot = TradingBot.__new__(TradingBot)
+            bot.v2 = type("V2", (), {"registry": registry})()
+
+            TradingBot._mark_v2_decision_quality_once(bot, decision_id)
+            TradingBot._mark_v2_decision_quality_once(bot, decision_id)
+
+            events = store.events_for_decision(decision_id)
+            quality_events = [event for event in events if event["event_type"] == "QUALITY_MARKED"]
+            self.assertEqual(len(quality_events), 1)
+            self.assertEqual(quality_events[0]["payload"]["quality"], "CLEAN")
+            self.assertTrue(quality_events[0]["payload"]["learning_allowed"])
 
 
 if __name__ == "__main__":

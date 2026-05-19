@@ -9,6 +9,7 @@ PLANB_CANCEL_CONFIDENCE_MIN = 0.75
 
 
 ENTRY_ACTIONS = {"PROBE_READY", "BUY_READY", "ADD_READY"}
+KR_CONFIRMATION_ACTIONS = {"PROBE_READY", "BUY_READY", "PULLBACK_WAIT"}
 
 
 @dataclass
@@ -71,6 +72,37 @@ def _num_or_none(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
+
+
+def _normalized_tokens(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        text = str(value or "").replace(";", ",")
+        raw_items = text.split(",") if "," in text else text.split()
+    tokens: list[str] = []
+    for item in raw_items:
+        token = str(item or "").strip().lower().replace("-", "_")
+        if token:
+            tokens.append(token)
+    return list(dict.fromkeys(tokens))
+
+
+def _kr_risk_combo_confirmation_ok(context: dict[str, Any]) -> bool:
+    if _boolish(context.get("kr_confirmation_confirmed")):
+        return True
+    if _boolish(context.get("opening_range_break")) or _boolish(context.get("vwap_reclaim")):
+        return True
+    current_price = _num_or_none(context.get("current_price"))
+    vwap = _num_or_none(context.get("vwap") or context.get("vwap_proxy"))
+    if current_price is not None and vwap is not None and current_price >= vwap:
+        return True
+    volume_ratio = _num_or_none(context.get("volume_ratio_open") or context.get("volume_acceleration"))
+    if volume_ratio is not None and volume_ratio > 1.0:
+        return True
+    return False
 
 
 def _context_or_env_float(context: dict[str, Any], key: str, default: float, *, market: str = "") -> float:
@@ -352,6 +384,22 @@ def route_candidate_action(
         if context.get(key) is not None:
             gate_context[key] = context.get(key)
 
+    action_risk_tags = _normalized_tokens((action or {}).get("risk_tags"))
+    context_risk_tags = _normalized_tokens(context.get("risk_tags"))
+    risk_tags = action_risk_tags + [token for token in context_risk_tags if token not in action_risk_tags]
+    from_high_bucket = str((action or {}).get("from_high_bucket") or context.get("from_high_bucket") or "").strip().lower()
+    if from_high_bucket:
+        gate_context["from_high_bucket"] = from_high_bucket
+    if risk_tags:
+        gate_context["risk_tags"] = list(risk_tags)
+    has_or_missing = bool({"or_missing", "opening_range_missing", "or_not_ready"} & set(risk_tags))
+    has_high_entry = bool({"at_high", "near_high", "high_entry", "near_session_high"} & set(risk_tags)) or from_high_bucket in {
+        "at_high",
+        "near_high",
+        "high",
+    }
+    kr_risk_combo_active = bool(market_text == "KR" and has_or_missing and has_high_entry)
+
     default_warnings: list[str] = []
     evidence_demoted_to = ""
     evidence_runtime_reason = ""
@@ -453,6 +501,29 @@ def route_candidate_action(
             warnings=["same_ticker_route_lock"],
         )
 
+    if kr_risk_combo_active and requested in {"BUY_READY", "PULLBACK_WAIT"}:
+        gate_context["kr_risk_combo_gate"] = {
+            "active": True,
+            "tags": list(risk_tags),
+            "has_or_missing": has_or_missing,
+            "has_high_entry": has_high_entry,
+        }
+        if requested == "BUY_READY":
+            requested = "PROBE_READY"
+            evidence_demoted_to = "PROBE_READY"
+            evidence_runtime_reason = "kr_risk_combo_gate"
+            gate_context["kr_risk_combo_gate"]["result"] = "demote_to_probe"
+            default_warnings.append("kr_risk_combo_demoted")
+        elif requested == "PULLBACK_WAIT" and not _kr_risk_combo_confirmation_ok(context):
+            gate_context["kr_risk_combo_gate"]["result"] = "watch_confirmation_required"
+            return _decision(
+                "WATCH",
+                reason="kr_risk_combo_confirmation_required",
+                warnings=["kr_risk_combo_confirmation_required"],
+                demoted_to="WATCH",
+                runtime_gate_reason="kr_risk_combo_gate",
+            )
+
     if bool(context.get("evidence_pack_ceiling_enabled")) and requested in {"PROBE_READY", "BUY_READY"}:
         evidence_ceiling = str(context.get("evidence_action_ceiling") or "").strip().upper()
         evidence_state = str(context.get("evidence_data_state") or "").strip().lower()
@@ -496,7 +567,7 @@ def route_candidate_action(
 
     if (
         market_text == "KR"
-        and requested in {"PROBE_READY", "BUY_READY"}
+        and requested in KR_CONFIRMATION_ACTIONS
         and bool(context.get("kr_confirmation_gate_active"))
     ):
         confirmation_reason = str(context.get("kr_confirmation_reason") or "kr_confirmation_required")

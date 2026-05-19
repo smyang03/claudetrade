@@ -1780,6 +1780,25 @@ class PathBRuntime:
                 brain_snapshot_id=self._brain_snapshot_id(market),
             )
             return False
+        submit_gate = self._kr_pathb_submit_gate(plan, signal)
+        if submit_gate.get("allowed") is False:
+            reason = str(submit_gate.get("reason") or "KR_PATHB_SUBMIT_GUARD_BLOCKED")
+            self._record_blocked(
+                market,
+                plan.ticker,
+                plan.decision_id,
+                reason,
+                submit_gate,
+                plan.path_run_id,
+            )
+            if bool(submit_gate.get("cancel_plan", True)):
+                self.adapter.cancel_plan(
+                    plan.path_run_id,
+                    reason=reason,
+                    runtime_mode=self.mode,
+                    brain_snapshot_id=self._brain_snapshot_id(market),
+                )
+            return False
         self.adapter.mark_hit(
             plan.path_run_id,
             price=signal.price,
@@ -5283,6 +5302,66 @@ class PathBRuntime:
                     link_episode(signal_id, episode_id, reason="ORDER_UNKNOWN_PATHB_BLOCKED")
         except Exception:
             pass
+
+    @staticmethod
+    def _pathb_submit_guard_cancels_plan(reason_code: str) -> bool:
+        terminal_reasons = {
+            "kr_late_entry_closed",
+            "max_entry_price_exceeded",
+            "same_day_stopped",
+            "kr_late_entry_current_price_missing",
+            "kr_late_chase_order_time_block",
+            "kr_stale_chase_order_time_block",
+        }
+        temporary_reasons = {
+            "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
+            "order_time_late_entry_metrics_unresolved_allow",
+        }
+        reason = str(reason_code or "").strip()
+        if reason in temporary_reasons:
+            return False
+        return reason in terminal_reasons or bool(reason)
+
+    def _kr_pathb_submit_gate(self, plan: PricePlan, signal: EntrySignal) -> dict[str, Any]:
+        market = str(getattr(plan, "market", "") or "").upper()
+        if market != "KR":
+            return {"enabled": False, "allowed": True, "reason": "not_kr"}
+        gate_fn = getattr(self.bot, "_kr_late_entry_order_time_gate", None)
+        if not callable(gate_fn):
+            return {"enabled": False, "allowed": True, "reason": "kr_submit_gate_unavailable"}
+        try:
+            current_price = float(getattr(signal, "price", 0.0) or getattr(signal, "limit_price", 0.0) or 0.0)
+        except Exception:
+            current_price = 0.0
+        try:
+            max_entry_price = float(getattr(plan, "cancel_if_open_above", None) or getattr(plan, "buy_zone_high", 0.0) or 0.0)
+        except Exception:
+            max_entry_price = 0.0
+        gate = dict(
+            gate_fn(
+                plan.ticker,
+                current_price=current_price,
+                max_entry_price=max_entry_price,
+                strategy="claude_price",
+                signal_payload={
+                    "path_run_id": plan.path_run_id,
+                    "origin_action": getattr(plan, "origin_action", "") or "",
+                    "origin_route": getattr(plan, "origin_route", "") or "",
+                    "registration_scope": getattr(plan, "registration_scope", "") or "",
+                    "created_at": getattr(plan, "created_at", "") or "",
+                    "signal_price": current_price,
+                    "signal_limit_price": getattr(signal, "limit_price", 0.0) or 0.0,
+                    "signal_reason": getattr(signal, "reason", "") or "",
+                },
+            )
+        )
+        gate.setdefault("enabled", True)
+        gate.setdefault("allowed", True)
+        gate.setdefault("reason", "")
+        gate["stage"] = "pathb_submit_gate"
+        if gate.get("allowed") is False:
+            gate["cancel_plan"] = self._pathb_submit_guard_cancels_plan(str(gate.get("reason") or ""))
+        return gate
 
     def _plan_from_run(self, run: dict[str, Any]) -> PricePlan | None:
         raw_plan = run.get("plan") or run.get("plan_json") or {}

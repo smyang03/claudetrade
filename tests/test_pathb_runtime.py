@@ -1108,6 +1108,89 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["status"], "CANCELLED")
             self.assertEqual(run["plan"]["cancel_reason"], "SAME_DAY_REENTRY_AFTER_STOP")
 
+    def test_submit_buy_kr_order_time_gate_blocks_before_precheck(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            lifecycle_events: list[tuple[tuple, dict]] = []
+            bot._v2_record_lifecycle_event = lambda *args, **kwargs: lifecycle_events.append((args, kwargs))
+            bot._kr_late_entry_order_time_gate = lambda *args, **kwargs: {
+                "enabled": True,
+                "allowed": False,
+                "reason": "kr_stale_chase_order_time_block",
+                "final_action": "WATCH",
+            }
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            plan = make_price_plan(
+                decision_id="dec_kr_submit_gate",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+
+            with patch("runtime.pathb_runtime.precheck_order") as precheck, patch("runtime.pathb_runtime.place_order") as place:
+                accepted = runtime._submit_buy(
+                    plan,
+                    EntrySignal(True, "buy_zone_hit", price=52_100, limit_price=52_100, path_run_id=plan.path_run_id),
+                )
+
+            run = store.find_path_run(plan.path_run_id)
+            self.assertFalse(accepted)
+            precheck.assert_not_called()
+            place.assert_not_called()
+            self.assertEqual(run["status"], "CANCELLED")
+            self.assertEqual(run["plan"]["cancel_reason"], "kr_stale_chase_order_time_block")
+            self.assertEqual(lifecycle_events[0][0][0], "SAFETY_BLOCKED")
+            self.assertEqual(lifecycle_events[0][1]["reason_code"], "kr_stale_chase_order_time_block")
+
+    def test_submit_buy_us_preopen_market_closed_blocks_before_precheck(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.current_market = "US"
+            bot.session_active = False
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(
+                bot,
+                is_paper=False,
+                store=store,
+                config=V2Config(pathb_fixed_order_krw=500_000, us_min_order_krw=100_000),
+            )
+            runtime.control_store = _Control()
+            plan = make_price_plan(
+                decision_id="dec_us_preopen",
+                ticker="AAPL",
+                market="US",
+                session_date="2026-04-27",
+                buy_zone_low=180,
+                buy_zone_high=181,
+                sell_target=190,
+                stop_loss=175,
+                hold_days=1,
+                confidence=0.8,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+
+            with patch("runtime.pathb_runtime.precheck_order") as precheck, patch("runtime.pathb_runtime.place_order") as place:
+                accepted = runtime._submit_buy(
+                    plan,
+                    EntrySignal(True, "buy_zone_hit", price=180.5, limit_price=180.5, path_run_id=plan.path_run_id),
+                )
+
+            run = store.find_path_run(plan.path_run_id)
+            self.assertFalse(accepted)
+            precheck.assert_not_called()
+            place.assert_not_called()
+            self.assertEqual(run["status"], "CANCELLED")
+            self.assertEqual(run["plan"]["cancel_reason"], "MARKET_CLOSED")
+
     def test_consistency_health_reports_missing_pathb_lifecycle_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")

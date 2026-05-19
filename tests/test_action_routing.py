@@ -155,6 +155,94 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.runtime_gate["kr_confirmation_gate_mode"], "FAST_TRIGGER_WITH_HARD_VETO")
         self.assertTrue(decision.runtime_gate["kr_confirmation_fast_window_ok"])
 
+    def test_kr_confirmation_live_blocks_pullback_wait(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "005930",
+                "action": "PULLBACK_WAIT",
+                "confidence": 0.72,
+                "price_targets": {
+                    "buy_zone_low": 69500,
+                    "buy_zone_high": 70000,
+                    "sell_target": 73000,
+                    "stop_loss": 68000,
+                    "hold_days": 1,
+                    "confidence": 0.72,
+                },
+            },
+            market="KR",
+            execution_context={
+                "data_quality": "good",
+                "kr_confirmation_gate_active": True,
+                "kr_confirmation_confirmed": False,
+                "kr_confirmation_state": "CONFIRMING",
+                "kr_confirmation_reason": "kr_momentum_not_confirmed",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "kr_momentum_not_confirmed")
+        self.assertEqual(decision.runtime_gate_reason, "kr_momentum_not_confirmed")
+        self.assertEqual(decision.demoted_to, "WATCH")
+
+    def test_kr_or_missing_at_high_demotes_buy_ready_to_probe(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "005930",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "risk_tags": ["or_missing", "at_high"],
+            },
+            market="KR",
+            execution_context={"data_quality": "good"},
+        )
+
+        self.assertEqual(decision.final_action, "PROBE_READY")
+        self.assertEqual(decision.route, "PlanA.probe")
+        self.assertEqual(decision.original_action, "BUY_READY")
+        self.assertEqual(decision.demoted_to, "PROBE_READY")
+        self.assertEqual(decision.runtime_gate_reason, "kr_risk_combo_gate")
+        self.assertIn("kr_risk_combo_demoted", decision.warnings)
+
+    def test_kr_or_missing_at_high_blocks_pullback_wait_without_confirmation(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "005930",
+                "action": "PULLBACK_WAIT",
+                "confidence": 0.72,
+                "risk_tags": ["or_missing", "at_high"],
+                "price_targets": {
+                    "buy_zone_low": 69500,
+                    "buy_zone_high": 70000,
+                    "sell_target": 73000,
+                    "stop_loss": 68000,
+                    "hold_days": 1,
+                    "confidence": 0.72,
+                },
+            },
+            market="KR",
+            execution_context={"data_quality": "good"},
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "kr_risk_combo_confirmation_required")
+        self.assertEqual(decision.runtime_gate_reason, "kr_risk_combo_gate")
+
+    def test_us_risk_tags_do_not_apply_kr_combo_gate(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "AAPL",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "risk_tags": ["or_missing", "at_high"],
+            },
+            market="US",
+            execution_context={"data_quality": "good"},
+        )
+
+        self.assertEqual(decision.final_action, "BUY_READY")
+        self.assertEqual(decision.route, "PlanA.buy")
+
     def test_pathb_waiting_keeps_wait_when_buy_ready_is_inside_buy_zone(self) -> None:
         decision = route_candidate_action(
             {

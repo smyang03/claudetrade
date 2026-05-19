@@ -97,3 +97,45 @@ CREATE INDEX IF NOT EXISTS idx_decisions_date    ON decisions(session_date);
 CREATE INDEX IF NOT EXISTS idx_decisions_market  ON decisions(market, session_date);
 CREATE INDEX IF NOT EXISTS idx_decisions_ticker  ON decisions(ticker, session_date);
 CREATE INDEX IF NOT EXISTS idx_decisions_signal  ON decisions(decision, session_date);
+
+CREATE TABLE IF NOT EXISTS v2_learning_performance (
+    v2_decision_id       TEXT PRIMARY KEY,
+    market               TEXT NOT NULL,
+    runtime_mode         TEXT NOT NULL,
+    session_date         TEXT NOT NULL,
+    ticker               TEXT NOT NULL,
+    status               TEXT NOT NULL,
+    route                TEXT,
+    path_type            TEXT,
+    path_run_id          TEXT,
+    strategy             TEXT,
+    origin_action        TEXT,
+    timing_style         TEXT,
+    filled               INTEGER NOT NULL DEFAULT 0,
+    closed               INTEGER NOT NULL DEFAULT 0,
+    fill_event_id        INTEGER,
+    close_event_id       INTEGER,
+    filled_at            TEXT,
+    closed_at            TEXT,
+    entry_price          REAL,
+    exit_price           REAL,
+    qty                  REAL,
+    pnl_krw              REAL,
+    pnl_pct              REAL,
+    mfe_pct              REAL,
+    mae_pct              REAL,
+    close_reason         TEXT,
+    forward_complete     INTEGER NOT NULL DEFAULT 0,
+    quality_grade        TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
+    quality_reasons_json TEXT NOT NULL DEFAULT '[]',
+    learning_allowed     INTEGER NOT NULL DEFAULT 0,
+    source_event_count   INTEGER NOT NULL DEFAULT 0,
+    synced_at            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_market_session
+    ON v2_learning_performance(market, runtime_mode, session_date);
+CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_ticker
+    ON v2_learning_performance(market, ticker, session_date);
+CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_learning
+    ON v2_learning_performance(learning_allowed, quality_grade, session_date);

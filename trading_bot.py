@@ -4878,7 +4878,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not self._runtime_bool("KR_LATE_ENTRY_GATE_ENABLED", True):
             return {"enabled": False, "allowed": True}
         requested = str((action or {}).get("action") or "").strip().upper()
-        if requested not in {"BUY_READY", "PROBE_READY"}:
+        if requested not in {"BUY_READY", "PROBE_READY", "PULLBACK_WAIT"}:
             return {"enabled": True, "allowed": True, "reason": "not_entry_action"}
         current = now_dt or datetime.now(KST)
         if current.tzinfo is None:
@@ -4983,6 +4983,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return state
         if requested == "BUY_READY":
             state.update({"final_action": "PROBE_READY", "reason": "kr_late_fresh_buy_demoted_to_probe"})
+            return state
+        if requested == "PULLBACK_WAIT":
+            state["reason"] = "kr_late_fresh_pullback_wait_allowed"
             return state
         state["reason"] = "kr_late_fresh_probe_allowed"
         return state
@@ -5310,12 +5313,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     execution_context["action_ceiling"] = "WATCH"
                     risk_tags.append("action_ceiling_watch")
                 _merge_soft_gates(risk_tags)
-            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY"}:
+            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY", "PULLBACK_WAIT"}:
                 execution_context.update(
                     self._kr_confirmation_gate_state(market_key, key, execution_context)
                 )
             kr_late_gate: dict[str, Any] = {}
-            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY"}:
+            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY", "PULLBACK_WAIT"}:
                 kr_late_gate = self._kr_late_entry_gate_state(
                     key,
                     action_for_route,
@@ -5657,6 +5660,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 reason_code=reason_code,
                 payload=payload,
             )
+    def _mark_v2_decision_quality_once(self, decision_id: str) -> None:
+        decision_key = str(decision_id or "").strip()
+        if not decision_key:
+            return
+        try:
+            v2_runtime = getattr(self, "v2", None)
+            registry = getattr(v2_runtime, "registry", None)
+            store = getattr(registry, "store", None) or getattr(v2_runtime, "store", None)
+            if store is None:
+                return
+            events = store.events_for_decision(decision_key)
+            if any(str(event.get("event_type") or "") == "QUALITY_MARKED" for event in events):
+                return
+            from lifecycle.quality_marker import DataQualityMarker
+
+            # Close-time marking is provisional; v2_learning_performance
+            # recalculates the authoritative grade after forward measurement.
+            DataQualityMarker(store).mark_decision(decision_key)
+        except Exception as exc:
+            log.debug(f"[quality marker skip] {decision_key}: {exc}")
+
     def _v2_fixed_size_entry(self, market: str, risk_price_krw: float):
         return self.v2.fixed_size_entry(market, risk_price_krw) if getattr(self, "v2", None) is not None else None
 
@@ -14384,6 +14408,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "original_qty": int(order_qty),
                         "remaining_qty": int(order.get("qty", 0) or 0),
                         "fill_price_native": float(order.get("filled_price_native", 0) or broker_pos.get("avg_price", 0) or 0),
+                        "path_type": order.get("path_type", ""),
+                        "path_run_id": order.get("pathb_path_run_id", ""),
                     },
                 )
                 if getattr(self, "pathb", None) is not None and order.get("pathb_path_run_id"):
@@ -14426,6 +14452,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "order_no": order.get("order_no", ""),
                         "qty": int(order_qty),
                         "fill_price_native": float(order.get("filled_price_native", 0) or broker_pos.get("avg_price", 0) or 0),
+                        "path_type": order.get("path_type", ""),
+                        "path_run_id": order.get("pathb_path_run_id", ""),
                     },
                 )
                 if getattr(self, "pathb", None) is not None and order.get("pathb_path_run_id"):
@@ -18068,6 +18096,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         event_price_native = float(raw_exit or 0)
         if market == "US" and not raw_exit_cached and event_price_native > 0 and self.usd_krw_rate > 0:
             event_price_native = event_price_native / float(self.usd_krw_rate)
+        closed_v2_decision_id = str(ex.get("v2_decision_id", "") or "")
         self._record_decision_event(
             market, "sell_filled", ex["ticker"],
             strategy=ex.get("strategy", ""),
@@ -18095,7 +18124,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "CLOSED",
             market,
             ex["ticker"],
-            decision_id=str(ex.get("v2_decision_id", "") or ""),
+            decision_id=closed_v2_decision_id,
             execution_id=str(result.get("order_no", "") or ex.get("v2_execution_id", "") or ""),
             position_id=str(ex.get("position_id", "") or ""),
             reason_code=_v2_close_reason(reason),
@@ -18110,6 +18139,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 **exit_meta,
             },
         )
+        self._mark_v2_decision_quality_once(closed_v2_decision_id)
         if getattr(self, "pathb", None) is not None and ex.get("pathb_path_run_id"):
             try:
                 self.pathb.on_external_close(
