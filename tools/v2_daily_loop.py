@@ -17,6 +17,7 @@ from lifecycle.models import LifecycleEvent
 from research.v2_policy_optimizer import OptimizerConfig, build_policy_optimization_report
 from research.v2_simulation_report import build_simulation_report
 from review.daily_review import DailyReviewWriter
+from tools.sync_v2_learning_performance import sync_v2_learning_performance
 from tools.v2_forward_measurer import measure_forward_pending
 
 
@@ -64,6 +65,15 @@ def run_daily_loop(
         markets=markets,
         dry_run=dry_run,
     )
+    learning_sync: dict[str, Any] = {}
+    for mkt in markets:
+        learning_sync[mkt] = sync_v2_learning_performance(
+            event_db=event_store.path,
+            ml_db=root_path / "data" / "ml" / "decisions.db",
+            market=mkt,
+            runtime_mode=runtime_mode,
+            dry_run=dry_run,
+        )
     reviews: dict[str, Any] = {}
     for mkt in markets:
         writer = DailyReviewWriter(event_store)
@@ -94,6 +104,7 @@ def run_daily_loop(
         "config_diff_vs_previous_loop": config_diff,
         "forward_pending": forward,
         "forward_measured": forward_measured,
+        "learning_sync": learning_sync,
         "daily_reviews": reviews,
         "simulation_report": simulation_paths,
         "policy_optimization_report": optimizer_paths,
@@ -324,6 +335,7 @@ def _to_markdown(payload: dict[str, Any]) -> str:
         lines.append(f"- {'PASS' if item.get('ok') else 'FAIL'} {item.get('name')}")
     forward = payload.get("forward_pending") or {}
     forward_measured = payload.get("forward_measured") or {}
+    learning_sync = payload.get("learning_sync") or {}
     lines.extend(
         [
             "",
@@ -340,6 +352,21 @@ def _to_markdown(payload: dict[str, Any]) -> str:
             f"- pending data: {forward_measured.get('pending_data_count', 0)}",
             f"- missing CSV: {forward_measured.get('missing_csv_count', 0)}",
             "",
+            "## Learning Sync",
+            "",
+        ]
+    )
+    for mkt, sync in learning_sync.items():
+        lines.append(f"### {mkt}")
+        lines.append(f"- selected: {sync.get('selected', 0)}")
+        lines.append(f"- written: {sync.get('written', 0)}")
+        lines.append(f"- filled: {sync.get('filled', 0)}")
+        lines.append(f"- closed: {sync.get('closed', 0)}")
+        lines.append(f"- learning_allowed: {sync.get('learning_allowed', 0)}")
+        lines.append(f"- forward_complete: {sync.get('forward_complete', 0)}")
+        lines.append("")
+    lines.extend(
+        [
             "## Reports",
             "",
             f"- simulation: {(payload.get('simulation_report') or {}).get('markdown')}",
