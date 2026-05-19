@@ -27,7 +27,7 @@ def evaluate_decision_quality(events: list[dict[str, Any]]) -> QualityResult:
     suspect = []
     if "ORDER_UNKNOWN" in event_types and "ORDER_RECOVERED" not in event_types:
         suspect.append("ORDER_UNKNOWN_UNRESOLVED")
-    if "FORWARD_PENDING_DATA" in event_types:
+    if "FORWARD_PENDING_DATA" in event_types and not forward_measurement_complete(events):
         suspect.append("FORWARD_PENDING_DATA")
     for event in events:
         if event.get("event_type") == "CLOSED":
@@ -45,6 +45,49 @@ def evaluate_decision_quality(events: list[dict[str, Any]]) -> QualityResult:
         return QualityResult(DataQuality.LEGACY_UNKNOWN, ("FORWARD_NOT_MEASURED",), learning_allowed=False)
 
     return QualityResult(DataQuality.CLEAN, tuple(), learning_allowed=True)
+
+
+def forward_measurement_complete(events: list[dict[str, Any]]) -> bool:
+    due: set[int] = set()
+    measured: set[int] = set()
+    has_pending = False
+    has_measured = False
+    for event in events:
+        if str(event.get("event_type") or "") != "FORWARD_PENDING_DATA":
+            continue
+        has_pending = True
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        due.update(_parse_horizon_values(payload.get("due_horizons") or []))
+    for event in events:
+        if str(event.get("event_type") or "") != "FORWARD_MEASURED":
+            continue
+        has_measured = True
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if payload.get("complete") is True:
+            return True
+        if not due:
+            due.update(_parse_horizon_values(payload.get("due_horizons") or []))
+        measured.update(_parse_horizon_values(payload.get("all_measured_horizons") or payload.get("measured_horizons") or []))
+    if not has_measured:
+        return False
+    if not has_pending and not due:
+        return True
+    if not due:
+        due = {1, 3, 5}
+    return bool(measured) and due.issubset(measured)
+
+
+def _parse_horizon_values(values: Any) -> set[int]:
+    parsed: set[int] = set()
+    if isinstance(values, (str, int)):
+        values = [values]
+    for item in values or []:
+        text = str(item).strip().lower().removesuffix("d")
+        try:
+            parsed.add(int(text))
+        except ValueError:
+            continue
+    return parsed
 
 
 def live_clean_learning_allowed(*, runtime_mode: str, quality: DataQuality | str, forward_complete: bool) -> bool:

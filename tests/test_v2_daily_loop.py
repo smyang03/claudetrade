@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 
 from decision.registry import DecisionRegistry
 from lifecycle.event_store import EventStore
-from tools.v2_daily_loop import _forward_measurement_complete, build_checks, diff_start_config, reserve_forward_pending
+from tools.v2_daily_loop import (
+    _forward_measurement_complete,
+    build_checks,
+    diff_start_config,
+    reserve_forward_pending,
+    run_daily_loop,
+)
 
 
 class V2DailyLoopTests(unittest.TestCase):
@@ -91,7 +100,15 @@ class V2DailyLoopTests(unittest.TestCase):
         self.assertEqual(diff_start_config(None, current)["status"], "NO_PREVIOUS_CONFIG")
         self.assertEqual(diff_start_config(current, current)["status"], "UNCHANGED")
         self.assertTrue(
-            all(item["ok"] for item in build_checks(current, {"decision_count": 0}, {"measured_count": 0}))
+            all(
+                item["ok"]
+                for item in build_checks(
+                    current,
+                    {"decision_count": 0},
+                    {"measured_count": 0},
+                    {"KR": {"selected": 0, "written": 0, "dry_run": True, "learning_allowed": 0}},
+                )
+            )
         )
 
     def test_forward_measurement_complete_uses_pending_due_horizons(self) -> None:
@@ -101,6 +118,84 @@ class V2DailyLoopTests(unittest.TestCase):
         ]
 
         self.assertTrue(_forward_measurement_complete(events))
+
+    def test_run_daily_loop_catches_up_forward_sessions_and_syncs_learning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = {
+                "enabled_markets": ["KR", "US"],
+                "disabled_markets": [],
+                "KR_FIXED_ORDER_KRW": 200000,
+                "US_FIXED_ORDER_KRW": 200000,
+                "KR_MIN_ORDER_KRW": 50000,
+                "US_MIN_ORDER_KRW": 50000,
+                "KR_MAX_POSITIONS": 10,
+                "US_MAX_POSITIONS": 10,
+                "V2_MAX_DAILY_ENTRIES": 10,
+                "brain_policy": "fresh_v2_reference_v1",
+                "same_close_policy": "research_only_disallowed_for_live",
+                "env_overrides": {
+                    "US_FIXED_ORDER_KRW": "200000",
+                    "PATHB_MAX_POSITIONS": "10",
+                    "PATHB_MAX_DAILY_ENTRIES": "10",
+                },
+            }
+            config_path = root / "v2_start_config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            price_dir = root / "data" / "price" / "kr"
+            price_dir.mkdir(parents=True)
+            (price_dir / "kr_005930.csv").write_text(
+                "date,open,high,low,close,volume\n"
+                "2026-05-08,100,101,99,100,1000\n"
+                "2026-05-11,101,102,100,101,1000\n"
+                "2026-05-12,102,103,101,102,1000\n"
+                "2026-05-13,103,104,102,103,1000\n"
+                "2026-05-14,104,105,103,104,1000\n"
+                "2026-05-15,105,106,104,105,1000\n",
+                encoding="utf-8-sig",
+            )
+            store = EventStore(root / "events.db")
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+
+            payload = run_daily_loop(
+                session_date="2026-05-10",
+                runtime_mode="live",
+                market="KR",
+                config_path=config_path,
+                dry_run=False,
+                run_simulation=False,
+                run_optimizer=False,
+                store=store,
+                root=root,
+                output_dir=root / "reports",
+                forward_lookback_days=3,
+            )
+
+            self.assertEqual(payload["forward_sessions"], ["2026-05-08", "2026-05-09", "2026-05-10"])
+            self.assertEqual(payload["forward_pending"]["decision_count"], 1)
+            self.assertEqual(payload["forward_measured"]["measured_count"], 1)
+            self.assertEqual(payload["learning_sync"]["KR"]["written"], 1)
+            self.assertEqual(payload["learning_sync"]["KR"]["learning_allowed"], 1)
+            self.assertTrue(all(item["ok"] for item in payload["checks"]))
+            events = store.events_for_decision(decision_id)
+            self.assertTrue(_forward_measurement_complete(events))
+            with closing(sqlite3.connect(root / "data" / "ml" / "decisions.db")) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT forward_complete, quality_grade, learning_allowed FROM v2_learning_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+            self.assertEqual(row["forward_complete"], 1)
+            self.assertEqual(row["quality_grade"], "CLEAN")
+            self.assertEqual(row["learning_allowed"], 1)
 
 
 if __name__ == "__main__":

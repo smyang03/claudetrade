@@ -76,6 +76,41 @@ class V2ForwardMeasurerTests(unittest.TestCase):
             self.assertEqual(second["measured_count"], 0)
             self.assertEqual(second["skipped"][0]["reason"], "already_measured")
 
+    def test_measure_forward_pending_reads_bom_csv_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            price_dir = root / "price"
+            kr_dir = price_dir / "kr"
+            kr_dir.mkdir(parents=True)
+            (kr_dir / "kr_005930.csv").write_text(
+                "date,open,high,low,close,volume\n"
+                "2026-04-27,100,101,99,100,1000\n"
+                "2026-04-28,103,104,102,103,1000\n",
+                encoding="utf-8-sig",
+            )
+            store = EventStore(root / "events.db")
+            registry = DecisionRegistry(store)
+            registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-04-27",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+                payload={"due_horizons": ["1d"]},
+            )
+
+            result = measure_forward_pending(
+                store,
+                session_date="2026-04-27",
+                runtime_mode="live",
+                markets=["KR"],
+                price_dir=price_dir,
+            )
+
+            self.assertEqual(result["measured_count"], 1)
+            self.assertEqual(result["pending_data_count"], 0)
+
     def test_dry_run_does_not_append_forward_measured(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

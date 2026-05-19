@@ -225,8 +225,14 @@ def _load_price_rows(price_dir: Path, market: str, ticker: str) -> list[dict[str
     path = price_dir / mkt / f"{mkt}_{ticker}.csv"
     if not path.exists():
         return None
-    with path.open("r", encoding="utf-8", newline="") as f:
-        rows = list(csv.DictReader(f))
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            normalized = {
+                str(key or "").lstrip("\ufeff").strip().lower(): value
+                for key, value in row.items()
+            }
+            rows.append(normalized)
     rows.sort(key=lambda row: str(row.get("date") or ""))
     return rows
 

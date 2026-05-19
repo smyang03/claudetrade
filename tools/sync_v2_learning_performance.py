@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lifecycle.quality import evaluate_decision_quality
+from lifecycle.quality import evaluate_decision_quality, forward_measurement_complete
 
 
 DEFAULT_EVENT_DB = ROOT / "data" / "v2_event_store.db"
@@ -330,7 +330,7 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
     path_plan = dict(path_run.get("plan") or {})
     fill = _first_event(events, "FILLED", "PARTIAL_FILLED")
     close = _last_event(events, "CLOSED")
-    forward_complete = any(str(event.get("event_type") or "") == "FORWARD_MEASURED" for event in events)
+    forward_complete = forward_measurement_complete(events)
     fill_payload = dict(fill.get("payload") or {})
     close_payload = dict(close.get("payload") or {})
     event_path_run_id = _entry_path_run_id_from_events(events)

@@ -239,6 +239,27 @@ class V2Phase1Tests(unittest.TestCase):
         self.assertFalse(live_clean_learning_allowed(runtime_mode="paper", quality="CLEAN", forward_complete=True))
         self.assertTrue(live_clean_learning_allowed(runtime_mode="live", quality="CLEAN", forward_complete=True))
 
+    def test_quality_allows_completed_forward_after_pending_reservation(self) -> None:
+        incomplete = evaluate_decision_quality(
+            [
+                {"event_type": "CLAUDE_TRADE_READY"},
+                {"event_type": "FORWARD_PENDING_DATA", "payload": {"due_horizons": ["1d", "3d"]}},
+                {"event_type": "FORWARD_MEASURED", "payload": {"all_measured_horizons": ["1d"]}},
+            ]
+        )
+        self.assertEqual(incomplete.grade.value, "SUSPECT")
+        self.assertFalse(incomplete.learning_allowed)
+
+        complete = evaluate_decision_quality(
+            [
+                {"event_type": "CLAUDE_TRADE_READY"},
+                {"event_type": "FORWARD_PENDING_DATA", "payload": {"due_horizons": ["1d", "3d"]}},
+                {"event_type": "FORWARD_MEASURED", "payload": {"all_measured_horizons": ["1d", "3d"]}},
+            ]
+        )
+        self.assertEqual(complete.grade.value, "CLEAN")
+        self.assertTrue(complete.learning_allowed)
+
     def test_daily_review_writes_json_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")
