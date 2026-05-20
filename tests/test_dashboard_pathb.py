@@ -461,6 +461,22 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(today["stop_cluster"]["daily_stop_count"], 3)
         self.assertEqual(today["stop_cluster"]["hard_block_count"], 4)
 
+    def test_summary_min_order_krw_tolerates_bad_env_values(self) -> None:
+        def bad_us_env(_mode: str, key: str):
+            return {"US_MIN_ORDER_KRW": "bad", "US_MIN_ORDER_USD": "bad"}.get(key)
+
+        with patch.object(dashboard_server, "_get_env_raw", side_effect=bad_us_env):
+            self.assertEqual(dashboard_server._summary_min_order_krw("US", {}, 1300.0), 39000.0)
+
+        with patch.object(dashboard_server, "_get_env_raw", return_value="bad"):
+            self.assertEqual(dashboard_server._summary_min_order_krw("KR", {}, 1300.0), 50000.0)
+
+        with patch.object(dashboard_server, "_get_env_raw", return_value="bad"):
+            self.assertEqual(
+                dashboard_server._summary_min_order_krw("US", {"min_effective_order_krw": "42000"}, 1300.0),
+                42000.0,
+            )
+
     def test_summary_api_ignores_stale_previous_session_execution_warning(self) -> None:
         stale_rec = {
             "date": "2026-05-08",

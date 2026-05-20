@@ -350,6 +350,68 @@ def _start_config_env_overrides(mode: str) -> dict:
     return {str(k): str(v).lower() if isinstance(v, bool) else str(v) for k, v in overrides.items() if v is not None}
 
 
+def _start_config_path() -> Path:
+    return BASE_DIR / "config" / "v2_start_config.json"
+
+
+def _order_size_config_keys(market: str) -> list[str]:
+    market_key = str(market or "").upper()
+    if market_key == "US":
+        return ["MAX_ORDER_KRW", "US_FIXED_ORDER_KRW", "PATHB_FIXED_ORDER_KRW"]
+    return ["MAX_ORDER_KRW", "KR_FIXED_ORDER_KRW"]
+
+
+def _summary_order_size_setting_krw(market: str, mode: str, fallback: float = 0.0) -> float:
+    market_key = str(market or "").upper()
+    primary = "US_FIXED_ORDER_KRW" if market_key == "US" else "KR_FIXED_ORDER_KRW"
+    value = _float_or_none(_get_env_raw(mode, primary)) or 0.0
+    if value <= 0:
+        value = _float_or_none(_get_env_raw(mode, "MAX_ORDER_KRW")) or 0.0
+    if value <= 0:
+        value = float(fallback or 0.0)
+    return float(value or 0.0)
+
+
+def _update_start_config_order_size(market: str, amount_krw: float) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    if market_key not in {"KR", "US"}:
+        raise ValueError("market must be KR or US")
+    try:
+        amount = int(round(float(amount_krw or 0)))
+    except Exception as exc:
+        raise ValueError("amount_krw must be numeric") from exc
+    if amount < 50_000 or amount > 5_000_000:
+        raise ValueError("amount_krw must be between 50,000 and 5,000,000")
+
+    path = _start_config_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    overrides = data.get("env_overrides")
+    if not isinstance(overrides, dict):
+        overrides = {}
+        data["env_overrides"] = overrides
+
+    keys = _order_size_config_keys(market_key)
+    for key in keys:
+        overrides[key] = str(amount)
+        if key in data and key != "MAX_ORDER_KRW":
+            data[key] = amount
+    data["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+    data["updated_by"] = "dashboard_order_size_control"
+    _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    return {
+        "market": market_key,
+        "amount_krw": amount,
+        "updated_keys": keys,
+        "path": str(path),
+        "restart_required": True,
+    }
+
+
 def _get_env_int(mode: str, key: str, default: int) -> int:
     raw = _get_env_raw(mode, key)
     try:
@@ -1172,6 +1234,25 @@ def _float_or_none(value) -> Optional[float]:
         return num
     except Exception:
         return None
+
+
+def _summary_min_order_krw(market: str, live: Optional[dict], usd_krw: float, mode: str = "live") -> float:
+    market_key = str(market or "").upper()
+    live_map = live if isinstance(live, dict) else {}
+    min_order_krw = _float_or_none(
+        live_map.get("min_order_krw")
+        or live_map.get("min_effective_order_krw")
+        or 0
+    ) or 0.0
+    if min_order_krw <= 0:
+        env_name = "US_MIN_ORDER_KRW" if market_key == "US" else "KR_MIN_ORDER_KRW"
+        min_order_krw = _float_or_none(_get_env_raw(mode, env_name)) or 0.0
+    if min_order_krw <= 0:
+        if market_key == "US":
+            min_order_krw = (_float_or_none(_get_env_raw(mode, "US_MIN_ORDER_USD")) or 30.0) * float(usd_krw or 0)
+        else:
+            min_order_krw = 50000.0
+    return float(min_order_krw or 0.0)
 
 
 def _judge_brain_result(stance: str, market_change_pct: float) -> str:
@@ -5463,6 +5544,8 @@ def api_summary():
     mode_size_pct = int((live.get("mode_size_pct", 0) if live else 0) or (today_rec.get("consensus", {}).get("size", 0) or 0))
     max_order_krw = float((live.get("max_order_krw", 0) if live else 0) or 500000)
     mode_order_limit_krw = round(max_order_krw * (mode_size_pct / 100.0), 0) if mode_size_pct > 0 else 0
+    min_order_krw = _summary_min_order_krw(market, live, usd_krw, mode=mode)
+    order_size_setting_krw = _summary_order_size_setting_krw(market, mode, fallback=max_order_krw)
 
     streak = 0
     streak_type = None
@@ -5562,6 +5645,11 @@ def api_summary():
             "mode_size_pct":  mode_size_pct,
             "max_order_krw":  round(max_order_krw, 0),
             "mode_order_limit_krw": mode_order_limit_krw,
+            "min_order_krw":  round(min_order_krw, 0),
+            "buy_range_min_krw": round(min_order_krw, 0),
+            "buy_range_max_krw": mode_order_limit_krw,
+            "order_size_setting_krw": round(order_size_setting_krw, 0),
+            "order_size_setting_keys": _order_size_config_keys(market),
             "cumulative":     cum_asset,
             "asset_krw_kr":   round(kr_asset, 0),
             "asset_krw_us":   round(us_asset, 0),
@@ -6760,6 +6848,27 @@ def api_control_restart_bot():
     ok, message = _restart_bot_process()
     status = 200 if ok else 400
     return jsonify({"ok": ok, "message": message}), status
+
+
+@app.route("/api/control/order-size", methods=["POST"])
+def api_control_order_size():
+    mode = _request_mode()
+    if mode != "live":
+        return jsonify({"ok": False, "error": "order size control is live-mode only"}), 400
+    body = request.get_json(silent=True) or {}
+    market = str(body.get("market") or request.args.get("market") or "US").strip().upper()
+    amount = body.get("amount_krw", body.get("max_order_krw", body.get("value")))
+    try:
+        result = _update_start_config_order_size(market, amount)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"failed to update order size config: {exc}"}), 500
+    return jsonify({
+        "ok": True,
+        **result,
+        "message": "매수금액 설정을 저장했습니다. 실행 중인 봇에는 재시작 후 적용됩니다.",
+    })
 
 
 @app.route("/api/control/stop-cluster-reset", methods=["POST"])
@@ -9462,6 +9571,28 @@ function formatOrderableBreakdown(today) {
   return parts.join(' | ');
 }
 
+function formatBuyRange(today) {
+  const minOrder = Number(today.buy_range_min_krw || today.min_order_krw || 0);
+  const maxOrder = Number(today.buy_range_max_krw || today.mode_order_limit_krw || 0);
+  const configuredMax = Number(today.max_order_krw || 0);
+  const modeSizePct = Number(today.mode_size_pct || 0);
+  const why = configuredMax > 0 && maxOrder > 0 && modeSizePct > 0
+    ? `현재실행 ${fmt.asset(configuredMax)} × 모드 ${modeSizePct}%`
+    : (configuredMax > 0 ? `현재실행 설정최대 ${fmt.asset(configuredMax)}` : '');
+  const whySuffix = why ? ` (${why})` : '';
+  if (minOrder > 0 && maxOrder > 0 && maxOrder >= minOrder) {
+    return `${fmt.asset(minOrder)}~${fmt.asset(maxOrder)}${whySuffix}`;
+  }
+  if (minOrder > 0 && maxOrder > 0) {
+    return `최소 ${fmt.asset(minOrder)} · 실상한 ${fmt.asset(maxOrder)}${whySuffix}`;
+  }
+  if (maxOrder > 0) return `실상한 ${fmt.asset(maxOrder)}${whySuffix}`;
+  if (configuredMax > 0 && minOrder > 0) return `${fmt.asset(minOrder)}~설정최대 ${fmt.asset(configuredMax)}${whySuffix}`;
+  if (configuredMax > 0) return `설정최대 ${fmt.asset(configuredMax)}${whySuffix}`;
+  if (minOrder > 0) return `최소 ${fmt.asset(minOrder)}`;
+  return '';
+}
+
 function formatAccountAssetSummary(today, tradingKrw, assetBreakdown, assetSourceLabel) {
   const flowLabel = today.cash_flow_label || '입출금/환전 추정';
   return `<div>현재 매매 ${fmt.krw(tradingKrw)}${assetBreakdown ? ` · ${assetBreakdown}` : ''}</div>`
@@ -9589,6 +9720,8 @@ function renderStopClusterBar(today) {
   const sc = (today || {}).stop_cluster || {};
   const el = document.getElementById('bar-stop-cluster');
   const btn = document.getElementById('stop-cluster-reset-btn');
+  const buyRangeEl = document.getElementById('bar-buy-range');
+  const orderSizeInput = document.getElementById('bar-order-size-input');
   if (!el) return;
   const count = Number(sc.daily_stop_count || 0);
   const hard = Number(sc.hard_block_count || 0);
@@ -9613,6 +9746,16 @@ function renderStopClusterBar(today) {
     stopped.length ? `당일 재진입 차단 ${stopped.join(', ')}` : '',
     (sc.last_operator_reset || {}).at ? `최근 해제 ${String(sc.last_operator_reset.at).slice(11, 19)} 이전 count ${(sc.last_operator_reset || {}).count_before || 0}` : '',
   ].filter(Boolean).join(' | ');
+  if (buyRangeEl) {
+    const buyRange = formatBuyRange(today || {});
+    buyRangeEl.textContent = buyRange || '--';
+    buyRangeEl.title = buyRange ? '현재 설정 기준 최소~최대 1회 매수금액' : '매수금액 설정 없음';
+  }
+  if (orderSizeInput && document.activeElement !== orderSizeInput) {
+    const setting = Number((today || {}).order_size_setting_krw || (today || {}).max_order_krw || 0);
+    orderSizeInput.value = setting > 0 ? String(Math.round(setting)) : '';
+    orderSizeInput.title = `다음 ${MARKET} 1회 매수 설정금액`;
+  }
   if (btn) {
     btn.style.display = count > 0 || blocked || pending ? 'inline-flex' : 'none';
     btn.disabled = pending;
@@ -9620,6 +9763,36 @@ function renderStopClusterBar(today) {
     btn.textContent = pending ? '해제요청 대기' : '클러스터 해제';
     btn.title = '시장 손실클러스터 카운터만 0으로 되돌립니다. 당일 손절 종목 재진입 차단은 유지됩니다.';
   }
+}
+
+async function applyOrderSizeSetting() {
+  const input = document.getElementById('bar-order-size-input');
+  const status = document.getElementById('bar-order-size-status');
+  const btn = document.getElementById('bar-order-size-btn');
+  const amount = Number(input ? input.value : 0);
+  if (!(amount >= 50000)) {
+    if (status) status.textContent = '5만원 이상 입력';
+    return;
+  }
+  if (MODE !== 'live') {
+    if (status) status.textContent = 'live 모드만 저장 가능';
+    return;
+  }
+  if (!confirm(`${MARKET} 1회 매수 설정을 ${fmt.asset(amount)}로 저장할까요? 실행 중인 봇에는 재시작 후 적용됩니다.`)) return;
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = '저장 중..';
+  const res = await apiPost('/api/control/order-size', {
+    market: MARKET,
+    amount_krw: amount,
+  }).then(async r => ({ ok: r.ok, data: await r.json() })).catch(() => ({ ok: false, data: {} }));
+  if (status) {
+    status.textContent = res.ok
+      ? '저장됨 · 봇 재시작 필요'
+      : (res.data.error || '저장 실패');
+    status.style.color = res.ok ? '#fbbf24' : '#f87171';
+  }
+  if (btn) btn.disabled = false;
+  if (res.ok) await loadSummary();
 }
 
 const MODE_KO = {
@@ -9951,6 +10124,14 @@ PAGE_TODAY_HTML = """
   <span style="color:var(--border)">|</span>
   <span style="color:var(--text-dim)">손실클러스터</span>
   <span id="bar-stop-cluster" style="font-weight:700;color:var(--text)">--</span>
+  <span style="color:var(--border)">|</span>
+  <span style="color:var(--text-dim)">매수범위</span>
+  <span id="bar-buy-range" style="font-weight:700;color:var(--text)">--</span>
+  <span style="color:var(--text-dim)">다음설정</span>
+  <input id="bar-order-size-input" type="number" min="50000" step="10000" inputmode="numeric" aria-label="1회 매수 설정금액"
+    style="width:112px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);font-size:12px">
+  <button id="bar-order-size-btn" class="apply-btn" style="padding:6px 10px;font-size:12px" onclick="applyOrderSizeSetting()">설정</button>
+  <span id="bar-order-size-status" style="font-size:11px;color:var(--text-dim)"></span>
   <button id="stop-cluster-reset-btn" class="apply-btn" style="display:none;padding:6px 10px;font-size:12px" onclick="requestStopClusterReset()">시장차단 해제</button>
 </div>
 <div id="position-board" style="display:flex;flex-wrap:nowrap;gap:10px;margin-bottom:20px;overflow-x:auto;overflow-y:hidden;padding-bottom:6px;scrollbar-width:thin"></div>
