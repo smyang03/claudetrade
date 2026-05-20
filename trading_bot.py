@@ -954,6 +954,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._or_high: dict[str, float] = {}
         self._or_low: dict[str, float] = {}
         self._or_formed: dict[str, bool] = {}
+        self._intraday_recheck_stale_alert_keys: set[str] = set()
         # KIS 지수 스냅샷 캐시 — API 일시 실패 시 TTL 내 이전 성공 값 재사용
         self._kis_index_cache: dict[str, dict] = {}
         # 매도 실패 쿨다운 — ticker → 실패 시각, 90초간 재시도 억제
@@ -3332,6 +3333,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         else:
             order.setdefault("strategy_used", str(order.get("strategy") or order.get("source_strategy") or ""))
             order.setdefault("route_source", "signal_entry")
+        order.setdefault("source_type", str(order.get("route_source") or ""))
         return order
 
     def _hybrid_gap_pullback_gate_payload(
@@ -10625,14 +10627,526 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 return self._build_market_judgment_override_context(market)
             except Exception:
                 return f"CURRENT_MARKET_CONTEXT unavailable; intraday context failed: {e}"
+    def _position_hold_minutes(self, pos: dict) -> Optional[float]:
+        raw_ts = pos.get("_fill_ts")
+        try:
+            if raw_ts not in (None, ""):
+                return max(0.0, (time.time() - float(raw_ts)) / 60.0)
+        except Exception:
+            pass
+        for key in ("entry_time", "fill_time", "created_at", "opened_at"):
+            raw = str(pos.get(key) or "").strip()
+            if not raw:
+                continue
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=KST)
+            return max(0.0, (datetime.now(KST) - parsed.astimezone(KST)).total_seconds() / 60.0)
+        return None
+
+    def _position_native_prices(self, pos: dict, market: str) -> tuple[float, float]:
+        if str(market or "").upper() == "US":
+            entry = self._float_or_zero(pos.get("display_avg_price") or pos.get("avg_price") or pos.get("entry"))
+            current = self._float_or_zero(
+                pos.get("display_current_price")
+                or pos.get("raw_current_price")
+                or pos.get("current_price")
+                or entry
+            )
+            if current > 0 and entry > 0 and current > entry * 20 and self.usd_krw_rate > 0:
+                current = current / float(self.usd_krw_rate)
+            return entry, current
+        entry = self._float_or_zero(pos.get("entry") or pos.get("avg_price") or pos.get("display_avg_price"))
+        current = self._float_or_zero(
+            pos.get("current_price")
+            or pos.get("display_current_price")
+            or self.price_cache_raw.get(pos.get("ticker", ""))
+            or entry
+        )
+        return entry, current
+
+    def _position_stop_price(self, pos: dict) -> float:
+        for key in (
+            "effective_stop_price",
+            "strategy_stop_price",
+            "sl",
+            "selection_reference_stop",
+            "pathb_reference_stop",
+            "loss_cap_price",
+            "auto_sell_policy_hard_stop",
+            "auto_sell_policy_protective_stop",
+        ):
+            value = self._float_or_zero(pos.get(key))
+            if value > 0:
+                return value
+        return 0.0
+
+    def _advisor_or_context(self, market: str, ticker: str, entry_native: float) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        raw_ticker = str(ticker or "").strip()
+        keys = [raw_ticker]
+        try:
+            norm_key = self._selection_ticker_key(market_key, raw_ticker)
+            if norm_key and norm_key not in keys:
+                keys.append(norm_key)
+        except Exception:
+            if market_key == "US" and raw_ticker.upper() not in keys:
+                keys.append(raw_ticker.upper())
+        or_high = 0.0
+        or_low = 0.0
+        or_formed = False
+        for key in keys:
+            if not or_high:
+                or_high = self._float_or_zero(getattr(self, "_or_high", {}).get(key))
+            if not or_low:
+                or_low = self._float_or_zero(getattr(self, "_or_low", {}).get(key))
+            if key in getattr(self, "_or_formed", {}):
+                or_formed = bool(getattr(self, "_or_formed", {}).get(key))
+        entry_vs_or_high_pct = None
+        if entry_native > 0 and or_high > 0:
+            entry_vs_or_high_pct = round((entry_native / or_high - 1.0) * 100.0, 3)
+        return {
+            "or_formed": or_formed,
+            "or_high": or_high,
+            "or_low": or_low,
+            "entry_vs_or_high_pct": entry_vs_or_high_pct,
+        }
+
+    def _advisor_selection_reason(self, market: str, ticker: str, pos: dict) -> str:
+        reason = str(pos.get("selected_reason") or "").strip()
+        if reason:
+            return reason
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = ticker.upper() if market_key == "US" else ticker
+        for order in list(getattr(self, "pending_orders", []) or []):
+            order_market = str(order.get("market", market_key) or market_key).upper()
+            order_ticker = str(order.get("ticker", "") or "").strip()
+            order_key = order_ticker.upper() if order_market == "US" else order_ticker
+            if order_market == market_key and order_key == ticker_key:
+                reason = str(order.get("selected_reason") or "").strip()
+                if reason:
+                    return reason
+        reason_map = getattr(self, "today_ticker_reasons", {}).get(market_key, {}) or {}
+        reason = str(reason_map.get(ticker_key, "") or reason_map.get(ticker, "") or "").strip()
+        if reason:
+            return reason
+        if market_key == "US":
+            for raw_key, raw_value in reason_map.items():
+                if str(raw_key).upper() == ticker_key:
+                    return str(raw_value or "").strip()
+        return ""
+
+    def _advisor_invalid_if(self, pos: dict, stop_price: float, stop_distance_pct: Optional[float]) -> str:
+        raw = str(pos.get("invalid_if") or "").strip()
+        if raw:
+            return raw
+        policy = pos.get("auto_sell_policy") or {}
+        if isinstance(policy, dict):
+            raw = str(policy.get("invalid_if") or "").strip()
+            if raw:
+                return raw
+        if stop_price > 0 and stop_distance_pct is not None:
+            return f"price trades at or below hard stop {stop_price:g}; current stop distance {stop_distance_pct:+.2f}%"
+        return "thesis invalid if price loses the active hard stop or broker/risk guard requires exit"
+
     def _advisor_pos(self, pos: dict, market: str) -> dict:
-        """hold_advisor 호출용 pos 복사본 — mode/entry_time 등 컨텍스트 필드 주입."""
+        """Copy position for hold_advisor and attach execution context."""
         mode = ""
         try:
             mode = (self.today_judgment or {}).get("consensus", {}).get("mode", "")
         except Exception:
             pass
-        return {**pos, "mode": mode}
+        enriched = {**pos, "mode": mode}
+        if not self._runtime_bool("INTRADAY_REVIEW_CONTEXT_V2_ENABLED", True):
+            return enriched
+        try:
+            market_key = "US" if str(market or "").upper() == "US" else "KR"
+            ticker = str(pos.get("ticker", "") or "").strip()
+            entry_native, current_native = self._position_native_prices(pos, market_key)
+            stop_price = self._position_stop_price(pos)
+            stop_distance_pct = None
+            if current_native > 0 and stop_price > 0:
+                stop_distance_pct = round((current_native / stop_price - 1.0) * 100.0, 3)
+            or_ctx = self._advisor_or_context(market_key, ticker, entry_native)
+            selected_reason = self._advisor_selection_reason(market_key, ticker, pos)
+            source_type = str(
+                pos.get("source_type")
+                or pos.get("selection_source_type")
+                or pos.get("route_source")
+                or pos.get("entry_source_type")
+                or pos.get("source_strategy")
+                or ""
+            ).strip()
+            hold_min = self._position_hold_minutes(pos)
+            ctx = {
+                "schema": "intraday_review_context_v2",
+                "selected_reason": selected_reason,
+                "selected_reason_tag": str(pos.get("selected_reason_tag") or "").strip(),
+                "source_type": source_type,
+                "entry_route": str(pos.get("entry_route") or "").strip(),
+                "route_source": str(pos.get("route_source") or "").strip(),
+                "hold_min_since_entry": round(hold_min, 1) if hold_min is not None else None,
+                "entry_native": entry_native,
+                "current_native": current_native,
+                "hard_stop_price": stop_price,
+                "hard_stop_distance_pct": stop_distance_pct,
+                "invalid_if": self._advisor_invalid_if(pos, stop_price, stop_distance_pct),
+                "selection_reference_target": self._float_or_zero(pos.get("selection_reference_target")),
+                "selection_reference_stop": self._float_or_zero(pos.get("selection_reference_stop")),
+                "pathb_reference_target": self._float_or_zero(pos.get("pathb_reference_target")),
+                "pathb_reference_stop": self._float_or_zero(pos.get("pathb_reference_stop")),
+                "pending_intraday_recheck": bool(pos.get("pending_intraday_recheck")),
+                "pending_intraday_recheck_at": str(pos.get("pending_intraday_recheck_at") or ""),
+                **or_ctx,
+            }
+            enriched["advisor_context_v2"] = ctx
+            for key, value in ctx.items():
+                if key != "schema" and enriched.get(key) in (None, ""):
+                    enriched[key] = value
+        except Exception as exc:
+            log.debug(f"[advisor context v2] failed {market} {pos.get('ticker')}: {exc}")
+        return enriched
+
+    def _execution_leak_log_path(self, market: str, kind: str) -> Path:
+        session_date = self._current_session_date_str(market).replace("-", "")
+        safe_kind = str(kind or "event").strip() or "event"
+        return get_runtime_path("logs", "execution_leak", f"{session_date}_{safe_kind}.jsonl")
+
+    def _write_execution_leak_event(self, market: str, kind: str, event: str, payload: dict) -> None:
+        if not self._runtime_bool("EXECUTION_LEAK_LOG_ENABLED", True):
+            return
+        try:
+            rec = {
+                "event": event,
+                "market": market,
+                "session_date": self._current_session_date_str(market),
+                "logged_at": datetime.now(KST).isoformat(timespec="seconds"),
+                **(payload or {}),
+            }
+            path = self._execution_leak_log_path(market, kind)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+        except Exception as exc:
+            log.debug(f"[execution leak log] write failed {market} {kind} {event}: {exc}")
+
+    def _rolling_kr_forward_3d_recent(self, days: Optional[int] = None) -> dict:
+        lookback_days = int(days or self._runtime_float("KR_INTRADAY_RECHECK_FORWARD_DAYS", 10.0))
+        min_n = int(self._runtime_float("KR_INTRADAY_RECHECK_FORWARD_MIN_N", 3.0))
+        min_avg = float(self._runtime_float("KR_INTRADAY_RECHECK_MIN_ROLLING_FWD3", -3.0))
+        try:
+            summary = tsdb.get_recent_selection_feedback(
+                "KR",
+                days=max(1, lookback_days),
+                as_of=self._current_session_date_str("KR"),
+            )
+            n = int(summary.get("trade_ready_forward_n") or 0)
+            avg_raw = summary.get("trade_ready_avg_forward_3d")
+            avg = None if avg_raw is None else float(avg_raw)
+            allowed = bool(n >= min_n and avg is not None and avg >= min_avg)
+            reason = "ok" if allowed else (
+                "insufficient_forward_sample" if n < min_n else f"rolling_forward_3d_below_gate:{avg}"
+            )
+            return {
+                "allowed": allowed,
+                "reason": reason,
+                "days": lookback_days,
+                "min_n": min_n,
+                "n": n,
+                "avg_forward_3d": avg,
+                "min_avg_forward_3d": min_avg,
+            }
+        except Exception as exc:
+            return {
+                "allowed": False,
+                "reason": f"rolling_forward_lookup_failed:{str(exc)[:120]}",
+                "days": lookback_days,
+                "min_n": min_n,
+                "n": 0,
+                "avg_forward_3d": None,
+                "min_avg_forward_3d": min_avg,
+            }
+
+    def _parse_kst_datetime(self, raw: Any) -> Optional[datetime]:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=KST)
+        return parsed.astimezone(KST)
+
+    def _clear_stale_intraday_recheck_flags(self, market: str) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        session_date = self._current_session_date_str(market_key)
+        changed = False
+        for pos in list(getattr(self.risk, "positions", []) or []):
+            if self._ticker_market(pos.get("ticker", "")) != market_key:
+                continue
+            if not bool(pos.get("pending_intraday_recheck")):
+                continue
+            pending_session = str(pos.get("pending_intraday_recheck_session") or session_date)
+            if pending_session == session_date:
+                continue
+            pos["pending_intraday_recheck"] = False
+            pos["pending_intraday_recheck_status"] = "expired_next_session"
+            pos["pending_intraday_recheck_expired_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            changed = True
+            self._write_execution_leak_event(
+                market_key,
+                "recheck",
+                "recheck_expired_next_session",
+                {
+                    "ticker": pos.get("ticker", ""),
+                    "pending_session": pending_session,
+                    "current_session": session_date,
+                },
+            )
+        if changed:
+            self._save_positions()
+
+    def _alert_stale_intraday_recheck_positions(self, market: str) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        threshold = float(self._runtime_float("KR_INTRADAY_RECHECK_STALE_ALERT_MIN", 90.0))
+        if threshold <= 0:
+            return
+        now_dt = datetime.now(KST)
+        lines = []
+        for pos in list(getattr(self.risk, "positions", []) or []):
+            if self._ticker_market(pos.get("ticker", "")) != market_key:
+                continue
+            if not bool(pos.get("pending_intraday_recheck")):
+                continue
+            started = self._parse_kst_datetime(pos.get("pending_intraday_recheck_at"))
+            if started is None:
+                continue
+            age_min = (now_dt - started).total_seconds() / 60.0
+            if age_min <= threshold:
+                continue
+            key = f"{market_key}:{pos.get('ticker','')}:{pos.get('pending_intraday_recheck_at','')}"
+            if key in getattr(self, "_intraday_recheck_stale_alert_keys", set()):
+                continue
+            self._intraday_recheck_stale_alert_keys.add(key)
+            lines.append(f"{pos.get('ticker')} pending_age={age_min:.0f}m")
+            self._write_execution_leak_event(
+                market_key,
+                "recheck",
+                "recheck_pending_stale_alert",
+                {
+                    "ticker": pos.get("ticker", ""),
+                    "pending_age_min": round(age_min, 1),
+                    "threshold_min": threshold,
+                },
+            )
+        if not lines:
+            return
+        try:
+            block_alert("intraday recheck stale", lines, market=market_key, icon="!", show_time=True)
+        except Exception as exc:
+            log.warning(f"[intraday recheck stale] {market_key}: {lines} alert_failed={exc}")
+
+    def _recheck_blocked_source(self, pos: dict) -> str:
+        source_values = {
+            str(pos.get("source_type") or "").strip().lower(),
+            str(pos.get("selection_source_type") or "").strip().lower(),
+            str(pos.get("route_source") or "").strip().lower(),
+            str(pos.get("entry_source_type") or "").strip().lower(),
+        }
+        if "preopen_watch" in source_values:
+            return "preopen_watch"
+        if "recovery_micro_no_carry" in source_values:
+            return "recovery_micro_no_carry_source"
+        if bool(pos.get("recovery_micro_no_carry")):
+            return "recovery_micro_no_carry"
+        strategy = str(pos.get("strategy") or "").strip().upper()
+        if strategy == "RECOVERY_MICRO":
+            return "recovery_micro_strategy_no_carry_default"
+        return ""
+
+    def _intraday_mode_is_risk_off(self, mode: str) -> bool:
+        value = str(mode or "").strip().upper()
+        return value in {"RISK_OFF", "HALT"} or "RISK_OFF" in value
+
+    def _kr_intraday_small_loss_recheck_gate(
+        self,
+        pos: dict,
+        market: str,
+        pnl_pct: float,
+        current_native: float,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not self._runtime_bool("KR_INTRADAY_SMALL_LOSS_RECHECK_ENABLED", True):
+            return {"allowed": False, "reason": "disabled"}
+        if market_key != "KR":
+            return {"allowed": False, "reason": "market_not_kr"}
+        if bool(pos.get("pending_intraday_recheck")):
+            return {"allowed": False, "reason": "second_review_executes"}
+        if bool(pos.get("pending_intraday_recheck_used")):
+            return {"allowed": False, "reason": "already_rechecked"}
+        min_pnl = float(self._runtime_float("KR_INTRADAY_RECHECK_MIN_PNL", -2.5))
+        max_pnl = float(self._runtime_float("KR_INTRADAY_RECHECK_MAX_PNL", 0.0))
+        if not (min_pnl <= float(pnl_pct) < max_pnl):
+            return {"allowed": False, "reason": "pnl_out_of_band", "min_pnl": min_pnl, "max_pnl": max_pnl}
+        mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "") or pos.get("mode", ""))
+        if self._intraday_mode_is_risk_off(mode):
+            return {"allowed": False, "reason": "market_mode_risk_off", "mode": mode}
+        trust = self._broker_trust_level(market_key)
+        if trust != "trusted":
+            return {"allowed": False, "reason": f"broker_truth_not_trusted:{trust}"}
+        source_reason = self._recheck_blocked_source(pos)
+        if source_reason:
+            return {"allowed": False, "reason": source_reason}
+        minutes_to_close = float(self._minutes_to_close(market_key))
+        min_to_close = float(self._runtime_float("KR_INTRADAY_RECHECK_MINUTES_TO_CLOSE", 60.0))
+        if minutes_to_close <= min_to_close:
+            return {
+                "allowed": False,
+                "reason": "near_close",
+                "minutes_to_close": round(minutes_to_close, 1),
+                "min_minutes_to_close": min_to_close,
+            }
+        stop_price = self._position_stop_price(pos)
+        stop_distance_pct = None
+        if current_native > 0 and stop_price > 0:
+            stop_distance_pct = (current_native / stop_price - 1.0) * 100.0
+        min_stop_distance = float(self._runtime_float("KR_INTRADAY_RECHECK_MIN_STOP_DISTANCE_PCT", 1.0))
+        if stop_distance_pct is None or stop_distance_pct <= min_stop_distance:
+            return {
+                "allowed": False,
+                "reason": "near_hard_stop",
+                "hard_stop_distance_pct": None if stop_distance_pct is None else round(stop_distance_pct, 3),
+                "min_stop_distance_pct": min_stop_distance,
+            }
+        rolling = self._rolling_kr_forward_3d_recent()
+        if not rolling.get("allowed"):
+            return {"allowed": False, "reason": rolling.get("reason", "rolling_forward_gate"), "rolling_forward": rolling}
+        return {
+            "allowed": True,
+            "reason": "small_loss_recheck",
+            "mode": mode,
+            "broker_trust": trust,
+            "minutes_to_close": round(minutes_to_close, 1),
+            "hard_stop_distance_pct": round(float(stop_distance_pct), 3),
+            "rolling_forward": rolling,
+        }
+
+    def _mark_intraday_sell_recheck_pending(
+        self,
+        pos: dict,
+        market: str,
+        *,
+        pnl_pct: float,
+        current_native: float,
+        advice: dict,
+        gate: dict,
+    ) -> None:
+        now_dt = datetime.now(KST)
+        delay_min = float(self._runtime_float("KR_INTRADAY_RECHECK_DELAY_MIN", 60.0))
+        pos["pending_intraday_recheck"] = True
+        pos["pending_intraday_recheck_used"] = True
+        pos["pending_intraday_recheck_status"] = "deferred"
+        pos["pending_intraday_recheck_at"] = now_dt.isoformat(timespec="seconds")
+        pos["pending_intraday_recheck_due_at"] = (now_dt + timedelta(minutes=max(1.0, delay_min))).isoformat(timespec="seconds")
+        pos["pending_intraday_recheck_session"] = self._current_session_date_str(market)
+        pos["pending_intraday_recheck_pnl_at_review"] = round(float(pnl_pct), 4)
+        pos["pending_intraday_recheck_price_at_review"] = float(current_native or 0)
+        pos["pending_intraday_recheck_immediate_sell_price"] = float(current_native or 0)
+        pos["pending_intraday_recheck_reason"] = "intraday_review_sell"
+        pos["pending_intraday_recheck_gate"] = dict(gate or {})
+        pos["pending_intraday_recheck_advice"] = advice or {}
+        self._save_positions()
+        self._write_execution_leak_event(
+            market,
+            "recheck",
+            "recheck_deferred",
+            {
+                "ticker": pos.get("ticker", ""),
+                "pnl_at_review": round(float(pnl_pct), 4),
+                "price_at_review": float(current_native or 0),
+                "recheck_due_at": pos.get("pending_intraday_recheck_due_at", ""),
+                "gate": gate,
+                "advice_action": (advice or {}).get("action", ""),
+                "advice_confidence": (advice or {}).get("confidence", ""),
+            },
+        )
+
+    def _record_intraday_recheck_result(
+        self,
+        pos: dict,
+        market: str,
+        *,
+        verdict: str,
+        pnl_pct: float,
+        current_native: float,
+        final_exit_reason: str = "",
+        clear_pending: bool = True,
+    ) -> None:
+        review_pnl = self._float_or_zero(pos.get("pending_intraday_recheck_pnl_at_review"))
+        delta = float(pnl_pct) - review_pnl
+        if clear_pending:
+            pos["pending_intraday_recheck"] = False
+            pos["pending_intraday_recheck_status"] = f"{str(verdict or '').lower()}_after_recheck"
+            pos["pending_intraday_recheck_result_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            pos["pending_intraday_recheck_pnl_at_recheck"] = round(float(pnl_pct), 4)
+            pos["pending_intraday_recheck_delta_vs_immediate"] = round(delta, 4)
+            try:
+                self._save_positions()
+            except Exception:
+                pass
+        self._write_execution_leak_event(
+            market,
+            "recheck",
+            "recheck_result",
+            {
+                "ticker": pos.get("ticker", ""),
+                "verdict": verdict,
+                "pnl_at_review": round(review_pnl, 4),
+                "pnl_at_recheck": round(float(pnl_pct), 4),
+                "delta_vs_immediate": round(delta, 4),
+                "price_at_recheck": float(current_native or 0),
+                "final_exit_reason": final_exit_reason,
+            },
+        )
+
+    def _record_premature_fixed_stop_shadow(self, cand: dict, market: str, reason: str, ex: Optional[dict] = None) -> None:
+        if str(market or "").upper() != "KR" or str(reason or "") != "stop_loss":
+            return
+        ticker = str(cand.get("ticker") or (ex or {}).get("ticker") or "").strip()
+        if not ticker:
+            return
+        entry_native, current_native = self._position_native_prices(cand, market)
+        stop_price = self._position_stop_price(cand)
+        or_ctx = self._advisor_or_context(market, ticker, entry_native)
+        pnl_pct = self._float_or_zero((ex or {}).get("pnl_pct") if ex else cand.get("pnl_pct"))
+        if not pnl_pct and entry_native > 0 and current_native > 0:
+            pnl_pct = (current_native / entry_native - 1.0) * 100.0
+        self._write_execution_leak_event(
+            market,
+            "stop",
+            "premature_fixed_stop_raw",
+            {
+                "ticker": ticker,
+                "reason": reason,
+                "market_elapsed_min": round(float(self._market_elapsed_min(market)), 1),
+                "entry_native": entry_native,
+                "current_native": current_native,
+                "base_stop": stop_price,
+                "loss_cap": self._float_or_zero(cand.get("loss_cap_price")),
+                "pnl_pct": round(float(pnl_pct), 4),
+                "peak_pnl_pct": self._float_or_zero(cand.get("peak_pnl_pct")),
+                "trough_pnl_pct": self._float_or_zero(cand.get("trough_pnl_pct")),
+                "entry_route": str(cand.get("entry_route") or ""),
+                "source_type": str(cand.get("source_type") or cand.get("route_source") or ""),
+                "future_label_pending": True,
+                "future_label_rule": "attach premature_fixed_stop=true if T+3 max_runup_pct >= 3.0 after forward update",
+                **or_ctx,
+            },
+        )
 
     def _funnel_jsonl_is_enabled(self) -> bool:
         return bool(getattr(self, "_funnel_jsonl_enabled", False))
@@ -14660,6 +15174,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "fill_time": order.get("fill_time", ""),
             "strategy": order.get("strategy", "broker_fill"),
             "source_strategy": order.get("source_strategy", ""),
+            "selected_reason": order.get("selected_reason", ""),
+            "selected_reason_tag": order.get("selected_reason_tag", ""),
+            "source_type": order.get("source_type", order.get("route_source", "")),
+            "selection_source_type": order.get("selection_source_type", ""),
             "micro_probe": bool(order.get("micro_probe")),
             "micro_probe_reason": order.get("micro_probe_reason", ""),
             "recovery_micro": bool(order.get("recovery_micro")),
@@ -16188,6 +16706,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not self.session_active or self.current_market != market:
             if not force:
                 return
+        self._clear_stale_intraday_recheck_flags(market)
+        self._alert_stale_intraday_recheck_positions(market)
         now_ts = time.time()
         # 해당 마켓 포지션만, 진입 60분 이상 경과한 것만
         MIN_HOLD_SEC = 3600
@@ -16282,6 +16802,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         p2["pending_next_open_sell"] = False
                         p2["pending_next_open_reason"] = ""
                     break
+            if action == "HOLD" and pos.get("pending_intraday_recheck"):
+                self._record_intraday_recheck_result(
+                    pos,
+                    market,
+                    verdict="HOLD",
+                    pnl_pct=float(pnl),
+                    current_native=float(cur or 0),
+                    final_exit_reason="",
+                    clear_pending=True,
+                )
             if action == "HOLD" and isinstance(advice, dict):
                 self._apply_pathb_hold_advice_bridge(pos, market, advice)
             action_ko = {"HOLD": "홀드 유지", "TRAIL": "트레일링 유지", "SELL": "즉시 매도"}.get(action, action)
@@ -16308,6 +16838,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     else:
                         try:
                             cand = {**pos, "exit_price": sell_px, "reason": "intraday_review_sell"}
+                            pending_recheck = bool(pos.get("pending_intraday_recheck"))
+                            if not pending_recheck:
+                                recheck_gate = self._kr_intraday_small_loss_recheck_gate(
+                                    pos,
+                                    market,
+                                    float(pnl),
+                                    float(cur or 0),
+                                )
+                                if bool(recheck_gate.get("allowed")):
+                                    self._mark_intraday_sell_recheck_pending(
+                                        pos,
+                                        market,
+                                        pnl_pct=float(pnl),
+                                        current_native=float(cur or 0),
+                                        advice=advice or {},
+                                        gate=recheck_gate,
+                                    )
+                                    lines.append(
+                                        "  intraday small-loss recheck deferred "
+                                        f"(pnl={pnl:+.2f}%, stop_dist={recheck_gate.get('hard_stop_distance_pct')})"
+                                    )
+                                    log.info(
+                                        f"[intraday recheck deferred] {market} {ticker} "
+                                        f"pnl={pnl:+.2f}% gate={recheck_gate}"
+                                    )
+                                    continue
                             sell_ok = self._execute_sell(
                                 cand,
                                 market,
@@ -16315,6 +16871,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 hold_advice=advice,
                             )
                             if sell_ok:
+                                if pending_recheck:
+                                    self._record_intraday_recheck_result(
+                                        pos,
+                                        market,
+                                        verdict="SELL",
+                                        pnl_pct=float(pnl),
+                                        current_native=float(cur or 0),
+                                        final_exit_reason="intraday_review_sell",
+                                        clear_pending=True,
+                                    )
                                 lines.append(f"  ⚡ 매도 주문 접수 ({px(cur)} × {qty}주)")
                                 log.info(f"[장중 리뷰 SELL] {ticker} {pnl:+.2f}% → 즉시 매도 ({sell_px:,.0f})")
                             else:
@@ -18500,6 +19066,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ex = self.risk.close_position(cand["ticker"], cand["exit_price"], reason, exit_meta=exit_meta)
         if not ex:
             return True
+        if cand.get("pending_intraday_recheck") and reason in ("loss_cap", "stop_loss", "policy_hard_stop"):
+            self._record_intraday_recheck_result(
+                cand,
+                market,
+                verdict="STOP_FIRST",
+                pnl_pct=float(ex.get("pnl_pct", 0) or 0),
+                current_native=float(raw_px or cand.get("exit_price", 0) or 0),
+                final_exit_reason=reason,
+                clear_pending=False,
+            )
+        self._record_premature_fixed_stop_shadow(cand, market, reason, ex)
         try:
             proceeds_krw = float(ex.get("exit_price", 0) or 0) * int(ex.get("qty", 0) or 0)
             self._note_recent_sell_proceeds(
@@ -19379,6 +19956,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._save_pending_orders()
         self._reset_us_order_cache()
         self._sync_runtime_with_broker()
+        self._clear_stale_intraday_recheck_flags(market)
         if getattr(self, "pathb", None) is not None:
             try:
                 self.pathb.refresh_broker_truth(market, force=True)
@@ -23910,13 +24488,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if _isdb_id and _s_strat == "opening_range_pullback":
                         isdb.update_trade(_isdb_id)
                     _v2_execution_id = str(result.get("order_no", "") or f"exec_{market}_{_s_tk}_{int(time.time())}")
+                    _selection_source_type = str(
+                        self._selection_meta_flag(market, "_entry_route_source")
+                        or self._selection_meta_value(market, _s_tk, "source_type")
+                        or "signal_entry"
+                    ).strip() or "signal_entry"
                     _route_payload = self._entry_route_payload(
                         market,
                         _s_tk,
                         _s_strat,
                         decision_id=_v2_decision_id,
                         entry_route="plan_a",
-                        route_source="signal_entry",
+                        route_source=_selection_source_type,
                     )
                     self._v2_record_lifecycle_event(
                         "ORDER_SENT",
@@ -23980,6 +24563,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "decision_id":    _ml_decision_id,
                         "v2_decision_id": _v2_decision_id,
                         "v2_execution_id": _v2_execution_id,
+                        "selected_reason": _s_sr or "",
+                        "selected_reason_tag": str(self._selection_meta_value(market, _s_tk, "selected_reason_tag") or ""),
+                        "source_type": _selection_source_type,
+                        "selection_source_type": _selection_source_type,
                         **_route_payload,
                         "entry_timing":   _entry_timing_order_snapshot,
                         **{k: v for k, v in _recovery_micro_meta.items() if k != "allowed"},

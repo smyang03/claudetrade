@@ -297,6 +297,21 @@ def _recent_selection_feedback_section(market: str) -> str:
     return ""
 
 
+def _prompt_policy_exclusion(actual_result: dict, *, execution_learning_excluded: bool) -> tuple[bool, str]:
+    explicit = actual_result.get("prompt_policy_excluded")
+    explicit_reason = str(actual_result.get("policy_exclusion_reason") or "").strip()
+    if execution_learning_excluded:
+        return True, explicit_reason or "execution_learning_excluded"
+    if explicit is not None:
+        excluded = bool(explicit)
+        return excluded, explicit_reason if excluded else ""
+    if actual_result.get("selection_evidence_verified"):
+        return False, ""
+    if actual_result.get("execution_contaminated"):
+        return True, explicit_reason or "execution_contaminated"
+    return False, ""
+
+
 def run(market: str, date: str, today_judgment: dict,
         actual_result: dict, digest_prompt: str,
         trade_log: list = None, decision_event_log: list = None) -> dict:
@@ -572,6 +587,11 @@ def run(market: str, date: str, today_judgment: dict,
             actual_result.get("execution_contaminated", False),
         )
     )
+    prompt_policy_excluded, policy_exclusion_reason = _prompt_policy_exclusion(
+        actual_result,
+        execution_learning_excluded=execution_learning_excluded,
+    )
+    prompt_policy_allowed = not prompt_policy_excluded
 
     # ── brain 업데이트 ───────────────────────────────────────────────
     if not execution_learning_excluded:
@@ -588,12 +608,12 @@ def run(market: str, date: str, today_judgment: dict,
     bu = pm.get("brain_updates", {})
     # new_lesson 없으면 key_lesson을 fallback으로 사용
     lesson_to_save = bu.get("new_lesson") or pm.get("key_lesson")
-    if not execution_learning_excluded and not pm.get("_system_error") and lesson_to_save and not _is_placeholder_lesson(lesson_to_save):
+    if prompt_policy_allowed and not pm.get("_system_error") and lesson_to_save and not _is_placeholder_lesson(lesson_to_save):
         BrainDB.update_beliefs(market, {"new_lesson": lesson_to_save})
-    if not execution_learning_excluded and not pm.get("_system_error") and bu.get("market_regime") and bu["market_regime"] != "unknown":
+    if prompt_policy_allowed and not pm.get("_system_error") and bu.get("market_regime") and bu["market_regime"] != "unknown":
         BrainDB.update_beliefs(market, {"market_regime": bu["market_regime"]})
 
-    if not execution_learning_excluded and not pm.get("_system_error") and not pm.get("_skip_issue_pattern"):
+    if prompt_policy_allowed and not pm.get("_system_error") and not pm.get("_skip_issue_pattern"):
         BrainDB.update_issue_pattern(market, {
             "matched_id":  pm.get("pattern_id"),
             "type":        pm.get("issue_type", "unknown"),
@@ -634,6 +654,8 @@ def run(market: str, date: str, today_judgment: dict,
         "trades":            sell_count,
         "execution_contaminated": bool(actual_result.get("execution_contaminated", False)),
         "execution_learning_excluded": execution_learning_excluded,
+        "prompt_policy_excluded": prompt_policy_excluded,
+        "policy_exclusion_reason": policy_exclusion_reason,
         "execution_warning": bool(actual_result.get("execution_warning", False)),
         "execution_issues": actual_result.get("execution_issues", []),
         "execution_issue_labels": actual_result.get("execution_issue_labels", []),
@@ -655,7 +677,7 @@ def run(market: str, date: str, today_judgment: dict,
 
     # 당일 Claude 보정 지침 업데이트
     cg = pm.get("correction_guide", {})
-    if cg and not pm.get("_system_error") and not execution_learning_excluded:
+    if cg and not pm.get("_system_error") and prompt_policy_allowed:
         BrainDB.update_correction_guide(market, cg)
 
     log.info(

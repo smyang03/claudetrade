@@ -255,6 +255,12 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
         if bool(row.get("execution_learning_excluded", False)):
             ignored.append({"source": "recent_day", "reason": "execution_learning_excluded"})
             continue
+        if bool(row.get("prompt_policy_excluded", False)):
+            ignored.append({"source": "recent_day", "reason": "prompt_policy_excluded"})
+            continue
+        if bool(row.get("execution_contaminated", False)):
+            ignored.append({"source": "recent_day", "reason": "execution_contaminated"})
+            continue
         lesson = row.get("key_lesson")
         if not lesson:
             continue

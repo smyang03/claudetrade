@@ -318,6 +318,33 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
     elif peak_pnl_pct > 0:
         drawdown_str = f"  고점 수익률: {peak_pnl_pct:+.2f}%  (현재 고점 유지)\n"
     mode_line = f"  시장 모드: {mode_str}\n" if mode_str else ""
+    advisor_ctx = pos.get("advisor_context_v2") or {}
+    advisor_context_text = ""
+    if isinstance(advisor_ctx, dict) and advisor_ctx:
+        ctx_lines = []
+
+        def _ctx_add(label: str, value) -> None:
+            if value in (None, "", []):
+                return
+            ctx_lines.append(f"  {label}: {value}")
+
+        _ctx_add("entry thesis", advisor_ctx.get("selected_reason"))
+        _ctx_add("source type", advisor_ctx.get("source_type"))
+        _ctx_add("entry route", advisor_ctx.get("entry_route") or advisor_ctx.get("route_source"))
+        _ctx_add("hold minutes", advisor_ctx.get("hold_min_since_entry"))
+        _ctx_add("OR formed", advisor_ctx.get("or_formed"))
+        if advisor_ctx.get("or_high") or advisor_ctx.get("or_low"):
+            _ctx_add("OR high/low", f"{advisor_ctx.get('or_high')} / {advisor_ctx.get('or_low')}")
+        _ctx_add("entry vs OR high pct", advisor_ctx.get("entry_vs_or_high_pct"))
+        _ctx_add("hard stop distance pct", advisor_ctx.get("hard_stop_distance_pct"))
+        if advisor_ctx.get("selection_reference_target") or advisor_ctx.get("selection_reference_stop"):
+            _ctx_add("selection target/stop", f"{advisor_ctx.get('selection_reference_target')} / {advisor_ctx.get('selection_reference_stop')}")
+        if advisor_ctx.get("pathb_reference_target") or advisor_ctx.get("pathb_reference_stop"):
+            _ctx_add("pathb target/stop", f"{advisor_ctx.get('pathb_reference_target')} / {advisor_ctx.get('pathb_reference_stop')}")
+        _ctx_add("invalid if", advisor_ctx.get("invalid_if"))
+        _ctx_add("pending intraday recheck", advisor_ctx.get("pending_intraday_recheck"))
+        if ctx_lines:
+            advisor_context_text = "\n━━━ Execution Context V2 ━━━\n" + "\n".join(ctx_lines) + "\n"
 
     context_text = rt_context or (digest_prompt[:300] if digest_prompt else "  (정보 없음)")
     if minutes_to_close is None:
@@ -345,6 +372,7 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
   진입가: {entry_str}  현재가: {cp_str}  수익률: {pnl_pct:+.2f}%
   보유시간: {held_str}
 {drawdown_str}{mode_line}  포지션 상태: {status_line}
+{advisor_context_text}
 
 ━━━ 현재 시장 (실시간) ━━━
 {context_text}
@@ -407,7 +435,11 @@ JSON으로만 응답:
             market=market,
             model=MODEL,
             prompt_version="hold_advisor_v3",
-            extra={"decision_stage": decision_stage, "default_policy": default_policy_text},
+            extra={
+                "decision_stage": decision_stage,
+                "default_policy": default_policy_text,
+                "advisor_context_v2": advisor_ctx if isinstance(advisor_ctx, dict) else {},
+            },
         )
         return _coerce_vote(result, decision_stage=decision_stage, default_policy=default_policy_text)
     except Exception as e:
@@ -631,6 +663,7 @@ def _log_decision(ticker: str, market: str, pos: dict,
             "decision":   action,
             "decision_stage": decision_stage,
             "default_policy": default_policy,
+            "advisor_context_v2": pos.get("advisor_context_v2", {}) if isinstance(pos, dict) else {},
             "trail_pct":  trail_pct,
             "votes": {k: {"action": v["action"], "confidence": v["confidence"],
                           "reason": v["reason"]} for k, v in votes.items()},
