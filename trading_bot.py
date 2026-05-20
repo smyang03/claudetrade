@@ -11383,6 +11383,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     info.get("failed_ready_reasons", []),
                 ),
             }
+        actual_prompt_count = len(actual_prompt_tickers)
         try:
             store.upsert_call(
                 {
@@ -11395,7 +11396,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "model": str((meta or {}).get("model") or ""),
                     "prompt_version": self._v2_prompt_version(),
                     "source_file": "trading_bot._record_candidate_funnel_snapshot",
-                    "prompt_candidate_count": len(watchlist),
+                    "prompt_candidate_count": actual_prompt_count,
+                    "actual_prompt_count": actual_prompt_count,
                     "watchlist_count": len(watchlist),
                     "trade_ready_count": len(trade_ready),
                     "candidate_action_count": len(actions),
@@ -11405,7 +11407,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "audit_source": "live_write",
                         "actual_prompt_tickers": actual_prompt_tickers,
                         "excluded_prompt_tickers": excluded_prompt_tickers,
-                        "actual_prompt_count": len(actual_prompt_tickers),
+                        "actual_prompt_count": actual_prompt_count,
                         "excluded_prompt_count": len(excluded_prompt_tickers),
                         "plan_a_in_prompt": plan_a_in_prompt,
                         "overlay_mode": overlay_mode,
@@ -13143,6 +13145,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 )
             except Exception as e:
                 log.error(f"[broker verify] {market} balance lookup failed: {e}")
+        saved_counts = {
+            "KR": self._position_count_by_market("KR", saved),
+            "US": self._position_count_by_market("US", saved),
+        }
+        for market in ("KR", "US"):
+            if self._broker_empty_holdings_unreliable(
+                market,
+                broker_ok=broker_ok[market],
+                broker_positions=broker_balances[market],
+                internal_position_count=saved_counts[market],
+                stage="verify_live_positions",
+            ):
+                broker_ok[market] = False
         if not broker_ok["KR"] and not broker_ok["US"]:
             log.error("[broker verify] KR/US balance lookup both failed; keeping saved positions")
             return saved
@@ -13464,6 +13479,43 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             key = ticker.upper() if market == "US" else ticker
             normalized[key] = stock
         return normalized
+    def _position_count_by_market(self, market: str, positions: Optional[list[dict]] = None) -> int:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        items = list(positions if positions is not None else getattr(self.risk, "positions", []) or [])
+        count = 0
+        for pos in items:
+            if not isinstance(pos, dict):
+                continue
+            try:
+                ticker = str(pos.get("ticker") or "").strip()
+                pos_market = resolve_position_market(pos, unknown="") or self._ticker_market(ticker)
+            except Exception:
+                pos_market = ""
+            if pos_market == market_key and int(pos.get("qty", 0) or 0) > 0:
+                count += 1
+        return count
+    def _broker_empty_holdings_unreliable(
+        self,
+        market: str,
+        *,
+        broker_ok: bool,
+        broker_positions: dict,
+        internal_position_count: int,
+        stage: str,
+    ) -> bool:
+        if not broker_ok or broker_positions or internal_position_count <= 0:
+            return False
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        self._set_broker_state(
+            market_key,
+            trust_level="degraded",
+            error=f"broker_empty_with_internal_positions:{stage}",
+        )
+        log.warning(
+            f"[broker truth degraded] {market_key} empty holdings from broker "
+            f"but internal_positions={internal_position_count} stage={stage}; skip destructive reconcile"
+        )
+        return True
     def _flag_execution_issue(self, market: str, issue: str):
         if market in self._execution_flags and issue:
             self._execution_flags[market].add(issue)
@@ -14229,9 +14281,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         bal_us = {}
         bal_kr = {"cash": 0, "total_eval": 0, "stocks": []}
+        kr_ok = False
         if self._market_enabled("KR"):
             try:
                 bal_kr = get_balance(self._token_for_market("KR"), market="KR")
+                kr_ok = True
                 self._set_broker_state(
                     "KR",
                     trust_level="trusted",
@@ -14242,6 +14296,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 log.warning(f"[브로커 런타임 동기화] KR 토큰 만료 감지 → 강제 갱신 후 재시도: {e}")
                 try:
                     bal_kr = get_balance(self._token_for_market("KR", force_refresh=True), market="KR")
+                    kr_ok = True
                     self._set_broker_state(
                         "KR",
                         trust_level="trusted",
@@ -14300,6 +14355,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         else:
             self._set_broker_state("US", trust_level="untrusted", error="market_disabled")
         broker_kr = self._normalize_broker_balance(bal_kr, "KR")
+        runtime_counts = {
+            "KR": self._position_count_by_market("KR", self.risk.positions),
+            "US": self._position_count_by_market("US", self.risk.positions),
+        }
+        if self._broker_empty_holdings_unreliable(
+            "KR",
+            broker_ok=kr_ok,
+            broker_positions=broker_kr,
+            internal_position_count=runtime_counts["KR"],
+            stage="runtime_sync",
+        ):
+            kr_ok = False
+        if self._broker_empty_holdings_unreliable(
+            "US",
+            broker_ok=us_ok,
+            broker_positions=broker_us,
+            internal_position_count=runtime_counts["US"],
+            stage="runtime_sync",
+        ):
+            us_ok = False
         self._reconcile_pending_orders(broker_kr, broker_us)
         pending_by_key = self._pending_orders_by_key()
         _positions_before = json.dumps(self.risk.positions, ensure_ascii=False, sort_keys=True, default=str)
@@ -14331,9 +14406,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 synced_positions[key] = pos
                 seen_keys.add(key)
                 continue
-            # US 잔고 조회 실패 시 US 포지션 제거 금지
-            if market == "US" and not us_ok:
-                synced_positions[key] = pos
+            market_ok = us_ok if market == "US" else kr_ok
+            if not market_ok:
+                synced_positions[key] = self._normalize_position_metadata(
+                    pos,
+                    market,
+                    origin=str(pos.get("position_origin") or "saved_restore"),
+                    integrity="protected",
+                    management_protected=True,
+                )
                 seen_keys.add(key)
                 continue
             broker_pos = broker.get(key[1])
@@ -14474,7 +14555,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 대응 현금 차감이 없어 equity = KR_cash + US_pos_value 로 과대계상된다.
         # 이를 방지하기 위해 paper 모드에서 US paper 포지션 cost를 KR 현금에서 차감해 회계를 맞춘다.
         # (실거래 US의 경우 us_cash_krw가 실제 달러 잔고를 반영하므로 기존 로직 유지)
-        if self.is_paper and us_ok and us_cash_krw == 0:
+        enabled_markets = {m for m in ("KR", "US") if self._market_enabled(m)}
+        ok_markets = {m for m in enabled_markets if (kr_ok if m == "KR" else us_ok)}
+        if ok_markets != enabled_markets:
+            log.warning(
+                f"[broker sync partial] keep pre-sync cash because broker truth degraded "
+                f"enabled={sorted(enabled_markets)} ok={sorted(ok_markets)}"
+            )
+            self.risk.cash = _pre_sync_cash
+        elif self.is_paper and us_ok and us_cash_krw == 0:
             synthetic_cash = _pre_sync_cash
             for _pos in self.risk.positions:
                 _ticker = str(_pos.get("ticker", "") or "").strip()

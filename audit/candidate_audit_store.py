@@ -134,6 +134,10 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "strength_capture_rules": "TEXT",
 }
 
+EXTRA_CALL_COLUMNS: dict[str, str] = {
+    "actual_prompt_count": "INTEGER DEFAULT 0",
+}
+
 _MISSING = object()
 _JSON_TEXT_COLUMNS = {"soft_gate_overrides", "hard_blocks", "soft_gates", "strength_capture_rules"}
 _PROMPT_STAGE_SOURCE_FILES = {
@@ -295,6 +299,7 @@ class CandidateAuditStore:
                     input_tokens INTEGER DEFAULT 0,
                     output_tokens INTEGER DEFAULT 0,
                     prompt_candidate_count INTEGER DEFAULT 0,
+                    actual_prompt_count INTEGER DEFAULT 0,
                     watchlist_count INTEGER DEFAULT 0,
                     trade_ready_count INTEGER DEFAULT 0,
                     candidate_action_count INTEGER DEFAULT 0,
@@ -414,6 +419,7 @@ class CandidateAuditStore:
                     WHERE latest_rank = 1;
                 """
             )
+            _ensure_columns(conn, "audit_claude_calls", EXTRA_CALL_COLUMNS)
             _ensure_columns(conn, "audit_candidate_rows", EXTRA_CANDIDATE_COLUMNS)
             conn.execute(
                 """
@@ -465,6 +471,17 @@ class CandidateAuditStore:
 
     def upsert_call(self, call: dict[str, Any]) -> None:
         now = _utc_now()
+        payload = call.get("payload") if isinstance(call.get("payload"), dict) else {}
+        actual_raw = call.get("actual_prompt_count")
+        if actual_raw in (None, "") and "actual_prompt_count" in payload:
+            actual_raw = payload.get("actual_prompt_count")
+        actual_prompt_count = int(actual_raw or 0)
+        has_actual_prompt_count = actual_raw not in (None, "")
+        prompt_candidate_count = (
+            actual_prompt_count
+            if has_actual_prompt_count
+            else int(call.get("prompt_candidate_count") or 0)
+        )
         conn = self.connect()
         try:
             conn.execute(
@@ -472,10 +489,10 @@ class CandidateAuditStore:
                 INSERT INTO audit_claude_calls (
                     call_id, runtime_mode, market, session_date, called_at, label,
                     model, prompt_version, source_file, input_tokens, output_tokens,
-                    prompt_candidate_count, watchlist_count, trade_ready_count,
+                    prompt_candidate_count, actual_prompt_count, watchlist_count, trade_ready_count,
                     candidate_action_count, payload_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(call_id) DO UPDATE SET
                     called_at=excluded.called_at,
                     label=excluded.label,
@@ -485,6 +502,7 @@ class CandidateAuditStore:
                     input_tokens=excluded.input_tokens,
                     output_tokens=excluded.output_tokens,
                     prompt_candidate_count=excluded.prompt_candidate_count,
+                    actual_prompt_count=excluded.actual_prompt_count,
                     watchlist_count=excluded.watchlist_count,
                     trade_ready_count=excluded.trade_ready_count,
                     candidate_action_count=excluded.candidate_action_count,
@@ -503,11 +521,12 @@ class CandidateAuditStore:
                     call.get("source_file", ""),
                     int(call.get("input_tokens") or 0),
                     int(call.get("output_tokens") or 0),
-                    int(call.get("prompt_candidate_count") or 0),
+                    prompt_candidate_count,
+                    actual_prompt_count,
                     int(call.get("watchlist_count") or 0),
                     int(call.get("trade_ready_count") or 0),
                     int(call.get("candidate_action_count") or 0),
-                    _json(call.get("payload") or {}),
+                    _json(payload),
                     now,
                     now,
                 ),
@@ -966,7 +985,9 @@ class CandidateAuditStore:
                 SELECT COUNT(*) AS call_count,
                        COALESCE(SUM(input_tokens), 0) AS input_tokens,
                        COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                       COALESCE(SUM(prompt_candidate_count), 0) AS prompt_candidate_rows
+                       COALESCE(SUM(prompt_candidate_count), 0) AS prompt_candidate_rows,
+                       COALESCE(SUM(actual_prompt_count), 0) AS actual_prompt_rows,
+                       COALESCE(SUM(watchlist_count), 0) AS watchlist_rows
                 FROM audit_claude_calls
                 WHERE session_date=? AND market=? AND runtime_mode=?
                 """,

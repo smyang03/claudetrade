@@ -1043,6 +1043,44 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(result["strategy_mismatch"]["match_count"], 1)
             self.assertEqual(result["strategy_mismatch"]["mismatch_count"], 1)
 
+    def test_audit_call_summary_separates_actual_prompt_and_watchlist_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_call(
+                {
+                    "call_id": "call_counts",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-08",
+                    "called_at": "2026-05-08T09:00:00",
+                    "prompt_candidate_count": 2,
+                    "watchlist_count": 2,
+                    "payload": {"actual_prompt_count": 1},
+                }
+            )
+
+            summary = store.summary(session_date="2026-05-08", market="US", runtime_mode="live")
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT prompt_candidate_count, actual_prompt_count, watchlist_count
+                    FROM audit_claude_calls
+                    WHERE call_id='call_counts'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+            self.assertEqual(row["prompt_candidate_count"], 1)
+            self.assertEqual(row["actual_prompt_count"], 1)
+            self.assertEqual(row["watchlist_count"], 2)
+            self.assertEqual(summary["calls"]["prompt_candidate_rows"], 1)
+            self.assertEqual(summary["calls"]["actual_prompt_rows"], 1)
+            self.assertEqual(summary["calls"]["watchlist_rows"], 2)
+
     def test_analysis_exposes_live_monitoring_operational_summaries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

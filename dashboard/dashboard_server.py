@@ -7504,6 +7504,13 @@ def _candidate_audit_columns(conn: sqlite3.Connection) -> set[str]:
         return set()
 
 
+def _candidate_audit_call_columns(conn: sqlite3.Connection) -> set[str]:
+    try:
+        return {str(row[1]) for row in conn.execute("PRAGMA table_info(audit_claude_calls)").fetchall()}
+    except Exception:
+        return set()
+
+
 def _candidate_audit_optional_expr(
     columns: set[str],
     column: str,
@@ -7764,12 +7771,25 @@ def api_candidate_audit_summary():
         })
     params = (session_date, market, mode)
     try:
+        call_columns = _candidate_audit_call_columns(conn)
+        actual_prompt_expr = (
+            "COALESCE(SUM(actual_prompt_count), 0)"
+            if "actual_prompt_count" in call_columns
+            else "COALESCE(SUM(prompt_candidate_count), 0)"
+        )
+        watchlist_expr = (
+            "COALESCE(SUM(watchlist_count), 0)"
+            if "watchlist_count" in call_columns
+            else "0"
+        )
         calls = dict(conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS call_count,
                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                   COALESCE(SUM(prompt_candidate_count), 0) AS prompt_candidate_rows
+                   COALESCE(SUM(prompt_candidate_count), 0) AS prompt_candidate_rows,
+                   {actual_prompt_expr} AS actual_prompt_rows,
+                   {watchlist_expr} AS watchlist_rows
             FROM audit_claude_calls
             WHERE session_date=? AND market=? AND runtime_mode=?
             """,
@@ -14390,6 +14410,8 @@ function renderCandidateAuditSummary(data) {
   const coverageRate = auditNum(coverage.coverage_rate);
   const inputTokens = Number(calls.input_tokens || 0);
   const outputTokens = Number(calls.output_tokens || 0);
+  const actualPromptRows = Number((calls.actual_prompt_rows ?? calls.prompt_candidate_rows) || 0);
+  const watchlistRows = Number(calls.watchlist_rows || 0);
   const fallbackText = data.session_date_fallback
     ? ` · requested ${auditLabel(data.requested_session_date)} → latest ${auditLabel(data.session_date)}`
     : '';
@@ -14403,7 +14425,7 @@ function renderCandidateAuditSummary(data) {
   document.getElementById('audit-coverage').textContent = coverageRate === null ? '-' : auditRate(coverageRate);
   document.getElementById('audit-coverage-detail').textContent = `분석 가능 ${auditInt(sparse)} / outcome ${auditInt(totalOutcome)} · 부족 ${auditInt(coverage.insufficient_samples)}`;
   document.getElementById('audit-tokens').textContent = auditInt(inputTokens + outputTokens);
-  document.getElementById('audit-calls').textContent = `호출 ${auditInt(calls.call_count)}회 · 입력 ${auditInt(inputTokens)} · 출력 ${auditInt(outputTokens)}`;
+  document.getElementById('audit-calls').textContent = `호출 ${auditInt(calls.call_count)}회 · 실제 Claude 입력 ${auditInt(actualPromptRows)} · watchlist ${auditInt(watchlistRows)} · 입력 ${auditInt(inputTokens)} · 출력 ${auditInt(outputTokens)}`;
   renderCandidateAuditFreshness(data.freshness || {});
   renderCandidateAuditLatency(data.latency_sla || {});
   renderCandidateAuditMissed(data.missed_winners || []);

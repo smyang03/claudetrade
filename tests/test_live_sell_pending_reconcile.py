@@ -379,7 +379,7 @@ def test_resolved_pending_sell_order_no_metadata_is_not_reconciled() -> None:
     assert bot.decision_events == []
 
 
-def test_broker_sync_protects_pending_sell_absent_position_and_reconciles() -> None:
+def test_broker_sync_keeps_us_position_when_success_empty_stocks_is_unreliable() -> None:
     bot = _bot_for_broker_sync(
         {
             "missing": False,
@@ -394,13 +394,15 @@ def test_broker_sync_protects_pending_sell_absent_position_and_reconciles() -> N
     with patch("trading_bot.get_balance", return_value=_broker_balance_without_us_positions()):
         TradingBot._sync_runtime_with_broker(bot)
 
-    assert bot.risk.positions == []
+    assert len(bot.risk.positions) == 1
+    assert bot.risk.positions[0]["ticker"] == "IREN"
+    assert bot.risk.positions[0]["position_integrity"] == "protected"
+    assert bot._broker_state["US"]["trust_level"] == "degraded"
+    assert "broker_empty_with_internal_positions:runtime_sync" in bot._broker_state["US"]["last_error"]
+    assert bot.risk.cash == 1_000_000.0
     bot._flag_execution_issue.assert_not_called()
-    assert bot.decision_events[-1]["detail"] == "pending_sell_reconcile:BROKER_POSITION_GONE_ASSUME_SOLD"
-    assert bot.proceeds_records
-    assert bot.proceeds_records[-1]["market"] == "US"
-    assert bot.proceeds_records[-1]["ticker"] == "IREN"
-    assert bot.proceeds_records[-1]["proceeds_krw"] > 0
+    assert bot.decision_events == []
+    assert bot.proceeds_records == []
 
 
 def test_broker_sync_keeps_pending_sell_when_broker_truth_unavailable() -> None:
@@ -420,8 +422,8 @@ def test_broker_sync_keeps_pending_sell_when_broker_truth_unavailable() -> None:
 
     assert len(bot.risk.positions) == 1
     pos = bot.risk.positions[0]
-    assert pos["broker_reconcile_status"] == "pending_sell_confirmation_protected"
-    assert pos["pending_sell_resolution"] == "BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING"
+    assert pos["position_integrity"] == "protected"
+    assert bot._broker_state["US"]["trust_level"] == "degraded"
     bot._flag_execution_issue.assert_not_called()
     assert bot.proceeds_records == []
 
@@ -451,9 +453,27 @@ def test_broker_sync_keeps_pending_sell_when_broker_open_order_exists() -> None:
     assert len(bot.risk.positions) == 1
     pos = bot.risk.positions[0]
     assert pos["sell_confirmation_pending"] is True
-    assert pos["pending_sell_resolution"] == "BROKER_OPEN_ORDER_FOUND_KEEP_PENDING"
+    assert pos["position_integrity"] == "protected"
+    assert bot._broker_state["US"]["trust_level"] == "degraded"
     bot._flag_execution_issue.assert_not_called()
     assert bot.proceeds_records == []
+
+
+def test_verify_live_positions_keeps_saved_us_position_when_broker_empty_unreliable() -> None:
+    bot = _bot_for_broker_sync({})
+    bot.pending_orders = []
+    bot.risk.positions = []
+    saved = [{"ticker": "AAPL", "qty": 3, "display_currency": "USD"}]
+
+    with patch("trading_bot.get_balance", return_value=_broker_balance_without_us_positions()):
+        verified = TradingBot._verify_live_positions(bot, saved)
+
+    assert len(verified) == 1
+    assert verified[0]["ticker"] == "AAPL"
+    assert verified[0]["market"] == "US"
+    assert verified[0]["position_integrity"] == "protected"
+    assert bot._broker_state["US"]["trust_level"] == "degraded"
+    assert "broker_empty_with_internal_positions:verify_live_positions" in bot._broker_state["US"]["last_error"]
 
 
 def test_pending_sell_still_held_without_open_order_clears_stale_pending() -> None:

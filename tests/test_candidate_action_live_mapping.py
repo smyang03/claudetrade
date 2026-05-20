@@ -1781,6 +1781,51 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(call_payload["evidence_pack_tickers"], ["AAPL"])
         self.assertEqual(call_payload["prompt_exec_missing_pct"], 0.0)
 
+    def test_candidate_audit_call_prompt_count_uses_actual_prompt_count(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        meta = {
+            "selection_snapshot_ts": "2026-05-07T09:00:00+09:00",
+            "watchlist": ["AAPL", "MSFT"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {"ticker": "AAPL", "action": "WATCH", "reason": "watch"},
+                {"ticker": "MSFT", "action": "WATCH", "reason": "watch"},
+            ],
+            "_final_prompt_pool": [
+                {"ticker": "AAPL", "market": "US", "prompt_rank": 1, "trainer_candidate_state": "PLAN_A"},
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                TradingBot._write_candidate_audit_live(
+                    bot,
+                    "US",
+                    selected=["AAPL", "MSFT"],
+                    meta=meta,
+                    stages={},
+                )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                call = conn.execute(
+                    """
+                    SELECT prompt_candidate_count, actual_prompt_count, watchlist_count, payload_json
+                    FROM audit_claude_calls
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+        payload = json.loads(call["payload_json"])
+        self.assertEqual(call["prompt_candidate_count"], 1)
+        self.assertEqual(call["actual_prompt_count"], 1)
+        self.assertEqual(call["watchlist_count"], 2)
+        self.assertEqual(payload["actual_prompt_count"], 1)
+        self.assertEqual(payload["actual_prompt_tickers"], ["AAPL"])
+
     def test_candidate_audit_records_shadow_and_live_overlay_payloads(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})

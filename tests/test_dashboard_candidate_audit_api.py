@@ -110,6 +110,49 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             self.assertEqual(data["strategy_mismatch"]["mismatch_count"], 1)
             self.assertFalse(data["trainer_summary"]["available"])
 
+    def test_candidate_audit_summary_separates_actual_prompt_and_watchlist_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            session_date = "2026-05-08"
+            store.upsert_call(
+                {
+                    "call_id": "call_counts",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": session_date,
+                    "called_at": "2026-05-08T09:00:00",
+                    "prompt_candidate_count": 2,
+                    "watchlist_count": 2,
+                    "payload": {"actual_prompt_count": 1},
+                }
+            )
+            store.upsert_candidate(
+                {
+                    "call_id": "call_counts",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": session_date,
+                    "known_at": "2026-05-08T09:00:00",
+                    "ticker": "AAPL",
+                    "price": 100.0,
+                    "classification": "watch_only",
+                }
+            )
+
+            import dashboard.dashboard_server as dashboard_server
+
+            with patch.object(dashboard_server, "_candidate_audit_db_path", return_value=db_path):
+                response = dashboard_server.app.test_client().get(
+                    "/api/candidate-audit/summary?market=US&date=2026-05-08&mode=live"
+                )
+
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertEqual(data["calls"]["prompt_candidate_rows"], 1)
+            self.assertEqual(data["calls"]["actual_prompt_rows"], 1)
+            self.assertEqual(data["calls"]["watchlist_rows"], 2)
+
     def test_candidate_audit_api_exposes_trainer_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
