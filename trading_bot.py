@@ -7083,13 +7083,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.selection_meta[market] = meta
         self.trade_ready_tickers[market] = list(meta.get("trade_ready") or [])
         v2_meta = meta
-        if meta.get("_pathb_wait_tickers"):
+        pathb_wait_tickers = list(meta.get("_pathb_wait_tickers") or [])
+        pathb_shadow_tickers = list(meta.get("_pathb_shadow_tickers") or [])
+        if pathb_wait_tickers or pathb_shadow_tickers:
             v2_meta = {
                 **meta,
-                "trade_ready": list(dict.fromkeys(list(meta.get("trade_ready") or []) + list(meta.get("_pathb_wait_tickers") or []))),
+                "trade_ready": list(dict.fromkeys(
+                    list(meta.get("trade_ready") or [])
+                    + pathb_wait_tickers
+                    + pathb_shadow_tickers
+                )),
                 "price_targets": {
                     **(meta.get("price_targets") or {}),
                     **(meta.get("_pathb_price_targets") or {}),
+                    **(meta.get("_pathb_shadow_price_targets") or {}),
+                },
+                "_pathb_wait_origins": {
+                    **(meta.get("_pathb_wait_origins") or {}),
+                    **(meta.get("_pathb_shadow_origins") or {}),
                 },
             }
         v2_ids = self._v2_register_trade_ready(market, v2_meta)
@@ -11074,6 +11085,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "advice_confidence": (advice or {}).get("confidence", ""),
             },
         )
+
+    def _intraday_recheck_due_state(self, pos: dict) -> dict:
+        due_at_raw = pos.get("pending_intraday_recheck_due_at")
+        due_at = self._parse_kst_datetime(due_at_raw)
+        if due_at is None:
+            raw_text = str(due_at_raw or "").strip()
+            reason = "invalid_due_at" if raw_text else "missing_due_at"
+            log.warning(
+                f"[intraday recheck due_at invalid] {pos.get('ticker','')} "
+                f"reason={reason} due_at={raw_text}"
+            )
+            return {
+                "due": False,
+                "reason": reason,
+                "due_at": raw_text,
+                "remaining_min": 0.0,
+            }
+        now_dt = datetime.now(KST)
+        remaining_min = (due_at - now_dt).total_seconds() / 60.0
+        return {
+            "due": remaining_min <= 0,
+            "reason": "due" if remaining_min <= 0 else "not_due",
+            "due_at": due_at.isoformat(timespec="seconds"),
+            "remaining_min": round(max(0.0, remaining_min), 1),
+        }
 
     def _record_intraday_recheck_result(
         self,
@@ -16802,16 +16838,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         p2["pending_next_open_sell"] = False
                         p2["pending_next_open_reason"] = ""
                     break
+            action = str(action or "HOLD").strip().upper()
+            if action not in {"HOLD", "SELL"}:
+                log.warning(f"[intraday review action normalized] {ticker} action={action} -> HOLD")
+                action = "HOLD"
             if action == "HOLD" and pos.get("pending_intraday_recheck"):
-                self._record_intraday_recheck_result(
-                    pos,
-                    market,
-                    verdict="HOLD",
-                    pnl_pct=float(pnl),
-                    current_native=float(cur or 0),
-                    final_exit_reason="",
-                    clear_pending=True,
-                )
+                due_state = self._intraday_recheck_due_state(pos)
+                if not bool(due_state.get("due")):
+                    lines.append(
+                        "  intraday recheck pending "
+                        f"(due_at={due_state.get('due_at')}, remaining={due_state.get('remaining_min')}m)"
+                    )
+                    log.info(
+                        f"[intraday recheck not due] {market} {ticker} action=HOLD "
+                        f"remaining={due_state.get('remaining_min')}m due_at={due_state.get('due_at')}"
+                    )
+                else:
+                    self._record_intraday_recheck_result(
+                        pos,
+                        market,
+                        verdict="HOLD",
+                        pnl_pct=float(pnl),
+                        current_native=float(cur or 0),
+                        final_exit_reason="",
+                        clear_pending=True,
+                    )
             if action == "HOLD" and isinstance(advice, dict):
                 self._apply_pathb_hold_advice_bridge(pos, market, advice)
             action_ko = {"HOLD": "홀드 유지", "TRAIL": "트레일링 유지", "SELL": "즉시 매도"}.get(action, action)
@@ -16839,7 +16890,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         try:
                             cand = {**pos, "exit_price": sell_px, "reason": "intraday_review_sell"}
                             pending_recheck = bool(pos.get("pending_intraday_recheck"))
-                            if not pending_recheck:
+                            if pending_recheck:
+                                due_state = self._intraday_recheck_due_state(pos)
+                                if not bool(due_state.get("due")):
+                                    lines.append(
+                                        "  intraday recheck pending "
+                                        f"(due_at={due_state.get('due_at')}, remaining={due_state.get('remaining_min')}m)"
+                                    )
+                                    log.info(
+                                        f"[intraday recheck not due] {market} {ticker} action=SELL "
+                                        f"remaining={due_state.get('remaining_min')}m due_at={due_state.get('due_at')}"
+                                    )
+                                    continue
+                            else:
                                 recheck_gate = self._kr_intraday_small_loss_recheck_gate(
                                     pos,
                                     market,

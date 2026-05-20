@@ -108,6 +108,7 @@ class ActiveLessonBuilderTests(unittest.TestCase):
                  "ACTIVE_LESSONS_ENABLED": "true",
                  "ACTIVE_LESSONS_SHADOW": "false",
                  "ACTIVE_LESSONS_ALLOW_LEGACY_BRAIN": "false",
+                 "ACTIVE_LESSONS_ALLOW_RECENT_DAYS": "true",
              }, clear=False):
             result = active_lessons.build_active_lesson_context("US")
 
@@ -123,6 +124,34 @@ class ActiveLessonBuilderTests(unittest.TestCase):
         self.assertNotIn("Legacy broad momentum", section)
         self.assertEqual(result["metadata"]["ignored_reasons"]["ops_flag"], 1)
         self.assertEqual(result["metadata"]["ignored_reasons"]["execution_scope_excluded"], 2)
+
+    def test_recent_day_lessons_are_disabled_by_default(self) -> None:
+        brain = {
+            "markets": {
+                "US": {
+                    "recent_days": [
+                        {
+                            "date": "2026-05-20",
+                            "key_lesson": "Unapproved daily lesson must not reach prompt.",
+                            "trades": 1,
+                        }
+                    ],
+                    "execution_lessons": [],
+                }
+            }
+        }
+        with patch.object(active_lessons, "_load_lesson_candidates", return_value={"markets": {"US": []}}), \
+             patch.object(active_lessons, "_load_brain", return_value=brain), \
+             patch.dict(os.environ, {
+                 "ACTIVE_LESSONS_ENABLED": "true",
+                 "ACTIVE_LESSONS_SHADOW": "false",
+                 "ACTIVE_LESSONS_ALLOW_RECENT_DAYS": "false",
+             }, clear=False):
+            result = active_lessons.build_active_lesson_context("US")
+
+        self.assertEqual(result["section"], "")
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["metadata"]["ignored_reasons"]["recent_day_disabled"], 1)
 
     def test_lesson_candidates_require_action_hint_and_use_500_char_limit(self) -> None:
         marker = "TAIL_MARKER_AFTER_220"
@@ -188,7 +217,11 @@ class ActiveLessonBuilderTests(unittest.TestCase):
         }
         with patch.object(active_lessons, "_load_lesson_candidates", return_value={"markets": {"US": []}}), \
              patch.object(active_lessons, "_load_brain", return_value=brain), \
-             patch.dict(os.environ, {"ACTIVE_LESSONS_ENABLED": "true", "ACTIVE_LESSONS_SHADOW": "false"}, clear=False):
+             patch.dict(os.environ, {
+                 "ACTIVE_LESSONS_ENABLED": "true",
+                 "ACTIVE_LESSONS_SHADOW": "false",
+                 "ACTIVE_LESSONS_ALLOW_RECENT_DAYS": "true",
+             }, clear=False):
             result = active_lessons.build_active_lesson_context("US")
 
         recent_items = [item for item in result["items"] if item["source"] == "recent_day"]
@@ -224,7 +257,11 @@ class ActiveLessonBuilderTests(unittest.TestCase):
         }
         with patch.object(active_lessons, "_load_lesson_candidates", return_value={"markets": {"US": []}}), \
              patch.object(active_lessons, "_load_brain", return_value=brain), \
-             patch.dict(os.environ, {"ACTIVE_LESSONS_ENABLED": "true", "ACTIVE_LESSONS_SHADOW": "false"}, clear=False):
+             patch.dict(os.environ, {
+                 "ACTIVE_LESSONS_ENABLED": "true",
+                 "ACTIVE_LESSONS_SHADOW": "false",
+                 "ACTIVE_LESSONS_ALLOW_RECENT_DAYS": "true",
+             }, clear=False):
             result = active_lessons.build_active_lesson_context("US")
 
         self.assertIn("Clean market lesson.", result["section"])

@@ -10,7 +10,7 @@ from contextlib import closing
 from decision.registry import DecisionRegistry
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent
-from tools.sync_v2_learning_performance import sync_v2_learning_performance
+from tools.sync_v2_learning_performance import _apply_decision_repair, sync_v2_learning_performance
 
 
 class V2LearningPerformanceSyncTests(unittest.TestCase):
@@ -495,6 +495,538 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
             self.assertEqual(link["legacy_filled_before"], 1)
             self.assertEqual(link["legacy_filled_after"], 1)
 
+    def test_sync_does_not_repair_simulated_only_legacy_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL,
+                        is_simulated INTEGER,
+                        data_source TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status,
+                        entry_price, is_simulated, data_source
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '',
+                              NULL, 1, 'backfill')
+                    """
+                )
+                conn.commit()
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 1},
+                )
+            )
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 0)
+            self.assertEqual(summary["decision_links_repaired"], 0)
+            self.assertEqual(summary["decision_links_unmatched"], 1)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                decision = conn.execute("SELECT * FROM decisions WHERE id=1").fetchone()
+                link = conn.execute(
+                    "SELECT * FROM v2_decision_fill_links WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertEqual(decision["filled"], 0)
+            self.assertEqual(decision["order_status"], "")
+            self.assertIsNone(decision["entry_price"])
+            self.assertEqual(decision["is_simulated"], 1)
+            self.assertEqual(decision["data_source"], "backfill")
+            self.assertEqual(link["link_status"], "UNMATCHED_NO_LIVE_ROW")
+            self.assertIsNone(link["legacy_decision_id"])
+            self.assertEqual(link["repaired"], 0)
+            self.assertEqual(link["unmatched_reason"], "simulated_legacy_rows_excluded")
+
+    def test_sync_repairs_live_legacy_decision_when_simulated_row_also_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL,
+                        is_simulated INTEGER,
+                        data_source TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status,
+                        entry_price, is_simulated, data_source
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '',
+                              NULL, 1, 'backfill')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status,
+                        entry_price, is_simulated, data_source
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '',
+                              NULL, 0, 'live')
+                    """
+                )
+                live_id = int(conn.execute("SELECT id FROM decisions WHERE data_source='live'").fetchone()[0])
+                conn.commit()
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 1},
+                )
+            )
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 1)
+            self.assertEqual(summary["decision_links_repaired"], 1)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                simulated = conn.execute("SELECT * FROM decisions WHERE data_source='backfill'").fetchone()
+                live = conn.execute("SELECT * FROM decisions WHERE data_source='live'").fetchone()
+                link = conn.execute(
+                    "SELECT * FROM v2_decision_fill_links WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertEqual(simulated["filled"], 0)
+            self.assertEqual(simulated["order_status"], "")
+            self.assertIsNone(simulated["entry_price"])
+            self.assertEqual(live["filled"], 1)
+            self.assertEqual(live["order_status"], "FILLED")
+            self.assertEqual(live["entry_price"], 70000)
+            self.assertEqual(link["link_status"], "MATCHED")
+            self.assertEqual(link["legacy_decision_id"], live_id)
+            self.assertEqual(link["repaired"], 1)
+
+    def test_sync_keeps_legacy_lookup_for_decisions_schema_without_simulated_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status,
+                        entry_price
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '', NULL)
+                    """
+                )
+                conn.commit()
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 1},
+                )
+            )
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 1)
+            self.assertEqual(summary["decision_links_repaired"], 1)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                decision = conn.execute("SELECT * FROM decisions WHERE id=1").fetchone()
+
+            self.assertEqual(decision["filled"], 1)
+            self.assertEqual(decision["order_status"], "FILLED")
+            self.assertEqual(decision["entry_price"], 70000)
+
+    def test_apply_decision_repair_skips_simulated_legacy_row_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ml_db = Path(tmp) / "decisions.db"
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL,
+                        is_simulated INTEGER,
+                        data_source TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        filled, order_status, entry_price, is_simulated, data_source
+                    ) VALUES (0, '', NULL, 1, 'backfill')
+                    """
+                )
+                link_row = {
+                    "link_status": "MATCHED",
+                    "matched_by": "payload_legacy_decision_id",
+                    "legacy_decision_id": 1,
+                    "legacy_filled_before": 0,
+                    "legacy_filled_after": 0,
+                    "legacy_order_status_before": "",
+                    "legacy_order_status_after": "",
+                    "repaired": 0,
+                    "unmatched_reason": "",
+                }
+
+                updated_link = _apply_decision_repair(
+                    conn,
+                    {"filled": 1, "entry_price": 70000},
+                    link_row,
+                )
+                decision = conn.execute("SELECT * FROM decisions WHERE id=1").fetchone()
+
+            self.assertEqual(decision["filled"], 0)
+            self.assertEqual(decision["order_status"], "")
+            self.assertIsNone(decision["entry_price"])
+            self.assertEqual(updated_link["link_status"], "REPAIR_SKIPPED_SIMULATED")
+            self.assertEqual(updated_link["matched_by"], "")
+            self.assertEqual(updated_link["legacy_filled_after"], 0)
+            self.assertEqual(updated_link["legacy_order_status_after"], "")
+            self.assertEqual(updated_link["repaired"], 0)
+            self.assertEqual(updated_link["unmatched_reason"], "simulated_legacy_row_excluded_at_repair")
+
+    def test_sync_excludes_payload_simulated_legacy_decision_id_from_link_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL,
+                        is_simulated INTEGER,
+                        data_source TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status,
+                        entry_price, is_simulated, data_source
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '',
+                              NULL, 1, 'backfill')
+                    """
+                )
+                conn.commit()
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 1, "legacy_decision_id": 1},
+                )
+            )
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=False,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 0)
+            self.assertEqual(summary["decision_links_repaired"], 0)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                decision = conn.execute("SELECT * FROM decisions WHERE id=1").fetchone()
+                link = conn.execute(
+                    "SELECT * FROM v2_decision_fill_links WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertEqual(decision["filled"], 0)
+            self.assertEqual(link["link_status"], "UNMATCHED_NO_LIVE_ROW")
+            self.assertIsNone(link["legacy_decision_id"])
+            self.assertEqual(link["unmatched_reason"], "payload_simulated_legacy_row_excluded")
+
+    def test_sync_excludes_payload_legacy_decision_id_with_scope_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL,
+                        is_simulated INTEGER,
+                        data_source TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status,
+                        entry_price, is_simulated, data_source
+                    ) VALUES ('US', 'AAPL', '2026-05-08', 'BUY_SIGNAL', 0, '',
+                              NULL, 0, 'live')
+                    """
+                )
+                conn.commit()
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 1, "legacy_decision_id": 1},
+                )
+            )
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 0)
+            self.assertEqual(summary["decision_links_repaired"], 0)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                decision = conn.execute("SELECT * FROM decisions WHERE id=1").fetchone()
+                link = conn.execute(
+                    "SELECT * FROM v2_decision_fill_links WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertEqual(decision["filled"], 0)
+            self.assertEqual(decision["order_status"], "")
+            self.assertIsNone(decision["entry_price"])
+            self.assertEqual(link["link_status"], "PAYLOAD_LEGACY_MISMATCH")
+            self.assertIsNone(link["legacy_decision_id"])
+            self.assertEqual(link["unmatched_reason"], "payload_legacy_market_mismatch")
+
+    def test_apply_decision_repair_skips_legacy_row_scope_mismatch_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ml_db = Path(tmp) / "decisions.db"
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL,
+                        is_simulated INTEGER,
+                        data_source TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, filled, order_status,
+                        entry_price, is_simulated, data_source
+                    ) VALUES ('US', 'AAPL', '2026-05-08', 0, '', NULL, 0, 'live')
+                    """
+                )
+                link_row = {
+                    "link_status": "MATCHED",
+                    "matched_by": "payload_legacy_decision_id",
+                    "legacy_decision_id": 1,
+                    "legacy_filled_before": 0,
+                    "legacy_filled_after": 0,
+                    "legacy_order_status_before": "",
+                    "legacy_order_status_after": "",
+                    "repaired": 0,
+                    "unmatched_reason": "",
+                }
+
+                updated_link = _apply_decision_repair(
+                    conn,
+                    {
+                        "filled": 1,
+                        "market": "KR",
+                        "ticker": "005930",
+                        "session_date": "2026-05-08",
+                        "entry_price": 70000,
+                    },
+                    link_row,
+                )
+                decision = conn.execute("SELECT * FROM decisions WHERE id=1").fetchone()
+
+            self.assertEqual(decision["filled"], 0)
+            self.assertEqual(decision["order_status"], "")
+            self.assertIsNone(decision["entry_price"])
+            self.assertEqual(updated_link["link_status"], "REPAIR_SKIPPED_SCOPE_MISMATCH")
+            self.assertEqual(updated_link["matched_by"], "")
+            self.assertEqual(updated_link["legacy_filled_after"], 0)
+            self.assertEqual(updated_link["legacy_order_status_after"], "")
+            self.assertEqual(updated_link["repaired"], 0)
+            self.assertEqual(updated_link["unmatched_reason"], "payload_legacy_market_mismatch")
+
     def test_sync_does_not_match_legacy_decision_when_canonical_has_no_fill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -972,6 +1504,91 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
             self.assertEqual(summary["selected"], 1)
             self.assertEqual(summary["written"], 0)
             self.assertFalse(ml_db.exists())
+
+    def test_dry_run_previews_decision_links_without_mutating_legacy_decisions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL,
+                        is_simulated INTEGER,
+                        data_source TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status,
+                        entry_price, is_simulated, data_source
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '',
+                              NULL, 0, 'live')
+                    """
+                )
+                conn.commit()
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 1},
+                )
+            )
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=True,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["selected"], 1)
+            self.assertEqual(summary["written"], 0)
+            self.assertEqual(summary["canonical_written"], 0)
+            self.assertEqual(summary["decision_links_written"], 0)
+            self.assertEqual(summary["decision_links_matched"], 1)
+            self.assertEqual(summary["decision_links_repaired"], 1)
+            self.assertEqual(summary["decision_link_sample"][0]["link_status"], "MATCHED")
+            self.assertEqual(summary["decision_link_sample"][0]["repaired"], 1)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                decision = conn.execute("SELECT * FROM decisions WHERE id=1").fetchone()
+                link_table = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='v2_decision_fill_links'"
+                ).fetchone()
+
+            self.assertEqual(decision["filled"], 0)
+            self.assertEqual(decision["order_status"], "")
+            self.assertIsNone(decision["entry_price"])
+            self.assertIsNone(link_table)
 
 
 if __name__ == "__main__":

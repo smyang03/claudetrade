@@ -1,6 +1,6 @@
 {
   "meta": {
-    "version": 3585,
+    "version": 3589,
     "created": "2026-03-19",
     "last_updated": "2026-05-20",
     "trained_days_kr": 42,
@@ -1927,6 +1927,8 @@
           "trades": 0,
           "execution_contaminated": false,
           "execution_learning_excluded": false,
+          "prompt_policy_excluded": true,
+          "policy_exclusion_reason": "unapproved_daily_lesson",
           "execution_warning": false,
           "execution_issues": [],
           "execution_issue_labels": [],
@@ -5518,13 +5520,13 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "30min_tune": {
-          "count": 112,
+          "count": 113,
           "correct": 13,
-          "rate": 0.116,
-          "insight": "개장 대비 지수 -0.19%로 낙폭 축소, breadth adv/dec=39/35로 균형 회복(advance_ratio +2%p), GC/DC 0/0·vol_spike 0으로 시스템 리스크 부재 확인되나 MILD_BEAR thesis 반전 신호 미충족이며 30분 기울기 N/A로 추세 확정 불가, MXL 손익률 -0.1% SL 여유 충분해 현 모드 유지",
+          "rate": 0.115,
+          "insight": "지수 +0.33% 소폭 상승, breadth advance_ratio +7%p 개선되었으나 adv/dec=36/38로 여전히 중립 이하이고 GC/DC=0/0·vol_spike=0으로 모멘텀 확인 불충분, 30분 기울기 N/A·블랙아웃 구간·경과 2m 상태에서 CAUTIOUS 유지가 적절하며 AXTI +0.2% 소익 정상 범위 내",
           "last_seen": "2026-05-20",
           "adjusted": 13,
-          "adjusted_rate": 0.116,
+          "adjusted_rate": 0.115,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "60min_tune": {
@@ -8018,6 +8020,46 @@
           "changes": [],
           "consensus_shifted": false,
           "outcome": "wrong"
+        },
+        {
+          "date": "2026-05-20",
+          "r1": {
+            "bull": {
+              "stance": "MILD_BULL",
+              "confidence": 0.65,
+              "key_reason": "인트라데이 S&P500 +0.23%·NASDAQ +0.58%로 프리오픈 소화 후 반등 중이며, breadth는 41% 상승·GC/DC 13/16"
+            },
+            "bear": {
+              "stance": "CAUTIOUS",
+              "confidence": 0.62,
+              "key_reason": "인트라데이 S&P500 +0.23%·NASDAQ +0.58%로 반등 중이나, 프리오픈 기준 breadth 41% 상승·GC/DC 13/16으로 "
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.65,
+              "key_reason": "브레드스 12상승/17하락(41%) · GC/DC 13/16으로 하락 우위나 2:1 기울기 미달이고, 인트라데이 S&P500 +0.23%·NAS"
+            }
+          },
+          "r2": {
+            "bull": {
+              "stance": "MILD_BULL",
+              "confidence": 0.63,
+              "key_reason": "인트라데이 S&P500 +0.23%·NASDAQ +0.58% 실시간 반등 확인, VIX 18.0 안정권이나 breadth 41%·GC/DC 13"
+            },
+            "bear": {
+              "stance": "CAUTIOUS",
+              "confidence": 0.6,
+              "key_reason": "인트라데이 S&P500 +0.23%·NASDAQ +0.58% 반등 중이나 세션 경과 3분으로 방향 확인 불충분하며, breadth 41% 상승·"
+            },
+            "neutral": {
+              "stance": "NEUTRAL",
+              "confidence": 0.65,
+              "key_reason": "breadth 41%(GC/DC 13/16)로 하락 우위나 2:1 미달·S&P500 +0.23%·NASDAQ +0.58% 인트라데이 반등 중이나"
+            }
+          },
+          "changes": [],
+          "consensus_shifted": false,
+          "outcome": null
         }
       ],
       "execution_patterns": {

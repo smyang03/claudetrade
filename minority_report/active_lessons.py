@@ -249,6 +249,7 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
 
     items: list[dict[str, Any]] = []
     recent_days = list(market_data.get("recent_days") or [])
+    allow_recent_days = _env_bool("ACTIVE_LESSONS_ALLOW_RECENT_DAYS", False)
     for idx, row in enumerate(reversed(recent_days[-5:])):
         if not isinstance(row, dict):
             continue
@@ -263,6 +264,9 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
             continue
         lesson = row.get("key_lesson")
         if not lesson:
+            continue
+        if not allow_recent_days:
+            ignored.append({"source": "recent_day", "reason": "recent_day_disabled"})
             continue
         _append_item(
             items,

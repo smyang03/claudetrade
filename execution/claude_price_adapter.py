@@ -63,10 +63,20 @@ class ClaudePriceAdapter:
         self.store = store or EventStore()
         self.config = config
 
-    def register_plan(self, plan: PricePlan, *, runtime_mode: str, brain_snapshot_id: str) -> str:
+    def register_plan(
+        self,
+        plan: PricePlan,
+        *,
+        runtime_mode: str,
+        brain_snapshot_id: str,
+        initial_status: str = "WAITING",
+        plan_overrides: dict[str, Any] | None = None,
+    ) -> str:
         errors = plan.validate(min_confidence=self.config.pathb_min_confidence)
         if errors:
             raise ValueError(f"invalid Claude price plan: {errors}")
+        path_status = str(initial_status or "WAITING").upper()
+        plan_payload = {**plan.to_dict(), **(plan_overrides or {})}
         self.store.create_path_run(
             path_run_id=plan.path_run_id,
             decision_id=plan.decision_id,
@@ -75,23 +85,23 @@ class ClaudePriceAdapter:
             runtime_mode=runtime_mode,
             session_date=plan.session_date,
             ticker=plan.ticker,
-            status="WAITING",
-            plan=plan.to_dict(),
+            status=path_status,
+            plan=plan_payload,
         )
         self._append_event(
             LifecycleEventType.CLAUDE_PRICE_PLAN_CREATED,
             plan.path_run_id,
             runtime_mode=runtime_mode,
             brain_snapshot_id=brain_snapshot_id,
-            path_status="WAITING",
-            extra={"plan": plan.to_dict()},
+            path_status=path_status,
+            extra={"plan": plan_payload},
         )
         self._append_event(
             LifecycleEventType.CLAUDE_PRICE_WAITING,
             plan.path_run_id,
             runtime_mode=runtime_mode,
             brain_snapshot_id=brain_snapshot_id,
-            path_status="WAITING",
+            path_status=path_status,
         )
         return plan.path_run_id
 
@@ -136,6 +146,27 @@ class ClaudePriceAdapter:
             brain_snapshot_id=brain_snapshot_id,
             path_status="HIT",
             extra={"price": float(price or 0)},
+        )
+
+    def mark_shadow_hit(self, path_run_id: str, *, price: float, runtime_mode: str, brain_snapshot_id: str) -> None:
+        self.store.update_path_run(
+            path_run_id,
+            status="SHADOW_HIT",
+            plan={
+                "shadow_hit_price": float(price or 0),
+                "shadow_hit_at": utc_now_iso(),
+                "shadow_only": True,
+            },
+            merge_plan=True,
+        )
+        self._append_event(
+            LifecycleEventType.CLAUDE_PRICE_HIT,
+            path_run_id,
+            runtime_mode=runtime_mode,
+            brain_snapshot_id=brain_snapshot_id,
+            path_status="SHADOW_HIT",
+            reason_code="shadow_buy_zone_hit",
+            extra={"price": float(price or 0), "shadow_only": True, "order_submitted": False},
         )
 
     def mark_order_sent(

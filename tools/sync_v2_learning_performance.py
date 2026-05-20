@@ -731,6 +731,51 @@ def _changed_legacy_updates(row: sqlite3.Row, updates: dict[str, Any]) -> dict[s
     }
 
 
+def _live_legacy_decision_where(columns: set[str]) -> str:
+    clauses: list[str] = []
+    if "is_simulated" in columns:
+        clauses.append("(is_simulated = 0 OR is_simulated IS NULL)")
+    return " AND ".join(clauses)
+
+
+def _is_truthy_db_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"", "0", "false", "f", "no", "n", "none", "null"}:
+        return False
+    return True
+
+
+def _is_simulated_legacy_row(row: sqlite3.Row) -> bool:
+    if "is_simulated" not in row.keys():
+        return False
+    return _is_truthy_db_value(row["is_simulated"])
+
+
+def _scope_value(field: str, value: Any) -> str:
+    text = str(value or "").strip()
+    if field in {"market", "ticker"}:
+        return text.upper()
+    if field == "session_date":
+        return text[:10]
+    return text
+
+
+def _legacy_scope_mismatch_reason(row: sqlite3.Row, canonical: dict[str, Any]) -> str:
+    row_keys = set(row.keys())
+    for field in ("market", "ticker", "session_date"):
+        if field not in row_keys:
+            continue
+        row_value = _scope_value(field, row[field])
+        canonical_value = _scope_value(field, canonical.get(field))
+        if not row_value or not canonical_value or row_value != canonical_value:
+            return f"payload_legacy_{field}_mismatch"
+    return ""
+
+
 def _find_legacy_decision(
     conn: sqlite3.Connection,
     canonical: dict[str, Any],
@@ -743,22 +788,42 @@ def _find_legacy_decision(
     if legacy_id and "id" in columns:
         row = conn.execute("SELECT * FROM decisions WHERE id=?", (legacy_id,)).fetchone()
         if row is not None:
+            if _is_simulated_legacy_row(row):
+                return None, "UNMATCHED_NO_LIVE_ROW", "payload_simulated_legacy_row_excluded"
+            mismatch_reason = _legacy_scope_mismatch_reason(row, canonical)
+            if mismatch_reason:
+                return None, "PAYLOAD_LEGACY_MISMATCH", mismatch_reason
             return row, "MATCHED", "payload_legacy_decision_id"
     required = {"market", "ticker", "session_date"}
     if not required.issubset(columns):
         return None, "UNMATCHED_SCHEMA", "decisions_missing_market_ticker_session_date"
+    live_clause = _live_legacy_decision_where(columns)
+    where_extra = f" AND {live_clause}" if live_clause else ""
+    params = (canonical.get("market"), canonical.get("ticker"), canonical.get("session_date"))
     rows = conn.execute(
-        """
+        f"""
         SELECT *
         FROM decisions
-        WHERE market=? AND ticker=? AND session_date=?
+        WHERE market=? AND ticker=? AND session_date=?{where_extra}
         ORDER BY
             CASE WHEN decision='BUY_SIGNAL' THEN 0 ELSE 1 END,
             id
         """,
-        (canonical.get("market"), canonical.get("ticker"), canonical.get("session_date")),
+        params,
     ).fetchall()
     if not rows:
+        if live_clause:
+            any_row = conn.execute(
+                """
+                SELECT 1
+                FROM decisions
+                WHERE market=? AND ticker=? AND session_date=?
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            if any_row is not None:
+                return None, "UNMATCHED_NO_LIVE_ROW", "simulated_legacy_rows_excluded"
         return None, "UNMATCHED_NO_ROW", "no_market_ticker_session_match"
     if len(rows) > 1:
         buy_rows = [row for row in rows if str(row["decision"] if "decision" in row.keys() else "") == "BUY_SIGNAL"]
@@ -772,6 +837,8 @@ def _apply_decision_repair(
     conn: sqlite3.Connection,
     canonical: dict[str, Any],
     link_row: dict[str, Any],
+    *,
+    write: bool = True,
 ) -> dict[str, Any]:
     if link_row.get("link_status") != "MATCHED" or not int(canonical.get("filled") or 0):
         return link_row
@@ -785,14 +852,32 @@ def _apply_decision_repair(
         link_row["unmatched_reason"] = "legacy_row_missing_at_repair"
         return link_row
     columns = _table_columns(conn, "decisions")
+    if _is_simulated_legacy_row(row):
+        link_row["link_status"] = "REPAIR_SKIPPED_SIMULATED"
+        link_row["matched_by"] = ""
+        link_row["legacy_filled_after"] = link_row.get("legacy_filled_before")
+        link_row["legacy_order_status_after"] = link_row.get("legacy_order_status_before")
+        link_row["repaired"] = 0
+        link_row["unmatched_reason"] = "simulated_legacy_row_excluded_at_repair"
+        return link_row
+    mismatch_reason = _legacy_scope_mismatch_reason(row, canonical)
+    if mismatch_reason:
+        link_row["link_status"] = "REPAIR_SKIPPED_SCOPE_MISMATCH"
+        link_row["matched_by"] = ""
+        link_row["legacy_filled_after"] = link_row.get("legacy_filled_before")
+        link_row["legacy_order_status_after"] = link_row.get("legacy_order_status_before")
+        link_row["repaired"] = 0
+        link_row["unmatched_reason"] = mismatch_reason
+        return link_row
     updates = _legacy_update_values(canonical, columns)
     changed_updates = _changed_legacy_updates(row, updates)
     if changed_updates:
-        assignments = ", ".join(f"{name}=?" for name in changed_updates)
-        conn.execute(
-            f"UPDATE decisions SET {assignments} WHERE id=?",
-            (*changed_updates.values(), legacy_id),
-        )
+        if write:
+            assignments = ", ".join(f"{name}=?" for name in changed_updates)
+            conn.execute(
+                f"UPDATE decisions SET {assignments} WHERE id=?",
+                (*changed_updates.values(), legacy_id),
+            )
         link_row["repaired"] = 1
     if "filled" in row.keys():
         filled_after = changed_updates.get("filled", row["filled"])
@@ -882,6 +967,43 @@ def build_decision_fill_link(
     return link_row
 
 
+def _build_decision_fill_links(
+    conn: sqlite3.Connection,
+    canonical_rows: list[dict[str, Any]],
+    event_sets: dict[str, list[dict[str, Any]]],
+    *,
+    repair_decisions: bool,
+    write_repairs: bool,
+) -> list[dict[str, Any]]:
+    link_rows: list[dict[str, Any]] = []
+    canonical_by_decision = {
+        str(row.get("v2_decision_id") or ""): row
+        for row in canonical_rows
+    }
+    for canonical in canonical_rows:
+        link_rows.append(
+            build_decision_fill_link(
+                conn,
+                canonical,
+                event_sets.get(str(canonical.get("v2_decision_id") or ""), []),
+                repair_decisions=False,
+            )
+        )
+    _mark_shared_legacy_ambiguity(link_rows)
+    if repair_decisions:
+        for index, link_row in enumerate(link_rows):
+            canonical = canonical_by_decision.get(str(link_row.get("v2_decision_id") or ""))
+            if canonical is None:
+                continue
+            link_rows[index] = _apply_decision_repair(
+                conn,
+                canonical,
+                link_row,
+                write=write_repairs,
+            )
+    return link_rows
+
+
 def sync_v2_learning_performance(
     *,
     event_db: str | Path = DEFAULT_EVENT_DB,
@@ -916,32 +1038,29 @@ def sync_v2_learning_performance(
             event_sets[decision_id] = events
     written = 0
     link_rows: list[dict[str, Any]] = []
-    if not dry_run:
+    if dry_run:
+        if ml_path.exists():
+            with _connect(ml_path) as ml_conn:
+                link_rows = _build_decision_fill_links(
+                    ml_conn,
+                    canonical_rows,
+                    event_sets,
+                    repair_decisions=repair_decisions,
+                    write_repairs=False,
+                )
+    else:
         ml_path.parent.mkdir(parents=True, exist_ok=True)
         with _connect(ml_path) as ml_conn:
             ensure_schema(ml_conn)
             ml_conn.executemany(UPSERT_SQL, rows)
             ml_conn.executemany(CANONICAL_UPSERT_SQL, canonical_rows)
-            canonical_by_decision = {
-                str(row.get("v2_decision_id") or ""): row
-                for row in canonical_rows
-            }
-            for canonical in canonical_rows:
-                link_rows.append(
-                    build_decision_fill_link(
-                        ml_conn,
-                        canonical,
-                        event_sets.get(str(canonical.get("v2_decision_id") or ""), []),
-                        repair_decisions=False,
-                    )
-                )
-            _mark_shared_legacy_ambiguity(link_rows)
-            if repair_decisions:
-                for index, link_row in enumerate(link_rows):
-                    canonical = canonical_by_decision.get(str(link_row.get("v2_decision_id") or ""))
-                    if canonical is None:
-                        continue
-                    link_rows[index] = _apply_decision_repair(ml_conn, canonical, link_row)
+            link_rows = _build_decision_fill_links(
+                ml_conn,
+                canonical_rows,
+                event_sets,
+                repair_decisions=repair_decisions,
+                write_repairs=True,
+            )
             ml_conn.executemany(LINK_UPSERT_SQL, link_rows)
             ml_conn.commit()
             written = len(rows)

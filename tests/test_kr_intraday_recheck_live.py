@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import time
 import unittest
 from unittest.mock import Mock, patch
 
-from trading_bot import TradingBot
+from trading_bot import KST, TradingBot
 
 
 class _RuntimeConfig:
@@ -183,7 +184,191 @@ class KrIntradayRecheckLiveTests(unittest.TestCase):
         events = [call.args[2] for call in bot._write_execution_leak_event.call_args_list]
         self.assertIn("recheck_deferred", events)
 
-    def test_intraday_review_second_sell_clears_pending_recheck_after_order_accept(self) -> None:
+    def test_intraday_review_pending_sell_after_due_records_recheck_result(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 990.0,
+            "display_current_price": 990.0,
+            "sl": 960.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "pending_intraday_recheck": True,
+            "pending_intraday_recheck_used": True,
+            "pending_intraday_recheck_pnl_at_review": -1.2,
+            "pending_intraday_recheck_due_at": (datetime.now(KST) - timedelta(minutes=1)).isoformat(
+                timespec="seconds"
+            ),
+            "_fill_ts": time.time() - 3900,
+        }
+        bot = _bot(pos)
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.8}), patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        bot._execute_sell.assert_called_once()
+        self.assertFalse(pos["pending_intraday_recheck"])
+        self.assertEqual(pos["pending_intraday_recheck_status"], "sell_after_recheck")
+        events = [call.args[2] for call in bot._write_execution_leak_event.call_args_list]
+        self.assertIn("recheck_result", events)
+
+    def test_intraday_review_second_sell_after_due_executes(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 990.0,
+            "display_current_price": 990.0,
+            "sl": 960.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "pending_intraday_recheck": True,
+            "pending_intraday_recheck_used": True,
+            "pending_intraday_recheck_pnl_at_review": -1.2,
+            "pending_intraday_recheck_due_at": (datetime.now(KST) - timedelta(minutes=1)).isoformat(
+                timespec="seconds"
+            ),
+            "_fill_ts": time.time() - 3900,
+        }
+        bot = _bot(pos)
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.8}), patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        bot._execute_sell.assert_called_once()
+        self.assertFalse(pos["pending_intraday_recheck"])
+        self.assertEqual(pos["pending_intraday_recheck_status"], "sell_after_recheck")
+
+    def test_intraday_review_pending_hold_after_due_clears_pending(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 990.0,
+            "display_current_price": 990.0,
+            "sl": 960.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "pending_intraday_recheck": True,
+            "pending_intraday_recheck_used": True,
+            "pending_intraday_recheck_pnl_at_review": -1.2,
+            "pending_intraday_recheck_due_at": (datetime.now(KST) - timedelta(minutes=1)).isoformat(
+                timespec="seconds"
+            ),
+            "_fill_ts": time.time() - 3900,
+        }
+        bot = _bot(pos)
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "confidence": 0.8}), patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        bot._execute_sell.assert_not_called()
+        self.assertFalse(pos["pending_intraday_recheck"])
+        self.assertEqual(pos["pending_intraday_recheck_status"], "hold_after_recheck")
+        events = [call.args[2] for call in bot._write_execution_leak_event.call_args_list]
+        self.assertIn("recheck_result", events)
+
+    def test_intraday_review_pending_sell_before_due_does_not_execute(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 990.0,
+            "display_current_price": 990.0,
+            "sl": 960.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "pending_intraday_recheck": True,
+            "pending_intraday_recheck_used": True,
+            "pending_intraday_recheck_pnl_at_review": -1.2,
+            "pending_intraday_recheck_due_at": (datetime.now(KST) + timedelta(minutes=30)).isoformat(
+                timespec="seconds"
+            ),
+            "_fill_ts": time.time() - 3900,
+        }
+        bot = _bot(pos)
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.8}), patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        bot._execute_sell.assert_not_called()
+        self.assertTrue(pos["pending_intraday_recheck"])
+        self.assertNotEqual(pos.get("pending_intraday_recheck_status"), "sell_after_recheck")
+        events = [call.args[2] for call in bot._write_execution_leak_event.call_args_list]
+        self.assertNotIn("recheck_result", events)
+
+    def test_intraday_review_pending_hold_before_due_does_not_clear_pending(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 990.0,
+            "display_current_price": 990.0,
+            "sl": 960.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "pending_intraday_recheck": True,
+            "pending_intraday_recheck_used": True,
+            "pending_intraday_recheck_pnl_at_review": -1.2,
+            "pending_intraday_recheck_due_at": (datetime.now(KST) + timedelta(minutes=30)).isoformat(
+                timespec="seconds"
+            ),
+            "_fill_ts": time.time() - 3900,
+        }
+        bot = _bot(pos)
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "confidence": 0.8}), patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        bot._execute_sell.assert_not_called()
+        self.assertTrue(pos["pending_intraday_recheck"])
+        self.assertNotEqual(pos.get("pending_intraday_recheck_status"), "hold_after_recheck")
+        events = [call.args[2] for call in bot._write_execution_leak_event.call_args_list]
+        self.assertNotIn("recheck_result", events)
+
+    def test_intraday_review_trail_action_does_not_execute_sell(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 990.0,
+            "display_current_price": 990.0,
+            "sl": 960.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "pending_intraday_recheck": True,
+            "pending_intraday_recheck_used": True,
+            "pending_intraday_recheck_pnl_at_review": -1.2,
+            "pending_intraday_recheck_due_at": (datetime.now(KST) - timedelta(minutes=1)).isoformat(
+                timespec="seconds"
+            ),
+            "_fill_ts": time.time() - 3900,
+        }
+        bot = _bot(pos)
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "TRAIL", "confidence": 0.8}), patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        bot._execute_sell.assert_not_called()
+        self.assertFalse(pos["pending_intraday_recheck"])
+        self.assertEqual(pos["pending_intraday_recheck_status"], "hold_after_recheck")
+        events = [call.args[2] for call in bot._write_execution_leak_event.call_args_list]
+        self.assertIn("recheck_result", events)
+
+    def test_intraday_review_pending_sell_without_due_at_fail_closed_blocks_sell(self) -> None:
         pos = {
             "ticker": "005930",
             "entry": 1000.0,
@@ -205,11 +390,40 @@ class KrIntradayRecheckLiveTests(unittest.TestCase):
         ):
             TradingBot._intraday_position_review(bot, "KR")
 
-        bot._execute_sell.assert_called_once()
-        self.assertFalse(pos["pending_intraday_recheck"])
-        self.assertEqual(pos["pending_intraday_recheck_status"], "sell_after_recheck")
+        bot._execute_sell.assert_not_called()
+        self.assertTrue(pos["pending_intraday_recheck"])
+        self.assertNotEqual(pos.get("pending_intraday_recheck_status"), "sell_after_recheck")
         events = [call.args[2] for call in bot._write_execution_leak_event.call_args_list]
-        self.assertIn("recheck_result", events)
+        self.assertNotIn("recheck_result", events)
+
+    def test_intraday_recheck_due_state_invalid_due_at_is_fail_closed(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "pending_intraday_recheck": True,
+            "pending_intraday_recheck_due_at": "not-a-date",
+        }
+        bot = _bot(pos)
+
+        state = TradingBot._intraday_recheck_due_state(bot, pos)
+
+        self.assertFalse(state["due"])
+        self.assertEqual(state["reason"], "invalid_due_at")
+        self.assertEqual(state["due_at"], "not-a-date")
+
+    def test_intraday_recheck_due_state_missing_due_at_is_fail_closed(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "pending_intraday_recheck": True,
+        }
+        bot = _bot(pos)
+
+        with patch("trading_bot.log.warning") as warning:
+            state = TradingBot._intraday_recheck_due_state(bot, pos)
+
+        self.assertFalse(state["due"])
+        self.assertEqual(state["reason"], "missing_due_at")
+        self.assertEqual(state["due_at"], "")
+        warning.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -309,7 +309,7 @@ def _prompt_policy_exclusion(actual_result: dict, *, execution_learning_excluded
         return False, ""
     if actual_result.get("execution_contaminated"):
         return True, explicit_reason or "execution_contaminated"
-    return False, ""
+    return True, "postmortem_policy_requires_approval"
 
 
 def run(market: str, date: str, today_judgment: dict,

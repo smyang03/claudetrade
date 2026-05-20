@@ -77,7 +77,7 @@ def _has_hint(insight: str) -> bool:
 
 def _sanitize_insight(insight: str, rate: float, count: int, market: str = "KR", extra: str = "") -> tuple[str, list[str]]:
     """
-    insight 에서 종목명 제거 + 저정확도 hint 추가.
+    insight 에서 종목명 제거만 수행. 저정확도 hint는 precision_note에 분리 저장.
     반환: (새 insight, 변경 설명 목록)
     """
     changes: list[str] = []
@@ -88,16 +88,6 @@ def _sanitize_insight(insight: str, rate: float, count: int, market: str = "KR",
         insight = ticker_re.sub("[특정종목]", insight)
         insight = re.sub(r"(\[특정종목\][·,/·\s]*){2,}", "[특정종목] 등 ", insight)
         changes.append("종목명 제거")
-
-    # 저정확도 hint 추가/교체
-    if count > 0 and rate < _LOW_PRECISION_THRESHOLD and not _has_hint(insight):
-        hint = _precision_hint(rate, count, extra)
-        clean = insight.strip()
-        if len(clean) > 20:
-            insight = f"{hint} (Context: {clean[:80]})"
-        else:
-            insight = hint
-        changes.append(f"저정확도 hint 추가(rate={rate*100:.0f}%)")
 
     return insight, changes
 
@@ -205,6 +195,11 @@ def _check_tuning_patterns(market: str, brain: dict) -> tuple[list[str], list[st
             v["insight"] = new_insight
             for c in changes:
                 fixed.append(f"[tune/{market}] {k}: {c}")
+
+        # 저정확도 hint는 precision_note에 분리 저장 (insight 직접 수정 없음)
+        if cnt > 0 and rate < _LOW_PRECISION_THRESHOLD and not v.get("precision_note"):
+            v["precision_note"] = _precision_hint(rate, cnt, extra)
+            fixed.append(f"[tune/{market}] {k}: precision_note 추가(rate={rate*100:.0f}%)")
 
     return fixed, warnings
 

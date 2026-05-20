@@ -194,6 +194,10 @@ class PathBRuntime:
                 "KR": self._market_live_enabled("KR"),
                 "US": self._market_live_enabled("US"),
             },
+            "market_shadow_plan_enabled": {
+                "KR": self._market_shadow_plan_enabled("KR"),
+                "US": self._market_shadow_plan_enabled("US"),
+            },
             "mode": self.config.pathb_mode,
             "runtime_mode": self.mode,
             "operator_enabled": control.enabled,
@@ -473,6 +477,18 @@ class PathBRuntime:
         if os.getenv(primary) is not None:
             return _env_bool(primary, True)
         return _env_bool(legacy, True)
+
+    def _market_shadow_plan_enabled(self, market: str) -> bool:
+        if self.is_paper:
+            return False
+        market_key = str(market or "").upper()
+        if not market_key:
+            return False
+        primary = f"PATHB_{market_key}_SHADOW_PLAN_ENABLED"
+        legacy = f"{market_key}_CLAUDE_PRICE_SHADOW_PLAN_ENABLED"
+        if os.getenv(primary) is not None:
+            return _env_bool(primary, False)
+        return _env_bool(legacy, False)
 
     def _audit_entry_scan_blocked(self, market: str, entry_gate: dict[str, Any]) -> None:
         bot = getattr(self, "bot", None)
@@ -849,25 +865,82 @@ class PathBRuntime:
                 log.warning(f"[PathB KILL] close open failed {market}: {exc}")
         return state
 
-    def register_from_selection_meta(self, market: str, meta: dict[str, Any]) -> list[str]:
-        if not self.is_enabled():
-            return []
-        market = str(market or "").upper()
-        if not self._market_live_enabled(market):
-            log.warning(f"[PathB paper-only] {market} live Claude Price registration skipped")
-            return []
+    def _pathb_registration_inputs(
+        self,
+        market: str,
+        meta: dict[str, Any],
+        *,
+        shadow_only: bool = False,
+    ) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
         if str(meta.get("_pathb_registration_scope") or "") == "candidate_actions_wait_only":
             # Policy note: PULLBACK_WAIT is not PathA trade_ready, but the current
             # PathB live policy treats Claude's buy-zone plan as executable when
             # price enters the zone. Keep this behavior for now; revisit if PathB
             # live entries should require explicit BUY_READY/PROBE_READY instead.
             trade_ready = list(meta.get("_pathb_wait_tickers") or [])
-            price_targets = meta.get("_pathb_price_targets") or {}
+            price_targets = dict(meta.get("_pathb_price_targets") or {})
         else:
             trade_ready = list(meta.get("trade_ready") or [])
-            price_targets = meta.get("price_targets") or {}
+            price_targets = dict(meta.get("price_targets") or {})
+
+        origin_map = dict(meta.get("_pathb_wait_origins") or {}) if isinstance(meta.get("_pathb_wait_origins"), dict) else {}
+        if shadow_only:
+            shadow_tickers = list(meta.get("_pathb_shadow_tickers") or [])
+            shadow_targets = dict(meta.get("_pathb_shadow_price_targets") or {})
+            shadow_origins = (
+                dict(meta.get("_pathb_shadow_origins") or {})
+                if isinstance(meta.get("_pathb_shadow_origins"), dict)
+                else {}
+            )
+            trade_ready = list(dict.fromkeys(list(trade_ready or []) + shadow_tickers))
+            price_targets = {**price_targets, **shadow_targets}
+            origin_map = {**origin_map, **shadow_origins}
+            if str(meta.get("_pathb_registration_scope") or "") == "candidate_actions_wait_only":
+                fallback_targets = dict(meta.get("price_targets") or {})
+                for ticker in list(meta.get("trade_ready") or []):
+                    key = self._ticker_key(market, ticker)
+                    trade_ready.append(key)
+                    raw = fallback_targets.get(ticker) or fallback_targets.get(key)
+                    if raw and key not in price_targets:
+                        price_targets[key] = raw
+                trade_ready = list(dict.fromkeys(trade_ready))
+
+        return trade_ready, price_targets, origin_map
+
+    def _shadow_path_for_ticker(self, market: str, ticker: str) -> dict[str, Any] | None:
+        key = self._ticker_key(market, ticker)
+        for run in self.store.path_runs_for_session(
+            market=market,
+            runtime_mode=self.mode,
+            session_date=self._session_date(market),
+            path_type="claude_price",
+        ):
+            if self._ticker_key(market, str(run.get("ticker", "") or "")) != key:
+                continue
+            if str(run.get("status", "") or "") in {"SHADOW_WAITING", "SHADOW_HIT"}:
+                return run
+            plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+            if bool(plan.get("shadow_only")):
+                return run
+        return None
+
+    def register_from_selection_meta(self, market: str, meta: dict[str, Any]) -> list[str]:
+        if not self.is_enabled():
+            return []
+        market = str(market or "").upper()
+        live_enabled = self._market_live_enabled(market)
+        shadow_only = (not live_enabled) and self._market_shadow_plan_enabled(market)
+        if not live_enabled and not shadow_only:
+            log.warning(f"[PathB paper-only] {market} live Claude Price registration skipped")
+            return []
+        if shadow_only:
+            log.info(f"[PathB shadow plan] {market} live off; registering shadow-only Claude Price plans")
+        trade_ready, price_targets, origin_map = self._pathb_registration_inputs(
+            market,
+            meta,
+            shadow_only=shadow_only,
+        )
         decision_ids = meta.get("v2_decision_ids") or {}
-        origin_map = meta.get("_pathb_wait_origins") if isinstance(meta.get("_pathb_wait_origins"), dict) else {}
         session_date = self._session_date(market)
         registered: list[str] = []
         missing_price_targets: list[str] = []
@@ -904,7 +977,10 @@ class PathBRuntime:
             )
         for ticker in trade_ready:
             key = self._ticker_key(market, ticker)
-            if self._active_path_for_ticker(market, key):
+            if shadow_only:
+                if self._active_path_for_ticker(market, key) or self._shadow_path_for_ticker(market, key):
+                    continue
+            elif self._active_path_for_ticker(market, key):
                 continue
             decision_id = str(decision_ids.get(ticker) or decision_ids.get(key) or "")
             if not decision_id:
@@ -961,10 +1037,17 @@ class PathBRuntime:
                 plan,
                 runtime_mode=self.mode,
                 brain_snapshot_id=self._brain_snapshot_id(market),
+                initial_status="SHADOW_WAITING" if shadow_only else "WAITING",
+                plan_overrides={
+                    "shadow_only": True,
+                    "live_order_enabled": False,
+                    "shadow_reason": "market_live_disabled",
+                } if shadow_only else None,
             )
             registered.append(path_run_id)
             log.info(
-                f"[PathB plan] {market} {key} zone={plan.buy_zone_low:g}-{plan.buy_zone_high:g} "
+                f"[PathB {'shadow ' if shadow_only else ''}plan] {market} {key} "
+                f"zone={plan.buy_zone_low:g}-{plan.buy_zone_high:g} "
                 f"target={plan.sell_target:g} stop={plan.stop_loss:g} conf={plan.confidence:.2f}"
             )
         if missing_price_targets:
@@ -973,6 +1056,64 @@ class PathBRuntime:
                 f"{missing_price_targets}"
             )
         return registered
+
+    def _scan_shadow_waiting_entries(self, market: str) -> int:
+        market_key = str(market or "").upper()
+        hit_count = 0
+        for run in self.store.path_runs_for_session(
+            market=market_key,
+            runtime_mode=self.mode,
+            session_date=self._session_date(market_key),
+            status="SHADOW_WAITING",
+            path_type="claude_price",
+        ):
+            plan = self._plan_from_run(run)
+            if plan is None:
+                continue
+            current = self._current_native_price(market_key, plan.ticker)
+            if current <= 0:
+                continue
+            self._audit_pathb_price_seen(plan, current, source="pathb:shadow_waiting_scan")
+            cancel_above = float(plan.cancel_if_open_above or 0)
+            if cancel_above > 0 and current > cancel_above:
+                self.store.update_path_run(
+                    plan.path_run_id,
+                    status="SHADOW_CANCELLED",
+                    plan={
+                        "shadow_cancel_reason": "cancel_if_open_above",
+                        "shadow_cancel_trigger_price": float(current),
+                        "shadow_order_submitted": False,
+                    },
+                    merge_plan=True,
+                )
+                self.adapter._append_event(
+                    "CLAUDE_PRICE_CANCELLED",
+                    plan.path_run_id,
+                    runtime_mode=self.mode,
+                    brain_snapshot_id=self._brain_snapshot_id(market_key),
+                    path_status="SHADOW_CANCELLED",
+                    reason_code="shadow_cancel_if_open_above",
+                    extra={
+                        "price": float(current),
+                        "shadow_only": True,
+                        "order_submitted": False,
+                    },
+                )
+                continue
+            if not (float(plan.buy_zone_low or 0) <= current <= float(plan.buy_zone_high or 0)):
+                continue
+            self.adapter.mark_shadow_hit(
+                plan.path_run_id,
+                price=current,
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market_key),
+            )
+            hit_count += 1
+            log.info(
+                f"[PathB shadow hit] {market_key} {plan.ticker} "
+                f"price={current:g} zone={plan.buy_zone_low:g}-{plan.buy_zone_high:g}"
+            )
+        return hit_count
 
     def scan_waiting_entries(self, market: str, *, force: bool = False) -> None:
         market = str(market or "").upper()
@@ -985,6 +1126,9 @@ class PathBRuntime:
         self.reconcile_buy_pending_cancel_above(market, force=False)
         self.process_miss_quality_followups(market)
         if not self._market_live_enabled(market):
+            if self._market_shadow_plan_enabled(market):
+                self._scan_shadow_waiting_entries(market)
+                return
             self.cancel_waiting(market, reason="PATHB_MANUALLY_DISABLED")
             return
         kr_new_entry_blocked = (
