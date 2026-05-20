@@ -148,7 +148,10 @@ class ClaudePriceAdapter:
             extra={"price": float(price or 0)},
         )
 
-    def mark_shadow_hit(self, path_run_id: str, *, price: float, runtime_mode: str, brain_snapshot_id: str) -> None:
+    def mark_shadow_hit(self, path_run_id: str, *, price: float, runtime_mode: str, brain_snapshot_id: str) -> bool:
+        run = self.store.find_path_run(path_run_id)
+        if not run or str(run.get("status") or "") != "SHADOW_WAITING":
+            return False
         self.store.update_path_run(
             path_run_id,
             status="SHADOW_HIT",
@@ -168,6 +171,40 @@ class ClaudePriceAdapter:
             reason_code="shadow_buy_zone_hit",
             extra={"price": float(price or 0), "shadow_only": True, "order_submitted": False},
         )
+        return True
+
+    def mark_shadow_cancelled(
+        self,
+        path_run_id: str,
+        *,
+        reason: str,
+        runtime_mode: str,
+        brain_snapshot_id: str,
+    ) -> bool:
+        run = self.store.find_path_run(path_run_id)
+        if not run or str(run.get("status") or "") not in {"SHADOW_WAITING", "SHADOW_HIT"}:
+            return False
+        self.store.update_path_run(
+            path_run_id,
+            status="SHADOW_CANCELLED",
+            plan={
+                "cancel_reason": reason,
+                "shadow_cancel_reason": reason,
+                "shadow_cancelled_at": utc_now_iso(),
+                "shadow_only": True,
+            },
+            merge_plan=True,
+        )
+        self._append_event(
+            LifecycleEventType.CLAUDE_PRICE_CANCELLED,
+            path_run_id,
+            runtime_mode=runtime_mode,
+            brain_snapshot_id=brain_snapshot_id,
+            path_status="SHADOW_CANCELLED",
+            reason_code=str(reason or "shadow_cancelled"),
+            extra={"reason": reason, "shadow_only": True, "order_submitted": False},
+        )
+        return True
 
     def mark_order_sent(
         self,

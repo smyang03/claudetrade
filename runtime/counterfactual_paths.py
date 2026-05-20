@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,32 @@ def deterministic_candidate_key(*, runtime_mode: str, session_date: str, market:
     return "cf_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
+def _boolish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on", "ok"}
+
+
+def _num(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _known_plus_minutes(known_at: str, minutes: int) -> str:
+    try:
+        return (datetime.fromisoformat(str(known_at).replace("Z", "+00:00")) + timedelta(minutes=minutes)).isoformat(
+            timespec="seconds"
+        )
+    except Exception:
+        return ""
+
+
 def build_counterfactual_rows(
     *,
     runtime_mode: str,
@@ -67,8 +93,16 @@ def build_counterfactual_rows(
     current_price = ctx.get("current_price")
     overrides = dict(metadata_overrides or {})
     rows: list[dict[str, Any]] = []
+    current_price_num = _num(current_price)
+    volume_ratio = _num(ctx.get("volume_ratio_open") or ctx.get("volume_acceleration"))
+    pullback_pct = _num(ctx.get("pullback_from_high_pct"))
     for path_name in counterfactual_path_names(market_key):
         status = "PENDING"
+        trigger_time = None
+        trigger_price = None
+        trigger_reason = ""
+        entry_price = None
+        entry_delay_min = None
         metadata = {
             "source": "counterfactual_paths",
             "context": ctx,
@@ -94,9 +128,49 @@ def build_counterfactual_rows(
         }
         metadata.update(overrides)
         if path_name == "immediate":
-            status = "TRIGGERED" if current_price else "PENDING"
+            status = "TRIGGERED" if current_price_num else "PENDING"
+            trigger_time = known if current_price_num else None
+            trigger_price = current_price_num
+            trigger_reason = "actual_immediate" if current_price_num else ""
+            entry_price = current_price_num
         elif path_name == "no_entry":
             status = "BASELINE_NO_TRADE"
+        elif path_name == "or_break" and (_boolish(ctx.get("opening_range_break")) or _boolish(ctx.get("or_break"))):
+            status = "TRIGGERED"
+            trigger_time = known
+            trigger_price = current_price_num
+            trigger_reason = "opening_range_break"
+            entry_price = current_price_num
+        elif path_name == "vwap_reclaim" and _boolish(ctx.get("vwap_reclaim")):
+            status = "TRIGGERED"
+            trigger_time = known
+            trigger_price = current_price_num
+            trigger_reason = "vwap_reclaim"
+            entry_price = current_price_num
+        elif path_name == "volume_surge" and volume_ratio is not None and volume_ratio >= 1.5:
+            status = "TRIGGERED"
+            trigger_time = known
+            trigger_price = current_price_num
+            trigger_reason = "volume_surge"
+            entry_price = current_price_num
+        elif path_name == "pullback_reclaim" and (
+            _boolish(ctx.get("pullback_reclaim"))
+            or (
+                pullback_pct is not None
+                and pullback_pct <= -1.0
+                and (_boolish(ctx.get("vwap_reclaim")) or _boolish(ctx.get("opening_range_break")))
+            )
+        ):
+            status = "TRIGGERED"
+            trigger_time = known
+            trigger_price = current_price_num
+            trigger_reason = "pullback_reclaim"
+            entry_price = current_price_num
+        elif path_name in {"wait_30m", "wait_60m"}:
+            minutes = 30 if path_name == "wait_30m" else 60
+            trigger_time = _known_plus_minutes(known, minutes)
+            trigger_reason = path_name
+            entry_delay_min = float(minutes)
         if market_key == "KR" and path_name in {"vi_safe_reclaim", "orderbook_support"}:
             missing: list[str] = []
             vi_payload = ctx.get("vi_state")
@@ -125,9 +199,11 @@ def build_counterfactual_rows(
                 "trade_ready_action": action,
                 "actual_path": actual_path or ("immediate" if action in {"BUY_READY", "PROBE_READY", "ADD_READY"} else "no_entry"),
                 "path_name": path_name,
-                "entry_price": current_price if path_name == "immediate" else None,
-                "trigger_time": known if path_name == "immediate" and current_price else None,
-                "trigger_reason": "actual_immediate" if path_name == "immediate" and current_price else "",
+                "entry_price": entry_price,
+                "trigger_time": trigger_time,
+                "trigger_price": trigger_price,
+                "trigger_reason": trigger_reason,
+                "entry_delay_min": entry_delay_min,
                 "status": status,
                 "metadata_quality": overrides.get("metadata_quality"),
                 "label_source": overrides.get("label_source"),

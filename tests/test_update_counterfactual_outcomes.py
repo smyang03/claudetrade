@@ -100,6 +100,116 @@ def test_update_counterfactual_outcomes_fills_close_from_daily_csv() -> None:
         assert round(float(row["outcome_close_pct"]), 6) == 10.0
 
 
+def test_update_counterfactual_outcomes_infers_wait_entry_from_minute_csv() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        db = root / "candidate_audit.db"
+        price_root = root / "price"
+        store = CandidateCounterfactualStore(db)
+        store.upsert_path(
+            {
+                "runtime_mode": "live",
+                "session_date": "2026-05-19",
+                "market": "KR",
+                "ticker": "005930",
+                "known_at": "2026-05-19T09:05:00+09:00",
+                "signal_time": "2026-05-19T09:05:00+09:00",
+                "trade_ready_action": "BUY_READY",
+                "path_name": "wait_30m",
+                "trigger_time": "2026-05-19T09:35:00+09:00",
+                "entry_delay_min": 30.0,
+                "status": "PENDING",
+                "metadata": {"source_attempts": ["runtime"]},
+            }
+        )
+        _write_minute_csv(
+            price_root,
+            "KR",
+            "005930",
+            [
+                ("2026-05-19T09:35:00+09:00", 101.0, 103.0, 100.0),
+                ("2026-05-19T10:05:00+09:00", 104.0, 105.0, 99.0),
+                ("2026-05-19T10:35:00+09:00", 106.0, 107.0, 98.0),
+            ],
+        )
+        _write_price_csv(price_root, "KR", "005930", [("2026-05-19", 108.0)])
+
+        result = update_counterfactual_outcomes(
+            db_path=db,
+            session_date="2026-05-19",
+            market="KR",
+            price_root=price_root,
+            minute_root=price_root,
+        )
+
+        row = store.fetch_rows(session_date="2026-05-19", market="KR")[0]
+        assert result["filled"] == 1
+        assert row["entry_price"] == 101.0
+        assert row["status"] == "CLOSE_OUTCOME_FILLED"
+        assert row["outcome_30m_pct"] is not None
+        metadata = json.loads(row["metadata_json"])
+        assert metadata["entry_price_source"] == "minute_csv_trigger"
+
+
+def test_wait_entry_missing_minute_is_retryable_price_pending() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        db = root / "candidate_audit.db"
+        price_root = root / "price"
+        store = CandidateCounterfactualStore(db)
+        store.upsert_path(
+            {
+                "runtime_mode": "live",
+                "session_date": "2026-05-20",
+                "market": "KR",
+                "ticker": "005930",
+                "known_at": "2026-05-20T09:05:00+09:00",
+                "signal_time": "2026-05-20T09:05:00+09:00",
+                "trade_ready_action": "BUY_READY",
+                "path_name": "wait_30m",
+                "trigger_time": "2026-05-20T09:35:00+09:00",
+                "entry_delay_min": 30.0,
+                "status": "PENDING",
+                "metadata": {"source_attempts": ["runtime"]},
+            }
+        )
+
+        first = update_counterfactual_outcomes(
+            db_path=db,
+            session_date="2026-05-20",
+            market="KR",
+            price_root=price_root,
+            minute_root=price_root,
+            _now=datetime(2026, 5, 20, 9, 40, tzinfo=KST),
+        )
+        _write_minute_csv(
+            price_root,
+            "KR",
+            "005930",
+            [
+                ("2026-05-20T09:35:00+09:00", 101.0, 103.0, 100.0),
+                ("2026-05-20T10:05:00+09:00", 104.0, 105.0, 99.0),
+            ],
+        )
+        _write_price_csv(price_root, "KR", "005930", [("2026-05-20", 108.0)])
+        retry = update_counterfactual_outcomes(
+            db_path=db,
+            session_date="2026-05-20",
+            market="KR",
+            retry_missing=True,
+            price_root=price_root,
+            minute_root=price_root,
+            _now=datetime(2026, 5, 20, 16, 10, tzinfo=KST),
+        )
+
+        row = store.fetch_rows(session_date="2026-05-20", market="KR")[0]
+        assert first["price_pending"] == 1
+        assert retry["targeted"] == 1
+        assert retry["filled"] == 1
+        assert row["entry_price"] == 101.0
+        assert row["status"] == "CLOSE_OUTCOME_FILLED"
+
+
 def test_update_counterfactual_outcomes_marks_pending_when_close_not_available_yet() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

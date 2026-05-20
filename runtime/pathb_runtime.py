@@ -924,6 +924,27 @@ class PathBRuntime:
                 return run
         return None
 
+    def _plan_shadow_only(self, plan: PricePlan) -> bool:
+        try:
+            run = self.store.find_path_run(plan.path_run_id) or {}
+        except Exception as exc:
+            log.warning(
+                f"[PathB plan truth unavailable] {plan.market} {plan.ticker} "
+                f"path_run_id={plan.path_run_id} err={exc}"
+            )
+            return True
+        if not run:
+            log.warning(
+                f"[PathB plan truth missing] {plan.market} {plan.ticker} "
+                f"path_run_id={plan.path_run_id}"
+            )
+            return True
+        status = str(run.get("status", "") or "")
+        if status.startswith("SHADOW_"):
+            return True
+        raw_plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        return bool(raw_plan.get("shadow_only"))
+
     def register_from_selection_meta(self, market: str, meta: dict[str, Any]) -> list[str]:
         if not self.is_enabled():
             return []
@@ -1033,16 +1054,31 @@ class PathBRuntime:
                     {"errors": errors, "raw_plan": raw_plan},
                 )
                 continue
+            shadow_overrides = None
+            if shadow_only:
+                shadow_overrides = {
+                    "shadow_only": True,
+                    "live_order_enabled": False,
+                    "execution_allowed": False,
+                    "shadow_reason": "market_live_disabled",
+                }
+                if isinstance(origin, dict):
+                    for field in (
+                        "origin_reason",
+                        "demoted_from",
+                        "demotion_reason",
+                        "microstructure_data_quality",
+                        "pathb_shadow_reason",
+                    ):
+                        value = origin.get(field)
+                        if value not in (None, ""):
+                            shadow_overrides[field] = value
             path_run_id = self.adapter.register_plan(
                 plan,
                 runtime_mode=self.mode,
                 brain_snapshot_id=self._brain_snapshot_id(market),
                 initial_status="SHADOW_WAITING" if shadow_only else "WAITING",
-                plan_overrides={
-                    "shadow_only": True,
-                    "live_order_enabled": False,
-                    "shadow_reason": "market_live_disabled",
-                } if shadow_only else None,
+                plan_overrides=shadow_overrides,
             )
             registered.append(path_run_id)
             log.info(
@@ -1078,7 +1114,6 @@ class PathBRuntime:
             if cancel_above > 0 and current > cancel_above:
                 self.store.update_path_run(
                     plan.path_run_id,
-                    status="SHADOW_CANCELLED",
                     plan={
                         "shadow_cancel_reason": "cancel_if_open_above",
                         "shadow_cancel_trigger_price": float(current),
@@ -1086,18 +1121,11 @@ class PathBRuntime:
                     },
                     merge_plan=True,
                 )
-                self.adapter._append_event(
-                    "CLAUDE_PRICE_CANCELLED",
+                self.adapter.mark_shadow_cancelled(
                     plan.path_run_id,
                     runtime_mode=self.mode,
                     brain_snapshot_id=self._brain_snapshot_id(market_key),
-                    path_status="SHADOW_CANCELLED",
-                    reason_code="shadow_cancel_if_open_above",
-                    extra={
-                        "price": float(current),
-                        "shadow_only": True,
-                        "order_submitted": False,
-                    },
+                    reason="shadow_cancel_if_open_above",
                 )
                 continue
             if not (float(plan.buy_zone_low or 0) <= current <= float(plan.buy_zone_high or 0)):
@@ -1608,7 +1636,17 @@ class PathBRuntime:
         ):
             if str(run.get("path_type", "")) != "claude_price":
                 continue
-            if str(run.get("status", "")) not in {"WAITING", "HIT", "ORDER_SENT", "ORDER_ACKED"}:
+            status = str(run.get("status", ""))
+            if status in {"SHADOW_WAITING", "SHADOW_HIT"}:
+                if self.adapter.mark_shadow_cancelled(
+                    str(run.get("path_run_id", "")),
+                    reason=reason,
+                    runtime_mode=self.mode,
+                    brain_snapshot_id=self._brain_snapshot_id(market),
+                ):
+                    count += 1
+                continue
+            if status not in {"WAITING", "HIT", "ORDER_SENT", "ORDER_ACKED"}:
                 continue
             self.adapter.cancel_plan(
                 str(run.get("path_run_id", "")),
@@ -1632,7 +1670,17 @@ class PathBRuntime:
                 continue
             if self._ticker_key(market, str(run.get("ticker", "") or "")) != target:
                 continue
-            if str(run.get("status", "")) not in {"WAITING", "HIT"}:
+            status = str(run.get("status", ""))
+            if status in {"SHADOW_WAITING", "SHADOW_HIT"}:
+                if self.adapter.mark_shadow_cancelled(
+                    str(run.get("path_run_id", "")),
+                    reason=reason,
+                    runtime_mode=self.mode,
+                    brain_snapshot_id=self._brain_snapshot_id(market),
+                ):
+                    count += 1
+                continue
+            if status not in {"WAITING", "HIT"}:
                 continue
             self.adapter.cancel_plan(
                 str(run.get("path_run_id", "")),
@@ -1644,12 +1692,29 @@ class PathBRuntime:
         return count
 
     def expire_waiting_at_session_close(self, market: str) -> int:
-        return self.sell_manager.expire_all_waiting(
-            str(market or "").upper(),
+        market_key = str(market or "").upper()
+        count = self.sell_manager.expire_all_waiting(
+            market_key,
             self.mode,
-            self._session_date(str(market or "").upper()),
-            brain_snapshot_id=self._brain_snapshot_id(str(market or "").upper()),
+            self._session_date(market_key),
+            brain_snapshot_id=self._brain_snapshot_id(market_key),
         )
+        for status in ("SHADOW_WAITING", "SHADOW_HIT"):
+            for run in self.store.path_runs_for_session(
+                market=market_key,
+                runtime_mode=self.mode,
+                session_date=self._session_date(market_key),
+                status=status,
+                path_type="claude_price",
+            ):
+                if self.adapter.mark_shadow_cancelled(
+                    str(run.get("path_run_id", "")),
+                    reason="SESSION_CLOSE_EXPIRED",
+                    runtime_mode=self.mode,
+                    brain_snapshot_id=self._brain_snapshot_id(market_key),
+                ):
+                    count += 1
+        return count
 
     def finalize_carried_positions_at_session_close(self, market: str) -> dict[str, Any]:
         market_key = str(market or "").upper()
@@ -1827,6 +1892,17 @@ class PathBRuntime:
 
     def _submit_buy(self, plan: PricePlan, signal: EntrySignal) -> bool:
         market = plan.market
+        if self._plan_shadow_only(plan):
+            self._record_blocked(
+                market,
+                plan.ticker,
+                plan.decision_id,
+                "PATHB_SHADOW_ONLY",
+                {"shadow_only": True, "order_submitted": False, "stage": "pathb_submit_buy"},
+                plan.path_run_id,
+            )
+            log.warning(f"[PathB shadow blocked] {market} {plan.ticker} submit_buy ignored path_run_id={plan.path_run_id}")
+            return False
         if not self._market_live_enabled(market):
             self._record_blocked(
                 market,

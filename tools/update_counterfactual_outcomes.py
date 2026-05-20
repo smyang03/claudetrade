@@ -24,6 +24,12 @@ RETRYABLE_PRICE_STATUSES = {"PRICE_PENDING", "PRICE_UNAVAILABLE"}
 RETRYABLE_CLOSE_STATUSES = {"OUTCOME_PARTIAL"}
 RETRYABLE_OUTCOME_STATUSES = RETRYABLE_PRICE_STATUSES | RETRYABLE_CLOSE_STATUSES
 PRICE_FILE_TRANSIENT_REASONS = {"price_file_missing", "price_file_empty"}
+ENTRY_PRICE_TRANSIENT_REASONS = {
+    "minute_file_missing",
+    "minute_file_empty",
+    "minute_entry_sample_missing",
+    "minute_file_read_error",
+}
 US_DAILY_BAR_GRACE_END_KST = dt_time(7, 0)
 MINUTE_OUTCOME_FIELDS = (
     "outcome_30m_pct",
@@ -229,6 +235,29 @@ def _minute_outcomes(
     return updates, metadata, missing
 
 
+def _infer_entry_price_from_minute(
+    row: dict[str, Any],
+    *,
+    minute_root: str | Path,
+) -> tuple[float | None, dict[str, Any], list[str]]:
+    trigger_at = _parse_dt(row.get("trigger_time") or row.get("known_at") or row.get("signal_time"))
+    samples, source, reason = _load_minute_samples(minute_root, str(row.get("market") or ""), str(row.get("ticker") or ""))
+    metadata = {
+        "entry_price_source": "minute_csv_trigger",
+        "entry_price_minute_source": source,
+        "entry_price_minute_sample_count": len(samples),
+    }
+    if trigger_at is None:
+        return None, {**metadata, "entry_price_reason": "trigger_time_missing"}, ["trigger_time"]
+    if not samples:
+        return None, {**metadata, "entry_price_reason": reason or "minute_file_missing"}, ["entry_price"]
+    normalized = [{**sample, "dt": _compare_dt(sample["dt"], trigger_at)} for sample in samples]
+    observed = next((sample for sample in normalized if sample["dt"] >= trigger_at), None)
+    if observed is None:
+        return None, {**metadata, "entry_price_reason": "minute_entry_sample_missing"}, ["entry_price"]
+    return float(observed["close"]), {**metadata, "entry_price_observed_at": observed["dt"].isoformat()}, []
+
+
 def _kst_now(now_dt: datetime | None = None) -> datetime:
     if now_dt is None:
         return datetime.now(KST)
@@ -323,7 +352,6 @@ def _target_rows(
         if retry_missing:
             if (
                 status in RETRYABLE_OUTCOME_STATUSES
-                and row.get("entry_price") is not None
                 and row.get("trigger_time") is not None
                 and row.get("outcome_close_pct") is None
             ):
@@ -399,7 +427,9 @@ def _mark_unavailable(
     status: str,
     reason: str,
     missing_fields: list[str] | None = None,
+    metadata_updates: dict[str, Any] | None = None,
 ) -> None:
+    extra = dict(metadata_updates or {})
     store.mark_outcome(
         int(row["id"]),
         status=status,
@@ -413,6 +443,7 @@ def _mark_unavailable(
             outcome_update_source="tools/update_counterfactual_outcomes.py",
             final_attempt_at=datetime.now().isoformat(timespec="seconds"),
             reason=reason,
+            **extra,
         ),
     )
 
@@ -486,13 +517,64 @@ def update_counterfactual_outcomes(
     minute_filled = 0
     minute_missing = 0
     for row in targets:
+        inferred_entry_updates: dict[str, Any] = {}
+        inferred_entry_metadata: dict[str, Any] = {}
+        inferred_entry_missing: list[str] = []
+        if row.get("entry_price") is None and row.get("trigger_time") is not None:
+            inferred_entry, inferred_entry_metadata, inferred_entry_missing = _infer_entry_price_from_minute(
+                row,
+                minute_root=minute,
+            )
+            if inferred_entry is not None and inferred_entry > 0:
+                row["entry_price"] = inferred_entry
+                row["trigger_price"] = row.get("trigger_price") or inferred_entry
+                inferred_entry_updates = {
+                    "entry_price": inferred_entry,
+                    "trigger_price": row.get("trigger_price") or inferred_entry,
+                }
+
         if row.get("entry_price") is None or row.get("trigger_time") is None:
+            entry_reason = str(inferred_entry_metadata.get("entry_price_reason") or "")
+            if (
+                row.get("entry_price") is None
+                and row.get("trigger_time") is not None
+                and entry_reason in ENTRY_PRICE_TRANSIENT_REASONS
+            ):
+                date_text = str(row.get("session_date") or "")[:10]
+                status = (
+                    "PRICE_PENDING"
+                    if _is_current_or_future_session(
+                        session_date=date_text,
+                        market=str(row.get("market") or ""),
+                        now_dt=_now,
+                    )
+                    or _is_recent_us_close_waiting_for_daily_bar(
+                        session_date=date_text,
+                        market=str(row.get("market") or ""),
+                        now_dt=_now,
+                    )
+                    else "PRICE_UNAVAILABLE"
+                )
+                _mark_unavailable(
+                    store,
+                    row,
+                    status=status,
+                    reason=entry_reason,
+                    missing_fields=sorted(set(["entry_price"] + inferred_entry_missing)),
+                    metadata_updates=inferred_entry_metadata,
+                )
+                if status == "PRICE_PENDING":
+                    price_pending += 1
+                else:
+                    price_unavailable += 1
+                continue
             _mark_unavailable(
                 store,
                 row,
                 status="DATA_MISSING",
                 reason="entry_or_trigger_missing",
-                missing_fields=["entry_price", "trigger_time"],
+                missing_fields=sorted(set(["entry_price", "trigger_time"] + inferred_entry_missing)),
+                metadata_updates=inferred_entry_metadata,
             )
             data_missing += 1
             continue
@@ -507,12 +589,12 @@ def update_counterfactual_outcomes(
             minute_missing += 1
 
         if row.get("outcome_close_pct") is not None:
-            if minute_updates_to_write:
+            if minute_updates_to_write or inferred_entry_updates:
                 _mark_minute_only_outcome(
                     store,
                     row,
-                    minute_updates=minute_updates_to_write,
-                    minute_metadata=minute_metadata,
+                    minute_updates={**inferred_entry_updates, **minute_updates_to_write},
+                    minute_metadata={**inferred_entry_metadata, **minute_metadata},
                     minute_missing_fields=minute_missing_fields,
                 )
             continue
@@ -525,8 +607,8 @@ def update_counterfactual_outcomes(
                 _mark_partial_minute_outcome(
                     store,
                     row,
-                    minute_updates=minute_updates_to_write,
-                    minute_metadata=minute_metadata,
+                    minute_updates={**inferred_entry_updates, **minute_updates_to_write},
+                    minute_metadata={**inferred_entry_metadata, **minute_metadata},
                     minute_missing_fields=minute_missing_fields,
                     close_reason=reason,
                 )
@@ -554,8 +636,8 @@ def update_counterfactual_outcomes(
                 _mark_partial_minute_outcome(
                     store,
                     row,
-                    minute_updates=minute_updates_to_write,
-                    minute_metadata=minute_metadata,
+                    minute_updates={**inferred_entry_updates, **minute_updates_to_write},
+                    minute_metadata={**inferred_entry_metadata, **minute_metadata},
                     minute_missing_fields=minute_missing_fields,
                     close_reason="daily_close_not_available_yet" if date_text and date_text > max_date else "daily_close_missing_for_date",
                 )
@@ -594,7 +676,10 @@ def update_counterfactual_outcomes(
         metadata_json = _metadata(
             row,
             label_source="virtual_immediate_shadow",
-            entry_price_source=existing_metadata.get("entry_price_source", "context_current_price"),
+            entry_price_source=inferred_entry_metadata.get(
+                "entry_price_source",
+                existing_metadata.get("entry_price_source", "context_current_price"),
+            ),
             is_virtual_pnl=True,
             label_horizons=label_horizons,
             source_attempts=source_attempts,
@@ -608,9 +693,11 @@ def update_counterfactual_outcomes(
             },
             missing_fields=missing_fields,
             reason="daily_close_labeled",
+            **{k: v for k, v in inferred_entry_metadata.items() if k != "entry_price_source"},
             **minute_metadata,
         )
         updates = {
+            **inferred_entry_updates,
             **minute_updates_to_write,
             "outcome_close_pct": outcome,
             "status": "CLOSE_OUTCOME_FILLED",

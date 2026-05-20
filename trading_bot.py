@@ -5440,11 +5440,62 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         pathb_wait: list[str] = []
         pathb_targets: dict[str, dict] = {}
         pathb_wait_origins: dict[str, dict] = {}
+        pathb_shadow: list[str] = []
+        pathb_shadow_targets: dict[str, dict] = {}
+        pathb_shadow_origins: dict[str, dict] = {}
         action_routes: list[dict] = []
         allocation_intent = dict(normalized_meta.get("allocation_intent") or {})
         max_order_cap_pct = dict(normalized_meta.get("max_order_cap_pct") or {})
         size_reason = dict(normalized_meta.get("size_reason") or {})
         price_targets = dict(normalized_meta.get("price_targets") or {})
+        pathb_shadow_enabled = market_key == "KR" and (
+            self._runtime_bool("PATHB_KR_SHADOW_PLAN_ENABLED", False)
+            or self._runtime_bool("KR_CLAUDE_PRICE_SHADOW_PLAN_ENABLED", False)
+        )
+
+        def _maybe_add_pathb_shadow(
+            ticker_key: str,
+            action_obj: dict,
+            *,
+            final_action: str,
+            reason: str = "",
+            runtime_context: Optional[dict] = None,
+        ) -> None:
+            if not pathb_shadow_enabled:
+                return
+            requested = str((action_obj or {}).get("action") or "").strip().upper()
+            if requested not in {"PROBE_READY", "BUY_READY", "PULLBACK_WAIT"}:
+                return
+            if str(final_action or "").strip().upper() == "PULLBACK_WAIT":
+                return
+            target = dict((action_obj or {}).get("price_targets") or {})
+            if not target:
+                target = self._selection_price_target_for_ticker(market_key, price_targets, ticker_key)
+            if not target:
+                return
+            key_text = self._selection_ticker_key(market_key, ticker_key)
+            final_text = str(final_action or "").strip().upper()
+            shadow_reason = str(reason or "kr_pathb_shadow_validation").strip()
+            context_map = runtime_context if isinstance(runtime_context, dict) else {}
+            pathb_shadow.append(key_text)
+            pathb_shadow_targets[key_text] = target
+            pathb_shadow_origins[key_text] = {
+                "origin_action": requested,
+                "origin_route": "pathb_shadow_only",
+                "registration_scope": "candidate_actions_shadow_only",
+                "not_patha_trade_ready": final_text not in {"PROBE_READY", "BUY_READY", "ADD_READY"},
+                "reason": shadow_reason,
+                "origin_reason": shadow_reason,
+                "demoted_from": requested if final_text != requested else "",
+                "demotion_reason": shadow_reason if final_text != requested else "",
+                "microstructure_data_quality": str(
+                    context_map.get("microstructure_data_quality")
+                    or (action_obj or {}).get("microstructure_data_quality")
+                    or ""
+                ),
+                "pathb_shadow_reason": shadow_reason,
+                "source_prompt_id": str((action_obj or {}).get("source_prompt_id") or ""),
+            }
 
         for action in actions:
             ticker = str((action or {}).get("ticker") or "").strip()
@@ -5597,6 +5648,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "routed_at": datetime.now(KST).isoformat(timespec="seconds"),
                         "warnings": [reason],
                     }
+                    _maybe_add_pathb_shadow(
+                        key,
+                        action_for_route,
+                        final_action="WATCH",
+                        reason=reason,
+                        runtime_context=execution_context,
+                    )
                     action_routes.append(route_payload)
                     self._write_candidate_action_gate_event(
                         market_key,
@@ -5695,6 +5753,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     route_payload["original_action"] = str((action or {}).get("action") or "")
                     route_payload["demoted_to"] = "PROBE_READY"
                     route_payload["runtime_gate_reason"] = reason
+            _maybe_add_pathb_shadow(
+                key,
+                action_for_route,
+                final_action=decision.final_action,
+                reason=str(decision.reason or route_payload.get("runtime_gate_reason") or ""),
+                runtime_context=execution_context,
+            )
             if decision.cancel_pathb and route_state.get("waiting"):
                 pathb = getattr(self, "pathb", None)
                 if pathb is not None and hasattr(pathb, "cancel_waiting_for_ticker"):
@@ -5812,6 +5877,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         normalized_meta["_pathb_wait_tickers"] = list(dict.fromkeys(pathb_wait))
         normalized_meta["_pathb_price_targets"] = pathb_targets
         normalized_meta["_pathb_wait_origins"] = pathb_wait_origins
+        normalized_meta["_pathb_shadow_tickers"] = list(dict.fromkeys(pathb_shadow))
+        normalized_meta["_pathb_shadow_price_targets"] = pathb_shadow_targets
+        normalized_meta["_pathb_shadow_origins"] = pathb_shadow_origins
         normalized_meta["_pathb_registration_scope"] = "candidate_actions_wait_only"
         return normalized_meta
 

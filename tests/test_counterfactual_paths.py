@@ -43,6 +43,33 @@ def test_counterfactual_paths_upsert_and_store_missing_kr_feature_paths() -> Non
         assert metadata["microstructure"]["vi_state"] is None
 
 
+def test_counterfactual_paths_trigger_condition_paths_from_runtime_context() -> None:
+    rows = build_counterfactual_rows(
+        runtime_mode="live",
+        session_date="2026-05-16",
+        market="KR",
+        ticker="005930",
+        trade_ready_action="BUY_READY",
+        known_at="2026-05-16T09:05:00+09:00",
+        context={
+            "current_price": 70000,
+            "opening_range_break": True,
+            "vwap_reclaim": True,
+            "volume_ratio_open": 2.1,
+            "pullback_reclaim": True,
+        },
+    )
+
+    by_path = {row["path_name"]: row for row in rows}
+    assert by_path["or_break"]["status"] == "TRIGGERED"
+    assert by_path["or_break"]["entry_price"] == 70000.0
+    assert by_path["vwap_reclaim"]["trigger_reason"] == "vwap_reclaim"
+    assert by_path["volume_surge"]["status"] == "TRIGGERED"
+    assert by_path["pullback_reclaim"]["status"] == "TRIGGERED"
+    assert by_path["wait_30m"]["trigger_time"] == "2026-05-16T09:35:00+09:00"
+    assert by_path["wait_30m"]["entry_delay_min"] == 30.0
+
+
 def test_counterfactual_write_failure_does_not_raise() -> None:
     result = safe_write_counterfactual_paths(
         [{"runtime_mode": "live", "session_date": "2026-05-16", "market": "KR", "ticker": "005930"}],

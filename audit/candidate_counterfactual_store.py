@@ -462,6 +462,8 @@ class CandidateCounterfactualStore:
             "outcome_close_pct",
             "max_runup_60m_pct",
             "max_drawdown_60m_pct",
+            "entry_price",
+            "trigger_price",
             "status",
             "metadata_quality",
             "label_source",
