@@ -986,7 +986,13 @@ class CandidateAuditStore:
                        COALESCE(SUM(input_tokens), 0) AS input_tokens,
                        COALESCE(SUM(output_tokens), 0) AS output_tokens,
                        COALESCE(SUM(prompt_candidate_count), 0) AS prompt_candidate_rows,
-                       COALESCE(SUM(actual_prompt_count), 0) AS actual_prompt_rows,
+                       COALESCE(SUM(
+                           CASE
+                               WHEN actual_prompt_count IS NOT NULL AND actual_prompt_count > 0
+                               THEN actual_prompt_count
+                               ELSE prompt_candidate_count
+                           END
+                       ), 0) AS actual_prompt_rows,
                        COALESCE(SUM(watchlist_count), 0) AS watchlist_rows
                 FROM audit_claude_calls
                 WHERE session_date=? AND market=? AND runtime_mode=?

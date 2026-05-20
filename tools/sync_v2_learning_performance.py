@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lifecycle.quality import evaluate_decision_quality, forward_measurement_complete
+from lifecycle.quality import evaluate_decision_quality, forward_measurement_complete, live_clean_learning_allowed
 
 
 DEFAULT_EVENT_DB = ROOT / "data" / "v2_event_store.db"
@@ -338,6 +338,7 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
     # table always recalculates quality from the full current event set.
     quality = evaluate_decision_quality(events)
     latest_event = events[-1] if events else {}
+    runtime_mode = str(decision.get("runtime_mode") or "")
 
     path_type = str(path_run.get("path_type") or close_payload.get("path_type") or fill_payload.get("path_type") or "")
     route = _text(close_payload, "entry_route", "route") or _text(fill_payload, "entry_route", "route")
@@ -354,7 +355,7 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
     return {
         "v2_decision_id": str(decision.get("decision_id") or ""),
         "market": str(decision.get("market") or ""),
-        "runtime_mode": str(decision.get("runtime_mode") or ""),
+        "runtime_mode": runtime_mode,
         "session_date": str(decision.get("session_date") or ""),
         "ticker": str(decision.get("ticker") or ""),
         "status": status,
@@ -370,7 +371,15 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         "close_event_id": close.get("event_id") if close else None,
         "filled_at": fill.get("occurred_at") if fill else None,
         "closed_at": close.get("occurred_at") if close else None,
-        "entry_price": _num(fill_payload, "entry_price", "actual_fill_price", "fill_price", "price", "avg_price"),
+        "entry_price": _num(
+            fill_payload,
+            "entry_price",
+            "actual_fill_price",
+            "fill_price_native",
+            "fill_price",
+            "price",
+            "avg_price",
+        ),
         "exit_price": _num(close_payload, "exit_price", "actual_fill_price", "fill_price", "price", "close_price"),
         "qty": _num(close_payload, "qty", "filled_qty") or _num(fill_payload, "qty", "filled_qty"),
         "pnl_krw": _num(close_payload, "pnl_krw", "pnl"),
@@ -381,7 +390,11 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         "forward_complete": 1 if forward_complete else 0,
         "quality_grade": quality.grade.value,
         "quality_reasons_json": json.dumps(list(quality.reasons), ensure_ascii=False),
-        "learning_allowed": 1 if quality.learning_allowed else 0,
+        "learning_allowed": 1 if live_clean_learning_allowed(
+            runtime_mode=runtime_mode,
+            quality=quality.grade,
+            forward_complete=forward_complete,
+        ) else 0,
         "source_event_count": len(events),
         "synced_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }

@@ -1,6 +1,21 @@
-# Developed Work Summary - 2026-05-13
+# Developed Work Summary - 2026-05-20
 
 이 문서는 완료된 작업의 요약만 보존한다. 실행해야 할 일은 [TODO_ROADMAP.md](TODO_ROADMAP.md) 하나만 기준으로 본다. 삭제된 상세 plan은 Git history에서 복구할 수 있다.
+
+## 2026-05-20 완료/정리
+
+| 문서/항목 | 완료 판단 근거 | 개선 효과 | 보존 리뷰 |
+| --- | --- | --- | --- |
+| `audit/priority_hotfix_improvement_plan_20260501.md` | 문서 내 최종 QA: `py_compile`, `tests/test_pathb_runtime.py`, 전체 pytest 398 passed 기록 | startup/session/order 상태 복구 경로가 안정되어 stale state와 broker marker 오염이 live 주문으로 이어질 위험을 줄였다. | 인스턴스 상태 초기화, session reset, startup guard, order error clear, broker marker, PathB US carry price 전달이 복구되어 상세 plan은 삭제했다. |
+| `docs/plans/candidate_pipeline_improvement_implementation_plan_20260515.md` | 문서 내 QA batch와 이후 코드 존재: screener quality, audit linkage, outcome catch-up, KR alpha/tooling | 후보 생성, 감사 연결, outcome 기록이 이어져 selection 품질 저하 원인을 execution/risk 문제와 분리해서 볼 수 있다. | 후보 품질/감사 연결 작업은 완료로 정리하고, 운영 모니터링만 TODO에 남겼다. |
+| Prompt Overlay Phase 0/1 | `docs/reports/prompt_overlay_impl_qa_20260520.md`: helper, off/shadow/live, audit payload, analyzer, tests 통과 | prompt 개선을 즉시 live로 밀어 넣지 않고 shadow gate로 검증할 수 있어 과최적화와 단기 착시를 줄인다. | 즉시 구현 범위는 완료. shadow→live 전환, cap 확대, fresh slot은 데이터 관찰 항목으로 TODO에 남겼다. |
+| Final Prompt Evidence Alignment | `trading_bot.py`, `minority_report/analysts.py`의 final prompt pool 기반 evidence prefetch와 override 경로, 관련 테스트 존재 | Claude가 보는 final prompt 후보와 실행 후보의 괴리를 줄여 판단 근거와 주문 후보를 같은 pool로 맞춘다. | 코드 수정은 완료. 다음 세션 metric 검증만 TODO에 남겼다. |
+| KR cap40 confirmation enforce | `docs/reports/kr_cap40_confirmation_enforce_implementation_report_20260516.md`: preflight/guardian/test 통과 | KR live 진입 수량이 cap 40 confirmation 정책을 우회하지 못하게 하여 과도한 단일 주문 노출을 낮춘다. | KR cap 40은 confirmation enforce와 결합된 운영값으로 정리했다. live 전 시작 검증은 TODO 유지. |
+| PathB base live implementation | `pathb_v2_live_plan.md`의 Phase 1~8 완료 기록과 PathB runtime/control/dashboard/test 근거 | Claude price plan 기반 조건부 진입/청산을 PathA safety/order truth와 합류시키는 운영 흐름을 확보했다. | 상세 phase checklist는 active plan에서 제거하고, root 문서는 운영 reference로 축소했다. |
+| Dashboard PnL source label | dashboard helper와 tests에서 source badge 확인 | daily PnL이 broker truth인지 local 계산인지 드러나 운영자가 잘못된 수익률 축으로 판단할 가능성을 줄였다. | daily PnL source 오해를 줄이는 small patch는 완료. 전면 mismatch 정비는 TODO 유지. |
+| PathB `PULLBACK_WAIT` origin audit | `tests/test_pathb_runtime.py`, `tests/test_candidate_action_live_mapping.py`의 origin_action/origin_route 보존 확인 | PathB wait-only plan과 PathA trade_ready를 구분해 stale wait, zone hit, 실제 주문 전이를 추적할 수 있다. | `PULLBACK_WAIT`가 PathA trade_ready가 아닌 PathB wait-only plan임을 추적 가능하게 했다. |
+| Counterfactual store/writer base | `audit/candidate_counterfactual_store.py`, `runtime/counterfactual_paths.py`, analyzer/backfill CLI, tests | 차단/비진입 후보도 가격 경로와 연결할 수 있는 저장 기반이 생겨 정책 변경의 기회비용 분석이 가능해졌다. | row 저장/분석 기반은 완료. 실제 outcome label backfill은 TODO P0로 유지. |
+| Market risk shadow | `ENABLE_MARKET_RISK_SHADOW`, `_risk(market)`, live status `risk_shadow` | KR/US 리스크 상태를 병렬 관찰할 수 있어 live write path 분리 전 cash/position/halt 오염 가능성을 확인할 수 있다. | 시장별 mirror는 완료. live write path 전환은 TODO P1로 유지. |
 
 ## 2026-05-13 완료로 삭제한 plan
 
@@ -14,7 +29,7 @@
 
 ## 2026-05-13 통합 삭제한 active plan 원본
 
-미완료 항목은 완료 처리하지 않고 [TODO_ROADMAP.md](TODO_ROADMAP.md)에 우선순위, 사유, 개선 전후 리뷰로 통합했다.
+미완료 항목은 완료 처리하지 않고 [TODO_ROADMAP.md](TODO_ROADMAP.md)에 우선순위, 사유, 개선 효과로 통합했다.
 
 | 묶음 | 통합한 원본 |
 | --- | --- |
@@ -42,12 +57,12 @@
 
 ## 현재 완료로 보지 않는 항목
 
+- live 시작 전 guardian/preflight와 브로커 open order 0 수동 확인.
 - KIS WS/REST 체결 truth의 실제 payload 검증.
-- PathB `PULLBACK_WAIT` live 전이 audit와 reconfirm shadow.
-- Dashboard PnL fallback source labeling과 broker/local mismatch ops 표시.
-- `RiskManager` KR/US 분리.
-- SafetyContext audit field 확장.
-- Counterfactual shadow infrastructure와 hybrid/watch trigger 성과 검증.
-- Preopen/extended-hours 10세션 성과 리포트.
-- Candidate tier book, theme injection, KRX/BigKinds integration.
-- Dual runtime, Brain Train, 신규 intraday/VWAP/momentum gate.
+- V2 lifecycle canonical performance table과 decisions fill 연결.
+- counterfactual outcome 30m/60m/close label backfill.
+- final prompt evidence alignment와 prompt overlay shadow의 실제 세션 gate 통과.
+- `RiskManager` KR/US live write path 분리.
+- Safety/equity source/lag audit 확장.
+- KR modern action schema, entry timing gate, US preopen 샘플 확충.
+- CandidateTierBook, KRX/BigKinds/theme injection, L3 inject, dual runtime, Brain Train, 신규 전략 gate.

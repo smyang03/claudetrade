@@ -7773,7 +7773,15 @@ def api_candidate_audit_summary():
     try:
         call_columns = _candidate_audit_call_columns(conn)
         actual_prompt_expr = (
-            "COALESCE(SUM(actual_prompt_count), 0)"
+            """
+            COALESCE(SUM(
+                CASE
+                    WHEN actual_prompt_count IS NOT NULL AND actual_prompt_count > 0
+                    THEN actual_prompt_count
+                    ELSE prompt_candidate_count
+                END
+            ), 0)
+            """
             if "actual_prompt_count" in call_columns
             else "COALESCE(SUM(prompt_candidate_count), 0)"
         )

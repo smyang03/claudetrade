@@ -4,7 +4,7 @@ import argparse
 import json
 import math
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -49,11 +49,17 @@ def analyze_counterfactual_paths(*, db_path: str | Path | None = None, session_d
     rows = store.fetch_rows(session_date=session_date, market=market)
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     candidate_paths: dict[tuple[str, str, str, str], set[str]] = defaultdict(set)
+    status_counts: Counter[str] = Counter()
+    quality_counts: Counter[str] = Counter()
+    label_source_counts: Counter[str] = Counter()
     trigger_eval = 0
     pending = 0
     for row in rows:
         key = f"{row.get('market')}|{row.get('path_name')}"
         groups[key].append(row)
+        status_counts[str(row.get("status") or "")] += 1
+        quality_counts[str(row.get("metadata_quality") or "")] += 1
+        label_source_counts[str(row.get("label_source") or "")] += 1
         candidate_paths[
             (
                 str(row.get("runtime_mode") or ""),
@@ -70,6 +76,7 @@ def analyze_counterfactual_paths(*, db_path: str | Path | None = None, session_d
         key: {
             "ret30": _metrics(items, "outcome_30m_pct"),
             "ret60": _metrics(items, "outcome_60m_pct"),
+            "ret_close": _metrics(items, "outcome_close_pct"),
             "rows": len(items),
             "data_missing": sum(1 for row in items if str(row.get("status") or "") == "DATA_MISSING"),
         }
@@ -85,6 +92,9 @@ def analyze_counterfactual_paths(*, db_path: str | Path | None = None, session_d
         "candidate_count": candidates,
         "candidates_with_3plus_paths_filled_pct": round((rich / candidates) * 100.0, 4) if candidates else 0.0,
         "trigger_eval_rate_pct": round((trigger_eval / total_eval) * 100.0, 4) if total_eval else 0.0,
+        "status_counts": dict(sorted(status_counts.items())),
+        "metadata_quality_counts": dict(sorted(quality_counts.items())),
+        "label_source_counts": dict(sorted(label_source_counts.items())),
         "by_path": by_path,
     }
 
@@ -99,16 +109,53 @@ def to_markdown(payload: dict[str, Any]) -> str:
         f"3+ path candidates: {payload['candidates_with_3plus_paths_filled_pct']}%",
         f"Trigger eval rate: {payload['trigger_eval_rate_pct']}%",
         "",
-        "| Path | Rows | Missing | 30m N | 30m Avg | 30m PF | 60m N | 60m Avg | 60m PF |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "## Status",
+        "",
+        "| Status | Rows |",
+        "|---|---:|",
     ]
+    for key, count in (payload.get("status_counts") or {}).items():
+        lines.append(f"| {key or '(blank)'} | {count} |")
+    lines.extend(
+        [
+            "",
+            "## Metadata Quality",
+            "",
+            "| Metadata quality | Rows |",
+            "|---|---:|",
+        ]
+    )
+    for key, count in (payload.get("metadata_quality_counts") or {}).items():
+        lines.append(f"| {key or '(blank)'} | {count} |")
+    lines.extend(
+        [
+            "",
+            "## Label Source",
+            "",
+            "| Label source | Rows |",
+            "|---|---:|",
+        ]
+    )
+    for key, count in (payload.get("label_source_counts") or {}).items():
+        lines.append(f"| {key or '(blank)'} | {count} |")
+    lines.extend(
+        [
+            "",
+            "## By Path",
+            "",
+            "| Path | Rows | Missing | 30m N | 30m Avg | 30m PF | 60m N | 60m Avg | 60m PF | Close N | Close Avg | Close PF |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
     for path, item in payload.get("by_path", {}).items():
         r30 = item.get("ret30") or {}
         r60 = item.get("ret60") or {}
+        rclose = item.get("ret_close") or {}
         lines.append(
             f"| {path} | {item.get('rows', 0)} | {item.get('data_missing', 0)} | "
             f"{r30.get('n', 0)} | {r30.get('avg_pct', 0)} | {r30.get('profit_factor')} | "
-            f"{r60.get('n', 0)} | {r60.get('avg_pct', 0)} | {r60.get('profit_factor')} |"
+            f"{r60.get('n', 0)} | {r60.get('avg_pct', 0)} | {r60.get('profit_factor')} | "
+            f"{rclose.get('n', 0)} | {rclose.get('avg_pct', 0)} | {rclose.get('profit_factor')} |"
         )
     return "\n".join(lines) + "\n"
 

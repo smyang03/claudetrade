@@ -214,6 +214,144 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
             self.assertEqual(row["path_run_id"], "path_filled")
             self.assertEqual(row["origin_action"], "PULLBACK_WAIT")
 
+    def test_sync_uses_fill_price_native_for_entry_price(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="STM",
+                prompt_version="v2",
+                brain_snapshot_id="brain_us",
+            )
+            for event in (
+                LifecycleEvent(
+                    event_type="ORDER_SENT",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="STM",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                ),
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="STM",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"fill_price_native": 61.35, "qty": 1},
+                ),
+                LifecycleEvent(
+                    event_type="FORWARD_MEASURED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="STM",
+                    decision_id=decision_id,
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"horizon": "close"},
+                ),
+            ):
+                store.append(event)
+
+            sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="US", dry_run=False)
+
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT entry_price FROM v2_learning_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertIsNotNone(row)
+            self.assertEqual(row["entry_price"], 61.35)
+
+    def test_sync_blocks_paper_rows_from_learning_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="US",
+                runtime_mode="paper",
+                session_date="2026-05-08",
+                ticker="AAPL",
+                prompt_version="v2",
+                brain_snapshot_id="brain_us",
+            )
+            for event in (
+                LifecycleEvent(
+                    event_type="ORDER_SENT",
+                    market="US",
+                    runtime_mode="paper",
+                    session_date="2026-05-08",
+                    ticker="AAPL",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                ),
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="US",
+                    runtime_mode="paper",
+                    session_date="2026-05-08",
+                    ticker="AAPL",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"price": 200.0, "qty": 1},
+                ),
+                LifecycleEvent(
+                    event_type="FORWARD_MEASURED",
+                    market="US",
+                    runtime_mode="paper",
+                    session_date="2026-05-08",
+                    ticker="AAPL",
+                    decision_id=decision_id,
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"horizon": "close"},
+                ),
+            ):
+                store.append(event)
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="US",
+                runtime_mode="paper",
+                dry_run=False,
+            )
+
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT quality_grade, learning_allowed FROM v2_learning_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertEqual(summary["learning_allowed"], 0)
+            self.assertIsNotNone(row)
+            self.assertEqual(row["quality_grade"], "CLEAN")
+            self.assertEqual(row["learning_allowed"], 0)
+
     def test_sync_quality_recalculation_overrides_provisional_quality_mark(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -49,6 +49,7 @@ def build_counterfactual_rows(
     call_id: str | None = None,
     actual_path: str = "",
     context: dict[str, Any] | None = None,
+    metadata_overrides: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     market_key = str(market or "").upper()
     ticker_key = str(ticker or "").strip().upper() if market_key == "US" else str(ticker or "").strip()
@@ -64,6 +65,7 @@ def build_counterfactual_rows(
     )
     ctx = dict(context or {})
     current_price = ctx.get("current_price")
+    overrides = dict(metadata_overrides or {})
     rows: list[dict[str, Any]] = []
     for path_name in counterfactual_path_names(market_key):
         status = "PENDING"
@@ -90,6 +92,7 @@ def build_counterfactual_rows(
                 "orderbook_support": ctx.get("orderbook_support"),
             },
         }
+        metadata.update(overrides)
         if path_name == "immediate":
             status = "TRIGGERED" if current_price else "PENDING"
         elif path_name == "no_entry":
@@ -126,6 +129,8 @@ def build_counterfactual_rows(
                 "trigger_time": known if path_name == "immediate" and current_price else None,
                 "trigger_reason": "actual_immediate" if path_name == "immediate" and current_price else "",
                 "status": status,
+                "metadata_quality": overrides.get("metadata_quality"),
+                "label_source": overrides.get("label_source"),
                 "metadata": metadata,
             }
         )

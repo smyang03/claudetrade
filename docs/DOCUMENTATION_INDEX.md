@@ -1,4 +1,4 @@
-# Documentation Index - 2026-05-13
+# Documentation Index - 2026-05-20
 
 ## Scope
 
@@ -17,13 +17,15 @@
 
 ## Current Cleanup State
 
-2026-05-13 코드 기준 재분류:
+2026-05-20 코드/문서 기준 재분류:
 
-- `docs/plans/`의 tracked Markdown 24개를 모두 검토했다.
-- 완료된 plan 5개는 [DEVELOPED_WORK.md](DEVELOPED_WORK.md)에 요약을 남기고 삭제했다.
-- 미완료 plan과 KIS TODO 2개는 [TODO_ROADMAP.md](TODO_ROADMAP.md)에 우선순위, 사유, 개선 전후 리뷰로 통합했다.
 - active 실행 계획은 `TODO_ROADMAP.md` 하나만 기준으로 본다.
-- 과거 reports 안의 삭제된 plan 링크는 당시 검증 근거로 남겨 둔다.
+- 2026-05-16 이후 새로 생긴 `docs/plans/` tracked Markdown 3개를 모두 검토했다.
+- 완료된 candidate pipeline plan은 `DEVELOPED_WORK.md`에 요약을 남기고 삭제했다.
+- L3 priority backfill과 Regime/RR plan은 보류 조건만 `TODO_ROADMAP.md`에 흡수하고 삭제했다.
+- 완료된 `audit/priority_hotfix_improvement_plan_20260501.md`는 완료 요약으로 대체하고 삭제했다.
+- `pathb_v2_live_plan.md`는 phase checklist를 제거하고 운영 reference로 축소했다.
+- prompt overlay later-data plan, evidence alignment report, KR/US DB 재검토, momentum 재활성 검토의 미완료 항목은 `TODO_ROADMAP.md` P0~P3로 흡수했다.
 
 ## Reading Order
 

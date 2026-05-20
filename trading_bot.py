@@ -4191,6 +4191,52 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 from runtime.counterfactual_paths import build_counterfactual_rows, safe_write_counterfactual_paths
 
                 known_at = str(payload.get("known_at") or datetime.now(KST).isoformat(timespec="seconds"))
+                selection_meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+                runtime_filtered = dict(selection_meta.get("_runtime_filtered_trade_ready") or {})
+                recommended_map = selection_meta.get("recommended_strategy") or {}
+                slot_plan = selection_meta.get("slot_plan") or {}
+                consensus_mode = str(
+                    selection_meta.get("consensus_mode")
+                    or ((self.today_judgment or {}).get("consensus", {}) or {}).get("mode", "")
+                    or ""
+                )
+
+                def _lookup_ticker_map(mapping, raw_ticker: str, normalized_key: str):
+                    if not isinstance(mapping, dict):
+                        return None
+                    candidates = [
+                        str(raw_ticker or ""),
+                        str(normalized_key or ""),
+                        str(raw_ticker or "").upper(),
+                        str(normalized_key or "").upper(),
+                    ]
+                    for candidate in candidates:
+                        if candidate in mapping:
+                            return mapping.get(candidate)
+                    normalized_upper = str(normalized_key or "").upper()
+                    for raw_key, raw_value in mapping.items():
+                        if str(raw_key).upper() == normalized_upper:
+                            return raw_value
+                    return None
+
+                recommended_strategy = _normalize_strategy_name(
+                    str(_lookup_ticker_map(recommended_map, ticker, key) or payload.get("strategy") or "")
+                )
+                slot_filter_reason = str(_lookup_ticker_map(runtime_filtered, ticker, key) or "")
+                metadata_overrides = {
+                    "recommended_strategy": recommended_strategy,
+                    "mode_family": _mode_family(consensus_mode),
+                    "consensus_mode": consensus_mode,
+                    "slot_filter_reason": slot_filter_reason,
+                    "slot_plan": slot_plan,
+                    "shadow_label": bool(slot_filter_reason),
+                    "shadow_lane": "momentum_slot_disabled" if slot_filter_reason == "slot_disabled:momentum" else "",
+                    "route_original_action": requested_action_text,
+                    "route_final_action": final_action,
+                    "entry_price_source": "context_current_price",
+                    "is_virtual_pnl": True,
+                    "metadata_quality": "runtime_authoritative",
+                }
                 rows = build_counterfactual_rows(
                     runtime_mode=str(getattr(self, "_mode", "live") or "live"),
                     session_date=self._current_session_date_str(market_key),
@@ -4203,6 +4249,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     call_id=str((action or {}).get("source_prompt_id") or "") or None,
                     actual_path="immediate" if final_action in {"BUY_READY", "PROBE_READY", "ADD_READY"} else "no_entry",
                     context=runtime_gate,
+                    metadata_overrides=metadata_overrides,
                 )
                 result = safe_write_counterfactual_paths(rows)
                 runtime_gate["counterfactual_write_count"] = result.get("count", 0)
