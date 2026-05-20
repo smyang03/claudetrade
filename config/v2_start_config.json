@@ -12,7 +12,7 @@
     "US": "enabled_min_size_live"
   },
   "KR_FIXED_ORDER_KRW": 300000,
-  "US_FIXED_ORDER_KRW": 300000,
+  "US_FIXED_ORDER_KRW": 500000,
   "KR_MIN_ORDER_KRW": 50000,
   "US_MIN_ORDER_KRW": 50000,
   "PATHB_ALLOW_ONE_SHARE_OVER_BUDGET": true,
@@ -47,14 +47,14 @@
   "launch_notes": [
     "First live day enables KR and US with minimum live size.",
     "KR fixed order remains 200000 KRW; minimum order is 50000 KRW.",
-    "US fixed order remains 200000 KRW; minimum order is 50000 KRW and runtime uses the latest USD/KRW rate for price conversion.",
+    "US fixed order is 500000 KRW; minimum order is 50000 KRW and runtime uses the latest USD/KRW rate for price conversion.",
     "Legacy v1 brain is not injected into V2 live prompts; keep it as reference/archive only."
   ],
   "env_overrides": {
     "ENABLED_MARKETS": "KR,US",
     "KR_FIXED_ORDER_KRW": "300000",
     "KR_MIN_ORDER_KRW": "50000",
-    "US_FIXED_ORDER_KRW": "300000",
+    "US_FIXED_ORDER_KRW": "500000",
     "US_MIN_ORDER_KRW": "50000",
     "KR_MAX_POSITIONS": "20",
     "US_MAX_POSITIONS": "20",
@@ -282,7 +282,7 @@
     "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "true",
     "PATHB_US_LIVE_ENABLED": "true",
     "PATHB_TELEGRAM_CONTROL_ENABLED": "true",
-    "PATHB_FIXED_ORDER_KRW": "300000",
+    "PATHB_FIXED_ORDER_KRW": "500000",
     "PATHB_ALLOW_ONE_SHARE_OVER_BUDGET": "true",
     "PATHB_ONE_SHARE_OVER_BUDGET_MAX_KRW": "700000",
     "PATHB_ONE_SHARE_OVER_BUDGET_MAX_ACCOUNT_PCT": "30.0",
