@@ -199,6 +199,40 @@ class ActiveLessonBuilderTests(unittest.TestCase):
         self.assertEqual(result["metadata"]["ignored_reasons"]["execution_scope_excluded"], 1)
         self.assertEqual(result["metadata"]["ignored_reasons"]["source_cap"], 1)
 
+    def test_recent_day_contamination_and_prompt_policy_exclusion_are_not_injected(self) -> None:
+        brain = {
+            "markets": {
+                "US": {
+                    "recent_days": [
+                        {"date": "2026-05-01", "key_lesson": "Clean market lesson.", "trades": 5},
+                        {
+                            "date": "2026-05-02",
+                            "key_lesson": "Contaminated execution lesson must stay out.",
+                            "trades": 1,
+                            "execution_contaminated": True,
+                        },
+                        {
+                            "date": "2026-05-03",
+                            "key_lesson": "Prompt policy excluded lesson must stay out.",
+                            "trades": 1,
+                            "prompt_policy_excluded": True,
+                        },
+                    ],
+                    "execution_lessons": [],
+                }
+            }
+        }
+        with patch.object(active_lessons, "_load_lesson_candidates", return_value={"markets": {"US": []}}), \
+             patch.object(active_lessons, "_load_brain", return_value=brain), \
+             patch.dict(os.environ, {"ACTIVE_LESSONS_ENABLED": "true", "ACTIVE_LESSONS_SHADOW": "false"}, clear=False):
+            result = active_lessons.build_active_lesson_context("US")
+
+        self.assertIn("Clean market lesson.", result["section"])
+        self.assertNotIn("Contaminated execution lesson", result["section"])
+        self.assertNotIn("Prompt policy excluded lesson", result["section"])
+        self.assertEqual(result["metadata"]["ignored_reasons"]["execution_contaminated"], 1)
+        self.assertEqual(result["metadata"]["ignored_reasons"]["prompt_policy_excluded"], 1)
+
 
 class ActiveLessonSelectionPromptTests(unittest.TestCase):
     def test_lesson_context_helper_no_longer_hard_clamps_at_500_chars(self) -> None:

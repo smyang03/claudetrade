@@ -1,16 +1,16 @@
 {
   "meta": {
-    "version": 3570,
+    "version": 3585,
     "created": "2026-03-19",
     "last_updated": "2026-05-20",
-    "trained_days_kr": 41,
+    "trained_days_kr": 42,
     "trained_days_us": 44,
     "description": "Claude 마이너리티 리포트 판단 메모리",
     "brain_quality_cleaned_at": "2026-05-01T03:54:10+00:00"
   },
   "markets": {
     "KR": {
-      "trained_days": 39,
+      "trained_days": 40,
       "training_period": {
         "phase1": "2024-10-01 ~ 2024-12-31 (하락장 50일)",
         "phase2": "2025-01-01 ~ 2025-05-31 (반등/횡보 50일)",
@@ -19,27 +19,44 @@
       "current_regime": "unknown",
       "analyst_performance": {
         "bull": {
-          "total": 38,
-          "hit": 16,
+          "total": 39,
+          "hit": 17,
           "miss": 22,
-          "rate": 0.421,
+          "rate": 0.436,
           "recent_7d": {
             "total": 7,
-            "hit": 2,
-            "rate": 0.286
+            "hit": 3,
+            "rate": 0.429
           },
           "recent_30d": {
             "total": 30,
-            "hit": 13,
-            "rate": 0.433
+            "hit": 14,
+            "rate": 0.467
           },
-          "trend": "declining"
+          "trend": "stable"
         },
         "bear": {
-          "total": 38,
-          "hit": 18,
+          "total": 39,
+          "hit": 19,
           "miss": 20,
-          "rate": 0.474,
+          "rate": 0.487,
+          "recent_7d": {
+            "total": 7,
+            "hit": 4,
+            "rate": 0.571
+          },
+          "recent_30d": {
+            "total": 30,
+            "hit": 14,
+            "rate": 0.467
+          },
+          "trend": "improving"
+        },
+        "neutral": {
+          "total": 39,
+          "hit": 14,
+          "miss": 25,
+          "rate": 0.359,
           "recent_7d": {
             "total": 7,
             "hit": 4,
@@ -51,23 +68,6 @@
             "rate": 0.433
           },
           "trend": "improving"
-        },
-        "neutral": {
-          "total": 38,
-          "hit": 13,
-          "miss": 25,
-          "rate": 0.342,
-          "recent_7d": {
-            "total": 7,
-            "hit": 3,
-            "rate": 0.429
-          },
-          "recent_30d": {
-            "total": 30,
-            "hit": 12,
-            "rate": 0.4
-          },
-          "trend": "stable"
         }
       },
       "mode_performance": {
@@ -87,7 +87,7 @@
           "win_rate": 0.0
         },
         "DEFENSIVE": {
-          "count": 14,
+          "count": 15,
           "avg_pnl": -0.0005,
           "win_rate": 0.0
         },
@@ -744,6 +744,21 @@
           "avg_pnl_when_followed": 0.0,
           "insight": "CAUTIOUS_BEAR 합의 하에 체결 거래 없이 세션 종료 — 포지션 미보유로 -3.47% 낙폭 완전 회피. Bear의 DEFENSIVE 단독 신호가 합의 희석으로 CAUTIOUS_BEAR로 완화된 상황에서도 실질 손익은 동일(+0.00%)했으나, DEFENSIVE였다면 더 낮은 임계 기준으로 안전 마진 확보. 코스피 1d -3.47% + 5d -5.08% + USD/KRW 20일 고점 + 섹터 전면 약세 4개 조건 동시 충족 시 Bear DEFENSIVE 단독 신호를 합의 희석 없이 최종 채택하는 강제 규칙 필요.",
           "examples": []
+        },
+        {
+          "id": "P072",
+          "type": "정상판단",
+          "description": "3개 분석가 전원 CAUTIOUS_BEAR 합의 후 DEFENSIVE로 최종 결정. 실제 -2.55% 하락으로 방향 완전 적중. 거래 미발생으로 손익 중립. P034(전원DEFENSIVE→반등) 패턴과 달리 고환율+대형주급락 복합 조건에서는 추가 하락이 실현됨을 재학습.",
+          "count": 1,
+          "bull_hit": 1,
+          "bear_hit": 0,
+          "bull_accuracy": 1.0,
+          "bear_accuracy": 0.0,
+          "best_strategy": "unknown",
+          "best_mode": "unknown",
+          "avg_pnl_when_followed": 0.0,
+          "insight": "3개 분석가 전원 CAUTIOUS_BEAR → DEFENSIVE 합의 + 실제 -2.55% 하락: 복수 매크로 약세 신호(고환율 20일 고점·5d -4%+ 추세·대형주 급락) 동시 충족 시 DEFENSIVE 모드는 손실 회피 관점에서 최적 대응이었음. 단, '전원 DEFENSIVE 합의 → 익일 반등 확률 높음'(P034 패턴) 레슨과 상충: 오늘 실제 하락(-2.55%)이 P034 예외 케이스임을 확인. 고환율+대형주 급락 복합 조건에서는 P034 반등 기대 패턴 적용 보류 필요.",
+          "examples": []
         }
       ],
       "tuning_patterns": {
@@ -849,43 +864,43 @@
           "metric_semantics": "adjusted_not_accuracy"
         },
         "300min_tune": {
-          "count": 25,
-          "correct": 7,
-          "rate": 0.28,
-          "insight": "경과 272분 지수 +0.99% 유지, 최근 30분 기울기 -0.09%p(미약 하락)이나 breadth advance_ratio +22%p 개선(8/27→31/60)으로 아침 NEUTRAL thesis 유지 — 기울기 소폭 음수이나 breadth 확산 개선·경고 없음·GC/DC 0/0 중립화로 TIGHTEN 트리거 미충족, 연속 MAINTAIN 8회이나 포지션 손익(-0.4%/+0.6%) 안정적이고 ops 병목 미확인으로 파라미터 조정 불필요",
-          "last_seen": "2026-05-18",
-          "adjusted": 7,
-          "adjusted_rate": 0.28,
+          "count": 26,
+          "correct": 8,
+          "rate": 0.308,
+          "insight": "개장 대비 -1.71% 하락 + 30분 기울기 -0.07%p 하락 지속 + breadth advance_ratio -16%p 악화(adv/dec 29/30 역전, GC -17)로 아침 MILD_BEAR thesis 강화되어 기존 런타임 조정값 유지하되 TIGHTEN으로 방어 강화",
+          "last_seen": "2026-05-20",
+          "adjusted": 8,
+          "adjusted_rate": 0.308,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "330min_tune": {
-          "count": 25,
-          "correct": 7,
-          "rate": 0.28,
-          "insight": "지수 개장 대비 +0.47% 유지 중이나 최근 30분 기울기 -0.52%p 하락 전환 + 거래량 low + breadth advance_ratio 50%(30/59) 중립 수준으로 아침 NEUTRAL thesis 유지되며, GC/DC 소멸(0/0)·vol_spike 52/60 과다로 방향성 확신 부족 — 9회 연속 MAINTAIN 및 잔여 88분·SOFI +0.6%/MSFT -0.4% 포지션 안정 범위 내에서 현 파라미터 동결 적절",
-          "last_seen": "2026-05-18",
-          "adjusted": 7,
-          "adjusted_rate": 0.28,
+          "count": 26,
+          "correct": 8,
+          "rate": 0.308,
+          "insight": "지수 -1.59% 하락 지속으로 아침 CAUTIOUS_BEAR thesis 유지되며, breadth advance_ratio -16%p 악화(adv/dec 29/31로 역전) + decliners +22 급증으로 breadth 질 추가 저하, 30분 기울기 +0.11%p는 미미한 반등에 불과해 추세 전환 신호 불충분 — 직전 TIGHTEN 기조 연장하여 현행 runtime 조정값 유지.",
+          "last_seen": "2026-05-20",
+          "adjusted": 8,
+          "adjusted_rate": 0.308,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "360min_tune": {
-          "count": 23,
+          "count": 24,
           "correct": 7,
-          "rate": 0.304,
-          "insight": "개장 대비 +0.45% 유지, breadth advance_ratio +22%p 개선(31/28)으로 아침 NEUTRAL thesis 훼손 없으나, 최근 30분 기울기 -0.02%p 하락·거래량 low·마감 57분 잔여·vkospi 결측 지속으로 stance 상향 근거 불충분, 10회 연속 MAINTAIN 이후에도 ops 병목 미감지·포지션 SOFI +0.6%/MSFT -0.4% 안정 범위 내 — MAINTAIN 유지",
-          "last_seen": "2026-05-18",
+          "rate": 0.292,
+          "insight": "장 마감 2분 전 blackout 구간, 지수 -1.30% 약세 지속·breadth advance_ratio -16%p 악화(29/29 중립 붕괴)·vol_spike 47로 변동성 확대로 아침 CAUTIOUS_BEAR thesis 유지되며 최근 +0.29%p 반등은 close_guard 국면 노이즈 수준으로 REVERSE 근거 미달, 직전 TIGHTEN 조정값 그대로 유지.",
+          "last_seen": "2026-05-20",
           "adjusted": 7,
-          "adjusted_rate": 0.304,
+          "adjusted_rate": 0.292,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "390min_tune": {
-          "count": 18,
+          "count": 19,
           "correct": 6,
-          "rate": 0.333,
-          "insight": "경과 390분 지수 +0.39%, 최근 30분 기울기 -0.07%p(약보합), breadth advance_ratio +24%p 개선(32/28)으로 아침 NEUTRAL thesis 유지되나 마감 27분 전 거래량 low·기울기 음전환·vkospi_missing 잔존으로 추가 상향 근거 부족 — MAINTAIN 적정",
-          "last_seen": "2026-05-18",
+          "rate": 0.316,
+          "insight": "지수 -0.86%로 아침 CAUTIOUS_BEAR thesis 유지, 30분 기울기 +0.44%p 상승이나 세션 종료 29분 전 blackout 구간·advance_ratio -16%p 악화(29/29 중립)·vol_spike 47/60으로 breadth 질 저하 지속되어 DEFENSIVE 유지, runtime 조정값은 직전 MAINTAIN과 동일하게 유지",
+          "last_seen": "2026-05-20",
           "adjusted": 6,
-          "adjusted_rate": 0.333,
+          "adjusted_rate": 0.316,
           "metric_semantics": "adjusted_not_accuracy"
         },
         "420min_tune": {
@@ -920,14 +935,13 @@
         }
       },
       "current_beliefs": {
-        "market_regime": "코스피 1d -3.47% / 5d -5.08% 하락 추세 지속 확인. USD/KRW 1,502 고환율 유지, 섹터 ETF 전면 약세, VKOSPI 결측 불확실성 잔존. 단기 하락 추세 레짐 지속 — 내일 세션은 기술적 반등(급락 후 되돌림) vs 추가 하락 분기점. breadth 50% 회복 + GC 전환 + 환율 안정화 3개 조건 미충족 시 DEFENSIVE~CAUTIOUS_BEAR 레짐 유지. P034 반등오판 패턴 주의(급락 후 익일 반등 과소평가 경계).",
+        "market_regime": "코스피 1d -2.55% / 5d -4.17% 하락 추세 지속 확인. USD/KRW 1,492 고환율 20일 고점 유지, 대형주(현대차 -8.90%·LG화학 -6.03%) 급락으로 breadth 질 저하. 단기 하락 추세 레짐 확정 — 내일 세션은 기술적 반등(급락 2일 연속 후 되돌림) 가능성 vs 추세 추가 하락 분기점. P034 반등 패턴 조건부 주의 유지(고환율+대형주급락 복합 시 적용 금지). 환율 안정화 + breadth 60%+ + GC 전환 3개 조건 미충족 시 DEFENSIVE~CAUTIOUS_BEAR 레짐 유지.",
         "bull_reliability": "unknown",
         "bear_reliability": "unknown",
         "best_strategy": "unknown",
         "avoid": [],
         "emphasize": [],
         "learned_lessons": [
-          "전원DEFENSIVE합의일시장반등확률높음진입검토필요",
           "MILD_BULL 합의 + 코스피 5d +7%이상 모멘텀장세에서 watch_only runup≥5% 비율 50% 초과 시 trade_ready 전환 임계값을 한 단계 완화(복합신호 2개→1.5개 기준 적용) 검토 필수. 단, RSI>75 종목은 제외.",
           "MILD_BULL + 5d 강모멘텀 환경에서 watch_only→trade_ready 전환 임계 완화(복합신호 1.5개 기준, RSI≤75 조건) 즉시 적용 검토. intraday_review_sell 청산은 당일 +0.9% 수익 확보에 기여했으나 runup 추가 여력 차단 위험 존재 — 청산 기준에 trailing stop 또는 시간 기반 hold 연장 옵션 추가 검토.",
           "5d 강모멘텀 후 당일 보합(-0.00%) 마감은 단기 소화 국면 신호일 수 있음. 다음 세션은 횡보 돌파 or 조정 분기점으로 거래량 확인 후 방향 추종 전략 우선. watch_only runup 누적 미스(57.1%) 해소를 위해 RSI≤75·복합신호 1.5개 이상 종목의 trade_ready 전환 기준 즉시 적용 검토.",
@@ -936,7 +950,8 @@
           "5d 누적 +10% 초과 강모멘텀 직후 세션에서 USD/KRW 1d +1.0% 초과 + RSI 과매수 10개 이상 + VKOSPI 결측 3개 조건 동시 충족 시 Breadth 60% 이상·GC 우세 여부와 무관하게 최종 합의를 CAUTIOUS 이하로 강제 하향. Neutral 분석가가 Bull 신호를 근거로 MILD_BULL을 지지할 경우 Bear 분석가 단독 비토권 부여.",
           "KIS 라이브 인덱스 장애 발생 시 intraday에서 보고되는 급락 수치는 실제 시장 움직임이 아닌 시스템 오류 데이터일 가능성을 우선 검토해야 함. 장전 breadth 80%+ · GC 15건+ · 거래량 폭증 15건+ 3가지 조건이 동시 충족된 상태에서 인프라 장애로 인한 이상 지수 수치가 보고될 경우, 해당 수치를 근거로 한 판단 하향은 금지하며 breadth 원칙을 절대 우선 적용. 전원 DEFENSIVE/HALT 합의는 실제 상승장에서의 기회 손실을 반복 유발하므로 breadth 강세 조건 충족 시 Neutral 분석가의 NEUTRAL 이상 유지를 보호하는 비토권 부여 검토.",
           "장전 낙폭 -5% 초과 + breadth 상승 30% 이하 + DC 우위 + 섹터 ETF 전면 -5% 이상 4개 조건 동시 충족 시, intraday 반등폭 2% 미만은 추세 전환 신호로 인정 불가. 해당 조건에서 Bull 분석가의 반등 기반 상향 주장은 Bear 분석가 단독 비토권으로 차단하고 최종 합의는 CAUTIOUS_BEAR 이하로 강제. 또한 KIS 실시간 데이터 장애(stale digest 경고) 상태에서 보고되는 intraday 지수 수치는 신뢰도 50% 이하로 간주하고 breadth/섹터 데이터를 절대 우선.",
-          "코스피 5d -5% 이상 + USD/KRW 20일 고점 + 섹터 ETF 전면 -3.5% 이상 + breadth 상승 50% 미만 4개 조건 동시 충족 시, GC 수 및 breadth 혼조 신호는 판단 완화 근거로 사용 금지. Bear 단독 DEFENSIVE 신호를 최종 합의로 강제 채택하며 Bull/Neutral의 상향 주장에 Bear 단독 비토권 부여."
+          "코스피 5d -5% 이상 + USD/KRW 20일 고점 + 섹터 ETF 전면 -3.5% 이상 + breadth 상승 50% 미만 4개 조건 동시 충족 시, GC 수 및 breadth 혼조 신호는 판단 완화 근거로 사용 금지. Bear 단독 DEFENSIVE 신호를 최종 합의로 강제 채택하며 Bull/Neutral의 상향 주장에 Bear 단독 비토권 부여.",
+          "P034 예외 조건 명확화: 전원 DEFENSIVE/CAUTIOUS_BEAR 합의 후 익일 반등 기대(P034)는 USD/KRW 20일 고점 유지 + 코스피 5d -4% 이상 + 대형주 -6% 이상 급락 3개 조건 동시 충족 시 적용 금지. 해당 조건에서는 추가 하락 시나리오 우선 유지하고, 반등 신호는 환율 안정화(20일 고점대비 -1% 이상 후퇴) + breadth 60%+ + GC 우세 3개 조건 동시 확인 후에만 인정."
         ]
       },
       "recent_days": [
@@ -1887,6 +1902,36 @@
           "execution_issue_labels": [],
           "execution_issue_details": [],
           "selection_feedback": "- 최근 20일 selected=476 trade_ready=51 watch_only=425 traded=17\n- trade_ready 3d: hit_rate=49.0% avg_fwd=+3.5% avg_runup=+17.6% avg_dd=-8.3% (n=51)\n- watch_only 3d: avg_fwd=-0.7% avg_runup=+14.9% avg_dd=-9.6% (n=318)\n- missed watch_only: runup>=5.0% 219건 (68.9%)\n- weak trade_ready: forward_3d<=0 26건 (51.0%)\n- by board: KOSDAQ selected=350 miss_watch=72.6%(n=215) weak_TR=58.1%(n=31) watch_runup=+15.0"
+        },
+        {
+          "date": "2026-05-20",
+          "mode": "DEFENSIVE",
+          "pnl_pct": 0.0,
+          "market_change": -2.55,
+          "win": false,
+          "bull_result": "HIT",
+          "bear_result": "HIT",
+          "neutral_result": "HIT",
+          "bull_stance": "CAUTIOUS_BEAR",
+          "bear_stance": "CAUTIOUS_BEAR",
+          "neutral_stance": "CAUTIOUS_BEAR",
+          "bull_reason": "코스피 5d -4.17% 하락 추세 + intraday 반등 0.9%p는 추세전환 기준(2%) 미달 + USD/KRW 20일고점 유지로 환율 위험 미해소 + 현대차 -8.90%·LG화학 -6.03% 대형주 급락으로 breadth 64% 상승의 실질 신뢰도 저하 — 복수 약세 신호 동시 충족으로 CAUTIOUS_BEAR 유지",
+          "bear_reason": "코스피 1d -2.55%(intraday -1.65%) + USD/KRW 1d +1.3% / 20일고점대비 0.0%로 환율 위험 미해소 + VKOSPI 결측(중간 불확실성) + 현대차 -8.90%·LG화학 -6.03% 등 대형주 급락으로 breadth 64% 상승의 질 저하 — 복수 위험 신호 동시 충족으로 CAUTIOUS_BEAR 유지",
+          "neutral_reason": "코스피 1d -2.55%·5d -4.17% 하락 추세 + USD/KRW 20일고점대비 0.0%로 환율 위험 미해소 + breadth 64% 상승은 소형 테마주 상한가(011000 +29.97% 등) 쏠림으로 왜곡되어 실질 breadth 약세 + VKOSPI 결측·KIS 실시간 지수 미확인으로 데이터 품질 불량 — 복수 매크로 약세 신호가 기술적 수치를 압도하며 과거 유사 패턴(intraday 반등 2% 미만은 추세전환 불인정)에 따라 CAUTIOUS_BEAR로 상향",
+          "key_lesson": "3개 분석가 전원 CAUTIOUS_BEAR → DEFENSIVE 합의 + 실제 -2.55% 하락: 복수 매크로 약세 신호(고환율 20일 고점·5d -4%+ 추세·대형주 급락) 동시 충족 시 DEFENSIVE 모드는 손실 회피 관점에서 최적 대응이었음. 단, '전원 DEFENSIVE 합의 → 익일 반등 확률 높음'(P034 패턴) 레슨과 상충: 오늘 실제 하락(-2.55%)이 P034 예외 케이스임을 확인. 고환율+대형주 급락 복합 조건에서는 P034 반등 기대 패턴 적용 보류 필요.",
+          "issue_type": "정상판단",
+          "postmortem_fallback_note": "",
+          "best_trade": null,
+          "worst_trade": null,
+          "worst_trade_reason": "",
+          "trades": 0,
+          "execution_contaminated": false,
+          "execution_learning_excluded": false,
+          "execution_warning": false,
+          "execution_issues": [],
+          "execution_issue_labels": [],
+          "execution_issue_details": [],
+          "selection_feedback": "- 최근 20일 selected=577 trade_ready=40 watch_only=537 traded=14\n- trade_ready 3d: hit_rate=45.0% avg_fwd=-0.2% avg_runup=+13.7% avg_dd=-10.5% (n=40)\n- watch_only 3d: avg_fwd=-2.2% avg_runup=+13.6% avg_dd=-10.9% (n=294)\n- missed watch_only: runup>=5.0% 190건 (64.6%)\n- weak trade_ready: forward_3d<=0 22건 (55.0%)\n- by board: KOSDAQ selected=456 miss_watch=68.2%(n=201) weak_TR=69.2%(n=26) watch_runup=+13"
         }
       ],
       "debate_history": [
@@ -2909,36 +2954,36 @@
           "date": "2026-05-20",
           "r1": {
             "bull": {
-              "stance": "MILD_BEAR",
-              "confidence": 0.62,
-              "key_reason": "코스피 1d -2.55% / 5d -4.17% 하락 추세 + USD/KRW 1,492 (20일고점대비 +0.0%) 환율 위험 지속 속, brea"
+              "stance": "CAUTIOUS_BEAR",
+              "confidence": 0.72,
+              "key_reason": "코스피 1d -2.55% / 5d -4.17% + USD/KRW 20일고점대비 +0.0%(환율 위험 미해소) + 현재 -1.65%(장중 반등 0"
             },
             "bear": {
               "stance": "CAUTIOUS_BEAR",
-              "confidence": 0.62,
-              "key_reason": "USD/KRW 1d +1.3% (KRW 약세) + 20일고점대비 0.0%로 환율 위험 해소 없음, 코스피 1d -2.55%/5d -4.17% 하"
+              "confidence": 0.72,
+              "key_reason": "코스피 1d -2.55% / 5d -4.17%의 복합 약세 + USD/KRW 1d +1.3% 환율 상승(KRW 약세) + 20일고점대비 +0.0"
             },
             "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.62,
-              "key_reason": "장중 코스피 -0.74%로 장전 -2.55% 대비 1.8%p 반등했으나, 5d -4.17% 하락 추세 지속 + USD/KRW 1,492 (1d "
+              "stance": "MILD_BEAR",
+              "confidence": 0.72,
+              "key_reason": "코스피 1d -2.55%(intraday -1.65%로 부분 회복 중)·5d -4.17% 하락 추세 + USD/KRW 1,492(1d +1.3%"
             }
           },
           "r2": {
             "bull": {
-              "stance": "MILD_BEAR",
-              "confidence": 0.62,
-              "key_reason": "코스피 5d -4.17% 하락 추세 + 인트라데이 -2.55%→-0.74% 반등은 2% 미만 되돌림으로 추세 전환 불인정(기존 lesson 적용"
+              "stance": "CAUTIOUS_BEAR",
+              "confidence": 0.72,
+              "key_reason": "코스피 5d -4.17% 하락 추세 + intraday 반등 0.9%p는 추세전환 기준(2%) 미달 + USD/KRW 20일고점 유지로 환율 위"
             },
             "bear": {
               "stance": "CAUTIOUS_BEAR",
-              "confidence": 0.63,
-              "key_reason": "USD/KRW 1d +1.3% + 20일고점대비 0.0%로 환율 위험 미해소 + 코스피 5d -4.17% 하락 추세 지속 — intraday +"
+              "confidence": 0.72,
+              "key_reason": "코스피 1d -2.55%(intraday -1.65%) + USD/KRW 1d +1.3% / 20일고점대비 0.0%로 환율 위험 미해소 + VK"
             },
             "neutral": {
-              "stance": "NEUTRAL",
-              "confidence": 0.62,
-              "key_reason": "breadth 64% 상승·GC 17/DC 11로 기술적 긍정 유지되나 현대차 -8.90%·LG화학 -6.03% 대형주 급락 + USD/KRW "
+              "stance": "CAUTIOUS_BEAR",
+              "confidence": 0.72,
+              "key_reason": "코스피 1d -2.55%·5d -4.17% 하락 추세 + USD/KRW 20일고점대비 0.0%로 환율 위험 미해소 + breadth 64% 상승"
             }
           },
           "changes": [
@@ -2946,11 +2991,11 @@
               "analyst": "neutral",
               "r1_stance": "MILD_BEAR",
               "r2_stance": "CAUTIOUS_BEAR",
-              "reason": "BULL·BEAR 분석가 모두 CAUTIOUS_BEAR로 수렴했고, intraday 2% 미만 반등은 추세 전환 불인정 레슨 + 상한가 테마주 집중으로 인한 breadth 왜곡 논거가 통계적으로 설득력 있음 — 단순 다수 동조가 아닌 breadth 왜곡 가능성(테마주 집중)과 레슨 적용이 핵심 근거"
+              "reason": "BULL·BEAR 양측 분석가 모두 CAUTIOUS_BEAR를 제시했으며, breadth 64% 상승이 소형 테마주 상한가 집중에 따른 왜곡임을 지적한 논거가 통계적으로 타당 — 실질 breadth 신뢰도 저하 시 매크로 부정 신호(환율·국채·외국인 매도)를 우선하는 판단 기준에 부합. 또한 과거 lesson상 intraday 반등 0.9%p는 추세전환 불인정 기준 미달이며, 변경 후 적중률이 낮은 이력(0%, 3건)이 우려되나 이번은 BULL 포함 3자 동일 방향으로 단순 동조가 아닌 논거 기반 수렴으로 판단"
             }
           ],
-          "consensus_shifted": false,
-          "outcome": null
+          "consensus_shifted": true,
+          "outcome": "wrong"
         }
       ],
       "execution_patterns": {
@@ -5629,8 +5674,7 @@
           "MODERATE_BULL 합의 시 size=60% 적용보다 진입 종목의 섹터 정렬이 더 중요하다. 강세 섹터(당일 XLK +3%) 종목 외 진입은 시장 모드와 무관하게 섹터 역풍 손실 위험이 상존한다. pre_close 전략 사용 시 당일 섹터 강도를 1순위 필터로 적용할 것.",
           "MODERATE_BULL 합의 + Breadth 80%↑ + VIX<20 + XLK/XLE 동반 강세 조건에서 gap_pullback 전략 qty=1 고정은 구조적 수익 제한 요인이다. 이 조건 충족 시 gap_pullback qty를 최소 2~3주로 상향하거나 claude_price 전략과 병행 비중 조정을 검토할 것. 또한 GOOGL 유형의 trail_stop 자동매도는 VIX<19 안정·S&P 소폭 양전 환경에서 trail 간격을 1.5→2.5%p로 확대하여 조기 청산 빈도를 낮추는 것이 유리할 수 있다.",
           "CAUTIOUS 합의 세션에서 개장 후 30~60분 내 breadth advance_ratio +10%p 이상 개선 + 지수 누적 +0.5% 초과 시, 아침 CAUTIOUS 기조를 유지하더라도 size를 38%→50%로 상향하고 섹터 정렬 확인된 종목 1건 추가 진입 허용. IREN형 손실 방지를 위해 claude_price 전략 진입 시 당일 섹터 ETF 성과 +0.3% 미만 종목은 진입 제외 필터 적용.",
-          "인트라데이 하락(-0.96%) + RSI 과매수 + VIX 상승 조합이 동시 발생해도 세션 마감이 +0.77% 반등으로 끝나는 패턴이 반복 확인됨. 이 3중 조합은 NEUTRAL 상한으로만 작동하고 하락 확정 신호가 아니다. 아침 합의가 NEUTRAL이더라도 인트라데이 60분 누적 +0.3% 반등 + breadth advance_ratio 개선 확인 시 기존 포지션 유지 및 섹터 정렬 종목 1건 추가 진입을 허용하는 조건부 규칙 필요. 손실 청산 종목(DXCM/HUBS)은 공통적으로 당일 섹터 ETF 성과 0% 미만 구간 소속 — 섹터 ETF +0.3% 미만 종목은 진입/보유 연장 금지 필터를 loss_cap 발동 전 단계에서 적용할 것.",
-          "MILD_BEAR 합의 + 진입 대상 섹터 ETF 당일 성과 < 0% + 대형 이벤트(실적/FOMC) 리스크 존재 시, claude_price 전략 신규 buy_order 완전 차단. 이 3중 조건은 loss_cap 강제 청산의 반복 선행 패턴으로 확인됨. 또한 약세 합의 세션에서 인트라데이 초반(개장 후 2시간 이내) 낙폭(-0.78%)이 종가(-0.07%)보다 과도하게 확대되는 '인트라데이 과매도 후 반등' 패턴이 재확인됨 — 아침 판단의 강도(size=36%)는 적절했으나 진입 종목 섹터 필터가 실패했다."
+          "인트라데이 하락(-0.96%) + RSI 과매수 + VIX 상승 조합이 동시 발생해도 세션 마감이 +0.77% 반등으로 끝나는 패턴이 반복 확인됨. 이 3중 조합은 NEUTRAL 상한으로만 작동하고 하락 확정 신호가 아니다. 아침 합의가 NEUTRAL이더라도 인트라데이 60분 누적 +0.3% 반등 + breadth advance_ratio 개선 확인 시 기존 포지션 유지 및 섹터 정렬 종목 1건 추가 진입을 허용하는 조건부 규칙 필요. 손실 청산 종목(DXCM/HUBS)은 공통적으로 당일 섹터 ETF 성과 0% 미만 구간 소속 — 섹터 ETF +0.3% 미만 종목은 진입/보유 연장 금지 필터를 loss_cap 발동 전 단계에서 적용할 것."
         ]
       },
       "recent_days": [
@@ -6515,6 +6559,8 @@
           "trades": 1,
           "execution_contaminated": true,
           "execution_learning_excluded": false,
+          "prompt_policy_excluded": true,
+          "policy_exclusion_reason": "execution_contaminated",
           "execution_warning": true,
           "execution_issues": [
             "broker_position_removed"

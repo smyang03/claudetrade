@@ -104,10 +104,13 @@ class BrainExecutionIntegrityTests(unittest.TestCase):
 
             self.assertEqual(summary["change_count"], 1)
             self.assertTrue(Path(summary["backup_path"]).exists())
+            self.assertIn("brain.json.backup_", Path(summary["backup_path"]).name)
             updated = json.loads(brain_path.read_text(encoding="utf-8"))
             row = updated["markets"]["US"]["recent_days"][0]
             self.assertTrue(row["execution_contaminated"])
             self.assertTrue(row["execution_learning_excluded"])
+            self.assertTrue(row["prompt_policy_excluded"])
+            self.assertEqual(row["policy_exclusion_reason"], "execution_learning_excluded")
             self.assertEqual(row["execution_issues"], ["broker_sync_trade"])
             self.assertEqual(row["key_lesson"], "")
             self.assertEqual(row["issue_type"], "")
@@ -144,6 +147,8 @@ class BrainExecutionIntegrityTests(unittest.TestCase):
             row = updated["markets"]["KR"]["recent_days"][0]
             self.assertTrue(row["execution_warning"])
             self.assertFalse(row["execution_learning_excluded"])
+            self.assertTrue(row["prompt_policy_excluded"])
+            self.assertEqual(row["policy_exclusion_reason"], "execution_contaminated")
             self.assertEqual(row["key_lesson"], "keep")
 
 

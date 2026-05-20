@@ -91,6 +91,27 @@ def _is_learning_excluded(*, contaminated: bool, issues: list[Any], explicit: An
     return any(_issue_key(issue) not in WARNING_ONLY_ISSUES for issue in issues)
 
 
+def _prompt_policy_exclusion(
+    *,
+    contaminated: bool,
+    learning_excluded: bool,
+    explicit: Any,
+    explicit_reason: Any,
+    selection_evidence_verified: bool,
+) -> tuple[bool, str]:
+    reason = str(explicit_reason or "").strip()
+    if learning_excluded:
+        return True, reason or "execution_learning_excluded"
+    if explicit is not None:
+        excluded = bool(explicit)
+        return excluded, reason if excluded else ""
+    if selection_evidence_verified:
+        return False, ""
+    if contaminated:
+        return True, reason or "execution_contaminated"
+    return False, ""
+
+
 def load_execution_sources(log_dir: Path, *, market_filter: str = "") -> dict[tuple[str, str], dict[str, Any]]:
     sources: dict[tuple[str, str], dict[str, Any]] = {}
     market_filter = market_filter.upper().strip()
@@ -120,12 +141,23 @@ def load_execution_sources(log_dir: Path, *, market_filter: str = "") -> dict[tu
         warning = actual.get("execution_warning")
         if warning is None:
             warning = bool(contaminated and not learning_excluded)
+        prompt_policy_excluded, policy_exclusion_reason = _prompt_policy_exclusion(
+            contaminated=contaminated,
+            learning_excluded=learning_excluded,
+            explicit=actual.get("prompt_policy_excluded", health.get("prompt_policy_excluded")),
+            explicit_reason=actual.get("policy_exclusion_reason", health.get("policy_exclusion_reason")),
+            selection_evidence_verified=bool(
+                actual.get("selection_evidence_verified", health.get("selection_evidence_verified", False))
+            ),
+        )
         sources[(market, date_key)] = {
             "market": market,
             "date": date_key,
             "source_file": str(path),
             "execution_contaminated": contaminated,
             "execution_learning_excluded": learning_excluded,
+            "prompt_policy_excluded": prompt_policy_excluded,
+            "policy_exclusion_reason": policy_exclusion_reason,
             "execution_warning": bool(warning),
             "execution_issues": issues,
             "execution_issue_labels": list(actual.get("execution_issue_labels") or health.get("labels") or []),
@@ -160,6 +192,8 @@ def reconcile_brain_payload(
             for key in (
                 "execution_contaminated",
                 "execution_learning_excluded",
+                "prompt_policy_excluded",
+                "policy_exclusion_reason",
                 "execution_warning",
                 "execution_issues",
                 "execution_issue_labels",
@@ -181,6 +215,7 @@ def reconcile_brain_payload(
                         "date": date_key,
                         "source_file": source["source_file"],
                         "execution_learning_excluded": bool(desired.get("execution_learning_excluded")),
+                        "prompt_policy_excluded": bool(desired.get("prompt_policy_excluded")),
                         "changed_fields": changed_fields,
                     }
                 )
@@ -201,7 +236,7 @@ def run(
     backup_path = ""
     if apply and changes:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup = brain_path.with_name(f"{brain_path.name}.execution_flags_backup_{stamp}")
+        backup = brain_path.with_name(f"{brain_path.name}.backup_{stamp}")
         shutil.copy2(brain_path, backup)
         _write_json_atomic(brain_path, updated)
         backup_path = str(backup)

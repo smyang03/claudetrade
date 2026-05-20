@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -213,6 +214,515 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
 
             self.assertEqual(row["path_run_id"], "path_filled")
             self.assertEqual(row["origin_action"], "PULLBACK_WAIT")
+
+    def test_sync_writes_canonical_performance_with_event_dedupe_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="AAPL",
+                prompt_version="v2",
+                brain_snapshot_id="brain_us",
+            )
+            for event in (
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="AAPL",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    occurred_at="2026-05-08T13:31:00+00:00",
+                    payload={"price": 100.0, "qty": 1},
+                ),
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="AAPL",
+                    decision_id=decision_id,
+                    execution_id="buy1-dup",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    occurred_at="2026-05-08T13:32:00+00:00",
+                    payload={"price": 100.5, "qty": 1},
+                ),
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="AAPL",
+                    decision_id=decision_id,
+                    execution_id="sell1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    occurred_at="2026-05-08T14:00:00+00:00",
+                    payload={"price": 101.0, "pnl_pct": 1.0},
+                ),
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="AAPL",
+                    decision_id=decision_id,
+                    execution_id="sell2",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    occurred_at="2026-05-08T14:10:00+00:00",
+                    payload={"price": 102.0, "pnl_pct": 2.0},
+                ),
+            ):
+                store.append(event)
+
+            summary = sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="US", dry_run=False)
+
+            self.assertEqual(summary["canonical_written"], 1)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM v2_canonical_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertIsNotNone(row)
+            self.assertEqual(row["raw_fill_event_count"], 2)
+            self.assertEqual(row["raw_close_event_count"], 2)
+            self.assertEqual(row["earliest_fill_at"], "2026-05-08T13:31:00+00:00")
+            self.assertEqual(row["first_closed_at"], "2026-05-08T14:00:00+00:00")
+            self.assertEqual(row["last_closed_at"], "2026-05-08T14:10:00+00:00")
+            self.assertEqual(row["entry_price"], 100.0)
+            self.assertEqual(row["first_exit_price"], 101.0)
+            self.assertEqual(row["last_exit_price"], 102.0)
+            contract = json.loads(row["metric_contract_json"])
+            self.assertEqual(contract["dedupe_axis"], "v2_decision_id_market_session_ticker")
+
+    def test_sync_repairs_legacy_decisions_fill_from_canonical_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL,
+                        exit_price REAL,
+                        pnl_pct REAL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '')
+                    """
+                )
+                conn.commit()
+            for event in (
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 2},
+                ),
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="sell1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"exit_price": 71400, "pnl_pct": 2.0},
+                ),
+            ):
+                store.append(event)
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 1)
+            self.assertEqual(summary["decision_links_repaired"], 1)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                decision = conn.execute("SELECT * FROM decisions WHERE id=1").fetchone()
+                link = conn.execute(
+                    "SELECT * FROM v2_decision_fill_links WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertEqual(decision["filled"], 1)
+            self.assertEqual(decision["order_status"], "FILLED")
+            self.assertEqual(decision["entry_price"], 70000)
+            self.assertEqual(decision["exit_price"], 71400)
+            self.assertEqual(decision["pnl_pct"], 2.0)
+            self.assertEqual(link["link_status"], "MATCHED")
+            self.assertEqual(link["legacy_filled_before"], 0)
+            self.assertEqual(link["legacy_filled_after"], 1)
+
+    def test_sync_does_not_count_repair_when_legacy_values_already_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL,
+                        exit_price REAL,
+                        pnl_pct REAL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status,
+                        entry_price, exit_price, pnl_pct
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 1, 'FILLED',
+                              70000, 71400, 2.0)
+                    """
+                )
+                conn.commit()
+            for event in (
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 2},
+                ),
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="sell1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"exit_price": 71400, "pnl_pct": 2.0},
+                ),
+            ):
+                store.append(event)
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 1)
+            self.assertEqual(summary["decision_links_repaired"], 0)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                link = conn.execute(
+                    "SELECT * FROM v2_decision_fill_links WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertEqual(link["link_status"], "MATCHED")
+            self.assertEqual(link["repaired"], 0)
+            self.assertEqual(link["legacy_filled_before"], 1)
+            self.assertEqual(link["legacy_filled_after"], 1)
+
+    def test_sync_does_not_match_legacy_decision_when_canonical_has_no_fill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            store.create_decision(
+                decision_id="v2_unfilled",
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+                status="CLAUDE_TRADE_READY",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '')
+                    """
+                )
+                conn.commit()
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 0)
+            self.assertEqual(summary["decision_links_repaired"], 0)
+            self.assertEqual(summary["decision_links_unmatched"], 1)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                link = conn.execute("SELECT * FROM v2_decision_fill_links WHERE v2_decision_id='v2_unfilled'").fetchone()
+
+            self.assertEqual(link["link_status"], "NO_CANONICAL_FILL")
+            self.assertIsNone(link["legacy_decision_id"])
+            self.assertEqual(link["filled_from_canonical"], 0)
+            self.assertEqual(link["unmatched_reason"], "canonical_has_no_fill")
+
+    def test_sync_does_not_let_unfilled_row_create_shared_legacy_ambiguity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            filled_decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+            )
+            store.create_decision(
+                decision_id="v2_unfilled",
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+                status="CLAUDE_TRADE_READY",
+            )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '')
+                    """
+                )
+                conn.commit()
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=filled_decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 1},
+                )
+            )
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 1)
+            self.assertEqual(summary["decision_links_repaired"], 1)
+            self.assertEqual(summary["decision_links_unmatched"], 1)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                links = conn.execute(
+                    "SELECT v2_decision_id, link_status, legacy_decision_id, unmatched_reason "
+                    "FROM v2_decision_fill_links ORDER BY v2_decision_id"
+                ).fetchall()
+
+            by_id = {row["v2_decision_id"]: row for row in links}
+            self.assertEqual(by_id[filled_decision_id]["link_status"], "MATCHED")
+            self.assertEqual(by_id[filled_decision_id]["legacy_decision_id"], 1)
+            self.assertEqual(by_id["v2_unfilled"]["link_status"], "NO_CANONICAL_FILL")
+            self.assertIsNone(by_id["v2_unfilled"]["legacy_decision_id"])
+            self.assertEqual(by_id["v2_unfilled"]["unmatched_reason"], "canonical_has_no_fill")
+
+    def test_sync_marks_shared_legacy_decision_as_ambiguous_before_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            decision_ids = ["v2_decision_a", "v2_decision_b"]
+            for decision_id in decision_ids:
+                store.create_decision(
+                    decision_id=decision_id,
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    status="CLAUDE_TRADE_READY",
+                )
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        market TEXT,
+                        ticker TEXT,
+                        session_date TEXT,
+                        decision TEXT,
+                        filled INTEGER DEFAULT 0,
+                        order_status TEXT,
+                        entry_price REAL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        market, ticker, session_date, decision, filled, order_status
+                    ) VALUES ('KR', '005930', '2026-05-08', 'BUY_SIGNAL', 0, '')
+                    """
+                )
+                conn.commit()
+            for index, decision_id in enumerate(decision_ids):
+                store.append(
+                    LifecycleEvent(
+                        event_type="FILLED",
+                        market="KR",
+                        runtime_mode="live",
+                        session_date="2026-05-08",
+                        ticker="005930",
+                        decision_id=decision_id,
+                        execution_id=f"buy{index}",
+                        prompt_version="v2",
+                        brain_snapshot_id="brain_kr",
+                        payload={"price": 70000 + index, "qty": 1},
+                    )
+                )
+
+            summary = sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="KR",
+                dry_run=False,
+                repair_decisions=True,
+            )
+
+            self.assertEqual(summary["decision_links_matched"], 0)
+            self.assertEqual(summary["decision_links_repaired"], 0)
+            self.assertEqual(summary["decision_links_unmatched"], 2)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                decision = conn.execute("SELECT * FROM decisions WHERE id=1").fetchone()
+                links = conn.execute(
+                    "SELECT link_status, legacy_decision_id, repaired, unmatched_reason "
+                    "FROM v2_decision_fill_links ORDER BY v2_decision_id"
+                ).fetchall()
+
+            self.assertEqual(decision["filled"], 0)
+            self.assertEqual([row["link_status"] for row in links], ["AMBIGUOUS_SHARED_LEGACY", "AMBIGUOUS_SHARED_LEGACY"])
+            self.assertEqual([row["legacy_decision_id"] for row in links], [1, 1])
+            self.assertEqual([row["repaired"] for row in links], [0, 0])
+            self.assertEqual([row["unmatched_reason"] for row in links], ["shared_legacy_decision_id", "shared_legacy_decision_id"])
 
     def test_sync_uses_fill_price_native_for_entry_price(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

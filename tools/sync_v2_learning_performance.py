@@ -69,6 +69,75 @@ CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_ticker
     ON v2_learning_performance(market, ticker, session_date);
 CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_learning
     ON v2_learning_performance(learning_allowed, quality_grade, session_date);
+
+CREATE TABLE IF NOT EXISTS v2_canonical_performance (
+    v2_decision_id       TEXT PRIMARY KEY,
+    canonical_key        TEXT NOT NULL,
+    market               TEXT NOT NULL,
+    runtime_mode         TEXT NOT NULL,
+    session_date         TEXT NOT NULL,
+    ticker               TEXT NOT NULL,
+    status               TEXT NOT NULL,
+    route                TEXT,
+    path_type            TEXT,
+    path_run_id          TEXT,
+    strategy             TEXT,
+    origin_action        TEXT,
+    filled               INTEGER NOT NULL DEFAULT 0,
+    closed               INTEGER NOT NULL DEFAULT 0,
+    first_fill_event_id  INTEGER,
+    first_close_event_id INTEGER,
+    last_close_event_id  INTEGER,
+    earliest_fill_at     TEXT,
+    first_closed_at      TEXT,
+    last_closed_at       TEXT,
+    entry_price          REAL,
+    first_exit_price     REAL,
+    last_exit_price      REAL,
+    qty                  REAL,
+    pnl_krw              REAL,
+    pnl_pct              REAL,
+    mfe_pct              REAL,
+    mae_pct              REAL,
+    quality_grade        TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
+    learning_allowed     INTEGER NOT NULL DEFAULT 0,
+    raw_fill_event_count INTEGER NOT NULL DEFAULT 0,
+    raw_close_event_count INTEGER NOT NULL DEFAULT 0,
+    source_event_count   INTEGER NOT NULL DEFAULT 0,
+    metric_contract_json TEXT NOT NULL,
+    synced_at            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_v2_canonical_perf_market_session
+    ON v2_canonical_performance(market, runtime_mode, session_date);
+CREATE INDEX IF NOT EXISTS idx_v2_canonical_perf_ticker
+    ON v2_canonical_performance(market, ticker, session_date);
+CREATE INDEX IF NOT EXISTS idx_v2_canonical_perf_bucket
+    ON v2_canonical_performance(filled, closed, learning_allowed, session_date);
+
+CREATE TABLE IF NOT EXISTS v2_decision_fill_links (
+    v2_decision_id              TEXT PRIMARY KEY,
+    canonical_key               TEXT NOT NULL,
+    legacy_decision_id          INTEGER,
+    market                      TEXT NOT NULL,
+    runtime_mode                TEXT NOT NULL,
+    session_date                TEXT NOT NULL,
+    ticker                      TEXT NOT NULL,
+    link_status                 TEXT NOT NULL,
+    matched_by                  TEXT NOT NULL,
+    filled_from_canonical       INTEGER NOT NULL DEFAULT 0,
+    legacy_filled_before        INTEGER,
+    legacy_filled_after         INTEGER,
+    legacy_order_status_before  TEXT,
+    legacy_order_status_after   TEXT,
+    repaired                    INTEGER NOT NULL DEFAULT 0,
+    unmatched_reason            TEXT,
+    metric_contract_json        TEXT NOT NULL,
+    synced_at                   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_v2_decision_fill_links_status
+    ON v2_decision_fill_links(link_status, market, session_date);
 """
 
 
@@ -122,6 +191,106 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     source_event_count=excluded.source_event_count,
     synced_at=excluded.synced_at
 """
+
+CANONICAL_UPSERT_SQL = """
+INSERT INTO v2_canonical_performance (
+    v2_decision_id, canonical_key, market, runtime_mode, session_date, ticker,
+    status, route, path_type, path_run_id, strategy, origin_action,
+    filled, closed, first_fill_event_id, first_close_event_id, last_close_event_id,
+    earliest_fill_at, first_closed_at, last_closed_at,
+    entry_price, first_exit_price, last_exit_price, qty, pnl_krw, pnl_pct,
+    mfe_pct, mae_pct, quality_grade, learning_allowed, raw_fill_event_count,
+    raw_close_event_count, source_event_count, metric_contract_json, synced_at
+)
+VALUES (
+    :v2_decision_id, :canonical_key, :market, :runtime_mode, :session_date, :ticker,
+    :status, :route, :path_type, :path_run_id, :strategy, :origin_action,
+    :filled, :closed, :first_fill_event_id, :first_close_event_id, :last_close_event_id,
+    :earliest_fill_at, :first_closed_at, :last_closed_at,
+    :entry_price, :first_exit_price, :last_exit_price, :qty, :pnl_krw, :pnl_pct,
+    :mfe_pct, :mae_pct, :quality_grade, :learning_allowed, :raw_fill_event_count,
+    :raw_close_event_count, :source_event_count, :metric_contract_json, :synced_at
+)
+ON CONFLICT(v2_decision_id) DO UPDATE SET
+    canonical_key=excluded.canonical_key,
+    market=excluded.market,
+    runtime_mode=excluded.runtime_mode,
+    session_date=excluded.session_date,
+    ticker=excluded.ticker,
+    status=excluded.status,
+    route=excluded.route,
+    path_type=excluded.path_type,
+    path_run_id=excluded.path_run_id,
+    strategy=excluded.strategy,
+    origin_action=excluded.origin_action,
+    filled=excluded.filled,
+    closed=excluded.closed,
+    first_fill_event_id=excluded.first_fill_event_id,
+    first_close_event_id=excluded.first_close_event_id,
+    last_close_event_id=excluded.last_close_event_id,
+    earliest_fill_at=excluded.earliest_fill_at,
+    first_closed_at=excluded.first_closed_at,
+    last_closed_at=excluded.last_closed_at,
+    entry_price=excluded.entry_price,
+    first_exit_price=excluded.first_exit_price,
+    last_exit_price=excluded.last_exit_price,
+    qty=excluded.qty,
+    pnl_krw=excluded.pnl_krw,
+    pnl_pct=excluded.pnl_pct,
+    mfe_pct=excluded.mfe_pct,
+    mae_pct=excluded.mae_pct,
+    quality_grade=excluded.quality_grade,
+    learning_allowed=excluded.learning_allowed,
+    raw_fill_event_count=excluded.raw_fill_event_count,
+    raw_close_event_count=excluded.raw_close_event_count,
+    source_event_count=excluded.source_event_count,
+    metric_contract_json=excluded.metric_contract_json,
+    synced_at=excluded.synced_at
+"""
+
+LINK_UPSERT_SQL = """
+INSERT INTO v2_decision_fill_links (
+    v2_decision_id, canonical_key, legacy_decision_id, market, runtime_mode,
+    session_date, ticker, link_status, matched_by, filled_from_canonical,
+    legacy_filled_before, legacy_filled_after, legacy_order_status_before,
+    legacy_order_status_after, repaired, unmatched_reason, metric_contract_json,
+    synced_at
+)
+VALUES (
+    :v2_decision_id, :canonical_key, :legacy_decision_id, :market, :runtime_mode,
+    :session_date, :ticker, :link_status, :matched_by, :filled_from_canonical,
+    :legacy_filled_before, :legacy_filled_after, :legacy_order_status_before,
+    :legacy_order_status_after, :repaired, :unmatched_reason, :metric_contract_json,
+    :synced_at
+)
+ON CONFLICT(v2_decision_id) DO UPDATE SET
+    canonical_key=excluded.canonical_key,
+    legacy_decision_id=excluded.legacy_decision_id,
+    market=excluded.market,
+    runtime_mode=excluded.runtime_mode,
+    session_date=excluded.session_date,
+    ticker=excluded.ticker,
+    link_status=excluded.link_status,
+    matched_by=excluded.matched_by,
+    filled_from_canonical=excluded.filled_from_canonical,
+    legacy_filled_before=excluded.legacy_filled_before,
+    legacy_filled_after=excluded.legacy_filled_after,
+    legacy_order_status_before=excluded.legacy_order_status_before,
+    legacy_order_status_after=excluded.legacy_order_status_after,
+    repaired=excluded.repaired,
+    unmatched_reason=excluded.unmatched_reason,
+    metric_contract_json=excluded.metric_contract_json,
+    synced_at=excluded.synced_at
+"""
+
+METRIC_CONTRACT = {
+    "runtime_mode_axis": "live_or_paper",
+    "market_axis": "KR_or_US",
+    "dedupe_axis": "v2_decision_id_market_session_ticker",
+    "bucket_axis": "filled_closed_unmatched",
+    "watch_axis": "filled_demoted_pure_watch_separated",
+    "truth_source": "lifecycle_events_and_v2_path_runs",
+}
 
 
 def _connect(path: str | Path) -> sqlite3.Connection:
@@ -183,12 +352,32 @@ def _first_event(events: list[dict[str, Any]], *event_types: str) -> dict[str, A
     return {}
 
 
+def _entry_fill_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    fills: list[dict[str, Any]] = []
+    for event in events:
+        if str(event.get("event_type") or "") not in {"FILLED", "PARTIAL_FILLED"}:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if str(payload.get("side") or "").strip().lower() == "sell":
+            continue
+        fills.append(event)
+    return fills
+
+
+def _close_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [event for event in events if str(event.get("event_type") or "") == "CLOSED"]
+
+
 def _last_event(events: list[dict[str, Any]], *event_types: str) -> dict[str, Any]:
     allowed = set(event_types)
     for event in reversed(events):
         if str(event.get("event_type") or "") in allowed:
             return event
     return {}
+
+
+def _metric_contract_json() -> str:
+    return json.dumps(METRIC_CONTRACT, ensure_ascii=False, sort_keys=True)
 
 
 def _load_decisions(
@@ -400,6 +589,299 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
     }
 
 
+def build_canonical_row(
+    decision: dict[str, Any],
+    events: list[dict[str, Any]],
+    path_run: dict[str, Any],
+    learning_row: dict[str, Any],
+) -> dict[str, Any]:
+    fill_events = _entry_fill_events(events)
+    close_events = _close_events(events)
+    first_fill = fill_events[0] if fill_events else {}
+    first_close = close_events[0] if close_events else {}
+    last_close = close_events[-1] if close_events else {}
+    first_close_payload = dict(first_close.get("payload") or {})
+    last_close_payload = dict(last_close.get("payload") or {})
+    canonical_key = "|".join(
+        [
+            str(learning_row.get("runtime_mode") or ""),
+            str(learning_row.get("market") or ""),
+            str(learning_row.get("session_date") or ""),
+            str(learning_row.get("ticker") or ""),
+            str(learning_row.get("v2_decision_id") or ""),
+        ]
+    )
+    return {
+        "v2_decision_id": str(learning_row.get("v2_decision_id") or ""),
+        "canonical_key": canonical_key,
+        "market": str(learning_row.get("market") or ""),
+        "runtime_mode": str(learning_row.get("runtime_mode") or ""),
+        "session_date": str(learning_row.get("session_date") or ""),
+        "ticker": str(learning_row.get("ticker") or ""),
+        "status": str(learning_row.get("status") or ""),
+        "route": learning_row.get("route"),
+        "path_type": learning_row.get("path_type"),
+        "path_run_id": learning_row.get("path_run_id"),
+        "strategy": learning_row.get("strategy"),
+        "origin_action": learning_row.get("origin_action"),
+        "filled": 1 if fill_events else 0,
+        "closed": 1 if close_events else 0,
+        "first_fill_event_id": first_fill.get("event_id") if first_fill else None,
+        "first_close_event_id": first_close.get("event_id") if first_close else None,
+        "last_close_event_id": last_close.get("event_id") if last_close else None,
+        "earliest_fill_at": first_fill.get("occurred_at") if first_fill else None,
+        "first_closed_at": first_close.get("occurred_at") if first_close else None,
+        "last_closed_at": last_close.get("occurred_at") if last_close else None,
+        "entry_price": learning_row.get("entry_price"),
+        "first_exit_price": _num(first_close_payload, "exit_price", "actual_fill_price", "fill_price", "price", "close_price"),
+        "last_exit_price": learning_row.get("exit_price"),
+        "qty": learning_row.get("qty"),
+        "pnl_krw": learning_row.get("pnl_krw"),
+        "pnl_pct": learning_row.get("pnl_pct"),
+        "mfe_pct": learning_row.get("mfe_pct"),
+        "mae_pct": learning_row.get("mae_pct"),
+        "quality_grade": learning_row.get("quality_grade"),
+        "learning_allowed": learning_row.get("learning_allowed"),
+        "raw_fill_event_count": len(fill_events),
+        "raw_close_event_count": len(close_events),
+        "source_event_count": len(events),
+        "metric_contract_json": _metric_contract_json(),
+        "synced_at": learning_row.get("synced_at"),
+    }
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    if not _table_exists(conn, table):
+        return set()
+    return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _legacy_decision_id_from_events(events: list[dict[str, Any]]) -> int | None:
+    for event in events:
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        for key in ("legacy_decision_id", "ml_decision_id", "ml_db_decision_id", "decision_db_id"):
+            value = payload.get(key)
+            try:
+                legacy_id = int(value)
+            except Exception:
+                continue
+            if legacy_id > 0:
+                return legacy_id
+        value = payload.get("decision_id")
+        try:
+            legacy_id = int(value)
+        except Exception:
+            legacy_id = 0
+        if legacy_id > 0:
+            return legacy_id
+    return None
+
+
+def _legacy_order_status_after(canonical: dict[str, Any]) -> str:
+    if int(canonical.get("closed") or 0):
+        return "CLOSED"
+    if int(canonical.get("filled") or 0):
+        return "FILLED"
+    return ""
+
+
+def _legacy_update_values(canonical: dict[str, Any], columns: set[str]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    if "filled" in columns:
+        values["filled"] = int(canonical.get("filled") or 0)
+    status_after = _legacy_order_status_after(canonical)
+    if status_after and "order_status" in columns:
+        values["order_status"] = status_after if status_after == "FILLED" else "FILLED"
+    if canonical.get("entry_price") is not None and "entry_price" in columns:
+        values["entry_price"] = canonical.get("entry_price")
+    if canonical.get("last_exit_price") is not None and "exit_price" in columns:
+        values["exit_price"] = canonical.get("last_exit_price")
+    if canonical.get("pnl_pct") is not None and "pnl_pct" in columns:
+        values["pnl_pct"] = canonical.get("pnl_pct")
+    if canonical.get("pnl_krw") is not None and "pnl_krw" in columns:
+        values["pnl_krw"] = canonical.get("pnl_krw")
+    return values
+
+
+def _db_values_equal(current: Any, desired: Any) -> bool:
+    if current == desired:
+        return True
+    if current in (None, "") and desired in (None, ""):
+        return True
+    try:
+        return float(current) == float(desired)
+    except Exception:
+        return str(current or "") == str(desired or "")
+
+
+def _changed_legacy_updates(row: sqlite3.Row, updates: dict[str, Any]) -> dict[str, Any]:
+    row_keys = set(row.keys())
+    return {
+        key: value
+        for key, value in updates.items()
+        if key in row_keys and not _db_values_equal(row[key], value)
+    }
+
+
+def _find_legacy_decision(
+    conn: sqlite3.Connection,
+    canonical: dict[str, Any],
+    events: list[dict[str, Any]],
+) -> tuple[sqlite3.Row | None, str, str]:
+    if not _table_exists(conn, "decisions"):
+        return None, "UNMATCHED_NO_DECISIONS_TABLE", "decisions_table_missing"
+    columns = _table_columns(conn, "decisions")
+    legacy_id = _legacy_decision_id_from_events(events)
+    if legacy_id and "id" in columns:
+        row = conn.execute("SELECT * FROM decisions WHERE id=?", (legacy_id,)).fetchone()
+        if row is not None:
+            return row, "MATCHED", "payload_legacy_decision_id"
+    required = {"market", "ticker", "session_date"}
+    if not required.issubset(columns):
+        return None, "UNMATCHED_SCHEMA", "decisions_missing_market_ticker_session_date"
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM decisions
+        WHERE market=? AND ticker=? AND session_date=?
+        ORDER BY
+            CASE WHEN decision='BUY_SIGNAL' THEN 0 ELSE 1 END,
+            id
+        """,
+        (canonical.get("market"), canonical.get("ticker"), canonical.get("session_date")),
+    ).fetchall()
+    if not rows:
+        return None, "UNMATCHED_NO_ROW", "no_market_ticker_session_match"
+    if len(rows) > 1:
+        buy_rows = [row for row in rows if str(row["decision"] if "decision" in row.keys() else "") == "BUY_SIGNAL"]
+        if len(buy_rows) == 1:
+            return buy_rows[0], "MATCHED", "unique_buy_signal_market_ticker_session"
+        return None, "AMBIGUOUS", "multiple_market_ticker_session_matches"
+    return rows[0], "MATCHED", "unique_market_ticker_session"
+
+
+def _apply_decision_repair(
+    conn: sqlite3.Connection,
+    canonical: dict[str, Any],
+    link_row: dict[str, Any],
+) -> dict[str, Any]:
+    if link_row.get("link_status") != "MATCHED" or not int(canonical.get("filled") or 0):
+        return link_row
+    legacy_id = link_row.get("legacy_decision_id")
+    if legacy_id is None:
+        return link_row
+    row = conn.execute("SELECT * FROM decisions WHERE id=?", (legacy_id,)).fetchone()
+    if row is None:
+        link_row["link_status"] = "UNMATCHED_NO_ROW"
+        link_row["matched_by"] = ""
+        link_row["unmatched_reason"] = "legacy_row_missing_at_repair"
+        return link_row
+    columns = _table_columns(conn, "decisions")
+    updates = _legacy_update_values(canonical, columns)
+    changed_updates = _changed_legacy_updates(row, updates)
+    if changed_updates:
+        assignments = ", ".join(f"{name}=?" for name in changed_updates)
+        conn.execute(
+            f"UPDATE decisions SET {assignments} WHERE id=?",
+            (*changed_updates.values(), legacy_id),
+        )
+        link_row["repaired"] = 1
+    if "filled" in row.keys():
+        filled_after = changed_updates.get("filled", row["filled"])
+        link_row["legacy_filled_after"] = None if filled_after is None else int(filled_after)
+    link_row["legacy_order_status_after"] = (
+        str(changed_updates.get("order_status", row["order_status"] or ""))
+        if "order_status" in row.keys()
+        else link_row.get("legacy_order_status_after")
+    )
+    return link_row
+
+
+def _mark_shared_legacy_ambiguity(link_rows: list[dict[str, Any]]) -> None:
+    by_legacy_id: dict[int, list[dict[str, Any]]] = {}
+    for row in link_rows:
+        if row.get("link_status") != "MATCHED" or row.get("legacy_decision_id") is None:
+            continue
+        by_legacy_id.setdefault(int(row["legacy_decision_id"]), []).append(row)
+    for rows in by_legacy_id.values():
+        if len(rows) <= 1:
+            continue
+        for row in rows:
+            row["link_status"] = "AMBIGUOUS_SHARED_LEGACY"
+            row["matched_by"] = ""
+            row["legacy_filled_after"] = row.get("legacy_filled_before")
+            row["legacy_order_status_after"] = row.get("legacy_order_status_before")
+            row["repaired"] = 0
+            row["unmatched_reason"] = "shared_legacy_decision_id"
+
+
+def build_decision_fill_link(
+    conn: sqlite3.Connection,
+    canonical: dict[str, Any],
+    events: list[dict[str, Any]],
+    *,
+    repair_decisions: bool,
+) -> dict[str, Any]:
+    if not int(canonical.get("filled") or 0):
+        return {
+            "v2_decision_id": canonical.get("v2_decision_id"),
+            "canonical_key": canonical.get("canonical_key"),
+            "legacy_decision_id": None,
+            "market": canonical.get("market"),
+            "runtime_mode": canonical.get("runtime_mode"),
+            "session_date": canonical.get("session_date"),
+            "ticker": canonical.get("ticker"),
+            "link_status": "NO_CANONICAL_FILL",
+            "matched_by": "",
+            "filled_from_canonical": 0,
+            "legacy_filled_before": None,
+            "legacy_filled_after": None,
+            "legacy_order_status_before": "",
+            "legacy_order_status_after": "",
+            "repaired": 0,
+            "unmatched_reason": "canonical_has_no_fill",
+            "metric_contract_json": _metric_contract_json(),
+            "synced_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+    row, status, reason = _find_legacy_decision(conn, canonical, events)
+    legacy_id = int(row["id"]) if row is not None and "id" in row.keys() else None
+    before_filled = int(row["filled"]) if row is not None and "filled" in row.keys() and row["filled"] is not None else None
+    before_status = str(row["order_status"] or "") if row is not None and "order_status" in row.keys() else ""
+    after_filled = before_filled
+    after_status = before_status
+    link_row = {
+        "v2_decision_id": canonical.get("v2_decision_id"),
+        "canonical_key": canonical.get("canonical_key"),
+        "legacy_decision_id": legacy_id,
+        "market": canonical.get("market"),
+        "runtime_mode": canonical.get("runtime_mode"),
+        "session_date": canonical.get("session_date"),
+        "ticker": canonical.get("ticker"),
+        "link_status": status,
+        "matched_by": reason if status == "MATCHED" else "",
+        "filled_from_canonical": int(canonical.get("filled") or 0),
+        "legacy_filled_before": before_filled,
+        "legacy_filled_after": after_filled,
+        "legacy_order_status_before": before_status,
+        "legacy_order_status_after": after_status,
+        "repaired": 0,
+        "unmatched_reason": "" if status == "MATCHED" else reason,
+        "metric_contract_json": _metric_contract_json(),
+        "synced_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    if repair_decisions:
+        return _apply_decision_repair(conn, canonical, link_row)
+    return link_row
+
+
 def sync_v2_learning_performance(
     *,
     event_db: str | Path = DEFAULT_EVENT_DB,
@@ -409,6 +891,7 @@ def sync_v2_learning_performance(
     start_date: str | None = None,
     end_date: str | None = None,
     dry_run: bool = False,
+    repair_decisions: bool = False,
 ) -> dict[str, Any]:
     event_path = Path(event_db)
     ml_path = Path(ml_db)
@@ -421,17 +904,45 @@ def sync_v2_learning_performance(
             end_date=end_date,
         )
         rows = []
+        canonical_rows = []
+        event_sets: dict[str, list[dict[str, Any]]] = {}
         for decision in decisions:
             decision_id = str(decision.get("decision_id") or "")
             events = _load_events(event_conn, decision_id)
             path_run = _load_path_run(event_conn, decision_id, _entry_path_run_id_from_events(events))
-            rows.append(build_learning_row(decision, events, path_run))
+            learning_row = build_learning_row(decision, events, path_run)
+            rows.append(learning_row)
+            canonical_rows.append(build_canonical_row(decision, events, path_run, learning_row))
+            event_sets[decision_id] = events
     written = 0
+    link_rows: list[dict[str, Any]] = []
     if not dry_run:
         ml_path.parent.mkdir(parents=True, exist_ok=True)
         with _connect(ml_path) as ml_conn:
             ensure_schema(ml_conn)
             ml_conn.executemany(UPSERT_SQL, rows)
+            ml_conn.executemany(CANONICAL_UPSERT_SQL, canonical_rows)
+            canonical_by_decision = {
+                str(row.get("v2_decision_id") or ""): row
+                for row in canonical_rows
+            }
+            for canonical in canonical_rows:
+                link_rows.append(
+                    build_decision_fill_link(
+                        ml_conn,
+                        canonical,
+                        event_sets.get(str(canonical.get("v2_decision_id") or ""), []),
+                        repair_decisions=False,
+                    )
+                )
+            _mark_shared_legacy_ambiguity(link_rows)
+            if repair_decisions:
+                for index, link_row in enumerate(link_rows):
+                    canonical = canonical_by_decision.get(str(link_row.get("v2_decision_id") or ""))
+                    if canonical is None:
+                        continue
+                    link_rows[index] = _apply_decision_repair(ml_conn, canonical, link_row)
+            ml_conn.executemany(LINK_UPSERT_SQL, link_rows)
             ml_conn.commit()
             written = len(rows)
     filled = sum(1 for row in rows if row["filled"])
@@ -441,8 +952,14 @@ def sync_v2_learning_performance(
         "event_db": str(event_path),
         "ml_db": str(ml_path),
         "dry_run": bool(dry_run),
+        "repair_decisions": bool(repair_decisions),
         "selected": len(rows),
         "written": written,
+        "canonical_written": 0 if dry_run else len(canonical_rows),
+        "decision_links_written": 0 if dry_run else len(link_rows),
+        "decision_links_matched": sum(1 for row in link_rows if row.get("link_status") == "MATCHED"),
+        "decision_links_repaired": sum(1 for row in link_rows if row.get("repaired")),
+        "decision_links_unmatched": sum(1 for row in link_rows if row.get("link_status") != "MATCHED"),
         "filled": filled,
         "closed": closed,
         "forward_complete": sum(1 for row in rows if row["forward_complete"]),
@@ -451,7 +968,10 @@ def sync_v2_learning_performance(
             grade: sum(1 for row in rows if row["quality_grade"] == grade)
             for grade in sorted({row["quality_grade"] for row in rows})
         },
+        "metric_contract": dict(METRIC_CONTRACT),
         "sample": rows[:5],
+        "canonical_sample": canonical_rows[:5],
+        "decision_link_sample": link_rows[:5],
     }
 
 
@@ -464,6 +984,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", default="")
     parser.add_argument("--end-date", default="")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--repair-decisions", action="store_true", help="update matched legacy decisions rows from canonical fill truth")
     return parser.parse_args()
 
 
@@ -477,6 +998,7 @@ def main() -> int:
         start_date=args.start_date or None,
         end_date=args.end_date or None,
         dry_run=bool(args.dry_run),
+        repair_decisions=bool(args.repair_decisions),
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

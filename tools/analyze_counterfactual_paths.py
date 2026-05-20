@@ -44,6 +44,10 @@ def _metrics(rows: list[dict[str, Any]], field: str) -> dict[str, Any]:
     }
 
 
+def _markdown_cell(value: Any) -> str:
+    return str(value if value is not None else "").replace("|", "\\|")
+
+
 def analyze_counterfactual_paths(*, db_path: str | Path | None = None, session_date: str = "", market: str = "") -> dict[str, Any]:
     store = CandidateCounterfactualStore(db_path or get_runtime_path("data", "audit", "candidate_audit.db"))
     rows = store.fetch_rows(session_date=session_date, market=market)
@@ -115,7 +119,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
         "|---|---:|",
     ]
     for key, count in (payload.get("status_counts") or {}).items():
-        lines.append(f"| {key or '(blank)'} | {count} |")
+        lines.append(f"| {_markdown_cell(key or '(blank)')} | {count} |")
     lines.extend(
         [
             "",
@@ -126,7 +130,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
         ]
     )
     for key, count in (payload.get("metadata_quality_counts") or {}).items():
-        lines.append(f"| {key or '(blank)'} | {count} |")
+        lines.append(f"| {_markdown_cell(key or '(blank)')} | {count} |")
     lines.extend(
         [
             "",
@@ -137,7 +141,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
         ]
     )
     for key, count in (payload.get("label_source_counts") or {}).items():
-        lines.append(f"| {key or '(blank)'} | {count} |")
+        lines.append(f"| {_markdown_cell(key or '(blank)')} | {count} |")
     lines.extend(
         [
             "",
@@ -152,7 +156,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
         r60 = item.get("ret60") or {}
         rclose = item.get("ret_close") or {}
         lines.append(
-            f"| {path} | {item.get('rows', 0)} | {item.get('data_missing', 0)} | "
+            f"| {_markdown_cell(path)} | {item.get('rows', 0)} | {item.get('data_missing', 0)} | "
             f"{r30.get('n', 0)} | {r30.get('avg_pct', 0)} | {r30.get('profit_factor')} | "
             f"{r60.get('n', 0)} | {r60.get('avg_pct', 0)} | {r60.get('profit_factor')} | "
             f"{rclose.get('n', 0)} | {rclose.get('avg_pct', 0)} | {rclose.get('profit_factor')} |"

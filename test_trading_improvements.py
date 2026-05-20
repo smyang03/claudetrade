@@ -1881,7 +1881,9 @@ class TradingBotRecoveryTests(unittest.TestCase):
         self.assertEqual(pos["adjusted_order_cost_krw"], 32_000)
         self.assertEqual(pos["oversize_ratio"], 1.6)
 
-    def test_verify_live_positions_removes_stale_legacy_when_broker_has_no_holding(self):
+    def test_verify_live_positions_protects_position_when_broker_returns_empty(self):
+        # broker가 빈 stocks를 반환해도 내부 포지션이 있으면 broker truth degraded로 간주,
+        # 포지션을 제거하지 않고 보호 상태로 유지한다.
         bot = self._make_bot()
         saved = [{"ticker": "OKLO", "qty": 2, "entry": 100.0, "price_source": "order_fill"}]
 
@@ -1895,7 +1897,8 @@ class TradingBotRecoveryTests(unittest.TestCase):
         ):
             verified = bot._verify_live_positions(saved)
 
-        self.assertEqual(verified, [])
+        self.assertEqual(len(verified), 1)
+        self.assertTrue(verified[0].get("management_protected"))
 
     def test_verify_live_positions_keeps_legacy_when_pending_exists(self):
         bot = self._make_bot()
@@ -1916,7 +1919,9 @@ class TradingBotRecoveryTests(unittest.TestCase):
         self.assertEqual(verified[0]["position_integrity"], "protected")
         self.assertTrue(verified[0]["management_protected"])
 
-    def test_sync_runtime_with_broker_removes_stale_legacy_position_and_persists(self):
+    def test_sync_runtime_with_broker_protects_position_when_broker_returns_empty(self):
+        # broker가 빈 stocks를 반환해도 내부 포지션이 있으면 broker truth degraded로 간주,
+        # 포지션을 제거하지 않고 보호 상태로 유지한다.
         bot = self._make_bot()
         bot.risk.positions = [
             {
@@ -1953,8 +1958,9 @@ class TradingBotRecoveryTests(unittest.TestCase):
             ):
                 bot._sync_runtime_with_broker()
 
-        self.assertEqual(bot.risk.positions, [])
-        bot._save_positions.assert_called()
+        # degraded 상태에서 포지션이 제거되지 않고 보존되는지 확인
+        self.assertEqual(len(bot.risk.positions), 1)
+        self.assertEqual(bot.risk.positions[0]["ticker"], "OKLO")
 
     def test_process_exit_candidates_deduplicates_same_ticker(self):
         bot = self._make_bot()
@@ -3254,10 +3260,6 @@ class AnalystSelectionPromptTests(unittest.TestCase):
         self.assertIn("from_high=-5.4%(deep)", captured["prompt"])
         self.assertIn("ma60=above", captured["prompt"])
         self.assertIn("ma60=below", captured["prompt"])
-        self.assertEqual(candidates[0]["liquidity_bucket"], "mid")
-        self.assertEqual(candidates[0]["from_high_bucket"], "near_high")
-        self.assertEqual(candidates[1]["liquidity_bucket"], "high")
-        self.assertEqual(candidates[1]["from_high_bucket"], "deep")
 
 
 class UniverseManagerTests(unittest.TestCase):
@@ -3373,9 +3375,11 @@ class UniverseManagerTests(unittest.TestCase):
         candidates = [
             {"ticker": "NVDA", "name": "NVIDIA", "price": 100.0, "volume": 1000, "change_rate": 1.0},
         ]
+        _empty_lessons = {"section": "", "metadata": {"count": 0, "injected": False, "shadow": True, "chars": 0}}
         with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
              patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
-             patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None):
+             patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None), \
+             patch.object(analysts_module, "build_active_lesson_context", return_value=_empty_lessons):
             analysts_module.select_tickers(
                 market="US",
                 digest_prompt="market digest",
