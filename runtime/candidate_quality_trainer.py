@@ -279,6 +279,12 @@ def score_candidate_for_trainer(
             components["us_poor_change_bin"] = _trainer_weight("US_POOR_CHANGE_BIN_PENALTY", -6.0)
             risk_components["us_poor_change_risk"] = _trainer_weight("US_POOR_CHANGE_RISK", 6.0)
 
+    raw_rank_val = int(_as_float(_first_present(row, "raw_rank"), 0.0))
+    raw_rank_cap = int(_env_float("TRAINER_RAW_RANK_BONUS_CAP", 25.0))
+    raw_rank_step = _trainer_weight("RAW_RANK_BONUS_PER_STEP", 0.3)
+    if 0 < raw_rank_val <= raw_rank_cap:
+        components["raw_rank_bonus"] = raw_rank_step * (raw_rank_cap + 1 - raw_rank_val)
+
     if age_min > 120:
         components["stale_age_penalty"] = _trainer_weight("STALE_AGE_PENALTY", -10.0)
         risk_components["stale_age_risk"] = _trainer_weight("STALE_AGE_RISK", 10.0)

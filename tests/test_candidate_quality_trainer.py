@@ -230,7 +230,7 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertEqual(capped_result["hard_cap"], 28)
         self.assertEqual(len(capped_result["prompt_pool"]), 28)
 
-    def test_us_prompt_pool_default_cap_follows_policy_24(self) -> None:
+    def test_us_prompt_pool_default_cap_follows_policy_32(self) -> None:
         candidates = [
             {"ticker": f"T{idx}", "market": "US", "primary_bucket": "momentum_now", "liquidity_bucket": "high"}
             for idx in range(40)
@@ -238,8 +238,8 @@ class CandidateQualityTrainerTests(unittest.TestCase):
 
         result = build_trainer_prompt_pool(candidates, market="US", target=30, reorder_enabled=True)
 
-        self.assertEqual(result["hard_cap"], 24)
-        self.assertEqual(len(result["prompt_pool"]), 24)
+        self.assertEqual(result["hard_cap"], 32)
+        self.assertEqual(len(result["prompt_pool"]), 32)
         self.assertTrue(
             all(row["prompt_excluded_reason"] == "hard_cap_cutoff" for row in result["excluded_from_prompt"])
         )
@@ -250,13 +250,13 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(analysts._selection_candidate_cap("KR", watch_max=80, trade_max=5), 28)
 
-    def test_legacy_us_selection_candidate_cap_defaults_to_24(self) -> None:
+    def test_legacy_us_selection_candidate_cap_defaults_to_32(self) -> None:
         from minority_report import analysts
 
         with patch.dict("os.environ", {}, clear=True):
-            self.assertEqual(analysts._selection_candidate_cap("US", watch_max=80, trade_max=5), 24)
+            self.assertEqual(analysts._selection_candidate_cap("US", watch_max=80, trade_max=5), 32)
             self.assertEqual(analysts._trainer_prompt_hard_cap("KR", fallback=30), 28)
-            self.assertEqual(analysts._trainer_prompt_hard_cap("US", fallback=30), 24)
+            self.assertEqual(analysts._trainer_prompt_hard_cap("US", fallback=30), 32)
 
     def test_live_config_caps_selection_full_evidence_at_five(self) -> None:
         config_path = Path(__file__).resolve().parents[1] / "config" / "v2_start_config.json"

@@ -197,11 +197,41 @@ def build_trainer_prompt_pool(
 ) -> dict[str, Any]:
     market_key = "US" if str(market or "").upper() == "US" else "KR"
     target_count = max(0, int(target or 0))
-    default_hard_cap = 28 if market_key == "KR" else 24
+    default_hard_cap = 28 if market_key == "KR" else 32
     configured_hard_cap = int(hard_cap if hard_cap is not None else default_hard_cap)
     cap = configured_hard_cap if configured_hard_cap > 0 else target_count
     if cap <= 0:
         cap = target_count
+
+    # liquidity_bucket 미설정 후보를 price*volume 백분위로 보완
+    _turnovers: list[float] = []
+    for _raw in candidates or []:
+        if not isinstance(_raw, dict):
+            continue
+        try:
+            _t = float(str(_raw.get("price") or 0) or "0") * float(str(_raw.get("volume") or 0) or "0")
+        except Exception:
+            _t = 0.0
+        if _t > 0:
+            _turnovers.append(_t)
+    _turnovers.sort()
+
+    def _infer_liquidity(raw: dict[str, Any]) -> str:
+        if raw.get("liquidity_bucket"):
+            return str(raw["liquidity_bucket"])
+        try:
+            t = float(str(raw.get("price") or 0) or "0") * float(str(raw.get("volume") or 0) or "0")
+        except Exception:
+            t = 0.0
+        if t <= 0 or not _turnovers:
+            return "unknown"
+        higher = sum(1 for v in _turnovers if v > t)
+        pct = 1.0 - higher / len(_turnovers)
+        if pct >= 0.67:
+            return "high"
+        if pct >= 0.34:
+            return "mid"
+        return "low"
 
     scored_by_ticker: dict[str, dict[str, Any]] = {}
     legacy_order: list[str] = []
@@ -214,6 +244,8 @@ def build_trainer_prompt_pool(
             continue
         row.setdefault("raw_rank", idx)
         row["ticker"] = ticker
+        if not row.get("liquidity_bucket"):
+            row["liquidity_bucket"] = _infer_liquidity(raw)
         scored = score_candidate_for_trainer(row, market=market_key)
         key = ticker.upper() if market_key == "US" else ticker
         legacy_order.append(key)
