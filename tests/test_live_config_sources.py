@@ -57,8 +57,8 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(effective.get("PATHB_INTRADAY_ONLY"), "false")
         self.assertEqual(effective.get("KR_MAX_SINGLE_LOSS_PCT"), "-2.0")
         self.assertEqual(effective.get("KR_LOSS_CAP_SHADOW_PCT"), "1.5")
-        self.assertEqual(effective.get("KR_REENTRY_COOLDOWN_MINUTES"), "120")
-        self.assertEqual(effective.get("US_REENTRY_COOLDOWN_MINUTES"), "90")
+        self.assertEqual(effective.get("KR_REENTRY_COOLDOWN_MINUTES"), "60")
+        self.assertEqual(effective.get("US_REENTRY_COOLDOWN_MINUTES"), "60")
         checks_by_name = {item.name: item for item in checks}
         self.assertEqual(checks_by_name["config.pathb_intraday_only"].status, "PASS")
         self.assertEqual(checks_by_name["us.pathb_intraday_only"].status, "PASS")

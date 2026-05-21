@@ -4690,13 +4690,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     def _us_early_entry_soft_gate(self, market: str, now_dt: Optional[datetime] = None) -> dict:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
-        if market_key != "US":
-            return {"active": False, "market": market_key}
-        enabled = self._runtime_bool("US_EARLY_ENTRY_SOFT_GATE_ENABLED", True)
-        elapsed = self._market_open_elapsed_min("US", now_dt=now_dt)
-        start_min = self._runtime_float("US_EARLY_ENTRY_SOFT_GATE_START_MIN", 0.0)
-        end_min = self._runtime_float("US_EARLY_ENTRY_SOFT_GATE_END_MIN", 60.0)
-        size_mult = self._runtime_float("US_EARLY_ENTRY_SIZE_MULT", 0.5)
+        prefix = market_key
+        default_enabled = market_key == "US"
+        enabled = self._runtime_bool(f"{prefix}_EARLY_ENTRY_SOFT_GATE_ENABLED", default_enabled)
+        elapsed = self._market_open_elapsed_min(market_key, now_dt=now_dt)
+        start_min = self._runtime_float(f"{prefix}_EARLY_ENTRY_SOFT_GATE_START_MIN", 0.0)
+        end_min = self._runtime_float(f"{prefix}_EARLY_ENTRY_SOFT_GATE_END_MIN", 60.0)
+        size_mult = self._runtime_float(f"{prefix}_EARLY_ENTRY_SIZE_MULT", 0.5)
         size_mult = max(0.1, min(1.0, float(size_mult or 0.5)))
         active = bool(
             enabled
@@ -4711,7 +4711,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "start_min": float(start_min),
             "end_min": float(end_min),
             "size_mult": float(size_mult),
-            "policy": "us_early_entry_soft_size",
+            "policy": f"{market_key.lower()}_early_entry_soft_size",
         }
 
     def _candidate_entry_timing_context(

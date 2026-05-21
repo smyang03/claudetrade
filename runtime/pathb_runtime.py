@@ -6773,16 +6773,14 @@ class PathBRuntime:
         return max(0, int(decision.qty or 0))
 
     def _us_early_entry_soft_gate(self, market: str) -> dict[str, Any]:
-        if str(market or "").upper() != "US":
-            return {"active": False, "market": str(market or "").upper()}
         try:
             gate = getattr(getattr(self, "bot", None), "_us_early_entry_soft_gate", None)
             if callable(gate):
-                result = gate("US")
+                result = gate(market)
                 return dict(result or {})
         except Exception:
             pass
-        return {"active": False, "market": "US"}
+        return {"active": False, "market": str(market or "").upper()}
 
     def _pathb_total_equity_krw(self, market: str, *, fallback_cash_krw: float) -> float:
         try:
