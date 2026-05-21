@@ -18279,6 +18279,99 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 return True
         return False
 
+    def _pathb_sell_in_flight_state(self, ticker: str, market: str) -> dict:
+        market_key = str(market or "").upper()
+        key = str(ticker or "").strip()
+        key = key.upper() if market_key == "US" else key
+        positions = list(getattr(getattr(self, "risk", None), "positions", []) or [])
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            pos_key = str(pos.get("ticker", "") or "").strip()
+            pos_key = pos_key.upper() if market_key == "US" else pos_key
+            if pos_key != key:
+                continue
+
+            markers: list[str] = []
+            order_no = str(pos.get("pathb_pending_sell_order_no", "") or "").strip()
+            if str(pos.get("pathb_closing", "") or "").strip():
+                markers.append("pathb_closing")
+            if order_no:
+                markers.append("pathb_pending_sell_order_no")
+
+            path_run_id = str(pos.get("pathb_path_run_id", "") or pos.get("path_run_id", "") or "").strip()
+            run_status = ""
+            plan: dict = {}
+            pathb = getattr(self, "pathb", None)
+            store = getattr(pathb, "store", None)
+            find_run = getattr(store, "find_path_run", None)
+            if path_run_id and callable(find_run):
+                try:
+                    run = find_run(path_run_id) or {}
+                except Exception:
+                    run = {}
+                run_status = str(run.get("status", "") or "").upper()
+                raw_plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+                plan = dict(raw_plan or {})
+                if run_status in {"SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED"}:
+                    markers.append("pathb_sell_status")
+                if str(plan.get("exit_execution_id", "") or "").strip():
+                    markers.append("pathb_exit_execution_id")
+                    order_no = order_no or str(plan.get("exit_execution_id", "") or "").strip()
+                if str(plan.get("sell_order_sent_at", "") or "").strip():
+                    markers.append("pathb_sell_order_sent_at")
+                if run_status == "ORDER_UNKNOWN" and (
+                    markers
+                    or int(plan.get("exit_qty", 0) or 0) > 0
+                    or "sell_" in str(plan.get("order_unknown_detail", "") or "").lower()
+                ):
+                    markers.append("pathb_exit_order_unknown")
+
+            if markers:
+                return {
+                    "blocked": True,
+                    "market": market_key,
+                    "ticker": key,
+                    "path_run_id": path_run_id,
+                    "order_no": order_no,
+                    "run_status": run_status,
+                    "markers": sorted(set(markers)),
+                }
+        return {"blocked": False, "market": market_key, "ticker": key}
+
+    def _reconcile_pathb_sell_before_generic_exit(self, ticker: str, market: str, state: Optional[dict] = None) -> dict:
+        market_key = str(market or "").upper()
+        current = dict(state or self._pathb_sell_in_flight_state(ticker, market_key) or {})
+        if not bool(current.get("blocked")):
+            return current
+        pathb = getattr(self, "pathb", None)
+        if pathb is None:
+            return current
+        reconcile_sell_pending = getattr(pathb, "reconcile_sell_pending", None)
+        if callable(reconcile_sell_pending):
+            try:
+                reconcile_sell_pending(market_key, force=True)
+            except Exception as exc:
+                log.warning(f"[PathB sell reconcile before generic sell failed] {market_key} {ticker}: {exc}")
+        path_run_id = str(current.get("path_run_id", "") or "").strip()
+        reconcile_unknown = getattr(pathb, "reconcile_order_unknowns", None)
+        if path_run_id and callable(reconcile_unknown):
+            try:
+                reconcile_unknown(
+                    market_key,
+                    force=True,
+                    path_run_id=path_run_id,
+                    include_cross_session=True,
+                )
+            except TypeError:
+                try:
+                    reconcile_unknown(market_key, force=True, path_run_id=path_run_id)
+                except Exception as exc:
+                    log.warning(f"[PathB ORDER_UNKNOWN reconcile before generic sell failed] {market_key} {ticker}: {exc}")
+            except Exception as exc:
+                log.warning(f"[PathB ORDER_UNKNOWN reconcile before generic sell failed] {market_key} {ticker}: {exc}")
+        return self._pathb_sell_in_flight_state(ticker, market_key)
+
     @staticmethod
     def _sell_order_no_matches(left: object, right: object) -> bool:
         lhs = str(left or "").strip()
@@ -18962,6 +19055,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         raw_px   = self.price_cache_raw.get(cand["ticker"], cand["exit_price"])
         if float(cand.get("exit_price", 0) or 0) <= 0 or float(raw_px or 0) <= 0:
             log.error(f"sell skipped [{cand['ticker']}]: invalid exit/raw price exit={cand.get('exit_price')} raw={raw_px}")
+            return False
+        pathb_sell_state = self._pathb_sell_in_flight_state(cand["ticker"], market)
+        if bool(pathb_sell_state.get("blocked")):
+            pathb_sell_state = self._reconcile_pathb_sell_before_generic_exit(
+                cand["ticker"],
+                market,
+                pathb_sell_state,
+            )
+        if bool(pathb_sell_state.get("blocked")):
+            log.warning(
+                f"sell skipped [{cand['ticker']}]: PathB sell/order_unknown pending "
+                f"run={pathb_sell_state.get('path_run_id', '')} "
+                f"order={pathb_sell_state.get('order_no', '')}"
+            )
+            try:
+                self._record_decision_event(
+                    market,
+                    "sell_skipped",
+                    cand["ticker"],
+                    strategy=cand.get("strategy", ""),
+                    qty=cand.get("qty", 0),
+                    price_native=float(raw_px or 0),
+                    price_krw=cand.get("exit_price", 0),
+                    reason=reason,
+                    detail="pathb_sell_in_flight",
+                    order_no=str(pathb_sell_state.get("order_no", "") or ""),
+                    pathb_path_run_id=str(pathb_sell_state.get("path_run_id", "") or ""),
+                )
+            except Exception:
+                pass
             return False
         if self._has_pending_sell_confirmation(cand["ticker"], market):
             try:
@@ -26117,6 +26240,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not market or not ticker:
             return
         values: dict[str, Any] = {"execution_link_source": "trading_bot.decision_event"}
+        event_decision_id = str(
+            (event or {}).get("v2_decision_id")
+            or kwargs.get("v2_decision_id")
+            or kwargs.get("decision_id")
+            or ""
+        ).strip()
+        if event_decision_id:
+            values["execution_decision_id"] = event_decision_id
+        event_id = (
+            (event or {}).get("execution_event_id")
+            or kwargs.get("execution_event_id")
+            or (event or {}).get("event_id")
+            or kwargs.get("event_id")
+            or kwargs.get("lifecycle_event_id")
+        )
+        if event_id not in (None, ""):
+            try:
+                values["execution_event_id"] = int(event_id)
+            except Exception:
+                pass
         event_price_native = event.get("price_native") or event.get("price_krw")
         if action in {"buy_order", "buy_signal"}:
             entry_timing = (

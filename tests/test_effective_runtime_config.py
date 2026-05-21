@@ -32,6 +32,10 @@ class EffectiveRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(redact_config_value("V2_START_CONFIG_PATH", "config/v2_start_config.json"), "config/v2_start_config.json")
         self.assertNotEqual(redact_config_value("TELEGRAM_TOKEN", "abcdef123456"), "abcdef123456")
 
+    def test_redaction_keeps_token_limit_values_visible(self) -> None:
+        self.assertEqual(redact_config_value("CLAUDE_ANALYST_R1_MAX_TOKENS", "700"), "700")
+        self.assertEqual(redact_config_value("CLAUDE_SELECTION_RETRY_MAX_TOKENS", "3500"), "3500")
+
     def test_write_redacted_snapshot_is_utf8_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("runtime_paths._RUNTIME_ROOT", Path(tmpdir)):

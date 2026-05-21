@@ -626,6 +626,35 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(classes["222222"], "watch_only")
             self.assertEqual(classes["333333"], "not_in_prompt")
 
+    def test_backfill_candidate_audit_default_does_not_clear_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit_db = root / "data" / "audit" / "candidate_audit.db"
+            store = CandidateAuditStore(audit_db)
+            store.upsert_candidate(
+                {
+                    "call_id": "existing_call",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-05-08",
+                    "known_at": "2026-05-08T09:00:00",
+                    "ticker": "111111",
+                    "classification": "watch_only",
+                }
+            )
+
+            summary = backfill_candidate_audit(
+                root=root,
+                db_path=audit_db,
+                session_date="2026-05-08",
+                market="KR",
+                runtime_mode="live",
+            )
+
+            rows = store.rows(session_date="2026-05-08", market="KR", runtime_mode="live", limit=20)
+            self.assertFalse(summary["reset_session"])
+            self.assertEqual([row["ticker"] for row in rows], ["111111"])
+
     def test_backfill_reads_compact_raw_call_normalized_meta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

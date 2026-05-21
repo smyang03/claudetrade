@@ -864,6 +864,157 @@ class PathBRuntimeTests(unittest.TestCase):
             events = store.events_for_decision("dec1")
             self.assertIn("CLAUDE_PRICE_HIT", [event["event_type"] for event in events])
 
+    def test_shadow_only_scan_cancels_unsent_live_runs_before_shadow_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock(return_value={})
+            runtime.reconcile_buy_pending_cancel_above = Mock(return_value={})
+            runtime.process_miss_quality_followups = Mock()
+            runtime._scan_shadow_waiting_entries = Mock(return_value=0)
+
+            def register(ticker: str, status: str, *, shadow: bool = False) -> str:
+                plan = make_price_plan(
+                    decision_id=f"dec_{ticker}_{status}",
+                    ticker=ticker,
+                    market="KR",
+                    session_date="2026-04-27",
+                    buy_zone_low=52_000,
+                    buy_zone_high=52_500,
+                    sell_target=54_500,
+                    stop_loss=51_000,
+                    hold_days=1,
+                    confidence=0.7,
+                )
+                runtime.adapter.register_plan(
+                    plan,
+                    runtime_mode="live",
+                    brain_snapshot_id="brain1",
+                    initial_status=status,
+                    plan_overrides={"shadow_only": True} if shadow else None,
+                )
+                return plan.path_run_id
+
+            unsent_live_ids = [
+                register("005930", "WAITING"),
+                register("000660", "HIT"),
+            ]
+            broker_submitted_ids = [
+                (register("035420", "ORDER_SENT"), "ORDER_SENT"),
+                (register("051910", "ORDER_ACKED"), "ORDER_ACKED"),
+            ]
+            order_unknown_id = register("096770", "ORDER_UNKNOWN")
+            shadow_waiting_id = register("068270", "SHADOW_WAITING", shadow=True)
+            shadow_hit_id = register("323410", "SHADOW_HIT", shadow=True)
+
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "false", "PATHB_KR_SHADOW_PLAN_ENABLED": "true"},
+            ):
+                runtime.scan_waiting_entries("KR", force=True)
+
+            for path_run_id in unsent_live_ids:
+                run = store.find_path_run(path_run_id)
+                self.assertEqual(run["status"], "CANCELLED")
+                self.assertEqual(run["plan"]["cancel_reason"], "PATHB_MANUALLY_DISABLED")
+            for path_run_id, expected_status in broker_submitted_ids:
+                run = store.find_path_run(path_run_id)
+                self.assertEqual(run["status"], expected_status)
+                self.assertNotIn("cancel_reason", run["plan"])
+            self.assertEqual(store.find_path_run(order_unknown_id)["status"], "ORDER_UNKNOWN")
+            self.assertEqual(store.find_path_run(shadow_waiting_id)["status"], "SHADOW_WAITING")
+            self.assertEqual(store.find_path_run(shadow_hit_id)["status"], "SHADOW_HIT")
+            runtime._scan_shadow_waiting_entries.assert_called_once_with("KR")
+
+    def test_live_disabled_without_shadow_keeps_broker_submitted_live_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock(return_value={})
+            runtime.reconcile_buy_pending_cancel_above = Mock(return_value={})
+            runtime.process_miss_quality_followups = Mock()
+            runtime._scan_shadow_waiting_entries = Mock(return_value=0)
+
+            def register(ticker: str, status: str) -> str:
+                plan = make_price_plan(
+                    decision_id=f"dec_{ticker}_{status}",
+                    ticker=ticker,
+                    market="KR",
+                    session_date="2026-04-27",
+                    buy_zone_low=52_000,
+                    buy_zone_high=52_500,
+                    sell_target=54_500,
+                    stop_loss=51_000,
+                    hold_days=1,
+                    confidence=0.7,
+                )
+                runtime.adapter.register_plan(
+                    plan,
+                    runtime_mode="live",
+                    brain_snapshot_id="brain1",
+                    initial_status=status,
+                )
+                return plan.path_run_id
+
+            broker_submitted_ids = [
+                (register("035420", "ORDER_SENT"), "ORDER_SENT"),
+                (register("051910", "ORDER_ACKED"), "ORDER_ACKED"),
+            ]
+
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "false", "PATHB_KR_SHADOW_PLAN_ENABLED": "false"},
+            ):
+                runtime.scan_waiting_entries("KR", force=True)
+
+            for path_run_id, expected_status in broker_submitted_ids:
+                run = store.find_path_run(path_run_id)
+                self.assertEqual(run["status"], expected_status)
+                self.assertNotIn("cancel_reason", run["plan"])
+            runtime._scan_shadow_waiting_entries.assert_not_called()
+
+    def test_live_disabled_without_shadow_cancels_shadow_waiting_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock(return_value={})
+            runtime.reconcile_buy_pending_cancel_above = Mock(return_value={})
+            runtime.process_miss_quality_followups = Mock()
+            runtime._scan_shadow_waiting_entries = Mock(return_value=0)
+            plan = make_price_plan(
+                decision_id="dec_shadow_disabled_cancel",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(
+                plan,
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+                initial_status="SHADOW_WAITING",
+                plan_overrides={"shadow_only": True},
+            )
+
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "false", "PATHB_KR_SHADOW_PLAN_ENABLED": "false"},
+            ):
+                runtime.scan_waiting_entries("KR", force=True)
+
+            run = store.find_path_run(plan.path_run_id)
+            self.assertEqual(run["status"], "SHADOW_CANCELLED")
+            self.assertEqual(run["plan"]["shadow_cancel_reason"], "PATHB_MANUALLY_DISABLED")
+            runtime._scan_shadow_waiting_entries.assert_not_called()
+
     def test_shadow_hit_adapter_does_not_convert_live_waiting_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")

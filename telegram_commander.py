@@ -9,11 +9,13 @@ trading_bot.py의 TradingBot 인스턴스에 접근해 실제 동작 수행.
 from __future__ import annotations
 
 import os
+import json
 import secrets
 import threading
 import time
 import requests
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 from logger import get_trading_logger
 from runtime.market_resolver import infer_ticker_market, resolve_position_market
@@ -32,6 +34,8 @@ from bot.log_sanitizer import mask_secrets
 
 log = get_trading_logger()
 KST = ZoneInfo("Asia/Seoul")
+COMMON_ORDER_MIN_KRW = 50_000
+COMMON_ORDER_MAX_KRW = 5_000_000
 
 TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = str(os.getenv("TELEGRAM_CHAT_ID", ""))
@@ -39,6 +43,108 @@ DANGER_CONFIRM_TTL_SEC = 30
 DANGER_CONFIRM_PREFIX = "CONFIRM_"
 _pending_danger_confirms: dict[str, dict] = {}
 _pending_danger_lock = threading.Lock()
+
+
+def _start_config_path() -> Path:
+    raw = str(os.getenv("V2_START_CONFIG_PATH") or "config/v2_start_config.json")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path(__file__).parent / path
+    return path
+
+
+def _start_config_common_order_krw() -> int:
+    path = _start_config_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        data = {}
+    if isinstance(data, dict):
+        overrides = data.get("env_overrides")
+        if isinstance(overrides, dict):
+            raw = overrides.get("MAX_ORDER_KRW")
+            if raw not in (None, ""):
+                try:
+                    return int(float(str(raw).replace(",", "").strip()))
+                except Exception:
+                    pass
+        raw = data.get("MAX_ORDER_KRW")
+        if raw not in (None, ""):
+            try:
+                return int(float(str(raw).replace(",", "").strip()))
+            except Exception:
+                pass
+    raw_env = os.getenv("MAX_ORDER_KRW", "")
+    try:
+        return int(float(str(raw_env).replace(",", "").strip())) if raw_env else 0
+    except Exception:
+        return 0
+
+
+class StartConfigWriteError(RuntimeError):
+    pass
+
+
+def _load_start_config_for_write(path: Path) -> dict:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        raise StartConfigWriteError(f"start config read failed: {path}") from exc
+
+    try:
+        data = json.loads(raw or "{}")
+    except json.JSONDecodeError as exc:
+        raise StartConfigWriteError(f"start config is invalid JSON: {path}") from exc
+
+    if not isinstance(data, dict):
+        raise StartConfigWriteError("start config root must be object")
+    overrides = data.get("env_overrides")
+    if overrides is not None and not isinstance(overrides, dict):
+        raise StartConfigWriteError("start config env_overrides must be object")
+    return data
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception as exc:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        raise StartConfigWriteError(f"start config write failed: {path}") from exc
+
+
+def _write_start_config_common_order_krw(amount: int) -> None:
+    path = _start_config_path()
+    data = _load_start_config_for_write(path)
+    overrides = data.get("env_overrides")
+    if not isinstance(overrides, dict):
+        overrides = {}
+        data["env_overrides"] = overrides
+    for key in ("MAX_ORDER_KRW", "KR_FIXED_ORDER_KRW", "US_FIXED_ORDER_KRW", "PATHB_FIXED_ORDER_KRW"):
+        overrides[key] = str(int(amount))
+        if key in data and key != "MAX_ORDER_KRW":
+            data[key] = int(amount)
+    data["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+    data["updated_by"] = "telegram_order_size_control"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+def _format_common_order_limit(bot) -> str:
+    current = int(getattr(getattr(bot, "risk", None), "max_order_krw", 0) or 0)
+    next_amount = _start_config_common_order_krw()
+    if next_amount > 0 and next_amount != current:
+        return f"공통 최대주문: <b>{current:,}원</b> (재시작 후 {next_amount:,}원)"
+    if current > 0:
+        return f"공통 최대주문: <b>{current:,}원</b>"
+    if next_amount > 0:
+        return f"공통 최대주문: <b>{next_amount:,}원</b>"
+    return "공통 최대주문: 설정 없음"
 
 HELP_TEXT = """━━━━━━━━━━━━━━━━━━━━━━
 📋 <b>명령어 목록</b>
@@ -922,7 +1028,7 @@ def _handle(text: str, bot) -> str:
     # ── 최대 주문금액 변경 ────────────────────────────────────────────────────
     if cmd == "/setorder":
         if not args:
-            return f"현재 최대주문: <b>{int(bot.risk.max_order_krw):,}원</b>\n변경: /setorder 300000"
+            return f"{_format_common_order_limit(bot)}\n변경: /setorder 500000"
         return _cmd_setorder(bot, args[0])
 
     # ── 일일 손실 한도 변경 ───────────────────────────────────────────────────
@@ -1034,7 +1140,7 @@ def _legacy_cmd_status(bot) -> str:
         lines.append("\n📌 보유 포지션: 없음")
 
     # 설정
-    lines.append(f"\n⚙️ 최대주문: {int(bot.risk.max_order_krw):,}원  수수료: {int(bot.risk.total_fee):,}원")
+    lines.append(f"\n⚙️ 공통 최대주문: {int(bot.risk.max_order_krw):,}원  수수료: {int(bot.risk.total_fee):,}원")
 
     return "\n".join(lines)
 
@@ -1237,7 +1343,7 @@ def _cmd_status(bot) -> str:
         f"현금: {cash:,.0f}원\n"
         f"주식평가: {stock_value:,.0f}원\n"
         f"총자산: {total_equity:,.0f}원\n"
-        f"주문한도: {int(bot.risk.max_order_krw):,}원 | 누적 수수료: {int(bot.risk.total_fee):,}원\n\n"
+        f"공통 주문한도: {int(bot.risk.max_order_krw):,}원 | 누적 수수료: {int(bot.risk.total_fee):,}원\n\n"
         f"보유 포지션\n{body}"
     )
 
@@ -1293,7 +1399,7 @@ def _cmd_pnl(bot) -> str:
         f"{icon} 오늘 순손익: {pnl_pct:+.2f}%  {daily_pnl:+,.0f}원",
         f"  · 실현손익(수수료 전): {gross_pnl:+,.0f}원",
         f"  · 수수료(누적): -{total_fee:,.0f}원",
-        f"📊 청산: {wr}  |  최대주문: {int(bot.risk.max_order_krw):,}원",
+        f"📊 청산: {wr}  |  공통 최대주문: {int(bot.risk.max_order_krw):,}원",
         f"💵 현금: {cash:,.0f}원  |  평가액: {equity:,.0f}원",
     ]
 
@@ -1718,17 +1824,26 @@ def _cmd_close(bot, ticker: str) -> str:
 def _cmd_setorder(bot, amount_str: str) -> str:
     try:
         amount = int(amount_str.replace(",", "").replace("원", ""))
-        if amount < 10_000:
-            return "❌ 최소 10,000원 이상이어야 합니다."
-        if amount > 10_000_000:
-            return "❌ 1회 최대주문은 1,000만원을 초과할 수 없습니다."
+        if amount < COMMON_ORDER_MIN_KRW:
+            return f"❌ 최소 {COMMON_ORDER_MIN_KRW:,}원 이상이어야 합니다."
+        if amount > COMMON_ORDER_MAX_KRW:
+            return f"❌ 1회 최대주문은 {COMMON_ORDER_MAX_KRW:,}원을 초과할 수 없습니다."
         old = int(bot.risk.max_order_krw)
+        try:
+            _write_start_config_common_order_krw(amount)
+        except StartConfigWriteError as exc:
+            log.warning(f"[commander] MAX_ORDER_KRW start config update failed: {exc}")
+            return (
+                f"❌ <b>공통 최대주문 금액 변경 실패</b>\n"
+                f"  다음 시작 설정 저장 실패: {exc}\n"
+                f"  현재 주문한도는 변경하지 않았습니다."
+            )
         bot.risk.max_order_krw = float(amount)
         log.info(f"[commander] max_order_krw 변경: {old:,} → {amount:,}")
         return (
-            f"✅ <b>최대주문 금액 변경</b>\n"
+            f"✅ <b>공통 최대주문 금액 변경</b>\n"
             f"  {old:,}원 → <b>{amount:,}원</b>\n"
-            f"  (재시작 시 .env 기본값으로 복원됩니다)"
+            f"  다음 시작 공통설정도 함께 저장했습니다."
         )
     except ValueError:
         return "❌ 숫자를 입력하세요.\n예) /setorder 300000"
@@ -1746,7 +1861,7 @@ def _cmd_risk(bot) -> str:
         f"  일일 손실 한도:  <b>{dl:.1f}%</b>  ← /setloss\n"
         f"  종목 손절 기준:  <b>{sl:.1f}%</b>  ← /setsl\n"
         f"  기본 목표가 기준: <b>{tp:.1f}%</b>  ← /settp\n"
-        f"  1회 최대주문:    <b>{int(bot.risk.max_order_krw):,}원</b>  ← /setorder\n"
+        f"  공통 1회 최대주문: <b>{int(bot.risk.max_order_krw):,}원</b>  ← /setorder\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"  오늘 수익률: <b>{daily_ret:+.2f}%</b>"
     )
@@ -2094,6 +2209,6 @@ def _legacy_cmd_status_runtime(bot) -> str:
         f"\n현금: {cash:,.0f}원 | 주식평가: {stock_value:,.0f}원 | 총자산: {total_equity:,.0f}원"
     )
     lines.append(
-        f"주문한도: {int(bot.risk.max_order_krw):,}원 | 수수료: {int(bot.risk.total_fee):,}원"
+        f"공통 주문한도: {int(bot.risk.max_order_krw):,}원 | 수수료: {int(bot.risk.total_fee):,}원"
     )
     return "\n".join(lines)

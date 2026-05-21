@@ -354,19 +354,53 @@ def _start_config_path() -> Path:
     return BASE_DIR / "config" / "v2_start_config.json"
 
 
+class StartConfigReadError(RuntimeError):
+    pass
+
+
+class StartConfigValidationError(ValueError):
+    pass
+
+
+def _load_start_config_for_write(path: Path) -> dict[str, Any]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise StartConfigReadError("start config file is not readable") from exc
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise StartConfigValidationError("start config file is invalid JSON object") from exc
+    if not isinstance(data, dict):
+        raise StartConfigValidationError("start config file must contain a JSON object")
+    overrides = data.get("env_overrides")
+    if overrides is not None and not isinstance(overrides, dict):
+        raise StartConfigValidationError("env_overrides must be a JSON object")
+    return data
+
+
 def _order_size_config_keys(market: str) -> list[str]:
     market_key = str(market or "").upper()
-    if market_key == "US":
-        return ["MAX_ORDER_KRW", "US_FIXED_ORDER_KRW", "PATHB_FIXED_ORDER_KRW"]
-    return ["MAX_ORDER_KRW", "KR_FIXED_ORDER_KRW"]
+    if market_key in {"KR", "US"}:
+        return [
+            "MAX_ORDER_KRW",
+            "KR_FIXED_ORDER_KRW",
+            "US_FIXED_ORDER_KRW",
+            "PATHB_FIXED_ORDER_KRW",
+        ]
+    raise ValueError("market must be KR or US")
+
+
+def _order_size_sync_keys(market: str) -> list[str]:
+    return _order_size_config_keys(market)
 
 
 def _summary_order_size_setting_krw(market: str, mode: str, fallback: float = 0.0) -> float:
     market_key = str(market or "").upper()
-    primary = "US_FIXED_ORDER_KRW" if market_key == "US" else "KR_FIXED_ORDER_KRW"
-    value = _float_or_none(_get_env_raw(mode, primary)) or 0.0
+    value = _float_or_none(_get_env_raw(mode, "MAX_ORDER_KRW")) or 0.0
     if value <= 0:
-        value = _float_or_none(_get_env_raw(mode, "MAX_ORDER_KRW")) or 0.0
+        legacy_key = "US_FIXED_ORDER_KRW" if market_key == "US" else "KR_FIXED_ORDER_KRW"
+        value = _float_or_none(_get_env_raw(mode, legacy_key)) or 0.0
     if value <= 0:
         value = float(fallback or 0.0)
     return float(value or 0.0)
@@ -384,18 +418,13 @@ def _update_start_config_order_size(market: str, amount_krw: float) -> dict[str,
         raise ValueError("amount_krw must be between 50,000 and 5,000,000")
 
     path = _start_config_path()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
+    data = _load_start_config_for_write(path)
     overrides = data.get("env_overrides")
-    if not isinstance(overrides, dict):
+    if overrides is None:
         overrides = {}
         data["env_overrides"] = overrides
 
-    keys = _order_size_config_keys(market_key)
+    keys = _order_size_sync_keys(market_key)
     for key in keys:
         overrides[key] = str(amount)
         if key in data and key != "MAX_ORDER_KRW":
@@ -4681,6 +4710,19 @@ def _ml_db_digest(market: str) -> dict:
     digest = {
         "enabled": False,
         "exists": db_path.exists(),
+        "truth_source": "legacy_decisions",
+        "canonical_available": False,
+        "canonical_total": 0,
+        "canonical_today": 0,
+        "canonical_filled": 0,
+        "canonical_filled_today": 0,
+        "canonical_closed": 0,
+        "canonical_closed_today": 0,
+        "canonical_with_outcome": 0,
+        "canonical_learning_allowed": 0,
+        "canonical_last_synced_at": "",
+        "legacy_filled": 0,
+        "legacy_with_outcome": 0,
         "total": 0,
         "total_all": 0,
         "total_live_non_sim": 0,
@@ -4743,6 +4785,8 @@ def _ml_db_digest(market: str) -> dict:
             digest["buy_signal"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause} AND session_date=? AND decision='BUY_SIGNAL'", [*live_safe_params, session_date]).fetchone()[0] or 0)
             digest["filled"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause} AND session_date=? AND filled=1", [*live_safe_params, session_date]).fetchone()[0] or 0)
             digest["with_outcome"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause} AND pnl_pct IS NOT NULL", live_safe_params).fetchone()[0] or 0)
+            digest["legacy_filled"] = digest["filled"]
+            digest["legacy_with_outcome"] = digest["with_outcome"]
             digest["forward_ready_all"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=? AND forward_1d IS NOT NULL", (market,)).fetchone()[0] or 0)
             digest["forward_ready"] = int(conn.execute(f"SELECT COUNT(*) FROM decisions WHERE {live_safe_clause} AND forward_1d IS NOT NULL", live_safe_params).fetchone()[0] or 0)
             if digest["total"] > 0:
@@ -4767,6 +4811,54 @@ def _ml_db_digest(market: str) -> dict:
                 {"date": str(r[0]), "count": int(r[1] or 0)}
                 for r in reversed(day_rows)
             ]
+            canonical_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='v2_canonical_performance' LIMIT 1"
+            ).fetchone()
+            if canonical_exists:
+                canonical_params = [market, "live"]
+                canonical_today_params = [*canonical_params, session_date]
+                digest["canonical_available"] = True
+                digest["canonical_total"] = int(conn.execute(
+                    "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=?",
+                    canonical_params,
+                ).fetchone()[0] or 0)
+                digest["canonical_today"] = int(conn.execute(
+                    "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND session_date=?",
+                    canonical_today_params,
+                ).fetchone()[0] or 0)
+                digest["canonical_filled"] = int(conn.execute(
+                    "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND filled=1",
+                    canonical_params,
+                ).fetchone()[0] or 0)
+                digest["canonical_filled_today"] = int(conn.execute(
+                    "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND session_date=? AND filled=1",
+                    canonical_today_params,
+                ).fetchone()[0] or 0)
+                digest["canonical_closed"] = int(conn.execute(
+                    "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND closed=1",
+                    canonical_params,
+                ).fetchone()[0] or 0)
+                digest["canonical_closed_today"] = int(conn.execute(
+                    "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND session_date=? AND closed=1",
+                    canonical_today_params,
+                ).fetchone()[0] or 0)
+                digest["canonical_with_outcome"] = int(conn.execute(
+                    "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND pnl_pct IS NOT NULL",
+                    canonical_params,
+                ).fetchone()[0] or 0)
+                digest["canonical_learning_allowed"] = int(conn.execute(
+                    "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND learning_allowed=1",
+                    canonical_params,
+                ).fetchone()[0] or 0)
+                synced_row = conn.execute(
+                    "SELECT MAX(synced_at) FROM v2_canonical_performance WHERE market=? AND runtime_mode=?",
+                    canonical_params,
+                ).fetchone()
+                digest["canonical_last_synced_at"] = str(synced_row[0]) if synced_row and synced_row[0] else ""
+                if digest["canonical_total"] > 0:
+                    digest["truth_source"] = "v2_canonical_performance"
+                    digest["filled"] = digest["canonical_filled_today"]
+                    digest["with_outcome"] = digest["canonical_with_outcome"]
     except Exception:
         pass
     return digest
@@ -6860,6 +6952,10 @@ def api_control_order_size():
     amount = body.get("amount_krw", body.get("max_order_krw", body.get("value")))
     try:
         result = _update_start_config_order_size(market, amount)
+    except StartConfigValidationError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except StartConfigReadError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
@@ -8090,7 +8186,9 @@ def api_candidate_audit_rows():
                        r.claude_action, r.claude_reason, r.route_final_action,
                        r.route_reason, r.route_runtime_gate_reason,
                        r.buy_signal_count, r.filled_count, r.pnl_pct, r.exit_reason,
-                       r.close_reason, r.classification, r.payload_json,
+                       r.close_reason, r.execution_link_source,
+                       r.execution_decision_id, r.execution_event_id,
+                       r.classification, r.payload_json,
                        {', '.join(trainer_select)},
                        o.status AS outcome_status,
                        o.return_pct AS outcome_return_pct,
@@ -10127,8 +10225,8 @@ PAGE_TODAY_HTML = """
   <span style="color:var(--border)">|</span>
   <span style="color:var(--text-dim)">매수범위</span>
   <span id="bar-buy-range" style="font-weight:700;color:var(--text)">--</span>
-  <span style="color:var(--text-dim)">다음설정</span>
-  <input id="bar-order-size-input" type="number" min="50000" step="10000" inputmode="numeric" aria-label="1회 매수 설정금액"
+  <span style="color:var(--text-dim)">다음공통</span>
+  <input id="bar-order-size-input" type="number" min="50000" step="10000" inputmode="numeric" aria-label="공통 1회 매수 설정금액"
     style="width:112px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);font-size:12px">
   <button id="bar-order-size-btn" class="apply-btn" style="padding:6px 10px;font-size:12px" onclick="applyOrderSizeSetting()">설정</button>
   <span id="bar-order-size-status" style="font-size:11px;color:var(--text-dim)"></span>
@@ -11075,6 +11173,7 @@ async function loadSummary() {
       : `보유 없음 · 추가 여력 ${t.position_remaining || 0}${t.live_updated ? ' · ' + t.live_updated : ''}`;
   }
   const ml = t.ml_db || {};
+  const mlTruth = ml.truth_source === 'v2_canonical_performance' ? 'V2 truth' : 'legacy';
   const mlTitle = document.getElementById('ml-db-title');
   const mlMeta = document.getElementById('ml-db-meta');
   const mlBreakdown = document.getElementById('ml-db-breakdown');
@@ -11085,7 +11184,7 @@ async function loadSummary() {
   }
   if (mlMeta) {
     mlMeta.textContent = ml.enabled
-      ? `BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건 · 마지막 ${ml.last_ts || '--'}`
+      ? `${mlTruth} · BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건 · 마지막 ${ml.last_ts || '--'}`
       : '--';
   }
   if (mlBreakdown) {
@@ -12157,6 +12256,7 @@ async function loadSummary() {
   if (totalPnl) totalPnl.textContent = `누적: ${fmt.pct(p.total_pnl || 0)}`;
 
   const ml = t.ml_db || {};
+  const mlTruth = ml.truth_source === 'v2_canonical_performance' ? 'V2 truth' : 'legacy';
   const mlTitle = document.getElementById('ml-db-title');
   const mlMeta = document.getElementById('ml-db-meta');
   const mlBreakdown = document.getElementById('ml-db-breakdown');
@@ -12167,7 +12267,7 @@ async function loadSummary() {
   }
   if (mlMeta) {
     mlMeta.textContent = ml.enabled
-      ? `BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건 · 마지막 ${ml.last_ts || '--'}`
+      ? `${mlTruth} · BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건 · 마지막 ${ml.last_ts || '--'}`
       : '--';
   }
   if (mlBreakdown) {

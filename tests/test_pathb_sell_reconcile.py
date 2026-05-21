@@ -328,6 +328,73 @@ class PathBSellReconcileTests(unittest.TestCase):
             self.assertTrue(runtime.bot.pending_saved)
             self.assertEqual(runtime.bot.risk.positions[0]["qty"], 12)
 
+    def test_targeted_exit_order_unknown_reconcile_searches_previous_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda: "token",
+                balance_provider=lambda market, force: {
+                    "cash": 0,
+                    "stocks": [{"ticker": "SNAP", "qty": 12, "avg_price": 6.0, "current_price": 6.1}],
+                },
+                ccld_provider=lambda market, day: [],
+                date_provider=lambda market: "2026-04-27",
+            )
+            plan = _plan(session_date="2026-04-26")
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=6.0,
+                qty=12,
+                execution_id="buy1",
+                runtime_mode="live",
+                brain_snapshot_id="brain",
+            )
+            pos = {
+                "ticker": plan.ticker,
+                "qty": 12,
+                "entry": 6000,
+                "display_avg_price": 6.0,
+                "path_type": "claude_price",
+                "pathb_path_run_id": plan.path_run_id,
+                "pathb_closing": datetime.now(KST).isoformat(timespec="seconds"),
+                "pathb_pending_sell_order_no": "sell1",
+                "pathb_pending_sell_qty": 12,
+                "pathb_pending_close_reason": "CLOSED_CLAUDE_PRICE_PRE_CLOSE",
+                "pathb_pending_sell_price": 6.1,
+            }
+            bot.risk.positions.append(pos)
+            runtime.sell_manager.mark_sell_order_sent(
+                plan.path_run_id,
+                execution_id="sell1",
+                price=6.1,
+                qty=12,
+                close_reason="CLOSED_CLAUDE_PRICE_PRE_CLOSE",
+                runtime_mode="live",
+                brain_snapshot_id="brain",
+            )
+            runtime.adapter.mark_order_unknown(
+                plan.path_run_id,
+                detail="sell_fill_not_confirmed:ttl_expired",
+                runtime_mode="live",
+                brain_snapshot_id="brain",
+                execution_id="sell1",
+            )
+
+            summary = runtime.reconcile_order_unknowns("US", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["checked"], 1)
+            self.assertEqual(summary["recovered_position"], 1)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "exit_sell_missing_still_held")
+            self.assertNotIn("pathb_pending_sell_order_no", pos)
+
     def test_session_end_exit_unknown_partial_sell_stays_retryable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan = _runtime(

@@ -74,6 +74,32 @@ def _insert_counterfactual(
     )
 
 
+def _insert_wait_counterfactual_missing_entry(
+    store: CandidateCounterfactualStore,
+    *,
+    session_date: str,
+    market: str,
+    ticker: str,
+    trigger_time: str,
+) -> None:
+    store.upsert_path(
+        {
+            "runtime_mode": "live",
+            "session_date": session_date,
+            "market": market,
+            "ticker": ticker,
+            "known_at": trigger_time,
+            "signal_time": trigger_time,
+            "trade_ready_action": "BUY_READY",
+            "path_name": "wait_30m",
+            "trigger_time": trigger_time,
+            "entry_delay_min": 30.0,
+            "status": "PENDING",
+            "metadata": {"source_attempts": ["runtime"]},
+        }
+    )
+
+
 def test_update_counterfactual_outcomes_fills_close_from_daily_csv() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -149,6 +175,124 @@ def test_update_counterfactual_outcomes_infers_wait_entry_from_minute_csv() -> N
         assert row["outcome_30m_pct"] is not None
         metadata = json.loads(row["metadata_json"])
         assert metadata["entry_price_source"] == "minute_csv_trigger"
+
+
+def test_wait_entry_late_minute_sample_is_price_unavailable_for_historical_session() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        db = root / "candidate_audit.db"
+        price_root = root / "price"
+        store = CandidateCounterfactualStore(db)
+        _insert_wait_counterfactual_missing_entry(
+            store,
+            session_date="2026-05-19",
+            market="KR",
+            ticker="005930",
+            trigger_time="2026-05-19T09:35:00+09:00",
+        )
+        _write_minute_csv(
+            price_root,
+            "KR",
+            "005930",
+            [("2026-05-19T09:41:00+09:00", 101.0, 103.0, 100.0)],
+        )
+        _write_price_csv(price_root, "KR", "005930", [("2026-05-19", 108.0)])
+
+        result = update_counterfactual_outcomes(
+            db_path=db,
+            session_date="2026-05-19",
+            market="KR",
+            price_root=price_root,
+            minute_root=price_root,
+            _now=datetime(2026, 5, 20, 9, 0, tzinfo=KST),
+        )
+
+        row = store.fetch_rows(session_date="2026-05-19", market="KR")[0]
+        metadata = json.loads(row["metadata_json"])
+        assert result["price_unavailable"] == 1
+        assert row["entry_price"] is None
+        assert row["outcome_close_pct"] is None
+        assert row["status"] == "PRICE_UNAVAILABLE"
+        assert metadata["entry_price_reason"] == "minute_entry_sample_too_late"
+        assert metadata["entry_price_sample_lag_seconds"] == 360
+
+
+def test_wait_entry_late_minute_sample_stays_pending_for_current_session() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        db = root / "candidate_audit.db"
+        price_root = root / "price"
+        store = CandidateCounterfactualStore(db)
+        _insert_wait_counterfactual_missing_entry(
+            store,
+            session_date="2026-05-20",
+            market="KR",
+            ticker="005930",
+            trigger_time="2026-05-20T09:35:00+09:00",
+        )
+        _write_minute_csv(
+            price_root,
+            "KR",
+            "005930",
+            [("2026-05-20T09:41:00+09:00", 101.0, 103.0, 100.0)],
+        )
+
+        result = update_counterfactual_outcomes(
+            db_path=db,
+            session_date="2026-05-20",
+            market="KR",
+            price_root=price_root,
+            minute_root=price_root,
+            _now=datetime(2026, 5, 20, 9, 40, tzinfo=KST),
+        )
+
+        row = store.fetch_rows(session_date="2026-05-20", market="KR")[0]
+        metadata = json.loads(row["metadata_json"])
+        assert result["price_pending"] == 1
+        assert row["entry_price"] is None
+        assert row["status"] == "PRICE_PENDING"
+        assert metadata["entry_price_reason"] == "minute_entry_sample_too_late"
+
+
+def test_wait_entry_sample_crossing_us_session_boundary_is_rejected() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        db = root / "candidate_audit.db"
+        price_root = root / "price"
+        store = CandidateCounterfactualStore(db)
+        _insert_wait_counterfactual_missing_entry(
+            store,
+            session_date="2026-05-19",
+            market="US",
+            ticker="CRDO",
+            trigger_time="2026-05-20T04:55:00+09:00",
+        )
+        _write_minute_csv(
+            price_root,
+            "US",
+            "CRDO",
+            [("2026-05-20T05:01:00+09:00", 101.0, 103.0, 100.0)],
+        )
+        _write_price_csv(price_root, "US", "CRDO", [("2026-05-19", 108.0)])
+
+        result = update_counterfactual_outcomes(
+            db_path=db,
+            session_date="2026-05-19",
+            market="US",
+            price_root=price_root,
+            minute_root=price_root,
+            _now=datetime(2026, 5, 20, 7, 1, tzinfo=KST),
+        )
+
+        row = store.fetch_rows(session_date="2026-05-19", market="US")[0]
+        metadata = json.loads(row["metadata_json"])
+        assert result["price_unavailable"] == 1
+        assert row["entry_price"] is None
+        assert row["outcome_close_pct"] is None
+        assert row["status"] == "PRICE_UNAVAILABLE"
+        assert metadata["entry_price_reason"] == "minute_entry_sample_out_of_session"
+        assert metadata["entry_price_trigger_session"] == "2026-05-19"
+        assert metadata["entry_price_observed_session"] == "2026-05-20"
 
 
 def test_wait_entry_missing_minute_is_retryable_price_pending() -> None:
@@ -499,6 +643,58 @@ def test_default_run_adds_minute_outcomes_to_existing_close_label_without_refill
         assert round(float(row["outcome_60m_pct"]), 6) == 8.0
         assert round(float(row["max_runup_60m_pct"]), 6) == 10.0
         assert round(float(row["max_drawdown_60m_pct"]), 6) == -3.0
+
+
+def test_minute_outcomes_do_not_use_next_session_samples() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        db = root / "candidate_audit.db"
+        price_root = root / "price"
+        store = CandidateCounterfactualStore(db)
+        store.upsert_path(
+            {
+                "runtime_mode": "live",
+                "session_date": "2026-05-19",
+                "market": "KR",
+                "ticker": "005930",
+                "known_at": "2026-05-19T15:20:00+09:00",
+                "signal_time": "2026-05-19T15:20:00+09:00",
+                "trade_ready_action": "BUY_READY",
+                "path_name": "immediate",
+                "entry_price": 100.0,
+                "trigger_time": "2026-05-19T15:20:00+09:00",
+                "status": "TRIGGERED",
+                "metadata": {"source_attempts": ["runtime"]},
+            }
+        )
+        _write_minute_csv(
+            price_root,
+            "KR",
+            "005930",
+            [("2026-05-20T09:00:00+09:00", 120.0, 125.0, 119.0)],
+        )
+        _write_price_csv(price_root, "KR", "005930", [("2026-05-19", 105.0)])
+
+        result = update_counterfactual_outcomes(
+            db_path=db,
+            session_date="2026-05-19",
+            market="KR",
+            price_root=price_root,
+            minute_root=price_root,
+        )
+
+        row = store.fetch_rows(session_date="2026-05-19", market="KR")[0]
+        metadata = json.loads(row["metadata_json"])
+        assert result["filled"] == 1
+        assert row["status"] == "CLOSE_OUTCOME_FILLED"
+        assert round(float(row["outcome_close_pct"]), 6) == 5.0
+        assert row["outcome_30m_pct"] is None
+        assert row["outcome_60m_pct"] is None
+        assert row["max_runup_60m_pct"] is None
+        assert row["max_drawdown_60m_pct"] is None
+        assert metadata["minute_same_session_sample_count"] == 0
+        assert metadata["outcome_30m_reason"] == "minute_outcome_sample_missing_same_session"
+        assert metadata["outcome_60m_reason"] == "minute_outcome_sample_missing_same_session"
 
 
 def test_default_run_does_not_downgrade_existing_close_when_entry_or_trigger_missing() -> None:

@@ -28,10 +28,16 @@ NON_SECRET_PATH_KEYS = {
     "CLAUDETRADE_RUNTIME_DIR",
 }
 
+NON_SECRET_SUFFIXES = (
+    "_MAX_TOKENS",
+)
+
 
 def _is_secret_key(key: str) -> bool:
     upper = str(key or "").upper()
     if upper in NON_SECRET_PATH_KEYS:
+        return False
+    if any(upper.endswith(suffix) for suffix in NON_SECRET_SUFFIXES):
         return False
     return any(marker in upper for marker in SECRET_MARKERS)
 

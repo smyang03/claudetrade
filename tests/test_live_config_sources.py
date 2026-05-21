@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 import unittest
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from tools.live_preflight import (
     _config_checks,
     _kr_cap40_confirmation_enforce_check,
+    _pathb_lifecycle_window_check_result,
+    _market_session_calendar_check,
+    _pathb_market_live_gate_check,
     _runtime_config_drift_check,
     _runtime_config_drift_payload,
     load_effective_config,
@@ -15,13 +20,23 @@ from tools.live_preflight import (
 
 class LiveConfigSourceTests(unittest.TestCase):
     def test_live_effective_config_has_no_unapproved_conflicts(self) -> None:
-        checks, config = _config_checks("live", allow_config_conflicts=False)
+        expected = load_effective_config("live")
+        snapshot = {
+            "written_at": "test",
+            "runtime_mode": "live",
+            "effective": expected["effective"],
+        }
+        with patch(
+            "tools.live_preflight._latest_runtime_config_snapshot",
+            return_value=(Path("effective_config_live.redacted.json"), snapshot),
+        ):
+            checks, config = _config_checks("live", allow_config_conflicts=False)
         failing = [item for item in checks if item.status == "FAIL"]
 
         self.assertEqual(failing, [])
         effective = config["effective"]
-        self.assertEqual(effective.get("MAX_ORDER_KRW"), "300000")
-        self.assertEqual(effective.get("KR_FIXED_ORDER_KRW"), "300000")
+        self.assertEqual(effective.get("MAX_ORDER_KRW"), "500000")
+        self.assertEqual(effective.get("KR_FIXED_ORDER_KRW"), "500000")
         self.assertEqual(effective.get("US_FIXED_ORDER_KRW"), "500000")
         self.assertEqual(effective.get("KR_MAX_POSITIONS"), "20")
         self.assertEqual(effective.get("US_MAX_POSITIONS"), "20")
@@ -32,9 +47,9 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(effective.get("PATHB_MAX_DAILY_ENTRIES"), "40")
         self.assertEqual(effective.get("PATHB_FIXED_ORDER_KRW"), "500000")
         self.assertEqual(effective.get("PATHB_ONE_SHARE_OVER_BUDGET_MAX_KRW"), "700000")
-        self.assertEqual(effective.get("PATHB_KR_LIVE_ENABLED"), "false")
+        self.assertEqual(effective.get("PATHB_KR_LIVE_ENABLED"), "true")
         self.assertEqual(effective.get("KR_CLAUDE_PRICE_LIVE_ENABLED"), "false")
-        self.assertEqual(effective.get("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK"), "true")
+        self.assertEqual(effective.get("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK"), "false")
         self.assertEqual(effective.get("KR_CONTINUATION_NEW_ENTRY_BLOCK"), "true")
         self.assertEqual(effective.get("PATHB_US_LIVE_ENABLED"), "true")
         self.assertEqual(effective.get("KR_MAX_SINGLE_LOSS_PCT"), "-2.0")
@@ -87,6 +102,101 @@ class LiveConfigSourceTests(unittest.TestCase):
 
         self.assertEqual(check.status, "PASS")
 
+    def test_pathb_market_live_gate_accepts_current_kr_on_us_on_policy(self) -> None:
+        check = _pathb_market_live_gate_check(
+            {
+                "PATHB_KR_LIVE_ENABLED": "true",
+                "PATHB_US_LIVE_ENABLED": "true",
+            }
+        )
+
+        self.assertEqual(check.status, "PASS")
+        self.assertTrue(check.data["policy_match"])
+        self.assertFalse(check.data["remediation_required"])
+
+    def test_pathb_market_live_gate_warns_when_kr_live_is_disabled(self) -> None:
+        check = _pathb_market_live_gate_check(
+            {
+                "PATHB_KR_LIVE_ENABLED": "false",
+                "PATHB_US_LIVE_ENABLED": "true",
+            }
+        )
+
+        self.assertEqual(check.status, "WARN")
+        self.assertFalse(check.data["policy_match"])
+        self.assertTrue(check.data["remediation_required"])
+        self.assertIn("KR", check.detail)
+
+    def test_pathb_market_live_gate_warns_when_us_live_is_disabled(self) -> None:
+        check = _pathb_market_live_gate_check(
+            {
+                "PATHB_KR_LIVE_ENABLED": "true",
+                "PATHB_US_LIVE_ENABLED": "false",
+            }
+        )
+
+        self.assertEqual(check.status, "WARN")
+        self.assertFalse(check.data["policy_match"])
+        self.assertTrue(check.data["remediation_required"])
+        self.assertIn("US", check.detail)
+
+    def test_pathb_market_live_gate_warns_when_both_markets_are_disabled(self) -> None:
+        check = _pathb_market_live_gate_check(
+            {
+                "PATHB_KR_LIVE_ENABLED": "false",
+                "PATHB_US_LIVE_ENABLED": "false",
+            }
+        )
+
+        self.assertEqual(check.status, "WARN")
+        self.assertFalse(check.data["policy_match"])
+        self.assertTrue(check.data["remediation_required"])
+        self.assertIn("KR", check.detail)
+        self.assertIn("US", check.detail)
+
+    def test_market_session_calendar_uses_exchange_calendars(self) -> None:
+        now = datetime(2026, 5, 21, 2, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+
+        with patch("tools.live_preflight._now_kst", return_value=now):
+            check = _market_session_calendar_check()
+
+        self.assertEqual(check.status, "PASS")
+        self.assertEqual(check.data["calendar_source"], "exchange_calendars")
+        self.assertTrue(check.data["sessions"]["KR"]["is_session"])
+        self.assertTrue(check.data["sessions"]["US"]["is_session"])
+
+    def test_pathb_lifecycle_pre_run_missing_path_ids_are_not_remediation_warnings(self) -> None:
+        check = _pathb_lifecycle_window_check_result(
+            [],
+            {
+                "rows": [{"event_type": "SAFETY_BLOCKED"}],
+                "pre_run": [{"event_type": "SAFETY_BLOCKED"}],
+                "post_run": [],
+                "decision_id_linkable_count": 1,
+                "decision_id_unlinkable_count": 0,
+            },
+        )
+
+        self.assertEqual(check.status, "PASS")
+        self.assertTrue(check.data["accepted_exception"])
+        self.assertFalse(check.data["remediation_required"])
+
+    def test_pathb_lifecycle_post_run_missing_path_ids_remain_warnings(self) -> None:
+        check = _pathb_lifecycle_window_check_result(
+            [],
+            {
+                "rows": [{"event_type": "FILLED"}],
+                "pre_run": [],
+                "post_run": [{"event_type": "FILLED"}],
+                "decision_id_linkable_count": 1,
+                "decision_id_unlinkable_count": 0,
+            },
+        )
+
+        self.assertEqual(check.status, "WARN")
+        self.assertFalse(check.data["accepted_exception"])
+        self.assertTrue(check.data["remediation_required"])
+
     def test_runtime_config_drift_payload_compares_operational_caps(self) -> None:
         config = {
             "effective": {
@@ -110,6 +220,25 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(drift["PATHB_MAX_DAILY_ENTRIES"]["runtime_snapshot"], "20")
         self.assertNotIn("PATHB_US_LIVE_ENABLED", drift)
 
+    def test_runtime_config_drift_payload_ignores_redacted_snapshot_values(self) -> None:
+        config = {
+            "effective": {
+                "CLAUDE_ANALYST_R1_MAX_TOKENS": "700",
+                "CLAUDE_ANALYST_R2_MAX_TOKENS": "900",
+            }
+        }
+        snapshot = {
+            "effective": {
+                "CLAUDE_ANALYST_R1_MAX_TOKENS": "***",
+                "CLAUDE_ANALYST_R2_MAX_TOKENS": "90***00",
+            }
+        }
+
+        drift = _runtime_config_drift_payload(config, snapshot)
+
+        self.assertNotIn("CLAUDE_ANALYST_R1_MAX_TOKENS", drift)
+        self.assertNotIn("CLAUDE_ANALYST_R2_MAX_TOKENS", drift)
+
     def test_runtime_config_drift_check_describes_snapshot_not_process_memory(self) -> None:
         config = {"effective": {"US_DAILY_ENTRY_CAP": "40"}}
         snapshot = {
@@ -128,6 +257,25 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertIn("latest runtime config snapshot differs from files", check.detail)
         self.assertNotIn("running process", check.detail)
         self.assertEqual(check.data["drift"]["US_DAILY_ENTRY_CAP"]["runtime_snapshot"], "1")
+
+    def test_runtime_config_drift_check_fails_for_critical_live_gate_drift(self) -> None:
+        config = {"effective": {"PATHB_KR_LIVE_ENABLED": "true"}}
+        snapshot = {
+            "written_at": "2026-05-21T11:34:38+09:00",
+            "runtime_mode": "live",
+            "effective": {"PATHB_KR_LIVE_ENABLED": "false"},
+        }
+
+        with patch(
+            "tools.live_preflight._latest_runtime_config_snapshot",
+            return_value=(Path("effective_config_live.redacted.json"), snapshot),
+        ):
+            check = _runtime_config_drift_check(config, "live")
+
+        self.assertEqual(check.status, "FAIL")
+        self.assertIn("critical runtime config snapshot differs", check.detail)
+        self.assertIn("PATHB_KR_LIVE_ENABLED", check.data["critical_drift"])
+        self.assertIn("restart", check.data["operator_action"])
 
 
 if __name__ == "__main__":

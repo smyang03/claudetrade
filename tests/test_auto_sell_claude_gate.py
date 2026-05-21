@@ -129,6 +129,45 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         precheck.assert_called_once()
         self.assertEqual(cand["auto_sell_review_action"], "SELL")
 
+    def test_plan_a_sell_skips_when_pathb_sell_is_pending(self) -> None:
+        bot = _plan_a_bot()
+        pos = bot.risk.positions[0]
+        pos.update(
+            {
+                "path_type": "claude_price",
+                "pathb_path_run_id": "path_qcom",
+                "pathb_pending_sell_order_no": "sell_qcom",
+                "pathb_pending_sell_qty": 1,
+            }
+        )
+        bot.pathb = SimpleNamespace(
+            reconcile_sell_pending=Mock(return_value={}),
+            reconcile_order_unknowns=Mock(return_value={}),
+            store=SimpleNamespace(
+                find_path_run=Mock(
+                    return_value={
+                        "status": "ORDER_UNKNOWN",
+                        "plan": {"exit_execution_id": "sell_qcom", "exit_qty": 1},
+                    }
+                )
+            ),
+        )
+        cand = {**pos, "exit_price": 95.0, "reason": "stop_loss"}
+
+        with patch("trading_bot.precheck_order") as precheck:
+            ok = bot._execute_sell(cand, "US", reason="stop_loss")
+
+        self.assertFalse(ok)
+        precheck.assert_not_called()
+        bot.pathb.reconcile_sell_pending.assert_called_once_with("US", force=True)
+        bot.pathb.reconcile_order_unknowns.assert_called_once_with(
+            "US",
+            force=True,
+            path_run_id="path_qcom",
+            include_cross_session=True,
+        )
+        bot._record_decision_event.assert_called()
+
     def test_plan_a_loss_cap_hold_blocks_when_loss_is_controlled(self) -> None:
         bot = _plan_a_bot()
         bot.price_cache_raw["QCOM"] = 98.8

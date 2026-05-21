@@ -1154,10 +1154,11 @@ class PathBRuntime:
         self.reconcile_buy_pending_cancel_above(market, force=False)
         self.process_miss_quality_followups(market)
         if not self._market_live_enabled(market):
+            self.cancel_unsent_waiting(market, reason="PATHB_MANUALLY_DISABLED", include_shadow=False)
             if self._market_shadow_plan_enabled(market):
                 self._scan_shadow_waiting_entries(market)
                 return
-            self.cancel_waiting(market, reason="PATHB_MANUALLY_DISABLED")
+            self.cancel_unsent_waiting(market, reason="PATHB_MANUALLY_DISABLED", include_shadow=True)
             return
         kr_new_entry_blocked = (
             market == "KR"
@@ -1626,7 +1627,7 @@ class PathBRuntime:
         )
         return True
 
-    def cancel_waiting(self, market: str, *, reason: str) -> int:
+    def cancel_waiting(self, market: str, *, reason: str, include_shadow: bool = True) -> int:
         count = 0
         market = str(market or "").upper()
         for run in self.store.path_runs_for_session(
@@ -1638,6 +1639,8 @@ class PathBRuntime:
                 continue
             status = str(run.get("status", ""))
             if status in {"SHADOW_WAITING", "SHADOW_HIT"}:
+                if not include_shadow:
+                    continue
                 if self.adapter.mark_shadow_cancelled(
                     str(run.get("path_run_id", "")),
                     reason=reason,
@@ -1647,6 +1650,39 @@ class PathBRuntime:
                     count += 1
                 continue
             if status not in {"WAITING", "HIT", "ORDER_SENT", "ORDER_ACKED"}:
+                continue
+            self.adapter.cancel_plan(
+                str(run.get("path_run_id", "")),
+                reason=reason,
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+            )
+            count += 1
+        return count
+
+    def cancel_unsent_waiting(self, market: str, *, reason: str, include_shadow: bool = False) -> int:
+        count = 0
+        market = str(market or "").upper()
+        for run in self.store.path_runs_for_session(
+            market=market,
+            runtime_mode=self.mode,
+            session_date=self._session_date(market),
+        ):
+            if str(run.get("path_type", "")) != "claude_price":
+                continue
+            status = str(run.get("status", ""))
+            if status in {"SHADOW_WAITING", "SHADOW_HIT"}:
+                if not include_shadow:
+                    continue
+                if self.adapter.mark_shadow_cancelled(
+                    str(run.get("path_run_id", "")),
+                    reason=reason,
+                    runtime_mode=self.mode,
+                    brain_snapshot_id=self._brain_snapshot_id(market),
+                ):
+                    count += 1
+                continue
+            if status not in {"WAITING", "HIT"}:
                 continue
             self.adapter.cancel_plan(
                 str(run.get("path_run_id", "")),
@@ -4423,7 +4459,18 @@ class PathBRuntime:
                 else self._order_unknown_runs(market_key)
             )
         if path_run_id:
-            runs = [run for run in runs if str(run.get("path_run_id", "") or "") == path_run_id]
+            direct_run = self.store.find_path_run(path_run_id)
+            if (
+                direct_run
+                and str(direct_run.get("path_run_id", "") or "") == path_run_id
+                and str(direct_run.get("market", "") or "").upper() == market_key
+                and str(direct_run.get("runtime_mode", "") or "") == self.mode
+                and str(direct_run.get("status", "") or "") == "ORDER_UNKNOWN"
+                and str(direct_run.get("path_type", "") or "") == "claude_price"
+            ):
+                runs = [direct_run]
+            else:
+                runs = [run for run in runs if str(run.get("path_run_id", "") or "") == path_run_id]
         if not runs:
             self._last_unknown_reconcile_at[market_key] = time.time()
             return summary

@@ -996,7 +996,7 @@ def backfill_candidate_audit(
     session_date: str,
     market: str,
     runtime_mode: str = "live",
-    reset_session: bool = True,
+    reset_session: bool = False,
 ) -> dict[str, Any]:
     market_key = str(market or "").upper()
     mode = str(runtime_mode or "live").lower()
@@ -1070,6 +1070,7 @@ def backfill_candidate_audit(
     changed = store.refresh_classifications(session_date=session_date, market=market_key, runtime_mode=mode)
     summary = store.summary(session_date=session_date, market=market_key, runtime_mode=mode)
     summary["classification_rows_refreshed"] = changed
+    summary["reset_session"] = bool(reset_session)
     try:
         from tools.analyze_candidate_audit import watch_trigger_funnel_summary
 
@@ -1088,8 +1089,11 @@ def main() -> int:
     parser.add_argument("--market", default="KR", choices=["KR", "US"])
     parser.add_argument("--mode", default="live", choices=["live", "paper"])
     parser.add_argument("--db", default="", help="output DB path; defaults to data/audit/candidate_audit.db")
-    parser.add_argument("--no-reset", action="store_true", help="do not clear the target session before backfill")
+    parser.add_argument("--reset", action="store_true", help="clear the target session before backfill")
+    parser.add_argument("--no-reset", action="store_true", help="kept for compatibility; no-reset is now the default")
     args = parser.parse_args()
+    if args.reset and args.no_reset:
+        parser.error("--reset and --no-reset cannot be used together")
     db_path = Path(args.db) if args.db else None
     summary = backfill_candidate_audit(
         root=ROOT,
@@ -1097,7 +1101,7 @@ def main() -> int:
         session_date=args.date,
         market=args.market,
         runtime_mode=args.mode,
-        reset_session=not args.no_reset,
+        reset_session=bool(args.reset),
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
     return 0

@@ -202,6 +202,19 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "US_EARLY_ENTRY_SIZE_MULT",
 }
 
+CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS = {
+    "ENABLED_MARKETS",
+    "PATHB_ENABLED",
+    "PATHB_KR_LIVE_ENABLED",
+    "PATHB_US_LIVE_ENABLED",
+    "KR_CLAUDE_PRICE_LIVE_ENABLED",
+    "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
+    "KR_CONTINUATION_NEW_ENTRY_BLOCK",
+    "PATHB_MAX_POSITIONS",
+    "PATHB_MAX_DAILY_ENTRIES",
+    "PATHB_FIXED_ORDER_KRW",
+}
+
 REQUIRED_TABLE_COLUMNS = {
     "v2_decisions": {
         "decision_id",
@@ -375,6 +388,59 @@ def _pathb_terminal_missing_events(
             }
         )
     return missing
+
+
+def _pathb_lifecycle_window_check_result(
+    inconsistent_runs: list[dict[str, Any]],
+    window_missing_path: dict[str, Any],
+) -> CheckResult:
+    post_run_missing_path = list(window_missing_path.get("post_run") or [])
+    pre_run_missing_path = list(window_missing_path.get("pre_run") or [])
+    remediation_required = bool(inconsistent_runs or post_run_missing_path)
+    if remediation_required:
+        status = "WARN"
+        detail = (
+            "recent-window Path B lifecycle diagnostic warnings: "
+            f"recent_window_missing_events_count={len(inconsistent_runs)} "
+            "recent_window_size_events=1000 recent_window_size_runs=500; "
+            f"PathB post-run lifecycle events missing payload_json.path_run_id={len(post_run_missing_path)}"
+        )
+        operator_action = "review lifecycle diagnostics before mutating production records"
+    else:
+        status = "PASS"
+        detail = (
+            "recent-window Path B terminal/post-run lifecycle rows are internally consistent"
+            if not pre_run_missing_path
+            else (
+                "recent-window Path B terminal/post-run lifecycle rows are internally consistent; "
+                f"pre-run events without path_run_id={len(pre_run_missing_path)}"
+            )
+        )
+        operator_action = "none; pre-run safety/gate events can occur before a path_run_id exists"
+    return CheckResult(
+        "db.pathb_lifecycle_window_consistency",
+        status,
+        detail,
+        {
+            "missing_events": inconsistent_runs[:30],
+            "pathb_events_missing_path_run_id": list(window_missing_path.get("rows") or [])[:30],
+            "pathb_pre_run_events_missing_path_run_id": pre_run_missing_path[:30],
+            "pathb_post_run_events_missing_path_run_id": post_run_missing_path[:30],
+            "missing_events_count": len(inconsistent_runs),
+            "recent_window_missing_events_count": len(inconsistent_runs),
+            "recent_window_size_events": 1000,
+            "recent_window_size_runs": 500,
+            "pathb_events_missing_path_run_id_count": len(window_missing_path.get("rows") or []),
+            "pathb_pre_run_events_missing_path_run_id_count": len(pre_run_missing_path),
+            "pathb_post_run_events_missing_path_run_id_count": len(post_run_missing_path),
+            "decision_id_linkable_count": window_missing_path["decision_id_linkable_count"],
+            "decision_id_unlinkable_count": window_missing_path["decision_id_unlinkable_count"],
+            "accepted_exception": bool(pre_run_missing_path and not remediation_required),
+            "remediation_required": remediation_required,
+            "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
+            "operator_action": operator_action,
+        },
+    )
 
 
 def _pathb_local_exposure_index(mode: str) -> tuple[dict[str, dict[str, Any]], dict[tuple[str, str], list[dict[str, Any]]]]:
@@ -794,6 +860,8 @@ def _runtime_config_drift_payload(config: dict[str, Any], snapshot_payload: dict
             continue
         file_value = _norm_config_value(effective.get(key, ""))
         runtime_value = _norm_config_value(runtime_effective.get(key, ""))
+        if runtime_value == "***" or "***" in runtime_value:
+            continue
         if file_value != runtime_value:
             drift[key] = {"file_effective": file_value, "runtime_snapshot": runtime_value}
     return drift
@@ -809,15 +877,33 @@ def _runtime_config_drift_check(config: dict[str, Any], mode: str) -> CheckResul
             {"mode": mode},
         )
     drift = _runtime_config_drift_payload(config, payload)
+    critical_drift = {
+        key: value for key, value in drift.items() if key in CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS
+    }
+    if critical_drift:
+        status = "FAIL"
+        detail = "critical runtime config snapshot differs from files"
+        operator_action = "restart or reload the live bot so runtime effective config matches files"
+    elif drift:
+        status = "WARN"
+        detail = "latest runtime config snapshot differs from files"
+        operator_action = "review drift; restart/reload if the difference is intentional and should be live"
+    else:
+        status = "PASS"
+        detail = "runtime snapshot matches file effective config"
+        operator_action = "none"
     return CheckResult(
         "config.runtime_snapshot_drift",
-        "WARN" if drift else "PASS",
-        "latest runtime config snapshot differs from files" if drift else "runtime snapshot matches file effective config",
+        status,
+        detail,
         {
             "snapshot_path": str(path),
             "written_at": payload.get("written_at", ""),
             "runtime_mode": payload.get("runtime_mode", ""),
             "drift": drift,
+            "critical_drift": critical_drift,
+            "critical_drift_keys": sorted(critical_drift),
+            "operator_action": operator_action,
         },
     )
 
@@ -873,6 +959,40 @@ def _kr_cap40_confirmation_enforce_check(effective: dict[str, str]) -> CheckResu
     )
 
 
+def _pathb_market_live_gate_check(effective: dict[str, Any]) -> CheckResult:
+    pathb_market_gates = {
+        "KR": effective.get("PATHB_KR_LIVE_ENABLED", "true"),
+        "US": effective.get("PATHB_US_LIVE_ENABLED", "true"),
+    }
+    violations: list[str] = []
+    kr_live = _truthy(pathb_market_gates["KR"])
+    us_live = _truthy(pathb_market_gates["US"])
+    if not kr_live:
+        violations.append("KR Path B live must be enabled")
+    if not us_live:
+        violations.append("US Path B live must be enabled")
+    policy_match = not violations
+    if violations:
+        status = "WARN"
+        detail = "Path B market live gates violate KR-on/US-on policy: " + "; ".join(violations)
+    else:
+        status = "PASS"
+        detail = "Path B market live gates match KR-on/US-on policy"
+    return CheckResult(
+        "config.pathb_market_live_gates",
+        status,
+        detail,
+        {
+            "values": pathb_market_gates,
+            "policy": "KR-on/US-on",
+            "policy_match": policy_match,
+            "violations": violations,
+            "remediation_required": bool(violations),
+            "operator_action": "set PATHB_KR_LIVE_ENABLED=true and PATHB_US_LIVE_ENABLED=true",
+        },
+    )
+
+
 def _repo_text(*parts: str) -> str:
     path = ROOT.joinpath(*parts)
     try:
@@ -885,6 +1005,82 @@ def _session_date_guess(market: str) -> str:
     """Preflight session date using the same boundary rules as TradingBot."""
     now = _now_kst()
     return resolve_session_date(market, now).isoformat()
+
+
+def _market_session_calendar_check() -> CheckResult:
+    now_kst = _now_kst()
+    weekday = now_kst.weekday()
+    weekend = weekday >= 5
+    data: dict[str, Any] = {
+        "now_kst": now_kst.isoformat(timespec="seconds"),
+        "weekday": weekday,
+        "weekend": weekend,
+        "KR_session_date_guess": _session_date_guess("KR"),
+        "US_session_date_guess": _session_date_guess("US"),
+    }
+    try:
+        import exchange_calendars as ec
+
+        exchange_by_market = {"KR": "XKRX", "US": "XNYS"}
+        sessions: dict[str, dict[str, Any]] = {}
+        non_sessions: list[str] = []
+        for market, exchange in exchange_by_market.items():
+            session_date = str(data[f"{market}_session_date_guess"])
+            calendar = ec.get_calendar(exchange)
+            is_session = bool(calendar.is_session(session_date))
+            item: dict[str, Any] = {
+                "exchange": exchange,
+                "session_date": session_date,
+                "is_session": is_session,
+            }
+            if is_session:
+                item["open_utc"] = str(calendar.session_open(session_date))
+                item["close_utc"] = str(calendar.session_close(session_date))
+            else:
+                non_sessions.append(market)
+            sessions[market] = item
+        data["sessions"] = sessions
+        data["calendar_source"] = "exchange_calendars"
+        data["accepted_exception"] = bool(non_sessions and weekend)
+        data["remediation_required"] = bool(non_sessions and not weekend)
+        data["operator_action"] = (
+            "verify holiday and early-close calendar before operation"
+            if non_sessions and not weekend
+            else "none"
+        )
+        if non_sessions:
+            return CheckResult(
+                "market.session_calendar",
+                "WARN",
+                "exchange calendars report non-trading session for: " + ",".join(non_sessions),
+                data,
+            )
+        return CheckResult(
+            "market.session_calendar",
+            "PASS",
+            "exchange calendars verified KR/US session dates",
+            data,
+        )
+    except Exception as exc:
+        data["calendar_source"] = "unavailable"
+        data["error"] = str(exc)
+        data["accepted_exception"] = weekend
+        data["remediation_required"] = not weekend
+        data["operator_action"] = (
+            "none; weekend/non-trading-day warning is expected"
+            if weekend
+            else "verify holiday and early-close calendar before operation"
+        )
+        return CheckResult(
+            "market.session_calendar",
+            "WARN",
+            (
+                "today is a weekend; verify next trading session before operation"
+                if weekend
+                else "calendar API unavailable; verify holidays/early-close operationally"
+            ),
+            data,
+        )
 
 
 def _pid_alive(pid: int) -> bool:
@@ -1070,23 +1266,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     else:
         checks.append(CheckResult("config.pathb_intraday_only", "PASS", "Path B intraday-only is enabled"))
 
-    pathb_market_gates = {
-        "KR": effective.get("PATHB_KR_LIVE_ENABLED", "true"),
-        "US": effective.get("PATHB_US_LIVE_ENABLED", "true"),
-    }
-    disabled_pathb_markets = [
-        market for market, value in pathb_market_gates.items() if not _truthy(value)
-    ]
-    checks.append(
-        CheckResult(
-            "config.pathb_market_live_gates",
-            "WARN" if disabled_pathb_markets else "PASS",
-            "Path B market live gates disabled: " + ",".join(disabled_pathb_markets)
-            if disabled_pathb_markets
-            else "Path B market live gates are enabled for KR/US",
-            {"values": pathb_market_gates},
-        )
-    )
+    checks.append(_pathb_market_live_gate_check(effective))
 
     enabled_markets = {
         item.strip().upper()
@@ -1533,6 +1713,15 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             """,
             (mode,),
         ).fetchall()
+        terminal_events = conn.execute(
+            """
+            SELECT event_type, market, runtime_mode, session_date, ticker, decision_id, payload_json
+            FROM lifecycle_events
+            WHERE runtime_mode=? AND event_type IN ('FILLED','PARTIAL_FILLED','CLOSED')
+            ORDER BY event_id
+            """,
+            (mode,),
+        ).fetchall()
         decision_ids_with_runs = {
             str(row["decision_id"] or "")
             for row in conn.execute(
@@ -1544,45 +1733,9 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                 (mode,),
             ).fetchall()
         }
-        inconsistent_runs = _pathb_terminal_missing_events(list(recent_runs), list(recent_events))
+        inconsistent_runs = _pathb_terminal_missing_events(list(recent_runs), list(terminal_events))
         window_missing_path = _pathb_like_missing_path_run_id_rows(list(recent_events), decision_ids_with_runs)
-        checks.append(
-            CheckResult(
-                "db.pathb_lifecycle_window_consistency",
-                "WARN" if inconsistent_runs or window_missing_path["rows"] else "PASS",
-                (
-                    "recent-window Path B lifecycle diagnostic warnings: "
-                    f"recent_window_missing_events_count={len(inconsistent_runs)} "
-                    "recent_window_size_events=1000 recent_window_size_runs=500; "
-                    f"PathB-like lifecycle events missing payload_json.path_run_id={len(window_missing_path['rows'])}"
-                )
-                if inconsistent_runs or window_missing_path["rows"]
-                else "recent-window Path B lifecycle rows are internally consistent",
-                {
-                    "missing_events": inconsistent_runs[:30],
-                    "pathb_events_missing_path_run_id": window_missing_path["rows"][:30],
-                    "pathb_pre_run_events_missing_path_run_id": window_missing_path["pre_run"][:30],
-                    "pathb_post_run_events_missing_path_run_id": window_missing_path["post_run"][:30],
-                    "missing_events_count": len(inconsistent_runs),
-                    "recent_window_missing_events_count": len(inconsistent_runs),
-                    "recent_window_size_events": 1000,
-                    "recent_window_size_runs": 500,
-                    "pathb_events_missing_path_run_id_count": len(window_missing_path["rows"]),
-                    "pathb_pre_run_events_missing_path_run_id_count": len(window_missing_path["pre_run"]),
-                    "pathb_post_run_events_missing_path_run_id_count": len(window_missing_path["post_run"]),
-                    "decision_id_linkable_count": window_missing_path["decision_id_linkable_count"],
-                    "decision_id_unlinkable_count": window_missing_path["decision_id_unlinkable_count"],
-                    "accepted_exception": False,
-                    "remediation_required": bool(inconsistent_runs or window_missing_path["rows"]),
-                    "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
-                    "operator_action": (
-                        "review recent-window lifecycle diagnostics before mutating production records"
-                        if inconsistent_runs or window_missing_path["rows"]
-                        else "none"
-                    ),
-                },
-            )
-        )
+        checks.append(_pathb_lifecycle_window_check_result(inconsistent_runs, window_missing_path))
         full_events = conn.execute(
             """
             SELECT event_type, market, runtime_mode, session_date, ticker, decision_id, payload_json
@@ -2237,36 +2390,7 @@ def _static_code_checks(effective: dict[str, str] | None = None) -> list[CheckRe
         checks.append(CheckResult("code.us_exchange_map_coverage", "FAIL", f"cannot inspect US exchange map: {exc}"))
         checks.append(CheckResult("us.exchange_map_coverage", "FAIL", f"cannot inspect US exchange map: {exc}"))
 
-    now_kst = _now_kst()
-    weekday = now_kst.weekday()
-    weekend = weekday >= 5
-    session_detail = (
-        "today is a weekend; verify next trading session before operation"
-        if weekend
-        else "calendar API is not called by preflight; verify holidays/early-close operationally"
-    )
-    session_data = {
-        "now_kst": now_kst.isoformat(timespec="seconds"),
-        "weekday": weekday,
-        "weekend": weekend,
-        "KR_session_date_guess": _session_date_guess("KR"),
-        "US_session_date_guess": _session_date_guess("US"),
-        "accepted_exception": weekend,
-        "remediation_required": not weekend,
-        "operator_action": (
-            "none; weekend/non-trading-day warning is expected"
-            if weekend
-            else "verify holiday and early-close calendar before operation"
-        ),
-    }
-    checks.append(
-        CheckResult(
-            "market.session_calendar",
-            "WARN",
-            session_detail,
-            session_data,
-        )
-    )
+    checks.append(_market_session_calendar_check())
     return checks
 
 

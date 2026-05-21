@@ -400,6 +400,67 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
             [{"date": "2026-04-10", "count": 1}, {"date": "2026-05-12", "count": 1}],
         )
 
+    def test_ml_db_digest_prefers_canonical_fill_truth_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "data" / "ml" / "decisions.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conn.executescript(ML_SCHEMA.read_text(encoding="utf-8"))
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        ts, market, ticker, session_date, mode, decision,
+                        data_source, is_simulated, filled
+                    ) VALUES (
+                        '2026-05-12T09:00:00', 'US', 'LEGACY', '2026-05-12',
+                        'NEUTRAL', 'BUY_SIGNAL', 'live', 0, 0
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE v2_canonical_performance (
+                        market TEXT,
+                        runtime_mode TEXT,
+                        session_date TEXT,
+                        filled INTEGER,
+                        closed INTEGER,
+                        pnl_pct REAL,
+                        learning_allowed INTEGER,
+                        synced_at TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO v2_canonical_performance (
+                        market, runtime_mode, session_date, filled, closed,
+                        pnl_pct, learning_allowed, synced_at
+                    ) VALUES (
+                        'US', 'live', '2026-05-12', 1, 1, 2.5, 1,
+                        '2026-05-12T23:59:00+00:00'
+                    )
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with patch.object(dashboard_server, "BASE_DIR", root), patch.object(
+                dashboard_server, "_session_trade_date", return_value=date(2026, 5, 12)
+            ):
+                digest = dashboard_server._ml_db_digest("US")
+
+        self.assertEqual(digest["truth_source"], "v2_canonical_performance")
+        self.assertTrue(digest["canonical_available"])
+        self.assertEqual(digest["legacy_filled"], 0)
+        self.assertEqual(digest["canonical_filled_today"], 1)
+        self.assertEqual(digest["canonical_closed_today"], 1)
+        self.assertEqual(digest["filled"], 1)
+        self.assertEqual(digest["with_outcome"], 1)
+
     def test_live_summary_uses_cached_read_path_without_blocking_broker_calls(self) -> None:
         session = date(2026, 5, 15)
         record = {

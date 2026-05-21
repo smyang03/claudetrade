@@ -28,9 +28,14 @@ ENTRY_PRICE_TRANSIENT_REASONS = {
     "minute_file_missing",
     "minute_file_empty",
     "minute_entry_sample_missing",
+    "minute_entry_sample_missing_same_session",
+    "minute_entry_sample_out_of_session",
+    "minute_entry_sample_too_late",
     "minute_file_read_error",
 }
 US_DAILY_BAR_GRACE_END_KST = dt_time(7, 0)
+MAX_ENTRY_SAMPLE_LATENCY = timedelta(minutes=5)
+MAX_OUTCOME_SAMPLE_LATENCY = timedelta(minutes=5)
 MINUTE_OUTCOME_FIELDS = (
     "outcome_30m_pct",
     "outcome_60m_pct",
@@ -83,6 +88,51 @@ def _compare_dt(value: datetime, reference: datetime) -> datetime:
     if value.tzinfo is not None and reference.tzinfo is None:
         return value.replace(tzinfo=None)
     return value
+
+
+def _kst_dt(value: datetime) -> datetime:
+    if value.tzinfo is not None:
+        return value.astimezone(KST)
+    return value.replace(tzinfo=KST)
+
+
+def _market_key(market: str) -> str:
+    key = str(market or "").upper()
+    return key if key in {"KR", "US"} else ""
+
+
+def _target_session_date(row: dict[str, Any], market: str, trigger_at: datetime) -> str:
+    market_key = _market_key(market)
+    if not market_key:
+        return ""
+    date_text = str(row.get("session_date") or "")[:10]
+    return date_text or resolve_session_date_str(market_key, _kst_dt(trigger_at))
+
+
+def _sample_session_date(market: str, sample_dt: datetime) -> str:
+    key = _market_key(market)
+    if not key:
+        return ""
+    return resolve_session_date_str(key, _kst_dt(sample_dt))
+
+
+def _same_session_samples(
+    samples: list[dict[str, Any]],
+    *,
+    market: str,
+    trigger_at: datetime,
+    target_session: str,
+) -> list[dict[str, Any]]:
+    market_key = _market_key(market)
+    if not market_key or not str(target_session or "")[:10]:
+        return []
+    normalized: list[dict[str, Any]] = []
+    for sample in samples:
+        dt = _compare_dt(sample["dt"], trigger_at)
+        if _sample_session_date(market_key, dt) != target_session:
+            continue
+        normalized.append({**sample, "dt": dt})
+    return normalized
 
 
 def _pct(entry_price: float, price: float) -> float | None:
@@ -194,7 +244,8 @@ def _minute_outcomes(
 ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     trigger_at = _parse_dt(row.get("trigger_time") or row.get("known_at") or row.get("signal_time"))
     entry_price = float(row.get("entry_price") or 0.0)
-    samples, source, reason = _load_minute_samples(minute_root, str(row.get("market") or ""), str(row.get("ticker") or ""))
+    market = str(row.get("market") or "")
+    samples, source, reason = _load_minute_samples(minute_root, market, str(row.get("ticker") or ""))
     metadata: dict[str, Any] = {
         "minute_price_source": source,
         "minute_sample_count": len(samples),
@@ -208,14 +259,34 @@ def _minute_outcomes(
     if not samples:
         return updates, {**metadata, "minute_reason": reason or "minute_file_missing"}, ["minute_samples"]
 
-    normalized: list[dict[str, Any]] = []
-    for sample in samples:
-        normalized.append({**sample, "dt": _compare_dt(sample["dt"], trigger_at)})
+    target_session = _target_session_date(row, market, trigger_at)
+    normalized = _same_session_samples(samples, market=market, trigger_at=trigger_at, target_session=target_session)
+    metadata["minute_session_date"] = target_session
+    metadata["minute_same_session_sample_count"] = len(normalized)
+    if not normalized:
+        return (
+            updates,
+            {
+                **metadata,
+                "minute_reason": "minute_samples_missing_same_session",
+                "outcome_30m_reason": "minute_outcome_sample_missing_same_session",
+                "outcome_60m_reason": "minute_outcome_sample_missing_same_session",
+            },
+            list(MINUTE_OUTCOME_FIELDS),
+        )
     for horizon in (30, 60):
         target = trigger_at + timedelta(minutes=horizon)
         observed = next((sample for sample in normalized if sample["dt"] >= target), None)
         if observed is None:
             missing.append(f"outcome_{horizon}m_pct")
+            metadata[f"outcome_{horizon}m_reason"] = "minute_outcome_sample_missing_same_session"
+            continue
+        lag = observed["dt"] - target
+        if lag > MAX_OUTCOME_SAMPLE_LATENCY:
+            missing.append(f"outcome_{horizon}m_pct")
+            metadata[f"outcome_{horizon}m_reason"] = "minute_outcome_sample_too_late"
+            metadata[f"outcome_{horizon}m_rejected_observed_at"] = observed["dt"].isoformat()
+            metadata[f"outcome_{horizon}m_sample_lag_seconds"] = int(lag.total_seconds())
             continue
         updates[f"outcome_{horizon}m_pct"] = _pct(entry_price, float(observed["close"]))
         metadata[f"outcome_{horizon}m_observed_at"] = observed["dt"].isoformat()
@@ -241,7 +312,8 @@ def _infer_entry_price_from_minute(
     minute_root: str | Path,
 ) -> tuple[float | None, dict[str, Any], list[str]]:
     trigger_at = _parse_dt(row.get("trigger_time") or row.get("known_at") or row.get("signal_time"))
-    samples, source, reason = _load_minute_samples(minute_root, str(row.get("market") or ""), str(row.get("ticker") or ""))
+    market = str(row.get("market") or "")
+    samples, source, reason = _load_minute_samples(minute_root, market, str(row.get("ticker") or ""))
     metadata = {
         "entry_price_source": "minute_csv_trigger",
         "entry_price_minute_source": source,
@@ -251,11 +323,46 @@ def _infer_entry_price_from_minute(
         return None, {**metadata, "entry_price_reason": "trigger_time_missing"}, ["trigger_time"]
     if not samples:
         return None, {**metadata, "entry_price_reason": reason or "minute_file_missing"}, ["entry_price"]
-    normalized = [{**sample, "dt": _compare_dt(sample["dt"], trigger_at)} for sample in samples]
+    target_session = _target_session_date(row, market, trigger_at)
+    all_normalized = [{**sample, "dt": _compare_dt(sample["dt"], trigger_at)} for sample in samples]
+    normalized = _same_session_samples(samples, market=market, trigger_at=trigger_at, target_session=target_session)
+    metadata["entry_price_session_date"] = target_session
+    metadata["entry_price_session_filter"] = "same_session"
+    metadata["entry_price_same_session_sample_count"] = len(normalized)
+    if not normalized:
+        rejected = next((sample for sample in all_normalized if sample["dt"] >= trigger_at), None)
+        if rejected is not None:
+            observed_session = _sample_session_date(market, rejected["dt"])
+            if target_session and observed_session and observed_session != target_session:
+                return (
+                    None,
+                    {
+                        **metadata,
+                        "entry_price_reason": "minute_entry_sample_out_of_session",
+                        "entry_price_rejected_observed_at": rejected["dt"].isoformat(),
+                        "entry_price_trigger_session": target_session,
+                        "entry_price_observed_session": observed_session,
+                    },
+                    ["entry_price"],
+                )
+        return None, {**metadata, "entry_price_reason": "minute_entry_sample_missing_same_session"}, ["entry_price"]
     observed = next((sample for sample in normalized if sample["dt"] >= trigger_at), None)
     if observed is None:
-        return None, {**metadata, "entry_price_reason": "minute_entry_sample_missing"}, ["entry_price"]
-    return float(observed["close"]), {**metadata, "entry_price_observed_at": observed["dt"].isoformat()}, []
+        return None, {**metadata, "entry_price_reason": "minute_entry_sample_missing_same_session"}, ["entry_price"]
+    observed_at = observed["dt"].isoformat()
+    lag = observed["dt"] - trigger_at
+    if lag > MAX_ENTRY_SAMPLE_LATENCY:
+        return (
+            None,
+            {
+                **metadata,
+                "entry_price_reason": "minute_entry_sample_too_late",
+                "entry_price_rejected_observed_at": observed_at,
+                "entry_price_sample_lag_seconds": int(lag.total_seconds()),
+            },
+            ["entry_price"],
+        )
+    return float(observed["close"]), {**metadata, "entry_price_observed_at": observed_at}, []
 
 
 def _kst_now(now_dt: datetime | None = None) -> datetime:

@@ -2081,6 +2081,8 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
                     qty=1,
                     price_native=70_000,
                     price_krw=70_000,
+                    v2_decision_id="v2_decision_005930",
+                    execution_event_id=42,
                     entry_timing_snapshot={
                         "candidate_to_order_delay_min": 14.0,
                         "price_change_candidate_to_order_pct": 2.4,
@@ -2108,7 +2110,10 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
                            us_early_entry_elapsed_min,
                            us_early_entry_size_mult,
                            us_early_entry_confirmation_reason,
-                           us_early_entry_gate_json
+                           us_early_entry_gate_json,
+                           execution_link_source,
+                           execution_decision_id,
+                           execution_event_id
                     FROM audit_candidate_rows
                     WHERE ticker='005930'
                     """
@@ -2127,6 +2132,9 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(row["us_early_entry_size_mult"], 0.5)
         self.assertEqual(row["us_early_entry_confirmation_reason"], "us_early_entry_soft_size")
         self.assertIn("size_mult", row["us_early_entry_gate_json"])
+        self.assertEqual(row["execution_link_source"], "trading_bot.decision_event")
+        self.assertEqual(row["execution_decision_id"], "v2_decision_005930")
+        self.assertEqual(row["execution_event_id"], 42)
 
     def test_us_decision_event_updates_candidate_audit_with_native_prices(self) -> None:
         bot = _make_bot()

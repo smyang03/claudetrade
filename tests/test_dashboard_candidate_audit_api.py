@@ -247,6 +247,18 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
                     "classification": "not_in_prompt",
                 }
             )
+            store.update_execution_by_ticker(
+                session_date="2026-05-12",
+                market="US",
+                runtime_mode="live",
+                ticker="NVTS",
+                values={
+                    "execution_link_source": "trading_bot.decision_event",
+                    "execution_decision_id": "v2_decision_nvts",
+                    "execution_event_id": 77,
+                },
+                latest_only=True,
+            )
 
             import dashboard.dashboard_server as dashboard_server
 
@@ -276,6 +288,9 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             self.assertEqual(by_ticker["NVTS"]["trainer_score_rank"], 1)
             self.assertEqual(by_ticker["NVTS"]["screener_quality_state"], "DEGRADED_COUNT")
             self.assertTrue(by_ticker["NVTS"]["screener_degraded"])
+            self.assertEqual(by_ticker["NVTS"]["execution_link_source"], "trading_bot.decision_event")
+            self.assertEqual(by_ticker["NVTS"]["execution_decision_id"], "v2_decision_nvts")
+            self.assertEqual(by_ticker["NVTS"]["execution_event_id"], 77)
             self.assertEqual(by_ticker["WEAK"]["prompt_excluded_reason"], "trainer_quarantine")
 
     def test_candidate_audit_summary_missing_db_is_non_fatal(self) -> None:
