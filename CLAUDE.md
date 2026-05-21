@@ -381,8 +381,44 @@ until more data is available or a human explicitly approves the change.
 | `KR_LATE_ENTRY_GATE_ENABLED` | `false` | KR 늦은 진입 게이트. false = 시간대 차단 없음 |
 | `KR_LATE_ENTRY_EXEC_GATE_ENABLED` | `false` | KR 늦은 진입 실행 게이트. false = 차단 없음 |
 | `PATHB_KR_LIVE_ENABLED` | `true` | KR PathB live 활성 여부 |
+| `PATHB_US_LIVE_ENABLED` | `true` | US PathB live 활성 여부 |
+| `KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK` | `false` | KR zone hit 시 주문 제출 차단 여부. false = 정상 주문 허용 |
+| `KR_REENTRY_COOLDOWN_MINUTES` | `60` | KR 재진입 쿨다운(분) |
+| `US_REENTRY_COOLDOWN_MINUTES` | `60` | US 재진입 쿨다운(분) |
+| `KR_EARLY_ENTRY_SOFT_GATE_ENABLED` | `true` | KR 장 초반 진입 사이즈 축소 게이트 활성 여부 |
+| `PATHB_KR_SHADOW_PLAN_ENABLED` | `false` | KR PathB shadow 플랜 활성 여부. false = shadow 비활성 |
 
 이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
+
+### PathB KR/US 현재 운영 파라미터 (2026-05-21 기준)
+
+**이 섹션의 값을 변경하면 반드시 운영자에게 먼저 알린다.**
+
+#### 공통 (KR = US)
+
+| 파라미터 | 현재값 |
+|---|---|
+| 고정 주문금액 | 500,000 KRW |
+| 최대 포지션 수 (`PATHB_MAX_POSITIONS`) | 15 |
+| 일일 최대 진입 수 (`PATHB_MAX_DAILY_ENTRIES`) | 40 |
+| 최소 confidence (`PATHB_MIN_CONFIDENCE`) | 0.5 |
+| INTRADAY_ONLY (`PATHB_INTRADAY_ONLY`) | false (multi-day hold 허용) |
+| 재진입 쿨다운 | 60분 |
+| 장 초반 soft gate | 0~60분 size × 0.5 |
+| Shadow 플랜 | 비활성 |
+
+#### KR만 다른 것
+
+| 파라미터 | KR | US |
+|---|---|---|
+| 슬리피지 캡 | 1.003 (0.3%) | 1.002 (0.2%) |
+| Protective hold 최소 거리 | 0.5% | 0.3% |
+
+#### 변경 시 주의사항
+
+- 위 값 중 어떤 것이라도 바꾸면 **변경 전에 운영자에게 명시적으로 알려야 한다**.
+- 재진입 쿨다운, 슬리피지 캡, soft gate 파라미터는 진입 빈도와 직결되므로 단독 변경 불가.
+- KR/US 를 비대칭으로 바꿀 경우 의도적 차이인지 반드시 확인한다.
 
 ## 코드 작업 원칙
 
@@ -496,7 +532,7 @@ KIS 브로커 API(`kis_api.py`)는 `KIS_APP_KEY_US` / `KIS_APP_SECRET_US`가 비
 - **Path A**: `TradingBot` 클래스(`trading_bot.py`) — Claude selection → 전략 신호 → 주문
 - **Path B**: `PathBRuntime`(`runtime/pathb_runtime.py`) — Claude 가격 플랜 기반 진입/청산, `PATHB_US_LIVE_ENABLED=true`일 때 활성
 
-두 경로는 `runtime/action_routing.py`의 `RouteDecision`으로 합류한다. PathB는 KR live가 꺼져 있고 US live만 활성 상태이다 (`PATHB_KR_LIVE_ENABLED=false`, `PATHB_US_LIVE_ENABLED=true`).
+두 경로는 `runtime/action_routing.py`의 `RouteDecision`으로 합류한다. PathB는 KR/US 모두 live 활성 상태이다 (`PATHB_KR_LIVE_ENABLED=true`, `PATHB_US_LIVE_ENABLED=true`).
 
 ### 진입 결정 파이프라인
 

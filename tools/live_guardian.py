@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
 KST = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
 
 from bot.session_date import resolve_session_date_str
+from runtime_paths import get_runtime_path
 from tools.live_preflight import run_preflight
 from tools.v2_live_smoke import run_live_smoke
 
@@ -58,7 +59,7 @@ def _now_kst() -> datetime:
 def _guardian_heartbeat_path(mode: str) -> Path:
     runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
     name = "live_guardian_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_guardian_heartbeat.json"
-    return ROOT / "state" / name
+    return get_runtime_path("state", name)
 
 
 def _write_guardian_heartbeat(
@@ -468,7 +469,7 @@ def run_guardian_once(
 
 
 def _write_guardian_report(report: dict[str, Any]) -> tuple[Path, Path]:
-    out_dir = ROOT / "data" / "v2_reports"
+    out_dir = get_runtime_path("data", "v2_reports", make_parents=False)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = _now_kst().strftime("%Y%m%d_%H%M%S")
     json_path = out_dir / f"live_guardian_{stamp}.json"
@@ -509,7 +510,7 @@ def _write_guardian_report(report: dict[str, Any]) -> tuple[Path, Path]:
 
 
 def _alert_state_path(mode: str) -> Path:
-    return ROOT / "state" / f"{mode}_guardian_alert_state.json"
+    return get_runtime_path("state", f"{mode}_guardian_alert_state.json")
 
 
 def _load_alert_state(path: Path) -> dict[str, Any]:

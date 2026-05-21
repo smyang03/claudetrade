@@ -186,6 +186,24 @@ class PathBRuntime:
             date_provider=lambda market: self._session_date(str(market or "").upper()),
         )
 
+    def _runtime_value(self, key: str, default: Any = "") -> Any:
+        runtime_cfg = getattr(getattr(self, "bot", None), "runtime_config", None)
+        if runtime_cfg is not None and hasattr(runtime_cfg, "get"):
+            value = runtime_cfg.get(key, None)
+            if value is not None and str(value).strip() != "":
+                return value
+        return os.getenv(key, default)
+
+    def _runtime_bool(self, key: str, default: bool = False) -> bool:
+        runtime_cfg = getattr(getattr(self, "bot", None), "runtime_config", None)
+        if runtime_cfg is not None and hasattr(runtime_cfg, "get_bool"):
+            if not hasattr(runtime_cfg, "get"):
+                return bool(runtime_cfg.get_bool(key, default))
+            value = runtime_cfg.get(key, None)
+            if value is not None and str(value).strip() != "":
+                return bool(runtime_cfg.get_bool(key, default))
+        return _env_bool(key, default)
+
     def status(self) -> dict[str, Any]:
         control = self.control_store.load()
         return {
@@ -1326,10 +1344,9 @@ class PathBRuntime:
                 return
             self.cancel_unsent_waiting(market, reason="PATHB_MANUALLY_DISABLED", include_shadow=True)
             return
-        kr_new_entry_blocked = (
-            market == "KR"
-            and str(os.getenv("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK", "false")).strip().lower()
-            in {"1", "true", "yes", "y", "on"}
+        kr_new_entry_blocked = market == "KR" and self._runtime_bool(
+            "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
+            False,
         )
         if self._market_shadow_plan_enabled(market):
             self._scan_shadow_waiting_entries(market)
@@ -1379,6 +1396,11 @@ class PathBRuntime:
                         "stage": "pathb_waiting_scan",
                         "scope": "market",
                         "reason": "kr_claude_price_new_entry_block",
+                        "config_key": "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
+                        "config_value": self._runtime_value(
+                            "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
+                            "false",
+                        ),
                         "price": float(current or 0.0),
                         "limit_price": float(signal.limit_price or 0.0),
                         "signal_reason": str(signal.reason or ""),

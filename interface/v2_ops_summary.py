@@ -64,6 +64,18 @@ RUNTIME_DRIFT_KEYS: tuple[str, ...] = (
     "PATHB_FIXED_ORDER_KRW",
 )
 
+PATHB_ACTIVE_STATUSES: set[str] = {
+    "WAITING",
+    "HIT",
+    "ORDER_SENT",
+    "ORDER_ACKED",
+    "PARTIAL_FILLED",
+    "FILLED",
+    "SELL_SENT",
+    "SELL_ACKED",
+    "SELL_PARTIAL_FILLED",
+}
+
 PATHB_NO_PLAN_MESSAGES: dict[str, str] = {
     "NO_TRADE_READY": "Claude selection is all watch_only; no Path B live entry candidate is ready.",
     "PRICE_TARGETS_EMPTY": "trade_ready exists but price_targets are empty, so Path B cannot register plans.",
@@ -442,8 +454,7 @@ def _path_b_live_summary(
     ]
     name_map = _path_b_name_map(markets, runtime_mode, session_date)
     status_counts = Counter(str(run.get("status", "") or "UNKNOWN") for run in pathb_runs)
-    active_statuses = {"WAITING", "HIT", "ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED", "FILLED", "SELL_SENT", "SELL_ACKED"}
-    active = [run for run in pathb_runs if str(run.get("status", "")) in active_statuses]
+    active = [run for run in pathb_runs if str(run.get("status", "")).upper() in PATHB_ACTIVE_STATUSES]
     unknown = [run for run in pathb_runs if str(run.get("status", "")) == "ORDER_UNKNOWN"]
     metrics = _path_b_metrics(pathb_runs)
     comparison = _path_performance_comparison(events or [], pathb_runs)
@@ -1690,6 +1701,13 @@ def _path_b_execution_readiness(
     price_targets_count = int(counts.get("price_targets") or 0)
     watchlist_count = int(counts.get("watchlist") or 0)
     registered_live_plans = sum(1 for run in pathb_runs if str(run.get("market", "") or "").upper() == market_key and not _is_shadow_pathb_run(run))
+    active_live_plans = sum(
+        1
+        for run in pathb_runs
+        if str(run.get("market", "") or "").upper() == market_key
+        and not _is_shadow_pathb_run(run)
+        and str(run.get("status", "") or "").upper() in PATHB_ACTIVE_STATUSES
+    )
     broker_open_orders = int(truth.get("open_orders") or 0)
     broker_position_count = int(truth.get("positions") or 0)
     intraday_only = _path_b_intraday_only_from_config(config, runtime_mode)
@@ -1713,6 +1731,15 @@ def _path_b_execution_readiness(
         else:
             state = "IDLE_MARKET_CLOSED_OVERNIGHT_ALLOWED"
         quote_state = "not_checked_market_inactive"
+    elif active_live_plans > 0:
+        if not bool(capacity.get("min_order_possible", True)):
+            state = "BLOCKED_AFFORDABILITY"
+            known_blockers.append(state)
+        elif market_key == "KR" and not _kr_confirmation_hard_veto_ready(config):
+            state = "BLOCKED_CONFIRMATION_GATE"
+            known_blockers.append(state)
+        else:
+            state = "WAITING_QUOTE_OR_BUY_ZONE"
     elif trade_ready_count <= 0:
         state = "IDLE_NO_TRADE_READY"
         quote_state = "not_required_no_trade_ready"
@@ -1725,7 +1752,7 @@ def _path_b_execution_readiness(
     elif market_key == "KR" and not _kr_confirmation_hard_veto_ready(config):
         state = "BLOCKED_CONFIRMATION_GATE"
         known_blockers.append(state)
-    elif registered_live_plans <= 0:
+    elif active_live_plans <= 0:
         state = "READY_WAITING_BUY_ZONE"
     else:
         state = "WAITING_QUOTE_OR_BUY_ZONE"
@@ -1736,6 +1763,7 @@ def _path_b_execution_readiness(
         "trade_ready_count": trade_ready_count,
         "price_targets_count": price_targets_count,
         "registered_live_plans": registered_live_plans,
+        "active_live_plans": active_live_plans,
         "broker_open_orders": broker_open_orders,
         "market_session_state": session.get("state", "unknown"),
         "market_session": session,

@@ -131,6 +131,20 @@ class _Control:
         return PathBControlState(enabled=True, emergency_disabled=False)
 
 
+class _RuntimeConfig:
+    def __init__(self, values: dict[str, object]) -> None:
+        self.values = dict(values)
+
+    def get(self, key: str, default: object = None) -> object:
+        return self.values.get(key, default)
+
+    def get_bool(self, key: str, default: bool = False) -> bool:
+        value = self.get(key, None)
+        if value is None or str(value).strip() == "":
+            return default
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 class PathBRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._pathb_env = patch.dict("os.environ", {"PATHB_KR_LIVE_ENABLED": "true"})
@@ -1771,6 +1785,74 @@ class PathBRuntimeTests(unittest.TestCase):
             runtime._record_blocked.assert_called_once()
             self.assertEqual(runtime._record_blocked.call_args.args[3], "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK")
             self.assertEqual(runtime._record_blocked.call_args.args[5], plan.path_run_id)
+
+    def test_scan_waiting_entries_uses_runtime_config_for_kr_entry_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.runtime_config = _RuntimeConfig({"KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "true"})
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime._record_blocked = Mock()
+            runtime._submit_buy = Mock()
+            plan = make_price_plan(
+                decision_id="dec1",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            bot.price_cache_raw["005930"] = 52_100
+
+            with patch.dict("os.environ", {"KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "false"}, clear=False):
+                runtime.scan_waiting_entries("KR", force=True)
+
+            runtime._submit_buy.assert_not_called()
+            runtime._record_blocked.assert_called_once()
+            self.assertEqual(runtime._record_blocked.call_args.args[3], "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK")
+            self.assertEqual(runtime._record_blocked.call_args.args[5], plan.path_run_id)
+            payload = runtime._record_blocked.call_args.args[4]
+            self.assertEqual(payload["config_key"], "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK")
+            self.assertEqual(payload["config_value"], "true")
+
+    def test_scan_waiting_entries_falls_back_to_env_when_runtime_config_key_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.runtime_config = _RuntimeConfig({})
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime._record_blocked = Mock()
+            runtime._submit_buy = Mock()
+            plan = make_price_plan(
+                decision_id="dec1",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            bot.price_cache_raw["005930"] = 52_100
+
+            with patch.dict("os.environ", {"KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "true"}, clear=False):
+                runtime.scan_waiting_entries("KR", force=True)
+
+            runtime._submit_buy.assert_not_called()
+            runtime._record_blocked.assert_called_once()
+            self.assertEqual(runtime._record_blocked.call_args.args[3], "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK")
+            payload = runtime._record_blocked.call_args.args[4]
+            self.assertEqual(payload["config_value"], "true")
 
     def test_recover_on_startup_attaches_existing_position_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

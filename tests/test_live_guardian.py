@@ -9,13 +9,50 @@ from unittest.mock import patch
 
 from tools.live_guardian import (
     _apply_auto_fixes,
+    _alert_state_path,
+    _guardian_heartbeat_path,
     _maybe_send_telegram_alert,
+    _write_guardian_heartbeat,
+    _write_guardian_report,
     classify_preflight_check,
     run_guardian_once,
 )
 
 
 class LiveGuardianTests(unittest.TestCase):
+    def test_guardian_runtime_outputs_use_runtime_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch("runtime_paths.get_runtime_root", return_value=Path(tmp)):
+            heartbeat = _guardian_heartbeat_path("live")
+            _write_guardian_heartbeat("live", status="running")
+            alert_state = _alert_state_path("live")
+            json_path, md_path = _write_guardian_report(
+                {
+                    "ok": True,
+                    "gate": "ALLOW_START",
+                    "mode": "live",
+                    "enabled_markets": ["KR"],
+                    "counts": {
+                        "hard_fail": 0,
+                        "soft_fail": 0,
+                        "accepted_exception": 0,
+                        "auto_fixable": 0,
+                        "actions": 0,
+                    },
+                    "findings": [],
+                    "actions": [],
+                }
+            )
+
+            runtime_root = Path(tmp)
+            self.assertEqual(heartbeat, runtime_root / "state" / "live_guardian_heartbeat.json")
+            self.assertTrue(heartbeat.exists())
+            self.assertEqual(json.loads(heartbeat.read_text(encoding="utf-8"))["status"], "running")
+            self.assertEqual(alert_state, runtime_root / "state" / "live_guardian_alert_state.json")
+            self.assertEqual(json_path.parent, runtime_root / "data" / "v2_reports")
+            self.assertEqual(md_path.parent, runtime_root / "data" / "v2_reports")
+            self.assertTrue(json_path.exists())
+            self.assertTrue(md_path.exists())
+
     def test_code_marker_fail_is_soft(self) -> None:
         finding = classify_preflight_check(
             {
