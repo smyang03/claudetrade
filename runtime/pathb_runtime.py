@@ -1328,7 +1328,7 @@ class PathBRuntime:
             return
         kr_new_entry_blocked = (
             market == "KR"
-            and str(os.getenv("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK", "true")).strip().lower()
+            and str(os.getenv("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK", "false")).strip().lower()
             in {"1", "true", "yes", "y", "on"}
         )
         if self._market_shadow_plan_enabled(market):
