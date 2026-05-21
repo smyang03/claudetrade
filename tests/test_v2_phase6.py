@@ -309,6 +309,9 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(selection["counts"]["compact_validation_errors"], 2)
         self.assertIn("CANDIDATE_ACTIONS_MISSING_CONTRACT", selection["no_plan_reasons"])
         self.assertIn("SELECTION_TRUNCATED", selection["no_plan_reasons"])
+        self.assertEqual(selection["no_plan_primary_reason"], "NO_TRADE_READY")
+        self.assertTrue(selection["no_plan_action_required"])
+        self.assertIn("watch_only", selection["no_plan_summary"])
 
     def test_pathb_selection_summary_uses_candidate_action_price_targets(self):
         selection_meta = {
@@ -363,6 +366,125 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(rows["ZS"]["sell_target"], 180.0)
         self.assertEqual(rows["ZS"]["stop_loss"], 166.0)
         self.assertEqual(rows["ZS"]["confidence"], 0.52)
+        self.assertFalse(selection["no_plan_action_required"])
+
+    def test_pathb_execution_capacity_uses_broker_orderable_cash(self):
+        broker_truth = {
+            "markets": {
+                "KR": {
+                    "account_summary": {"orderable_cash": 1_941_524},
+                    "positions": [],
+                    "open_orders": [],
+                }
+            }
+        }
+        config = {
+            "fixed_order_krw": 500_000,
+            "fixed_order_krw_by_market": {"KR": 500_000},
+            "min_order_krw_by_market": {"KR": 50_000},
+            "max_positions": 15,
+            "max_daily_entries": 40,
+            "daily_entry_cap_by_market": {"KR": 40},
+            "usd_krw": 1400,
+        }
+
+        capacity = v2_ops_summary._path_b_execution_capacity(
+            broker_truth,
+            config,
+            [],
+            markets=["KR"],
+            session_date="2026-05-21",
+        )
+
+        self.assertEqual(capacity["KR"]["max_affordable_fixed_orders"], 3)
+        self.assertTrue(capacity["KR"]["min_order_possible"])
+        self.assertFalse(capacity["KR"]["daily_cap_cash_feasible"])
+
+    def test_pathb_readiness_distinguishes_overnight_allowed_states(self):
+        selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
+        config = {"enabled": True, "intraday_only": False, "market_live_enabled": {"US": True}}
+        control = {"enabled": True}
+        capacity = {"US": {"min_order_possible": True}}
+        truth = {
+            "US": {
+                "trusted": True,
+                "fresh": True,
+                "positions": 1,
+                "open_orders": 0,
+            }
+        }
+
+        with patch.object(
+            v2_ops_summary,
+            "_path_b_market_session_state",
+            return_value={"state": "inactive", "reason": "after_close"},
+        ):
+            readiness = v2_ops_summary._path_b_execution_readiness(
+                market="US",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=truth,
+                execution_capacity=capacity,
+                pathb_runs=[],
+            )
+            no_position = dict(truth)
+            no_position["US"] = {**truth["US"], "positions": 0}
+            idle = v2_ops_summary._path_b_execution_readiness(
+                market="US",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=no_position,
+                execution_capacity=capacity,
+                pathb_runs=[],
+            )
+
+        self.assertEqual(readiness["state"], "HOLDING_OVERNIGHT")
+        self.assertEqual(idle["state"], "IDLE_MARKET_CLOSED_OVERNIGHT_ALLOWED")
+
+    def test_pathb_readiness_missing_intraday_uses_effective_config(self):
+        selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
+        config = {"enabled": True, "market_live_enabled": {"US": True}}
+        control = {"enabled": True}
+        capacity = {"US": {"min_order_possible": True}}
+        truth = {
+            "US": {
+                "trusted": True,
+                "fresh": True,
+                "positions": 0,
+                "open_orders": 0,
+            }
+        }
+
+        with patch.object(
+            v2_ops_summary,
+            "_path_b_market_session_state",
+            return_value={"state": "inactive", "reason": "after_close"},
+        ), patch.object(
+            v2_ops_summary,
+            "_path_b_config",
+            return_value={"intraday_only": False},
+        ):
+            readiness = v2_ops_summary._path_b_execution_readiness(
+                market="US",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=truth,
+                execution_capacity=capacity,
+                pathb_runs=[],
+                runtime_mode="live",
+            )
+
+        self.assertFalse(readiness["pathb_intraday_only"])
+        self.assertEqual(readiness["state"], "IDLE_MARKET_CLOSED_OVERNIGHT_ALLOWED")
 
     def test_telegram_v2_halt_resume_and_health(self):
         bot = _Bot()

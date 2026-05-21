@@ -69,6 +69,10 @@ class V2Phase5Tests(unittest.TestCase):
         self.assertEqual(us["event_count"], 2)
         self.assertEqual(kr["session_date"], "2026-05-02")
         self.assertEqual(us["session_date"], "2026-05-02")
+        self.assertEqual(kr["smoke_context"]["runtime_context"], "smoke")
+        self.assertFalse(kr["smoke_context"]["broker_call"])
+        self.assertFalse(kr["smoke_context"]["order_send"])
+        self.assertEqual(kr["log_prefix"], "[SMOKE][NO_BROKER][NO_ORDER]")
 
     def test_phase5_gate_runs_with_cumulative_previous_phases(self):
         report = V2PhaseValidator(ROOT).validate(5)

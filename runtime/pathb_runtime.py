@@ -27,6 +27,7 @@ from execution.safety_gate import PathBSafetyGate, SafetyContext
 from kis_api import cancel_order, get_balance, get_price, place_order, precheck_order
 from lifecycle.event_store import EventStore
 from logger import get_trading_logger
+from runtime.broker_side import broker_row_side_matches
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
 from runtime.market_resolver import infer_ticker_market
 from runtime.pathb_reasons import (
@@ -193,6 +194,10 @@ class PathBRuntime:
             "market_live_enabled": {
                 "KR": self._market_live_enabled("KR"),
                 "US": self._market_live_enabled("US"),
+            },
+            "market_live_gate_source": {
+                "KR": self._market_live_gate_detail("KR"),
+                "US": self._market_live_gate_detail("US"),
             },
             "market_shadow_plan_enabled": {
                 "KR": self._market_shadow_plan_enabled("KR"),
@@ -467,16 +472,47 @@ class PathBRuntime:
         return bool(control.enabled)
 
     def _market_live_enabled(self, market: str) -> bool:
+        return bool(self._market_live_gate_detail(market).get("effective", True))
+
+    def _market_live_gate_detail(self, market: str) -> dict[str, Any]:
         if self.is_paper:
-            return True
+            return {
+                "effective": True,
+                "source_key": "paper_runtime",
+                "source_value": "",
+                "legacy_key": "",
+                "legacy_value": "",
+                "legacy_shadowed": False,
+            }
         market_key = str(market or "").upper()
         if not market_key:
-            return True
+            return {
+                "effective": True,
+                "source_key": "default",
+                "source_value": "",
+                "legacy_key": "",
+                "legacy_value": "",
+                "legacy_shadowed": False,
+            }
         primary = f"PATHB_{market_key}_LIVE_ENABLED"
         legacy = f"{market_key}_CLAUDE_PRICE_LIVE_ENABLED"
         if os.getenv(primary) is not None:
-            return _env_bool(primary, True)
-        return _env_bool(legacy, True)
+            return {
+                "effective": _env_bool(primary, True),
+                "source_key": primary,
+                "source_value": str(os.getenv(primary, "")),
+                "legacy_key": legacy,
+                "legacy_value": str(os.getenv(legacy, "")),
+                "legacy_shadowed": os.getenv(legacy) is not None,
+            }
+        return {
+            "effective": _env_bool(legacy, True),
+            "source_key": legacy,
+            "source_value": str(os.getenv(legacy, "")),
+            "legacy_key": legacy,
+            "legacy_value": str(os.getenv(legacy, "")),
+            "legacy_shadowed": False,
+        }
 
     def _market_shadow_plan_enabled(self, market: str) -> bool:
         if self.is_paper:
@@ -907,6 +943,23 @@ class PathBRuntime:
 
         return trade_ready, price_targets, origin_map
 
+    def _pathb_shadow_registration_inputs(
+        self,
+        market: str,
+        meta: dict[str, Any],
+    ) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+        shadow_tickers = [
+            self._ticker_key(market, ticker)
+            for ticker in list(meta.get("_pathb_shadow_tickers") or [])
+        ]
+        shadow_targets = dict(meta.get("_pathb_shadow_price_targets") or {})
+        shadow_origins = (
+            dict(meta.get("_pathb_shadow_origins") or {})
+            if isinstance(meta.get("_pathb_shadow_origins"), dict)
+            else {}
+        )
+        return list(dict.fromkeys(shadow_tickers)), shadow_targets, shadow_origins
+
     def _shadow_path_for_ticker(self, market: str, ticker: str) -> dict[str, Any] | None:
         key = self._ticker_key(market, ticker)
         for run in self.store.path_runs_for_session(
@@ -956,136 +1009,249 @@ class PathBRuntime:
             return []
         if shadow_only:
             log.info(f"[PathB shadow plan] {market} live off; registering shadow-only Claude Price plans")
-        trade_ready, price_targets, origin_map = self._pathb_registration_inputs(
-            market,
-            meta,
-            shadow_only=shadow_only,
-        )
         decision_ids = meta.get("v2_decision_ids") or {}
         session_date = self._session_date(market)
         registered: list[str] = []
         missing_price_targets: list[str] = []
         entry_gate = self._new_buy_block_state(market, strategy="path_b_plan_registration")
-        if not bool(entry_gate.get("allowed", True)):
-            reason = str(entry_gate.get("reason") or "ORDER_UNKNOWN_UNRESOLVED")
-            for ticker in trade_ready:
-                key = self._ticker_key(market, ticker)
-                decision_id = str(decision_ids.get(ticker) or decision_ids.get(key) or "")
-                if not decision_id:
-                    try:
-                        decision_id = str(self.bot._v2_decision_id_for_ticker(market, key) or "")
-                    except Exception:
-                        decision_id = ""
-                try:
-                    self.bot._v2_record_lifecycle_event(
-                        "CLAUDE_PRICE_PLAN_GATE_WARNING",
-                        market,
-                        key,
-                        decision_id=decision_id,
-                        reason_code=reason,
-                        payload={
-                            **(entry_gate.get("details") or {}),
-                            "stage": "pathb_plan_registration",
-                            "scope": entry_gate.get("scope", ""),
-                            "path_type": "claude_price",
-                        },
-                    )
-                except Exception as exc:
-                    log.warning(f"[PathB plan gate warning record failed] {market} {key} {reason}: {exc}")
-            log.warning(
-                f"[PathB plan registration execution-gate warning] {market} {reason} "
-                f"scope={entry_gate.get('scope', '')} trade_ready={trade_ready}"
-            )
-        for ticker in trade_ready:
-            key = self._ticker_key(market, ticker)
-            if shadow_only:
-                if self._active_path_for_ticker(market, key) or self._shadow_path_for_ticker(market, key):
-                    continue
-            elif self._active_path_for_ticker(market, key):
-                continue
+
+        def _decision_id_for(
+            ticker: str,
+            key: str,
+            *,
+            shadow_registration: bool = False,
+            isolated_shadow: bool = False,
+        ) -> str:
+            if shadow_registration and isolated_shadow:
+                return f"shadow:{self.mode}:{market}:{session_date}:{key}"
             decision_id = str(decision_ids.get(ticker) or decision_ids.get(key) or "")
             if not decision_id:
                 try:
                     decision_id = str(self.bot._v2_decision_id_for_ticker(market, key) or "")
                 except Exception:
                     decision_id = ""
-            if not decision_id:
-                continue
-            raw_plan = price_targets.get(ticker) or price_targets.get(key)
-            if not raw_plan:
-                missing_price_targets.append(key)
-                self._record_blocked(
-                    market,
-                    key,
-                    decision_id,
-                    "CLAUDE_PRICE_MISSING",
-                    {
-                        "trade_ready": list(trade_ready),
-                        "price_target_keys": list(price_targets.keys()) if isinstance(price_targets, dict) else [],
-                    },
-                )
-                continue
+            if not decision_id and shadow_registration:
+                return f"shadow:{self.mode}:{market}:{session_date}:{key}"
+            return decision_id
+
+        def _shadow_registration_isolated(
+            ticker: str,
+            key: str,
+            origin_map: dict[str, Any],
+            batch_shadow_reason: str,
+        ) -> bool:
             origin = origin_map.get(key) or origin_map.get(ticker) or origin_map.get(str(ticker).upper()) or {}
-            if isinstance(origin, dict) and origin:
-                raw_plan = {
-                    **dict(raw_plan),
-                    "_origin_action": str(origin.get("origin_action") or ""),
-                    "_origin_route": str(origin.get("origin_route") or ""),
-                    "_registration_scope": str(origin.get("registration_scope") or ""),
-                    "_not_patha_trade_ready": bool(origin.get("not_patha_trade_ready", False)),
-                    "_origin_reason": str(origin.get("reason") or origin.get("origin_reason") or ""),
-                }
-            plan, errors = parse_plan_from_claude(
-                decision_id=decision_id,
-                ticker=key,
-                market=market,
-                session_date=session_date,
-                raw=raw_plan,
-                prompt_stage="PRE_SESSION",
-                prompt_version="pathb_price_v1.0",
-                min_confidence=float(self.config.pathb_min_confidence),
-            )
-            if plan is None:
-                self._record_blocked(
-                    market,
-                    key,
-                    decision_id,
-                    "CLAUDE_PRICE_INVALID",
-                    {"errors": errors, "raw_plan": raw_plan},
+            if isinstance(origin, dict):
+                if str(origin.get("registration_scope") or "") == "candidate_actions_shadow_only":
+                    return True
+                if str(origin.get("origin_route") or "") == "pathb_shadow_only":
+                    return True
+            return str(batch_shadow_reason or "") != "market_live_disabled"
+
+        def _shadow_overrides_for(origin: dict[str, Any], reason: str) -> dict[str, Any]:
+            overrides: dict[str, Any] = {
+                "shadow_only": True,
+                "live_order_enabled": False,
+                "execution_allowed": False,
+                "shadow_reason": reason,
+            }
+            if isinstance(origin, dict):
+                for field in (
+                    "origin_reason",
+                    "demoted_from",
+                    "demotion_reason",
+                    "microstructure_data_quality",
+                    "pathb_shadow_reason",
+                ):
+                    value = origin.get(field)
+                    if value not in (None, ""):
+                        overrides[field] = value
+            return overrides
+
+        def _register_batch(
+            trade_ready: list[str],
+            price_targets: dict[str, Any],
+            origin_map: dict[str, Any],
+            *,
+            shadow_registration: bool = False,
+            shadow_reason: str = "",
+        ) -> None:
+            if not trade_ready:
+                return
+            if not bool(entry_gate.get("allowed", True)):
+                reason = str(entry_gate.get("reason") or "ORDER_UNKNOWN_UNRESOLVED")
+                for ticker in trade_ready:
+                    key = self._ticker_key(market, ticker)
+                    decision_id = _decision_id_for(
+                        ticker,
+                        key,
+                        shadow_registration=shadow_registration,
+                        isolated_shadow=(
+                            shadow_registration
+                            and _shadow_registration_isolated(ticker, key, origin_map, shadow_reason)
+                        ),
+                    )
+                    if not decision_id:
+                        continue
+                    try:
+                        self.bot._v2_record_lifecycle_event(
+                            "CLAUDE_PRICE_PLAN_GATE_WARNING",
+                            market,
+                            key,
+                            decision_id=decision_id,
+                            reason_code=reason,
+                            payload={
+                                **(entry_gate.get("details") or {}),
+                                "stage": "pathb_plan_registration",
+                                "scope": entry_gate.get("scope", ""),
+                                "path_type": "claude_price",
+                                "shadow_registration": bool(shadow_registration),
+                            },
+                        )
+                    except Exception as exc:
+                        log.warning(f"[PathB plan gate warning record failed] {market} {key} {reason}: {exc}")
+                log.warning(
+                    f"[PathB plan registration execution-gate warning] {market} {reason} "
+                    f"scope={entry_gate.get('scope', '')} trade_ready={trade_ready}"
                 )
-                continue
-            shadow_overrides = None
-            if shadow_only:
-                shadow_overrides = {
-                    "shadow_only": True,
-                    "live_order_enabled": False,
-                    "execution_allowed": False,
-                    "shadow_reason": "market_live_disabled",
-                }
-                if isinstance(origin, dict):
-                    for field in (
-                        "origin_reason",
-                        "demoted_from",
-                        "demotion_reason",
-                        "microstructure_data_quality",
-                        "pathb_shadow_reason",
-                    ):
-                        value = origin.get(field)
-                        if value not in (None, ""):
-                            shadow_overrides[field] = value
-            path_run_id = self.adapter.register_plan(
-                plan,
-                runtime_mode=self.mode,
-                brain_snapshot_id=self._brain_snapshot_id(market),
-                initial_status="SHADOW_WAITING" if shadow_only else "WAITING",
-                plan_overrides=shadow_overrides,
+            for ticker in trade_ready:
+                key = self._ticker_key(market, ticker)
+                if shadow_registration:
+                    if self._active_path_for_ticker(market, key) or self._shadow_path_for_ticker(market, key):
+                        continue
+                else:
+                    if self._active_path_for_ticker(market, key):
+                        continue
+                    shadow_run = self._shadow_path_for_ticker(market, key)
+                    if shadow_run and str(shadow_run.get("status") or "") == "SHADOW_WAITING":
+                        self.adapter.mark_shadow_cancelled(
+                            str(shadow_run.get("path_run_id") or ""),
+                            runtime_mode=self.mode,
+                            brain_snapshot_id=self._brain_snapshot_id(market),
+                            reason="live_candidate_supersedes_shadow",
+                        )
+                isolated_shadow = (
+                    shadow_registration
+                    and _shadow_registration_isolated(ticker, key, origin_map, shadow_reason)
+                )
+                decision_id = _decision_id_for(
+                    ticker,
+                    key,
+                    shadow_registration=shadow_registration,
+                    isolated_shadow=isolated_shadow,
+                )
+                if not decision_id:
+                    continue
+                raw_plan = price_targets.get(ticker) or price_targets.get(key)
+                if not raw_plan:
+                    missing_price_targets.append(key)
+                    self._record_blocked(
+                        market,
+                        key,
+                        decision_id,
+                        "CLAUDE_PRICE_MISSING",
+                        {
+                            "trade_ready": list(trade_ready),
+                            "price_target_keys": list(price_targets.keys()) if isinstance(price_targets, dict) else [],
+                            "shadow_registration": bool(shadow_registration),
+                        },
+                    )
+                    continue
+                origin = origin_map.get(key) or origin_map.get(ticker) or origin_map.get(str(ticker).upper()) or {}
+                if isinstance(origin, dict) and origin:
+                    raw_plan = {
+                        **dict(raw_plan),
+                        "_origin_action": str(origin.get("origin_action") or ""),
+                        "_origin_route": str(origin.get("origin_route") or ""),
+                        "_registration_scope": str(origin.get("registration_scope") or ""),
+                        "_not_patha_trade_ready": bool(origin.get("not_patha_trade_ready", False)),
+                        "_origin_reason": str(origin.get("reason") or origin.get("origin_reason") or ""),
+                    }
+                plan, errors = parse_plan_from_claude(
+                    decision_id=decision_id,
+                    ticker=key,
+                    market=market,
+                    session_date=session_date,
+                    raw=raw_plan,
+                    prompt_stage="PRE_SESSION",
+                    prompt_version="pathb_price_v1.0",
+                    min_confidence=float(self.config.pathb_min_confidence),
+                )
+                if plan is None:
+                    self._record_blocked(
+                        market,
+                        key,
+                        decision_id,
+                        "CLAUDE_PRICE_INVALID",
+                        {"errors": errors, "raw_plan": raw_plan, "shadow_registration": bool(shadow_registration)},
+                    )
+                    continue
+                origin_dict = origin if isinstance(origin, dict) else {}
+                resolved_shadow_reason = shadow_reason
+                if shadow_registration and shadow_reason != "market_live_disabled":
+                    resolved_shadow_reason = (
+                        str(origin_dict.get("pathb_shadow_reason") or "")
+                        or str(origin_dict.get("origin_reason") or "")
+                        or str(origin_dict.get("reason") or "")
+                        or shadow_reason
+                        or "candidate_action_shadow_validation"
+                    )
+                path_run_id = self.adapter.register_plan(
+                    plan,
+                    runtime_mode=self.mode,
+                    brain_snapshot_id=self._brain_snapshot_id(market),
+                    initial_status="SHADOW_WAITING" if shadow_registration else "WAITING",
+                    plan_overrides=(
+                        _shadow_overrides_for(
+                            origin_dict,
+                            resolved_shadow_reason or "candidate_action_shadow_validation",
+                        )
+                        if shadow_registration
+                        else None
+                    ),
+                )
+                registered.append(path_run_id)
+                log.info(
+                    f"[PathB {'shadow ' if shadow_registration else ''}plan] {market} {key} "
+                    f"zone={plan.buy_zone_low:g}-{plan.buy_zone_high:g} "
+                    f"target={plan.sell_target:g} stop={plan.stop_loss:g} conf={plan.confidence:.2f}"
+                )
+
+        if shadow_only:
+            trade_ready, price_targets, origin_map = self._pathb_registration_inputs(
+                market,
+                meta,
+                shadow_only=True,
             )
-            registered.append(path_run_id)
-            log.info(
-                f"[PathB {'shadow ' if shadow_only else ''}plan] {market} {key} "
-                f"zone={plan.buy_zone_low:g}-{plan.buy_zone_high:g} "
-                f"target={plan.sell_target:g} stop={plan.stop_loss:g} conf={plan.confidence:.2f}"
+            _register_batch(
+                trade_ready,
+                price_targets,
+                origin_map,
+                shadow_registration=True,
+                shadow_reason="market_live_disabled",
             )
+        else:
+            trade_ready, price_targets, origin_map = self._pathb_registration_inputs(
+                market,
+                meta,
+                shadow_only=False,
+            )
+            _register_batch(trade_ready, price_targets, origin_map)
+            if self._market_shadow_plan_enabled(market):
+                shadow_tickers, shadow_targets, shadow_origins = self._pathb_shadow_registration_inputs(market, meta)
+                live_keys = {self._ticker_key(market, ticker) for ticker in trade_ready}
+                if live_keys:
+                    shadow_tickers = [
+                        ticker
+                        for ticker in shadow_tickers
+                        if self._ticker_key(market, ticker) not in live_keys
+                    ]
+                _register_batch(
+                    shadow_tickers,
+                    shadow_targets,
+                    shadow_origins,
+                    shadow_registration=True,
+                )
         if missing_price_targets:
             log.warning(
                 f"[PathB plan missing] {market} trade_ready without price_targets: "
@@ -1165,6 +1331,8 @@ class PathBRuntime:
             and str(os.getenv("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK", "true")).strip().lower()
             in {"1", "true", "yes", "y", "on"}
         )
+        if self._market_shadow_plan_enabled(market):
+            self._scan_shadow_waiting_entries(market)
         entry_gate = self._new_buy_block_state(market, strategy="path_b")
         if not bool(entry_gate.get("allowed", True)):
             self._audit_entry_scan_blocked(market, entry_gate)
@@ -5407,12 +5575,7 @@ class PathBRuntime:
 
     @staticmethod
     def _side_matches(row: dict[str, Any], side: str) -> bool:
-        raw = str(row.get("side", "") or "").strip().lower()
-        if not raw:
-            return True
-        if side == "buy":
-            return raw in {"buy", "b", "매수", "02"}
-        return raw in {"sell", "s", "매도", "01"}
+        return broker_row_side_matches(row, side, allow_missing_side=True)
 
     def _attach_recovered_broker_position(
         self,

@@ -371,6 +371,19 @@ until more data is available or a human explicitly approves the change.
 - brain 자동 승격은 승인형 워크플로우가 안정화된 뒤 검토
 - 전략 추가보다 입력 품질과 실행 품질 개선 우선
 
+## 운영자 확인 필수 설정값
+
+아래 설정은 변경 전 반드시 운영자에게 확인한다. 코드 리뷰, config 정리, 자동 수정 등 어떤 경로로도 임의로 바꾸지 않는다.
+
+| 설정 | 현재값 | 의미 |
+|---|---|---|
+| `PATHB_INTRADAY_ONLY` | `false` | PathB 포지션 당일 강제청산 여부. false = multi-day hold 허용 |
+| `KR_LATE_ENTRY_GATE_ENABLED` | `false` | KR 늦은 진입 게이트. false = 시간대 차단 없음 |
+| `KR_LATE_ENTRY_EXEC_GATE_ENABLED` | `false` | KR 늦은 진입 실행 게이트. false = 차단 없음 |
+| `PATHB_KR_LIVE_ENABLED` | `true` | KR PathB live 활성 여부 |
+
+이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
+
 ## 코드 작업 원칙
 
 1. 작은 수정으로 큰 사고를 막는다.

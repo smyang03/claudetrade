@@ -332,14 +332,24 @@ def _runtime_env(mode: str) -> dict:
     return {str(k): v for k, v in (data or {}).items() if v is not None}
 
 
+def _runtime_env_value(mode: str, key: str) -> Any:
+    env = _runtime_env(mode)
+    if key in env:
+        return env.get(key)
+    return os.getenv(key)
+
+
+def _start_config_disabled(mode: str) -> bool:
+    raw = _runtime_env_value(mode, "V2_START_CONFIG_DISABLED")
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _start_config_env_overrides(mode: str) -> dict:
     if _normalize_mode(mode) != "live":
         return {}
-    base_env = _runtime_env(mode)
-    disabled = str(base_env.get("V2_START_CONFIG_DISABLED", "") or "").strip().lower()
-    if disabled in {"1", "true", "yes", "y", "on"}:
+    if _start_config_disabled(mode):
         return {}
-    path = BASE_DIR / "config" / "v2_start_config.json"
+    path = _start_config_path(mode)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -350,8 +360,12 @@ def _start_config_env_overrides(mode: str) -> dict:
     return {str(k): str(v).lower() if isinstance(v, bool) else str(v) for k, v in overrides.items() if v is not None}
 
 
-def _start_config_path() -> Path:
-    return BASE_DIR / "config" / "v2_start_config.json"
+def _start_config_path(mode: str = "live") -> Path:
+    raw = str(_runtime_env_value(mode, "V2_START_CONFIG_PATH") or "config/v2_start_config.json").strip()
+    path = Path(raw or "config/v2_start_config.json")
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    return path
 
 
 class StartConfigReadError(RuntimeError):
@@ -406,7 +420,7 @@ def _summary_order_size_setting_krw(market: str, mode: str, fallback: float = 0.
     return float(value or 0.0)
 
 
-def _update_start_config_order_size(market: str, amount_krw: float) -> dict[str, Any]:
+def _update_start_config_order_size(market: str, amount_krw: float, *, mode: str = "live") -> dict[str, Any]:
     market_key = str(market or "").upper()
     if market_key not in {"KR", "US"}:
         raise ValueError("market must be KR or US")
@@ -416,8 +430,10 @@ def _update_start_config_order_size(market: str, amount_krw: float) -> dict[str,
         raise ValueError("amount_krw must be numeric") from exc
     if amount < 50_000 or amount > 5_000_000:
         raise ValueError("amount_krw must be between 50,000 and 5,000,000")
+    if _start_config_disabled(mode):
+        raise StartConfigValidationError("start config override is disabled")
 
-    path = _start_config_path()
+    path = _start_config_path(mode)
     data = _load_start_config_for_write(path)
     overrides = data.get("env_overrides")
     if overrides is None:
@@ -5857,6 +5873,9 @@ def _parse_jsonl_alerts(path: Path, *, source: str, market: str, limit: int) -> 
         level = str(row.get("level", "") or "").upper()
         message = str(row.get("message", "") or "")
         extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        if str(extra.get("runtime_context") or payload.get("runtime_context") or "").lower() == "smoke":
+            continue
         ticker = str(extra.get("ticker") or row.get("ticker") or "")
         row_market = str(extra.get("market") or row.get("market") or market or "")
         text = f"{level} {message} {json.dumps(extra, ensure_ascii=False)}"
@@ -6951,7 +6970,7 @@ def api_control_order_size():
     market = str(body.get("market") or request.args.get("market") or "US").strip().upper()
     amount = body.get("amount_krw", body.get("max_order_krw", body.get("value")))
     try:
-        result = _update_start_config_order_size(market, amount)
+        result = _update_start_config_order_size(market, amount, mode=mode)
     except StartConfigValidationError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except StartConfigReadError as exc:

@@ -822,6 +822,364 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(plan["microstructure_data_quality"], "DATA_MISSING")
             self.assertEqual(plan["pathb_shadow_reason"], "kr_data_quality_not_confirmed")
 
+    def test_kr_live_shadow_candidate_registers_shadow_run_without_v2_trade_ready(self) -> None:
+        meta = {
+            "trade_ready": [],
+            "v2_decision_ids": {},
+            "_pathb_shadow_tickers": ["005930"],
+            "_pathb_shadow_price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                    "entry_rationale": "support pullback",
+                    "exit_rationale": "resistance target",
+                    "rationale": "support pullback",
+                }
+            },
+            "_pathb_shadow_origins": {
+                "005930": {
+                    "origin_action": "BUY_READY",
+                    "origin_route": "pathb_shadow_only",
+                    "registration_scope": "candidate_actions_shadow_only",
+                    "not_patha_trade_ready": True,
+                    "origin_reason": "kr_data_quality_not_confirmed",
+                    "demoted_from": "BUY_READY",
+                    "demotion_reason": "kr_data_quality_not_confirmed",
+                    "pathb_shadow_reason": "kr_data_quality_not_confirmed",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "true", "PATHB_KR_SHADOW_PLAN_ENABLED": "true"},
+            ):
+                runs = runtime.register_from_selection_meta("KR", meta)
+
+            self.assertEqual(len(runs), 1)
+            run = store.find_path_run(runs[0])
+            self.assertEqual(run["status"], "SHADOW_WAITING")
+            self.assertEqual(run["decision_id"], "shadow:live:KR:2026-04-27:005930")
+            self.assertTrue(run["plan"]["shadow_only"])
+            self.assertFalse(run["plan"]["live_order_enabled"])
+            self.assertFalse(run["plan"]["execution_allowed"])
+            self.assertEqual(run["plan"]["shadow_reason"], "kr_data_quality_not_confirmed")
+            self.assertEqual(run["plan"]["pathb_shadow_reason"], "kr_data_quality_not_confirmed")
+            self.assertEqual(runtime.adapter.get_waiting_runs("KR", "live", "2026-04-27"), [])
+
+    def test_kr_live_shadow_candidate_does_not_reuse_or_create_v2_trade_ready_id(self) -> None:
+        class _ShadowBot(_Bot):
+            def _v2_decision_id_for_ticker(self, market: str, ticker: str) -> str:
+                return f"dec_existing_{market}_{ticker}"
+
+            def _v2_ensure_execution_decision_id(self, *args, **kwargs) -> str:
+                raise AssertionError("shadow registration must not create V2 trade_ready ids")
+
+        meta = {
+            "trade_ready": [],
+            "v2_decision_ids": {"005930": "dec_existing_meta"},
+            "_pathb_shadow_tickers": ["005930"],
+            "_pathb_shadow_price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                    "entry_rationale": "support pullback",
+                    "exit_rationale": "resistance target",
+                    "rationale": "support pullback",
+                }
+            },
+            "_pathb_shadow_origins": {
+                "005930": {
+                    "origin_action": "BUY_READY",
+                    "origin_route": "pathb_shadow_only",
+                    "registration_scope": "candidate_actions_shadow_only",
+                    "not_patha_trade_ready": True,
+                    "origin_reason": "kr_data_quality_not_confirmed",
+                    "pathb_shadow_reason": "kr_data_quality_not_confirmed",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_ShadowBot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "true", "PATHB_KR_SHADOW_PLAN_ENABLED": "true"},
+            ):
+                runs = runtime.register_from_selection_meta("KR", meta)
+
+            self.assertEqual(len(runs), 1)
+            run = store.find_path_run(runs[0])
+            self.assertEqual(run["decision_id"], "shadow:live:KR:2026-04-27:005930")
+            self.assertEqual(store.events_for_decision("dec_existing_meta"), [])
+            self.assertEqual(store.events_for_decision("dec_existing_KR_005930"), [])
+
+    def test_kr_live_shadow_candidate_skips_when_live_run_exists_for_same_ticker(self) -> None:
+        meta = {
+            "trade_ready": [],
+            "v2_decision_ids": {"005930": "dec_shadow_same_ticker"},
+            "_pathb_shadow_tickers": ["005930"],
+            "_pathb_shadow_price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                    "entry_rationale": "support pullback",
+                    "exit_rationale": "resistance target",
+                    "rationale": "support pullback",
+                }
+            },
+            "_pathb_shadow_origins": {
+                "005930": {
+                    "origin_action": "BUY_READY",
+                    "origin_route": "pathb_shadow_only",
+                    "registration_scope": "candidate_actions_shadow_only",
+                    "not_patha_trade_ready": True,
+                    "pathb_shadow_reason": "kr_data_quality_not_confirmed",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            live_plan = make_price_plan(
+                decision_id="dec_live_same_ticker",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            live_run_id = runtime.adapter.register_plan(live_plan, runtime_mode="live", brain_snapshot_id="brain1")
+
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "true", "PATHB_KR_SHADOW_PLAN_ENABLED": "true"},
+            ):
+                runs = runtime.register_from_selection_meta("KR", meta)
+
+            self.assertEqual(runs, [])
+            live_run = store.find_path_run(live_run_id)
+            self.assertEqual(live_run["ticker"], "005930")
+            self.assertEqual(live_run["status"], "WAITING")
+            self.assertFalse(live_run["plan"].get("shadow_only", False))
+            all_runs = store.path_runs_for_session(market="KR", runtime_mode="live", session_date="2026-04-27")
+            self.assertEqual([run["status"] for run in all_runs], ["WAITING"])
+
+    def test_kr_live_shadow_candidate_registers_after_live_run_cancelled_for_same_ticker(self) -> None:
+        meta = {
+            "trade_ready": [],
+            "v2_decision_ids": {"005930": "dec_shadow_after_cancelled_live"},
+            "_pathb_shadow_tickers": ["005930"],
+            "_pathb_shadow_price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                    "entry_rationale": "support pullback",
+                    "exit_rationale": "resistance target",
+                    "rationale": "support pullback",
+                }
+            },
+            "_pathb_shadow_origins": {
+                "005930": {
+                    "origin_action": "BUY_READY",
+                    "origin_route": "pathb_shadow_only",
+                    "registration_scope": "candidate_actions_shadow_only",
+                    "not_patha_trade_ready": True,
+                    "pathb_shadow_reason": "kr_data_quality_not_confirmed",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            live_plan = make_price_plan(
+                decision_id="dec_cancelled_live_same_ticker",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            live_run_id = runtime.adapter.register_plan(live_plan, runtime_mode="live", brain_snapshot_id="brain1")
+            store.update_path_run(live_run_id, status="CANCELLED")
+
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "true", "PATHB_KR_SHADOW_PLAN_ENABLED": "true"},
+            ):
+                runs = runtime.register_from_selection_meta("KR", meta)
+
+            self.assertEqual(len(runs), 1)
+            cancelled_live_run = store.find_path_run(live_run_id)
+            shadow_run = store.find_path_run(runs[0])
+            self.assertEqual(cancelled_live_run["status"], "CANCELLED")
+            self.assertEqual(shadow_run["ticker"], "005930")
+            self.assertEqual(shadow_run["status"], "SHADOW_WAITING")
+            self.assertTrue(shadow_run["plan"]["shadow_only"])
+            all_runs = store.path_runs_for_session(market="KR", runtime_mode="live", session_date="2026-04-27")
+            self.assertEqual(sorted(run["status"] for run in all_runs), ["CANCELLED", "SHADOW_WAITING"])
+
+    def test_kr_live_and_shadow_candidates_register_as_separate_modes(self) -> None:
+        meta = {
+            "trade_ready": [],
+            "v2_decision_ids": {
+                "000660": "dec_live_wait",
+                "005930": "dec_shadow_wait",
+            },
+            "_pathb_registration_scope": "candidate_actions_wait_only",
+            "_pathb_wait_tickers": ["000660"],
+            "_pathb_price_targets": {
+                "000660": {
+                    "buy_zone_low": 151000,
+                    "buy_zone_high": 152000,
+                    "sell_target": 158000,
+                    "stop_loss": 149000,
+                    "hold_days": 1,
+                    "confidence": 0.72,
+                    "entry_rationale": "support pullback",
+                    "exit_rationale": "resistance target",
+                    "rationale": "support pullback",
+                }
+            },
+            "_pathb_wait_origins": {
+                "000660": {
+                    "origin_action": "PULLBACK_WAIT",
+                    "origin_route": "pathb_wait_only",
+                    "registration_scope": "candidate_actions_wait_only",
+                    "not_patha_trade_ready": True,
+                    "reason": "pullback plan",
+                }
+            },
+            "_pathb_shadow_tickers": ["005930"],
+            "_pathb_shadow_price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                    "entry_rationale": "support pullback",
+                    "exit_rationale": "resistance target",
+                    "rationale": "support pullback",
+                }
+            },
+            "_pathb_shadow_origins": {
+                "005930": {
+                    "origin_action": "BUY_READY",
+                    "origin_route": "pathb_shadow_only",
+                    "registration_scope": "candidate_actions_shadow_only",
+                    "not_patha_trade_ready": True,
+                    "pathb_shadow_reason": "kr_data_quality_not_confirmed",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "true", "PATHB_KR_SHADOW_PLAN_ENABLED": "true"},
+            ):
+                runs = runtime.register_from_selection_meta("KR", meta)
+
+            self.assertEqual(len(runs), 2)
+            by_ticker = {
+                run["ticker"]: run
+                for run in store.path_runs_for_session(
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    path_type="claude_price",
+                )
+            }
+            self.assertEqual(by_ticker["000660"]["status"], "WAITING")
+            self.assertFalse(by_ticker["000660"]["plan"].get("shadow_only", False))
+            self.assertEqual(by_ticker["005930"]["status"], "SHADOW_WAITING")
+            self.assertTrue(by_ticker["005930"]["plan"]["shadow_only"])
+            self.assertFalse(by_ticker["005930"]["plan"]["live_order_enabled"])
+
+    def test_kr_live_candidate_with_existing_shadow_path_is_explicitly_resolved(self) -> None:
+        shadow_meta = {
+            "trade_ready": [],
+            "v2_decision_ids": {"005930": "dec_shadow_existing"},
+            "_pathb_shadow_tickers": ["005930"],
+            "_pathb_shadow_price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                }
+            },
+        }
+        live_meta = {
+            "trade_ready": ["005930"],
+            "v2_decision_ids": {"005930": "dec_live_supersedes"},
+            "price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "true", "PATHB_KR_SHADOW_PLAN_ENABLED": "true"},
+            ):
+                shadow_runs = runtime.register_from_selection_meta("KR", shadow_meta)
+                live_runs = runtime.register_from_selection_meta("KR", live_meta)
+
+            self.assertEqual(len(shadow_runs), 1)
+            self.assertEqual(len(live_runs), 1)
+            shadow_run = store.find_path_run(shadow_runs[0])
+            live_run = store.find_path_run(live_runs[0])
+            self.assertEqual(shadow_run["status"], "SHADOW_CANCELLED")
+            self.assertEqual(shadow_run["plan"]["shadow_cancel_reason"], "live_candidate_supersedes_shadow")
+            self.assertEqual(live_run["status"], "WAITING")
+            self.assertFalse(live_run["plan"].get("shadow_only", False))
+
     def test_kr_shadow_waiting_scan_marks_hit_without_order(self) -> None:
         meta = {
             "trade_ready": ["005930"],
@@ -863,6 +1221,88 @@ class PathBRuntimeTests(unittest.TestCase):
             runtime._submit_buy.assert_not_called()
             events = store.events_for_decision("dec1")
             self.assertIn("CLAUDE_PRICE_HIT", [event["event_type"] for event in events])
+
+    def test_kr_live_enabled_shadow_waiting_scan_marks_hit_without_order(self) -> None:
+        meta = {
+            "trade_ready": [],
+            "v2_decision_ids": {"005930": "dec_live_shadow_scan"},
+            "_pathb_shadow_tickers": ["005930"],
+            "_pathb_shadow_price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock()
+            runtime.reconcile_buy_pending_cancel_above = Mock()
+            runtime.process_miss_quality_followups = Mock()
+            runtime._audit_pathb_price_seen = Mock()
+            runtime._current_native_price = Mock(return_value=52300)
+            runtime._submit_buy = Mock()
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "true", "PATHB_KR_SHADOW_PLAN_ENABLED": "true"},
+            ):
+                runs = runtime.register_from_selection_meta("KR", meta)
+                runtime.scan_waiting_entries("KR", force=True)
+
+            run = store.find_path_run(runs[0])
+            self.assertEqual(run["status"], "SHADOW_HIT")
+            self.assertEqual(run["plan"]["shadow_hit_price"], 52300)
+            runtime._submit_buy.assert_not_called()
+
+    def test_kr_live_enabled_shadow_scan_runs_even_when_entry_gate_blocks_live(self) -> None:
+        meta = {
+            "trade_ready": [],
+            "v2_decision_ids": {"005930": "dec_live_shadow_blocked_gate"},
+            "_pathb_shadow_tickers": ["005930"],
+            "_pathb_shadow_price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock()
+            runtime.reconcile_buy_pending_cancel_above = Mock()
+            runtime.process_miss_quality_followups = Mock()
+            runtime._audit_pathb_price_seen = Mock()
+            runtime._current_native_price = Mock(return_value=52300)
+            runtime._submit_buy = Mock()
+            runtime._audit_entry_scan_blocked = Mock()
+            runtime._log_entry_scan_blocked = Mock()
+            with patch.dict(
+                "os.environ",
+                {"PATHB_KR_LIVE_ENABLED": "true", "PATHB_KR_SHADOW_PLAN_ENABLED": "true"},
+            ):
+                runs = runtime.register_from_selection_meta("KR", meta)
+                runtime._new_buy_block_state = Mock(
+                    return_value={"allowed": False, "reason": "ORDER_UNKNOWN_UNRESOLVED", "scope": "market"}
+                )
+                runtime.scan_waiting_entries("KR", force=True)
+
+            run = store.find_path_run(runs[0])
+            self.assertEqual(run["status"], "SHADOW_HIT")
+            runtime._audit_entry_scan_blocked.assert_called_once()
+            runtime._log_entry_scan_blocked.assert_called_once()
+            runtime._submit_buy.assert_not_called()
 
     def test_shadow_only_scan_cancels_unsent_live_runs_before_shadow_scan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -105,8 +105,7 @@ def _target_session_date(row: dict[str, Any], market: str, trigger_at: datetime)
     market_key = _market_key(market)
     if not market_key:
         return ""
-    date_text = str(row.get("session_date") or "")[:10]
-    return date_text or resolve_session_date_str(market_key, _kst_dt(trigger_at))
+    return str(row.get("session_date") or "")[:10]
 
 
 def _sample_session_date(market: str, sample_dt: datetime) -> str:
@@ -260,6 +259,20 @@ def _minute_outcomes(
         return updates, {**metadata, "minute_reason": reason or "minute_file_missing"}, ["minute_samples"]
 
     target_session = _target_session_date(row, market, trigger_at)
+    if not target_session:
+        return (
+            updates,
+            {
+                **metadata,
+                "minute_session_date": "",
+                "minute_session_date_missing": True,
+                "minute_same_session_sample_count": 0,
+                "minute_reason": "minute_session_date_missing",
+                "outcome_30m_reason": "minute_outcome_session_date_missing",
+                "outcome_60m_reason": "minute_outcome_session_date_missing",
+            },
+            list(MINUTE_OUTCOME_FIELDS),
+        )
     normalized = _same_session_samples(samples, market=market, trigger_at=trigger_at, target_session=target_session)
     metadata["minute_session_date"] = target_session
     metadata["minute_same_session_sample_count"] = len(normalized)
@@ -324,6 +337,19 @@ def _infer_entry_price_from_minute(
     if not samples:
         return None, {**metadata, "entry_price_reason": reason or "minute_file_missing"}, ["entry_price"]
     target_session = _target_session_date(row, market, trigger_at)
+    if not target_session:
+        return (
+            None,
+            {
+                **metadata,
+                "entry_price_session_date": "",
+                "entry_price_session_filter": "same_session",
+                "entry_price_same_session_sample_count": 0,
+                "minute_session_date_missing": True,
+                "entry_price_reason": "minute_entry_session_date_missing",
+            },
+            ["entry_price"],
+        )
     all_normalized = [{**sample, "dt": _compare_dt(sample["dt"], trigger_at)} for sample in samples]
     normalized = _same_session_samples(samples, market=market, trigger_at=trigger_at, target_session=target_session)
     metadata["entry_price_session_date"] = target_session
@@ -729,10 +755,22 @@ def update_counterfactual_outcomes(
                 reason=reason,
                 now_dt=_now,
             ):
-                _mark_unavailable(store, row, status="PRICE_PENDING", reason=reason)
+                _mark_unavailable(
+                    store,
+                    row,
+                    status="PRICE_PENDING",
+                    reason=reason,
+                    metadata_updates={**inferred_entry_metadata, **minute_metadata},
+                )
                 price_pending += 1
             else:
-                _mark_unavailable(store, row, status="PRICE_UNAVAILABLE", reason=reason)
+                _mark_unavailable(
+                    store,
+                    row,
+                    status="PRICE_UNAVAILABLE",
+                    reason=reason,
+                    metadata_updates={**inferred_entry_metadata, **minute_metadata},
+                )
                 price_unavailable += 1
             continue
 
@@ -753,16 +791,35 @@ def update_counterfactual_outcomes(
             if str(row.get("status") or "") == "OUTCOME_PARTIAL":
                 continue
             if date_text and date_text > max_date:
-                _mark_unavailable(store, row, status="PRICE_PENDING", reason="daily_close_not_available_yet")
+                _mark_unavailable(
+                    store,
+                    row,
+                    status="PRICE_PENDING",
+                    reason="daily_close_not_available_yet",
+                    metadata_updates={**inferred_entry_metadata, **minute_metadata},
+                )
                 price_pending += 1
             else:
-                _mark_unavailable(store, row, status="PRICE_UNAVAILABLE", reason="daily_close_missing_for_date")
+                _mark_unavailable(
+                    store,
+                    row,
+                    status="PRICE_UNAVAILABLE",
+                    reason="daily_close_missing_for_date",
+                    metadata_updates={**inferred_entry_metadata, **minute_metadata},
+                )
                 price_unavailable += 1
             continue
 
         entry_price = float(row.get("entry_price") or 0.0)
         if entry_price == 0.0:
-            _mark_unavailable(store, row, status="DATA_MISSING", reason="entry_price_zero", missing_fields=["entry_price"])
+            _mark_unavailable(
+                store,
+                row,
+                status="DATA_MISSING",
+                reason="entry_price_zero",
+                missing_fields=["entry_price"],
+                metadata_updates={**inferred_entry_metadata, **minute_metadata},
+            )
             data_missing += 1
             continue
 

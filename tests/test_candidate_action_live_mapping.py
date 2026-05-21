@@ -857,6 +857,53 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["runtime_gate_reason"], "kr_momentum_not_confirmed")
         self.assertEqual(route["confirmation_state"], "CONFIRMING")
 
+    def test_kr_pathb_shadow_is_not_promoted_to_v2_trade_ready_when_live_on(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+                "PATHB_KR_SHADOW_PLAN_ENABLED": True,
+                "KR_CLAUDE_PRICE_SHADOW_PLAN_ENABLED": True,
+            }
+        )
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {
+                        "buy_zone_low": 69000,
+                        "buy_zone_high": 70000,
+                        "sell_target": 73000,
+                        "stop_loss": 68000,
+                        "hold_days": 1,
+                        "confidence": 0.9,
+                    },
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": -0.1,
+                    "ret_5m_pct": -0.1,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_pathb_shadow_tickers"], ["005930"])
+        self.assertTrue(meta["_pathb_shadow_registration_enabled"])
+        self.assertTrue(meta["_pathb_shadow_v2_trade_ready_excluded"])
+        self.assertNotIn("005930", bot.v2.registered_meta["trade_ready"])
+        self.assertEqual(bot.pathb.registered_meta["_pathb_shadow_tickers"], ["005930"])
+
     def test_kr_confirmation_live_blocks_unconfirmed_pullback_wait(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update(

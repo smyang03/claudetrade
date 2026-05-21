@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import patch
 
 import pytest
 
 from dashboard import dashboard_server
+
+
+@pytest.fixture(autouse=True)
+def _clear_start_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("V2_START_CONFIG_PATH", raising=False)
+    monkeypatch.delenv("V2_START_CONFIG_DISABLED", raising=False)
 
 
 def test_summary_min_order_uses_mode_specific_us_krw_override() -> None:
@@ -134,6 +141,66 @@ def test_update_start_config_order_size_writes_common_keys_from_kr_control(tmp_p
     assert data["env_overrides"]["KR_FIXED_ORDER_KRW"] == "550000"
     assert data["env_overrides"]["US_FIXED_ORDER_KRW"] == "550000"
     assert data["env_overrides"]["PATHB_FIXED_ORDER_KRW"] == "550000"
+
+
+def test_update_start_config_order_size_honors_v2_start_config_path(tmp_path) -> None:
+    default_path = tmp_path / "config" / "v2_start_config.json"
+    custom_path = tmp_path / "custom_start_config.json"
+    default_path.parent.mkdir()
+    default_path.write_text(json.dumps({"env_overrides": {"MAX_ORDER_KRW": "300000"}}), encoding="utf-8")
+    custom_path.write_text(json.dumps({"env_overrides": {"MAX_ORDER_KRW": "400000"}}), encoding="utf-8")
+
+    with patch.object(dashboard_server, "BASE_DIR", tmp_path), patch.dict(
+        os.environ,
+        {"V2_START_CONFIG_PATH": str(custom_path), "V2_START_CONFIG_DISABLED": ""},
+    ):
+        result = dashboard_server._update_start_config_order_size("US", 650000, mode="live")
+
+    default_data = json.loads(default_path.read_text(encoding="utf-8"))
+    custom_data = json.loads(custom_path.read_text(encoding="utf-8"))
+    assert result["path"] == str(custom_path)
+    assert default_data["env_overrides"]["MAX_ORDER_KRW"] == "300000"
+    assert custom_data["env_overrides"]["MAX_ORDER_KRW"] == "650000"
+    assert custom_data["env_overrides"]["KR_FIXED_ORDER_KRW"] == "650000"
+
+
+def test_update_start_config_order_size_uses_mode_env_start_config_path(tmp_path) -> None:
+    default_path = tmp_path / "config" / "v2_start_config.json"
+    custom_path = tmp_path / "runtime" / "live_start.json"
+    default_path.parent.mkdir()
+    custom_path.parent.mkdir()
+    default_path.write_text(json.dumps({"env_overrides": {"MAX_ORDER_KRW": "300000"}}), encoding="utf-8")
+    custom_path.write_text(json.dumps({"env_overrides": {"MAX_ORDER_KRW": "400000"}}), encoding="utf-8")
+    (tmp_path / ".env.live").write_text("V2_START_CONFIG_PATH=runtime/live_start.json\n", encoding="utf-8")
+
+    with patch.object(dashboard_server, "BASE_DIR", tmp_path):
+        result = dashboard_server._update_start_config_order_size("KR", 550000, mode="live")
+        summary_value = dashboard_server._summary_order_size_setting_krw("KR", "live", fallback=300000)
+
+    default_data = json.loads(default_path.read_text(encoding="utf-8"))
+    custom_data = json.loads(custom_path.read_text(encoding="utf-8"))
+    assert result["path"] == str(custom_path)
+    assert summary_value == 550000.0
+    assert default_data["env_overrides"]["MAX_ORDER_KRW"] == "300000"
+    assert custom_data["env_overrides"]["MAX_ORDER_KRW"] == "550000"
+
+
+def test_order_size_endpoint_rejects_when_start_config_disabled(tmp_path) -> None:
+    config_path = tmp_path / "config" / "v2_start_config.json"
+    config_path.parent.mkdir()
+    original = {"env_overrides": {"MAX_ORDER_KRW": "300000"}}
+    config_path.write_text(json.dumps(original), encoding="utf-8")
+    (tmp_path / ".env.live").write_text("V2_START_CONFIG_DISABLED=true\n", encoding="utf-8")
+
+    with patch.object(dashboard_server, "BASE_DIR", tmp_path):
+        response = dashboard_server.app.test_client().post(
+            "/api/control/order-size",
+            json={"mode": "live", "market": "US", "amount_krw": 650000},
+        )
+
+    assert response.status_code == 400
+    assert response.get_json()["ok"] is False
+    assert json.loads(config_path.read_text(encoding="utf-8")) == original
 
 
 def test_update_start_config_order_size_rejects_invalid_json_without_rewrite(tmp_path) -> None:

@@ -173,6 +173,7 @@ from runtime.gate_evaluation import (
 from runtime.candidate_actions import action_counts, candidate_actions_from_response
 from runtime.adaptive_live_condition import attach_adaptive_live_condition_shadow
 from runtime.action_routing import route_candidate_action
+from runtime.broker_side import broker_row_side_matches
 from runtime.candidate_pool_runtime import build_candidate_pool
 from runtime.exit_lifecycle import (
     DEFAULT_LIVE_BYPASS_REASONS,
@@ -5880,6 +5881,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         normalized_meta["_pathb_shadow_tickers"] = list(dict.fromkeys(pathb_shadow))
         normalized_meta["_pathb_shadow_price_targets"] = pathb_shadow_targets
         normalized_meta["_pathb_shadow_origins"] = pathb_shadow_origins
+        normalized_meta["_pathb_shadow_registration_enabled"] = bool(pathb_shadow_enabled)
+        normalized_meta["_pathb_shadow_v2_trade_ready_excluded"] = True
         normalized_meta["_pathb_registration_scope"] = "candidate_actions_wait_only"
         return normalized_meta
 
@@ -7152,24 +7155,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.trade_ready_tickers[market] = list(meta.get("trade_ready") or [])
         v2_meta = meta
         pathb_wait_tickers = list(meta.get("_pathb_wait_tickers") or [])
-        pathb_shadow_tickers = list(meta.get("_pathb_shadow_tickers") or [])
-        if pathb_wait_tickers or pathb_shadow_tickers:
+        if pathb_wait_tickers:
             v2_meta = {
                 **meta,
                 "trade_ready": list(dict.fromkeys(
                     list(meta.get("trade_ready") or [])
                     + pathb_wait_tickers
-                    + pathb_shadow_tickers
                 )),
                 "price_targets": {
                     **(meta.get("price_targets") or {}),
                     **(meta.get("_pathb_price_targets") or {}),
-                    **(meta.get("_pathb_shadow_price_targets") or {}),
                 },
-                "_pathb_wait_origins": {
-                    **(meta.get("_pathb_wait_origins") or {}),
-                    **(meta.get("_pathb_shadow_origins") or {}),
-                },
+                "_pathb_wait_origins": dict(meta.get("_pathb_wait_origins") or {}),
             }
         v2_ids = self._v2_register_trade_ready(market, v2_meta)
         if v2_ids:
@@ -18387,15 +18384,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     @staticmethod
     def _broker_row_side_matches(row: dict, side: str) -> bool:
-        raw = str(row.get("side", "") or row.get("order_side", "") or row.get("tr_side", "") or "").strip().lower()
-        wanted = str(side or "").strip().lower()
-        if raw == wanted:
-            return True
-        if wanted == "sell":
-            return raw in {"s", "sell", "ask", "매도", "2", "02"}
-        if wanted == "buy":
-            return raw in {"b", "buy", "bid", "매수", "1", "01"}
-        return False
+        return broker_row_side_matches(row, side, allow_missing_side=False)
 
     def _broker_rows_for_local_ticker(self, rows: object, market: str, ticker: str) -> list[dict]:
         market_key = str(market or "").upper()

@@ -81,6 +81,18 @@ def _start_config_common_order_krw() -> int:
         return 0
 
 
+def _bot_runtime_mode(bot) -> str:
+    is_paper = getattr(bot, "is_paper", None)
+    if is_paper is True:
+        return "paper"
+    if is_paper is False:
+        return "live"
+    mode = str(getattr(bot, "_mode", "") or "").strip().lower()
+    if mode in {"paper", "live"}:
+        return mode
+    return "unknown"
+
+
 class StartConfigWriteError(RuntimeError):
     pass
 
@@ -138,8 +150,13 @@ def _write_start_config_common_order_krw(amount: int) -> None:
 def _format_common_order_limit(bot) -> str:
     current = int(getattr(getattr(bot, "risk", None), "max_order_krw", 0) or 0)
     next_amount = _start_config_common_order_krw()
+    runtime_mode = _bot_runtime_mode(bot)
     if next_amount > 0 and next_amount != current:
-        return f"공통 최대주문: <b>{current:,}원</b> (재시작 후 {next_amount:,}원)"
+        if runtime_mode == "paper":
+            return f"공통 최대주문: <b>{current:,}원</b> (live 시작 설정 {next_amount:,}원)"
+        if runtime_mode == "live":
+            return f"공통 최대주문: <b>{current:,}원</b> (재시작 후 {next_amount:,}원)"
+        return f"공통 최대주문: <b>{current:,}원</b> (시작 설정 {next_amount:,}원)"
     if current > 0:
         return f"공통 최대주문: <b>{current:,}원</b>"
     if next_amount > 0:
@@ -1829,6 +1846,21 @@ def _cmd_setorder(bot, amount_str: str) -> str:
         if amount > COMMON_ORDER_MAX_KRW:
             return f"❌ 1회 최대주문은 {COMMON_ORDER_MAX_KRW:,}원을 초과할 수 없습니다."
         old = int(bot.risk.max_order_krw)
+        runtime_mode = _bot_runtime_mode(bot)
+        if runtime_mode == "paper":
+            bot.risk.max_order_krw = float(amount)
+            log.info(f"[commander] paper max_order_krw 변경: {old:,} → {amount:,}")
+            return (
+                f"✅ <b>paper 최대주문 금액 변경</b>\n"
+                f"  {old:,}원 → <b>{amount:,}원</b>\n"
+                f"  모의투자 변경은 현재 실행에만 적용하며 live 시작 설정에는 저장하지 않습니다."
+            )
+        if runtime_mode != "live":
+            log.warning("[commander] MAX_ORDER_KRW update blocked: runtime mode unknown")
+            return (
+                f"❌ <b>공통 최대주문 금액 변경 실패</b>\n"
+                f"  runtime mode를 확인할 수 없어 live 시작 설정을 변경하지 않았습니다."
+            )
         try:
             _write_start_config_common_order_krw(amount)
         except StartConfigWriteError as exc:

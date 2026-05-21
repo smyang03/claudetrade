@@ -697,6 +697,87 @@ def test_minute_outcomes_do_not_use_next_session_samples() -> None:
         assert metadata["outcome_60m_reason"] == "minute_outcome_sample_missing_same_session"
 
 
+def test_minute_labels_are_blocked_when_session_date_missing() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        db = root / "candidate_audit.db"
+        price_root = root / "price"
+        store = CandidateCounterfactualStore(db)
+        store.upsert_path(
+            {
+                "runtime_mode": "live",
+                "session_date": "",
+                "market": "KR",
+                "ticker": "005930",
+                "known_at": "2026-05-19T09:35:00+09:00",
+                "signal_time": "2026-05-19T09:35:00+09:00",
+                "trade_ready_action": "BUY_READY",
+                "path_name": "wait_30m",
+                "entry_price": None,
+                "trigger_time": "2026-05-19T09:35:00+09:00",
+                "status": "PENDING",
+                "metadata": {"source_attempts": ["runtime"]},
+            }
+        )
+        store.upsert_path(
+            {
+                "runtime_mode": "live",
+                "session_date": "",
+                "market": "KR",
+                "ticker": "000660",
+                "known_at": "2026-05-19T09:35:00+09:00",
+                "signal_time": "2026-05-19T09:35:00+09:00",
+                "trade_ready_action": "BUY_READY",
+                "path_name": "immediate",
+                "entry_price": 100.0,
+                "trigger_time": "2026-05-19T09:35:00+09:00",
+                "status": "TRIGGERED",
+                "metadata": {"source_attempts": ["runtime"]},
+            }
+        )
+        _write_minute_csv(
+            price_root,
+            "KR",
+            "005930",
+            [
+                ("2026-05-19T09:35:00+09:00", 101.0, 102.0, 100.0),
+                ("2026-05-19T10:05:00+09:00", 105.0, 106.0, 104.0),
+            ],
+        )
+        _write_minute_csv(
+            price_root,
+            "KR",
+            "000660",
+            [
+                ("2026-05-19T10:05:00+09:00", 105.0, 106.0, 104.0),
+                ("2026-05-19T10:35:00+09:00", 108.0, 110.0, 97.0),
+            ],
+        )
+        _write_price_csv(price_root, "KR", "000660", [("2026-05-19", 103.0)])
+
+        result = update_counterfactual_outcomes(db_path=db, market="KR", price_root=price_root, minute_root=price_root)
+
+        rows = {row["ticker"]: row for row in store.fetch_rows(market="KR")}
+        entry_row = rows["005930"]
+        entry_metadata = json.loads(entry_row["metadata_json"])
+        assert result["targeted"] == 2
+        assert entry_row["entry_price"] is None
+        assert entry_row["status"] == "DATA_MISSING"
+        assert entry_metadata["minute_session_date_missing"] is True
+        assert entry_metadata["entry_price_reason"] == "minute_entry_session_date_missing"
+
+        outcome_row = rows["000660"]
+        outcome_metadata = json.loads(outcome_row["metadata_json"])
+        assert outcome_row["status"] == "PRICE_UNAVAILABLE"
+        assert outcome_row["outcome_30m_pct"] is None
+        assert outcome_row["outcome_60m_pct"] is None
+        assert outcome_row["max_runup_60m_pct"] is None
+        assert outcome_row["max_drawdown_60m_pct"] is None
+        assert outcome_metadata["minute_session_date_missing"] is True
+        assert outcome_metadata["outcome_30m_reason"] == "minute_outcome_session_date_missing"
+        assert outcome_metadata["outcome_60m_reason"] == "minute_outcome_session_date_missing"
+
+
 def test_default_run_does_not_downgrade_existing_close_when_entry_or_trigger_missing() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

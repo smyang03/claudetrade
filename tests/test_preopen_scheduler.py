@@ -10,7 +10,7 @@ from unittest.mock import patch
 from bot.session_date import KST
 from preopen.scheduler import PreopenJob, default_outcome_offsets_min, due_jobs, regular_open_dt
 from preopen.storage import load_preopen_dashboard, load_preopen_scheduler_state
-from tools.preopen_scheduler import _run_job, run_scheduler_once
+from tools.preopen_scheduler import _run_job, _scheduler_heartbeat_path, run_scheduler_once
 
 
 def _runtime_path(root: Path):
@@ -236,10 +236,13 @@ class PreopenSchedulerTests(unittest.TestCase):
             ):
                 run_scheduler_once(mode="live", markets=["US"], dry_run=True, now_dt=now, interval_sec=60)
                 payload = load_preopen_dashboard("US", session_date="2026-05-04", mode="live")
+                heartbeat = _scheduler_heartbeat_path("live")
+                heartbeat_exists = heartbeat.exists()
 
         self.assertIn("scheduler", payload)
         self.assertEqual(payload["scheduler"]["status"], "active")
         self.assertIn("preopen_scheduler.py", payload["scheduler"]["start_command"])
+        self.assertTrue(heartbeat_exists)
 
     def test_paper_dashboard_and_jobs_do_not_show_live_commands(self) -> None:
         now = datetime(2026, 5, 4, 23, 1, tzinfo=KST)

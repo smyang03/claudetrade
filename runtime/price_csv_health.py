@@ -502,7 +502,8 @@ def price_csv_health_summary(
 ) -> dict[str, Any]:
     market_key = str(market or "").upper()
     price_dir = root / "data" / "price" / market_key.lower()
-    expected, source = (expected_date, "provided") if expected_date is not None else expected_last_trading_day(
+    expected_provided = expected_date is not None
+    expected, source = (expected_date, "provided") if expected_provided else expected_last_trading_day(
         market_key,
         pd.Timestamp(datetime.now().date()),
     )
@@ -552,7 +553,12 @@ def price_csv_health_summary(
 
     policy_sources: dict[str, int] = {}
     for ticker, path in sorted(by_ticker.items()):
-        _df, result = load_price_csv_frame(path, market_key, ticker)
+        _df, result = load_price_csv_frame(
+            path,
+            market_key,
+            ticker,
+            expected_last_date=expected if expected_provided else None,
+        )
         status = result.status
         detail = result.detail
         freshness: dict[str, Any] | None = None
@@ -584,7 +590,7 @@ def price_csv_health_summary(
             if any(sample.get("date") in {expected_match, result.last_date} for sample in result.samples):
                 counts["latest_ohlc_logic_error_csv"] += 1
                 quality_tickers["latest_ohlc_logic_error"].append(ticker)
-        if status == "ok" and result.last_date:
+        if status == "ok" and result.last_date and not expected_provided:
             freshness = price_csv_freshness_status(market_key, result.last_date)
             policy_sources[str(freshness.get("calendar_source") or "")] = (
                 policy_sources.get(str(freshness.get("calendar_source") or ""), 0) + 1

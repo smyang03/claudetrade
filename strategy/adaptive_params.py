@@ -62,15 +62,22 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return row is not None
 
 
-def _query_canonical_perf(market: str, like: str, days: int) -> tuple[int, int]:
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _query_canonical_perf(market: str, like: str, days: int) -> tuple[int, int, bool]:
     """Query live closed performance from V2 canonical execution truth."""
     try:
         with sqlite3.connect(str(_DB), timeout=5) as conn:
             if not _table_exists(conn, "v2_canonical_performance"):
-                return 0, 0
+                return 0, 0, False
+            columns = _table_columns(conn, "v2_canonical_performance")
+            if "learning_allowed" not in columns:
+                return 0, 0, False
             rows = conn.execute(
                 f"""
-                SELECT pnl_pct
+                SELECT pnl_pct, learning_allowed
                 FROM v2_canonical_performance
                 WHERE market = ?
                   AND runtime_mode = 'live'
@@ -85,10 +92,11 @@ def _query_canonical_perf(market: str, like: str, days: int) -> tuple[int, int]:
                 """,
                 (market, like, like, like),
             ).fetchall()
-        wins = sum(1 for (perf_value,) in rows if (perf_value or 0) > 0)
-        return wins, len(rows)
+        allowed = [perf_value for (perf_value, learning_allowed) in rows if int(learning_allowed or 0) == 1]
+        wins = sum(1 for perf_value in allowed if (perf_value or 0) > 0)
+        return wins, len(allowed), bool(rows)
     except Exception:
-        return 0, 0
+        return 0, 0, False
 
 
 def _query_perf(market: str, like: str, source_filter: str, days: int) -> tuple[int, int]:
@@ -136,10 +144,13 @@ def get_perf_stats(strategy: str, market: str, days: int = 30) -> dict:
         return {"win_rate": None, "n": 0, "source": "none"}
 
     like = f"%{strategy}%"
-    canonical_wins, canonical_n = _query_canonical_perf(market, like, days)
+    canonical_wins, canonical_n, has_matching_canonical = _query_canonical_perf(market, like, days)
     if canonical_n > 0:
         live_wins, live_n = canonical_wins, canonical_n
         live_source = "v2_canonical"
+    elif has_matching_canonical:
+        live_wins, live_n = 0, 0
+        live_source = "v2_canonical_filtered"
     else:
         live_wins, live_n = _query_perf(market, like, "= 'live'", days)
         live_source = "live"
@@ -153,6 +164,8 @@ def get_perf_stats(strategy: str, market: str, days: int = 30) -> dict:
     if live_n < 10:
         if bf_n == 0:
             if live_n == 0:
+                if live_source == "v2_canonical_filtered":
+                    return {"win_rate": None, "n": 0, "source": live_source}
                 return {"win_rate": None, "n": 0, "source": "none"}
             wr = live_wins / live_n * 100
             return {"win_rate": round(wr, 1), "n": live_n, "source": f"{live_source}_small"}

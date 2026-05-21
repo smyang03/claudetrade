@@ -2,14 +2,19 @@
 
 작성일: 2026-05-21
 
-## 오늘 활성화한 설정 변경
+## 현재 live 기준 플래그
 
-| 설정 | 이전 | 이후 |
-|---|---|---|
-| `PATHB_KR_LIVE_ENABLED` | false | true |
-| `KR_CLAUDE_PRICE_LIVE_ENABLED` | false | true |
-| `KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK` | true | false |
-| `PATHB_INTRADAY_ONLY` | true | false (KR/US 공통) |
+| 설정 | 이전 | 이후 | 의미 |
+|---|---|---|---|
+| `PATHB_KR_LIVE_ENABLED` | false | true | KR PathB live gate ON |
+| `KR_CLAUDE_PRICE_LIVE_ENABLED` | false | false | legacy Claude-price live gate는 계속 OFF |
+| `KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK` | true | false | KR Claude-price 신규 진입 차단 해제 |
+| `PATHB_INTRADAY_ONLY` | true | false | PathB hold-days 정책 허용 |
+| `PATHB_US_LIVE_ENABLED` | true | true | US PathB live는 기존 ON 유지 |
+
+주의: KR PathB live eligibility의 기준은 `PATHB_KR_LIVE_ENABLED`이며,
+`KR_CLAUDE_PRICE_LIVE_ENABLED`는 legacy gate로 유지한다. 현재 live 정책에서는
+`PATHB_INTRADAY_ONLY=false`이므로 PathB plan의 hold-days 정책을 허용한다.
 
 ---
 

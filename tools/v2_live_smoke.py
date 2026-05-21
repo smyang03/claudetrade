@@ -50,6 +50,15 @@ from bot.session_date import resolve_session_date_str
 from runtime.risk_factory import create_risk_manager
 from runtime.risk_profile import build_risk_profile
 
+SMOKE_CONTEXT: dict[str, Any] = {
+    "runtime_context": "smoke",
+    "dry_run": True,
+    "broker_call": False,
+    "order_send": False,
+    "test_ticker": True,
+    "source": "tools.v2_live_smoke",
+}
+
 
 def run_live_smoke(
     *,
@@ -114,6 +123,7 @@ def run_live_smoke(
                 "market": market,
                 "runtime_mode": runtime_mode,
                 "reason": safety.reason_code,
+                "smoke_context": dict(SMOKE_CONTEXT),
                 "profile": profile.__dict__,
             }
 
@@ -126,7 +136,7 @@ def run_live_smoke(
             brain_snapshot_id=snapshot.brain_snapshot_id,
             strategy_hint="smoke",
             timing_style="momentum_timing",
-            payload={"root": str(root_path), "smoke": True},
+            payload={"root": str(root_path), "smoke": True, **SMOKE_CONTEXT},
         )
         registry.record_event(
             event_type=LifecycleEventType.SAFETY_PASSED,
@@ -137,7 +147,7 @@ def run_live_smoke(
             decision_id=decision_id,
             prompt_version=config.prompt_version,
             brain_snapshot_id=snapshot.brain_snapshot_id,
-            payload={"sizing": sizing.__dict__},
+            payload={"sizing": sizing.__dict__, **SMOKE_CONTEXT},
         )
         event_count = len(store.events_for_decision(decision_id))
         return {
@@ -148,6 +158,8 @@ def run_live_smoke(
             "decision_id": decision_id,
             "brain_snapshot_id": snapshot.brain_snapshot_id,
             "event_count": event_count,
+            "log_prefix": "[SMOKE][NO_BROKER][NO_ORDER]",
+            "smoke_context": dict(SMOKE_CONTEXT),
             "profile": profile.__dict__,
             "sizing": sizing.__dict__,
         }
@@ -181,7 +193,7 @@ def main() -> int:
     else:
         for item in results:
             status = "PASS" if item.get("ok") else "FAIL"
-            print(f"{item.get('market')} {item.get('runtime_mode')} {item.get('session_date')} smoke: {status}")
+            print(f"[SMOKE][NO_BROKER][NO_ORDER] {item.get('market')} {item.get('runtime_mode')} {item.get('session_date')} smoke: {status}")
             if not item.get("ok"):
                 print(f"  reason: {item.get('reason')}")
     return 0 if ok else 1

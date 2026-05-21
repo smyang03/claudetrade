@@ -756,6 +756,16 @@ class CheckResult:
     data: dict[str, Any] = field(default_factory=dict)
 
 
+def _warning_meta(kind: str, *, accepted: bool, action: str = "none", blocked_if_live_start: bool = False) -> dict[str, Any]:
+    return {
+        "warning_kind": kind,
+        "accepted_exception": bool(accepted),
+        "operator_action_required": bool(action and action != "none" and not accepted),
+        "operator_action": action or "none",
+        "blocked_if_live_start": bool(blocked_if_live_start),
+    }
+
+
 def _now_kst() -> datetime:
     return datetime.now(KST) if KST is not None else datetime.now()
 
@@ -867,14 +877,45 @@ def _runtime_config_drift_payload(config: dict[str, Any], snapshot_payload: dict
     return drift
 
 
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None and KST is not None:
+        parsed = parsed.replace(tzinfo=KST)
+    return parsed
+
+
+def _runtime_pid_state(mode: str) -> dict[str, Any]:
+    path = get_runtime_path("state", f"{mode}_trading_bot.pid", make_parents=False)
+    if not path.exists():
+        return {"pid_path": str(path), "pid": 0, "pid_started_at": "", "pid_alive": False}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except Exception as exc:
+        return {"pid_path": str(path), "pid": 0, "pid_started_at": "", "pid_alive": False, "pid_error": str(exc)}
+    pid = _int_value(data.get("pid"), 0)
+    return {
+        "pid_path": str(path),
+        "pid": pid,
+        "pid_started_at": str(data.get("started_at") or ""),
+        "pid_alive": _pid_alive(pid),
+    }
+
+
 def _runtime_config_drift_check(config: dict[str, Any], mode: str) -> CheckResult:
     path, payload = _latest_runtime_config_snapshot(mode)
+    pid_state = _runtime_pid_state(mode)
     if path is None:
         return CheckResult(
             "config.runtime_snapshot_drift",
             "WARN",
             "no runtime effective_config snapshot found",
-            {"mode": mode},
+            {"mode": mode, **pid_state, "operator_action": "wait for the bot to write a runtime config snapshot or restart after config changes"},
         )
     drift = _runtime_config_drift_payload(config, payload)
     critical_drift = {
@@ -892,6 +933,23 @@ def _runtime_config_drift_check(config: dict[str, Any], mode: str) -> CheckResul
         status = "PASS"
         detail = "runtime snapshot matches file effective config"
         operator_action = "none"
+    written_dt = _parse_iso_datetime(payload.get("written_at", ""))
+    pid_started_dt = _parse_iso_datetime(pid_state.get("pid_started_at", ""))
+    snapshot_after_pid_start: bool | None = None
+    snapshot_fresh_for_process: bool | None = None
+    if written_dt is not None and pid_started_dt is not None:
+        if written_dt.tzinfo is not None and pid_started_dt.tzinfo is not None:
+            pid_started_dt = pid_started_dt.astimezone(written_dt.tzinfo)
+        snapshot_after_pid_start = written_dt >= pid_started_dt
+        snapshot_fresh_for_process = bool(snapshot_after_pid_start)
+        if not snapshot_fresh_for_process and status == "PASS":
+            status = "WARN"
+            detail = "runtime config snapshot predates current pid"
+            operator_action = "restart/reload the bot or wait until it writes a fresh effective config snapshot"
+    elif status == "PASS" and str(mode or "").lower() == "live" and bool(pid_state.get("pid_alive")):
+        status = "WARN"
+        detail = "runtime config snapshot freshness unverifiable"
+        operator_action = "verify pid and snapshot timestamps or wait until the live bot writes a fresh effective config snapshot"
     return CheckResult(
         "config.runtime_snapshot_drift",
         status,
@@ -904,6 +962,9 @@ def _runtime_config_drift_check(config: dict[str, Any], mode: str) -> CheckResul
             "critical_drift": critical_drift,
             "critical_drift_keys": sorted(critical_drift),
             "operator_action": operator_action,
+            **pid_state,
+            "snapshot_after_pid_start": snapshot_after_pid_start,
+            "snapshot_fresh_for_process": snapshot_fresh_for_process,
         },
     )
 
@@ -960,13 +1021,37 @@ def _kr_cap40_confirmation_enforce_check(effective: dict[str, str]) -> CheckResu
 
 
 def _pathb_market_live_gate_check(effective: dict[str, Any]) -> CheckResult:
+    def gate_detail(market: str) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        primary = f"PATHB_{market_key}_LIVE_ENABLED"
+        legacy = f"{market_key}_CLAUDE_PRICE_LIVE_ENABLED"
+        if primary in effective:
+            return {
+                "effective": _truthy(effective.get(primary)),
+                "source_key": primary,
+                "source_value": str(effective.get(primary, "")),
+                "legacy_key": legacy,
+                "legacy_value": str(effective.get(legacy, "")),
+                "legacy_shadowed": legacy in effective,
+            }
+        source_value = str(effective.get(legacy, "true"))
+        return {
+            "effective": _truthy(source_value),
+            "source_key": legacy,
+            "source_value": source_value,
+            "legacy_key": legacy,
+            "legacy_value": str(effective.get(legacy, "")),
+            "legacy_shadowed": False,
+        }
+
+    gate_source = {market: gate_detail(market) for market in ("KR", "US")}
     pathb_market_gates = {
-        "KR": effective.get("PATHB_KR_LIVE_ENABLED", "true"),
-        "US": effective.get("PATHB_US_LIVE_ENABLED", "true"),
+        market: str(gate_source[market].get("source_value", ""))
+        for market in ("KR", "US")
     }
     violations: list[str] = []
-    kr_live = _truthy(pathb_market_gates["KR"])
-    us_live = _truthy(pathb_market_gates["US"])
+    kr_live = bool(gate_source["KR"].get("effective"))
+    us_live = bool(gate_source["US"].get("effective"))
     if not kr_live:
         violations.append("KR Path B live must be enabled")
     if not us_live:
@@ -989,6 +1074,7 @@ def _pathb_market_live_gate_check(effective: dict[str, Any]) -> CheckResult:
             "violations": violations,
             "remediation_required": bool(violations),
             "operator_action": "set PATHB_KR_LIVE_ENABLED=true and PATHB_US_LIVE_ENABLED=true",
+            "market_live_gate_source": gate_source,
         },
     )
 
@@ -1143,6 +1229,263 @@ def _pid_lock_check(name: str, path: Path, *, expected_mode: str = "") -> CheckR
     return CheckResult(name, "WARN", "stale pid lock is present; guardian may remove it after process check", data)
 
 
+def _repo_python_processes() -> tuple[list[dict[str, Any]], str, str]:
+    known_scripts = (
+        "trading_bot.py",
+        "run_bot.py",
+        "dashboard_server.py",
+        "live_guardian.py",
+        "preopen_scheduler.py",
+    )
+    rows: list[dict[str, Any]] = []
+    if psutil is not None:
+        try:
+            root_text = str(ROOT).lower()
+            for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+                try:
+                    info = proc.info
+                    cmdline = [str(item) for item in (info.get("cmdline") or [])]
+                    command = " ".join(cmdline)
+                    lowered = command.lower().replace("\\", "/")
+                    name = str(info.get("name") or "")
+                    is_python = "python" in name.lower() or any("python" in item.lower() for item in cmdline[:2])
+                    if not is_python:
+                        continue
+                    if root_text not in command.lower() and not any(script in lowered for script in known_scripts):
+                        continue
+                    created_at = ""
+                    try:
+                        created_at = datetime.fromtimestamp(float(info.get("create_time") or 0), tz=KST).isoformat(timespec="seconds")
+                    except Exception:
+                        pass
+                    rows.append(
+                        {
+                            "pid": int(info.get("pid") or 0),
+                            "name": name,
+                            "cmdline": cmdline,
+                            "command": command,
+                            "created_at": created_at,
+                            "role": _classify_repo_process_role(cmdline),
+                        }
+                    )
+                except Exception:
+                    continue
+            return rows, "psutil", ""
+        except Exception as exc:
+            return rows, "psutil", str(exc)
+    return rows, "unavailable", "psutil is not available"
+
+
+def _classify_repo_process_role(cmdline: list[str]) -> str:
+    command = " ".join(str(item) for item in cmdline).lower().replace("\\", "/")
+    if "trading_bot.py" in command and "--live" in command:
+        return "live_bot"
+    if "trading_bot.py" in command and "--paper" in command:
+        return "paper_bot"
+    if "run_bot.py" in command and "paper" in command:
+        return "paper_bot"
+    if "dashboard/dashboard_server.py" in command or "dashboard_server.py" in command:
+        return "dashboard"
+    if "tools/live_guardian.py" in command or "live_guardian.py" in command:
+        return "guardian"
+    if "tools/preopen_scheduler.py" in command or "preopen_scheduler.py" in command:
+        return "preopen_scheduler"
+    return "repo_python"
+
+
+def _listening_ports_by_pid(ports: set[int]) -> tuple[dict[int, list[int]], str]:
+    out: dict[int, list[int]] = {}
+    if psutil is None:
+        return out, "psutil is not available"
+    try:
+        for conn in psutil.net_connections(kind="inet"):
+            try:
+                port = int(getattr(conn.laddr, "port", 0) or 0)
+                pid = int(conn.pid or 0)
+            except Exception:
+                continue
+            if port in ports and pid > 0:
+                out.setdefault(pid, []).append(port)
+    except Exception as exc:
+        return out, str(exc)
+    return {pid: sorted(set(values)) for pid, values in out.items()}, ""
+
+
+def _pid_lock_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"path": str(path), "pid": 0, "alive": False, "exists": False}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except Exception as exc:
+        return {"path": str(path), "pid": 0, "alive": False, "exists": True, "error": str(exc)}
+    pid = _int_value(data.get("pid"), 0)
+    return {"path": str(path), "pid": pid, "alive": _pid_alive(pid), "exists": True, "state": data}
+
+
+def _classify_live_process_inventory(
+    rows: list[dict[str, Any]],
+    ports_by_pid: dict[int, list[int]],
+    *,
+    mode: str,
+    bot_lock: dict[str, Any] | None = None,
+    dashboard_lock: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    by_role: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_role.setdefault(str(row.get("role") or ""), []).append(row)
+    live_bots = by_role.get("live_bot", [])
+    paper_bots = by_role.get("paper_bot", [])
+    dashboards = by_role.get("dashboard", [])
+    if str(mode or "").lower() == "live" and len(live_bots) > 1:
+        findings.append({"severity": "FAIL", "code": "duplicate_live_bot", "pids": [row.get("pid") for row in live_bots]})
+    if str(mode or "").lower() == "live" and paper_bots:
+        findings.append(
+            {
+                "severity": "WARN",
+                "code": "paper_bot_concurrent_with_live",
+                "pids": [row.get("pid") for row in paper_bots],
+                "accepted_exception": True,
+                "operator_action": "confirm paper process is intentional",
+            }
+        )
+    legacy_dashboard_pids = [
+        pid
+        for pid, ports in ports_by_pid.items()
+        if 5001 in ports and any(int(row.get("pid") or 0) == pid for row in dashboards)
+    ]
+    if legacy_dashboard_pids:
+        findings.append(
+            {
+                "severity": "WARN",
+                "code": "legacy_dashboard_port_5001",
+                "pids": legacy_dashboard_pids,
+                "accepted_exception": True,
+                "operator_action": "close legacy dashboard or ignore only if intentionally used",
+            }
+        )
+    bot_lock = bot_lock or {}
+    if bot_lock.get("alive") and live_bots:
+        lock_pid = int(bot_lock.get("pid") or 0)
+        if lock_pid and lock_pid not in {int(row.get("pid") or 0) for row in live_bots}:
+            findings.append({"severity": "WARN", "code": "bot_pid_lock_mismatch", "lock_pid": lock_pid, "pids": [row.get("pid") for row in live_bots]})
+    dashboard_lock = dashboard_lock or {}
+    if dashboard_lock.get("alive") and dashboards:
+        lock_pid = int(dashboard_lock.get("pid") or 0)
+        if lock_pid and lock_pid not in {int(row.get("pid") or 0) for row in dashboards}:
+            findings.append({"severity": "WARN", "code": "dashboard_pid_lock_mismatch", "lock_pid": lock_pid, "pids": [row.get("pid") for row in dashboards]})
+    return findings
+
+
+def _process_inventory_check(mode: str) -> CheckResult:
+    rows, source, error = _repo_python_processes()
+    ports_by_pid, port_error = _listening_ports_by_pid({5000, 5001})
+    bot_lock = _pid_lock_state(get_runtime_path("state", f"{mode}_trading_bot.pid", make_parents=False))
+    dashboard_lock = _pid_lock_state(get_runtime_path("state", "dashboard_server.pid", make_parents=False))
+    findings = _classify_live_process_inventory(
+        rows,
+        ports_by_pid,
+        mode=mode,
+        bot_lock=bot_lock,
+        dashboard_lock=dashboard_lock,
+    )
+    fail = any(str(item.get("severity")) == "FAIL" for item in findings)
+    warn = bool(findings) or bool(error and not rows)
+    status = "FAIL" if fail else ("WARN" if warn else "PASS")
+    detail = (
+        f"process inventory findings={len(findings)}"
+        if findings
+        else "repo process inventory has no duplicate live runtime findings"
+    )
+    data = {
+        "source": source,
+        "error": error,
+        "port_error": port_error,
+        "rows": rows,
+        "ports_by_pid": {str(pid): ports for pid, ports in ports_by_pid.items()},
+        "findings": findings,
+        "bot_lock": bot_lock,
+        "dashboard_lock": dashboard_lock,
+        "operator_action": "review process inventory findings before interpreting live state" if findings else "none",
+    }
+    if status == "WARN" and findings and all(bool(item.get("accepted_exception")) for item in findings):
+        data.update(_warning_meta("accepted_concurrent_process", accepted=True))
+    if status == "WARN" and error and not rows:
+        data.update(_warning_meta("process_inventory_unavailable", accepted=False, action="install/enable psutil or inspect processes manually"))
+    return CheckResult("runtime.process_inventory", status, detail, data)
+
+
+def _heartbeat_age_sec(value: Any) -> float | None:
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        return None
+    now = _now_kst()
+    if parsed.tzinfo is not None and now.tzinfo is not None:
+        parsed = parsed.astimezone(now.tzinfo)
+    try:
+        return round((now - parsed).total_seconds(), 2)
+    except Exception:
+        return None
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _heartbeat_check(name: str, path: Path, *, max_age_sec: int, process: str) -> CheckResult:
+    data = {"path": str(path), "process": process, "max_age_sec": int(max_age_sec)}
+    if not path.exists():
+        data.update(_warning_meta("heartbeat_missing", accepted=False, action=f"start or inspect {process} heartbeat"))
+        return CheckResult(name, "WARN", f"{process} heartbeat missing", data)
+    payload = _read_json_object(path)
+    data.update(payload)
+    last_tick = payload.get("last_tick_at") or payload.get("updated_at") or payload.get("last_success_at")
+    age = _heartbeat_age_sec(last_tick)
+    data["heartbeat_age_sec"] = age
+    pid = _int_value(payload.get("pid"), 0)
+    data["pid_alive"] = _pid_alive(pid) if pid else False
+    last_error = str(payload.get("last_error") or payload.get("error") or "")
+    if pid and not data["pid_alive"]:
+        data.update(_warning_meta("heartbeat_pid_dead", accepted=False, action=f"restart or inspect {process}"))
+        return CheckResult(name, "WARN", f"{process} heartbeat pid is not alive", data)
+    if last_error:
+        data.update(_warning_meta("heartbeat_error", accepted=False, action=f"inspect {process} last_error"))
+        return CheckResult(name, "WARN", f"{process} heartbeat reports last_error", data)
+    if age is None:
+        data.update(_warning_meta("heartbeat_unparseable", accepted=False, action=f"inspect {process} heartbeat timestamp"))
+        return CheckResult(name, "WARN", f"{process} heartbeat timestamp is unavailable", data)
+    if age > max_age_sec:
+        data.update(_warning_meta("heartbeat_stale", accepted=False, action=f"restart or inspect {process}"))
+        return CheckResult(name, "WARN", f"{process} heartbeat stale age_sec={age}", data)
+    return CheckResult(name, "PASS", f"{process} heartbeat fresh age_sec={age}", data)
+
+
+def _heartbeat_checks(mode: str) -> list[CheckResult]:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    guardian_name = "live_guardian_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_guardian_heartbeat.json"
+    preopen_name = "preopen_scheduler_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_preopen_scheduler_heartbeat.json"
+    guardian_process = "live_guardian" if runtime_mode == "live" else f"{runtime_mode}_guardian"
+    preopen_process = "preopen_scheduler" if runtime_mode == "live" else f"{runtime_mode}_preopen_scheduler"
+    return [
+        _heartbeat_check(
+            f"runtime.{runtime_mode}_guardian_heartbeat",
+            get_runtime_path("state", guardian_name, make_parents=False),
+            max_age_sec=300,
+            process=guardian_process,
+        ),
+        _heartbeat_check(
+            f"runtime.{runtime_mode}_preopen_scheduler_heartbeat",
+            get_runtime_path("state", preopen_name, make_parents=False),
+            max_age_sec=900,
+            process=preopen_process,
+        ),
+    ]
+
+
 def _default_kis_base_url(mode: str) -> str:
     return (
         "https://openapivts.koreainvestment.com:29443"
@@ -1261,10 +1604,28 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
     checks.append(_kr_cap40_confirmation_enforce_check(effective))
     checks.append(_runtime_config_drift_check(config, mode))
-    if effective.get("PATHB_INTRADAY_ONLY", "").lower() != "true":
-        checks.append(CheckResult("config.pathb_intraday_only", "WARN", "Path B is not forced intraday", {"value": effective.get("PATHB_INTRADAY_ONLY")}))
+    if _truthy(effective.get("PATHB_INTRADAY_ONLY")):
+        checks.append(
+            CheckResult(
+                "config.pathb_intraday_only",
+                "WARN",
+                "Path B is forced intraday but current live policy allows hold-days",
+                {
+                    "value": effective.get("PATHB_INTRADAY_ONLY"),
+                    "expected": "false",
+                    **_warning_meta("policy_mismatch", accepted=False, action="set PATHB_INTRADAY_ONLY=false if hold-days policy is approved"),
+                },
+            )
+        )
     else:
-        checks.append(CheckResult("config.pathb_intraday_only", "PASS", "Path B intraday-only is enabled"))
+        checks.append(
+            CheckResult(
+                "config.pathb_intraday_only",
+                "PASS",
+                "Path B hold-days policy is enabled",
+                {"value": effective.get("PATHB_INTRADAY_ONLY"), "expected": "false"},
+            )
+        )
 
     checks.append(_pathb_market_live_gate_check(effective))
 
@@ -1359,8 +1720,10 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     checks.append(
         CheckResult(
             "us.pathb_intraday_only",
-            "PASS" if _truthy(effective.get("PATHB_INTRADAY_ONLY")) else "WARN",
-            "US Path B follows intraday-only policy via shared config" if _truthy(effective.get("PATHB_INTRADAY_ONLY")) else "Path B intraday-only is disabled",
+            "WARN" if _truthy(effective.get("PATHB_INTRADAY_ONLY")) else "PASS",
+            "US Path B is forced intraday despite hold-days policy"
+            if _truthy(effective.get("PATHB_INTRADAY_ONLY"))
+            else "US Path B follows hold-days policy via shared config",
             {"PATHB_INTRADAY_ONLY": effective.get("PATHB_INTRADAY_ONLY")},
         )
     )
@@ -2631,6 +2994,9 @@ def _ops_summary_checks(mode: str) -> list[CheckResult]:
             comparison = pathb.get("path_comparison") or {}
             lifecycle = summary.get("lifecycle") or {}
             broker_truth = summary.get("broker_truth") or {}
+            readiness = pathb.get("readiness") if isinstance(pathb.get("readiness"), dict) else {}
+            live_truth = pathb.get("live_truth_verdict") if isinstance(pathb.get("live_truth_verdict"), dict) else {}
+            capacity = pathb.get("execution_capacity") if isinstance(pathb.get("execution_capacity"), dict) else {}
             unknown = lifecycle.get("order_unknown") or []
             closed = lifecycle.get("closed") or []
             checks.append(
@@ -2647,6 +3013,25 @@ def _ops_summary_checks(mode: str) -> list[CheckResult]:
                     "PASS" if market in (broker_truth.get("markets") or {}) else "FAIL",
                     f"{market} broker truth summary exposed" if market in (broker_truth.get("markets") or {}) else f"{market} broker truth summary missing",
                     {"market_data": (broker_truth.get("markets") or {}).get(market, {})},
+                )
+            )
+            readiness_state = str(readiness.get("state") or "")
+            readiness_status = "WARN" if readiness_state.startswith("BLOCKED_") else "PASS"
+            checks.append(
+                CheckResult(
+                    f"{market.lower()}.pathb_execution_readiness",
+                    readiness_status,
+                    f"{market} Path B readiness={readiness_state or 'missing'}",
+                    {
+                        "readiness": readiness,
+                        "live_truth_verdict": live_truth.get(market, {}),
+                        "execution_capacity": capacity.get(market, {}),
+                        "operator_action": (
+                            "review blocked Path B readiness before expecting live orders"
+                            if readiness_status == "WARN"
+                            else "none"
+                        ),
+                    },
                 )
             )
             checks.append(
@@ -2817,6 +3202,9 @@ def _price_csv_checks() -> list[CheckResult]:
             if value
         }
         summary["active_blocking_issues"] = active_blocking_issues
+        summary["execution_blocking"] = False
+        summary["impact_area"] = "price_history_quality"
+        summary["operator_action"] = "none"
         total = int(summary.get("total", 0))
         fresh_ratio = float(summary.get("fresh_ratio", 0.0))
         freshness_detail = (
@@ -2842,6 +3230,27 @@ def _price_csv_checks() -> list[CheckResult]:
             else "WARN"
             if malformed or missing or ohlc_error_csv or flat_zero_csv or too_few_rows_csv
             else "PASS"
+        )
+        summary["execution_blocking"] = bool(total == 0 or active_blocking_issues)
+        summary["impact_area"] = (
+            "execution_blocking_active_universe"
+            if active_blocking_issues
+            else "execution_blocking_no_price_files"
+            if total == 0
+            else "data_quality_nonblocking"
+            if integrity_status == "WARN"
+            else "healthy"
+        )
+        summary["data_quality_warning"] = integrity_status == "WARN"
+        summary["blocked_if_live_start"] = bool(total == 0 or active_blocking_issues)
+        summary["operator_action"] = (
+            "backfill or repair active-universe price CSV before trusting live execution checks"
+            if active_blocking_issues
+            else "create price CSV history before live execution checks"
+            if total == 0
+            else "schedule data cleanup/backfill; not blocking active execution"
+            if integrity_status == "WARN"
+            else "none"
         )
         checks.append(CheckResult(f"data.price_csv_integrity.{market.lower()}", integrity_status, integrity_detail, summary))
     return checks
@@ -2897,6 +3306,9 @@ def _ml_db_health_checks() -> list[CheckResult]:
         detail = f"{detail}; errors={', '.join(errors)}"
     elif warnings:
         detail = f"{detail}; warnings={', '.join(warnings)}"
+    if status == "WARN":
+        result = dict(result)
+        result.update(_warning_meta("known_data_gap", accepted=True))
     return [CheckResult("ml.decisions_db_health", status, detail, result)]
 
 
@@ -2919,7 +3331,33 @@ def _external_data_readiness_checks(config: dict[str, Any]) -> list[CheckResult]
     data = dict(summary)
     data["required"] = required
     data["data_quality_flags"] = [] if ready else ["external_data_empty"]
+    if not ready and not required:
+        data.update(_warning_meta("accepted_missing_optional_data", accepted=True))
     return [CheckResult("external_data.readiness", status, detail, data)]
+
+
+def _warning_classification_counts(checks: list[CheckResult]) -> dict[str, int]:
+    warnings = [check for check in checks if check.status == "WARN"]
+    accepted = 0
+    action_required = 0
+    data_quality = 0
+    blocked_if_live_start = 0
+    for check in warnings:
+        data = check.data if isinstance(check.data, dict) else {}
+        if bool(data.get("accepted_exception")):
+            accepted += 1
+        if bool(data.get("operator_action_required") or data.get("remediation_required")) and not bool(data.get("accepted_exception")):
+            action_required += 1
+        if bool(data.get("data_quality_warning")) or str(data.get("warning_kind") or "").startswith("data"):
+            data_quality += 1
+        if bool(data.get("blocked_if_live_start")):
+            blocked_if_live_start += 1
+    return {
+        "accepted_warn_count": accepted,
+        "action_required_warn_count": action_required,
+        "data_quality_warn_count": data_quality,
+        "blocked_if_live_start_warn_count": blocked_if_live_start,
+    }
 
 
 def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, include_dashboard: bool = True) -> dict[str, Any]:
@@ -2930,6 +3368,8 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     checks.extend(_db_checks(mode))
     checks.extend(_token_checks(mode))
     checks.extend(_state_checks(config, mode))
+    checks.append(_process_inventory_check(mode))
+    checks.extend(_heartbeat_checks(mode))
     checks.extend(_static_code_checks(config.get("effective", {})))
     checks.extend(_pathb_feature_checks())
     if include_dashboard:
@@ -2942,12 +3382,14 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     checks.extend(_ops_summary_checks(mode))
     fail_count = sum(1 for check in checks if check.status == "FAIL")
     warn_count = sum(1 for check in checks if check.status == "WARN")
+    warning_counts = _warning_classification_counts(checks)
     report = {
         "ok": fail_count == 0,
         "mode": mode,
         "generated_at": _now_kst().isoformat(timespec="seconds"),
         "fail_count": fail_count,
         "warn_count": warn_count,
+        **warning_counts,
         "checks": [asdict(check) for check in checks],
         "effective_config": {
             key: config["effective"].get(key, "")
@@ -2972,6 +3414,8 @@ def _write_report(report: dict[str, Any]) -> tuple[Path, Path]:
         f"- mode: {report['mode']}",
         f"- fail_count: {report['fail_count']}",
         f"- warn_count: {report['warn_count']}",
+        f"- accepted_warn_count: {report.get('accepted_warn_count', 0)}",
+        f"- action_required_warn_count: {report.get('action_required_warn_count', 0)}",
         "",
         "## Checks",
         "",

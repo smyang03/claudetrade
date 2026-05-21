@@ -55,6 +55,41 @@ def _now_kst() -> datetime:
     return datetime.now(KST) if KST is not None else datetime.now()
 
 
+def _guardian_heartbeat_path(mode: str) -> Path:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    name = "live_guardian_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_guardian_heartbeat.json"
+    return ROOT / "state" / name
+
+
+def _write_guardian_heartbeat(
+    mode: str,
+    *,
+    status: str,
+    last_success_at: str = "",
+    last_error: str = "",
+    report_path: str = "",
+) -> None:
+    path = _guardian_heartbeat_path(mode)
+    now = _now_kst().isoformat(timespec="seconds")
+    payload = {
+        "process": "live_guardian",
+        "pid": os.getpid(),
+        "last_started_at": now,
+        "last_tick_at": now,
+        "last_success_at": last_success_at,
+        "last_error_at": now if last_error else "",
+        "last_error": last_error,
+        "next_expected_at": "",
+        "healthy": not bool(last_error) and status != "error",
+        "status": status,
+        "report_path": report_path,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _load_env(mode: str, env_path: str | Path | None = None) -> str:
     try:
         from dotenv import load_dotenv
@@ -350,6 +385,7 @@ def run_guardian_once(
     bot_start_allowed: bool = True,
     bot_start_skip_detail: str = "",
 ) -> dict[str, Any]:
+    _write_guardian_heartbeat(mode, status="running")
     env_loaded = _load_env(mode, env or None)
     preflight = run_preflight(mode, include_dashboard=not skip_dashboard)
     markets = _enabled_markets(preflight)
@@ -422,6 +458,12 @@ def run_guardian_once(
     }
     json_path, md_path = _write_guardian_report(report)
     report["report_paths"] = {"json": str(json_path), "md": str(md_path)}
+    _write_guardian_heartbeat(
+        mode,
+        status="success" if report.get("ok") else "blocked",
+        last_success_at=_now_kst().isoformat(timespec="seconds"),
+        report_path=str(json_path),
+    )
     return report
 
 

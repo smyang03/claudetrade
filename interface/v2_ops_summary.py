@@ -8,6 +8,7 @@ import json
 import os
 
 from interface.bucket_summary import build_bucket_summary
+from bot.session_date import KST
 from config.v2 import DEFAULT_V2_CONFIG
 from learning.approval_queue import BrainApprovalQueue
 from lifecycle.event_store import EventStore
@@ -63,6 +64,35 @@ RUNTIME_DRIFT_KEYS: tuple[str, ...] = (
     "PATHB_FIXED_ORDER_KRW",
 )
 
+PATHB_NO_PLAN_MESSAGES: dict[str, str] = {
+    "NO_TRADE_READY": "Claude selection is all watch_only; no Path B live entry candidate is ready.",
+    "PRICE_TARGETS_EMPTY": "trade_ready exists but price_targets are empty, so Path B cannot register plans.",
+    "MISSING_PRICE_TARGETS": "some trade_ready tickers are missing price_targets.",
+    "PATHB_OPERATOR_DISABLED": "Path B operator control is disabled.",
+    "PATHB_CONFIG_DISABLED": "Path B config is disabled.",
+    "PATHB_EMERGENCY_DISABLED": "Path B emergency disable is active.",
+    "NO_SELECTION_FILE": "selection/judgment snapshot is missing for this market session.",
+    "NO_WATCHLIST": "selection snapshot has no watchlist tickers.",
+    "ALL_TRADE_READY_FILTERED": "raw trade_ready tickers were filtered before runtime application.",
+    "NO_PATH_RUN_REGISTERED": "trade_ready and price_targets exist but no Path B run has been registered yet.",
+    "MARKET_NOT_SELECTED": "select KR or US to inspect Path B selection state.",
+}
+
+PATHB_NO_PLAN_ACTION_REQUIRED: set[str] = {
+    "PRICE_TARGETS_EMPTY",
+    "MISSING_PRICE_TARGETS",
+    "PATHB_OPERATOR_DISABLED",
+    "PATHB_CONFIG_DISABLED",
+    "PATHB_EMERGENCY_DISABLED",
+    "NO_SELECTION_FILE",
+    "NO_WATCHLIST",
+    "ALL_TRADE_READY_FILTERED",
+    "NO_PATH_RUN_REGISTERED",
+    "CANDIDATE_ACTIONS_MISSING_CONTRACT",
+    "SELECTION_TRUNCATED",
+    "SELECTION_PARSE_FAILED",
+}
+
 
 def build_v2_ops_summary(
     *,
@@ -92,6 +122,7 @@ def build_v2_ops_summary(
     pending_orders = _pending_orders_from_bot(bot)
     brain_pending = BrainApprovalQueue().read_all()
     latest_review = _latest_daily_review(runtime_key)
+    live_truth_verdict = _broker_truth_verdict(broker_truth)
 
     return {
         "ok": True,
@@ -118,6 +149,7 @@ def build_v2_ops_summary(
             },
         },
         "broker_truth": broker_truth,
+        "live_truth_verdict": live_truth_verdict,
         "claude_picks": _claude_picks(events),
         "entry_timing": build_entry_timing_summary(
             market=market_key,
@@ -132,6 +164,7 @@ def build_v2_ops_summary(
             session_key,
             events=events,
             broker_truth=broker_truth,
+            live_truth_verdict=live_truth_verdict,
         ),
         "lifecycle": {
             "event_counts": dict(counts),
@@ -198,6 +231,39 @@ def _broker_truth_summary(runtime_mode: str | None) -> dict[str, Any]:
             for market in ("KR", "US")
         },
     }
+
+
+def _broker_truth_verdict(broker_truth: dict[str, Any] | None) -> dict[str, Any]:
+    markets = broker_truth.get("markets") if isinstance(broker_truth, dict) and isinstance(broker_truth.get("markets"), dict) else {}
+    verdict: dict[str, Any] = {}
+    for market in ("KR", "US"):
+        data = markets.get(market) if isinstance(markets.get(market), dict) else {}
+        missing = bool(data.get("missing", True))
+        stale = bool(data.get("stale", True))
+        error = str(data.get("error", "") or "")
+        positions = data.get("positions") if isinstance(data.get("positions"), list) else []
+        open_orders = data.get("open_orders") if isinstance(data.get("open_orders"), list) else []
+        fills = data.get("today_fills") if isinstance(data.get("today_fills"), list) else []
+        fresh = not missing and not stale and not error
+        trusted = fresh
+        if fresh:
+            message = f"broker truth: positions={len(positions)}, open_orders={len(open_orders)}"
+        else:
+            message = "broker truth needs refresh/reconcile before treating local state as current"
+        verdict[market] = {
+            "trusted": trusted,
+            "fresh": fresh,
+            "missing": missing,
+            "stale": stale,
+            "error": error,
+            "positions": len(positions),
+            "open_orders": len(open_orders),
+            "today_fills": len(fills),
+            "last_success_at": data.get("last_success_at", ""),
+            "last_attempt_at": data.get("last_attempt_at", ""),
+            "operator_message": message,
+        }
+    return verdict
 
 
 def _account_from_bot(bot: Any | None) -> dict[str, Any]:
@@ -351,6 +417,7 @@ def _path_b_live_summary(
     session_date: str,
     events: list[dict[str, Any]] | None = None,
     broker_truth: dict[str, Any] | None = None,
+    live_truth_verdict: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     markets = [market] if market else ["KR", "US"]
     modes = [runtime_mode] if runtime_mode else ["live", "paper"]
@@ -383,23 +450,48 @@ def _path_b_live_summary(
     consistency_health = _path_b_consistency_health(pathb_runs, events or [], broker_truth)
     config = _path_b_config(runtime_mode)
     control = _path_b_control_state(runtime_mode)
+    run_counts = _path_b_run_counts(store, markets, modes, session_date)
+    capacity = _path_b_execution_capacity(
+        broker_truth or {},
+        config,
+        pathb_runs,
+        markets=markets,
+        session_date=session_date,
+    )
+    selection = _path_b_selection_snapshot(
+        market=market,
+        runtime_mode=runtime_mode,
+        session_date=session_date,
+        pathb_runs=pathb_runs,
+        config=config,
+        control=control,
+        name_map=name_map,
+    )
+    readiness = _path_b_execution_readiness(
+        market=market,
+        session_date=session_date,
+        selection=selection,
+        config=config,
+        control=control,
+        broker_truth=broker_truth or {},
+        live_truth_verdict=live_truth_verdict or _broker_truth_verdict(broker_truth or {}),
+        execution_capacity=capacity,
+        pathb_runs=pathb_runs,
+        runtime_mode=runtime_mode,
+    )
     return {
         "config": config,
         "control": control,
+        "live_truth_verdict": live_truth_verdict or _broker_truth_verdict(broker_truth or {}),
+        "execution_capacity": capacity,
+        "run_counts": run_counts,
+        "readiness": readiness,
         "runs": len(pathb_runs),
         "metrics": metrics,
         "path_comparison": comparison,
         "consistency_health": consistency_health,
         "charts": _path_b_charts(pathb_runs, metrics),
-        "selection": _path_b_selection_snapshot(
-            market=market,
-            runtime_mode=runtime_mode,
-            session_date=session_date,
-            pathb_runs=pathb_runs,
-            config=config,
-            control=control,
-            name_map=name_map,
-        ),
+        "selection": selection,
         "active": _compact_path_runs(active, name_map=name_map, broker_truth=broker_truth),
         "recent": _compact_path_runs(pathb_runs, name_map=name_map, broker_truth=broker_truth),
         "order_unknown": _compact_path_runs(unknown, name_map=name_map, broker_truth=broker_truth),
@@ -424,11 +516,16 @@ def _path_b_selection_snapshot(
 ) -> dict[str, Any]:
     market_key = str(market or "").upper()
     if not market_key:
+        no_plan = _pathb_no_plan_summary(["MARKET_NOT_SELECTED"])
         return {
             "market": "ALL",
             "counts": {},
             "watch_rows": [],
             "no_plan_reasons": ["MARKET_NOT_SELECTED"],
+            "no_plan_primary_reason": no_plan["primary_reason"],
+            "no_plan_messages": no_plan["messages"],
+            "no_plan_summary": no_plan["summary"],
+            "no_plan_action_required": no_plan["action_required"],
             "message": "Select KR or US to inspect Path B selection state.",
         }
 
@@ -550,9 +647,11 @@ def _path_b_selection_snapshot(
             }
         )
 
+    no_plan = _pathb_no_plan_summary(_unique_list(no_plan_reasons))
     return {
         "market": market_key,
         "judgment_file": rec.get("_source_file", ""),
+        "judgment_snapshot": _judgment_snapshot(market_key, session_date, rec),
         "fallback_mode": str(meta.get("_fallback_mode", "") or ""),
         "parse_recovered": bool(meta.get("_parse_recovered", False)),
         "counts": {
@@ -586,6 +685,10 @@ def _path_b_selection_snapshot(
         "missing_price_targets": missing_applied,
         "missing_price_targets_raw": missing_raw,
         "no_plan_reasons": _unique_list(no_plan_reasons),
+        "no_plan_primary_reason": no_plan["primary_reason"],
+        "no_plan_messages": no_plan["messages"],
+        "no_plan_summary": no_plan["summary"],
+        "no_plan_action_required": no_plan["action_required"],
         "selection_raw_schema": str(meta.get("_selection_raw_schema") or ""),
         "selection_schema_version": str(meta.get("_selection_schema_version") or ""),
         "selection_stop_reason": str(meta.get("_selection_stop_reason") or ""),
@@ -595,6 +698,49 @@ def _path_b_selection_snapshot(
         "adaptive_live_condition": adaptive,
         "live_evidence": {key: value for key, value in live_evidence.items() if key != "packs"},
         "watch_rows": watch_rows,
+    }
+
+
+def _pathb_no_plan_summary(reasons: list[str]) -> dict[str, Any]:
+    unique = _unique_list(reasons)
+    primary = unique[0] if unique else ""
+    messages = [PATHB_NO_PLAN_MESSAGES.get(reason, reason) for reason in unique]
+    return {
+        "primary_reason": primary,
+        "messages": messages,
+        "summary": messages[0] if messages else "",
+        "action_required": any(reason in PATHB_NO_PLAN_ACTION_REQUIRED for reason in unique),
+    }
+
+
+def _judgment_snapshot(market: str, session_date: str, rec: dict[str, Any]) -> dict[str, Any]:
+    source_file = str(rec.get("_source_file", "") or "")
+    consensus = rec.get("consensus") if isinstance(rec.get("consensus"), dict) else {}
+    meta = rec.get("selection_meta") if isinstance(rec.get("selection_meta"), dict) else {}
+    file_session = str(rec.get("date") or rec.get("session_date") or session_date or "")[:10]
+    generated_at = (
+        str(rec.get("generated_at") or rec.get("created_at") or rec.get("updated_at") or "")
+        or str(meta.get("generated_at") or meta.get("created_at") or meta.get("updated_at") or "")
+    )
+    if not generated_at and source_file:
+        try:
+            generated_at = datetime.fromtimestamp(Path(source_file).stat().st_mtime, tz=KST).isoformat(timespec="seconds")
+        except Exception:
+            generated_at = ""
+    market_mode = str(consensus.get("mode") or rec.get("market_mode") or "")
+    new_buy_permission = str(consensus.get("new_buy_permission") or rec.get("new_buy_permission") or "")
+    session_match = bool(file_session == str(session_date or "")[:10])
+    stale_reason = "" if session_match else "session_date_mismatch"
+    return {
+        "market": str(market or "").upper(),
+        "session_date": str(session_date or "")[:10],
+        "source_file": source_file,
+        "generated_at": generated_at,
+        "market_mode": market_mode,
+        "new_buy_permission": new_buy_permission,
+        "selection_snapshot_fresh": bool(rec) and session_match,
+        "session_match": session_match,
+        "stale_reason": stale_reason,
     }
 
 
@@ -1264,19 +1410,342 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _env_bool_default(env: dict[str, str], key: str, default: bool) -> bool:
+    raw = env.get(key)
+    if raw is None or str(raw).strip() == "":
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _coerce_config_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _pathb_market_live_gate_detail(env: dict[str, str], market: str, runtime_mode: str | None) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    primary = f"PATHB_{market_key}_LIVE_ENABLED"
+    legacy = f"{market_key}_CLAUDE_PRICE_LIVE_ENABLED"
+    legacy_present = legacy in env
+    if str(runtime_mode or "").lower() == "paper":
+        return {
+            "effective": True,
+            "source_key": "paper_runtime",
+            "source_value": "",
+            "legacy_key": legacy,
+            "legacy_value": str(env.get(legacy, "")),
+            "legacy_shadowed": False,
+        }
+    if primary in env:
+        return {
+            "effective": _env_bool_default(env, primary, True),
+            "source_key": primary,
+            "source_value": str(env.get(primary, "")),
+            "legacy_key": legacy,
+            "legacy_value": str(env.get(legacy, "")),
+            "legacy_shadowed": legacy_present,
+        }
+    return {
+        "effective": _env_bool_default(env, legacy, True),
+        "source_key": legacy,
+        "source_value": str(env.get(legacy, "")),
+        "legacy_key": legacy,
+        "legacy_value": str(env.get(legacy, "")),
+        "legacy_shadowed": False,
+    }
+
+
 def _path_b_config(runtime_mode: str | None = None) -> dict[str, Any]:
     env, source = _effective_runtime_env(runtime_mode)
     cfg = DEFAULT_V2_CONFIG
+    usd_krw = _env_float(env, "USD_KRW_RATE", 1350.0)
+    us_fixed_default = cfg.us_fixed_order_krw or int(float(cfg.us_fixed_order_usd) * usd_krw)
+    us_min_default = cfg.us_min_order_krw or int(float(cfg.us_min_order_usd) * usd_krw)
+    fixed_order_krw = _env_int(env, "PATHB_FIXED_ORDER_KRW", cfg.pathb_fixed_order_krw)
+    market_live_gate_source = {
+        market: _pathb_market_live_gate_detail(env, market, runtime_mode)
+        for market in ("KR", "US")
+    }
     return {
         "enabled": _env_bool(env, "PATHB_ENABLED", cfg.pathb_enabled),
         "mode": str(env.get("PATHB_MODE", cfg.pathb_mode) or cfg.pathb_mode),
-        "fixed_order_krw": _env_int(env, "PATHB_FIXED_ORDER_KRW", cfg.pathb_fixed_order_krw),
+        "fixed_order_krw": fixed_order_krw,
+        "fixed_order_krw_by_market": {
+            "KR": _env_int(env, "KR_FIXED_ORDER_KRW", fixed_order_krw),
+            "US": _env_int(env, "US_FIXED_ORDER_KRW", us_fixed_default) or fixed_order_krw,
+        },
+        "min_order_krw_by_market": {
+            "KR": _env_int(env, "KR_MIN_ORDER_KRW", cfg.kr_min_order_krw),
+            "US": _env_int(env, "US_MIN_ORDER_KRW", us_min_default) or us_min_default,
+        },
         "max_positions": _env_int(env, "PATHB_MAX_POSITIONS", cfg.pathb_max_positions),
         "max_daily_entries": _env_int(env, "PATHB_MAX_DAILY_ENTRIES", cfg.pathb_max_daily_entries),
+        "daily_entry_cap_by_market": {
+            "KR": _env_int(env, "KR_DAILY_ENTRY_CAP", _env_int(env, "PATHB_MAX_DAILY_ENTRIES", cfg.pathb_max_daily_entries)),
+            "US": _env_int(env, "US_DAILY_ENTRY_CAP", _env_int(env, "PATHB_MAX_DAILY_ENTRIES", cfg.pathb_max_daily_entries)),
+        },
         "min_confidence": _env_float(env, "PATHB_MIN_CONFIDENCE", cfg.pathb_min_confidence),
         "intraday_only": _env_bool(env, "PATHB_INTRADAY_ONLY", cfg.pathb_intraday_only),
         "emergency_disable": _env_bool(env, "PATHB_EMERGENCY_DISABLE", cfg.pathb_emergency_disable),
+        "usd_krw": usd_krw,
+        "market_live_enabled": {market: bool(detail.get("effective")) for market, detail in market_live_gate_source.items()},
+        "market_live_gate_source": market_live_gate_source,
         "source": source,
+    }
+
+
+def _is_shadow_pathb_run(run: dict[str, Any]) -> bool:
+    status = str(run.get("status", "") or "").upper()
+    plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+    return status.startswith("SHADOW") or bool(plan.get("shadow") or plan.get("shadow_only") or plan.get("dry_run"))
+
+
+def _path_b_run_counts(store: EventStore, markets: list[str], modes: list[str], session_date: str) -> dict[str, Any]:
+    buckets: dict[str, list[dict[str, Any]]] = {
+        "current_live": [],
+        "current_shadow": [],
+        "historical_live": [],
+        "historical_shadow": [],
+        "current_paper": [],
+    }
+    for market in markets:
+        for mode in modes:
+            try:
+                rows = store.path_runs_for_session(market=market, runtime_mode=mode, path_type="claude_price")
+            except Exception:
+                rows = []
+            for row in rows:
+                current = str(row.get("session_date", "") or "") == str(session_date or "")
+                shadow = _is_shadow_pathb_run(row)
+                mode_key = str(row.get("runtime_mode", mode) or mode).lower()
+                if mode_key == "paper" and current:
+                    buckets["current_paper"].append(row)
+                elif current and shadow:
+                    buckets["current_shadow"].append(row)
+                elif current:
+                    buckets["current_live"].append(row)
+                elif shadow:
+                    buckets["historical_shadow"].append(row)
+                else:
+                    buckets["historical_live"].append(row)
+
+    def compact(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        status_counts = Counter(str(row.get("status", "") or "UNKNOWN") for row in rows)
+        return {"total": len(rows), "status_counts": dict(status_counts)}
+
+    return {key: compact(value) for key, value in buckets.items()}
+
+
+def _path_b_execution_capacity(
+    broker_truth: dict[str, Any],
+    config: dict[str, Any],
+    pathb_runs: list[dict[str, Any]],
+    *,
+    markets: list[str],
+    session_date: str,
+) -> dict[str, Any]:
+    market_payload = broker_truth.get("markets") if isinstance(broker_truth.get("markets"), dict) else {}
+    fixed_by_market = config.get("fixed_order_krw_by_market") if isinstance(config.get("fixed_order_krw_by_market"), dict) else {}
+    min_by_market = config.get("min_order_krw_by_market") if isinstance(config.get("min_order_krw_by_market"), dict) else {}
+    cap_by_market = config.get("daily_entry_cap_by_market") if isinstance(config.get("daily_entry_cap_by_market"), dict) else {}
+    usd_krw = float(config.get("usd_krw") or 1350.0)
+    entered_statuses = {"ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED", "FILLED", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED", "CLOSED"}
+    out: dict[str, Any] = {}
+    for market in markets:
+        market_key = str(market or "").upper()
+        data = market_payload.get(market_key) if isinstance(market_payload.get(market_key), dict) else {}
+        account = data.get("account_summary") if isinstance(data.get("account_summary"), dict) else {}
+        orderable_native = float(_to_float(account.get("orderable_cash")) or 0.0)
+        orderable_krw = orderable_native * usd_krw if market_key == "US" else orderable_native
+        fixed_order = int(_to_float(fixed_by_market.get(market_key)) or _to_float(config.get("fixed_order_krw")) or 0)
+        min_order = int(_to_float(min_by_market.get(market_key)) or 0)
+        current_positions = len(data.get("positions") if isinstance(data.get("positions"), list) else [])
+        open_orders = len(data.get("open_orders") if isinstance(data.get("open_orders"), list) else [])
+        max_positions = int(config.get("max_positions") or 0)
+        daily_cap = int(_to_float(cap_by_market.get(market_key)) or _to_float(config.get("max_daily_entries")) or 0)
+        current_daily_entries = sum(
+            1
+            for run in pathb_runs
+            if str(run.get("market", "") or "").upper() == market_key
+            and str(run.get("session_date", "") or "") == str(session_date or "")
+            and str(run.get("status", "") or "") in entered_statuses
+        )
+        max_fixed = int(orderable_krw // fixed_order) if fixed_order > 0 else 0
+        remaining_daily = max(0, daily_cap - current_daily_entries)
+        open_slots = max(0, max_positions - current_positions)
+        out[market_key] = {
+            "currency": "USD" if market_key == "US" else "KRW",
+            "orderable_cash_native": round(orderable_native, 4),
+            "orderable_cash_krw": round(orderable_krw, 2),
+            "fixed_order_krw": fixed_order,
+            "min_order_krw": min_order,
+            "max_affordable_fixed_orders": max_fixed,
+            "min_order_possible": bool(min_order > 0 and orderable_krw >= min_order),
+            "current_positions": current_positions,
+            "broker_open_orders": open_orders,
+            "max_positions": max_positions,
+            "open_position_slots": open_slots,
+            "current_daily_entries": current_daily_entries,
+            "remaining_daily_entries": remaining_daily,
+            "daily_entry_cap": daily_cap,
+            "daily_cap_cash_feasible": bool(daily_cap > 0 and max_fixed >= daily_cap),
+            "operator_message": (
+                f"orderable cash allows fixed orders={max_fixed}; daily cap={daily_cap} is an upper limit, not cash capacity"
+            ),
+        }
+    return out
+
+
+def _path_b_market_session_state(market: str, session_date: str) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    now_dt = datetime.now(KST)
+    try:
+        from preopen.scheduler import is_trading_day, regular_close_dt, regular_open_dt
+
+        trading_day = bool(is_trading_day(market_key, session_date))
+        opened = regular_open_dt(market_key, session_date) if trading_day else None
+        closed = regular_close_dt(market_key, session_date) if trading_day else None
+        active = bool(opened is not None and closed is not None and opened <= now_dt <= closed)
+        if not trading_day:
+            state = "inactive"
+            reason = "not_trading_day"
+        elif active:
+            state = "active"
+            reason = ""
+        elif opened is not None and now_dt < opened:
+            state = "inactive"
+            reason = "before_open"
+        else:
+            state = "inactive"
+            reason = "after_close"
+        return {
+            "state": state,
+            "reason": reason,
+            "now": now_dt.isoformat(timespec="seconds"),
+            "regular_open_at": opened.isoformat(timespec="seconds") if opened else "",
+            "regular_close_at": closed.isoformat(timespec="seconds") if closed else "",
+            "calendar_source": "exchange_calendars",
+        }
+    except Exception:
+        return {
+            "state": "unknown",
+            "reason": "calendar_unavailable",
+            "now": now_dt.isoformat(timespec="seconds"),
+            "regular_open_at": "",
+            "regular_close_at": "",
+            "calendar_source": "fallback_failed",
+        }
+
+
+def _kr_confirmation_hard_veto_ready(config_source: dict[str, Any]) -> bool:
+    values = ((config_source or {}).get("source") or {}).get("runtime_snapshot") or {}
+    effective = values.get("effective") if isinstance(values.get("effective"), dict) else {}
+    if not effective:
+        return True
+    cap = int(_to_float(effective.get("KR_DAILY_ENTRY_CAP")) or 0)
+    enabled = str(effective.get("KR_CONFIRMATION_GATE_ENABLED", "")).lower() in {"1", "true", "yes", "y", "on"}
+    shadow = str(effective.get("KR_CONFIRMATION_GATE_SHADOW", "")).lower() in {"1", "true", "yes", "y", "on"}
+    mode = str(effective.get("KR_CONFIRMATION_GATE_MODE", "") or "").upper()
+    return not (cap >= 40 and (not enabled or shadow or mode != "FAST_TRIGGER_WITH_HARD_VETO"))
+
+
+def _path_b_intraday_only_from_config(config: dict[str, Any], runtime_mode: str | None) -> bool:
+    raw = config.get("intraday_only") if isinstance(config, dict) else None
+    if raw is not None:
+        return _coerce_config_bool(raw, DEFAULT_V2_CONFIG.pathb_intraday_only)
+    try:
+        effective_config = _path_b_config(runtime_mode)
+    except Exception:
+        effective_config = {}
+    return _coerce_config_bool(
+        effective_config.get("intraday_only") if isinstance(effective_config, dict) else None,
+        DEFAULT_V2_CONFIG.pathb_intraday_only,
+    )
+
+
+def _path_b_execution_readiness(
+    *,
+    market: str | None,
+    session_date: str,
+    selection: dict[str, Any],
+    config: dict[str, Any],
+    control: dict[str, Any],
+    broker_truth: dict[str, Any],
+    live_truth_verdict: dict[str, Any],
+    execution_capacity: dict[str, Any],
+    pathb_runs: list[dict[str, Any]],
+    runtime_mode: str | None = None,
+) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    if market_key not in {"KR", "US"}:
+        return {"state": "MARKET_NOT_SELECTED", "operator_action_required": False}
+    counts = selection.get("counts") if isinstance(selection.get("counts"), dict) else {}
+    truth = live_truth_verdict.get(market_key) if isinstance(live_truth_verdict.get(market_key), dict) else {}
+    capacity = execution_capacity.get(market_key) if isinstance(execution_capacity.get(market_key), dict) else {}
+    session = _path_b_market_session_state(market_key, session_date)
+    trade_ready_count = int(counts.get("applied_trade_ready") or 0)
+    price_targets_count = int(counts.get("price_targets") or 0)
+    watchlist_count = int(counts.get("watchlist") or 0)
+    registered_live_plans = sum(1 for run in pathb_runs if str(run.get("market", "") or "").upper() == market_key and not _is_shadow_pathb_run(run))
+    broker_open_orders = int(truth.get("open_orders") or 0)
+    broker_position_count = int(truth.get("positions") or 0)
+    intraday_only = _path_b_intraday_only_from_config(config, runtime_mode)
+    live_gate = ((config.get("market_live_enabled") or {}).get(market_key) if isinstance(config.get("market_live_enabled"), dict) else True)
+    known_blockers: list[str] = []
+    next_gate_checks = ["price_in_buy_zone", "affordability", "risk", "confirmation_gate"]
+    state = "READY_WAITING_BUY_ZONE"
+    quote_state = "quote_not_checked_read_only"
+
+    if not bool(config.get("enabled", False)) or not bool(control.get("enabled", True)) or bool(config.get("emergency_disable", False)) or bool(control.get("emergency_disabled", False)) or not bool(live_gate):
+        state = "BLOCKED_CONFIG_OR_CONTROL"
+        known_blockers.append(state)
+    elif not bool(truth.get("trusted")) or not bool(truth.get("fresh")):
+        state = "BLOCKED_BROKER_TRUTH"
+        known_blockers.append(state)
+    elif str(session.get("state")) != "active":
+        if intraday_only:
+            state = "IDLE_MARKET_CLOSED"
+        elif broker_position_count > 0 or broker_open_orders > 0:
+            state = "HOLDING_OVERNIGHT"
+        else:
+            state = "IDLE_MARKET_CLOSED_OVERNIGHT_ALLOWED"
+        quote_state = "not_checked_market_inactive"
+    elif trade_ready_count <= 0:
+        state = "IDLE_NO_TRADE_READY"
+        quote_state = "not_required_no_trade_ready"
+    elif price_targets_count <= 0 or selection.get("missing_price_targets"):
+        state = "BLOCKED_MISSING_PRICE_TARGETS"
+        known_blockers.append(state)
+    elif not bool(capacity.get("min_order_possible", True)):
+        state = "BLOCKED_AFFORDABILITY"
+        known_blockers.append(state)
+    elif market_key == "KR" and not _kr_confirmation_hard_veto_ready(config):
+        state = "BLOCKED_CONFIRMATION_GATE"
+        known_blockers.append(state)
+    elif registered_live_plans <= 0:
+        state = "READY_WAITING_BUY_ZONE"
+    else:
+        state = "WAITING_QUOTE_OR_BUY_ZONE"
+
+    return {
+        "state": state,
+        "watchlist_count": watchlist_count,
+        "trade_ready_count": trade_ready_count,
+        "price_targets_count": price_targets_count,
+        "registered_live_plans": registered_live_plans,
+        "broker_open_orders": broker_open_orders,
+        "market_session_state": session.get("state", "unknown"),
+        "market_session": session,
+        "pathb_intraday_only": intraday_only,
+        "broker_position_count": broker_position_count,
+        "quote_state": quote_state,
+        "known_blockers": known_blockers,
+        "next_gate_checks": next_gate_checks,
+        "operator_action_required": state.startswith("BLOCKED_"),
+        "broker_truth": truth,
     }
 
 
@@ -1357,8 +1826,15 @@ def _effective_runtime_env(runtime_mode: str | None) -> tuple[dict[str, str], di
         "PATHB_ENABLED",
         "PATHB_KR_LIVE_ENABLED",
         "PATHB_US_LIVE_ENABLED",
+        "KR_CLAUDE_PRICE_LIVE_ENABLED",
+        "US_CLAUDE_PRICE_LIVE_ENABLED",
         "PATHB_INTRADAY_ONLY",
         "PATHB_MIN_CONFIDENCE",
+        "KR_FIXED_ORDER_KRW",
+        "US_FIXED_ORDER_KRW",
+        "KR_MIN_ORDER_KRW",
+        "US_MIN_ORDER_KRW",
+        "USD_KRW_RATE",
         "V2_MAX_DAILY_ENTRIES",
         "KR_DAILY_ENTRY_CAP",
         "US_DAILY_ENTRY_CAP",

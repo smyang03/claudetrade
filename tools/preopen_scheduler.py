@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -19,11 +20,50 @@ from preopen.storage import (
     load_preopen_scheduler_state,
     save_preopen_scheduler_event,
     save_preopen_scheduler_state,
+    scheduler_state_path,
 )
 
 
 def _now_iso() -> str:
     return datetime.now(KST).isoformat(timespec="seconds")
+
+
+def _scheduler_heartbeat_path(mode: str) -> Path:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    name = "preopen_scheduler_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_preopen_scheduler_heartbeat.json"
+    return scheduler_state_path(runtime_mode).with_name(name)
+
+
+def _write_scheduler_heartbeat(
+    mode: str,
+    *,
+    interval_sec: int,
+    status: str,
+    last_success_at: str = "",
+    last_error: str = "",
+    last_job: dict[str, Any] | None = None,
+) -> None:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    now_dt = datetime.now(KST)
+    path = _scheduler_heartbeat_path(runtime_mode)
+    payload = {
+        "process": "preopen_scheduler",
+        "pid": os.getpid(),
+        "mode": runtime_mode,
+        "last_started_at": now_dt.isoformat(timespec="seconds"),
+        "last_tick_at": now_dt.isoformat(timespec="seconds"),
+        "last_success_at": last_success_at,
+        "last_error_at": now_dt.isoformat(timespec="seconds") if last_error else "",
+        "last_error": last_error,
+        "next_expected_at": (now_dt + timedelta(seconds=max(10, int(interval_sec or 60)))).isoformat(timespec="seconds"),
+        "healthy": not bool(last_error) and status != "error",
+        "status": status,
+        "last_job": last_job or {},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _tail(text: str, limit: int = 900) -> str:
@@ -150,6 +190,7 @@ def run_scheduler_once(
     now_dt: datetime | None = None,
 ) -> dict[str, Any]:
     runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    _write_scheduler_heartbeat(runtime_mode, interval_sec=interval_sec, status="running")
     state = load_preopen_scheduler_state(runtime_mode) or {}
     state.setdefault("mode", runtime_mode)
     state.setdefault("started_at", _now_iso())
@@ -183,8 +224,16 @@ def run_scheduler_once(
             "dry_run": bool(dry_run),
         })
         save_preopen_scheduler_state(runtime_mode, _trim_state(state))
+        _write_scheduler_heartbeat(
+            runtime_mode,
+            interval_sec=interval_sec,
+            status="idle",
+            last_success_at=_now_iso(),
+        )
         return summary
 
+    last_job_record: dict[str, Any] = {}
+    last_error = ""
     for job in jobs:
         started_at = _now_iso()
         _record_event(runtime_mode, state, {
@@ -209,6 +258,9 @@ def run_scheduler_once(
             "command": result["command"],
         }
         state["runs"][job.job_id] = run_record
+        last_job_record = run_record
+        if str(result["status"]) not in {"success", "dry_run"}:
+            last_error = str(result.get("stderr") or result.get("status") or "job_failed")
         event_name = {
             "success": "job_success",
             "dry_run": "job_dry_run",
@@ -228,6 +280,14 @@ def run_scheduler_once(
         summary["ran"] += 1
 
     save_preopen_scheduler_state(runtime_mode, _trim_state(state))
+    _write_scheduler_heartbeat(
+        runtime_mode,
+        interval_sec=interval_sec,
+        status="success" if not last_error else "error",
+        last_success_at=_now_iso() if not last_error else "",
+        last_error=last_error,
+        last_job=last_job_record,
+    )
     return summary
 
 
