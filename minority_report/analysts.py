@@ -818,10 +818,10 @@ def _candidate_trainer_hint(candidate: dict) -> str:
 
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
     if market == "US":
-        hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "32"))
+        hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "35"))
         watch_margin = 4
     else:
-        hard_cap = int(os.getenv("KR_SELECTION_PROMPT_CAP", "28"))
+        hard_cap = int(os.getenv("KR_SELECTION_PROMPT_CAP", "32"))
         watch_margin = 8
     target = max(trade_max + 8, min(watch_max + watch_margin, hard_cap))
     return max(trade_max, min(target, hard_cap))
@@ -943,7 +943,7 @@ def _trainer_prompt_target(market: str, fallback: int) -> int:
 
 def _trainer_prompt_hard_cap(market: str, fallback: int) -> int:
     market_key = str(market or "").upper()
-    policy_default = 32 if market_key == "US" else 28
+    policy_default = 35 if market_key == "US" else 32
     return _env_int_bound(
         f"CANDIDATE_PROMPT_POOL_HARD_CAP_{market_key}",
         _env_int_bound(f"{market_key}_PROMPT_POOL_CAP", policy_default, 1, 100),

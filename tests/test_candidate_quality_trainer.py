@@ -216,21 +216,21 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertEqual(excluded["BAD"], "trainer_quarantine")
         self.assertEqual(excluded["MID"], "prompt_cap")
 
-    def test_kr_prompt_pool_default_and_config_cap_follow_policy_28(self) -> None:
+    def test_kr_prompt_pool_default_and_config_cap_follow_policy_32(self) -> None:
         candidates = [
             {"ticker": f"{idx:06d}", "market": "KR", "primary_bucket": "liquidity_leader", "liquidity_bucket": "mid"}
             for idx in range(40)
         ]
 
         default_result = build_trainer_prompt_pool(candidates, market="KR", target=30, reorder_enabled=True)
-        capped_result = build_trainer_prompt_pool(candidates, market="KR", target=30, hard_cap=28, reorder_enabled=True)
+        capped_result = build_trainer_prompt_pool(candidates, market="KR", target=30, hard_cap=32, reorder_enabled=True)
 
-        self.assertEqual(default_result["hard_cap"], 28)
-        self.assertEqual(len(default_result["prompt_pool"]), 28)
-        self.assertEqual(capped_result["hard_cap"], 28)
-        self.assertEqual(len(capped_result["prompt_pool"]), 28)
+        self.assertEqual(default_result["hard_cap"], 32)
+        self.assertEqual(len(default_result["prompt_pool"]), 32)
+        self.assertEqual(capped_result["hard_cap"], 32)
+        self.assertEqual(len(capped_result["prompt_pool"]), 32)
 
-    def test_us_prompt_pool_default_cap_follows_policy_32(self) -> None:
+    def test_us_prompt_pool_default_cap_follows_policy_35(self) -> None:
         candidates = [
             {"ticker": f"T{idx}", "market": "US", "primary_bucket": "momentum_now", "liquidity_bucket": "high"}
             for idx in range(40)
@@ -238,25 +238,25 @@ class CandidateQualityTrainerTests(unittest.TestCase):
 
         result = build_trainer_prompt_pool(candidates, market="US", target=30, reorder_enabled=True)
 
-        self.assertEqual(result["hard_cap"], 32)
-        self.assertEqual(len(result["prompt_pool"]), 32)
+        self.assertEqual(result["hard_cap"], 35)
+        self.assertEqual(len(result["prompt_pool"]), 35)
         self.assertTrue(
             all(row["prompt_excluded_reason"] == "hard_cap_cutoff" for row in result["excluded_from_prompt"])
         )
 
-    def test_legacy_kr_selection_candidate_cap_defaults_to_28(self) -> None:
+    def test_legacy_kr_selection_candidate_cap_defaults_to_32(self) -> None:
         from minority_report import analysts
 
         with patch.dict("os.environ", {}, clear=True):
-            self.assertEqual(analysts._selection_candidate_cap("KR", watch_max=80, trade_max=5), 28)
+            self.assertEqual(analysts._selection_candidate_cap("KR", watch_max=80, trade_max=5), 32)
 
-    def test_legacy_us_selection_candidate_cap_defaults_to_32(self) -> None:
+    def test_legacy_us_selection_candidate_cap_defaults_to_35(self) -> None:
         from minority_report import analysts
 
         with patch.dict("os.environ", {}, clear=True):
-            self.assertEqual(analysts._selection_candidate_cap("US", watch_max=80, trade_max=5), 32)
-            self.assertEqual(analysts._trainer_prompt_hard_cap("KR", fallback=30), 28)
-            self.assertEqual(analysts._trainer_prompt_hard_cap("US", fallback=30), 32)
+            self.assertEqual(analysts._selection_candidate_cap("US", watch_max=80, trade_max=5), 35)
+            self.assertEqual(analysts._trainer_prompt_hard_cap("KR", fallback=30), 32)
+            self.assertEqual(analysts._trainer_prompt_hard_cap("US", fallback=30), 35)
 
     def test_live_config_caps_selection_full_evidence_at_five(self) -> None:
         config_path = Path(__file__).resolve().parents[1] / "config" / "v2_start_config.json"

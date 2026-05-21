@@ -197,7 +197,7 @@ def build_trainer_prompt_pool(
 ) -> dict[str, Any]:
     market_key = "US" if str(market or "").upper() == "US" else "KR"
     target_count = max(0, int(target or 0))
-    default_hard_cap = 28 if market_key == "KR" else 32
+    default_hard_cap = 32 if market_key == "KR" else 35
     configured_hard_cap = int(hard_cap if hard_cap is not None else default_hard_cap)
     cap = configured_hard_cap if configured_hard_cap > 0 else target_count
     if cap <= 0:
