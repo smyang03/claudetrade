@@ -9323,6 +9323,31 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
   font-size: 13px; font-weight: 700; margin-left: 6px; vertical-align: middle;
 }}
 .card-sub {{ font-size: 12px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }}
+.account-focus-grid {{
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px; margin-top: 12px;
+}}
+.account-focus-item {{
+  min-width: 0; padding: 8px 9px; border-radius: 8px;
+  border: 1px solid rgba(148,163,184,0.22);
+  background: rgba(15,23,42,0.58);
+}}
+.account-focus-item.orderable {{
+  border-color: rgba(16,185,129,0.42);
+  background: rgba(16,185,129,0.09);
+}}
+.account-focus-label {{
+  font-size: 10px; font-weight: 700; color: var(--muted);
+  letter-spacing: 0; margin-bottom: 4px; white-space: nowrap;
+}}
+.account-focus-value {{
+  font-family: var(--mono); font-size: 17px; font-weight: 800;
+  line-height: 1.15; color: var(--text); overflow-wrap: anywhere;
+}}
+.account-focus-sub {{
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  line-height: 1.2; margin-top: 3px; overflow-wrap: anywhere;
+}}
 
 .up   {{ color: var(--green); }}
 .down {{ color: var(--red); }}
@@ -9465,6 +9490,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 }}
 @media (max-width: 768px) {{
   .grid-5, .grid-4, .grid-3, .grid-2 {{ grid-template-columns: 1fr; }}
+  .account-focus-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
   header {{ flex-wrap: wrap; height: auto; padding: 10px 16px; gap: 8px; }}
   main {{ padding: 12px; }}
 }}
@@ -9719,6 +9745,40 @@ function formatOrderableBreakdown(today) {
   if (krOrderable > 0) parts.push(`KR ${fmt.asset(krOrderable)}`);
   if (usText) parts.push(usText);
   return parts.join(' | ');
+}
+
+function accountFocusUsdValue(usd, krw) {
+  const usdNum = Number(usd || 0);
+  const krwNum = Number(krw || 0);
+  if (usdNum > 0) {
+    return {
+      main: fmtUsd(usdNum),
+      sub: krwNum > 0 ? `≈${fmt.asset(krwNum)}` : '',
+    };
+  }
+  if (krwNum > 0) return {main: fmt.asset(krwNum), sub: ''};
+  return {main: '$0.00', sub: ''};
+}
+
+function accountFocusTile(label, main, sub = '', cls = '') {
+  return `<div class="account-focus-item ${cls}">
+    <div class="account-focus-label">${label}</div>
+    <div class="account-focus-value">${main}</div>
+    ${sub ? `<div class="account-focus-sub">${sub}</div>` : ''}
+  </div>`;
+}
+
+function formatAccountCashFocus(today) {
+  const krHeld = Number(today.asset_krw_kr || 0);
+  const krOrderable = Number(today.broker_orderable_cash_kr || 0);
+  const usHeld = accountFocusUsdValue(today.asset_usd_total, today.asset_krw_us);
+  const usOrderable = accountFocusUsdValue(today.broker_orderable_cash_usd, today.broker_orderable_cash_us_krw);
+  return `<div class="account-focus-grid">
+    ${accountFocusTile('원화 보유', fmt.asset(krHeld))}
+    ${accountFocusTile('원화 주문가능', fmt.asset(krOrderable), '', 'orderable')}
+    ${accountFocusTile('외화 보유', usHeld.main, usHeld.sub)}
+    ${accountFocusTile('외화 주문가능', usOrderable.main, usOrderable.sub, 'orderable')}
+  </div>`;
 }
 
 function formatBuyRange(today) {
@@ -10223,6 +10283,12 @@ PAGE_TODAY_HTML = """
   <div class="card blue">
     <div class="card-label">계좌 자산</div>
     <div class="card-value" id="cumulative">--</div>
+    <div id="account-cash-focus" class="account-focus-grid">
+      <div class="account-focus-item"><div class="account-focus-label">원화 보유</div><div class="account-focus-value">--</div></div>
+      <div class="account-focus-item orderable"><div class="account-focus-label">원화 주문가능</div><div class="account-focus-value">--</div></div>
+      <div class="account-focus-item"><div class="account-focus-label">외화 보유</div><div class="account-focus-value">--</div></div>
+      <div class="account-focus-item orderable"><div class="account-focus-label">외화 주문가능</div><div class="account-focus-value">--</div></div>
+    </div>
     <div class="card-sub"  id="today-mode">모드: --</div>
     <div class="card-sub"  id="cumulative-pnl">누적 손익: --</div>
   </div>
@@ -11195,6 +11261,8 @@ async function loadSummary() {
     ` <span class="pnl-source-badge ${pnlSourceClass(pnlSource)}">${escapeHtml(pnlSourceLabel(pnlSource))}</span>`;
   todayKrw.title = `총손익 ${fmt.krw(tradingKrw)} · 보유평가 누적 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${pnlSource}`;
   document.getElementById('cumulative').textContent = fmt.asset(accountAsset);
+  const accountFocus = document.getElementById('account-cash-focus');
+  if (accountFocus) accountFocus.innerHTML = formatAccountCashFocus(t);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
     const assetBreakdown = formatAssetBreakdown(t);
@@ -12251,6 +12319,8 @@ async function loadSummary() {
   }
   const cumulative = document.getElementById('cumulative');
   if (cumulative) cumulative.textContent = fmt.asset(accountAsset);
+  const accountFocus = document.getElementById('account-cash-focus');
+  if (accountFocus) accountFocus.innerHTML = formatAccountCashFocus(t);
   const cumulativePnl = document.getElementById('cumulative-pnl');
   if (cumulativePnl) {
     const assetBreakdown = formatAssetBreakdown(t);
