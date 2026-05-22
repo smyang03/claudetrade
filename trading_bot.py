@@ -817,6 +817,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._last_entry_scan_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._last_rescreen_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._last_sub_screener_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
+        self._analyst_unavail_retry_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
+        self._analyst_unavail_retry_count: dict[str, int] = {"KR": 0, "US": 0}
         self.entry_timing = EntryTimingTracker(runtime_mode=self._mode)
         self.runtime_config = EffectiveRuntimeConfig.from_env(
             runtime_mode=self._mode,
@@ -6094,16 +6096,66 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if getattr(self, "v2", None) is None:
             return {"blocked": False}
         return self.v2.order_unknown_block_state(market, ticker)
+    def _analyst_gross_exposure_cap_policy(self, market: str, consensus: dict) -> dict:
+        market_key = str(market or "").upper()
+        try:
+            analyst_cap = float(consensus.get("max_gross_exposure_pct", 0) or 0)
+        except Exception:
+            analyst_cap = 0.0
+        analyst_cap = max(0.0, min(100.0, analyst_cap))
+        global_mode = str(self._runtime_value("ANALYST_GROSS_EXPOSURE_CAP_MODE", "auto") or "auto")
+        market_mode = self._runtime_value(f"{market_key}_ANALYST_GROSS_EXPOSURE_CAP_MODE", "")
+        raw_mode = str(market_mode if str(market_mode or "").strip() else global_mode)
+        mode_key = raw_mode.strip().lower()
+        mode = "manual" if mode_key in {"manual", "fixed", "operator", "override"} else "auto"
+        config_error = ""
+        manual_cap = 0.0
+        if mode == "manual":
+            global_raw = self._runtime_value("ANALYST_GROSS_EXPOSURE_CAP_PCT", "")
+            market_raw = self._runtime_value(f"{market_key}_ANALYST_GROSS_EXPOSURE_CAP_PCT", "")
+            manual_raw = market_raw if str(market_raw or "").strip() else global_raw
+            try:
+                manual_cap = float(str(manual_raw).replace(",", ""))
+            except Exception:
+                manual_cap = 0.0
+            if manual_cap > 0:
+                effective_cap = max(0.0, min(100.0, manual_cap))
+                source = "manual_config"
+            else:
+                effective_cap = analyst_cap
+                source = "analyst_consensus"
+                config_error = "manual_cap_missing_or_invalid"
+        else:
+            effective_cap = analyst_cap
+            source = "analyst_consensus"
+            if mode_key and mode_key not in {"auto", "claude", "analyst", "consensus"}:
+                config_error = f"unknown_mode:{raw_mode}"
+        return {
+            "max_gross_exposure_pct": effective_cap,
+            "analyst_max_gross_exposure_pct": analyst_cap,
+            "manual_max_gross_exposure_pct": max(0.0, min(100.0, manual_cap)) if manual_cap > 0 else 0.0,
+            "gross_cap_mode": mode,
+            "gross_cap_requested_mode": raw_mode,
+            "gross_cap_source": source,
+            "gross_cap_config_error": config_error,
+        }
     def _analyst_new_buy_block_state(self, market: str) -> dict:
         market_key = str(market or "").upper()
         consensus = ((getattr(self, "today_judgment", {}) or {}).get("consensus") or {})
         permission = str(consensus.get("new_buy_permission", "") or "").strip().lower()
+        cap_policy = self._analyst_gross_exposure_cap_policy(market_key, consensus)
         details = {
             "market": market_key,
             "permission": permission,
             "permission_votes": list(consensus.get("new_buy_permission_votes", []) or []),
             "permission_votes_by_role": dict(consensus.get("new_buy_permission_votes_by_role", {}) or {}),
-            "max_gross_exposure_pct": consensus.get("max_gross_exposure_pct", 0),
+            "max_gross_exposure_pct": cap_policy.get("max_gross_exposure_pct", 0),
+            "analyst_max_gross_exposure_pct": cap_policy.get("analyst_max_gross_exposure_pct", 0),
+            "manual_max_gross_exposure_pct": cap_policy.get("manual_max_gross_exposure_pct", 0),
+            "gross_cap_mode": cap_policy.get("gross_cap_mode", "auto"),
+            "gross_cap_requested_mode": cap_policy.get("gross_cap_requested_mode", "auto"),
+            "gross_cap_source": cap_policy.get("gross_cap_source", "analyst_consensus"),
+            "gross_cap_config_error": cap_policy.get("gross_cap_config_error", ""),
             "max_gross_exposure_pct_by_role": dict(consensus.get("max_gross_exposure_pct_by_role", {}) or {}),
             "consensus_quality": consensus.get("consensus_quality", ""),
             "quorum_met": consensus.get("quorum_met"),
@@ -6120,10 +6172,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "scope": "market",
                 "details": details,
             }
-        try:
-            max_gross = float(consensus.get("max_gross_exposure_pct", 0) or 0)
-        except Exception:
-            max_gross = 0.0
+        max_gross = float(cap_policy.get("max_gross_exposure_pct", 0) or 0)
         if max_gross > 0:
             equity_context = self._market_equity_reference_context(market_key)
             total_krw = float((equity_context or {}).get("total_krw", 0) or 0)
@@ -6144,6 +6193,65 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "details": details,
                 }
         return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
+    def _is_analyst_unavailability_block(self, market: str) -> bool:
+        """ANALYST_NEW_BUY_BLOCK이 분석가 장애(unavailable)로 인한 것인지 확인."""
+        consensus = ((getattr(self, "today_judgment", {}) or {}).get("consensus") or {})
+        permission = str(consensus.get("new_buy_permission", "") or "").strip().lower()
+        if permission != "block":
+            return False
+        unavailable_roles = list(consensus.get("unavailable_analyst_roles", []) or [])
+        if not unavailable_roles:
+            return False
+        quality = str(consensus.get("consensus_quality", "") or "")
+        return quality in {"partial_consensus", "partial_consensus_only", "fail_closed"}
+    def _maybe_handle_analyst_unavailability_retry(self, market: str) -> None:
+        """분석가 unavailability block 시 1분 후 재판단 스케줄. 정상 복귀 시 자동 중단."""
+        _MAX_RETRIES = 5
+        now_ts = time.time()
+        retry_at = float(self._analyst_unavail_retry_at.get(market, 0.0) or 0.0)
+        retry_count = int(self._analyst_unavail_retry_count.get(market, 0) or 0)
+        is_unavail_block = self._is_analyst_unavailability_block(market)
+        if not is_unavail_block:
+            # 정상 복귀 — 카운터 리셋
+            if retry_at > 0 or retry_count > 0:
+                log.info(f"[analyst_retry] {market} 분석가 상태 정상 복귀, 재판단 스케줄 해제 (시도={retry_count}회)")
+            self._analyst_unavail_retry_at[market] = 0.0
+            self._analyst_unavail_retry_count[market] = 0
+            return
+        if retry_count >= _MAX_RETRIES:
+            return
+        if retry_at == 0.0:
+            # 최초 unavailability 감지 — 1분 후 재판단 예약
+            self._analyst_unavail_retry_at[market] = now_ts + 60.0
+            consensus = ((getattr(self, "today_judgment", {}) or {}).get("consensus") or {})
+            unavail = list(consensus.get("unavailable_analyst_roles", []) or [])
+            log.warning(
+                f"[analyst_retry] {market} 분석가 unavailability block 감지, 1분 후 재판단 예약 "
+                f"unavailable={unavail}"
+            )
+            return
+        if now_ts < retry_at:
+            return
+        # 재판단 실행
+        self._analyst_unavail_retry_count[market] = retry_count + 1
+        self._analyst_unavail_retry_at[market] = 0.0
+        log.warning(
+            f"[analyst_retry] {market} 분석가 재판단 실행 (시도 {retry_count + 1}/{_MAX_RETRIES})"
+        )
+        try:
+            self._reinvoke_analysts(market, "analyst_unavailability_retry")
+        except Exception as exc:
+            log.warning(f"[analyst_retry] {market} 재판단 실패: {exc}")
+        # 재판단 후에도 unavailability block이면 1분 후 재예약
+        if self._is_analyst_unavailability_block(market):
+            if self._analyst_unavail_retry_count[market] < _MAX_RETRIES:
+                self._analyst_unavail_retry_at[market] = now_ts + 60.0
+                log.warning(
+                    f"[analyst_retry] {market} 재판단 후에도 block 유지, "
+                    f"1분 후 재예약 (남은 시도={_MAX_RETRIES - self._analyst_unavail_retry_count[market]}회)"
+                )
+            else:
+                log.warning(f"[analyst_retry] {market} 최대 재시도({_MAX_RETRIES}회) 도달, 재판단 중단")
     def _stop_loss_event_key(
         self,
         market: str,
@@ -6544,6 +6652,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             lines.append(f"gross caps: {cap_text}")
         if payload.get("max_gross_exposure_pct") not in (None, ""):
             lines.append(f"resolved cap: {payload.get('max_gross_exposure_pct')}")
+        if payload.get("gross_cap_mode") or payload.get("gross_cap_source"):
+            lines.append(
+                f"cap policy: {payload.get('gross_cap_mode', 'auto')}/{payload.get('gross_cap_source', 'analyst_consensus')}"
+            )
+        if payload.get("analyst_max_gross_exposure_pct") not in (None, ""):
+            lines.append(f"analyst cap: {payload.get('analyst_max_gross_exposure_pct')}")
         lines.append(f"manual: /claude {market_key}")
         lines.append(f"manual: /rescreen {market_key}")
         try:
@@ -6631,13 +6745,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 )
                 return state
         analyst_state = self._analyst_new_buy_block_state(market_key)
+        analyst_details = dict((analyst_state or {}).get("details") or {})
+        if analyst_details:
+            details.update(analyst_details)
         if bool((analyst_state or {}).get("blocked")):
             return {
                 "allowed": False,
                 "blocked": True,
                 "reason": str((analyst_state or {}).get("reason") or "ANALYST_NEW_BUY_BLOCK"),
                 "scope": str((analyst_state or {}).get("scope") or "market"),
-                "details": {**details, **dict((analyst_state or {}).get("details") or {})},
+                "details": details,
             }
         unknown = getattr(self, "v2_order_unknown", None)
         if unknown is not None:
@@ -22031,6 +22148,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"[{market} 엔트리 스캔] interval={int(interval_sec/60)}분"
             f"(초반 {_ENTRY_SCAN_OPENING_MIN}분={_ENTRY_SCAN_OPENING_INTERVAL_MIN}분 이후={_regular_min}분)"
         )
+        try:
+            self._maybe_handle_analyst_unavailability_retry(market)
+        except Exception as _retry_e:
+            log.warning(f"[analyst_retry 오류] {market}: {_retry_e}", exc_info=True)
         try:
             self.maybe_run_sub_screener(market)
         except Exception as _sub_e:

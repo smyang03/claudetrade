@@ -44,6 +44,8 @@ V2_TELEGRAM_COMMANDS: tuple[str, ...] = (
     "/resume",
     "/panic",
     "/brain_pending",
+    "/buy_capacity",
+    "/capacity",
     "/pathb_status",
     "/pathb_on",
     "/pathb_off",
@@ -179,6 +181,7 @@ def build_v2_ops_summary(
             events=events,
             broker_truth=broker_truth,
             live_truth_verdict=live_truth_verdict,
+            bot=bot,
         ),
         "lifecycle": {
             "event_counts": dict(counts),
@@ -432,6 +435,7 @@ def _path_b_live_summary(
     events: list[dict[str, Any]] | None = None,
     broker_truth: dict[str, Any] | None = None,
     live_truth_verdict: dict[str, Any] | None = None,
+    bot: Any | None = None,
 ) -> dict[str, Any]:
     markets = [market] if market else ["KR", "US"]
     modes = [runtime_mode] if runtime_mode else ["live", "paper"]
@@ -464,12 +468,21 @@ def _path_b_live_summary(
     config = _path_b_config(runtime_mode)
     control = _path_b_control_state(runtime_mode)
     run_counts = _path_b_run_counts(store, markets, modes, session_date)
+    consensus_by_market = _path_b_consensus_by_market(markets, runtime_mode, session_date, bot=bot)
+    equity_context_by_market = _path_b_equity_context_by_market(
+        markets,
+        broker_truth or {},
+        config,
+        bot=bot,
+    )
     capacity = _path_b_execution_capacity(
         broker_truth or {},
         config,
         pathb_runs,
         markets=markets,
         session_date=session_date,
+        consensus_by_market=consensus_by_market,
+        equity_context_by_market=equity_context_by_market,
     )
     selection = _path_b_selection_snapshot(
         market=market,
@@ -1471,6 +1484,71 @@ def _pathb_market_live_gate_detail(env: dict[str, str], market: str, runtime_mod
     }
 
 
+def _gross_cap_mode_from_env(env: dict[str, str], market: str) -> str:
+    market_key = str(market or "").upper()
+    raw = str(
+        env.get(f"{market_key}_ANALYST_GROSS_EXPOSURE_CAP_MODE")
+        or env.get("ANALYST_GROSS_EXPOSURE_CAP_MODE")
+        or "auto"
+    ).strip().lower()
+    return "manual" if raw in {"manual", "fixed", "operator", "override"} else "auto"
+
+
+def _gross_cap_pct_from_env(env: dict[str, str], market: str) -> float:
+    market_key = str(market or "").upper()
+    raw = env.get(f"{market_key}_ANALYST_GROSS_EXPOSURE_CAP_PCT")
+    if raw is None or str(raw).strip() == "":
+        raw = env.get("ANALYST_GROSS_EXPOSURE_CAP_PCT", "")
+    value = _to_float(raw)
+    return max(0.0, min(100.0, float(value or 0.0)))
+
+
+def _resolve_gross_exposure_cap_policy(
+    market: str,
+    consensus: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    analyst_cap = max(0.0, min(100.0, float(_to_float(consensus.get("max_gross_exposure_pct")) or 0.0)))
+    mode_by_market = config.get("analyst_gross_exposure_cap_mode_by_market")
+    mode_by_market = mode_by_market if isinstance(mode_by_market, dict) else {}
+    raw_mode = str(mode_by_market.get(market_key) or config.get("analyst_gross_exposure_cap_mode") or "auto")
+    mode_key = raw_mode.strip().lower()
+    mode = "manual" if mode_key in {"manual", "fixed", "operator", "override"} else "auto"
+    manual_by_market = config.get("analyst_gross_exposure_cap_pct_by_market")
+    manual_by_market = manual_by_market if isinstance(manual_by_market, dict) else {}
+    manual_cap = max(
+        0.0,
+        min(
+            100.0,
+            float(_to_float(manual_by_market.get(market_key)) or _to_float(config.get("analyst_gross_exposure_cap_pct")) or 0.0),
+        ),
+    )
+    config_error = ""
+    if mode == "manual":
+        if manual_cap > 0:
+            effective_cap = manual_cap
+            source = "manual_config"
+        else:
+            effective_cap = analyst_cap
+            source = "analyst_consensus"
+            config_error = "manual_cap_missing_or_invalid"
+    else:
+        effective_cap = analyst_cap
+        source = "analyst_consensus"
+        if mode_key and mode_key not in {"auto", "claude", "analyst", "consensus"}:
+            config_error = f"unknown_mode:{raw_mode}"
+    return {
+        "max_gross_exposure_pct": effective_cap,
+        "analyst_max_gross_exposure_pct": analyst_cap,
+        "manual_max_gross_exposure_pct": manual_cap,
+        "gross_cap_mode": mode,
+        "gross_cap_requested_mode": raw_mode,
+        "gross_cap_source": source,
+        "gross_cap_config_error": config_error,
+    }
+
+
 def _path_b_config(runtime_mode: str | None = None) -> dict[str, Any]:
     env, source = _effective_runtime_env(runtime_mode)
     cfg = DEFAULT_V2_CONFIG
@@ -1499,6 +1577,15 @@ def _path_b_config(runtime_mode: str | None = None) -> dict[str, Any]:
         "daily_entry_cap_by_market": {
             "KR": _env_int(env, "KR_DAILY_ENTRY_CAP", _env_int(env, "PATHB_MAX_DAILY_ENTRIES", cfg.pathb_max_daily_entries)),
             "US": _env_int(env, "US_DAILY_ENTRY_CAP", _env_int(env, "PATHB_MAX_DAILY_ENTRIES", cfg.pathb_max_daily_entries)),
+        },
+        "analyst_gross_exposure_cap_mode": str(env.get("ANALYST_GROSS_EXPOSURE_CAP_MODE", "auto") or "auto"),
+        "analyst_gross_exposure_cap_mode_by_market": {
+            "KR": _gross_cap_mode_from_env(env, "KR"),
+            "US": _gross_cap_mode_from_env(env, "US"),
+        },
+        "analyst_gross_exposure_cap_pct_by_market": {
+            "KR": _gross_cap_pct_from_env(env, "KR"),
+            "US": _gross_cap_pct_from_env(env, "US"),
         },
         "min_confidence": _env_float(env, "PATHB_MIN_CONFIDENCE", cfg.pathb_min_confidence),
         "intraday_only": _env_bool(env, "PATHB_INTRADAY_ONLY", cfg.pathb_intraday_only),
@@ -1552,6 +1639,111 @@ def _path_b_run_counts(store: EventStore, markets: list[str], modes: list[str], 
     return {key: compact(value) for key, value in buckets.items()}
 
 
+def _path_b_consensus_by_market(
+    markets: list[str],
+    runtime_mode: str | None,
+    session_date: str,
+    *,
+    bot: Any | None = None,
+) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    bot_judgment = getattr(bot, "today_judgment", None) if bot is not None else None
+    bot_judgment = bot_judgment if isinstance(bot_judgment, dict) else {}
+    bot_market = str(bot_judgment.get("market", "") or "").upper()
+    bot_day = "".join(ch for ch in str(bot_judgment.get("date") or bot_judgment.get("session_date") or session_date or "") if ch.isdigit())[:8]
+    requested_day = "".join(ch for ch in str(session_date or "") if ch.isdigit())[:8]
+    for market in markets:
+        market_key = str(market or "").upper()
+        consensus: dict[str, Any] = {}
+        if market_key and bot_market == market_key and (not requested_day or bot_day == requested_day):
+            bot_consensus = bot_judgment.get("consensus")
+            if isinstance(bot_consensus, dict):
+                consensus = dict(bot_consensus)
+        if not consensus:
+            rec = _load_judgment_record(market_key, runtime_mode, session_date)
+            rec_consensus = rec.get("consensus") if isinstance(rec.get("consensus"), dict) else {}
+            consensus = dict(rec_consensus)
+        out[market_key] = consensus
+    return out
+
+
+def _path_b_equity_context_by_market(
+    markets: list[str],
+    broker_truth: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    bot: Any | None = None,
+) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for market in markets:
+        market_key = str(market or "").upper()
+        context: dict[str, Any] = {}
+        provider = getattr(bot, "_market_equity_reference_context", None) if bot is not None else None
+        if callable(provider):
+            try:
+                candidate = provider(market_key)
+                if isinstance(candidate, dict):
+                    total = _to_float(candidate.get("total_krw")) or 0.0
+                    cash = _to_float(candidate.get("cash_krw")) or 0.0
+                    position = _to_float(candidate.get("position_krw")) or 0.0
+                    if total > 0 or cash > 0 or position > 0:
+                        context = dict(candidate)
+                        context.setdefault("source", "bot_equity_context")
+            except Exception:
+                context = {}
+        if not context:
+            context = _path_b_equity_context_from_broker(market_key, broker_truth, config)
+        out[market_key] = context
+    return out
+
+
+def _path_b_equity_context_from_broker(
+    market: str,
+    broker_truth: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    market_payload = broker_truth.get("markets") if isinstance(broker_truth.get("markets"), dict) else {}
+    data = market_payload.get(market_key) if isinstance(market_payload.get(market_key), dict) else {}
+    account = data.get("account_summary") if isinstance(data.get("account_summary"), dict) else {}
+    positions = data.get("positions") if isinstance(data.get("positions"), list) else []
+    usd_krw = float(config.get("usd_krw") or 1350.0)
+
+    def account_float(key: str) -> float:
+        return float(_to_float(account.get(key)) or 0.0)
+
+    if market_key == "US":
+        cash_krw = account_float("asset_cash_krw") or account_float("cash") * usd_krw
+        position_krw = account_float("total_eval_krw")
+        if position_krw <= 0:
+            position_krw = sum(float(_to_float(row.get("eval_amount")) or 0.0) for row in positions) * usd_krw
+        total_krw = (
+            account_float("market_asset_krw")
+            or account_float("asset_cash_krw") + account_float("total_eval_krw")
+            or cash_krw + position_krw
+        )
+    else:
+        cash_krw = account_float("cash")
+        position_krw = account_float("total_eval")
+        if position_krw <= 0:
+            position_krw = sum(float(_to_float(row.get("eval_amount")) or 0.0) for row in positions)
+        total_krw = account_float("market_asset_krw") or cash_krw + position_krw
+
+    source = "broker_truth_stale" if bool(data.get("stale") or data.get("missing")) else "broker_truth"
+    return {
+        "market": market_key,
+        "total_krw": float(total_krw),
+        "cash_krw": float(cash_krw),
+        "position_krw": float(position_krw),
+        "source": source,
+        "broker_total_krw": float(total_krw),
+        "internal_krw": 0.0,
+        "adjustment_krw": 0.0,
+        "lag_suspected": False,
+        "fallback_reason": "" if total_krw > 0 else "no_positive_equity_reference",
+    }
+
+
 def _path_b_execution_capacity(
     broker_truth: dict[str, Any],
     config: dict[str, Any],
@@ -1559,6 +1751,8 @@ def _path_b_execution_capacity(
     *,
     markets: list[str],
     session_date: str,
+    consensus_by_market: dict[str, dict[str, Any]] | None = None,
+    equity_context_by_market: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     market_payload = broker_truth.get("markets") if isinstance(broker_truth.get("markets"), dict) else {}
     fixed_by_market = config.get("fixed_order_krw_by_market") if isinstance(config.get("fixed_order_krw_by_market"), dict) else {}
@@ -1589,6 +1783,63 @@ def _path_b_execution_capacity(
         max_fixed = int(orderable_krw // fixed_order) if fixed_order > 0 else 0
         remaining_daily = max(0, daily_cap - current_daily_entries)
         open_slots = max(0, max_positions - current_positions)
+        consensus = (
+            consensus_by_market.get(market_key)
+            if isinstance(consensus_by_market, dict) and isinstance(consensus_by_market.get(market_key), dict)
+            else {}
+        )
+        equity_context = (
+            equity_context_by_market.get(market_key)
+            if isinstance(equity_context_by_market, dict) and isinstance(equity_context_by_market.get(market_key), dict)
+            else {}
+        )
+        permission = str(consensus.get("new_buy_permission", "") or "").strip().lower()
+        cap_policy = _resolve_gross_exposure_cap_policy(market_key, consensus, config)
+        max_gross_pct = float(cap_policy.get("max_gross_exposure_pct", 0.0) or 0.0)
+        total_krw = float(_to_float(equity_context.get("total_krw")) or 0.0)
+        position_krw = float(_to_float(equity_context.get("position_krw")) or 0.0)
+        if total_krw <= 0 and position_krw + orderable_krw > 0:
+            total_krw = position_krw + orderable_krw
+        gross_pct = position_krw / total_krw * 100.0 if total_krw > 0 else 0.0
+        gross_cap_krw = total_krw * max_gross_pct / 100.0 if total_krw > 0 and max_gross_pct > 0 else 0.0
+        gross_remaining_raw = gross_cap_krw - position_krw if gross_cap_krw > 0 else 0.0
+        gross_remaining = max(0.0, gross_remaining_raw) if gross_cap_krw > 0 else orderable_krw
+        cash_exposure_room = min(orderable_krw, gross_remaining) if gross_cap_krw > 0 else orderable_krw
+        if permission == "block":
+            cash_exposure_room = 0.0
+        slot_limit = min(remaining_daily if daily_cap > 0 else 10**9, open_slots if max_positions > 0 else 10**9)
+        slot_limit = max(0, int(slot_limit if slot_limit < 10**9 else max_fixed))
+        today_fixed_cash_orders = int(cash_exposure_room // fixed_order) if fixed_order > 0 else 0
+        today_entry_capacity_orders = min(today_fixed_cash_orders, slot_limit)
+        today_fixed_order_capacity = today_entry_capacity_orders * fixed_order
+        today_min_order_possible = bool(
+            min_order > 0
+            and cash_exposure_room >= min_order
+            and slot_limit > 0
+            and permission != "block"
+        )
+        block_reasons: list[str] = []
+        if permission == "block":
+            block_reasons.append("ANALYST_NEW_BUY_BLOCK")
+        if max_gross_pct > 0 and total_krw <= 0:
+            block_reasons.append("GROSS_EXPOSURE_REFERENCE_MISSING")
+        if max_gross_pct > 0 and total_krw > 0 and gross_pct >= max_gross_pct:
+            block_reasons.append("ANALYST_MAX_GROSS_EXPOSURE_REACHED")
+        elif max_gross_pct > 0 and gross_cap_krw > 0 and gross_remaining < min_order:
+            block_reasons.append("GROSS_EXPOSURE_REMAINING_BELOW_MIN_ORDER")
+        if min_order > 0 and orderable_krw < min_order:
+            block_reasons.append("CASH_BELOW_MIN_ORDER")
+        if max_positions > 0 and open_slots <= 0:
+            block_reasons.append("POSITION_CAP_REACHED")
+        if daily_cap > 0 and remaining_daily <= 0:
+            block_reasons.append("DAILY_ENTRY_CAP_REACHED")
+        if (
+            fixed_order > 0
+            and today_fixed_cash_orders <= 0
+            and today_min_order_possible
+            and "ANALYST_MAX_GROSS_EXPOSURE_REACHED" not in block_reasons
+        ):
+            block_reasons.append("FIXED_ORDER_SIZE_EXCEEDS_TODAY_CAPACITY")
         out[market_key] = {
             "currency": "USD" if market_key == "US" else "KRW",
             "orderable_cash_native": round(orderable_native, 4),
@@ -1605,8 +1856,34 @@ def _path_b_execution_capacity(
             "remaining_daily_entries": remaining_daily,
             "daily_entry_cap": daily_cap,
             "daily_cap_cash_feasible": bool(daily_cap > 0 and max_fixed >= daily_cap),
+            "new_buy_permission": permission,
+            "consensus_quality": str(consensus.get("consensus_quality", "") or ""),
+            "max_gross_exposure_pct": round(max_gross_pct, 3),
+            "analyst_max_gross_exposure_pct": round(float(cap_policy.get("analyst_max_gross_exposure_pct", 0.0) or 0.0), 3),
+            "manual_max_gross_exposure_pct": round(float(cap_policy.get("manual_max_gross_exposure_pct", 0.0) or 0.0), 3),
+            "gross_cap_mode": str(cap_policy.get("gross_cap_mode", "auto") or "auto"),
+            "gross_cap_requested_mode": str(cap_policy.get("gross_cap_requested_mode", "auto") or "auto"),
+            "gross_cap_source": str(cap_policy.get("gross_cap_source", "analyst_consensus") or "analyst_consensus"),
+            "gross_cap_config_error": str(cap_policy.get("gross_cap_config_error", "") or ""),
+            "gross_exposure_pct": round(gross_pct, 3),
+            "gross_exposure_cap_krw": round(gross_cap_krw, 2),
+            "gross_exposure_remaining_krw": round(gross_remaining, 2) if gross_cap_krw > 0 else None,
+            "gross_exposure_remaining_raw_krw": round(gross_remaining_raw, 2) if gross_cap_krw > 0 else None,
+            "position_exposure_krw": round(position_krw, 2),
+            "equity_reference_krw": round(total_krw, 2),
+            "equity_source": str(equity_context.get("source", "") or ""),
+            "equity_lag_suspected": bool(equity_context.get("lag_suspected", False)),
+            "equity_fallback_reason": str(equity_context.get("fallback_reason", "") or ""),
+            "today_buy_capacity_krw": round(cash_exposure_room, 2),
+            "today_affordable_fixed_orders": today_fixed_cash_orders,
+            "today_entry_capacity_orders": today_entry_capacity_orders,
+            "today_fixed_order_capacity_krw": round(today_fixed_order_capacity, 2),
+            "today_min_order_possible": today_min_order_possible,
+            "capacity_block_reasons": block_reasons,
+            "capacity_primary_block_reason": block_reasons[0] if block_reasons else "",
             "operator_message": (
-                f"orderable cash allows fixed orders={max_fixed}; daily cap={daily_cap} is an upper limit, not cash capacity"
+                f"orderable cash allows fixed orders={max_fixed}; today capacity after exposure/slots={today_entry_capacity_orders}; "
+                f"daily cap={daily_cap} is an upper limit, not cash capacity"
             ),
         }
     return out

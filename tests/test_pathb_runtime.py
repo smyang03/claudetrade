@@ -132,6 +132,57 @@ class _Control:
         return PathBControlState(enabled=True, emergency_disabled=False)
 
 
+def _us_filled_sell_runtime(tmp: str, *, ccld_provider):
+    bot = _MarketTokenBot()
+    bot.current_market = "US"
+    store = EventStore(Path(tmp) / "events.db")
+    runtime = PathBRuntime(bot, is_paper=False, store=store)
+    runtime.control_store = _Control()
+    runtime.broker_truth = BrokerTruthSnapshot(
+        runtime_mode="live",
+        path=Path(tmp) / "broker_truth.json",
+        token_provider=lambda market="US": "token",
+        balance_provider=lambda market, force: {
+            "cash": 1_000,
+            "stocks": [{"ticker": "AAPL", "qty": 2, "avg_price": 180.0, "current_price": 190.0}],
+        },
+        ccld_provider=ccld_provider,
+        date_provider=lambda market: "2026-05-01",
+    )
+    plan = make_price_plan(
+        decision_id="dec_us_sell_qty_reject",
+        ticker="AAPL",
+        market="US",
+        session_date="2026-05-01",
+        buy_zone_low=180,
+        buy_zone_high=181,
+        sell_target=190,
+        stop_loss=175,
+        hold_days=1,
+        confidence=0.8,
+    )
+    runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+    runtime.adapter.mark_filled(
+        plan.path_run_id,
+        price=180,
+        qty=2,
+        execution_id="us-buy-1",
+        runtime_mode="live",
+        brain_snapshot_id="brain-us",
+    )
+    pos = {
+        "ticker": "AAPL",
+        "market": "US",
+        "qty": 2,
+        "entry": 180.0,
+        "display_avg_price": 180.0,
+        "path_type": "claude_price",
+        "pathb_path_run_id": plan.path_run_id,
+    }
+    bot.risk.positions.append(pos)
+    return runtime, bot, plan, pos
+
+
 class _RuntimeConfig:
     def __init__(self, values: dict[str, object]) -> None:
         self.values = dict(values)
@@ -167,6 +218,25 @@ class PathBRuntimeTests(unittest.TestCase):
         bot.token = "legacy-only"
 
         self.assertEqual(_bot_token(bot, "US"), "legacy-only")
+
+    def test_pathb_detects_sellable_qty_reject_message(self) -> None:
+        self.assertTrue(PathBRuntime._is_sellable_qty_reject("주문수량이 가능수량보다 큽니다"))
+        self.assertTrue(PathBRuntime._is_sellable_qty_reject("insufficient sellable quantity"))
+        self.assertFalse(PathBRuntime._is_sellable_qty_reject("temporary network error"))
+
+    def test_pathb_sell_observation_required_uses_observation_flag_not_stale_metadata(self) -> None:
+        self.assertTrue(
+            PathBRuntime._pathb_sell_observation_required(
+                {"plan": {"stale_exit_order_unconfirmed": True, "sellable_qty_observation_required": True}},
+                {"stale_exit_order_unconfirmed": True},
+            )
+        )
+        self.assertFalse(
+            PathBRuntime._pathb_sell_observation_required(
+                {"plan": {"stale_exit_order_unconfirmed": True, "sellable_qty_observation_required": False}},
+                {"stale_exit_order_unconfirmed": True},
+            )
+        )
 
     def test_record_blocked_max_daily_entries_sends_new_buy_alert(self) -> None:
         lifecycle_events: list[tuple[tuple, dict]] = []
@@ -431,6 +501,113 @@ class PathBRuntimeTests(unittest.TestCase):
         self.assertEqual(precheck.call_args.kwargs["market"], "US")
         self.assertEqual(place.call_args.args[4], "token-US-0")
         self.assertEqual(place.call_args.kwargs["market"], "US")
+
+    def test_pathb_sellable_qty_reject_relinks_existing_broker_sell_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, bot, plan, pos = _us_filled_sell_runtime(
+                tmp,
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "AAPL",
+                        "side": "sell",
+                        "order_no": "broker-sell-1",
+                        "order_qty": 2,
+                        "filled_qty": 0,
+                        "remaining_qty": 2,
+                        "avg_price": 0,
+                    }
+                ],
+            )
+            signal = ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 190.0, plan.path_run_id)
+
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+                "runtime.pathb_runtime.precheck_order", return_value={"ok": True}
+            ) as precheck, patch(
+                "runtime.pathb_runtime.place_order",
+                return_value={"success": False, "msg": "주문수량이 가능수량보다 큽니다"},
+            ) as place:
+                accepted = runtime._submit_sell(plan, pos, signal)
+                second = runtime._submit_sell(plan, pos, signal)
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertFalse(accepted)
+            self.assertFalse(second)
+            self.assertEqual(precheck.call_count, 1)
+            self.assertEqual(place.call_count, 1)
+            self.assertEqual(run["status"], "SELL_ACKED")
+            self.assertEqual(run["plan"]["exit_execution_id"], "broker-sell-1")
+            self.assertEqual(run["plan"]["sellable_qty_reject_resolution"], "existing_open_sell_order_recovered")
+            self.assertEqual(pos["pathb_pending_sell_order_no"], "broker-sell-1")
+            self.assertEqual(pos["pathb_sell_state"], "broker_open_order_recovered_after_qty_reject")
+            self.assertNotIn("sellable_qty_untrusted", pos)
+            self.assertTrue(bot.saved_positions)
+
+    def test_pathb_sellable_qty_reject_quarantines_when_no_broker_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, bot, plan, pos = _us_filled_sell_runtime(tmp, ccld_provider=lambda market, day: [])
+            bot._log_risk_event = Mock()
+            signal = ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 190.0, plan.path_run_id)
+
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}) as advisor, patch(
+                "runtime.pathb_runtime.precheck_order", return_value={"ok": True}
+            ) as precheck, patch(
+                "runtime.pathb_runtime.place_order",
+                return_value={"success": False, "msg": "주문수량이 가능수량보다 큽니다"},
+            ) as place:
+                accepted = runtime._submit_sell(plan, pos, signal)
+                blocked = runtime._submit_sell(plan, pos, signal)
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertFalse(accepted)
+            self.assertFalse(blocked)
+            self.assertEqual(advisor.call_count, 1)
+            self.assertEqual(precheck.call_count, 1)
+            self.assertEqual(place.call_count, 1)
+            self.assertTrue(pos["sellable_qty_untrusted"])
+            self.assertTrue(pos["manual_reconcile_required"])
+            self.assertTrue(pos["broker_sell_lock_suspected"])
+            self.assertEqual(pos["pathb_sell_state"], "sellable_qty_reject_no_open_order")
+            self.assertEqual(run["plan"]["sellable_qty_reject_resolution"], "no_open_order_or_fill")
+            self.assertTrue(run["plan"]["manual_reconciliation_required"])
+            bot._log_risk_event.assert_called()
+            self.assertEqual(bot._log_risk_event.call_args.args[0], "PATHB_SELLABLE_QTY_REJECT_UNRESOLVED")
+
+    def test_pathb_sellable_qty_reject_partial_fill_keeps_original_exit_qty_for_reconcile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, _bot, plan, pos = _us_filled_sell_runtime(
+                tmp,
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "AAPL",
+                        "side": "sell",
+                        "order_no": "broker-sell-partial",
+                        "order_qty": 2,
+                        "filled_qty": 1,
+                        "remaining_qty": 1,
+                        "avg_price": 190.0,
+                    }
+                ],
+            )
+            signal = ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 190.0, plan.path_run_id)
+
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+                "runtime.pathb_runtime.precheck_order", return_value={"ok": True}
+            ), patch(
+                "runtime.pathb_runtime.place_order",
+                return_value={"success": False, "msg": "주문수량이 가능수량보다 큽니다"},
+            ):
+                accepted = runtime._submit_sell(plan, pos, signal)
+                summary = runtime.reconcile_sell_pending("US", force=True)
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertFalse(accepted)
+            self.assertEqual(run["status"], "SELL_PARTIAL_FILLED")
+            self.assertEqual(run["plan"]["exit_qty"], 2)
+            self.assertEqual(run["plan"]["exit_execution_id"], "broker-sell-partial")
+            self.assertEqual(pos["qty"], 1)
+            self.assertEqual(pos["pathb_pending_sell_order_no"], "broker-sell-partial")
+            self.assertEqual(summary["partial"], 1)
+            self.assertEqual(len(runtime.bot.risk.positions), 1)
 
     def test_pathb_sell_attempt_lock_blocks_duplicate_precheck(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -97,6 +97,8 @@ def handle_v2_command(text: str, bot: Any, *, market_override: str | None = None
         return _format_errors(summary)
     if cmd == "/brain_pending":
         return _format_brain_pending(summary)
+    if cmd in {"/buy_capacity", "/capacity"}:
+        return _format_buy_capacity(summary)
     if cmd == "/halt":
         return _halt(bot)
     if cmd == "/resume":
@@ -189,6 +191,59 @@ def _format_brain_pending(summary: dict[str, Any]) -> str:
     for item in pending[-5:]:
         candidate = item.get("candidate") or {}
         lines.append(str(candidate.get("id") or candidate.get("pattern_key") or candidate)[:120])
+    return "\n".join(lines)
+
+
+def _format_krw(value: Any) -> str:
+    try:
+        return f"{int(round(float(value or 0))):,} KRW"
+    except Exception:
+        return "0 KRW"
+
+
+def _format_pct(value: Any) -> str:
+    try:
+        return f"{float(value or 0):.1f}%"
+    except Exception:
+        return "0.0%"
+
+
+def _format_buy_capacity(summary: dict[str, Any]) -> str:
+    pathb_live = summary.get("path_b_live") if isinstance(summary.get("path_b_live"), dict) else {}
+    capacity = pathb_live.get("execution_capacity") if isinstance(pathb_live.get("execution_capacity"), dict) else {}
+    if not capacity:
+        return "<b>Buy Capacity</b>\nNo capacity snapshot is available."
+    lines = ["<b>Buy Capacity</b>"]
+    for market in ("KR", "US"):
+        row = capacity.get(market) if isinstance(capacity.get(market), dict) else {}
+        if not row:
+            continue
+        cap_pct = float(row.get("max_gross_exposure_pct") or 0)
+        cap_amount = row.get("gross_exposure_cap_krw") if cap_pct > 0 else None
+        remaining = row.get("gross_exposure_remaining_krw") if cap_pct > 0 else row.get("orderable_cash_krw")
+        reasons = row.get("capacity_block_reasons") if isinstance(row.get("capacity_block_reasons"), list) else []
+        reason_text = ", ".join(str(item) for item in reasons) if reasons else "OK"
+        cap_text = (
+            f"{_format_krw(cap_amount)} ({_format_pct(row.get('gross_exposure_pct'))}/{_format_pct(cap_pct)})"
+            if cap_pct > 0
+            else "no analyst cap"
+        )
+        cap_source = str(row.get("gross_cap_source") or "analyst_consensus")
+        cap_mode = str(row.get("gross_cap_mode") or "auto")
+        policy_text = "manual" if cap_source == "manual_config" else "Claude"
+        lines.extend(
+            [
+                f"{market}: held {_format_krw(row.get('position_exposure_krw'))} / cap {cap_text} [{cap_mode}/{policy_text}]",
+                (
+                    f"  orderable {_format_krw(row.get('orderable_cash_krw'))} | "
+                    f"remaining {_format_krw(remaining)} | today {_format_krw(row.get('today_buy_capacity_krw'))}"
+                ),
+                (
+                    f"  fixed orders {row.get('today_entry_capacity_orders', 0)} "
+                    f"({_format_krw(row.get('today_fixed_order_capacity_krw'))}) | {reason_text}"
+                ),
+            ]
+        )
     return "\n".join(lines)
 
 

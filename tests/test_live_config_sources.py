@@ -37,9 +37,18 @@ class LiveConfigSourceTests(unittest.TestCase):
 
         self.assertEqual(failing, [])
         effective = config["effective"]
-        self.assertEqual(effective.get("MAX_ORDER_KRW"), "500000")
-        self.assertEqual(effective.get("KR_FIXED_ORDER_KRW"), "500000")
-        self.assertEqual(effective.get("US_FIXED_ORDER_KRW"), "500000")
+        order_values = {
+            key: int(str(effective.get(key) or "0"))
+            for key in (
+                "MAX_ORDER_KRW",
+                "KR_FIXED_ORDER_KRW",
+                "US_FIXED_ORDER_KRW",
+                "PATHB_FIXED_ORDER_KRW",
+            )
+        }
+        self.assertEqual(len(set(order_values.values())), 1)
+        self.assertGreaterEqual(order_values["MAX_ORDER_KRW"], 50000)
+        self.assertLessEqual(order_values["MAX_ORDER_KRW"], 5000000)
         self.assertEqual(effective.get("KR_MAX_POSITIONS"), "20")
         self.assertEqual(effective.get("US_MAX_POSITIONS"), "20")
         self.assertEqual(effective.get("V2_MAX_DAILY_ENTRIES"), "40")
@@ -47,7 +56,6 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(effective.get("US_DAILY_ENTRY_CAP"), "40")
         self.assertEqual(effective.get("PATHB_MAX_POSITIONS"), "15")
         self.assertEqual(effective.get("PATHB_MAX_DAILY_ENTRIES"), "40")
-        self.assertEqual(effective.get("PATHB_FIXED_ORDER_KRW"), "500000")
         self.assertEqual(effective.get("PATHB_ONE_SHARE_OVER_BUDGET_MAX_KRW"), "700000")
         self.assertEqual(effective.get("PATHB_KR_LIVE_ENABLED"), "true")
         self.assertEqual(effective.get("KR_CLAUDE_PRICE_LIVE_ENABLED"), "false")

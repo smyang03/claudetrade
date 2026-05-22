@@ -2740,8 +2740,23 @@ class PathBRuntime:
             *stop_recovery_close_reasons,
             "CLOSED_PROFIT_FLOOR",
             "CLOSED_TRAILING_STOP",
+            "CLOSED_PROFIT_LADDER",
         } and signal_reason not in protective_hold_reasons:
             return {}, "unsupported_close_reason"
+        if close_reason == "CLOSED_PROFIT_LADDER":
+            protective_stop = self._round_policy_price(
+                advice.get("protective_stop"), market, direction="down"
+            )
+            if protective_stop <= 0 or protective_stop >= current:
+                return {}, "protective_stop_missing_or_invalid"
+            return {
+                **base,
+                "mode": "protective_hold",
+                "source": "profit_ladder_hold",
+                "protective_stop": protective_stop,
+                "hard_stop": protective_stop,
+                "trail_release_threshold": protective_stop,
+            }, ""
         if close_reason == "CLOSED_CLAUDE_PRICE_TARGET":
             revised_target = self._round_policy_price(advice.get("revised_sell_target"), market, direction="up")
             if revised_target <= current:
@@ -2954,6 +2969,17 @@ class PathBRuntime:
                         f"reason={result.get('reason')}"
                     )
                 return result
+
+            if self._pathb_sellability_untrusted(run, pos):
+                log.warning(
+                    f"[PathB hold advice preserved sell uncertainty] {market_key} {plan.ticker} "
+                    f"state={pos.get('pathb_sell_state', '') or (run.get('plan') or {}).get('pathb_sell_state', '')}"
+                )
+                return {
+                    "updated": False,
+                    "reason": "sellable_qty_untrusted",
+                    "preserved_execution_uncertainty": True,
+                }
 
             protective_stop = self._round_policy_price(advice.get("protective_stop"), market_key, direction="down")
             if protective_stop <= 0:
@@ -3400,16 +3426,50 @@ class PathBRuntime:
             return None
         try:
             run = self.store.find_path_run(plan.path_run_id) or {}
-            policy = (run.get("plan") or {}).get("auto_sell_policy") or {}
+            run_plan = dict(run.get("plan") or {}) if isinstance(run, dict) else {}
+            policy = run_plan.get("auto_sell_policy") or {}
         except Exception:
+            run_plan = {}
             policy = {}
         if (
             isinstance(policy, dict)
             and str(policy.get("status", "") or "").lower() == "active"
             and str(policy.get("mode", "") or "") == "protective_hold"
-            and self._policy_float(policy.get("protective_stop")) >= floor
         ):
-            return None
+            if str(policy.get("source", "") or "") == "profit_ladder_hold":
+                hold_floor = self._policy_float(policy.get("protective_stop"))
+                if hold_floor > 0 and current_price > hold_floor:
+                    return None
+            elif self._policy_float(policy.get("protective_stop")) >= floor:
+                return None
+        # HOLD 리뷰 후 reask_after 동안 재트리거 억제
+        # profit_ladder_hold 정책이 활성화된 경우 가격 기반으로만 억제 (스누즈 skip)
+        _has_active_ladder_hold = (
+            isinstance(policy, dict)
+            and str(policy.get("status", "") or "").lower() == "active"
+            and str(policy.get("source", "") or "") == "profit_ladder_hold"
+            and self._policy_float(policy.get("protective_stop")) > 0
+        )
+        if not _has_active_ladder_hold and (
+            str(run_plan.get("auto_sell_review_action", "") or "").upper() == "HOLD"
+            and str(run_plan.get("auto_sell_review_reason", "") or "").lower() == "profit_ladder"
+        ):
+            reviewed_at_str = str(run_plan.get("auto_sell_reviewed_at") or "")
+            if reviewed_at_str:
+                try:
+                    import datetime as _dt_mod
+                    reviewed_dt = _dt_mod.datetime.fromisoformat(reviewed_at_str)
+                    if reviewed_dt.tzinfo is None:
+                        reviewed_dt = reviewed_dt.replace(tzinfo=_dt_mod.timezone.utc)
+                    now_utc = _dt_mod.datetime.now(_dt_mod.timezone.utc)
+                    # hold advisor의 reask_after_min 우선, 없으면 env 기본값
+                    advisor_reask = int(run_plan.get("auto_sell_review_reask_after_min") or 0)
+                    snooze_min = advisor_reask if advisor_reask > 0 else _env_int("PATHB_PROFIT_LADDER_HOLD_SNOOZE_MIN", 10)
+                    elapsed_sec = (now_utc - reviewed_dt).total_seconds()
+                    if elapsed_sec < snooze_min * 60:
+                        return None
+                except Exception:
+                    pass
         if current_price > floor:
             return None
         log.warning(
@@ -3794,6 +3854,12 @@ class PathBRuntime:
         if action != "SELL" and force_sell:
             action = "SELL"
             detail = (detail + " | " if detail else "") + f"system_force_sell_after_review:{force_detail}"
+        _advice_reask = 0
+        if not fallback and isinstance(advice, dict):
+            try:
+                _advice_reask = max(0, min(30, int(float(advice.get("reask_after_min") or 0))))
+            except Exception:
+                _advice_reask = 0
         payload = {
             "auto_sell_reviewed_at": now_iso,
             "auto_sell_review_reason": str(signal.reason or ""),
@@ -3802,30 +3868,40 @@ class PathBRuntime:
             "auto_sell_review_detail": detail,
             "auto_sell_review_confidence": confidence,
             "auto_sell_review_fallback": fallback,
+            "auto_sell_review_reask_after_min": _advice_reask,
         }
         if force_sell:
             payload["auto_sell_review_system_force_sell"] = True
             payload["auto_sell_review_force_detail"] = force_detail
         if action == "HOLD":
-            policy, reject_reason = self._pathb_auto_sell_policy_from_advice(
-                plan,
-                pos,
-                signal,
-                advice if isinstance(advice, dict) else {},
-                current_native,
-                now=now_dt,
-            )
-            if policy:
-                payload["auto_sell_policy"] = policy
-                payload["auto_sell_policy_reject_reason"] = ""
-                if (
-                    str(policy.get("mode", "") or "") == "target_extension"
-                    and self._pathb_hold_policy_mode() == "enforce"
-                ):
-                    payload["sell_target"] = float(policy.get("revised_sell_target", 0) or 0)
-            elif reject_reason:
-                payload["auto_sell_policy_reject_reason"] = reject_reason
+            if self._pathb_sellability_untrusted(self.store.find_path_run(plan.path_run_id) or {}, pos):
+                payload["auto_sell_policy_reject_reason"] = "sellable_qty_untrusted"
                 payload["auto_sell_policy_rejected_at"] = now_iso
+                payload["preserved_execution_uncertainty"] = True
+                log.warning(
+                    f"[PathB hold advice preserved sell uncertainty] {plan.market} {plan.ticker} "
+                    f"state={pos.get('pathb_sell_state', '')}"
+                )
+            else:
+                policy, reject_reason = self._pathb_auto_sell_policy_from_advice(
+                    plan,
+                    pos,
+                    signal,
+                    advice if isinstance(advice, dict) else {},
+                    current_native,
+                    now=now_dt,
+                )
+                if policy:
+                    payload["auto_sell_policy"] = policy
+                    payload["auto_sell_policy_reject_reason"] = ""
+                    if (
+                        str(policy.get("mode", "") or "") == "target_extension"
+                        and self._pathb_hold_policy_mode() == "enforce"
+                    ):
+                        payload["sell_target"] = float(policy.get("revised_sell_target", 0) or 0)
+                elif reject_reason:
+                    payload["auto_sell_policy_reject_reason"] = reject_reason
+                    payload["auto_sell_policy_rejected_at"] = now_iso
         pos.update(payload)
         try:
             self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
@@ -3855,6 +3931,12 @@ class PathBRuntime:
         keep_lock = False
         try:
             run = self.store.find_path_run(plan.path_run_id) or {}
+            if self._pathb_sellability_untrusted(run, pos):
+                log.warning(
+                    f"[PathB sell skipped] {market} {plan.ticker} sellable qty untrusted; "
+                    f"manual reconcile required run={plan.path_run_id}"
+                )
+                return False
             if self._pathb_sell_in_flight(run, pos):
                 log.info(
                     f"[PathB sell skipped] {market} {plan.ticker} sell already in flight "
@@ -3865,11 +3947,28 @@ class PathBRuntime:
             order_price = self._compute_sell_order_price(market, signal.price)
             if qty <= 0 or order_price < 0:
                 return False
+            if self._pathb_sell_observation_required(run, pos):
+                observation = self._observe_pathb_sellability_before_submit(
+                    plan,
+                    pos,
+                    signal,
+                    qty=qty,
+                    order_price=order_price,
+                )
+                if observation.get("handled"):
+                    keep_lock = bool(observation.get("keep_lock", False))
+                    return False
             review = self._run_pathb_sell_review_gate(plan, pos, signal)
             if not bool(review.get("allowed", False)):
                 return False
             latest_run = self.store.find_path_run(plan.path_run_id) or {}
             latest_pos = self._find_position(market, plan.ticker, path_run_id=plan.path_run_id) or pos
+            if self._pathb_sellability_untrusted(latest_run, latest_pos):
+                log.warning(
+                    f"[PathB sell skipped] {market} {plan.ticker} sellability became untrusted before precheck "
+                    f"run={plan.path_run_id}"
+                )
+                return False
             if self._pathb_sell_in_flight(latest_run, latest_pos):
                 log.info(
                     f"[PathB sell skipped] {market} {plan.ticker} sell became in-flight before precheck "
@@ -3923,9 +4022,22 @@ class PathBRuntime:
                 return False
 
             if not result.get("success"):
+                msg = str(result.get("msg", "") or "")
+                if self._is_sellable_qty_reject(msg):
+                    handled = self._handle_pathb_sellable_qty_reject(
+                        plan,
+                        pos,
+                        signal,
+                        qty=qty,
+                        order_price=order_price,
+                        msg=msg,
+                    )
+                    if handled.get("handled"):
+                        keep_lock = bool(handled.get("keep_lock", False))
+                        return False
                 pos.pop("pathb_closing", None)
-                self._note_sell_failure(market, plan.ticker, signal.reason, str(result.get("msg", "") or "sell_order_failed"))
-                log.error(f"[PathB SELL FAILED] {market} {plan.ticker}: {result.get('msg', '')}")
+                self._note_sell_failure(market, plan.ticker, signal.reason, str(msg or "sell_order_failed"))
+                log.error(f"[PathB SELL FAILED] {market} {plan.ticker}: {msg}")
                 return False
 
             execution_id = str(result.get("order_no", "") or f"pathb_sell_{market}_{plan.ticker}_{int(time.time())}")
@@ -3987,6 +4099,494 @@ class PathBRuntime:
             return int(float((precheck or {}).get("allowed_qty", 0) or 0)) <= 0
         except Exception:
             return True
+
+    @staticmethod
+    def _is_sellable_qty_reject(msg: str) -> bool:
+        text = str(msg or "").strip().lower()
+        if not text:
+            return False
+        compact = "".join(text.split())
+        korean_patterns = (
+            "주문수량이가능수량보다큽니다",
+            "주문수량이매도가능수량보다큽니다",
+            "가능수량보다큽니다",
+            "매도가능수량",
+        )
+        if any(pattern in compact for pattern in korean_patterns):
+            return True
+        return any(
+            pattern in text
+            for pattern in (
+                "available quantity",
+                "sellable quantity",
+                "insufficient sellable",
+                "insufficient available",
+                "quantity exceeds available",
+            )
+        )
+
+    @staticmethod
+    def _pathb_sellability_untrusted(run: dict[str, Any] | None, pos: dict[str, Any] | None) -> bool:
+        run = run or {}
+        pos = pos or {}
+        unresolved_states = {
+            "sellable_qty_reject_no_open_order",
+            "sellable_qty_reject_broker_truth_failed",
+            "sellable_qty_reject_broker_truth_unavailable",
+        }
+        if bool(pos.get("sellable_qty_untrusted")):
+            return True
+        if bool(pos.get("manual_reconcile_required")) or bool(pos.get("manual_reconciliation_required")):
+            return True
+        if bool(pos.get("broker_sell_lock_suspected")):
+            return True
+        if str(pos.get("pathb_sell_state", "") or "").strip().lower() in unresolved_states:
+            return True
+        plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        if bool(plan.get("manual_reconciliation_required")) or bool(plan.get("manual_reconcile_required")):
+            return True
+        if bool(plan.get("broker_sell_lock_suspected")):
+            return True
+        resolution = str(plan.get("sellable_qty_reject_resolution", "") or "").strip().lower()
+        return resolution in {
+            "no_open_order_or_fill",
+            "broker_truth_failed",
+            "broker_truth_unavailable",
+            "refresh_failed",
+        }
+
+    @staticmethod
+    def _pathb_sell_observation_required(run: dict[str, Any] | None, pos: dict[str, Any] | None) -> bool:
+        run = run or {}
+        pos = pos or {}
+        plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        return bool(
+            pos.get("sellable_qty_observation_required")
+            or plan.get("sellable_qty_observation_required")
+        )
+
+    @staticmethod
+    def _pathb_qty_from_row(row: dict[str, Any], *keys: str) -> int:
+        for key in keys:
+            try:
+                qty = int(float(row.get(key, 0) or 0))
+            except Exception:
+                qty = 0
+            if qty > 0:
+                return qty
+        return 0
+
+    @staticmethod
+    def _pathb_sellable_qty_evidence_payload(evidence: dict[str, Any]) -> dict[str, Any]:
+        return {str(key): value for key, value in dict(evidence or {}).items() if not str(key).startswith("_")}
+
+    def _pathb_sellable_qty_reject_evidence(
+        self,
+        plan: PricePlan,
+        *,
+        requested_qty: int,
+        order_price: float,
+        msg: str,
+    ) -> dict[str, Any]:
+        market = str(plan.market or "").upper()
+        ticker = self._ticker_key(market, plan.ticker)
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        evidence: dict[str, Any] = {
+            **self._execution_safety_payload(),
+            "market": market,
+            "ticker": ticker,
+            "path_run_id": plan.path_run_id,
+            "sellable_qty_reject": True,
+            "sellable_qty_reject_at": now_iso,
+            "sellable_qty_reject_msg": str(msg or "")[:300],
+            "requested_sell_qty": int(requested_qty or 0),
+            "requested_sell_order_price": float(order_price or 0),
+            "broker_truth_available": False,
+            "manual_reconciliation_required": True,
+        }
+        try:
+            self.refresh_broker_truth(market, force=True, ttl_sec=15)
+        except Exception as exc:
+            evidence["broker_truth_refresh_error"] = str(exc)[:300]
+        try:
+            market_data = dict(self.broker_truth.market_snapshot(market, ttl_sec=15))
+        except Exception as exc:
+            market_data = {"missing": True, "stale": True, "error": str(exc)}
+        unavailable = (
+            bool(market_data.get("missing"))
+            or bool(market_data.get("stale"))
+            or bool(str(market_data.get("error", "") or ""))
+        )
+        positions = self._broker_rows_for_ticker(market_data.get("positions", []), market, ticker) if not unavailable else []
+        open_orders = self._broker_rows_for_ticker(market_data.get("open_orders", []), market, ticker) if not unavailable else []
+        fill_rows = market_data.get("today_fills", [])
+        if not fill_rows:
+            fill_rows = market_data.get("fills", [])
+        fills = self._broker_rows_for_ticker(fill_rows, market, ticker) if not unavailable else []
+        open_matches = self._matching_sell_open_orders(open_orders, strict_execution=False)
+        sell_fills = self._matching_sell_fills(fills, strict_execution=False)
+        broker_qty = 0
+        for row in positions:
+            broker_qty += self._pathb_qty_from_row(row, "qty", "hldg_qty", "ord_psbl_qty")
+        open_remaining = 0
+        for row in open_matches:
+            open_remaining += self._pathb_qty_from_row(row, "remaining_qty", "order_qty", "qty")
+        filled_qty = sum(self._pathb_qty_from_row(row, "filled_qty", "qty", "order_qty") for row in sell_fills)
+        evidence.update(
+            {
+                "broker_truth_available": not unavailable,
+                "broker_truth_last_success_at": str(market_data.get("last_success_at", "") or ""),
+                "broker_truth_last_attempt_at": str(market_data.get("last_attempt_at", "") or ""),
+                "broker_truth_stale": bool(market_data.get("stale")),
+                "broker_truth_error": str(market_data.get("error", "") or ""),
+                "broker_position_qty": int(broker_qty),
+                "broker_open_sell_order_evidence": bool(open_matches),
+                "broker_open_sell_order_count": int(len(open_matches)),
+                "broker_open_remaining_qty": int(open_remaining),
+                "broker_today_sell_fill_evidence": bool(sell_fills),
+                "broker_sell_fill_qty": int(filled_qty),
+                "_open_matches": open_matches,
+                "_sell_fills": sell_fills,
+            }
+        )
+        if open_matches:
+            evidence["broker_open_sell_order_no"] = str(open_matches[0].get("order_no", "") or "")
+        if sell_fills:
+            evidence["broker_sell_fill_order_no"] = str(sell_fills[0].get("order_no", "") or "")
+        return evidence
+
+    def _recover_existing_sell_order_after_qty_reject(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        *,
+        qty: int,
+        order_price: float,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        market = str(plan.market or "").upper()
+        open_matches = list(evidence.get("_open_matches") or [])
+        if not open_matches:
+            return {"handled": False, "reason": "no_open_sell_order"}
+        order = dict(open_matches[0])
+        order_no = str(order.get("order_no", "") or "").strip()
+        if not order_no:
+            order_no = f"broker_sell_{market}_{self._ticker_key(market, plan.ticker)}_{int(time.time())}"
+        remaining_qty = self._pathb_qty_from_row(order, "remaining_qty", "order_qty", "qty") or int(qty or 0)
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        pos.pop("pathb_closing", None)
+        pos["pathb_pending_sell_order_no"] = order_no
+        pos["pathb_pending_sell_qty"] = int(remaining_qty)
+        pos["pathb_pending_close_reason"] = signal.close_reason
+        pos["pathb_pending_sell_price"] = float(order_price or 0)
+        pos["pathb_sell_state"] = "broker_open_order_recovered_after_qty_reject"
+        pos["pathb_sellable_qty_reject_at"] = now_iso
+        pos["broker_sell_lock_suspected"] = False
+        for key in (
+            "sellable_qty_untrusted",
+            "manual_reconcile_required",
+            "manual_reconciliation_required",
+            "sellable_qty_observation_required",
+        ):
+            pos.pop(key, None)
+        self.sell_manager.mark_sell_acked(
+            plan.path_run_id,
+            execution_id=order_no,
+            runtime_mode=self.mode,
+            brain_snapshot_id=self._brain_snapshot_id(market),
+            detail="sellable_qty_reject_existing_open_order_recovered",
+        )
+        self.store.update_path_run(
+            plan.path_run_id,
+            plan={
+                **self._pathb_sellable_qty_evidence_payload(evidence),
+                "sellable_qty_reject_resolution": "existing_open_sell_order_recovered",
+                "manual_reconciliation_required": False,
+                "broker_sell_lock_suspected": False,
+                "exit_execution_id": order_no,
+                "exit_order_price": float(order_price or 0),
+                "exit_qty": int(remaining_qty or qty or 0),
+                "pending_close_reason": signal.close_reason,
+                "sell_order_sent_at": now_iso,
+                "recovered_broker_sell_order_no": order_no,
+                "recovered_broker_sell_remaining_qty": int(remaining_qty),
+            },
+            merge_plan=True,
+        )
+        try:
+            self._save_positions_if_possible()
+        except Exception:
+            pass
+        self._emit_risk_event(
+            "PATHB_SELL_EXISTING_ORDER_RECOVERED",
+            market,
+            ticker=plan.ticker,
+            reason="sellable_qty_reject_existing_open_order_recovered",
+            payload={
+                **self._pathb_sellable_qty_evidence_payload(evidence),
+                "recovered_broker_sell_order_no": order_no,
+                "recovered_broker_sell_remaining_qty": int(remaining_qty),
+            },
+        )
+        log.warning(
+            f"[PathB SELL relinked] {market} {plan.ticker} existing broker sell order recovered "
+            f"after qty reject order={order_no} qty={remaining_qty} run={plan.path_run_id}"
+        )
+        return {"handled": True, "resolution": "existing_open_sell_order_recovered", "keep_lock": True}
+
+    def _mark_pathb_sellability_untrusted(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        *,
+        qty: int,
+        msg: str,
+        evidence: dict[str, Any],
+        resolution: str,
+    ) -> dict[str, Any]:
+        market = str(plan.market or "").upper()
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        pos.pop("pathb_closing", None)
+        pos["sellable_qty_untrusted"] = True
+        pos["manual_reconcile_required"] = True
+        pos["manual_reconciliation_required"] = True
+        pos["broker_sell_lock_suspected"] = True
+        pos["pathb_sell_state"] = (
+            "sellable_qty_reject_broker_truth_failed"
+            if str(resolution or "") in {"broker_truth_failed", "broker_truth_unavailable", "refresh_failed"}
+            else "sellable_qty_reject_no_open_order"
+        )
+        pos["pathb_sellable_qty_reject_at"] = now_iso
+        pos["pathb_sellable_qty_reject_msg"] = str(msg or "")[:200]
+        pos["pathb_sellable_qty_reject_qty"] = int(qty or 0)
+        payload = {
+            **self._pathb_sellable_qty_evidence_payload(evidence),
+            "sellable_qty_reject_resolution": str(resolution or "no_open_order_or_fill"),
+            "manual_reconciliation_required": True,
+            "broker_sell_lock_suspected": True,
+            "pathb_sell_state": pos["pathb_sell_state"],
+            "pending_close_reason": signal.close_reason,
+        }
+        self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+        try:
+            self._save_positions_if_possible()
+        except Exception:
+            pass
+        self._emit_risk_event(
+            "PATHB_SELLABLE_QTY_REJECT_UNRESOLVED",
+            market,
+            ticker=plan.ticker,
+            reason=str(resolution or "sellable_qty_reject_unresolved"),
+            severity="error",
+            payload=payload,
+        )
+        self._note_sell_failure(market, plan.ticker, signal.reason, f"sellable_qty_reject:{resolution}")
+        log.warning(
+            f"[PathB SELL quarantine] {market} {plan.ticker} sellable qty reject unresolved "
+            f"resolution={resolution} run={plan.path_run_id}"
+        )
+        return {"handled": True, "resolution": str(resolution or "no_open_order_or_fill"), "keep_lock": False}
+
+    def _handle_pathb_sellable_qty_reject_fills(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        *,
+        qty: int,
+        order_price: float,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        market = str(plan.market or "").upper()
+        sell_fills = list(evidence.get("_sell_fills") or [])
+        if not sell_fills:
+            return {"handled": False, "reason": "no_sell_fills"}
+        filled_qty = sum(self._pathb_qty_from_row(row, "filled_qty", "qty", "order_qty") for row in sell_fills)
+        fill_price = self._weighted_fill_price(sell_fills) or float(order_price or 0)
+        execution_id = str(sell_fills[0].get("order_no", "") or "")
+        safe_evidence = self._pathb_sellable_qty_evidence_payload(evidence)
+        if int(qty or 0) <= 0 or filled_qty >= int(qty or 0):
+            self._finalize_pathb_sell_close(
+                plan,
+                price=fill_price,
+                qty=int(filled_qty or qty or 0),
+                execution_id=execution_id,
+                close_reason=signal.close_reason,
+                evidence={
+                    **safe_evidence,
+                    "sellable_qty_reject_resolution": "sell_fill_recovered_after_qty_reject",
+                },
+            )
+            self.store.update_path_run(
+                plan.path_run_id,
+                plan={"sellable_qty_reject_resolution": "sell_fill_recovered_after_qty_reject"},
+                merge_plan=True,
+            )
+            log.warning(
+                f"[PathB SELL fill recovered] {market} {plan.ticker} sell fill found after qty reject "
+                f"qty={filled_qty} order={execution_id or '-'} run={plan.path_run_id}"
+            )
+            return {"handled": True, "resolution": "sell_fill_recovered_after_qty_reject", "keep_lock": False}
+
+        remaining_qty = max(0, int(qty or 0) - int(filled_qty or 0))
+        open_matches = list(evidence.get("_open_matches") or [])
+        pending_order_no = str((open_matches[0] if open_matches else {}).get("order_no", "") or execution_id or "")
+        self._update_local_pathb_remaining_qty(plan, remaining_qty)
+        self.sell_manager.mark_sell_partial(
+            plan.path_run_id,
+            execution_id=execution_id,
+            price=fill_price,
+            filled_qty=int(filled_qty or 0),
+            remaining_qty=int(remaining_qty),
+            runtime_mode=self.mode,
+            brain_snapshot_id=self._brain_snapshot_id(market),
+        )
+        pos.pop("pathb_closing", None)
+        pos["pathb_sell_state"] = "partial_sell_fill_recovered_after_qty_reject"
+        if pending_order_no:
+            pos["pathb_pending_sell_order_no"] = pending_order_no
+            pos["pathb_pending_sell_qty"] = int(remaining_qty)
+            pos["pathb_pending_close_reason"] = signal.close_reason
+            pos["pathb_pending_sell_price"] = float(order_price or 0)
+        self.store.update_path_run(
+            plan.path_run_id,
+            plan={
+                **safe_evidence,
+                "sellable_qty_reject_resolution": "partial_sell_fill_recovered_after_qty_reject",
+                "exit_execution_id": execution_id,
+                "exit_order_price": float(order_price or 0),
+                "exit_qty": int(qty or 0),
+                "pending_close_reason": signal.close_reason,
+                "sell_order_sent_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "recovered_broker_sell_order_no": pending_order_no,
+                "remaining_qty": int(remaining_qty),
+                "manual_reconciliation_required": bool(remaining_qty > 0),
+            },
+            merge_plan=True,
+        )
+        log.warning(
+            f"[PathB SELL partial recovered] {market} {plan.ticker} partial sell fill found after qty reject "
+            f"filled={filled_qty} remaining={remaining_qty} run={plan.path_run_id}"
+        )
+        return {"handled": True, "resolution": "partial_sell_fill_recovered_after_qty_reject", "keep_lock": False}
+
+    def _handle_pathb_sellable_qty_reject(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        *,
+        qty: int,
+        order_price: float,
+        msg: str,
+    ) -> dict[str, Any]:
+        evidence = self._pathb_sellable_qty_reject_evidence(
+            plan,
+            requested_qty=qty,
+            order_price=order_price,
+            msg=msg,
+        )
+        if bool(evidence.get("broker_truth_available")):
+            fill_result = self._handle_pathb_sellable_qty_reject_fills(
+                plan,
+                pos,
+                signal,
+                qty=qty,
+                order_price=order_price,
+                evidence=evidence,
+            )
+            if fill_result.get("handled"):
+                return fill_result
+            if evidence.get("_open_matches"):
+                return self._recover_existing_sell_order_after_qty_reject(
+                    plan,
+                    pos,
+                    signal,
+                    qty=qty,
+                    order_price=order_price,
+                    evidence=evidence,
+                )
+            resolution = "no_open_order_or_fill"
+        else:
+            resolution = "broker_truth_failed"
+        return self._mark_pathb_sellability_untrusted(
+            plan,
+            pos,
+            signal,
+            qty=qty,
+            msg=msg,
+            evidence=evidence,
+            resolution=resolution,
+        )
+
+    def _observe_pathb_sellability_before_submit(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        *,
+        qty: int,
+        order_price: float,
+    ) -> dict[str, Any]:
+        evidence = self._pathb_sellable_qty_reject_evidence(
+            plan,
+            requested_qty=qty,
+            order_price=order_price,
+            msg="stale_exit_order_observation",
+        )
+        if not bool(evidence.get("broker_truth_available")):
+            return self._mark_pathb_sellability_untrusted(
+                plan,
+                pos,
+                signal,
+                qty=qty,
+                msg=str(evidence.get("broker_truth_error") or evidence.get("broker_truth_refresh_error") or ""),
+                evidence=evidence,
+                resolution="broker_truth_failed",
+            )
+        fill_result = self._handle_pathb_sellable_qty_reject_fills(
+            plan,
+            pos,
+            signal,
+            qty=qty,
+            order_price=order_price,
+            evidence=evidence,
+        )
+        if fill_result.get("handled"):
+            return fill_result
+        if evidence.get("_open_matches"):
+            return self._recover_existing_sell_order_after_qty_reject(
+                plan,
+                pos,
+                signal,
+                qty=qty,
+                order_price=order_price,
+                evidence=evidence,
+            )
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        for key in ("sellable_qty_observation_required",):
+            pos.pop(key, None)
+        pos["sellable_qty_observation_checked_at"] = now_iso
+        self.store.update_path_run(
+            plan.path_run_id,
+            plan={
+                "sellable_qty_observation_required": False,
+                "sellable_qty_observation_checked_at": now_iso,
+                "stale_exit_order_observation_result": "no_open_order_or_fill",
+            },
+            merge_plan=True,
+        )
+        try:
+            self._save_positions_if_possible()
+        except Exception:
+            pass
+        log.info(
+            f"[PathB sell observation clear] {plan.market} {plan.ticker} no broker sell lock evidence "
+            f"run={plan.path_run_id}"
+        )
+        return {"handled": False, "resolution": "no_open_order_or_fill"}
 
     def _pathb_zero_holding_broker_evidence(self, plan: PricePlan) -> dict[str, Any]:
         market = str(plan.market or "").upper()
@@ -5757,6 +6357,12 @@ class PathBRuntime:
             path_run_id=path_run_id,
             execution_id=execution_id,
         )
+        stale_exit_unconfirmed = bool(str(execution_id or "").strip())
+        if stale_exit_unconfirmed:
+            pos["stale_exit_order_unconfirmed"] = True
+            pos["stale_exit_execution_id"] = str(execution_id or "")
+            pos["sellable_qty_observation_required"] = True
+            pos["pathb_sell_state"] = "stale_exit_order_recovered_as_still_held"
         payload = {
             **evidence,
             "exit_sell_missing_still_held": True,
@@ -5768,6 +6374,8 @@ class PathBRuntime:
             "stale_exit_qty": int(requested_qty or 0),
             "stale_sell_order_sent_at": str(plan_json.get("sell_order_sent_at", "") or ""),
             "stale_pending_close_reason": str(plan_json.get("pending_close_reason", "") or ""),
+            "stale_exit_order_unconfirmed": stale_exit_unconfirmed,
+            "sellable_qty_observation_required": stale_exit_unconfirmed,
             "stale_pathb_position_fields": archived_position_fields,
             "stale_pending_orders_removed": int(removed_pending_orders),
             "exit_execution_id": "",
@@ -5783,6 +6391,11 @@ class PathBRuntime:
             next_retry=False,
         )
         self.store.update_path_run(path_run_id, status="FILLED", plan={"recovered_to_filled_still_held": True}, merge_plan=True)
+        if stale_exit_unconfirmed:
+            try:
+                self._save_positions_if_possible()
+            except Exception:
+                pass
         self._release_pathb_sell_attempt_lock(plan.market, plan.ticker, path_run_id)
         log.warning(
             f"[PathB ORDER_UNKNOWN sell recovered as still held] {plan.market} {plan.ticker} "

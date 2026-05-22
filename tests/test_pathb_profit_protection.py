@@ -113,6 +113,38 @@ class PathBProfitProtectionTests(unittest.TestCase):
             self.assertEqual(policy["protective_stop"], 70.80)
             self.assertLessEqual(policy["hard_stop"], policy["protective_stop"])
 
+    def test_apply_general_hold_advice_preserves_sellability_quarantine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, _bot, store, plan = _runtime_with_plan(tmp, market="US")
+            pos = {
+                "ticker": "HALO",
+                "qty": 1,
+                "display_avg_price": 70.34,
+                "display_current_price": 71.16,
+                "pathb_path_run_id": plan.path_run_id,
+                "sellable_qty_untrusted": True,
+                "manual_reconcile_required": True,
+                "pathb_sell_state": "sellable_qty_reject_no_open_order",
+            }
+            advice = {
+                "action": "HOLD",
+                "protective_stop": 70.80,
+                "hard_stop": 69.01,
+                "valid_for_min": 15,
+                "confidence": 0.72,
+                "reason": "protect open profit",
+            }
+
+            result = runtime.apply_general_hold_advice_policy(pos, "US", advice, 71.16)
+
+            self.assertFalse(result["updated"])
+            self.assertEqual(result["reason"], "sellable_qty_untrusted")
+            self.assertTrue(result["preserved_execution_uncertainty"])
+            self.assertNotIn("auto_sell_policy", store.find_path_run(plan.path_run_id)["plan"])
+            self.assertTrue(pos["sellable_qty_untrusted"])
+            self.assertTrue(pos["manual_reconcile_required"])
+            self.assertEqual(pos["pathb_sell_state"], "sellable_qty_reject_no_open_order")
+
     def test_apply_general_sell_advice_creates_forced_sell_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, _bot, store, plan = _runtime_with_plan(tmp, market="US")

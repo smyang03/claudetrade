@@ -618,6 +618,64 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertEqual(state["reason"], "ANALYST_MAX_GROSS_EXPOSURE_REACHED")
         self.assertEqual(state["details"]["gross_exposure_pct"], 25.0)
 
+    def test_new_buy_gate_can_use_manual_gross_exposure_cap(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._is_order_allowed_now = lambda market: True
+        bot._in_entry_blackout = lambda market: False
+        bot.v2_order_unknown = None
+        bot.v2 = None
+        bot.today_judgment = {"consensus": {"new_buy_permission": "selective", "max_gross_exposure_pct": 40}}
+        bot._market_equity_reference_context = lambda market: {
+            "total_krw": 100000.0,
+            "position_krw": 50000.0,
+            "source": "test",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "US_ANALYST_GROSS_EXPOSURE_CAP_MODE": "manual",
+                "US_ANALYST_GROSS_EXPOSURE_CAP_PCT": "60",
+            },
+            clear=False,
+        ):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "US", "AAPL", "momentum")
+
+        self.assertTrue(state["allowed"])
+        self.assertEqual(state["details"]["max_gross_exposure_pct"], 60.0)
+        self.assertEqual(state["details"]["analyst_max_gross_exposure_pct"], 40.0)
+        self.assertEqual(state["details"]["gross_cap_mode"], "manual")
+        self.assertEqual(state["details"]["gross_cap_source"], "manual_config")
+
+    def test_manual_gross_exposure_cap_falls_back_to_analyst_when_missing(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._is_order_allowed_now = lambda market: True
+        bot._in_entry_blackout = lambda market: False
+        bot.v2_order_unknown = None
+        bot.v2 = None
+        bot.today_judgment = {"consensus": {"new_buy_permission": "selective", "max_gross_exposure_pct": 40}}
+        bot._market_equity_reference_context = lambda market: {
+            "total_krw": 100000.0,
+            "position_krw": 50000.0,
+            "source": "test",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "US_ANALYST_GROSS_EXPOSURE_CAP_MODE": "manual",
+                "US_ANALYST_GROSS_EXPOSURE_CAP_PCT": "",
+            },
+            clear=False,
+        ):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "US", "AAPL", "momentum")
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "ANALYST_MAX_GROSS_EXPOSURE_REACHED")
+        self.assertEqual(state["details"]["max_gross_exposure_pct"], 40.0)
+        self.assertEqual(state["details"]["gross_cap_source"], "analyst_consensus")
+        self.assertEqual(state["details"]["gross_cap_config_error"], "manual_cap_missing_or_invalid")
+
     def test_new_buy_block_alert_includes_votes_and_dedupes(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
         bot._current_session_date_str = lambda market: "2026-05-15"

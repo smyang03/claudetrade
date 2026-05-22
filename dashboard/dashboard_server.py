@@ -294,6 +294,45 @@ def _candidate_audit_db_path() -> Path:
     return get_runtime_path("data", "audit", "candidate_audit.db", make_parents=False)
 
 
+def _v2_event_store_db_path() -> Path:
+    return get_runtime_path("data", "v2_event_store.db", make_parents=False)
+
+
+def _fetch_pathb_run_profit_review(path_run_ids: list[str]) -> dict[str, dict]:
+    """path_run_id 목록에 대한 profit_review / auto_sell_review 필드를 plan_json에서 읽어 반환."""
+    if not path_run_ids:
+        return {}
+    db_path = _v2_event_store_db_path()
+    if not db_path.exists():
+        return {}
+    result: dict[str, dict] = {}
+    try:
+        import sqlite3
+        placeholders = ",".join("?" for _ in path_run_ids)
+        with sqlite3.connect(str(db_path), timeout=3) as conn:
+            rows = conn.execute(
+                f"SELECT path_run_id, plan_json FROM v2_path_runs WHERE path_run_id IN ({placeholders})",
+                path_run_ids,
+            ).fetchall()
+        for run_id, plan_raw in rows:
+            try:
+                plan = json.loads(plan_raw or "{}")
+            except Exception:
+                plan = {}
+            result[run_id] = {
+                "profit_review_fallback": bool(plan.get("profit_review_fallback")),
+                "profit_review_timeout": bool(plan.get("profit_review_timeout")),
+                "profit_review_error_kind": str(plan.get("profit_review_error_kind") or ""),
+                "profit_review_fallback_reason": str(plan.get("profit_review_fallback_reason") or ""),
+                "auto_sell_review_action": str(plan.get("auto_sell_review_action") or ""),
+                "auto_sell_policy_mode": str((plan.get("auto_sell_policy") or {}).get("mode") or ""),
+                "auto_sell_policy_status": str((plan.get("auto_sell_policy") or {}).get("status") or ""),
+            }
+    except Exception:
+        pass
+    return result
+
+
 def _judgment_path(market: str, trade_date: str, mode: str) -> Path:
     day = str(trade_date or "").replace("-", "")
     return LOG_DIR / f"{_normalize_mode(mode)}_{day}_{market}.json"
@@ -393,6 +432,42 @@ def _load_start_config_for_write(path: Path) -> dict[str, Any]:
     return data
 
 
+def _mode_env_write_path(mode: str) -> Path:
+    runtime_mode = _normalize_mode(mode)
+    mode_path = BASE_DIR / f".env.{runtime_mode}"
+    if mode_path.exists():
+        return mode_path
+    fallback = BASE_DIR / ".env"
+    return fallback if fallback.exists() else mode_path
+
+
+def _update_mode_env_values(mode: str, updates: dict[str, Any]) -> Path:
+    path = _mode_env_write_path(mode)
+    line_by_key = {
+        str(key): f"{key}={'' if value is None else str(value)}"
+        for key, value in updates.items()
+    }
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    lines = text.splitlines()
+    seen: set[str] = set()
+    out: list[str] = []
+    pattern = re.compile(r"^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)\s*=")
+    for line in lines:
+        match = pattern.match(line)
+        key = match.group(2) if match else ""
+        if key in line_by_key:
+            prefix = match.group(1) if match else ""
+            out.append(f"{prefix}{line_by_key[key]}")
+            seen.add(key)
+        else:
+            out.append(line)
+    for key, line in line_by_key.items():
+        if key not in seen:
+            out.append(line)
+    _atomic_write_text(path, "\n".join(out).rstrip() + "\n")
+    return path
+
+
 def _order_size_config_keys(market: str) -> list[str]:
     market_key = str(market or "").upper()
     if market_key in {"KR", "US"}:
@@ -418,6 +493,42 @@ def _summary_order_size_setting_krw(market: str, mode: str, fallback: float = 0.
     if value <= 0:
         value = float(fallback or 0.0)
     return float(value or 0.0)
+
+
+def _gross_cap_config_keys(market: str) -> list[str]:
+    market_key = str(market or "").upper()
+    if market_key not in {"KR", "US"}:
+        raise ValueError("market must be KR or US")
+    return [
+        f"{market_key}_ANALYST_GROSS_EXPOSURE_CAP_MODE",
+        f"{market_key}_ANALYST_GROSS_EXPOSURE_CAP_PCT",
+    ]
+
+
+def _summary_gross_cap_setting(market: str, mode: str) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    if market_key not in {"KR", "US"}:
+        raise ValueError("market must be KR or US")
+    raw_mode = (
+        _get_env_raw(mode, f"{market_key}_ANALYST_GROSS_EXPOSURE_CAP_MODE")
+        or _get_env_raw(mode, "ANALYST_GROSS_EXPOSURE_CAP_MODE")
+        or "auto"
+    )
+    mode_key = str(raw_mode or "auto").strip().lower()
+    resolved_mode = "manual" if mode_key in {"manual", "fixed", "operator", "override"} else "auto"
+    pct = 0.0
+    if resolved_mode == "manual":
+        pct_raw = _get_env_raw(mode, f"{market_key}_ANALYST_GROSS_EXPOSURE_CAP_PCT")
+        if pct_raw in (None, ""):
+            pct_raw = _get_env_raw(mode, "ANALYST_GROSS_EXPOSURE_CAP_PCT")
+        pct = _float_or_none(pct_raw) or 0.0
+    return {
+        "market": market_key,
+        "mode": resolved_mode,
+        "requested_mode": str(raw_mode or "auto"),
+        "pct": max(0.0, min(100.0, float(pct or 0.0))),
+        "keys": _gross_cap_config_keys(market_key),
+    }
 
 
 def _update_start_config_order_size(market: str, amount_krw: float, *, mode: str = "live") -> dict[str, Any]:
@@ -448,11 +559,77 @@ def _update_start_config_order_size(market: str, amount_krw: float, *, mode: str
     data["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
     data["updated_by"] = "dashboard_order_size_control"
     _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    env_path = _update_mode_env_values(mode, {key: str(amount) for key in keys})
     return {
         "market": market_key,
         "amount_krw": amount,
         "updated_keys": keys,
         "path": str(path),
+        "env_path": str(env_path),
+        "restart_required": True,
+    }
+
+
+def _update_start_config_gross_cap(
+    market: str,
+    cap_mode: str,
+    cap_pct: Optional[Any] = None,
+    *,
+    mode: str = "live",
+) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    if market_key not in {"KR", "US"}:
+        raise ValueError("market must be KR or US")
+    raw_mode = str(cap_mode or "").strip().lower()
+    if raw_mode in {"auto", "claude", "analyst", "consensus"}:
+        resolved_mode = "auto"
+    elif raw_mode in {"manual", "fixed", "operator", "override"}:
+        resolved_mode = "manual"
+    else:
+        raise ValueError("cap_mode must be auto or manual")
+
+    pct_value = 0.0
+    if resolved_mode == "manual":
+        try:
+            pct_value = float(str(cap_pct).replace(",", ""))
+        except Exception as exc:
+            raise ValueError("cap_pct must be numeric") from exc
+        if pct_value <= 0 or pct_value > 100:
+            raise ValueError("cap_pct must be between 1 and 100")
+    if _start_config_disabled(mode):
+        raise StartConfigValidationError("start config override is disabled")
+
+    path = _start_config_path(mode)
+    data = _load_start_config_for_write(path)
+    overrides = data.get("env_overrides")
+    if overrides is None:
+        overrides = {}
+        data["env_overrides"] = overrides
+
+    mode_key, pct_key = _gross_cap_config_keys(market_key)
+    overrides[mode_key] = resolved_mode
+    overrides[pct_key] = f"{pct_value:g}" if resolved_mode == "manual" else ""
+    if mode_key in data:
+        data[mode_key] = resolved_mode
+    if pct_key in data:
+        data[pct_key] = f"{pct_value:g}" if resolved_mode == "manual" else ""
+    data["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+    data["updated_by"] = "dashboard_gross_cap_control"
+    _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    env_path = _update_mode_env_values(
+        mode,
+        {
+            mode_key: resolved_mode,
+            pct_key: f"{pct_value:g}" if resolved_mode == "manual" else "",
+        },
+    )
+    return {
+        "market": market_key,
+        "cap_mode": resolved_mode,
+        "cap_pct": pct_value if resolved_mode == "manual" else 0.0,
+        "updated_keys": [mode_key, pct_key],
+        "path": str(path),
+        "env_path": str(env_path),
         "restart_required": True,
     }
 
@@ -5677,6 +5854,7 @@ def api_summary():
     mode_order_limit_krw = round(max_order_krw * (mode_size_pct / 100.0), 0) if mode_size_pct > 0 else 0
     min_order_krw = _summary_min_order_krw(market, live, usd_krw, mode=mode)
     order_size_setting_krw = _summary_order_size_setting_krw(market, mode, fallback=max_order_krw)
+    gross_cap_setting = _summary_gross_cap_setting(market, mode)
 
     streak = 0
     streak_type = None
@@ -5781,6 +5959,10 @@ def api_summary():
             "buy_range_max_krw": mode_order_limit_krw,
             "order_size_setting_krw": round(order_size_setting_krw, 0),
             "order_size_setting_keys": _order_size_config_keys(market),
+            "gross_cap_setting_mode": gross_cap_setting.get("mode", "auto"),
+            "gross_cap_setting_requested_mode": gross_cap_setting.get("requested_mode", "auto"),
+            "gross_cap_setting_pct": round(float(gross_cap_setting.get("pct", 0.0) or 0.0), 3),
+            "gross_cap_setting_keys": gross_cap_setting.get("keys", []),
             "cumulative":     cum_asset,
             "asset_krw_kr":   round(kr_asset, 0),
             "asset_krw_us":   round(us_asset, 0),
@@ -7006,6 +7188,32 @@ def api_control_order_size():
         "ok": True,
         **result,
         "message": "매수금액 설정을 저장했습니다. 실행 중인 봇에는 재시작 후 적용됩니다.",
+    })
+
+
+@app.route("/api/control/gross-cap", methods=["POST"])
+def api_control_gross_cap():
+    mode = _request_mode()
+    if mode != "live":
+        return jsonify({"ok": False, "error": "gross cap control is live-mode only"}), 400
+    body = request.get_json(silent=True) or {}
+    market = str(body.get("market") or request.args.get("market") or "US").strip().upper()
+    cap_mode = body.get("cap_mode", body.get("mode_value", body.get("capMode", body.get("value"))))
+    cap_pct = body.get("cap_pct", body.get("pct", body.get("percent")))
+    try:
+        result = _update_start_config_gross_cap(market, cap_mode, cap_pct, mode=mode)
+    except StartConfigValidationError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except StartConfigReadError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"failed to update gross cap config: {exc}"}), 500
+    return jsonify({
+        "ok": True,
+        **result,
+        "message": "노출한도 설정을 저장했습니다. 실행 중인 봇에는 재시작 후 적용됩니다.",
     })
 
 
@@ -9084,6 +9292,14 @@ def api_tickers_today():
             "selection_price_label": _format_mmdd_hhmm(first_seen.get("ts", "")),
             "selection_price_event": first_seen.get("event", ""),
         })
+    # PathB profit_review 상태 일괄 조회 (타임아웃 fallback 표시용)
+    _pathb_run_ids = [
+        str(live_pos_map.get(item.get("ticker", ""), {}).get("pathb_path_run_id") or "")
+        for item in result
+    ]
+    _pathb_run_ids = [r for r in _pathb_run_ids if r]
+    _pathb_profit_review_map = _fetch_pathb_run_profit_review(_pathb_run_ids)
+
     # 선택되지 않은 후보 목록 (축약)
     for item in result:
         ticker = item.get("ticker", "")
@@ -9110,6 +9326,11 @@ def api_tickers_today():
         item["buy_path"] = "PathB" if is_pathb_position else ("PlanA" if item.get("held_qty", 0) > 0 else "")
         item["pathb_path_run_id"] = live_pos.get("pathb_path_run_id", "")
         item["pathb_plan"] = live_pos.get("pathb_plan", {}) or {}
+        _pr = _pathb_profit_review_map.get(str(live_pos.get("pathb_path_run_id") or ""), {})
+        item["profit_review_fallback"] = bool(_pr.get("profit_review_fallback"))
+        item["profit_review_timeout"] = bool(_pr.get("profit_review_timeout"))
+        item["profit_review_error_kind"] = str(_pr.get("profit_review_error_kind") or "")
+        item["profit_review_fallback_reason"] = str(_pr.get("profit_review_fallback_reason") or "")
         item["entry_time"] = live_pos.get("entry_time", "") or live_pos.get("entry_date", "")
         _apply_monitor_display_price(
             item,
@@ -9809,6 +10030,57 @@ function formatBuyRange(today) {
   return '';
 }
 
+function koBuyCapacityReason(reason) {
+  return ({
+    ANALYST_NEW_BUY_BLOCK: '분석가 신규매수 차단',
+    ANALYST_MAX_GROSS_EXPOSURE_REACHED: '노출 한도 도달',
+    GROSS_EXPOSURE_REFERENCE_MISSING: '노출 기준 없음',
+    GROSS_EXPOSURE_REMAINING_BELOW_MIN_ORDER: '남은 노출이 최소주문 미만',
+    CASH_BELOW_MIN_ORDER: '주문가능금액 부족',
+    POSITION_CAP_REACHED: '보유 슬롯 한도',
+    DAILY_ENTRY_CAP_REACHED: '일일 진입 한도',
+    FIXED_ORDER_SIZE_EXCEEDS_TODAY_CAPACITY: '고정 주문금액이 오늘 여력 초과',
+  }[String(reason || '')] || String(reason || ''));
+}
+
+function formatBuyCapacityLine(row) {
+  if (!row || !Object.keys(row).length) return '매수 여력: --';
+  const capPct = Number(row.max_gross_exposure_pct || 0);
+  const grossPct = Number(row.gross_exposure_pct || 0);
+  const capText = capPct > 0
+    ? `${fmt.asset(row.gross_exposure_cap_krw || 0)} (${grossPct.toFixed(1)}%/${capPct.toFixed(1)}%)`
+    : '노출 한도 없음';
+  const capSource = String(row.gross_cap_source || 'analyst_consensus');
+  const capMode = String(row.gross_cap_mode || 'auto');
+  const capPolicyText = capSource === 'manual_config' ? `${capMode}/수동` : `${capMode}/Claude`;
+  const remaining = capPct > 0 ? Number(row.gross_exposure_remaining_krw || 0) : Number(row.orderable_cash_krw || 0);
+  const reasons = Array.isArray(row.capacity_block_reasons) ? row.capacity_block_reasons : [];
+  const reasonText = reasons.length ? reasons.map(koBuyCapacityReason).join(' · ') : '정상';
+  const reasonColor = reasons.length ? '#f59e0b' : 'var(--green)';
+  const fixedOrders = Number(row.today_entry_capacity_orders || 0);
+  const fixedCapacity = Number(row.today_fixed_order_capacity_krw || 0);
+  return `매수 여력: 보유 ${fmt.asset(row.position_exposure_krw || 0)} / 한도 ${capText}(${capPolicyText}) · 남은한도 ${fmt.asset(remaining)} · 주문가능 ${fmt.asset(row.orderable_cash_krw || 0)} · 오늘추가 ${fmt.asset(row.today_buy_capacity_krw || 0)} · 고정주문 ${fixedOrders}회(${fmt.asset(fixedCapacity)}) · <span style="color:${reasonColor}">${reasonText}</span>`;
+}
+
+let buyCapacitySeq = 0;
+async function loadBuyCapacityBar() {
+  const el = document.getElementById('bar-buy-capacity');
+  if (!el) return;
+  const seq = ++buyCapacitySeq;
+  el.textContent = '매수 여력 확인 중...';
+  try {
+    const d = await apiGet('/api/v2/ops', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
+    if (seq !== buyCapacitySeq) return;
+    const row = ((((d || {}).path_b_live || {}).execution_capacity || {})[MARKET]) || {};
+    el.innerHTML = formatBuyCapacityLine(row);
+    el.title = row.equity_source
+      ? `기준 ${row.equity_source}${row.equity_lag_suspected ? ' · 브로커/내부 기준 차이 의심' : ''}`
+      : '';
+  } catch (e) {
+    if (seq === buyCapacitySeq) el.textContent = '매수 여력 조회 실패';
+  }
+}
+
 function formatAccountAssetSummary(today, tradingKrw, assetBreakdown, assetSourceLabel) {
   const flowLabel = today.cash_flow_label || '입출금/환전 추정';
   return `<div>현재 매매 ${fmt.krw(tradingKrw)}${assetBreakdown ? ` · ${assetBreakdown}` : ''}</div>`
@@ -9938,6 +10210,8 @@ function renderStopClusterBar(today) {
   const btn = document.getElementById('stop-cluster-reset-btn');
   const buyRangeEl = document.getElementById('bar-buy-range');
   const orderSizeInput = document.getElementById('bar-order-size-input');
+  const grossCapMode = document.getElementById('bar-gross-cap-mode');
+  const grossCapInput = document.getElementById('bar-gross-cap-input');
   if (!el) return;
   const count = Number(sc.daily_stop_count || 0);
   const hard = Number(sc.hard_block_count || 0);
@@ -9967,11 +10241,22 @@ function renderStopClusterBar(today) {
     buyRangeEl.textContent = buyRange || '--';
     buyRangeEl.title = buyRange ? '현재 설정 기준 최소~최대 1회 매수금액' : '매수금액 설정 없음';
   }
+  loadBuyCapacityBar();
   if (orderSizeInput && document.activeElement !== orderSizeInput) {
     const setting = Number((today || {}).order_size_setting_krw || (today || {}).max_order_krw || 0);
     orderSizeInput.value = setting > 0 ? String(Math.round(setting)) : '';
     orderSizeInput.title = `다음 ${MARKET} 1회 매수 설정금액`;
   }
+  if (grossCapMode && document.activeElement !== grossCapMode) {
+    const settingMode = String((today || {}).gross_cap_setting_mode || 'auto').toLowerCase();
+    grossCapMode.value = settingMode === 'manual' ? 'manual' : 'auto';
+  }
+  if (grossCapInput && document.activeElement !== grossCapInput) {
+    const pct = Number((today || {}).gross_cap_setting_pct || 0);
+    grossCapInput.value = pct > 0 ? String(Number.isInteger(pct) ? Math.round(pct) : pct.toFixed(1)) : '';
+    grossCapInput.title = `다음 ${MARKET} 신규매수 노출한도 수동 비율`;
+  }
+  syncGrossCapInputState();
   if (btn) {
     btn.style.display = count > 0 || blocked || pending ? 'inline-flex' : 'none';
     btn.disabled = pending;
@@ -9979,6 +10264,15 @@ function renderStopClusterBar(today) {
     btn.textContent = pending ? '해제요청 대기' : '클러스터 해제';
     btn.title = '시장 손실클러스터 카운터만 0으로 되돌립니다. 당일 손절 종목 재진입 차단은 유지됩니다.';
   }
+}
+
+function syncGrossCapInputState() {
+  const modeEl = document.getElementById('bar-gross-cap-mode');
+  const input = document.getElementById('bar-gross-cap-input');
+  if (!modeEl || !input) return;
+  const manual = modeEl.value === 'manual';
+  input.disabled = !manual;
+  input.style.opacity = manual ? '1' : '0.55';
 }
 
 async function applyOrderSizeSetting() {
@@ -10000,6 +10294,46 @@ async function applyOrderSizeSetting() {
   const res = await apiPost('/api/control/order-size', {
     market: MARKET,
     amount_krw: amount,
+  }).then(async r => ({ ok: r.ok, data: await r.json() })).catch(() => ({ ok: false, data: {} }));
+  if (status) {
+    status.textContent = res.ok
+      ? '저장됨 · 봇 재시작 필요'
+      : (res.data.error || '저장 실패');
+    status.style.color = res.ok ? '#fbbf24' : '#f87171';
+  }
+  if (btn) btn.disabled = false;
+  if (res.ok) await loadSummary();
+}
+
+async function applyGrossCapSetting() {
+  const modeEl = document.getElementById('bar-gross-cap-mode');
+  const input = document.getElementById('bar-gross-cap-input');
+  const status = document.getElementById('bar-gross-cap-status');
+  const btn = document.getElementById('bar-gross-cap-btn');
+  const capMode = modeEl ? modeEl.value : 'auto';
+  const capPct = Number(input ? input.value : 0);
+  if (MODE !== 'live') {
+    if (status) status.textContent = 'live 모드만 저장 가능';
+    return;
+  }
+  if (capMode === 'manual' && (!(capPct > 0) || capPct > 100)) {
+    if (status) {
+      status.textContent = '1~100% 입력';
+      status.style.color = '#f87171';
+    }
+    return;
+  }
+  const label = capMode === 'manual' ? `수동 ${capPct}%` : '자동(Claude)';
+  if (!confirm(`${MARKET} 신규매수 노출한도를 ${label}로 저장할까요? 실행 중인 봇에는 재시작 후 적용됩니다.`)) return;
+  if (btn) btn.disabled = true;
+  if (status) {
+    status.textContent = '저장 중..';
+    status.style.color = 'var(--text-dim)';
+  }
+  const res = await apiPost('/api/control/gross-cap', {
+    market: MARKET,
+    cap_mode: capMode,
+    cap_pct: capMode === 'manual' ? capPct : null,
   }).then(async r => ({ ok: r.ok, data: await r.json() })).catch(() => ({ ok: false, data: {} }));
   if (status) {
     status.textContent = res.ok
@@ -10337,24 +10671,40 @@ PAGE_TODAY_HTML = """
   <div id="adaptive-meta" style="font-size:12px;color:var(--text-dim);margin-top:8px">--</div>
   <div id="adaptive-breakdown" style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.7">--</div>
 </div>
-<div id="holdings-entry-bar" style="display:flex;align-items:center;gap:16px;padding:10px 14px;margin-bottom:12px;background:var(--card);border-radius:8px;border:1px solid var(--border);font-size:13px">
-  <span style="color:var(--text-dim)">보유</span>
-  <span id="bar-position-count" style="font-weight:700;color:var(--text)">--</span>
-  <span style="color:var(--border)">|</span>
-  <span style="color:var(--text-dim)">오늘 진입</span>
-  <span id="bar-entry-count" style="font-weight:700;color:var(--text)">--</span>
-  <span style="color:var(--border)">|</span>
-  <span style="color:var(--text-dim)">손실클러스터</span>
-  <span id="bar-stop-cluster" style="font-weight:700;color:var(--text)">--</span>
-  <span style="color:var(--border)">|</span>
-  <span style="color:var(--text-dim)">매수범위</span>
-  <span id="bar-buy-range" style="font-weight:700;color:var(--text)">--</span>
-  <span style="color:var(--text-dim)">다음공통</span>
-  <input id="bar-order-size-input" type="number" min="50000" step="10000" inputmode="numeric" aria-label="공통 1회 매수 설정금액"
-    style="width:112px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);font-size:12px">
-  <button id="bar-order-size-btn" class="apply-btn" style="padding:6px 10px;font-size:12px" onclick="applyOrderSizeSetting()">설정</button>
-  <span id="bar-order-size-status" style="font-size:11px;color:var(--text-dim)"></span>
-  <button id="stop-cluster-reset-btn" class="apply-btn" style="display:none;padding:6px 10px;font-size:12px" onclick="requestStopClusterReset()">시장차단 해제</button>
+<div id="holdings-entry-bar" style="display:flex;flex-direction:column;gap:8px;padding:10px 14px;margin-bottom:12px;background:var(--card);border-radius:8px;border:1px solid var(--border);font-size:13px">
+  <div style="display:flex;align-items:center;gap:12px;width:100%;white-space:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin">
+    <span style="color:var(--text-dim)">보유</span>
+    <span id="bar-position-count" style="font-weight:700;color:var(--text)">--</span>
+    <span style="color:var(--border)">|</span>
+    <span style="color:var(--text-dim)">오늘 진입</span>
+    <span id="bar-entry-count" style="font-weight:700;color:var(--text)">--</span>
+    <span style="color:var(--border)">|</span>
+    <span style="color:var(--text-dim)">손실클러스터</span>
+    <span id="bar-stop-cluster" style="font-weight:700;color:var(--text)">--</span>
+    <span style="color:var(--border)">|</span>
+    <span style="color:var(--text-dim)">매수범위</span>
+    <span id="bar-buy-range" style="font-weight:700;color:var(--text)">--</span>
+    <span style="color:var(--border)">|</span>
+    <span style="color:var(--text-dim)">다음공통</span>
+    <input id="bar-order-size-input" type="number" min="50000" step="10000" inputmode="numeric" aria-label="공통 1회 매수 설정금액"
+      style="width:112px;flex:0 0 112px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);font-size:12px">
+    <button id="bar-order-size-btn" class="apply-btn" style="padding:6px 10px;font-size:12px;white-space:nowrap" onclick="applyOrderSizeSetting()">설정</button>
+    <span id="bar-order-size-status" style="font-size:11px;color:var(--text-dim);white-space:nowrap"></span>
+    <button id="stop-cluster-reset-btn" class="apply-btn" style="display:none;padding:6px 10px;font-size:12px;white-space:nowrap" onclick="requestStopClusterReset()">시장차단 해제</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;width:100%;white-space:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin">
+    <span style="color:var(--text-dim)">노출한도</span>
+    <select id="bar-gross-cap-mode" aria-label="신규매수 노출한도 모드" onchange="syncGrossCapInputState()"
+      style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);font-size:12px">
+      <option value="auto">Claude</option>
+      <option value="manual">수동</option>
+    </select>
+    <input id="bar-gross-cap-input" type="number" min="1" max="100" step="1" inputmode="decimal" aria-label="수동 노출한도 퍼센트"
+      style="width:64px;flex:0 0 64px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);font-size:12px">
+    <button id="bar-gross-cap-btn" class="apply-btn" style="padding:6px 10px;font-size:12px;white-space:nowrap" onclick="applyGrossCapSetting()">한도설정</button>
+    <span id="bar-gross-cap-status" style="font-size:11px;color:var(--text-dim);white-space:nowrap"></span>
+    <span id="bar-buy-capacity" style="font-size:12px;color:var(--text-dim);line-height:1.55;white-space:nowrap">매수 여력 --</span>
+  </div>
 </div>
 <div id="position-board" style="display:flex;flex-wrap:nowrap;gap:10px;margin-bottom:20px;overflow-x:auto;overflow-y:hidden;padding-bottom:6px;scrollbar-width:thin"></div>
 
@@ -12527,12 +12877,20 @@ async function loadSummary() {
         if (reasons2.length) advReasonText2 = reasons2[0];
       }
       const advColor2 = advAction === 'SELL' ? '#ef4444' : advAction === 'TRAIL' ? '#f59e0b' : '#34d399';
+      const prFallback = !!(pos.profit_review_fallback);
+      const prTimeoutBadge = prFallback
+        ? `<span style="font-size:9px;background:rgba(234,179,8,0.15);color:#ca8a04;border:1px solid rgba(234,179,8,0.4);border-radius:3px;padding:1px 5px;margin-left:4px" title="수익 검토 타임아웃 — 어드바이저 응답 없이 HOLD 유지됨">타임아웃 HOLD</span>`
+        : '';
       const advHtml = advLabel
         ? `<div style="font-size:10px;margin-top:5px;padding-top:5px;border-top:1px solid rgba(100,116,139,0.2);overflow-wrap:anywhere;word-break:break-word">
-             <span style="color:${advColor2};font-weight:600;display:block">Claude: ${advLabel}</span>
+             <span style="color:${advColor2};font-weight:600;display:block">Claude: ${advLabel}${prTimeoutBadge}</span>
              ${advReasonText2 ? `<span style="color:#94a3b8;display:block;margin-top:3px;max-height:120px;overflow-y:auto;line-height:1.45;padding-right:4px;white-space:normal">→ ${advReasonText2}</span>` : ''}
            </div>`
-        : '';
+        : prFallback
+          ? `<div style="font-size:10px;margin-top:5px;padding-top:5px;border-top:1px solid rgba(100,116,139,0.2)">
+               <span style="color:#ca8a04;font-weight:600">수익 검토 타임아웃 HOLD${prTimeoutBadge}</span>
+             </div>`
+          : '';
       const safeTickerId2 = String(pos.ticker || '').replace(/[^A-Za-z0-9_-]/g, '_');
       const cardId2 = 'pos-card-' + safeTickerId2;
       const chartId2 = 'pos-chart-' + safeTickerId2;

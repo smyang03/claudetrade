@@ -54,7 +54,7 @@ class V2Phase6Tests(unittest.TestCase):
         )
         for command in (
             "/status", "/health", "/picks", "/positions", "/errors", "/halt", "/resume", "/panic",
-            "/brain_pending", "/pathb_status", "/pathb_on", "/pathb_off", "/pathb_kill",
+            "/brain_pending", "/buy_capacity", "/capacity", "/pathb_status", "/pathb_on", "/pathb_off", "/pathb_kill",
             "/pathb_closeall",
         ):
             self.assertIn(command, V2_TELEGRAM_COMMANDS)
@@ -399,6 +399,123 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(capacity["KR"]["max_affordable_fixed_orders"], 3)
         self.assertTrue(capacity["KR"]["min_order_possible"])
         self.assertFalse(capacity["KR"]["daily_cap_cash_feasible"])
+
+    def test_pathb_execution_capacity_applies_analyst_gross_exposure_cap(self):
+        broker_truth = {
+            "markets": {
+                "US": {
+                    "account_summary": {"orderable_cash": 1_000},
+                    "positions": [{"ticker": "IONQ"}],
+                    "open_orders": [],
+                },
+                "KR": {
+                    "account_summary": {"orderable_cash": 2_000_000},
+                    "positions": [{"ticker": "005930"}],
+                    "open_orders": [],
+                },
+            }
+        }
+        config = {
+            "fixed_order_krw": 300_000,
+            "fixed_order_krw_by_market": {"KR": 300_000, "US": 300_000},
+            "min_order_krw_by_market": {"KR": 50_000, "US": 50_000},
+            "max_positions": 15,
+            "max_daily_entries": 40,
+            "daily_entry_cap_by_market": {"KR": 40, "US": 40},
+            "usd_krw": 1500,
+        }
+
+        capacity = v2_ops_summary._path_b_execution_capacity(
+            broker_truth,
+            config,
+            [],
+            markets=["US", "KR"],
+            session_date="2026-05-22",
+            consensus_by_market={
+                "US": {"new_buy_permission": "selective", "max_gross_exposure_pct": 40},
+                "KR": {"new_buy_permission": "selective", "max_gross_exposure_pct": 50},
+            },
+            equity_context_by_market={
+                "US": {"total_krw": 3_400_000, "position_krw": 1_900_000, "source": "test"},
+                "KR": {"total_krw": 3_000_000, "position_krw": 1_000_000, "source": "test"},
+            },
+        )
+
+        self.assertEqual(capacity["US"]["today_buy_capacity_krw"], 0)
+        self.assertIn("ANALYST_MAX_GROSS_EXPOSURE_REACHED", capacity["US"]["capacity_block_reasons"])
+        self.assertEqual(capacity["KR"]["gross_exposure_remaining_krw"], 500_000)
+        self.assertEqual(capacity["KR"]["today_buy_capacity_krw"], 500_000)
+        self.assertEqual(capacity["KR"]["today_entry_capacity_orders"], 1)
+
+    def test_pathb_execution_capacity_can_use_manual_gross_exposure_cap(self):
+        broker_truth = {
+            "markets": {
+                "US": {
+                    "account_summary": {"orderable_cash": 1_000},
+                    "positions": [{"ticker": "IONQ"}],
+                    "open_orders": [],
+                },
+            }
+        }
+        config = {
+            "fixed_order_krw": 300_000,
+            "fixed_order_krw_by_market": {"US": 300_000},
+            "min_order_krw_by_market": {"US": 50_000},
+            "max_positions": 15,
+            "max_daily_entries": 40,
+            "daily_entry_cap_by_market": {"US": 40},
+            "usd_krw": 1500,
+            "analyst_gross_exposure_cap_mode_by_market": {"US": "manual"},
+            "analyst_gross_exposure_cap_pct_by_market": {"US": 60},
+        }
+
+        capacity = v2_ops_summary._path_b_execution_capacity(
+            broker_truth,
+            config,
+            [],
+            markets=["US"],
+            session_date="2026-05-22",
+            consensus_by_market={
+                "US": {"new_buy_permission": "selective", "max_gross_exposure_pct": 40},
+            },
+            equity_context_by_market={
+                "US": {"total_krw": 3_400_000, "position_krw": 1_900_000, "source": "test"},
+            },
+        )
+
+        self.assertEqual(capacity["US"]["max_gross_exposure_pct"], 60)
+        self.assertEqual(capacity["US"]["analyst_max_gross_exposure_pct"], 40)
+        self.assertEqual(capacity["US"]["gross_cap_mode"], "manual")
+        self.assertEqual(capacity["US"]["gross_cap_source"], "manual_config")
+        self.assertNotIn("ANALYST_MAX_GROSS_EXPOSURE_REACHED", capacity["US"]["capacity_block_reasons"])
+        self.assertEqual(capacity["US"]["gross_exposure_remaining_krw"], 140_000)
+
+    def test_buy_capacity_telegram_command_reports_capacity_snapshot(self):
+        payload = {
+            "path_b_live": {
+                "execution_capacity": {
+                    "US": {
+                        "position_exposure_krw": 1_900_000,
+                        "gross_exposure_cap_krw": 1_360_000,
+                        "gross_exposure_pct": 55.8,
+                        "max_gross_exposure_pct": 40,
+                        "gross_exposure_remaining_krw": 0,
+                        "orderable_cash_krw": 1_500_000,
+                        "today_buy_capacity_krw": 0,
+                        "today_entry_capacity_orders": 0,
+                        "today_fixed_order_capacity_krw": 0,
+                        "capacity_block_reasons": ["ANALYST_MAX_GROSS_EXPOSURE_REACHED"],
+                    }
+                }
+            }
+        }
+
+        with patch("interface.v2_telegram.build_v2_ops_summary", return_value=payload):
+            response = handle_v2_command("/buy_capacity", _Bot())
+
+        self.assertIn("Buy Capacity", response)
+        self.assertIn("US", response)
+        self.assertIn("ANALYST_MAX_GROSS_EXPOSURE_REACHED", response)
 
     def test_pathb_readiness_distinguishes_overnight_allowed_states(self):
         selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
