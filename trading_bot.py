@@ -1884,6 +1884,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         judgment_sample = len(judgment_rows)
         analyst_hits = {"bull": 0, "bear": 0, "neutral": 0}
+        analyst_samples = {"bull": 0, "bear": 0, "neutral": 0}
         consensus_hits = 0
         unanimous_mismatch_count = 0
         unanimous_override_count = 0
@@ -1900,14 +1901,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 except Exception:
                     pass
             for analyst in analyst_hits:
+                analyst_available = eval_row.get("analyst_available")
+                if isinstance(analyst_available, dict) and analyst_available.get(analyst) is False:
+                    continue
+                analyst_samples[analyst] += 1
                 analyst_hits[analyst] += 1 if (eval_row.get("analyst_hits") or {}).get(analyst) else 0
         consensus_hit_rate = _pct(consensus_hits, judgment_sample)
         analyst_rates = {
-            analyst: _pct(hit_count, judgment_sample)
+            analyst: _pct(hit_count, analyst_samples.get(analyst, 0))
             for analyst, hit_count in analyst_hits.items()
         }
-        best_analyst = max(analyst_hits, key=lambda analyst: analyst_hits[analyst]) if judgment_sample else ""
+        eligible_analysts = [
+            analyst for analyst, sample in analyst_samples.items()
+            if sample > 0 and analyst_rates.get(analyst) is not None
+        ]
+        best_analyst = (
+            max(eligible_analysts, key=lambda analyst: (analyst_rates.get(analyst) or 0.0, analyst_hits[analyst]))
+            if eligible_analysts else ""
+        )
         best_analyst_hit_rate = analyst_rates.get(best_analyst) if best_analyst else None
+        best_analyst_sample = analyst_samples.get(best_analyst, 0) if best_analyst else 0
         best_analyst_gap = (
             round(float(best_analyst_hit_rate) - float(consensus_hit_rate), 1)
             if best_analyst_hit_rate is not None and consensus_hit_rate is not None
@@ -2025,7 +2038,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         signal_conversion_threshold = 15.0 if market == "KR" else 10.0
         metrics = {
             "consensus_directional_hit_rate": _metric(consensus_hit_rate, 45.0, sample=judgment_sample, min_sample=1, direction="lt"),
-            "best_analyst_minus_consensus_hit_gap": _metric(best_analyst_gap, 10.0, sample=judgment_sample, min_sample=1, direction="ge"),
+            "best_analyst_minus_consensus_hit_gap": _metric(best_analyst_gap, 10.0, sample=best_analyst_sample, min_sample=1, direction="ge"),
             "unanimous_mismatch_count": _metric(unanimous_mismatch_count, 1, sample=judgment_sample, min_sample=1, direction="ge"),
             "unanimous_override_count": _metric(unanimous_override_count, 1, sample=judgment_sample, min_sample=1, direction="ge"),
             "trade_ready_signal_conversion": _metric(trade_ready_signal_conversion, signal_conversion_threshold, sample=selection_stats["trade_ready_rows"], min_sample=20, direction="lt"),
@@ -2045,6 +2058,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "judgment_sessions": judgment_sample,
             "best_analyst": best_analyst,
             "analyst_hit_rates": analyst_rates,
+            "analyst_hit_samples": analyst_samples,
             "samples": {
                 "trade_ready_rows": selection_stats["trade_ready_rows"],
                 "trade_ready_forward_n": selection_stats["trade_ready_forward_n"],
@@ -6091,6 +6105,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "permission_votes_by_role": dict(consensus.get("new_buy_permission_votes_by_role", {}) or {}),
             "max_gross_exposure_pct": consensus.get("max_gross_exposure_pct", 0),
             "max_gross_exposure_pct_by_role": dict(consensus.get("max_gross_exposure_pct_by_role", {}) or {}),
+            "consensus_quality": consensus.get("consensus_quality", ""),
+            "quorum_met": consensus.get("quorum_met"),
+            "available_analyst_count": consensus.get("available_analyst_count"),
+            "available_analyst_roles": list(consensus.get("available_analyst_roles", []) or []),
+            "unavailable_analyst_roles": list(consensus.get("unavailable_analyst_roles", []) or []),
             "source": "analyst_consensus",
         }
         if permission == "block":
@@ -7157,6 +7176,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             meta["_entry_route_source"] = route_source
         mode = str(mode or (self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
         meta["consensus_mode"] = mode
+        consensus_payload = (self.today_judgment or {}).get("consensus", {}) or {}
+        for key in (
+            "consensus_quality",
+            "quorum_met",
+            "available_analyst_count",
+            "available_analyst_roles",
+            "unavailable_analyst_roles",
+            "analyst_unavailable_count",
+            "analyst_unavailable_roles",
+        ):
+            if key in consensus_payload:
+                meta[key] = consensus_payload.get(key)
         candidate_actions, candidate_actions_source = self._normalize_candidate_actions_for_meta(market, meta)
         meta["candidate_actions"] = candidate_actions
         meta["_candidate_actions_source"] = candidate_actions_source

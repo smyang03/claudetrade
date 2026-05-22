@@ -953,6 +953,27 @@ def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
     if "debate_history" not in m:
         m["debate_history"] = []
 
+    def _compact(item: dict) -> dict:
+        source = item if isinstance(item, dict) else {}
+        out = {
+            "stance": source.get("stance"),
+            "confidence": source.get("confidence"),
+            "key_reason": str(source.get("key_reason", ""))[:80],
+        }
+        for key in (
+            "available",
+            "analyst_unavailable",
+            "status",
+            "failure_stage",
+            "error_class",
+            "debate_skipped",
+            "debate_skip_reason",
+            "r2_unavailable",
+        ):
+            if key in source:
+                out[key] = source.get(key)
+        return out
+
     changes = []
     for atype in ("bull", "bear", "neutral"):
         r1s = r1[atype].get("stance", "")
@@ -967,10 +988,14 @@ def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
 
     entry = {
         "date":              target_date,
-        "r1": {k: {"stance": r1[k].get("stance"), "confidence": r1[k].get("confidence"),
-                   "key_reason": r1[k].get("key_reason", "")[:80]} for k in r1},
-        "r2": {k: {"stance": r2[k].get("stance"), "confidence": r2[k].get("confidence"),
-                   "key_reason": r2[k].get("key_reason", "")[:80]} for k in r2},
+        "r1": {k: _compact(r1[k]) for k in r1},
+        "r2": {k: _compact(r2[k]) for k in r2},
+        "unavailable_roles": [
+            k for k in ("bull", "bear", "neutral")
+            if (r2.get(k) or r1.get(k) or {}).get("analyst_unavailable")
+            or (r2.get(k) or r1.get(k) or {}).get("available") is False
+            or str((r2.get(k) or r1.get(k) or {}).get("stance") or "").upper() == "UNAVAILABLE"
+        ],
         "changes":           changes,
         "consensus_shifted": len(changes) > 0,
         "outcome":           None,   # postmortem 채점 전
@@ -1020,15 +1045,22 @@ def get_debate_summary(market: str, n: int = 5) -> str:
 
     for h in reversed(recent):
         outcome_mark = {"correct": "OK", "wrong": "BAD"}.get(h.get("outcome"), "--")
+        unavailable_roles = list(h.get("unavailable_roles") or [])
+        outage_txt = f" outages={','.join(unavailable_roles)}" if unavailable_roles else ""
         if h["changes"]:
             change_txt = ", ".join(
                 f"{c['analyst'].upper()} {c['r1_stance']}->{c['r2_stance']} ({c['reason'][:30]})"
                 for c in h["changes"]
+                if c.get("analyst") not in unavailable_roles
             )
-            lines.append(f"  {h['date']} {outcome_mark} changed {change_txt}")
+            if change_txt:
+                lines.append(f"  {h['date']} {outcome_mark} changed {change_txt}{outage_txt}")
+            else:
+                r1_modes = " ".join(f"{k}={v['stance']}" for k, v in h["r1"].items() if k not in unavailable_roles)
+                lines.append(f"  {h['date']} {outcome_mark} kept: {r1_modes}{outage_txt}")
         else:
-            r1_modes = " ".join(f"{k}={v['stance']}" for k, v in h["r1"].items())
-            lines.append(f"  {h['date']} {outcome_mark} kept: {r1_modes}")
+            r1_modes = " ".join(f"{k}={v['stance']}" for k, v in h["r1"].items() if k not in unavailable_roles)
+            lines.append(f"  {h['date']} {outcome_mark} kept: {r1_modes}{outage_txt}")
 
     return "\n".join(lines)
 

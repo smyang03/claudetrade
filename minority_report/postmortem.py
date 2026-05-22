@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_judgment_logger, get_minority_logger
 from claude_memory import brain as BrainDB
 from credit_tracker import record as credit_record
+from minority_report.consensus import is_available_judgment
 from minority_report.raw_call_logger import save as save_raw_call
 
 log          = get_minority_logger()
@@ -328,6 +329,14 @@ def run(market: str, date: str, today_judgment: dict,
     judgments      = today_judgment.get("judgments", {})
     consensus      = today_judgment.get("consensus", {})
     consensus_mode = consensus.get("mode", "CAUTIOUS")
+    analyst_available = {
+        role: is_available_judgment((judgments or {}).get(role) or {})
+        for role in ("bull", "bear", "neutral")
+    }
+    analyst_unavailable_roles = [
+        role for role, available in analyst_available.items()
+        if not available
+    ]
     trade_log      = trade_log or []
     decision_event_log = decision_event_log or []
 
@@ -489,9 +498,18 @@ def run(market: str, date: str, today_judgment: dict,
         market_chg = float(actual_result.get("market_change"))
     except Exception:
         market_chg = 0.0
-    code_bull    = _code_judge_hit_miss(judgments.get("bull",    {}).get("stance", "NEUTRAL"), market_chg)
-    code_bear    = _code_judge_hit_miss(judgments.get("bear",    {}).get("stance", "NEUTRAL"), market_chg)
-    code_neutral = _code_judge_hit_miss(judgments.get("neutral", {}).get("stance", "NEUTRAL"), market_chg)
+    code_bull = (
+        _code_judge_hit_miss(judgments.get("bull", {}).get("stance", "NEUTRAL"), market_chg)
+        if analyst_available.get("bull") else "UNAVAILABLE"
+    )
+    code_bear = (
+        _code_judge_hit_miss(judgments.get("bear", {}).get("stance", "NEUTRAL"), market_chg)
+        if analyst_available.get("bear") else "UNAVAILABLE"
+    )
+    code_neutral = (
+        _code_judge_hit_miss(judgments.get("neutral", {}).get("stance", "NEUTRAL"), market_chg)
+        if analyst_available.get("neutral") else "UNAVAILABLE"
+    )
     log.info(f"[postmortem 코드보정] 시장변화 {market_chg:+.2f}% | "
              f"bull={code_bull} bear={code_bear} neutral={code_neutral}")
 
@@ -581,6 +599,13 @@ def run(market: str, date: str, today_judgment: dict,
             error=e,
         )
 
+    for role in analyst_unavailable_roles:
+        pm[f"{role}_result"] = "UNAVAILABLE"
+        pm[f"{role}_why"] = "analyst unavailable during judgment"
+    if analyst_unavailable_roles:
+        pm["analyst_unavailable_roles"] = list(analyst_unavailable_roles)
+        pm["analyst_available"] = dict(analyst_available)
+
     execution_learning_excluded = bool(
         actual_result.get(
             "execution_learning_excluded",
@@ -597,9 +622,10 @@ def run(market: str, date: str, today_judgment: dict,
     if not execution_learning_excluded:
         recent = BrainDB.load()["markets"][market].get("recent_days", [])
 
-        BrainDB.update_analyst(market, "bull",    pm["bull_result"]    == "HIT", recent)
-        BrainDB.update_analyst(market, "bear",    pm["bear_result"]    == "HIT", recent)
-        BrainDB.update_analyst(market, "neutral", pm["neutral_result"] == "HIT", recent)
+        for role in ("bull", "bear", "neutral"):
+            if not analyst_available.get(role):
+                continue
+            BrainDB.update_analyst(market, role, pm[f"{role}_result"] == "HIT", recent)
         BrainDB.update_mode_performance(
             market, consensus_mode,
             actual_result.get("pnl_pct", 0), actual_result.get("win", False)
@@ -645,6 +671,8 @@ def run(market: str, date: str, today_judgment: dict,
         "bull_reason":       judgments.get("bull", {}).get("key_reason", ""),
         "bear_reason":       judgments.get("bear", {}).get("key_reason", ""),
         "neutral_reason":    judgments.get("neutral", {}).get("key_reason", ""),
+        "analyst_available": dict(analyst_available),
+        "analyst_unavailable_roles": list(analyst_unavailable_roles),
         "key_lesson":        daily_key_lesson,
         "issue_type":        daily_issue_type,
         "postmortem_fallback_note": fallback_note,

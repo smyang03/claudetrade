@@ -18,6 +18,9 @@ Recent commit theme:
 
 | Commit | Meaning |
 | --- | --- |
+| `4a34380` | Dashboard account-focus grid UI added. |
+| `6f8fdc1` | KR confirmation `minute_complete` bug fixed and KR `fade_recovered_shadow` added. |
+| `b45eaf4` | Sub-screener added, PathB safety strengthened, docs reorganized. |
 | `7845f91` | Prompt pool hard cap adjusted to KR 32 / US 35. |
 | `71f0cd6` | Trainer prompt pool structure expanded. |
 | `cdbfbd4` | PathB readiness/guardian path improved; KR entry block reads runtime config first. |
@@ -59,25 +62,29 @@ Action:
 - Use `git status --short` and stage by path.
 - Exclude `state/brain.json`, `state/*202605*.json`, `data/*-shm`, `data/*-wal`, `tmp_*`, and local screenshots unless explicitly needed.
 
-### P0-1 - Sub-Screener Live Trigger Safety
+### P0-1 - Sub-Screener Effective Trigger Visibility
 
 Before:
 
-- `config/v2_start_config.json` enables `SUB_SCREENER_ENABLED=true` and `SUB_SCREENER_TRIGGER_ENABLED=true`.
-- `maybe_run_sub_screener()` can force-refresh screening, reinvoke analysts, and call `manual_rescreen()` every 15 minutes, up to 5 attempts per session.
-- This can change the live candidate pool and Claude call volume before enough shadow evidence exists.
+- `config/v2_start_config.json` now has `SUB_SCREENER_ENABLED=true` and global `SUB_SCREENER_TRIGGER_ENABLED=false`.
+- Code-level truth is more specific: `_sub_screener_trigger_enabled()` gives `SUB_SCREENER_KR_TRIGGER_ENABLED` / `SUB_SCREENER_US_TRIGGER_ENABLED` precedence when present.
+- Current tracked config sets both market-scoped trigger flags to `true`, so effective trigger can still be live for KR/US despite the global false flag.
+- If scoped and global trigger flags are both absent, current code defaults to live trigger.
 
 After:
 
-- Sub-screener runs shadow-first by default, or live trigger is enabled only after explicit operator approval.
-- Preflight/guardian/dashboard show trigger state, attempt count, success count, last detection, and call budget.
-- Live candidate changes are traceable as `sub_screener_rescreen` and can be separated from normal selection quality.
+- Preflight/guardian/dashboard show the effective per-market trigger state, not only the global flag.
+- The intended policy is unambiguous: either global false really means shadow, or market-scoped true is documented as intentional live trigger.
+- Attempt count, success count, last detection, and call budget are visible before live candidate flow changes.
 
 Action:
 
-- Decide whether tracked config should set `SUB_SCREENER_TRIGGER_ENABLED=false` until shadow evidence exists.
-- Add `.env.example` entries and preflight visibility for all `SUB_SCREENER_*` values.
-- Keep existing unit tests and add one ops/status test for exposed counters.
+- Implement read-only effective-state visibility first.
+- Decide operator policy for global false + market-scoped true.
+- Decide whether absent trigger config should continue to default live or become fail-closed.
+- Do not change trigger config until the operator confirms intended KR/US policy.
+- Add `.env.example` entries and preflight visibility for all `SUB_SCREENER_*` values, including effective trigger resolution.
+- Keep existing unit tests and add one ops/status test for exposed counters and effective trigger matrix.
 
 ### P0-2 - Broker-Truth Destructive Reconcile Verification
 
@@ -168,6 +175,7 @@ Action:
 
 - Implement optional `token` in `screen_market_us()`.
 - Add KIS `trade-vol` and `updown-rate` ranking helper/normalizer.
+- Add shadow comparison quality metrics before promoting KIS to first source: raw overlap, final screened overlap, price distribution, volume/dollar-volume pass/fail, change_pct distribution, category counts, and fallback reason.
 - Add tests for token absent fallback, API failure fallback, cache compatibility, and category quota parity.
 
 ### P1-3 - V2 Canonical Truth Runbook

@@ -6,9 +6,12 @@ Updated: 2026-05-22
 
 1. Use [ACTIVE_WORK.md](ACTIVE_WORK.md) for what still needs to be done.
 2. Use [ALWAYS_ANALYZE.md](ALWAYS_ANALYZE.md) before changing live behavior, market policy, learning data, or dashboard truth.
-3. Use [GIT_CODE_REVIEW_PLAN_20260522.md](GIT_CODE_REVIEW_PLAN_20260522.md) for the latest git/code review and before/after plan.
-4. Use `core/` for durable architecture and operating references.
-5. Use `source/` only when a decision needs the original detailed evidence.
+3. Use [NOW_CODE_REQUIREMENTS_20260522.md](NOW_CODE_REQUIREMENTS_20260522.md) for the immediate development scope.
+4. Use [NOW_RECHECK_RISK_ANALYSIS_20260522.md](../plans/NOW_RECHECK_RISK_ANALYSIS_20260522.md) for the code-level recheck list, before/after state, and risk mitigations.
+5. Use [GIT_CODE_REVIEW_PLAN_20260522.md](GIT_CODE_REVIEW_PLAN_20260522.md) for the latest git/code review and before/after plan.
+6. Use [CODE_LEVEL_REQUIREMENTS_20260522.md](CODE_LEVEL_REQUIREMENTS_20260522.md) for completed/not-completed code-level judgment and implementation requirements.
+7. Use `core/` for durable architecture and operating references.
+8. Use `source/` only when a decision needs the original detailed evidence.
 
 ## Core
 
@@ -27,7 +30,7 @@ Updated: 2026-05-22
 
 | Document | Category | Why It Remains |
 | --- | --- | --- |
-| [source/kr_confirmation_fade_recovery_dev_requirements_20260522.md](source/kr_confirmation_fade_recovery_dev_requirements_20260522.md) | Active Work | KR-only confirmation data_quality bug fix and fade-recovered shadow requirements; no US behavior or PathB operating parameter change. |
+| [source/kr_confirmation_fade_recovery_dev_requirements_20260522.md](source/kr_confirmation_fade_recovery_dev_requirements_20260522.md) | Completed Source | KR-only confirmation data_quality bug fix and fade-recovered shadow requirements implemented by `6f8fdc1`; retained as source evidence for the shadow observation rule. |
 | [source/us_kis_ranking_screener_requirements_20260522.md](source/us_kis_ranking_screener_requirements_20260522.md) | Active Work | US screener should prefer KIS overseas ranking APIs while preserving Yahoo/FMP fallback and order/risk isolation. |
 | [source/live_config_safety_code_requirements_20260521.md](source/live_config_safety_code_requirements_20260521.md) | Safety | `/setorder` must be fail-closed and PathB live gate policy must match KR-on/US-on. |
 | [source/operational_db_code_recheck_20260521.md](source/operational_db_code_recheck_20260521.md) | Truth | V2 canonical performance is the better fill/performance truth; legacy `decisions.db` is not enough for PathB. |

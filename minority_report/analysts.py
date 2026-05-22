@@ -14,6 +14,7 @@ from logger import get_analysis_logger, get_judgment_logger, get_minority_logger
 from credit_tracker import record as credit_record, throttle_state
 from minority_report.raw_call_logger import save as save_raw_call
 from minority_report.active_lessons import build_active_lesson_context
+from minority_report.consensus import is_available_judgment
 from bot.candidate_policy import normalize_selection_result, selection_limits
 from minority_report.prompt_contracts import (
     COMMON_DECISION_CONTRACT,
@@ -1326,19 +1327,27 @@ def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
 
 
 def _fallback_result(error: Exception) -> dict:
+    error_class = type(error).__name__ if error is not None else "Exception"
     return {
-        "stance": "NEUTRAL",
-        "confidence": 0.3,
-        "key_reason": f"오류:{str(error)[:60]}",
+        "stance": "UNAVAILABLE",
+        "available": False,
+        "analyst_unavailable": True,
+        "status": "unavailable",
+        "failure_stage": "r1",
+        "error_class": error_class[:80],
+        "failure_reason": error_class[:80],
+        "confidence": 0.0,
+        "key_reason": f"analyst_unavailable:{error_class[:80]}",
         "full_reasoning": "",
         "top_risks": [],
         "market_regime": "unknown",
-        "data_quality": "poor",
-        "new_buy_permission": "selective",
+        "data_quality": "unavailable",
+        "new_buy_permission": "block",
         "max_gross_exposure_pct": 0,
         "key_confirmations": [],
         "key_contradictions": [],
-        "suggested_strategy": "관망",
+        "suggested_strategy": "unavailable",
+        "suggested_size_pct": None,
     }
 
 
@@ -1360,6 +1369,8 @@ def _debate_defaults_for_stance(stance: str) -> dict:
 
 
 def _merge_debate_result(my_r1: dict, result: dict) -> dict:
+    if not is_available_judgment(my_r1):
+        return dict(my_r1 or {})
     clean = dict(result or {})
     stance = str(clean.get("stance", my_r1.get("stance", "NEUTRAL")) or "NEUTRAL").strip().upper()
     if stance not in ALLOWED_STANCES:
@@ -1603,10 +1614,34 @@ def call_analyst_debate(analyst_type: str, my_r1: dict,
     others: {analyst_type: r1_result, ...} (자신 제외)
     debate_history: brain.get_debate_summary() 결과
     """
+    if not is_available_judgment(my_r1):
+        return {**dict(my_r1 or {}), "debate_skipped": True, "debate_skip_reason": "r1_unavailable"}
+    raw_others = dict(others or {})
+    available_others = {
+        atype: result for atype, result in raw_others.items()
+        if is_available_judgment(result)
+    }
+    excluded_unavailable_peer_roles = [
+        atype for atype in raw_others
+        if atype not in available_others
+    ]
+    if not available_others:
+        return {
+            **dict(my_r1 or {}),
+            "debate_skipped": True,
+            "debate_skip_reason": "insufficient_available_peers",
+            "available_peer_count": 0,
+            "available_peer_roles": [],
+            "excluded_unavailable_peer_roles": excluded_unavailable_peer_roles,
+        }
     others_txt = "\n".join(
         f"• {atype.upper()} 분석가: {r['stance']} (확신도 {r.get('confidence',0):.0%})\n"
         f"  근거: {r.get('key_reason','')}"
-        for atype, r in others.items()
+        for atype, r in available_others.items()
+    )
+    peer_note = (
+        f"\n[available peer analysts: {len(available_others)}] "
+        f"{', '.join(available_others.keys())}\n"
     )
 
     history_section = f"\n[과거 토론 이력]\n{debate_history}\n" if debate_history else ""
@@ -1622,7 +1657,7 @@ def call_analyst_debate(analyst_type: str, my_r1: dict,
 • 근거: {my_r1.get('key_reason', '')}
 
 [다른 분석가들의 1라운드 판단]
-{others_txt}
+{peer_note}{others_txt}
 
 [오늘 시장 데이터 요약]
 {digest_prompt[:800]}
@@ -1673,6 +1708,11 @@ JSON으로만 응답:
                     "market": market,
                     "us_bear_persona": bool(str(analyst_type).lower() == "bear" and str(market or "").upper() == "US"),
                 },
+                "debate_peers": {
+                    "available_peer_count": len(available_others),
+                    "available_peer_roles": list(available_others.keys()),
+                    "excluded_unavailable_peer_roles": excluded_unavailable_peer_roles,
+                },
             },
         )
 
@@ -1685,7 +1725,13 @@ JSON으로만 응답:
         return merged
     except Exception as e:
         log.error(f"[{analyst_type} R2] 오류: {e}")
-        return my_r1  # 오류 시 1라운드 결과 그대로
+        tagged = dict(my_r1 or {})
+        tagged.update({
+            "r2_unavailable": True,
+            "debate_skipped": True,
+            "debate_skip_reason": "r2_error",
+        })
+        return tagged
 
 
 # ── 3명 판단 통합 (2라운드 토론 포함) ────────────────────────────────────────
@@ -1748,7 +1794,30 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
 
     r2 = {}
     for atype in ("bull", "bear", "neutral"):
-        others = {k: v for k, v in r1.items() if k != atype}
+        if not is_available_judgment(r1.get(atype) or {}):
+            r2[atype] = {
+                **dict(r1.get(atype) or {}),
+                "debate_skipped": True,
+                "debate_skip_reason": "r1_unavailable",
+            }
+            continue
+        others = {
+            k: v for k, v in r1.items()
+            if k != atype and is_available_judgment(v)
+        }
+        if not others:
+            r2[atype] = {
+                **dict(r1.get(atype) or {}),
+                "debate_skipped": True,
+                "debate_skip_reason": "insufficient_available_peers",
+                "available_peer_count": 0,
+                "available_peer_roles": [],
+                "excluded_unavailable_peer_roles": [
+                    k for k, v in r1.items()
+                    if k != atype and not is_available_judgment(v)
+                ],
+            }
+            continue
         r2[atype] = call_analyst_debate(
             atype,
             r1[atype],
@@ -1789,6 +1858,15 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
     except Exception as e:
         log.warning(f"[토론 기록 저장 실패] {e}")
 
+    unavailable_roles = [
+        atype for atype in ("bull", "bear", "neutral")
+        if not is_available_judgment(r2.get(atype) or {})
+    ]
+    available_roles = [
+        atype for atype in ("bull", "bear", "neutral")
+        if atype not in unavailable_roles
+    ]
+
     judgment_log.info(
         f"[judgments_final] Bull:{r2['bull']['stance']} "
         f"Bear:{r2['bear']['stance']} Neutral:{r2['neutral']['stance']}",
@@ -1800,10 +1878,18 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
             "bull":    r2["bull"],
             "bear":    r2["bear"],
             "neutral": r2["neutral"],
+            "analyst_unavailable_count": len(unavailable_roles),
+            "analyst_unavailable_roles": unavailable_roles,
+            "available_analyst_roles": available_roles,
         }},
     )
     return {"bull": r2["bull"], "bear": r2["bear"], "neutral": r2["neutral"],
-            "_debate": {"r1": r1, "changes": changes}}
+            "_debate": {
+                "r1": r1,
+                "changes": changes,
+                "unavailable_roles": unavailable_roles,
+                "available_roles": available_roles,
+            }}
 
 
 def _digest_news_excerpt(digest_prompt: str, max_chars: int = 600) -> str:

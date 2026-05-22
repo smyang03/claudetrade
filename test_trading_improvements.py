@@ -1529,6 +1529,47 @@ class TradingBotGateTests(unittest.TestCase):
 
 
 class OpsReviewSnapshotTests(unittest.TestCase):
+    def test_build_ops_review_snapshot_excludes_unavailable_analyst_from_rate_denominator(self):
+        bot = trading_bot_module.TradingBot.__new__(trading_bot_module.TradingBot)
+        bot.is_paper = False
+        bot._active_session_date = {"KR": date(2026, 4, 22), "US": None}
+        rows = [
+            {
+                "date": "2026-04-21",
+                "actual_result": {"market_change": 0.4},
+                "judgment_eval": {
+                    "consensus_hit": False,
+                    "analyst_available": {"bull": True, "bear": False, "neutral": True},
+                    "analyst_hits": {"bull": False, "bear": False, "neutral": False},
+                },
+            },
+            {
+                "date": "2026-04-22",
+                "actual_result": {"market_change": -0.4},
+                "judgment_eval": {
+                    "consensus_hit": False,
+                    "analyst_available": {"bull": True, "bear": True, "neutral": True},
+                    "analyst_hits": {"bull": False, "bear": True, "neutral": False},
+                },
+            },
+        ]
+        missing_selection_db = str(Path(tempfile.mkdtemp()) / "missing_selection.db")
+        missing_decisions_db = Path(tempfile.mkdtemp()) / "missing_decisions.db"
+
+        orig_tsdb = tsdb.DB_PATH
+        try:
+            tsdb.DB_PATH = missing_selection_db
+            with patch.object(bot, "_load_recent_judgment_review_records", return_value=rows), \
+                 patch.object(trading_bot_module, "_DECISIONS_DB_PATH", missing_decisions_db):
+                snapshot = bot._build_ops_review_snapshot("KR")
+        finally:
+            tsdb.DB_PATH = orig_tsdb
+
+        self.assertEqual(snapshot["analyst_hit_samples"]["bear"], 1)
+        self.assertEqual(snapshot["analyst_hit_rates"]["bear"], 100.0)
+        self.assertEqual(snapshot["best_analyst"], "bear")
+        self.assertEqual(snapshot["metrics"]["best_analyst_minus_consensus_hit_gap"]["sample"], 1)
+
     def test_build_ops_review_snapshot_aggregates_review_metrics(self):
         bot = trading_bot_module.TradingBot.__new__(trading_bot_module.TradingBot)
         bot.is_paper = False

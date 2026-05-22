@@ -9324,7 +9324,7 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
 }}
 .card-sub {{ font-size: 12px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }}
 .account-focus-grid {{
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
   gap: 8px; margin-top: 12px;
 }}
 .account-focus-item {{
@@ -9341,12 +9341,16 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
   letter-spacing: 0; margin-bottom: 4px; white-space: nowrap;
 }}
 .account-focus-value {{
-  font-family: var(--mono); font-size: 17px; font-weight: 800;
-  line-height: 1.15; color: var(--text); overflow-wrap: anywhere;
+  font-family: var(--mono); font-size: 15px; font-weight: 800;
+  line-height: 1.15; color: var(--text); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  overflow-wrap: normal; word-break: normal;
 }}
 .account-focus-sub {{
   font-family: var(--mono); font-size: 11px; color: var(--muted);
-  line-height: 1.2; margin-top: 3px; overflow-wrap: anywhere;
+  line-height: 1.2; margin-top: 3px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  overflow-wrap: normal; word-break: normal;
 }}
 
 .up   {{ color: var(--green); }}
@@ -9420,7 +9424,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 }}
 .analyst-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }}
 .analyst-icon {{
-  width: 36px; height: 36px; border-radius: 50%;
+  width: 36px; height: 36px; min-width: 36px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700;
 }}
 .analyst-icon.bull {{ background: rgba(16,185,129,0.2); color: var(--green); }}
@@ -9441,7 +9445,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
   font-size: 13px; line-height: 1.6; color: var(--text);
   padding: 10px; background: rgba(255,255,255,0.03);
   border-radius: 8px; border-left: 3px solid var(--border); margin-bottom: 10px;
-  word-break: keep-all; overflow-wrap: break-word;
+  white-space: normal; word-break: keep-all; overflow-wrap: anywhere;
 }}
 .analyst-grid-alert {{
   border: 1px solid rgba(245,158,11,.35); background: rgba(245,158,11,.08);
@@ -9487,10 +9491,12 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 @media (max-width: 1200px) {{
   .grid-5 {{ grid-template-columns: repeat(3,1fr); }}
   .grid-4 {{ grid-template-columns: repeat(2,1fr); }}
+  .analyst-card-row {{ grid-template-columns: 1fr; }}
 }}
 @media (max-width: 768px) {{
   .grid-5, .grid-4, .grid-3, .grid-2 {{ grid-template-columns: 1fr; }}
-  .account-focus-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+  .analyst-card-row {{ grid-template-columns: 1fr; }}
+  .account-focus-grid {{ grid-template-columns: repeat(auto-fit, minmax(122px, 1fr)); }}
   header {{ flex-wrap: wrap; height: auto; padding: 10px 16px; gap: 8px; }}
   main {{ padding: 12px; }}
 }}
@@ -10478,6 +10484,8 @@ async function loadJudgments() {
     const res  = info.result || '';
     const rb   = res === 'HIT' ? 'hit' : res === 'MISS' ? 'miss' : 'partial';
     const barC = iconClass === 'bull' ? 'var(--green)' : iconClass === 'bear' ? 'var(--red)' : 'var(--yellow)';
+    const keyReason = escapeHtml(info.key_reason || '-');
+    const why = info.why ? escapeHtml(info.why) : '';
     // 1라운드와 토론 후 스탠스 변경 여부 표시
     const r1stance = info.r1_stance || '';
     const debateHtml = (r1stance && r1stance !== info.stance)
@@ -10495,9 +10503,9 @@ async function loadJudgments() {
       </div>
       <div class="analyst-confidence">신뢰도 ${conf}%</div>
       <div class="conf-bar"><div class="conf-bar-fill" style="width:${conf}%;background:${barC}"></div></div>
-      <div class="analyst-reason">핵심 ${info.key_reason || '-'}</div>
+      <div class="analyst-reason">핵심 ${keyReason}</div>
       ${debateHtml}
-      ${info.why ? `<div class="postmortem">사후판정 ${info.why}</div>` : ''}
+      ${why ? `<div class="postmortem">사후판정 ${why}</div>` : ''}
     </div>`;
   }
 
@@ -10524,7 +10532,7 @@ async function loadJudgments() {
     '</div>';
 
   if (d.lesson) {
-    sec.innerHTML += `<div class="lesson-box">오늘의 교훈: ${d.lesson}</div>`;
+    sec.innerHTML += `<div class="lesson-box">오늘의 교훈: ${escapeHtml(d.lesson)}</div>`;
   }
 }
 
