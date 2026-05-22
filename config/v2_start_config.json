@@ -67,6 +67,8 @@
     "US_ANALYST_GROSS_EXPOSURE_CAP_MODE": "manual",
     "KR_ANALYST_GROSS_EXPOSURE_CAP_PCT": "",
     "US_ANALYST_GROSS_EXPOSURE_CAP_PCT": "100",
+    "PATHB_PROFIT_REVIEW_TIMEOUT_SEC": "30",
+    "US_TRADE_READY_SLOT_OPENING_RANGE_PULLBACK": "2",
     "V2_BRAIN_POLICY": "fresh_v2_reference_v1",
     "V2_FRESH_BRAIN_START": "true",
     "PATHA_TIMING_LIFECYCLE_ENABLED": "false",
@@ -325,6 +327,6 @@
     "PATHB_EMERGENCY_DISABLE": "false",
     "MAX_ORDER_KRW": "450000"
   },
-  "updated_at": "2026-05-23T00:10:42+09:00",
-  "updated_by": "dashboard_order_size_control"
+  "updated_at": "2026-05-23T01:24:40+09:00",
+  "updated_by": "operator_codex_profit_review_slot_update"
 }

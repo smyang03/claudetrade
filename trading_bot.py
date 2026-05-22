@@ -3000,6 +3000,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if cont_slots > 0:
                 config["continuation"] = 0
                 config["__unassigned__"] = int(config.get("__unassigned__", 0) or 0) + cont_slots
+        for slot_name in list(config.keys()):
+            env_slot = slot_name.strip("_").upper() if slot_name.startswith("__") else slot_name.upper()
+            env_slot = env_slot.replace("-", "_")
+            for key in (
+                f"{market_key}_{family}_TRADE_READY_SLOT_{env_slot}",
+                f"{market_key}_TRADE_READY_SLOT_{env_slot}",
+                f"{family}_TRADE_READY_SLOT_{env_slot}",
+                f"TRADE_READY_SLOT_{env_slot}",
+            ):
+                raw = os.getenv(key)
+                if raw is None or str(raw).strip() == "":
+                    continue
+                try:
+                    config[slot_name] = max(0, int(float(str(raw).replace(",", ""))))
+                except Exception:
+                    pass
+                break
         return config
     def _normalize_selection_meta_runtime(
         self,
