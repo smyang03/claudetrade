@@ -28,6 +28,8 @@ logger.py - 전체 시스템 공용 로깅 모듈
       └── YYYYMMDD_events.log      ← 일별 매매 이벤트
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
@@ -127,6 +129,25 @@ class JsonFormatter(logging.Formatter):
 # ── 로거 팩토리 ───────────────────────────────────────────────────────────────
 
 _loggers: dict[str, logging.Logger] = {}
+
+def reset_logger_runtime_dir_for_tests(path: str | Path | None = None, *, bot_mode: str = "test") -> None:
+    """Reset logger cache so tests can isolate log files from live/paper logs."""
+    global LOG_DIR, _BOT_MODE
+    for logger in list(_loggers.values()):
+        for handler in list(logger.handlers):
+            try:
+                handler.close()
+            except Exception:
+                pass
+        logger.handlers.clear()
+    _loggers.clear()
+    if path is not None:
+        LOG_DIR = Path(path)
+    else:
+        LOG_DIR = get_runtime_path("logs", make_parents=False)
+    for subdir in ["system", "phase1", "brain", "daily", "analysis", "judgment", "normal", "risk", "flow"]:
+        (LOG_DIR / subdir).mkdir(parents=True, exist_ok=True)
+    _BOT_MODE = str(bot_mode or os.environ.get("TRADING_BOT_MODE", "test") or "test")
 
 def get_logger(
     name: str,

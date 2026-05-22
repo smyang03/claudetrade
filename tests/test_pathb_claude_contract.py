@@ -100,6 +100,7 @@ class PathBClaudeContractTests(unittest.TestCase):
             {
                 "CANDIDATE_ACTIONS_V2_ENABLED": "false",
                 "PATHB_KR_LIVE_ENABLED": "true",
+                "PATHB_ENTRY_SCAN_BROKER_TRUTH_REFRESH_ENABLED": "false",
                 "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "false",
             },
         )

@@ -76,6 +76,8 @@ PATHB_ACTIVE_STATUSES: set[str] = {
     "SELL_PARTIAL_FILLED",
 }
 
+PATHB_ENTRY_WAITING_STATUSES: set[str] = {"WAITING", "HIT"}
+
 PATHB_NO_PLAN_MESSAGES: dict[str, str] = {
     "NO_TRADE_READY": "Claude selection is all watch_only; no Path B live entry candidate is ready.",
     "PRICE_TARGETS_EMPTY": "trade_ready exists but price_targets are empty, so Path B cannot register plans.",
@@ -1708,6 +1710,13 @@ def _path_b_execution_readiness(
         and not _is_shadow_pathb_run(run)
         and str(run.get("status", "") or "").upper() in PATHB_ACTIVE_STATUSES
     )
+    entry_waiting_plans = sum(
+        1
+        for run in pathb_runs
+        if str(run.get("market", "") or "").upper() == market_key
+        and not _is_shadow_pathb_run(run)
+        and str(run.get("status", "") or "").upper() in PATHB_ENTRY_WAITING_STATUSES
+    )
     broker_open_orders = int(truth.get("open_orders") or 0)
     broker_position_count = int(truth.get("positions") or 0)
     intraday_only = _path_b_intraday_only_from_config(config, runtime_mode)
@@ -1717,11 +1726,10 @@ def _path_b_execution_readiness(
     state = "READY_WAITING_BUY_ZONE"
     quote_state = "quote_not_checked_read_only"
 
+    broker_truth_unfresh = not bool(truth.get("trusted")) or not bool(truth.get("fresh"))
+
     if not bool(config.get("enabled", False)) or not bool(control.get("enabled", True)) or bool(config.get("emergency_disable", False)) or bool(control.get("emergency_disabled", False)) or not bool(live_gate):
         state = "BLOCKED_CONFIG_OR_CONTROL"
-        known_blockers.append(state)
-    elif not bool(truth.get("trusted")) or not bool(truth.get("fresh")):
-        state = "BLOCKED_BROKER_TRUTH"
         known_blockers.append(state)
     elif str(session.get("state")) != "active":
         if intraday_only:
@@ -1731,13 +1739,21 @@ def _path_b_execution_readiness(
         else:
             state = "IDLE_MARKET_CLOSED_OVERNIGHT_ALLOWED"
         quote_state = "not_checked_market_inactive"
+        if broker_truth_unfresh:
+            known_blockers.append("BROKER_TRUTH_STALE_WARNING")
+    elif broker_truth_unfresh:
+        state = "BLOCKED_BROKER_TRUTH"
+        known_blockers.append(state)
     elif active_live_plans > 0:
-        if not bool(capacity.get("min_order_possible", True)):
-            state = "BLOCKED_AFFORDABILITY"
-            known_blockers.append(state)
-        elif market_key == "KR" and not _kr_confirmation_hard_veto_ready(config):
-            state = "BLOCKED_CONFIRMATION_GATE"
-            known_blockers.append(state)
+        if entry_waiting_plans > 0:
+            if not bool(capacity.get("min_order_possible", True)):
+                state = "BLOCKED_AFFORDABILITY"
+                known_blockers.append(state)
+            elif market_key == "KR" and not _kr_confirmation_hard_veto_ready(config):
+                state = "BLOCKED_CONFIRMATION_GATE"
+                known_blockers.append(state)
+            else:
+                state = "WAITING_QUOTE_OR_BUY_ZONE"
         else:
             state = "WAITING_QUOTE_OR_BUY_ZONE"
     elif trade_ready_count <= 0:
@@ -1764,6 +1780,7 @@ def _path_b_execution_readiness(
         "price_targets_count": price_targets_count,
         "registered_live_plans": registered_live_plans,
         "active_live_plans": active_live_plans,
+        "entry_waiting_plans": entry_waiting_plans,
         "broker_open_orders": broker_open_orders,
         "market_session_state": session.get("state", "unknown"),
         "market_session": session,
@@ -1774,6 +1791,7 @@ def _path_b_execution_readiness(
         "next_gate_checks": next_gate_checks,
         "operator_action_required": state.startswith("BLOCKED_"),
         "broker_truth": truth,
+        "broker_truth_warning": "stale_or_untrusted" if broker_truth_unfresh else "",
     }
 
 

@@ -38,10 +38,12 @@ def _plan_a_bot() -> TradingBot:
     bot._sell_fail_at = {}
     bot._sell_fail_meta = {}
     bot._SELL_FAIL_COOLDOWN_SEC = 60
+    bot._execution_flags = {"KR": set(), "US": set()}
     bot._build_intraday_context = lambda market: ""  # type: ignore[method-assign]
     bot._advisor_pos = lambda pos, market: pos  # type: ignore[method-assign]
     bot._record_decision_event = Mock()  # type: ignore[method-assign]
     bot._save_positions = Mock()  # type: ignore[method-assign]
+    bot._write_live_status = Mock()  # type: ignore[method-assign]
     bot._note_sell_failure = Mock()  # type: ignore[method-assign]
     bot._compute_order_price = lambda side, market, price: float(price)  # type: ignore[method-assign]
     bot._token_for_market = lambda market: "token"  # type: ignore[method-assign]
@@ -128,6 +130,65 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         self.assertFalse(ok)
         precheck.assert_called_once()
         self.assertEqual(cand["auto_sell_review_action"], "SELL")
+
+    def test_plan_a_insufficient_holding_fresh_broker_truth_removes_stale_position(self) -> None:
+        bot = _plan_a_bot()
+        cand = {**bot.risk.positions[0], "exit_price": 95.0, "reason": "loss_cap"}
+        bot._broker_truth_market_snapshot = Mock(  # type: ignore[method-assign]
+            return_value={
+                "missing": False,
+                "stale": False,
+                "error": "",
+                "last_success_at": "2026-05-21T12:00:00+00:00",
+                "positions": [],
+                "open_orders": [],
+                "today_fills": [],
+            }
+        )
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+            "trading_bot.precheck_order",
+            side_effect=[
+                {"ok": False, "reason": "insufficient_holding", "allowed_qty": 0, "msg": "no shares"},
+                {"ok": False, "reason": "insufficient_holding", "allowed_qty": 0, "msg": "no shares"},
+            ],
+        ), patch("trading_bot.place_order") as place:
+            ok = bot._execute_sell(cand, "US", reason="loss_cap")
+
+        self.assertFalse(ok)
+        place.assert_not_called()
+        self.assertEqual(bot.risk.positions, [])
+        bot._save_positions.assert_called()
+        bot._write_live_status.assert_called()
+
+    def test_plan_a_insufficient_holding_stale_broker_truth_keeps_position(self) -> None:
+        bot = _plan_a_bot()
+        cand = {**bot.risk.positions[0], "exit_price": 95.0, "reason": "loss_cap"}
+        bot._broker_truth_market_snapshot = Mock(  # type: ignore[method-assign]
+            return_value={
+                "missing": False,
+                "stale": True,
+                "error": "ttl",
+                "last_success_at": "2026-05-21T12:00:00+00:00",
+                "positions": [],
+                "open_orders": [],
+                "today_fills": [],
+            }
+        )
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+            "trading_bot.precheck_order",
+            side_effect=[
+                {"ok": False, "reason": "insufficient_holding", "allowed_qty": 0, "msg": "no shares"},
+                {"ok": False, "reason": "insufficient_holding", "allowed_qty": 0, "msg": "no shares"},
+            ],
+        ), patch("trading_bot.place_order") as place:
+            ok = bot._execute_sell(cand, "US", reason="loss_cap")
+
+        self.assertFalse(ok)
+        place.assert_not_called()
+        self.assertEqual(len(bot.risk.positions), 1)
+        bot._note_sell_failure.assert_called()
 
     def test_plan_a_sell_skips_when_pathb_sell_is_pending(self) -> None:
         bot = _plan_a_bot()

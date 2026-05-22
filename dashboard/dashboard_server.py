@@ -9362,9 +9362,13 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 .side-sell {{ color: var(--red); }}
 
 /* 분석가 카드 */
-.analyst-grid {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-bottom: 20px; }}
+.analyst-grid {{ margin-bottom: 20px; }}
+.analyst-card-row {{
+  display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px;
+}}
 .analyst-card {{
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+  min-width: 0;
 }}
 .analyst-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }}
 .analyst-icon {{
@@ -9389,11 +9393,18 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
   font-size: 13px; line-height: 1.6; color: var(--text);
   padding: 10px; background: rgba(255,255,255,0.03);
   border-radius: 8px; border-left: 3px solid var(--border); margin-bottom: 10px;
+  word-break: keep-all; overflow-wrap: break-word;
+}}
+.analyst-grid-alert {{
+  border: 1px solid rgba(245,158,11,.35); background: rgba(245,158,11,.08);
+  color: #92400e; padding: 10px 12px; border-radius: 8px;
+  font-size: 12px; line-height: 1.5; margin-bottom: 16px;
 }}
 .postmortem {{ font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.5; font-style: italic; }}
 .lesson-box {{
   background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2);
   border-radius: 8px; padding: 12px 16px; font-size: 13px; line-height: 1.6; color: var(--yellow);
+  margin-top: 16px;
 }}
 
 /* 교훈 */
@@ -9431,7 +9442,6 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 }}
 @media (max-width: 768px) {{
   .grid-5, .grid-4, .grid-3, .grid-2 {{ grid-template-columns: 1fr; }}
-  .analyst-grid {{ grid-template-columns: 1fr; }}
   header {{ flex-wrap: wrap; height: auto; padding: 10px 16px; gap: 8px; }}
   main {{ padding: 12px; }}
 }}
@@ -10412,18 +10422,20 @@ async function loadJudgments() {
   if (basis.current_primary_change_pct !== null && basis.current_primary_change_pct !== undefined) basisBits.push(`live ${primaryLabel} ${signedPct(basis.current_primary_change_pct)}`);
   if (basis.current_secondary_change_pct !== null && basis.current_secondary_change_pct !== undefined) basisBits.push(`live ${secondaryLabel} ${signedPct(basis.current_secondary_change_pct)}`);
   const basisHtml = basis.warning ? `
-    <div style="grid-column:1/-1;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);color:#92400e;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.5">
+    <div class="analyst-grid-alert">
       <b>판단 기준 확인</b> ${escapeHtml(basis.warning)}
       ${basisBits.length ? `<div style="margin-top:4px;color:#78350f;font-family:var(--mono)">${basisBits.join(' · ')}</div>` : ''}
     </div>` : '';
   sec.innerHTML =
     basisHtml +
+    '<div class="analyst-card-row">' +
     analystCard(d.bull,    '상승 분석가', 'bull', 'stance-bull') +
     analystCard(d.bear,    '하락 분석가', 'bear', 'stance-bear') +
-    analystCard(d.neutral, '중립 분석가', 'neut', 'stance-neut');
+    analystCard(d.neutral, '중립 분석가', 'neut', 'stance-neut') +
+    '</div>';
 
   if (d.lesson) {
-    sec.innerHTML += `<div class="lesson-box" style="grid-column:1/-1">오늘의 교훈: ${d.lesson}</div>`;
+    sec.innerHTML += `<div class="lesson-box">오늘의 교훈: ${d.lesson}</div>`;
   }
 }
 

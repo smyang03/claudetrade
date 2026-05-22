@@ -386,8 +386,8 @@ def run_guardian_once(
     bot_start_allowed: bool = True,
     bot_start_skip_detail: str = "",
 ) -> dict[str, Any]:
-    _write_guardian_heartbeat(mode, status="running")
     env_loaded = _load_env(mode, env or None)
+    _write_guardian_heartbeat(mode, status="running")
     preflight = run_preflight(mode, include_dashboard=not skip_dashboard)
     markets = _enabled_markets(preflight)
     findings = [

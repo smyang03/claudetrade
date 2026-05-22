@@ -176,9 +176,13 @@ class PathBRuntime:
         self._last_exit_scan_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._last_unknown_reconcile_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._profit_review_last_attempt_at: dict[str, float] = {}
+        self._profit_review_timeout_state: dict[str, dict[str, Any]] = {}
+        self._profit_review_inflight_until: dict[str, float] = {}
         self._profit_review_calls_this_scan = 0
         self._pathb_sell_attempt_locks: dict[str, float] = {}
         self._entry_block_log_state: dict[str, dict[str, Any]] = {}
+        self._entry_broker_truth_refresh_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
+        self._broker_truth_refresh_metrics: dict[str, dict[str, Any]] = {"KR": {}, "US": {}}
         self.broker_truth = BrokerTruthSnapshot(
             runtime_mode=self.mode,
             token_provider=lambda market="KR": _bot_token(self.bot, market),
@@ -203,6 +207,54 @@ class PathBRuntime:
             if value is not None and str(value).strip() != "":
                 return bool(runtime_cfg.get_bool(key, default))
         return _env_bool(key, default)
+
+    def _runtime_int(self, key: str, default: int = 0) -> int:
+        value = self._runtime_value(key, default)
+        if value is None or str(value).strip() == "":
+            return int(default)
+        try:
+            return int(float(str(value).replace(",", "").strip()))
+        except Exception:
+            return int(default)
+
+    @staticmethod
+    def _execution_safety_payload() -> dict[str, Any]:
+        return {
+            "event_owner": "execution_safety",
+            "not_strategy_signal": True,
+            "strategy_pnl_excluded": True,
+            "learning_excluded": True,
+            "selection_quality_excluded": True,
+        }
+
+    def _emit_risk_event(
+        self,
+        event_type: str,
+        market: str,
+        *,
+        ticker: str = "",
+        reason: str = "",
+        severity: str = "warning",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        bridge = getattr(getattr(self, "bot", None), "_log_risk_event", None)
+        if callable(bridge):
+            try:
+                bridge(
+                    str(event_type or ""),
+                    str(market or "").upper(),
+                    ticker=str(ticker or ""),
+                    reason=str(reason or ""),
+                    severity=str(severity or "warning"),
+                    payload={**self._execution_safety_payload(), **dict(payload or {})},
+                )
+                return
+            except Exception as exc:
+                log.debug(f"[PathB risk event bridge failed] {market} {ticker} {event_type}: {exc}")
+        log.warning(
+            f"[PathB risk event] {market} {ticker or '*'} {event_type} reason={reason}",
+            extra={"extra": {**self._execution_safety_payload(), **dict(payload or {})}},
+        )
 
     def status(self) -> dict[str, Any]:
         control = self.control_store.load()
@@ -604,6 +656,13 @@ class PathBRuntime:
         market_key = str(market or "").upper()
         reason = str((entry_gate or {}).get("reason") or "NEW_BUY_BLOCKED")
         scope = str((entry_gate or {}).get("scope") or "market")
+        if reason in {"BLOCKED_BROKER_TRUTH", "BROKER_SYNC_QUARANTINE", "ORDER_UNKNOWN_UNRESOLVED"}:
+            self._emit_risk_event(
+                reason,
+                market_key,
+                reason=reason,
+                payload={"scope": scope, "stage": "pathb_entry_scan", "entry_gate": entry_gate},
+            )
         if reason != "BROKER_SYNC_QUARANTINE":
             log.warning(f"[PathB entry scan blocked] {market_key} {reason} scope={scope}")
             return
@@ -639,6 +698,96 @@ class PathBRuntime:
         )
         state["count"] = 0
         state["last_emit"] = now
+
+    def _entry_scan_broker_truth_gate(self, market: str) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        details: dict[str, Any] = {
+            **self._execution_safety_payload(),
+            "market": market_key,
+            "stage": "pathb_entry_scan",
+            "broker_truth_refresh_reason": "pathb_entry_scan",
+        }
+        if self.is_paper or not self._runtime_bool("PATHB_ENTRY_SCAN_BROKER_TRUTH_REFRESH_ENABLED", True):
+            details["broker_truth_refresh_skipped"] = True
+            return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
+        if not str(_bot_token(self.bot, market_key) or "").strip():
+            details["broker_truth_refresh_skipped"] = True
+            details["broker_truth_skip_reason"] = "token_unavailable"
+            return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
+        provider = getattr(self.broker_truth, "balance_provider", None)
+        own_provider = getattr(provider, "__self__", None) is self and getattr(provider, "__name__", "") == "_balance_for_snapshot"
+        if own_provider and not callable(getattr(self.bot, "_get_balance_with_token_refresh", None)):
+            details["broker_truth_refresh_skipped"] = True
+            details["broker_truth_skip_reason"] = "bot_balance_provider_unavailable"
+            return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
+
+        ttl = max(5, self._runtime_int("PATHB_ENTRY_SCAN_BROKER_TRUTH_TTL_SEC", 30))
+        min_interval = max(0, self._runtime_int("PATHB_ENTRY_SCAN_BROKER_TRUTH_MIN_INTERVAL_SEC", min(30, ttl)))
+        now_ts = time.time()
+        last_ts = float(self._entry_broker_truth_refresh_at.get(market_key, 0.0) or 0.0)
+        refresh_attempted = False
+        try:
+            current = dict(self.broker_truth.market_snapshot(market_key, ttl_sec=ttl))
+        except Exception:
+            current = {}
+        needs_refresh = bool(current.get("missing")) or bool(current.get("stale")) or bool(str(current.get("error", "") or ""))
+        if min_interval <= 0 or not last_ts or now_ts - last_ts >= min_interval or needs_refresh:
+            refresh_attempted = True
+            refresh_started = time.time()
+            refresh_error = ""
+            try:
+                self.refresh_broker_truth(market_key, force=True, ttl_sec=ttl)
+            except Exception as exc:
+                refresh_error = str(exc)[:300]
+                details["broker_truth_refresh_exception"] = refresh_error
+            refresh_latency = max(0.0, time.time() - refresh_started)
+            self._entry_broker_truth_refresh_at[market_key] = time.time()
+            try:
+                current = dict(self.broker_truth.market_snapshot(market_key, ttl_sec=ttl))
+            except Exception as exc:
+                current = {"missing": True, "stale": True, "error": str(exc)}
+            refresh_success = not (
+                bool(current.get("missing"))
+                or bool(current.get("stale"))
+                or bool(str(current.get("error", "") or ""))
+                or bool(refresh_error)
+            )
+            metrics = dict(self._broker_truth_refresh_metrics.get(market_key) or {})
+            metrics["call_count"] = int(metrics.get("call_count", 0) or 0) + 1
+            if refresh_success:
+                metrics["success_count"] = int(metrics.get("success_count", 0) or 0) + 1
+            else:
+                metrics["fail_count"] = int(metrics.get("fail_count", 0) or 0) + 1
+            metrics["last_latency_sec"] = round(refresh_latency, 4)
+            metrics["last_reason"] = "pathb_entry_scan"
+            metrics["last_success"] = bool(refresh_success)
+            metrics["last_error"] = refresh_error or str(current.get("error", "") or "")
+            self._broker_truth_refresh_metrics[market_key] = metrics
+            details["broker_truth_refresh_latency_sec"] = round(refresh_latency, 4)
+            details["broker_truth_refresh_success"] = bool(refresh_success)
+            details["broker_truth_refresh_metrics"] = dict(metrics)
+
+        details.update(
+            {
+                "broker_truth_refresh_attempted": refresh_attempted,
+                "broker_truth_last_success_at": str(current.get("last_success_at", "") or ""),
+                "broker_truth_last_attempt_at": str(current.get("last_attempt_at", "") or ""),
+                "broker_truth_stale": bool(current.get("stale")),
+                "broker_truth_missing": bool(current.get("missing")),
+                "broker_truth_error": str(current.get("error", "") or ""),
+                "broker_truth_ttl_sec": int(current.get("ttl_sec", ttl) or ttl),
+            }
+        )
+        unavailable = bool(current.get("missing")) or bool(current.get("stale")) or bool(str(current.get("error", "") or ""))
+        if not unavailable:
+            return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
+        return {
+            "allowed": False,
+            "blocked": True,
+            "reason": "BLOCKED_BROKER_TRUTH",
+            "scope": "market",
+            "details": details,
+        }
 
     def _audit_pathb_price_seen(self, plan: PricePlan, current: float, *, source: str) -> None:
         bot = getattr(self, "bot", None)
@@ -1344,6 +1493,13 @@ class PathBRuntime:
                 return
             self.cancel_unsent_waiting(market, reason="PATHB_MANUALLY_DISABLED", include_shadow=True)
             return
+        broker_truth_gate = self._entry_scan_broker_truth_gate(market)
+        if not bool(broker_truth_gate.get("allowed", True)):
+            if self._market_shadow_plan_enabled(market):
+                self._scan_shadow_waiting_entries(market)
+            self._audit_entry_scan_blocked(market, broker_truth_gate)
+            self._log_entry_scan_blocked(market, broker_truth_gate)
+            return
         kr_new_entry_blocked = market == "KR" and self._runtime_bool(
             "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
             False,
@@ -1393,6 +1549,7 @@ class PathBRuntime:
                     plan.decision_id,
                     "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
                     {
+                        **self._execution_safety_payload(),
                         "stage": "pathb_waiting_scan",
                         "scope": "market",
                         "reason": "kr_claude_price_new_entry_block",
@@ -3262,6 +3419,89 @@ class PathBRuntime:
         )
         return ExitSignal(True, "profit_ladder", "CLOSED_PROFIT_LADDER", current_price, plan.path_run_id)
 
+    def _profit_review_timeout_key(self, plan: PricePlan, review_stage: str = "INTRADAY_REVIEW") -> str:
+        return f"{str(plan.market or '').upper()}:{self._ticker_key(plan.market, plan.ticker)}:{review_stage}"
+
+    def _profit_review_timeout_payload(
+        self,
+        plan: PricePlan,
+        payload_base: dict[str, Any],
+        *,
+        reason: str,
+        timeout_sec: float,
+        timeout_count: int = 0,
+        digest_chars: int = 0,
+        position_payload_keys: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            **payload_base,
+            **self._execution_safety_payload(),
+            "profit_review_action": "HOLD",
+            "profit_review_fallback": True,
+            "profit_review_fallback_reason": reason,
+            "profit_review_error_kind": "TIMEOUT",
+            "profit_review_timeout": True,
+            "advisor_unavailable": True,
+            "learning_excluded": True,
+            "market": str(plan.market or "").upper(),
+            "ticker": plan.ticker,
+            "path_run_id": plan.path_run_id,
+            "review_stage": "INTRADAY_REVIEW",
+            "timeout_sec": float(timeout_sec or 0.0),
+            "timeout_count": int(timeout_count or 0),
+            "digest_chars": int(digest_chars or 0),
+            "position_payload_keys": list(position_payload_keys or []),
+            "minutes_to_close": self._minutes_to_close(plan.market),
+        }
+
+    def _profit_review_debounced_payload(
+        self,
+        plan: PricePlan,
+        payload_base: dict[str, Any],
+        *,
+        timeout_sec: float,
+        digest_chars: int,
+        position_payload_keys: list[str],
+    ) -> dict[str, Any] | None:
+        key = self._profit_review_timeout_key(plan)
+        now_ts = time.time()
+        inflight_until = float(self._profit_review_inflight_until.get(key, 0.0) or 0.0)
+        if inflight_until and now_ts < inflight_until:
+            state = self._profit_review_timeout_state.get(key, {})
+            return self._profit_review_timeout_payload(
+                plan,
+                payload_base,
+                reason="timeout_in_flight",
+                timeout_sec=timeout_sec,
+                timeout_count=int(state.get("count", 0) or 0),
+                digest_chars=digest_chars,
+                position_payload_keys=position_payload_keys,
+            )
+        state = self._profit_review_timeout_state.get(key, {})
+        last_timeout = float(state.get("last_timeout_at", 0.0) or 0.0)
+        count = int(state.get("count", 0) or 0)
+        debounce_sec = max(0, self._runtime_int("PATHB_PROFIT_REVIEW_TIMEOUT_DEBOUNCE_SEC", 900))
+        max_per_ticker = max(1, self._runtime_int("PATHB_PROFIT_REVIEW_TIMEOUT_MAX_PER_TICKER", 2))
+        if debounce_sec > 0 and count >= max_per_ticker and last_timeout and now_ts - last_timeout < debounce_sec:
+            return self._profit_review_timeout_payload(
+                plan,
+                payload_base,
+                reason="timeout_debounce",
+                timeout_sec=timeout_sec,
+                timeout_count=count,
+                digest_chars=digest_chars,
+                position_payload_keys=position_payload_keys,
+            )
+        return None
+
+    def _note_profit_review_timeout(self, plan: PricePlan) -> int:
+        key = self._profit_review_timeout_key(plan)
+        state = dict(self._profit_review_timeout_state.get(key) or {})
+        state["count"] = int(state.get("count", 0) or 0) + 1
+        state["last_timeout_at"] = time.time()
+        self._profit_review_timeout_state[key] = state
+        return int(state["count"])
+
     def _maybe_trigger_profit_protection_review(
         self,
         plan: PricePlan,
@@ -3353,6 +3593,26 @@ class PathBRuntime:
                     review_pos = builder(review_pos, plan.market)
                 except Exception:
                     pass
+            timeout_sec = _env_float("PATHB_PROFIT_REVIEW_TIMEOUT_SEC", 10.0)
+            position_payload_keys = sorted(str(key) for key in review_pos.keys())
+            debounced_payload = self._profit_review_debounced_payload(
+                plan,
+                payload_base,
+                timeout_sec=timeout_sec,
+                digest_chars=len(str(digest or "")),
+                position_payload_keys=position_payload_keys,
+            )
+            if debounced_payload is not None:
+                self.store.update_path_run(path_run_id, plan=debounced_payload, merge_plan=True)
+                log.warning(
+                    f"[PathB profit_review debounce] {plan.market} {plan.ticker} "
+                    f"reason={debounced_payload.get('profit_review_fallback_reason')} "
+                    f"count={debounced_payload.get('timeout_count')}"
+                )
+                return {
+                    "triggered": True,
+                    "reason": str(debounced_payload.get("profit_review_fallback_reason") or "timeout_debounce"),
+                }
 
             def _ask() -> dict[str, Any]:
                 return advisor_ask(
@@ -3364,8 +3624,12 @@ class PathBRuntime:
                     minutes_to_close=self._minutes_to_close(plan.market),
                 )
 
-            timeout_sec = _env_float("PATHB_PROFIT_REVIEW_TIMEOUT_SEC", 10.0)
             if timeout_sec > 0:
+                timeout_key = self._profit_review_timeout_key(plan)
+                self._profit_review_inflight_until[timeout_key] = time.time() + timeout_sec + max(
+                    0,
+                    self._runtime_int("PATHB_PROFIT_REVIEW_TIMEOUT_DEBOUNCE_SEC", 900),
+                )
                 executor = ThreadPoolExecutor(max_workers=1)
                 future = executor.submit(_ask)
                 try:
@@ -3373,13 +3637,28 @@ class PathBRuntime:
                 except FuturesTimeoutError:
                     future.cancel()
                     executor.shutdown(wait=False, cancel_futures=True)
-                    log.warning(f"[PathB profit_review timeout] {plan.market} {plan.ticker} timeout={timeout_sec:g}s")
+                    timeout_count = self._note_profit_review_timeout(plan)
+                    timeout_payload = self._profit_review_timeout_payload(
+                        plan,
+                        payload_base,
+                        reason="timeout",
+                        timeout_sec=timeout_sec,
+                        timeout_count=timeout_count,
+                        digest_chars=len(str(digest or "")),
+                        position_payload_keys=position_payload_keys,
+                    )
+                    log.warning(
+                        f"[PathB profit_review timeout] {plan.market} {plan.ticker} "
+                        f"timeout={timeout_sec:g}s count={timeout_count}",
+                        extra={"extra": timeout_payload},
+                    )
                     self.store.update_path_run(
                         path_run_id,
-                        plan={**payload_base, "profit_review_action": "TIMEOUT"},
+                        plan=timeout_payload,
                         merge_plan=True,
                     )
                     return {"triggered": True, "reason": "timeout"}
+                self._profit_review_inflight_until.pop(timeout_key, None)
                 executor.shutdown(wait=False, cancel_futures=True)
             else:
                 advice = _ask()
@@ -3411,6 +3690,10 @@ class PathBRuntime:
                 return {"triggered": True, "reason": "forced_sell_policy", "bridge": bridge_result, "advice": advice}
             return {"triggered": True, "reason": "hold_without_protective_stop", "advice": advice}
         except Exception as exc:
+            try:
+                self._profit_review_inflight_until.pop(self._profit_review_timeout_key(plan), None)
+            except Exception:
+                pass
             log.warning(f"[PathB profit_review failed] {plan.market} {plan.ticker}: {exc}")
             try:
                 self.store.update_path_run(
@@ -3624,8 +3907,7 @@ class PathBRuntime:
                             f"run={plan.path_run_id}"
                         )
                         return False
-                self._note_sell_failure(market, plan.ticker, signal.reason, str(pre.get("msg", "") or "precheck_failed"))
-                log.error(f"[PathB SELL PRECHECK FAILED] {market} {plan.ticker}: {pre}")
+                self._handle_pathb_sell_precheck_failed(plan, pos, signal, pre)
                 return False
 
             try:
@@ -3705,6 +3987,156 @@ class PathBRuntime:
             return int(float((precheck or {}).get("allowed_qty", 0) or 0)) <= 0
         except Exception:
             return True
+
+    def _pathb_zero_holding_broker_evidence(self, plan: PricePlan) -> dict[str, Any]:
+        market = str(plan.market or "").upper()
+        ticker = self._ticker_key(market, plan.ticker)
+        evidence: dict[str, Any] = {
+            **self._execution_safety_payload(),
+            "market": market,
+            "ticker": ticker,
+            "path_run_id": plan.path_run_id,
+            "close_reason": "broker_truth_zero_holding_reconcile",
+            "broker_sync_reconciled": False,
+            "manual_reconciliation_required": True,
+        }
+        provider = getattr(self.broker_truth, "balance_provider", None)
+        own_provider = getattr(provider, "__self__", None) is self and getattr(provider, "__name__", "") == "_balance_for_snapshot"
+        if own_provider and not callable(getattr(self.bot, "_get_balance_with_token_refresh", None)):
+            evidence.update(
+                {
+                    "broker_truth_available": False,
+                    "broker_truth_refresh_skipped": True,
+                    "broker_truth_skip_reason": "bot_balance_provider_unavailable",
+                    "safe_to_reconcile_zero_holding": False,
+                }
+            )
+            return evidence
+        try:
+            self.refresh_broker_truth(market, force=True, ttl_sec=15)
+        except Exception as exc:
+            evidence["broker_truth_refresh_error"] = str(exc)[:300]
+        try:
+            market_data = dict(self.broker_truth.market_snapshot(market, ttl_sec=15))
+        except Exception as exc:
+            market_data = {"missing": True, "stale": True, "error": str(exc)}
+        unavailable = bool(market_data.get("missing")) or bool(market_data.get("stale")) or bool(str(market_data.get("error", "") or ""))
+        positions = self._broker_rows_for_ticker(market_data.get("positions", []), market, ticker) if not unavailable else []
+        open_orders = self._broker_rows_for_ticker(market_data.get("open_orders", []), market, ticker) if not unavailable else []
+        fills = self._broker_rows_for_ticker(market_data.get("today_fills", []), market, ticker) if not unavailable else []
+        broker_qty = 0
+        for row in positions:
+            try:
+                broker_qty += max(0, int(float(row.get("qty", 0) or 0)))
+            except Exception:
+                pass
+        open_remaining = 0
+        for row in open_orders:
+            try:
+                open_remaining += max(0, int(float(row.get("remaining_qty", row.get("qty", 0)) or 0)))
+            except Exception:
+                open_remaining += 1
+        sell_fills = [row for row in fills if broker_row_side_matches(row, "sell")]
+        evidence.update(
+            {
+                "broker_truth_available": not unavailable,
+                "broker_truth_last_success_at": str(market_data.get("last_success_at", "") or ""),
+                "broker_truth_last_attempt_at": str(market_data.get("last_attempt_at", "") or ""),
+                "broker_truth_stale": bool(market_data.get("stale")),
+                "broker_truth_error": str(market_data.get("error", "") or ""),
+                "broker_position_qty": broker_qty,
+                "broker_open_order_count": len(open_orders),
+                "broker_open_remaining_qty": open_remaining,
+                "broker_today_sell_fill_evidence": bool(sell_fills),
+            }
+        )
+        evidence["safe_to_reconcile_zero_holding"] = bool((not unavailable) and broker_qty <= 0 and open_remaining <= 0)
+        evidence["manual_reconciliation_required"] = not bool(evidence["safe_to_reconcile_zero_holding"])
+        return evidence
+
+    def _remove_local_pathb_position(self, plan: PricePlan) -> bool:
+        risk = getattr(getattr(self, "bot", None), "risk", None)
+        positions = getattr(risk, "positions", None)
+        if not isinstance(positions, list):
+            return False
+        market = str(plan.market or "").upper()
+        ticker = self._ticker_key(market, plan.ticker)
+        kept: list[dict[str, Any]] = []
+        removed = False
+        for pos in positions:
+            if not isinstance(pos, dict):
+                kept.append(pos)
+                continue
+            pos_ticker = self._ticker_key(market, str(pos.get("ticker", "") or ""))
+            pos_run_id = str(pos.get("pathb_path_run_id", "") or pos.get("path_run_id", "") or "")
+            if pos_ticker == ticker and (not plan.path_run_id or pos_run_id == plan.path_run_id):
+                removed = True
+                continue
+            kept.append(pos)
+        if removed:
+            positions[:] = kept
+            try:
+                self._save_positions_if_possible()
+            except Exception:
+                pass
+        return removed
+
+    def _handle_pathb_sell_precheck_failed(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        precheck: dict[str, Any],
+    ) -> dict[str, Any]:
+        market = str(plan.market or "").upper()
+        reason = str((precheck or {}).get("reason", "") or "precheck_failed")
+        if not self._precheck_failed_zero_holding(precheck):
+            self._note_sell_failure(market, plan.ticker, signal.reason, str((precheck or {}).get("msg", "") or "precheck_failed"))
+            self._emit_risk_event(
+                "SELL_PRECHECK_FAILED",
+                market,
+                ticker=plan.ticker,
+                reason=reason,
+                severity="error",
+                payload={"precheck_reason": reason, "precheck_msg": str((precheck or {}).get("msg", "") or "")[:300]},
+            )
+            log.error(f"[PathB SELL PRECHECK FAILED] {market} {plan.ticker}: {precheck}")
+            return {"handled": True, "resolved": False, "reason": reason}
+
+        evidence = self._pathb_zero_holding_broker_evidence(plan)
+        self._emit_risk_event(
+            "SELL_PRECHECK_INSUFFICIENT_HOLDING",
+            market,
+            ticker=plan.ticker,
+            reason="insufficient_holding",
+            payload={**evidence, "precheck_msg": str((precheck or {}).get("msg", "") or "")[:300]},
+        )
+        if bool(evidence.get("safe_to_reconcile_zero_holding")):
+            removed = self._remove_local_pathb_position(plan)
+            self.store.update_path_run(
+                plan.path_run_id,
+                status="CLOSED",
+                plan={
+                    **evidence,
+                    "broker_sync_reconciled": True,
+                    "local_position_removed": bool(removed),
+                    "close_reason": "broker_truth_zero_holding_reconcile",
+                    "closed_at": datetime.now(KST).isoformat(timespec="seconds"),
+                },
+                merge_plan=True,
+            )
+            log.warning(
+                f"[PathB SELL SAFETY BLOCKED] {market} {plan.ticker} insufficient_holding; "
+                f"fresh broker truth shows zero holding, local_run_closed run={plan.path_run_id}"
+            )
+            return {"handled": True, "resolved": True, "reason": "broker_truth_zero_holding_reconcile"}
+
+        self._note_sell_failure(market, plan.ticker, signal.reason, "insufficient_holding")
+        log.warning(
+            f"[PathB SELL SAFETY BLOCKED] {market} {plan.ticker} insufficient_holding; "
+            f"broker truth unavailable or open order exists run={plan.path_run_id}"
+        )
+        return {"handled": True, "resolved": False, "reason": "insufficient_holding_unresolved", "evidence": evidence}
 
     def _broker_remaining_qty(self, market: str, ticker: str) -> int | None:
         if self.is_paper:
@@ -5673,20 +6105,37 @@ class PathBRuntime:
         path_run_id: str = "",
     ) -> None:
         try:
+            event_payload = {
+                **self._execution_safety_payload(),
+                **(payload or {}),
+                "path_type": "claude_price",
+                "path_run_id": path_run_id,
+            }
             self.bot._v2_record_lifecycle_event(
                 "SAFETY_BLOCKED",
                 market,
                 ticker,
                 decision_id=decision_id,
                 reason_code=reason_code,
+                payload=event_payload,
+            )
+        except Exception as exc:
+            log.warning(f"[PathB blocked record failed] {market} {ticker} {reason_code}: {exc}")
+        try:
+            self._emit_risk_event(
+                str(reason_code or "PATHB_SAFETY_BLOCKED"),
+                market,
+                ticker=ticker,
+                reason=str(reason_code or ""),
                 payload={
                     **(payload or {}),
                     "path_type": "claude_price",
                     "path_run_id": path_run_id,
+                    "decision_id": decision_id,
                 },
             )
-        except Exception as exc:
-            log.warning(f"[PathB blocked record failed] {market} {ticker} {reason_code}: {exc}")
+        except Exception:
+            pass
         if reason_code == "MAX_DAILY_ENTRIES":
             try:
                 bot = getattr(self, "bot", None)

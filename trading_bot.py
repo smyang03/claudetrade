@@ -42,7 +42,10 @@ if not Path(_dotenv_path).exists():
 load_dotenv(dotenv_path=_dotenv_path, override=True)
 # 로거 파일명 분리: import 전에 모드 설정 → 모든 서브모듈 로거 자동 적용
 import os as _os
-_os.environ["TRADING_BOT_MODE"] = "live" if "--live" in sys.argv else "paper"
+if "--live" in sys.argv:
+    _os.environ["TRADING_BOT_MODE"] = "live"
+elif str(_os.environ.get("TRADING_BOT_MODE", "") or "").strip().lower() != "test":
+    _os.environ["TRADING_BOT_MODE"] = "paper"
 def _apply_v2_start_config_env() -> None:
     if "--live" not in sys.argv:
         return
@@ -175,6 +178,7 @@ from runtime.adaptive_live_condition import attach_adaptive_live_condition_shado
 from runtime.action_routing import route_candidate_action
 from runtime.broker_side import broker_row_side_matches
 from runtime.candidate_pool_runtime import build_candidate_pool
+from runtime import sub_screener
 from runtime.exit_lifecycle import (
     DEFAULT_LIVE_BYPASS_REASONS,
     EXPANDABLE_LIVE_BYPASS_REASONS,
@@ -806,6 +810,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._recent_sell_proceeds_by_market: dict[str, list[dict]] = {"KR": [], "US": []}
         self._last_entry_scan_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._last_rescreen_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
+        self._last_sub_screener_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self.entry_timing = EntryTimingTracker(runtime_mode=self._mode)
         self.runtime_config = EffectiveRuntimeConfig.from_env(
             runtime_mode=self._mode,
@@ -924,6 +929,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._last_screen_candidates: dict[str, list] = {"KR": [], "US": []}
         self._last_data_insufficient_candidates: dict[str, list] = {"KR": [], "US": []}
         self._data_insufficient_watch_tickers: dict[str, set[str]] = {"KR": set(), "US": set()}
+        self._data_insufficient_failure_state: dict[str, dict] = {}
+        self._last_universe_filter_bypass: dict[str, Any] = {}
         self._opening_fresh_rejudge_done: set[str] = set()
         self._opening_fresh_once_done: set[str] = set()
         # 장중 이벤트 기록 (튜닝/긴급재판단) — session_close 시 daily_judgment에 포함
@@ -2470,17 +2477,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if value is None:
             value = getattr(self, "dynamic_universe_top_n", _DYNAMIC_UNIVERSE_TOP_N_DEFAULTS.get(market, 20))
         return max(3, int(value))
-    def _screen_market_candidates(self, market: str, mode: str) -> list[dict]:
+    def _screen_market_candidates(self, market: str, mode: str, *, force_refresh: bool = False) -> list[dict]:
         top_n = self._screen_top_n_for_market(market)
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if not ((getattr(self, "_last_screen_candidates", {}) or {}).get(market_key) or []):
             baseline = self._load_persisted_screen_baseline(market_key)
             if baseline:
                 self._last_screen_candidates[market_key] = baseline
-        if market == "KR":
-            raw_candidates = screen_market_kr(self._token_for_market("KR"), top_n=top_n, mode=mode)
-        else:
-            raw_candidates = screen_market_us(top_n=top_n, mode=mode)
+        force_us_cache_bypass = bool(force_refresh and market_key == "US")
+        prev_us_ttl = os.environ.get("US_SCREEN_CACHE_TTL_SEC")
+        if force_us_cache_bypass:
+            os.environ["US_SCREEN_CACHE_TTL_SEC"] = "0"
+        try:
+            if market_key == "KR":
+                raw_candidates = screen_market_kr(self._token_for_market("KR"), top_n=top_n, mode=mode)
+            else:
+                raw_candidates = screen_market_us(top_n=top_n, mode=mode)
+        finally:
+            if force_us_cache_bypass:
+                if prev_us_ttl is None:
+                    os.environ.pop("US_SCREEN_CACHE_TTL_SEC", None)
+                else:
+                    os.environ["US_SCREEN_CACHE_TTL_SEC"] = prev_us_ttl
         screened = self._screen_quality_guard(market, raw_candidates, phase="screen_market_candidates")
         try:
             state = self._load_candidate_cohort_reliability(market_key)
@@ -5017,9 +5035,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ]
         evidence_prefetch_source = "final_prompt_pool" if alignment_enabled else "legacy_candidates"
         evidence_requested_tickers: list[str] = []
+        alignment_min_target_limit: Optional[int] = None
         if alignment_enabled:
+            warn_overlap_target = max(
+                0.0,
+                min(1.0, self._runtime_float("FINAL_PROMPT_EVIDENCE_ALIGNMENT_WARN_OVERLAP_MIN", 0.80)),
+            )
+            if prompt_tickers and warn_overlap_target > 0:
+                alignment_min_target_limit = int(math.ceil(len(prompt_tickers) * warn_overlap_target))
             phase = self._selection_session_phase(market_key)
-            prefetched = self._prefetch_selection_intraday_evidence(market_key, prompt_rows, phase=phase)
+            prefetched = self._prefetch_selection_intraday_evidence(
+                market_key,
+                prompt_rows,
+                phase=phase,
+                min_target_limit=alignment_min_target_limit,
+            )
             evidence_requested_tickers = [
                 self._selection_ticker_key(market_key, key)
                 for key in (prefetched or {}).keys()
@@ -5041,17 +5071,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ]
         prompt_set = set(prompt_tickers)
         requested_set = set(evidence_requested_tickers)
+        pack_set = set(evidence_pack_tickers)
+        missing_evidence_tickers = sorted(prompt_set - requested_set)
+        extra_evidence_tickers = sorted(requested_set - prompt_set)
+        missing_pack_tickers = sorted(prompt_set - pack_set)
         overlap_count = len(prompt_set & requested_set)
         overlap_ratio = (overlap_count / max(1, len(prompt_set))) if prompt_set else 1.0
         exec_counts = self._prompt_exec_evidence_counts(prompt_rows)
         fetch_success = self._evidence_fetch_success_metrics(market_key, prompt_rows, evidence_requested_tickers)
+        universe_filter_bypass = dict(getattr(self, "_last_universe_filter_bypass", {}) or {})
+        selection_trace_id = f"{market_key}:{str(prompt_meta.get('selection_snapshot_ts') or prompt_meta.get('_selection_snapshot_ts') or '')}"
         prompt_meta.update(
             {
                 "evidence_prefetch_source": evidence_prefetch_source,
                 "evidence_requested_tickers": evidence_requested_tickers,
                 "evidence_requested_count": len(evidence_requested_tickers),
+                "evidence_alignment_min_target": int(alignment_min_target_limit or 0),
                 "evidence_prompt_overlap_count": overlap_count,
                 "evidence_prompt_overlap_ratio": round(float(overlap_ratio), 4),
+                "missing_evidence_tickers": missing_evidence_tickers,
+                "extra_evidence_tickers": extra_evidence_tickers,
+                "missing_exec_tickers": missing_pack_tickers,
+                "universe_filter_bypassed": bool(universe_filter_bypass.get("bypassed")),
+                "universe_filter_bypass": universe_filter_bypass,
+                "selection_trace_id": selection_trace_id,
                 "evidence_pack_source": evidence_pack_source,
                 "evidence_pack_tickers": evidence_pack_tickers,
                 "evidence_pack_count": len(evidence_pack_tickers),
@@ -5070,7 +5113,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "evidence_prefetch_source": evidence_prefetch_source,
                     "evidence_requested_tickers": evidence_requested_tickers,
                     "evidence_requested_count": len(evidence_requested_tickers),
+                    "evidence_alignment_min_target": int(alignment_min_target_limit or 0),
                     "evidence_prompt_overlap_ratio": round(float(overlap_ratio), 4),
+                    "missing_evidence_tickers": missing_evidence_tickers[:30],
+                    "extra_evidence_tickers": extra_evidence_tickers[:30],
+                    "missing_exec_tickers": missing_pack_tickers[:30],
+                    "prompt_sample": prompt_tickers[:30],
+                    "requested_sample": evidence_requested_tickers[:30],
+                    "universe_filter_bypassed": bool(universe_filter_bypass.get("bypassed")),
+                    "universe_filter_bypass": universe_filter_bypass,
+                    "selection_trace_id": selection_trace_id,
                     "evidence_pack_source": evidence_pack_source,
                     "evidence_pack_tickers": evidence_pack_tickers,
                     "evidence_pack_count": len(evidence_pack_tickers),
@@ -5088,7 +5140,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if prompt_tickers and overlap_ratio < warn_overlap:
                 log.warning(
                     f"[final prompt evidence alignment] {market_key} overlap={overlap_ratio:.2f} "
-                    f"< {warn_overlap:.2f} prompt={len(prompt_tickers)} requested={len(evidence_requested_tickers)}"
+                    f"< {warn_overlap:.2f} prompt={len(prompt_tickers)} requested={len(evidence_requested_tickers)} "
+                    f"missing={missing_evidence_tickers[:8]} extra={extra_evidence_tickers[:8]} "
+                    f"universe_bypass={bool(universe_filter_bypass.get('bypassed'))}"
                 )
             if prompt_tickers and float(exec_counts.get("prompt_exec_missing_pct") or 0.0) >= warn_missing:
                 log.warning(
@@ -6641,7 +6695,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         reason = str((state or {}).get("reason") or "NEW_BUY_BLOCKED")
         scope = str((state or {}).get("scope") or "")
         details = dict((state or {}).get("details") or {})
-        details.update({"stage": stage, "scope": scope})
+        details.update({**self._execution_safety_payload(), "stage": stage, "scope": scope})
         if ticker_key:
             self._bump_runtime_reason(market_key, ticker_key, reason)
             self._record_decision_event(
@@ -6689,6 +6743,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                     self._audit_link_signal_episode(_audit_signal_id, _episode_id, reason="ORDER_UNKNOWN_SIGNAL_BLOCKED")
         log.warning(f"[NEW_BUY_BLOCKED] {market_key} {ticker_key or '*'} {strategy} {reason} scope={scope}")
+        if reason in {
+            "ANALYST_MAX_GROSS_EXPOSURE_REACHED",
+            "BLOCKED_BROKER_TRUTH",
+            "BROKER_SYNC_QUARANTINE",
+            "ORDER_UNKNOWN_UNRESOLVED",
+            "MARKET_CLOSED",
+        }:
+            self._log_risk_event(
+                reason,
+                market_key,
+                ticker=ticker_key,
+                reason=reason,
+                payload={**details, "strategy": strategy},
+            )
         self._maybe_alert_stop_cluster_block(market_key, reason, scope, details)
         self._maybe_alert_new_buy_block(market_key, reason, scope, details)
         if signal_row is not None and _ML_DB_ENABLED:
@@ -8968,11 +9036,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         min_ratio = max(0.0, min(1.0, min_ratio))
         keep_ratio = len(filtered) / max(1, len(rows))
         if len(rows) >= min_keep and (len(filtered) < min_keep or keep_ratio < min_ratio):
+            self._last_universe_filter_bypass = {
+                "bypassed": True,
+                "at": datetime.now(KST).isoformat(timespec="seconds"),
+                "candidate_count": len(rows),
+                "filtered_count": len(filtered),
+                "min_keep": min_keep,
+                "min_ratio": min_ratio,
+                "allowed_sample": allowed[:20],
+                "candidate_sample": [
+                    str(row.get("ticker", "") or "").strip().upper()
+                    for row in rows[:20]
+                    if isinstance(row, dict)
+                ],
+            }
             log.warning(
                 f"[universe filter bypass] candidates={len(rows)} filtered={len(filtered)} "
                 f"min_keep={min_keep} min_ratio={min_ratio:.2f}"
             )
             return rows
+        self._last_universe_filter_bypass = {"bypassed": False, "at": datetime.now(KST).isoformat(timespec="seconds")}
         return filtered
     @staticmethod
     def _candidate_health_num(value: Any, default: float = 0.0) -> float:
@@ -9778,7 +9861,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 features["fail_closed"] = True
                 features["fail_closed_reason"] = reason
                 features["runtime_gate_reason"] = reason
-    def _prefetch_selection_intraday_evidence(self, market: str, candidates: list[dict], *, phase: dict) -> dict[str, dict]:
+    def _prefetch_selection_intraday_evidence(
+        self,
+        market: str,
+        candidates: list[dict],
+        *,
+        phase: dict,
+        min_target_limit: Optional[int] = None,
+    ) -> dict[str, dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if not self._runtime_bool("INTRADAY_EVIDENCE_ENABLED", False):
             return {}
@@ -9792,6 +9882,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         threshold = self._runtime_float(f"{market_key}_INTRADAY_EVIDENCE_MIN_COMPLETE_RATIO", 0.6 if market_key == "KR" else 0.5)
         max_tickers = max(1, int(self._runtime_float("INTRADAY_EVIDENCE_MAX_TICKERS", 30)))
         target_limit, target_rule = self._intraday_evidence_target_limit(market_key, phase or {}, max_tickers)
+        if min_target_limit is not None:
+            try:
+                requested_min = int(math.ceil(float(min_target_limit)))
+            except Exception:
+                requested_min = 0
+            boosted_limit = max(1, min(int(max_tickers), requested_min))
+            if boosted_limit > target_limit:
+                target_limit = boosted_limit
+                target_rule = f"{target_rule}+alignment_min:{requested_min}"
         tickers, priority_counts = self._intraday_evidence_priority_tickers(
             market_key,
             candidates or [],
@@ -12581,6 +12680,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         *,
         source_type: str = "manual_rescreen",
         trigger: str = "telegram_manual",
+        candidate_override: Optional[list[dict]] = None,
     ) -> list[str]:
         """텔레그램 수동 명령으로 현재 시장 종목만 즉시 재선택."""
         target_market = market or self.current_market or self.today_judgment.get("market")
@@ -12598,7 +12698,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             mode = consensus.get("mode", "NEUTRAL")
             digest_prompt = (self.today_judgment or {}).get("digest_prompt", "")
             today = self._current_session_date_str(target_market)
-            if target_market == "KR":
+            if candidate_override is not None:
+                candidates = list(candidate_override or [])
+                log.info(
+                    f"[manual_rescreen] {target_market} candidate_override 사용: "
+                    f"{len(candidates)}개 (trigger={trigger})"
+                )
+                if target_market == "KR" and candidates:
+                    self._last_kr_candidates = candidates
+            elif target_market == "KR":
                 candidates = self._screen_market_candidates("KR", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                 if candidates:
                     self._last_kr_candidates = candidates
@@ -12934,6 +13042,71 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._last_candidate_post_rank_meta = {"enabled": True, "error": str(exc)[:200]}
             log.warning(f"[candidate post rank] failed {market_key}: {exc}")
             return list(candidates or [])
+
+    def _record_data_insufficient_failure(
+        self,
+        market: str,
+        ticker: str,
+        failure_kind: str,
+        detail: str = "",
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = self._selection_ticker_key(market_key, ticker)
+        if not ticker_key:
+            return {}
+        state = getattr(self, "_data_insufficient_failure_state", None)
+        if not isinstance(state, dict):
+            state = {}
+            self._data_insufficient_failure_state = state
+        key = f"{market_key}:{ticker_key}:{failure_kind}"
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        row = dict(state.get(key) or {})
+        row.setdefault("market", market_key)
+        row.setdefault("ticker", ticker_key)
+        row.setdefault("failure_kind", str(failure_kind or "data_insufficient"))
+        row.setdefault("first_seen_at", now_iso)
+        row["last_seen_at"] = now_iso
+        row["count"] = int(row.get("count", 0) or 0) + 1
+        row["last_detail"] = str(detail or "")[:300]
+        state[key] = row
+        return row
+
+    def _hist_fill_enqueue_data_insufficient(
+        self,
+        ticker: str,
+        market: str,
+        *,
+        failure_kind: str,
+        detail: str = "",
+    ) -> bool:
+        row = self._record_data_insufficient_failure(market, ticker, failure_kind, detail)
+        try:
+            cooldown_min = max(0, int(float(os.getenv("DATA_INSUFFICIENT_BACKFILL_COOLDOWN_MINUTES", "120") or 120)))
+        except Exception:
+            cooldown_min = 120
+        try:
+            max_attempts = max(1, int(float(os.getenv("DATA_INSUFFICIENT_BACKFILL_MAX_ATTEMPTS_PER_DAY", "3") or 3)))
+        except Exception:
+            max_attempts = 3
+        count = int((row or {}).get("count", 0) or 0)
+        if count > max_attempts:
+            log.info(
+                f"[data_insufficient backfill cooldown] {market} {ticker} "
+                f"kind={failure_kind} count={count} max={max_attempts}"
+            )
+            return False
+        if cooldown_min > 0 and count > 1:
+            # The in-memory counter is session-scoped; once a ticker repeats in
+            # the same session, let the regular collector/backfill catch up
+            # instead of enqueueing every scan.
+            log.info(
+                f"[data_insufficient backfill cooldown] {market} {ticker} "
+                f"kind={failure_kind} cooldown_min={cooldown_min} count={count}"
+            )
+            return False
+        self._hist_fill_enqueue(ticker, market)
+        return True
+
     def _filter_candidates_by_history(self, candidates: list, market: str, *, phase: str = "") -> list:
         """
         스크리너 후보 중 신호 계산에 필요한 히스토리가 부족한 종목 제거.
@@ -12976,12 +13149,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     shadow_candidate["selection_bias"] = "shadow_only"
                     insufficient_shadow.append(shadow_candidate)
                     insufficient_shadow_reasons[self._selection_ticker_key(market_key, ticker)] = reason
-                    self._hist_fill_enqueue(ticker, market)
+                    self._hist_fill_enqueue_data_insufficient(
+                        ticker,
+                        market,
+                        failure_kind="no_candles",
+                        detail=reason,
+                    )
                     continue
                 sig_df = calc_all(candles)
                 usable_rows = len(sig_df)
                 if usable_rows < self._MIN_SIGNAL_ROWS:
-                    self._hist_fill_enqueue(ticker, market)
+                    self._hist_fill_enqueue_data_insufficient(
+                        ticker,
+                        market,
+                        failure_kind="too_few_rows",
+                        detail=f"{usable_rows}/{self._MIN_SIGNAL_ROWS}",
+                    )
                     if usable_rows >= watch_min_usable:
                         watch_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
                         watch_candidate = self._enrich_kr_candidate_quality(market_key, watch_candidate, candles)
@@ -14181,6 +14364,86 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _flag_execution_issue(self, market: str, issue: str):
         if market in self._execution_flags and issue:
             self._execution_flags[market].add(issue)
+
+    @staticmethod
+    def _execution_safety_payload() -> dict[str, Any]:
+        return {
+            "event_owner": "execution_safety",
+            "not_strategy_signal": True,
+            "strategy_pnl_excluded": True,
+            "learning_excluded": True,
+            "selection_quality_excluded": True,
+        }
+
+    @staticmethod
+    def _redact_risk_event_payload(payload: Optional[dict]) -> dict:
+        allowed = {
+            "event_owner",
+            "not_strategy_signal",
+            "strategy_pnl_excluded",
+            "learning_excluded",
+            "selection_quality_excluded",
+            "stage",
+            "scope",
+            "strategy",
+            "path_type",
+            "path_run_id",
+            "decision_id",
+            "reason",
+            "reason_code",
+            "precheck_reason",
+            "precheck_msg",
+            "broker_truth_available",
+            "broker_truth_last_success_at",
+            "broker_truth_last_attempt_at",
+            "broker_truth_stale",
+            "broker_truth_error",
+            "broker_truth_ttl_sec",
+            "broker_position_qty",
+            "broker_open_order_count",
+            "broker_open_remaining_qty",
+            "broker_today_sell_fill_evidence",
+            "broker_sync_reconciled",
+            "safe_to_reconcile_zero_holding",
+            "manual_reconciliation_required",
+            "local_position_removed",
+            "market_session_state",
+        }
+        result: dict[str, Any] = {}
+        for key, value in dict(payload or {}).items():
+            key_s = str(key)
+            if key_s in allowed:
+                result[key_s] = value
+        return result
+
+    def _log_risk_event(
+        self,
+        event_type: str,
+        market: str,
+        *,
+        ticker: str = "",
+        reason: str = "",
+        severity: str = "warning",
+        payload: Optional[dict] = None,
+    ) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        event_payload = {
+            **self._execution_safety_payload(),
+            **self._redact_risk_event_payload(payload),
+            "event_type": str(event_type or ""),
+            "market": market_key,
+            "ticker": str(ticker or ""),
+            "reason": str(reason or ""),
+        }
+        level = str(severity or "warning").lower()
+        if level not in {"debug", "info", "warning", "error", "critical"}:
+            level = "warning"
+        msg = (
+            f"[risk event] {event_payload['event_type']} {market_key} "
+            f"{event_payload['ticker'] or '*'} reason={event_payload['reason'] or '-'}"
+        )
+        _log_risk(level, msg, extra={"extra": event_payload})
+
     def _set_broker_state(self, market: str, *, trust_level: Optional[str] = None,
                           snapshot: Optional[dict] = None, error: str = "") -> None:
         state = self._broker_state.setdefault(market, {
@@ -19038,6 +19301,169 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _restore_session_closed_tickers_from_decisions(self, market: str) -> None:
         self._restore_intraday_execution_state_from_decisions(market)
 
+    @staticmethod
+    def _broker_truth_rows_for_ticker(rows: list, market: str, ticker: str) -> list[dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = str(ticker or "").strip()
+        ticker_key = ticker_key.upper() if market_key == "US" else ticker_key
+        matched: list[dict] = []
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            row_ticker = str(row.get("ticker") or row.get("pdno") or row.get("ovrs_pdno") or "").strip()
+            row_ticker = row_ticker.upper() if market_key == "US" else row_ticker
+            if row_ticker == ticker_key:
+                matched.append(row)
+        return matched
+
+    def _sell_zero_holding_broker_evidence(self, market: str, ticker: str) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = str(ticker or "").strip()
+        ticker_key = ticker_key.upper() if market_key == "US" else ticker_key
+        evidence = {
+            **self._execution_safety_payload(),
+            "market": market_key,
+            "ticker": ticker_key,
+            "close_reason": "broker_truth_zero_holding_reconcile",
+            "broker_sync_reconciled": False,
+            "manual_reconciliation_required": True,
+        }
+        try:
+            market_data = self._broker_truth_market_snapshot(market_key, force=True, ttl_sec=15)
+        except Exception as exc:
+            evidence.update(
+                {
+                    "broker_truth_available": False,
+                    "broker_truth_error": str(exc)[:300],
+                    "safe_to_reconcile_zero_holding": False,
+                }
+            )
+            return evidence
+        unavailable = (
+            not market_data
+            or bool(market_data.get("missing"))
+            or bool(market_data.get("stale"))
+            or bool(str(market_data.get("error", "") or ""))
+        )
+        positions = self._broker_truth_rows_for_ticker(market_data.get("positions", []), market_key, ticker_key) if not unavailable else []
+        open_orders = self._broker_truth_rows_for_ticker(market_data.get("open_orders", []), market_key, ticker_key) if not unavailable else []
+        fills = self._broker_truth_rows_for_ticker(market_data.get("today_fills", []), market_key, ticker_key) if not unavailable else []
+        broker_qty = 0
+        for row in positions:
+            try:
+                broker_qty += max(0, int(float(row.get("qty", 0) or 0)))
+            except Exception:
+                pass
+        open_remaining = 0
+        for row in open_orders:
+            try:
+                open_remaining += max(0, int(float(row.get("remaining_qty", row.get("qty", 0)) or 0)))
+            except Exception:
+                open_remaining += 1
+        sell_fills = [row for row in fills if str(row.get("side") or "").strip().lower() in {"sell", "s", "ask"}]
+        evidence.update(
+            {
+                "broker_truth_available": not unavailable,
+                "broker_truth_last_success_at": str(market_data.get("last_success_at", "") or ""),
+                "broker_truth_last_attempt_at": str(market_data.get("last_attempt_at", "") or ""),
+                "broker_truth_stale": bool(market_data.get("stale")),
+                "broker_truth_error": str(market_data.get("error", "") or ""),
+                "broker_truth_ttl_sec": int(market_data.get("ttl_sec", 15) or 15),
+                "broker_position_qty": broker_qty,
+                "broker_open_order_count": len(open_orders),
+                "broker_open_remaining_qty": open_remaining,
+                "broker_today_sell_fill_evidence": bool(sell_fills),
+            }
+        )
+        evidence["safe_to_reconcile_zero_holding"] = bool((not unavailable) and broker_qty <= 0 and open_remaining <= 0)
+        evidence["manual_reconciliation_required"] = not bool(evidence["safe_to_reconcile_zero_holding"])
+        return evidence
+
+    def _remove_local_position_after_zero_holding(self, market: str, ticker: str) -> bool:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = str(ticker or "").strip()
+        ticker_key = ticker_key.upper() if market_key == "US" else ticker_key
+        before = len(self.risk.positions)
+        kept = []
+        for pos in list(self.risk.positions or []):
+            pos_ticker = str(pos.get("ticker", "") or "").strip()
+            pos_ticker = pos_ticker.upper() if market_key == "US" else pos_ticker
+            pos_market = str(pos.get("market", market_key) or market_key).upper()
+            if pos_ticker == ticker_key and pos_market == market_key:
+                continue
+            kept.append(pos)
+        if len(kept) == before:
+            return False
+        self.risk.positions = kept
+        self._flag_execution_issue(market_key, "broker_position_removed")
+        self._save_positions()
+        self._write_live_status(market_key, force=True)
+        return True
+
+    def _handle_sell_precheck_failed(
+        self,
+        cand: dict,
+        market: str,
+        reason: str,
+        order_px: float,
+        precheck: dict,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker = str(cand.get("ticker", "") or "")
+        pre_reason = str((precheck or {}).get("reason", "") or "precheck_failed")
+        has_pending_buy = any(
+            o.get("market") == market_key
+            and o.get("ticker") == ticker
+            and int(o.get("qty", 0) or 0) > 0
+            for o in self.pending_orders
+        )
+        final_precheck = dict(precheck or {})
+        if pre_reason == "insufficient_holding" and not has_pending_buy:
+            try:
+                final_precheck = precheck_order(
+                    ticker,
+                    cand["qty"],
+                    order_px,
+                    "sell",
+                    self._token_for_market(market_key),
+                    market=market_key,
+                    force_refresh=True,
+                )
+                pre_reason = str(final_precheck.get("reason", "") or pre_reason)
+            except Exception as exc:
+                final_precheck = {**final_precheck, "force_refresh_error": str(exc), "reason": pre_reason}
+
+        if pre_reason == "insufficient_holding" and not has_pending_buy:
+            evidence = self._sell_zero_holding_broker_evidence(market_key, ticker)
+            removed = False
+            if bool(evidence.get("safe_to_reconcile_zero_holding")):
+                removed = self._remove_local_position_after_zero_holding(market_key, ticker)
+                evidence.update({"broker_sync_reconciled": True, "local_position_removed": bool(removed)})
+                log.warning(f"[SELL SAFETY BLOCKED] {market_key} {ticker} insufficient_holding; stale local position removed={removed}")
+            else:
+                self._note_sell_failure(market_key, ticker, reason, "insufficient_holding")
+                log.warning(f"[SELL SAFETY BLOCKED] {market_key} {ticker} insufficient_holding; broker truth unavailable/open order")
+            self._log_risk_event(
+                "SELL_PRECHECK_INSUFFICIENT_HOLDING",
+                market_key,
+                ticker=ticker,
+                reason="insufficient_holding",
+                payload={**evidence, "precheck_msg": str(final_precheck.get("msg", "") or "")[:300]},
+            )
+            return {"handled": True, "precheck": final_precheck, "removed": removed, "evidence": evidence}
+
+        self._note_sell_failure(market_key, ticker, reason, final_precheck.get("msg", "주문 불가"))
+        self._log_risk_event(
+            "SELL_PRECHECK_FAILED",
+            market_key,
+            ticker=ticker,
+            reason=pre_reason,
+            severity="error",
+            payload={"precheck_reason": pre_reason, "precheck_msg": str(final_precheck.get("msg", "") or "")[:300]},
+        )
+        log.error(f"sell precheck failed [{ticker}]: {final_precheck.get('msg','주문 불가')}")
+        return {"handled": True, "precheck": final_precheck}
+
     def _execute_sell(self, cand: dict, market: str, reason: str,
                       hold_advice: dict = None):
         """실제 매도 실행 + 텔레그램 알림 + hold_advisor 결과 기록"""
@@ -19117,19 +19543,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.error(f"sell precheck exception [{cand['ticker']}]: {_pre_e}")
             return False
         if not precheck.get("ok"):
-            self._note_sell_failure(market, cand["ticker"], reason, precheck.get("msg", "주문 불가"))
-            has_pending_buy = any(
-                o.get("market") == market and
-                o.get("ticker") == cand["ticker"] and
-                int(o.get("qty", 0) or 0) > 0
-                for o in self.pending_orders
-            )
-            if precheck.get("reason") == "insufficient_holding" and not has_pending_buy:
-                precheck = precheck_order(
-                    cand["ticker"], cand["qty"], order_px, "sell",
-                    self._token_for_market(market), market=market, force_refresh=True
-                )
-            log.error(f"sell precheck failed [{cand['ticker']}]: {precheck.get('msg','주문 불가')}")
+            handled = self._handle_sell_precheck_failed(cand, market, reason, order_px, precheck)
+            precheck = handled.get("precheck", precheck)
             self._record_decision_event(
                 market, "sell_failed", cand["ticker"],
                 strategy=cand.get("strategy", ""),
@@ -19138,15 +19553,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 price_krw=cand.get("exit_price", 0),
                 reason=reason,
                 detail=precheck.get("msg", "주문 불가"),
+                **(self._execution_safety_payload() if precheck.get("reason") == "insufficient_holding" else {}),
             )
-            if precheck.get("reason") == "insufficient_holding" and not has_pending_buy:
-                before = len(self.risk.positions)
-                self.risk.positions = [p for p in self.risk.positions if p.get("ticker") != cand["ticker"]]
-                after = len(self.risk.positions)
-                if before != after:
-                    log.warning(f"[브로커 미보유 정리] {cand['ticker']} 내부 포지션 제거")
-                    self._save_positions()
-                    self._write_live_status(market, force=True)
             return False
         try:
             result = place_order(cand["ticker"], cand["qty"], order_px, "sell", self._token_for_market(market), market=market)
@@ -21337,6 +21745,165 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.error(f"[housekeeping 오류] {market}: {_hk_e}", exc_info=True)
         finally:
             self._leave_market_task(market, "housekeeping")
+    def _build_sub_screener_exclude_set(self, market: str) -> set[str]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        exclude: set[str] = set()
+
+        def add_ticker(ticker: object) -> None:
+            key = self._selection_ticker_key(market_key, str(ticker or ""))
+            if key:
+                exclude.add(key)
+
+        for ticker in list((getattr(self, "today_tickers", {}) or {}).get(market_key, []) or []):
+            add_ticker(ticker)
+
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        for ticker in list(meta.get("watchlist") or []):
+            add_ticker(ticker)
+
+        for ticker in list((getattr(self, "trade_ready_tickers", {}) or {}).get(market_key, []) or []):
+            add_ticker(ticker)
+        for ticker in list(meta.get("trade_ready") or []):
+            add_ticker(ticker)
+
+        try:
+            exclude.update(self._local_position_keys(market_key))
+        except Exception:
+            pass
+
+        for order in list(getattr(self, "pending_orders", []) or []):
+            ticker = str((order or {}).get("ticker") or "").strip()
+            if not ticker:
+                continue
+            try:
+                order_market = str((order or {}).get("market") or self._ticker_market(ticker) or market_key).upper()
+            except Exception:
+                order_market = market_key
+            if order_market == market_key:
+                add_ticker(ticker)
+
+        pathb = getattr(self, "pathb", None)
+        if pathb is not None:
+            try:
+                waiting = pathb.adapter.get_waiting_runs(
+                    market_key,
+                    pathb.mode,
+                    pathb._session_date(market_key),
+                )
+                for run in waiting or []:
+                    add_ticker((run or {}).get("ticker", ""))
+            except Exception:
+                pass
+        return exclude
+    def maybe_run_sub_screener(self, market: str) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not _env_bool("SUB_SCREENER_ENABLED", False):
+            return
+        if not self.session_active or self.current_market != market_key:
+            return
+        current_owner = (getattr(self, "_market_task_owner", {}) or {}).get(market_key)
+        if current_owner:
+            log.info(f"[sub_screener] {market_key} skip busy={current_owner}")
+            return
+
+        last_by_market = getattr(self, "_last_sub_screener_at", None)
+        if not isinstance(last_by_market, dict):
+            last_by_market = {"KR": 0.0, "US": 0.0}
+            self._last_sub_screener_at = last_by_market
+        interval_sec = max(1, int(os.getenv("SUB_SCREENER_INTERVAL_MIN", "15"))) * 60
+        now_ts = time.time()
+        if now_ts - float(last_by_market.get(market_key, 0.0) or 0.0) < interval_sec:
+            return
+        last_by_market[market_key] = now_ts
+
+        blackout_min = max(0, int(os.getenv("SUB_SCREENER_BLACKOUT_BEFORE_CLOSE_MIN", "30")))
+        try:
+            if float(self._minutes_to_close(market_key)) < blackout_min:
+                log.info(f"[sub_screener] {market_key} blackout before close")
+                return
+        except Exception as exc:
+            log.warning(f"[sub_screener] {market_key} minutes_to_close failed: {exc}")
+            return
+
+        today = self._current_session_date_str(market_key)
+        max_per = max(0, int(os.getenv("SUB_SCREENER_MAX_PER_SESSION", "5")))
+        min_interval_sec = max(0, int(os.getenv("SUB_SCREENER_MIN_INTERVAL_MIN", "15"))) * 60
+        try:
+            if sub_screener.is_rate_limited(
+                market_key,
+                today,
+                max_per_session=max_per,
+                min_interval_sec=min_interval_sec,
+            ):
+                log.info(f"[sub_screener] {market_key} rate_limited")
+                return
+        except Exception as exc:
+            log.warning(f"[sub_screener] {market_key} rate limit check failed: {exc}")
+            return
+
+        mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "NEUTRAL") or "NEUTRAL")
+        try:
+            screener_rows = self._screen_market_candidates(market_key, mode, force_refresh=True)
+        except Exception as exc:
+            log.warning(f"[sub_screener] {market_key} screen failed: {exc}")
+            return
+
+        try:
+            current_exclude = self._build_sub_screener_exclude_set(market_key)
+            result = sub_screener.scan_new_candidates(
+                market_key,
+                current_exclude,
+                screener_rows,
+                plan_a_threshold=int(os.getenv("SUB_SCREENER_PLAN_A_THRESHOLD", "1")),
+                plan_b_threshold=int(os.getenv("SUB_SCREENER_PLAN_B_THRESHOLD", "2")),
+                plan_b_min_score=float(os.getenv("SUB_SCREENER_PLAN_B_MIN_SCORE", "65")),
+            )
+        except Exception as exc:
+            log.warning(f"[sub_screener] {market_key} scan failed: {exc}")
+            return
+
+        log.info(
+            f"[sub_screener] {market_key} "
+            f"new_plan_a={len(result.new_plan_a)} "
+            f"new_plan_b_high={len(result.new_plan_b_high)} "
+            f"trigger={result.should_trigger} reason={result.trigger_reason}"
+        )
+        try:
+            sub_screener.record_scan(market_key, today, result)
+        except Exception as exc:
+            log.warning(f"[sub_screener] {market_key} record_scan failed: {exc}")
+        if not result.should_trigger:
+            return
+        if not _env_bool("SUB_SCREENER_TRIGGER_ENABLED", True):
+            return
+        try:
+            sub_screener.record_attempt(market_key, today, result)
+        except Exception as exc:
+            log.warning(f"[sub_screener] {market_key} record_attempt failed: {exc}")
+            return
+
+        old_mode = mode
+        rejudged = False
+        try:
+            self._reinvoke_analysts(market_key, "sub_screener")
+            rejudged = True
+        except Exception as exc:
+            log.warning(f"[sub_screener] {market_key} reinvoke failed: {exc}")
+
+        new_mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "NEUTRAL") or "NEUTRAL")
+        try:
+            self.manual_rescreen(
+                market_key,
+                source_type="sub_screener_rescreen",
+                trigger="sub_screener",
+                candidate_override=screener_rows,
+            )
+            sub_screener.record_success(market_key, today)
+        except Exception as exc:
+            log.warning(
+                f"[sub_screener] {market_key} rescreen failed: {exc} "
+                f"rejudged={rejudged} old_mode={old_mode} new_mode={new_mode}"
+            )
     def run_entry_scan(self, market: str):
         if not self.session_active or self.current_market != market:
             return
@@ -21351,6 +21918,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"[{market} 엔트리 스캔] interval={int(interval_sec/60)}분"
             f"(초반 {_ENTRY_SCAN_OPENING_MIN}분={_ENTRY_SCAN_OPENING_INTERVAL_MIN}분 이후={_regular_min}분)"
         )
+        try:
+            self.maybe_run_sub_screener(market)
+        except Exception as _sub_e:
+            log.warning(f"[sub_screener 오류] {market}: {_sub_e}", exc_info=True)
         try:
             self.run_cycle(market)
         except Exception as _es_e:
@@ -26398,6 +26969,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "order_budget_krw": float(kwargs.get("order_budget_krw", 0) or 0),
             "available_budget_krw": float(kwargs.get("available_budget_krw", 0) or 0),
             "available_cash_krw": float(kwargs.get("available_cash_krw", kwargs.get("cash_krw", 0)) or 0),
+            "event_owner": kwargs.get("event_owner", ""),
+            "not_strategy_signal": bool(kwargs.get("not_strategy_signal", False)),
+            "strategy_pnl_excluded": bool(kwargs.get("strategy_pnl_excluded", False)),
+            "learning_excluded": bool(kwargs.get("learning_excluded", False)),
+            "selection_quality_excluded": bool(kwargs.get("selection_quality_excluded", False)),
         # Claude 판단 이벤트만 decisions.jsonl 기록
         }
         self.decision_event_log.append(event)

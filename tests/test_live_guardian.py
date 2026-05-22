@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -52,6 +53,41 @@ class LiveGuardianTests(unittest.TestCase):
             self.assertEqual(md_path.parent, runtime_root / "data" / "v2_reports")
             self.assertTrue(json_path.exists())
             self.assertTrue(md_path.exists())
+
+    def test_guardian_run_once_loads_env_before_runtime_paths(self) -> None:
+        preflight = {
+            "ok": True,
+            "fail_count": 0,
+            "warn_count": 0,
+            "checks": [],
+            "effective_config": {"ENABLED_MARKETS": "KR"},
+        }
+        smoke = {"ok": True, "results": [{"ok": True, "market": "KR"}]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            env_path = root / "guardian.env"
+            env_path.write_text(f"CLAUDETRADE_RUNTIME_DIR={runtime_root.as_posix()}\n", encoding="utf-8")
+
+            with patch("runtime_paths._RUNTIME_ROOT", None), patch.dict(
+                os.environ,
+                {"CLAUDETRADE_RUNTIME_DIR": ""},
+                clear=False,
+            ), patch(
+                "tools.live_guardian.run_preflight",
+                return_value=preflight,
+            ), patch(
+                "tools.live_guardian._run_smoke",
+                return_value=smoke,
+            ):
+                report = run_guardian_once(mode="live", env=str(env_path), skip_dashboard=True)
+                heartbeat = runtime_root / "state" / "live_guardian_heartbeat.json"
+
+                self.assertTrue(heartbeat.exists())
+                self.assertEqual(json.loads(heartbeat.read_text(encoding="utf-8"))["status"], "success")
+                self.assertEqual(Path(report["report_paths"]["json"]).parent, runtime_root / "data" / "v2_reports")
+                self.assertEqual(_alert_state_path("live"), runtime_root / "state" / "live_guardian_alert_state.json")
 
     def test_code_marker_fail_is_soft(self) -> None:
         finding = classify_preflight_check(

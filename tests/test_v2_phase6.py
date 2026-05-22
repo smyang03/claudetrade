@@ -447,6 +447,61 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(readiness["state"], "HOLDING_OVERNIGHT")
         self.assertEqual(idle["state"], "IDLE_MARKET_CLOSED_OVERNIGHT_ALLOWED")
 
+    def test_pathb_readiness_closed_market_reports_stale_truth_as_warning(self):
+        selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
+        config = {"enabled": True, "intraday_only": False, "market_live_enabled": {"US": True}}
+        control = {"enabled": True}
+        capacity = {"US": {"min_order_possible": True}}
+        truth = {"US": {"trusted": False, "fresh": False, "positions": 0, "open_orders": 0}}
+
+        with patch.object(
+            v2_ops_summary,
+            "_path_b_market_session_state",
+            return_value={"state": "inactive", "reason": "after_close"},
+        ):
+            readiness = v2_ops_summary._path_b_execution_readiness(
+                market="US",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=truth,
+                execution_capacity=capacity,
+                pathb_runs=[],
+            )
+
+        self.assertEqual(readiness["state"], "IDLE_MARKET_CLOSED_OVERNIGHT_ALLOWED")
+        self.assertIn("BROKER_TRUTH_STALE_WARNING", readiness["known_blockers"])
+        self.assertEqual(readiness["broker_truth_warning"], "stale_or_untrusted")
+
+    def test_pathb_readiness_active_market_keeps_stale_truth_hard_block(self):
+        selection = {"counts": {"watchlist": 15, "applied_trade_ready": 2, "price_targets": 2}}
+        config = {"enabled": True, "intraday_only": False, "market_live_enabled": {"US": True}}
+        control = {"enabled": True}
+        capacity = {"US": {"min_order_possible": True}}
+        truth = {"US": {"trusted": False, "fresh": False, "positions": 0, "open_orders": 0}}
+
+        with patch.object(
+            v2_ops_summary,
+            "_path_b_market_session_state",
+            return_value={"state": "active", "reason": "regular"},
+        ):
+            readiness = v2_ops_summary._path_b_execution_readiness(
+                market="US",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=truth,
+                execution_capacity=capacity,
+                pathb_runs=[],
+            )
+
+        self.assertEqual(readiness["state"], "BLOCKED_BROKER_TRUTH")
+        self.assertTrue(readiness["operator_action_required"])
+
     def test_pathb_readiness_missing_intraday_uses_effective_config(self):
         selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
         config = {"enabled": True, "market_live_enabled": {"US": True}}
@@ -530,6 +585,44 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(readiness["state"], "WAITING_QUOTE_OR_BUY_ZONE")
         self.assertEqual(readiness["registered_live_plans"], 1)
         self.assertEqual(readiness["active_live_plans"], 1)
+        self.assertEqual(readiness["entry_waiting_plans"], 1)
+
+    def test_pathb_readiness_blocks_entry_waiting_plan_when_cash_insufficient(self):
+        selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
+        config = {"enabled": True, "intraday_only": True, "market_live_enabled": {"US": True}}
+        control = {"enabled": True}
+        capacity = {"US": {"min_order_possible": False}}
+        truth = {
+            "US": {
+                "trusted": True,
+                "fresh": True,
+                "positions": 0,
+                "open_orders": 0,
+            }
+        }
+        pathb_runs = [{"market": "US", "status": "WAITING", "plan": {"origin_action": "PULLBACK_WAIT"}}]
+
+        with patch.object(
+            v2_ops_summary,
+            "_path_b_market_session_state",
+            return_value={"state": "active", "reason": "regular_session"},
+        ):
+            readiness = v2_ops_summary._path_b_execution_readiness(
+                market="US",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=truth,
+                execution_capacity=capacity,
+                pathb_runs=pathb_runs,
+            )
+
+        self.assertEqual(readiness["state"], "BLOCKED_AFFORDABILITY")
+        self.assertEqual(readiness["active_live_plans"], 1)
+        self.assertEqual(readiness["entry_waiting_plans"], 1)
+        self.assertTrue(readiness["operator_action_required"])
 
     def test_pathb_readiness_ignores_inactive_registered_plan(self):
         selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
@@ -566,12 +659,50 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(readiness["state"], "IDLE_NO_TRADE_READY")
         self.assertEqual(readiness["registered_live_plans"], 1)
         self.assertEqual(readiness["active_live_plans"], 0)
+        self.assertEqual(readiness["entry_waiting_plans"], 0)
+
+    def test_pathb_readiness_does_not_block_filled_plan_on_entry_cash(self):
+        selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
+        config = {"enabled": True, "intraday_only": True, "market_live_enabled": {"US": True}}
+        control = {"enabled": True}
+        capacity = {"US": {"min_order_possible": False}}
+        truth = {
+            "US": {
+                "trusted": True,
+                "fresh": True,
+                "positions": 1,
+                "open_orders": 0,
+            }
+        }
+        pathb_runs = [{"market": "US", "status": "FILLED", "plan": {"origin_action": "PULLBACK_WAIT"}}]
+
+        with patch.object(
+            v2_ops_summary,
+            "_path_b_market_session_state",
+            return_value={"state": "active", "reason": "regular_session"},
+        ):
+            readiness = v2_ops_summary._path_b_execution_readiness(
+                market="US",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=truth,
+                execution_capacity=capacity,
+                pathb_runs=pathb_runs,
+            )
+
+        self.assertEqual(readiness["state"], "WAITING_QUOTE_OR_BUY_ZONE")
+        self.assertEqual(readiness["active_live_plans"], 1)
+        self.assertEqual(readiness["entry_waiting_plans"], 0)
+        self.assertFalse(readiness["operator_action_required"])
 
     def test_pathb_readiness_counts_sell_partial_filled_as_active(self):
         selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
         config = {"enabled": True, "intraday_only": True, "market_live_enabled": {"US": True}}
         control = {"enabled": True}
-        capacity = {"US": {"min_order_possible": True}}
+        capacity = {"US": {"min_order_possible": False}}
         truth = {
             "US": {
                 "trusted": True,
@@ -602,6 +733,110 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(readiness["state"], "WAITING_QUOTE_OR_BUY_ZONE")
         self.assertEqual(readiness["registered_live_plans"], 1)
         self.assertEqual(readiness["active_live_plans"], 1)
+        self.assertEqual(readiness["entry_waiting_plans"], 0)
+        self.assertFalse(readiness["operator_action_required"])
+
+    def test_pathb_readiness_does_not_apply_kr_confirmation_gate_to_filled_plan(self):
+        selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
+        config = {
+            "enabled": True,
+            "intraday_only": True,
+            "market_live_enabled": {"KR": True},
+            "source": {
+                "runtime_snapshot": {
+                    "effective": {
+                        "KR_DAILY_ENTRY_CAP": "40",
+                        "KR_CONFIRMATION_GATE_ENABLED": "false",
+                        "KR_CONFIRMATION_GATE_SHADOW": "true",
+                        "KR_CONFIRMATION_GATE_MODE": "",
+                    }
+                }
+            },
+        }
+        control = {"enabled": True}
+        capacity = {"KR": {"min_order_possible": True}}
+        truth = {
+            "KR": {
+                "trusted": True,
+                "fresh": True,
+                "positions": 1,
+                "open_orders": 0,
+            }
+        }
+        pathb_runs = [{"market": "KR", "status": "FILLED", "plan": {"origin_action": "PULLBACK_WAIT"}}]
+
+        with patch.object(
+            v2_ops_summary,
+            "_path_b_market_session_state",
+            return_value={"state": "active", "reason": "regular_session"},
+        ):
+            readiness = v2_ops_summary._path_b_execution_readiness(
+                market="KR",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=truth,
+                execution_capacity=capacity,
+                pathb_runs=pathb_runs,
+            )
+
+        self.assertEqual(readiness["state"], "WAITING_QUOTE_OR_BUY_ZONE")
+        self.assertEqual(readiness["active_live_plans"], 1)
+        self.assertEqual(readiness["entry_waiting_plans"], 0)
+        self.assertFalse(readiness["operator_action_required"])
+
+    def test_pathb_readiness_blocks_kr_entry_waiting_when_confirmation_gate_not_ready(self):
+        selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}
+        config = {
+            "enabled": True,
+            "intraday_only": True,
+            "market_live_enabled": {"KR": True},
+            "source": {
+                "runtime_snapshot": {
+                    "effective": {
+                        "KR_DAILY_ENTRY_CAP": "40",
+                        "KR_CONFIRMATION_GATE_ENABLED": "false",
+                        "KR_CONFIRMATION_GATE_SHADOW": "true",
+                        "KR_CONFIRMATION_GATE_MODE": "",
+                    }
+                }
+            },
+        }
+        control = {"enabled": True}
+        capacity = {"KR": {"min_order_possible": True}}
+        truth = {
+            "KR": {
+                "trusted": True,
+                "fresh": True,
+                "positions": 0,
+                "open_orders": 0,
+            }
+        }
+        pathb_runs = [{"market": "KR", "status": "HIT", "plan": {"origin_action": "PULLBACK_WAIT"}}]
+
+        with patch.object(
+            v2_ops_summary,
+            "_path_b_market_session_state",
+            return_value={"state": "active", "reason": "regular_session"},
+        ):
+            readiness = v2_ops_summary._path_b_execution_readiness(
+                market="KR",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=truth,
+                execution_capacity=capacity,
+                pathb_runs=pathb_runs,
+            )
+
+        self.assertEqual(readiness["state"], "BLOCKED_CONFIRMATION_GATE")
+        self.assertEqual(readiness["active_live_plans"], 1)
+        self.assertEqual(readiness["entry_waiting_plans"], 1)
+        self.assertTrue(readiness["operator_action_required"])
 
     def test_telegram_v2_halt_resume_and_health(self):
         bot = _Bot()

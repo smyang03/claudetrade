@@ -420,6 +420,70 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         feature_by_ticker = {row["ticker"]: row.get("post_open_features") for row in candidates}
         self.assertEqual(feature_by_ticker["333333"]["data_quality"], "minute_complete")
 
+    def test_final_prompt_alignment_boosts_mid_prefetch_to_warn_threshold(self) -> None:
+        events: list[tuple[str, str, dict]] = []
+        bot = _make_bot(lambda **kwargs: _candles(), market="US")
+        bot._market_elapsed_min = lambda _market: 90.0
+        bot._minutes_to_close = lambda _market: 180.0
+        bot.runtime_config.values.update(
+            {
+                "FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED": True,
+                "FINAL_PROMPT_EVIDENCE_ALIGNMENT_WARN_OVERLAP_MIN": 0.80,
+                "EVIDENCE_PACK_ENABLED": True,
+                "INTRADAY_EVIDENCE_MAX_TICKERS": 30,
+            }
+        )
+        bot._write_funnel_event = lambda event, market_key, payload: events.append((event, market_key, payload))
+        bot._candidate_runtime_gate_info = lambda *_args, **_kwargs: {}
+        bot._candidate_entry_timing_context = lambda *_args, **_kwargs: {"entry_timing_snapshot": {}}
+        prompt_rows = [
+            {"ticker": f"T{i:02d}", "market": "US", "price": 100.0 + i, "volume": 1000 + i, "vol_ratio": 2.0}
+            for i in range(35)
+        ]
+
+        with patch(
+            "trading_bot.prepare_selection_prompt_pool",
+            return_value=([dict(row) for row in prompt_rows], {"prompt_pool": [dict(row) for row in prompt_rows], "prompt_pool_count": 35}),
+        ):
+            _candidates, _prompt_rows, prompt_meta, _evidence = TradingBot._prepare_selection_prompt_pool_with_evidence(
+                bot,
+                "US",
+                [dict(row) for row in prompt_rows],
+                "NEUTRAL",
+            )
+
+        coverage = next(payload for event, _market, payload in events if event == "selection_intraday_evidence_coverage")
+        self.assertEqual(coverage["target_limit"], 28)
+        self.assertIn("alignment_min:28", coverage["target_rule"])
+        self.assertEqual(coverage["requested"], 28)
+        self.assertEqual(prompt_meta["evidence_alignment_min_target"], 28)
+        self.assertEqual(prompt_meta["evidence_requested_count"], 28)
+        self.assertEqual(prompt_meta["evidence_prompt_overlap_ratio"], 0.8)
+        self.assertEqual(len(prompt_meta["missing_evidence_tickers"]), 7)
+
+    def test_intraday_evidence_alignment_min_target_respects_global_cap(self) -> None:
+        events: list[tuple[str, str, dict]] = []
+        bot = _make_bot(lambda **kwargs: _candles(), market="US")
+        bot._write_funnel_event = lambda event, market_key, payload: events.append((event, market_key, payload))
+        bot.runtime_config.values["INTRADAY_EVIDENCE_MAX_TICKERS"] = 30
+        rows = [
+            {"ticker": f"T{i:02d}", "market": "US", "price": 100.0 + i, "volume": 1000 + i}
+            for i in range(35)
+        ]
+
+        result = TradingBot._prefetch_selection_intraday_evidence(
+            bot,
+            "US",
+            rows,
+            phase={"phase": "mid"},
+            min_target_limit=40,
+        )
+
+        coverage = next(payload for event, _market, payload in events if event == "selection_intraday_evidence_coverage")
+        self.assertEqual(coverage["target_limit"], 30)
+        self.assertEqual(coverage["requested"], 30)
+        self.assertEqual(len(result), 30)
+
     def test_cached_intraday_evidence_replaces_stale_row_feature_with_missing_state(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
         bot._current_session_date_str = lambda _market: "2026-05-13"

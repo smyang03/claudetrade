@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -533,6 +534,162 @@ class PathBRuntimeTests(unittest.TestCase):
         self.assertFalse(accepted)
         runtime.reconcile_sell_pending.assert_called_once_with("US", force=True)
         place.assert_not_called()
+
+    def test_pathb_sell_zero_holding_fresh_broker_truth_closes_stale_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            bot.current_market = "US"
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda market="US": "token",
+                balance_provider=lambda market, force: {"cash": 1_000, "stocks": []},
+                ccld_provider=lambda market, day: [],
+                date_provider=lambda market: "2026-05-01",
+            )
+            plan = make_price_plan(
+                decision_id="dec_us_sell_reconcile",
+                ticker="AAPL",
+                market="US",
+                session_date="2026-05-01",
+                buy_zone_low=180,
+                buy_zone_high=181,
+                sell_target=190,
+                stop_loss=175,
+                hold_days=1,
+                confidence=0.8,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+            runtime.adapter.mark_filled(plan.path_run_id, price=180, qty=2, execution_id="us-buy-1", runtime_mode="live", brain_snapshot_id="brain-us")
+            pos = {
+                "ticker": "AAPL",
+                "market": "US",
+                "qty": 2,
+                "entry": 180.0,
+                "path_type": "claude_price",
+                "pathb_path_run_id": plan.path_run_id,
+            }
+            bot.risk.positions.append(pos)
+
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+                "runtime.pathb_runtime.precheck_order",
+                return_value={"ok": False, "reason": "insufficient_holding", "allowed_qty": 0, "msg": "no shares"},
+            ), patch("runtime.pathb_runtime.place_order") as place:
+                accepted = runtime._submit_sell(
+                    plan,
+                    pos,
+                    ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 190.0, plan.path_run_id),
+                )
+
+            self.assertFalse(accepted)
+            place.assert_not_called()
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertTrue(run["plan"]["broker_sync_reconciled"])
+            self.assertTrue(run["plan"]["strategy_pnl_excluded"])
+            self.assertEqual(bot.risk.positions, [])
+
+    def test_pathb_sell_zero_holding_stale_broker_truth_keeps_local_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            bot.current_market = "US"
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda market="US": "token",
+                balance_provider=lambda market, force: (_ for _ in ()).throw(RuntimeError("stale")),
+                ccld_provider=lambda market, day: [],
+                date_provider=lambda market: "2026-05-01",
+            )
+            plan = make_price_plan(
+                decision_id="dec_us_sell_reconcile",
+                ticker="AAPL",
+                market="US",
+                session_date="2026-05-01",
+                buy_zone_low=180,
+                buy_zone_high=181,
+                sell_target=190,
+                stop_loss=175,
+                hold_days=1,
+                confidence=0.8,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+            runtime.adapter.mark_filled(plan.path_run_id, price=180, qty=2, execution_id="us-buy-1", runtime_mode="live", brain_snapshot_id="brain-us")
+            pos = {
+                "ticker": "AAPL",
+                "market": "US",
+                "qty": 2,
+                "entry": 180.0,
+                "path_type": "claude_price",
+                "pathb_path_run_id": plan.path_run_id,
+            }
+            bot.risk.positions.append(pos)
+
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
+                "runtime.pathb_runtime.precheck_order",
+                return_value={"ok": False, "reason": "insufficient_holding", "allowed_qty": 0, "msg": "no shares"},
+            ), patch("runtime.pathb_runtime.place_order") as place:
+                accepted = runtime._submit_sell(
+                    plan,
+                    pos,
+                    ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 190.0, plan.path_run_id),
+                )
+
+            self.assertFalse(accepted)
+            place.assert_not_called()
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(len(bot.risk.positions), 1)
+
+    def test_profit_review_timeout_records_hold_fallback_and_debounces(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_profit_timeout",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=110,
+                stop_loss=95,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=1, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
+            pos = {"ticker": "005930", "qty": 1, "entry": 100.0, "peak_pnl_pct": 3.0}
+
+            def slow_advisor(*args, **kwargs):
+                time.sleep(0.05)
+                return {"action": "HOLD"}
+
+            env = {
+                "PATHB_PROFIT_REVIEW_TIMEOUT_SEC": "0.01",
+                "PATHB_PROFIT_REVIEW_COOLDOWN_SEC": "0",
+                "PATHB_PROFIT_REVIEW_MAX_PER_SCAN": "5",
+                "PATHB_PROFIT_REVIEW_TIMEOUT_DEBOUNCE_SEC": "900",
+                "PATHB_PROFIT_REVIEW_TIMEOUT_MAX_PER_TICKER": "1",
+            }
+            with patch.dict("os.environ", env, clear=False), patch("minority_report.hold_advisor.ask", side_effect=slow_advisor):
+                first = runtime._maybe_trigger_profit_protection_review(plan, pos, 104.0, "KR")
+                second = runtime._maybe_trigger_profit_protection_review(plan, pos, 104.0, "KR")
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertEqual(first["reason"], "timeout")
+            self.assertIn(second["reason"], {"timeout_in_flight", "timeout_debounce"})
+            self.assertEqual(run["plan"]["profit_review_action"], "HOLD")
+            self.assertTrue(run["plan"]["profit_review_fallback"])
+            self.assertTrue(run["plan"]["advisor_unavailable"])
+            self.assertTrue(run["plan"]["learning_excluded"])
 
     def test_brain_snapshot_id_has_cold_start_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1853,6 +2010,83 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(runtime._record_blocked.call_args.args[3], "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK")
             payload = runtime._record_blocked.call_args.args[4]
             self.assertEqual(payload["config_value"], "true")
+
+    def test_scan_waiting_entries_refreshes_broker_truth_before_buy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda market="KR": "token",
+                balance_provider=lambda market, force: {"cash": 1_000_000, "stocks": []},
+                ccld_provider=lambda market, day: [],
+                date_provider=lambda market: "2026-04-27",
+            )
+            runtime._submit_buy = Mock(return_value=True)
+            plan = make_price_plan(
+                decision_id="dec1",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            bot.price_cache_raw["005930"] = 52_100
+
+            runtime.scan_waiting_entries("KR", force=True)
+
+            runtime._submit_buy.assert_called_once()
+            snapshot = runtime.broker_truth.market_snapshot("KR", ttl_sec=30)
+            self.assertFalse(snapshot["stale"])
+            self.assertTrue(snapshot["last_success_at"])
+
+    def test_scan_waiting_entries_blocks_when_broker_truth_refresh_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _MarketTokenBot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda market="KR": "token",
+                balance_provider=lambda market, force: (_ for _ in ()).throw(RuntimeError("broker down")),
+                ccld_provider=lambda market, day: [],
+                date_provider=lambda market: "2026-04-27",
+            )
+            runtime._submit_buy = Mock(return_value=True)
+            runtime._audit_entry_scan_blocked = Mock()
+            runtime._log_entry_scan_blocked = Mock()
+            plan = make_price_plan(
+                decision_id="dec1",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-27",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            bot.price_cache_raw["005930"] = 52_100
+
+            runtime.scan_waiting_entries("KR", force=True)
+
+            runtime._submit_buy.assert_not_called()
+            runtime._audit_entry_scan_blocked.assert_called_once()
+            gate = runtime._audit_entry_scan_blocked.call_args.args[1]
+            self.assertEqual(gate["reason"], "BLOCKED_BROKER_TRUTH")
+            self.assertTrue(gate["details"]["broker_truth_stale"])
 
     def test_recover_on_startup_attaches_existing_position_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
