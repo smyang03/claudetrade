@@ -19,6 +19,7 @@ This priority order comes from the current git state, recent commits, and code i
 | P1-2 | US KIS ranking screener implementation | Source requirement remains unimplemented: `screen_market_us()` still has no optional token and no KIS overseas ranking branch. | US screener uses KIS ranking first and safely falls back to Yahoo/FMP/cache without touching order/risk logic. |
 | P1-3 | V2 canonical truth operational runbook | Code now has canonical performance, candidate audit live links, dashboard source labeling, and adaptive canonical preference. Daily repair/ops commands still need fixed runbook and evidence. | Live performance, adaptive params, dashboard ML digest, and candidate quality read the same canonical truth basis. |
 | P1-4 | Counterfactual outcome updater schedule | Store/updater/analyzer exist, but policy review still depends on regular outcome fill and metadata-quality checks. | Blocked/watch-only candidates get 30m/60m/close outcomes so gate changes are judged by opportunity cost, not anecdotes. |
+| P1-5 | KR confirmation data_quality bug and fade shadow | KR intraday features return `minute_complete`, but confirmation currently recognizes only `good`/`normal`/`ok`; fade recovery should be observed KR-only before any live route change. | KR `minute_complete` no longer fails as `kr_data_quality_not_confirmed`; `fade_recovered_shadow` is logged for KR only while US behavior and PathB operating parameters stay unchanged. |
 
 ## P0 - Live Truth And Safety
 
@@ -41,6 +42,7 @@ This priority order comes from the current git state, recent commits, and code i
 | RiskManager KR/US live adapter | Shadow exists, but write paths can still depend on global `self.risk`. | `_risk(market)` is used on write paths and KR/US cash, position, halt, and daily return tests pass. |
 | Safety/equity audit fields | Operator needs to know broker/local/equity source and lag basis for blocks. | Safety details include `equity_source`, unrealized return, and broker lag suspicion fields. |
 | US KIS ranking screener | US screener should use official KIS ranking first, with safe fallback. | KIS trade-volume and up/down ranking are normalized, cached, tested, and fallback to Yahoo/FMP remains intact. |
+| KR confirmation quality fix | KR `minute_complete` is a completed evidence quality, not a policy relaxation. | `minute_complete` passes KR confirmation data-quality check, while `minute_partial`/`minute_missing` remain blocked and fade stays watch-only unless shadow data later justifies a separate live change. |
 | Live config safety | Runtime order-size changes and PathB live gates need fail-closed behavior. | `/setorder` persists atomically before runtime mutation, and preflight warns if KR-on/US-on PathB policy is violated. |
 
 ## P2 - Shadow Experiments
@@ -49,6 +51,7 @@ This priority order comes from the current git state, recent commits, and code i
 | --- | --- |
 | Market index expansion | Add KOSPI200, KOSDAQ150, VKOSPI, Russell2000, and SOX as read-only/shadow first. No order gate until at least 2 weeks of stable data. |
 | Momentum shadow labels | Keep slot-disabled momentum as counterfactual metadata until enough labeled sessions justify a live decision. |
+| KR fade recovered shadow | Detect KR-only OR/VWAP-recovered fade candidates as shadow evidence first; do not enable US fade relaxation or PathB wait exceptions. |
 | Hybrid-lite/watch trigger | Measure pure watch-only missed runups and relaxed-block outcomes before promotion. |
 | PathB EXPIRED and sell remainder | Shadow quote refresh, zone re-entry, and partial-sell remainder handling before live behavior changes. |
 | CandidateTierBook | Build as shadow state before replacing flat candidate lists. |

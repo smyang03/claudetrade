@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from runtime.live_evidence_pack import build_fade_recovered_shadow
+
 
 VERSION = "adaptive_live_condition.v2"
 
@@ -133,6 +135,7 @@ def build_adaptive_live_condition(
     reask_claude_shadow: list[str] = []
     suggested_probe_ready_shadow: list[str] = []
     suggested_micro_probe_shadow: list[str] = []
+    fade_recovered_shadow: list[str] = []
     watch_shadow: list[str] = []
     thresholds = {
         "r3_min": _threshold(market_key, "R3_MIN", 0.8),
@@ -161,6 +164,9 @@ def build_adaptive_live_condition(
         momentum_state = str(features.get("momentum_state") or "unknown").strip().lower()
         data_quality = str(features.get("data_quality") or "unknown").strip().lower()
         missing_vwap_volume = volume_ratio is None and vwap_distance is None
+        fade_recovered = build_fade_recovered_shadow(market=market_key, features=features)
+        if fade_recovered.get("fade_recovered_shadow"):
+            fade_recovered_shadow.append(key)
 
         score = 0.0
         score += {"risk_on": 20.0, "mixed": 5.0, "risk_off": -25.0}.get(regime, 0.0)
@@ -280,6 +286,10 @@ def build_adaptive_live_condition(
             "size_intent": size_intent,
             "suggested_claude_action": suggested_claude_action,
             "suggested_size_intent": suggested_size_intent,
+            "fade_recovered_shadow": bool(fade_recovered.get("fade_recovered_shadow")),
+            "fade_recovered_reason": str(fade_recovered.get("fade_recovered_reason") or ""),
+            "fade_recovered_checks": dict(fade_recovered.get("fade_recovered_checks") or {}),
+            "fade_recovered_suggested_action": "PROBE_READY" if fade_recovered.get("fade_recovered_shadow") else "",
             "claude_reask": claude_reask,
             "reask_reason": "live_evidence_changed" if claude_reask else "",
             "non_executable": True,
@@ -318,6 +328,7 @@ def build_adaptive_live_condition(
         "reask_claude_shadow": reask_claude_shadow,
         "suggested_probe_ready_shadow": suggested_probe_ready_shadow,
         "suggested_micro_probe_shadow": suggested_micro_probe_shadow,
+        "fade_recovered_shadow": fade_recovered_shadow,
         "probe_ready_shadow": [],
         "micro_probe_shadow": [],
         "watch_shadow": watch_shadow,
@@ -326,6 +337,7 @@ def build_adaptive_live_condition(
             "reask_claude_shadow": len(reask_claude_shadow),
             "suggested_probe_ready_shadow": len(suggested_probe_ready_shadow),
             "suggested_micro_probe_shadow": len(suggested_micro_probe_shadow),
+            "fade_recovered_shadow": len(fade_recovered_shadow),
             "probe_ready_shadow": 0,
             "micro_probe_shadow": 0,
             "watch_shadow": len(watch_shadow),

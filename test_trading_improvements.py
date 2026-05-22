@@ -2520,19 +2520,20 @@ class AdaptiveParamsTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_get_perf_stats_uses_realized_pnl_when_forward_return_missing(self):
+        session_date = date.today().isoformat()
         with sqlite3.connect(self._db_path) as conn:
             conn.executemany(
                 """
                 INSERT INTO decisions (market, strategy_used, decision, forward_1d, pnl_pct, data_source, session_date)
-                VALUES (?, ?, 'BUY_SIGNAL', ?, ?, 'live', '2026-04-21')
+                VALUES (?, ?, 'BUY_SIGNAL', ?, ?, 'live', ?)
                 """,
                 [
-                    ("KR", "gap_pullback", None, 2.1),
-                    ("KR", "gap_pullback", None, -1.2),
-                    ("KR", "gap_pullback", None, 0.7),
-                    ("KR", "gap_pullback", None, 1.4),
-                    ("KR", "gap_pullback", None, -0.5),
-                    ("KR", "gap_pullback", None, 0.3),
+                    ("KR", "gap_pullback", None, 2.1, session_date),
+                    ("KR", "gap_pullback", None, -1.2, session_date),
+                    ("KR", "gap_pullback", None, 0.7, session_date),
+                    ("KR", "gap_pullback", None, 1.4, session_date),
+                    ("KR", "gap_pullback", None, -0.5, session_date),
+                    ("KR", "gap_pullback", None, 0.3, session_date),
                 ],
             )
 

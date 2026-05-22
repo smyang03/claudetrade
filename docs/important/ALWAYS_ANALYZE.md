@@ -40,6 +40,8 @@ Use this checklist before changing live behavior, market policy, prompts, learni
 - For KR, always split `BUY_READY`, `PROBE_READY`, `PULLBACK_WAIT`, and `ADD_READY` before policy changes.
 - For PathB, distinguish wait-only plans, zone hits, expired plans, live orders, partial fills, and sell remainders.
 - For US, KIS ranking can become the first screener source only if token failure, empty response, and quality fallback preserve Yahoo/FMP behavior.
+- KR `minute_complete` is a completed intraday evidence quality. Treating it as confirmed is a KR bug fix, not a general `data_quality` relaxation.
+- `fade_recovered` must stay KR-only shadow until explicit live approval; do not relax US fade handling or PathB `PULLBACK_WAIT` negative-context routing by implication.
 - Momentum, hybrid-lite, watch trigger, CandidateTierBook, and theme injection remain shadow until sample size and labels are sufficient.
 
 ## Runtime Safety

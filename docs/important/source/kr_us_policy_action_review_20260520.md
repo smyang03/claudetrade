@@ -293,7 +293,7 @@ V2 기준으로 다시 보면:
 1. temporal blocker 해소 후 active re-ask는 실전 경로에 붙인다.
 2. fresh re-ask에서 READY가 다시 나오고 risk/execution gate를 통과하면 주문 경로로 보낸다.
 3. partial 후보는 재평가 우선순위를 올린다.
-4. `kr_data_quality_not_confirmed` 단독 완화는 하지 않는다.
+4. `kr_data_quality_not_confirmed` 단독 완화는 하지 않는다. 단, KR intraday evidence의 완성 품질값인 `minute_complete`를 confirmation data-quality check에서 인정하는 것은 정책 완화가 아니라 버그 수정으로 분리한다.
 5. `preopen_watch` 단독 진입은 금지 유지.
 6. `stop_loss`/`intraday_review_sell` 누수 체결은 entry/exit/forward runup을 묶어서 매일 리포트한다.
 7. KR 진입 수 확대는 execution leak 원인 분리 이후로 미룬다.

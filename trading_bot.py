@@ -631,6 +631,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
+def _sub_screener_trigger_enabled(market: str) -> bool:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    scoped_name = f"SUB_SCREENER_{market_key}_TRIGGER_ENABLED"
+    if os.getenv(scoped_name) is not None:
+        return _env_bool(scoped_name, False)
+    return _env_bool("SUB_SCREENER_TRIGGER_ENABLED", True)
 def _market_dynamic_universe_top_n_env(market: str) -> int:
     market_key = str(market or "").upper()
     default = _DYNAMIC_UNIVERSE_TOP_N_DEFAULTS.get(market_key, 20)
@@ -3820,9 +3826,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception:
                 orderbook_support = False
 
+        kr_confirmed_data_qualities = {"good", "normal", "ok", "minute_complete"}
         checks = {
             "data_quality_present": not data_quality_missing,
-            "data_quality_ok": (not data_quality_missing) and data_quality in {"good", "normal", "ok"},
+            "data_quality_ok": (not data_quality_missing) and data_quality in kr_confirmed_data_qualities,
             "not_overextended": not overextended,
             "ret_3m_present": ret_3m is not None,
             "ret_5m_present": ret_5m is not None,
@@ -8499,6 +8506,53 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"budget_krw={budget:,.0f} "
             f"shortfall_krw={shortfall:,.0f}"
         )
+    def _one_share_over_budget_adjustment(
+        self,
+        *,
+        market: str,
+        price_krw: float,
+        qty: int,
+        order_budget_krw: float,
+        available_budget_krw: float,
+        cash_krw: float,
+        strategy: str = "",
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        price = float(price_krw or 0.0)
+        budget = float(order_budget_krw or 0.0)
+        available = float(available_budget_krw or 0.0)
+        cash = float(cash_krw or 0.0)
+        if market_key != "KR":
+            return {"allowed": False, "reason": "market_not_enabled"}
+        if not _env_bool("KR_ALLOW_ONE_SHARE_OVER_BUDGET", True):
+            return {"allowed": False, "reason": "disabled"}
+        if int(qty or 0) > 0:
+            return {"allowed": False, "reason": "qty_already_positive"}
+        if price <= 0 or budget <= 0:
+            return {"allowed": False, "reason": "invalid_basis"}
+        if budget >= price:
+            return {"allowed": False, "reason": "within_budget"}
+        if available < price:
+            return {"allowed": False, "reason": "market_budget_exceeded"}
+        if cash < price:
+            return {"allowed": False, "reason": "insufficient_cash"}
+        try:
+            max_krw = float(os.getenv("KR_ONE_SHARE_OVER_BUDGET_MAX_KRW", "0") or 0.0)
+        except Exception:
+            max_krw = 0.0
+        if max_krw > 0 and price > max_krw:
+            return {"allowed": False, "reason": "one_share_over_budget_max_krw"}
+        return {
+            "allowed": True,
+            "reason": "one_share_over_budget_allowed",
+            "market": market_key,
+            "strategy": str(strategy or ""),
+            "original_qty": int(qty or 0),
+            "adjusted_qty": 1,
+            "original_order_budget_krw": budget,
+            "adjusted_order_cost_krw": price,
+            "oversize_ratio": price / max(budget, 1.0),
+        }
     def _is_micro_probe_record(self, item: dict) -> bool:
         return bool(item.get("micro_probe")) or str(item.get("strategy", "") or "").upper() == _MICRO_PROBE_STRATEGY
     def _micro_probe_session_count(self, market: str) -> int:
@@ -11693,6 +11747,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception as exc:
                 pool_separation_state = "unified_pool_shadow_failed"
                 excluded_from_prompt.append({"reason": "pool_shadow_error", "detail": str(exc)})
+        live_evidence_raw = dict((meta or {}).get("_live_evidence") or {})
+        live_evidence_summary = {
+            key: value
+            for key, value in live_evidence_raw.items()
+            if key != "packs"
+        }
         payload = {
             "full_pool_count": full_pool_count,
             "prompt_pool_count": prompt_pool_count,
@@ -11710,14 +11770,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "candidate_action_routes": list((meta or {}).get("_candidate_action_routes") or []),
             "pathb_wait_tickers": list((meta or {}).get("_pathb_wait_tickers") or []),
             "partial_reselect": dict((meta or {}).get("_partial_reselect_replacement") or {}),
-            "live_evidence": {
-                key: value
-                for key, value in ((meta or {}).get("_live_evidence") or {}).items()
-                if key != "packs"
-            },
+            "live_evidence": live_evidence_summary,
             "selection_stages": stages,
         }
         self._write_funnel_event("candidate_funnel_snapshot", market, payload)
+        packs = live_evidence_raw.get("packs") if isinstance(live_evidence_raw, dict) else {}
+        if isinstance(packs, dict):
+            for pack in packs.values():
+                if not isinstance(pack, dict) or not bool(pack.get("fade_recovered_shadow")):
+                    continue
+                confirmation = dict(pack.get("post_open_confirmation") or {})
+                self._write_funnel_event(
+                    "live_evidence_shadow",
+                    market,
+                    {
+                        "ticker": pack.get("ticker") or "",
+                        "market": pack.get("market") or market,
+                        "data_quality": pack.get("data_quality") or "",
+                        "data_state": pack.get("data_state") or "",
+                        "momentum_state": confirmation.get("momentum_state") or "",
+                        "action_ceiling": pack.get("action_ceiling") or "",
+                        "fade_recovered_shadow": True,
+                        "fade_recovered_reason": pack.get("fade_recovered_reason") or "",
+                        "fade_recovered_checks": dict(pack.get("fade_recovered_checks") or {}),
+                        "pullback_from_high_pct": confirmation.get("pullback_from_high_pct"),
+                        "opening_range_break": confirmation.get("opening_range_break"),
+                        "vwap_distance_pct": confirmation.get("vwap_distance_pct"),
+                        "spread_bps": confirmation.get("spread_bps"),
+                        "vi_active": confirmation.get("vi_active"),
+                    },
+                )
         route_shadow_enabled = False
         if runtime_cfg is not None:
             route_shadow_enabled = bool(
@@ -21874,7 +21956,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.warning(f"[sub_screener] {market_key} record_scan failed: {exc}")
         if not result.should_trigger:
             return
-        if not _env_bool("SUB_SCREENER_TRIGGER_ENABLED", True):
+        if not _sub_screener_trigger_enabled(market_key):
             return
         try:
             sub_screener.record_attempt(market_key, today, result)
@@ -24331,6 +24413,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                     "v2_fixed_budget_after_krw": float(order_budget),
                                 }
                             )
+                    _one_share_over_budget_meta = self._one_share_over_budget_adjustment(
+                        market=market,
+                        price_krw=float(_s_rpx),
+                        qty=int(qty),
+                        order_budget_krw=float(order_budget),
+                        available_budget_krw=float(avail),
+                        cash_krw=float(self.risk.cash),
+                        strategy=_s_strat,
+                    )
+                    if _one_share_over_budget_meta.get("allowed"):
+                        qty = int(_one_share_over_budget_meta["adjusted_qty"])
+                        order_cost = float(_one_share_over_budget_meta["adjusted_order_cost_krw"])
                     _v2_min_order_krw = (
                         float(_v2_fixed.min_order_krw)
                         if _v2_fixed is not None
@@ -24907,6 +25001,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "final_qty": int(qty),
                         "partial_data": dict(_partial_order_decision or _sig.get("partial_data") or {}),
                     }
+                    if _one_share_over_budget_meta.get("allowed"):
+                        _sizing_contract.update(
+                            {
+                                "one_share_over_budget": True,
+                                "one_share_over_budget_reason": str(_one_share_over_budget_meta.get("reason") or ""),
+                                "one_share_over_budget_original_budget_krw": float(
+                                    _one_share_over_budget_meta.get("original_order_budget_krw", 0) or 0
+                                ),
+                                "one_share_over_budget_oversize_ratio": float(
+                                    _one_share_over_budget_meta.get("oversize_ratio", 0) or 0
+                                ),
+                            }
+                        )
                     _recovery = self._recovery_micro_adjustment(
                         market=market,
                         ticker=_s_tk,
@@ -25668,6 +25775,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         )
                         _t2_cost = _t2_qty * _t2_risk_price if _t2_qty > 0 else 0.0
                         _t2_avail = self._market_budget_available("KR")
+                        _t2_one_share_over_budget = self._one_share_over_budget_adjustment(
+                            market="KR",
+                            price_krw=float(_t2_risk_price),
+                            qty=int(_t2_qty),
+                            order_budget_krw=float(_t2_budget),
+                            available_budget_krw=float(_t2_avail),
+                            cash_krw=float(self.risk.cash),
+                            strategy="kr_sector_play",
+                        )
+                        if _t2_one_share_over_budget.get("allowed"):
+                            _t2_qty = int(_t2_one_share_over_budget["adjusted_qty"])
+                            _t2_cost = float(_t2_one_share_over_budget["adjusted_order_cost_krw"])
                         _t2_small, _t2_min = self._is_order_size_too_small("KR", _t2_qty, _t2_cost, _t2_budget)
                         _t2_affordability = self._affordability_diag(
                             price_krw=float(_t2_risk_price),
@@ -25723,6 +25842,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                     "reason": _t2_zero_reason, "strategy": "kr_sector_play",
                                     "mode": mode, "price": _t2_risk_price, "risk_price_krw": _t2_risk_price,
                                     "qty": int(_t2_qty), "order_cost_krw": float(_t2_cost),
+                                    "one_share_over_budget": bool(_t2_one_share_over_budget.get("allowed")),
                                     **_t2_affordability,
                                 }},
                             )
@@ -25778,6 +25898,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             detail=_play["reason"],
                             order_no=_t2_result.get("order_no", ""),
                             selected_reason=f"kr_sector_etf={_play['etf']}",
+                            one_share_over_budget=bool(_t2_one_share_over_budget.get("allowed")),
+                            one_share_over_budget_oversize_ratio=float(
+                                _t2_one_share_over_budget.get("oversize_ratio", 0) or 0
+                            ),
                         )
                         _t2_reference_meta = self._entry_reference_metadata("KR", _t2_ticker)
                         self._add_pending_order({
@@ -25792,6 +25916,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "sl_pct":        float(_t2_sl),
                             "max_hold":      1,
                             "created_at":    datetime.now(KST).isoformat(),
+                            "one_share_over_budget": bool(_t2_one_share_over_budget.get("allowed")),
+                            "one_share_over_budget_oversize_ratio": float(
+                                _t2_one_share_over_budget.get("oversize_ratio", 0) or 0
+                            ),
                             **_t2_reference_meta,
                         })
                         self._block_entry(_t2_ticker, _BUY_COOLDOWN_MIN, "buy_placed")

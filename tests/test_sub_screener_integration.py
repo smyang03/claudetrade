@@ -83,6 +83,56 @@ class SubScreenerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(recorded, ["scan"])
 
+    def test_market_scoped_trigger_can_enable_kr_when_global_shadow(self) -> None:
+        bot = _base_bot()
+        bot.current_market = "KR"
+        rows = [{"ticker": "005930"}]
+        bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: rows
+        recorded: list[str] = []
+        bot._reinvoke_analysts = lambda *args, **kwargs: recorded.append("reinvoke")
+        bot.manual_rescreen = lambda *args, **kwargs: recorded.append("rescreen")
+
+        with patch.dict(
+            os.environ,
+            {
+                "SUB_SCREENER_TRIGGER_ENABLED": "false",
+                "SUB_SCREENER_KR_TRIGGER_ENABLED": "true",
+            },
+            clear=False,
+        ), \
+            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+            patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
+            patch("runtime.sub_screener.record_scan", side_effect=lambda *args, **kwargs: recorded.append("scan")), \
+            patch("runtime.sub_screener.record_attempt", side_effect=lambda *args, **kwargs: recorded.append("attempt")), \
+            patch("runtime.sub_screener.record_success", side_effect=lambda *args, **kwargs: recorded.append("success")):
+            TradingBot.maybe_run_sub_screener(bot, "KR")
+
+        self.assertEqual(recorded, ["scan", "attempt", "reinvoke", "rescreen", "success"])
+
+    def test_market_scoped_trigger_can_keep_us_shadow_when_global_live(self) -> None:
+        bot = _base_bot()
+        rows = [{"ticker": "SPOT"}]
+        bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: rows
+        recorded: list[str] = []
+        bot._reinvoke_analysts = lambda *args, **kwargs: recorded.append("reinvoke")
+        bot.manual_rescreen = lambda *args, **kwargs: recorded.append("rescreen")
+
+        with patch.dict(
+            os.environ,
+            {
+                "SUB_SCREENER_TRIGGER_ENABLED": "true",
+                "SUB_SCREENER_US_TRIGGER_ENABLED": "false",
+            },
+            clear=False,
+        ), \
+            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+            patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
+            patch("runtime.sub_screener.record_scan", side_effect=lambda *args, **kwargs: recorded.append("scan")), \
+            patch("runtime.sub_screener.record_attempt", side_effect=AssertionError("attempt should not run")):
+            TradingBot.maybe_run_sub_screener(bot, "US")
+
+        self.assertEqual(recorded, ["scan"])
+
     def test_interval_respected(self) -> None:
         bot = _base_bot()
         bot._last_sub_screener_at["US"] = time.time()

@@ -112,6 +112,48 @@ class DashboardKisProfileTests(unittest.TestCase):
         self.assertEqual(snapshot["us_asset_cash_usd"], 4.0)
         self.assertEqual(snapshot["cumulative"], 1000.0 + 2000.0 + (4.0 + 3.0) * 1300.0)
 
+    def test_broker_snapshot_derives_us_asset_usd_from_kis_krw_truth(self) -> None:
+        @contextmanager
+        def fake_runtime(_mode: str):
+            yield
+
+        def fake_token(*, market: str = "KR") -> str:
+            return f"token-{market}"
+
+        def fake_balance(token: str, *, market: str, force_refresh: bool = False) -> dict:
+            if market == "US":
+                return {
+                    "cash": 2259.71,
+                    "orderable_cash": 780.39,
+                    "asset_cash": 2259.71,
+                    "total_eval": 1489.56,
+                    "market_asset_krw": 3_419_331.0,
+                    "asset_cash_krw": 1_179_781.0,
+                    "total_eval_krw": 2_239_550.0,
+                    "kis_exchange_rate": 1503.5,
+                    "stocks": [],
+                    "currency": "USD",
+                }
+            return {"cash": 1_941_524.0, "total_eval": 1_103_500.0, "stocks": [], "currency": "KRW"}
+
+        with patch.object(dashboard_server, "_kis_runtime", fake_runtime), patch.object(
+            dashboard_server, "get_access_token", side_effect=fake_token
+        ), patch.object(
+            dashboard_server, "get_balance", side_effect=fake_balance
+        ), patch.object(
+            dashboard_server, "get_kis_profile_summary", return_value={}
+        ), patch.object(
+            dashboard_server, "_get_usd_krw_cached", return_value=1400.0
+        ):
+            snapshot = dashboard_server._broker_snapshot("live")
+
+        self.assertEqual(snapshot["usd_krw"], 1503.5)
+        self.assertEqual(snapshot["us_asset_krw"], 3_419_331.0)
+        self.assertEqual(snapshot["us_asset_cash_krw"], 1_179_781.0)
+        self.assertAlmostEqual(snapshot["us_asset_cash_usd"], 1_179_781.0 / 1503.5)
+        self.assertNotEqual(round(snapshot["us_asset_cash_usd"], 2), 2259.71)
+        self.assertEqual(snapshot["cumulative"], 1_941_524.0 + 1_103_500.0 + 3_419_331.0)
+
     def test_broker_snapshot_uses_kis_us_profit_krw_for_unrealized(self) -> None:
         @contextmanager
         def fake_runtime(_mode: str):

@@ -2424,6 +2424,8 @@ def _broker_snapshot_has_account(snapshot: dict) -> bool:
         "us_cash_krw",
         "us_asset_cash_usd",
         "us_asset_cash_krw",
+        "us_orderable_cash_usd",
+        "us_orderable_cash_krw",
         "us_eval_usd",
         "us_eval_krw",
         "us_asset_krw",
@@ -2452,20 +2454,36 @@ def _broker_snapshot_from_truth(mode: str) -> dict:
     kr_summary = kr.get("account_summary") if isinstance(kr.get("account_summary"), dict) else {}
     us_summary = us.get("account_summary") if isinstance(us.get("account_summary"), dict) else {}
     usd_krw = _get_usd_krw_cached()
+    kis_usd_krw = float(us_summary.get("kis_exchange_rate", 0) or 0)
+    if kis_usd_krw > 0:
+        usd_krw = kis_usd_krw
     kr_cash = float(kr_summary.get("cash", 0) or 0)
     kr_orderable = float(kr_summary.get("orderable_cash", kr_cash) or kr_cash)
     kr_eval = float(kr_summary.get("total_eval", 0) or 0)
     kr_profit = float(kr_summary.get("total_profit", 0) or 0)
     us_cash_usd = float(us_summary.get("cash", 0) or 0)
     us_orderable_cash_usd = float(us_summary.get("orderable_cash", us_cash_usd) or us_cash_usd)
-    us_asset_cash_usd = max(us_cash_usd, us_orderable_cash_usd)
+    us_asset_cash_usd = float(us_summary.get("asset_cash", us_orderable_cash_usd) or 0)
+    if us_asset_cash_usd <= 0:
+        us_asset_cash_usd = us_orderable_cash_usd
     us_eval_usd = float(us_summary.get("total_eval", 0) or 0)
     us_profit_native = float(us_summary.get("total_profit", 0) or 0)
     us_cash_krw = us_cash_usd * usd_krw
     us_asset_cash_krw = us_asset_cash_usd * usd_krw
     us_orderable_cash_krw = us_orderable_cash_usd * usd_krw
     us_eval_krw = us_eval_usd * usd_krw
-    us_asset_krw = us_asset_cash_krw + us_eval_krw
+    kis_us_asset_krw = float(us_summary.get("market_asset_krw", 0) or 0)
+    kis_us_asset_cash_krw = float(us_summary.get("asset_cash_krw", 0) or 0)
+    kis_us_eval_krw = float(us_summary.get("total_eval_krw", 0) or 0)
+    if kis_us_eval_krw > 0:
+        us_eval_krw = kis_us_eval_krw
+    if kis_us_asset_cash_krw > 0:
+        us_asset_cash_krw = kis_us_asset_cash_krw
+    if kis_us_asset_krw > 0:
+        us_asset_cash_krw = max(kis_us_asset_krw - us_eval_krw, 0.0)
+    if (kis_us_asset_cash_krw > 0 or kis_us_asset_krw > 0) and usd_krw > 0:
+        us_asset_cash_usd = us_asset_cash_krw / usd_krw
+    us_asset_krw = kis_us_asset_krw if kis_us_asset_krw > 0 else us_asset_cash_krw + us_eval_krw
     generated_at = str(snap.get("generated_at") or kr.get("last_success_at") or us.get("last_success_at") or "")
     age_sec = _dt_age_sec(generated_at)
     cached_ts = _time.time() - float(age_sec or 0)
@@ -2511,12 +2529,15 @@ def _broker_snapshot_from_truth(mode: str) -> dict:
         "us_eval_usd": us_eval_usd,
         "us_eval_krw": us_eval_krw,
         "us_asset_krw": us_asset_krw,
-        "kis_account_total_asset_krw": 0.0,
-        "us_kis_exchange_rate": 0.0,
+        "kis_account_total_asset_krw": float(us_summary.get("kis_total_asset_krw", 0) or 0),
+        "us_kis_exchange_rate": kis_usd_krw,
         "kr_profit_krw": kr_profit,
-        "us_profit_krw": us_profit_native * usd_krw,
+        "us_profit_krw": float(us_summary.get("total_profit_krw", 0) or 0) or us_profit_native * usd_krw,
         "cumulative": kr_cash + kr_eval + us_asset_krw,
-        "unrealized_krw": {"KR": kr_profit, "US": us_profit_native * usd_krw},
+        "unrealized_krw": {
+            "KR": kr_profit,
+            "US": float(us_summary.get("total_profit_krw", 0) or 0) or us_profit_native * usd_krw,
+        },
     }
     cached["value"] = copy.deepcopy(result)
     cached["meta"] = copy.deepcopy(meta)
@@ -3055,9 +3076,9 @@ def _broker_snapshot(mode: str = "paper") -> dict:
         kr_eval = float(kr.get("total_eval", 0) or 0)
         us_cash_usd = float(us.get("cash", 0) or 0)
         us_orderable_cash_usd = float(us.get("orderable_cash", us_cash_usd) or us_cash_usd)
-        us_asset_cash_usd = float(us.get("asset_cash", max(us_cash_usd, us_orderable_cash_usd)) or 0)
+        us_asset_cash_usd = float(us.get("asset_cash", us_orderable_cash_usd) or 0)
         if us_asset_cash_usd <= 0:
-            us_asset_cash_usd = max(us_cash_usd, us_orderable_cash_usd)
+            us_asset_cash_usd = us_orderable_cash_usd
         us_eval_usd = float(us.get("total_eval", 0) or 0)
         us_cash_krw = us_cash_usd * usd_krw
         us_asset_cash_krw = us_asset_cash_usd * usd_krw
@@ -3072,6 +3093,8 @@ def _broker_snapshot(mode: str = "paper") -> dict:
             us_asset_cash_krw = kis_us_asset_cash_krw
         if kis_us_asset_krw > 0:
             us_asset_cash_krw = max(kis_us_asset_krw - us_eval_krw, 0.0)
+        if (kis_us_asset_cash_krw > 0 or kis_us_asset_krw > 0) and usd_krw > 0:
+            us_asset_cash_usd = us_asset_cash_krw / usd_krw
         source = "broker"
 
         # KIS US paper는 달러 현금을 0으로 반환하는 경우가 있어 KR 현금이 과대계상될 수 있다.

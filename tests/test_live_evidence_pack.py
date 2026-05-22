@@ -104,6 +104,101 @@ class LiveEvidencePackTests(unittest.TestCase):
         self.assertIn("current_price", pack["missing_fields"])
         self.assertEqual(pack["decision_trace"]["runtime_gate_reason"], "")
 
+    def test_kr_fade_recovered_shadow_keeps_watch_ceiling(self) -> None:
+        pack = build_live_evidence_pack(
+            market="KR",
+            ticker="036540",
+            features={
+                "current_price": 10360,
+                "ret_3m_pct": 6.84,
+                "ret_5m_pct": 6.50,
+                "opening_range_break": True,
+                "vwap_distance_pct": 2.39,
+                "volume_ratio_open": 64.73,
+                "pullback_from_high_pct": -5.04,
+                "spread_bps": 9.67,
+                "vi_active": False,
+                "momentum_state": "fade",
+                "data_quality": "minute_complete",
+            },
+            action={"ticker": "036540", "action": "BUY_READY"},
+        )
+
+        self.assertEqual(pack["data_state"], "confirmed")
+        self.assertEqual(pack["action_ceiling"], "WATCH")
+        self.assertTrue(pack["fade_recovered_shadow"])
+        self.assertEqual(pack["fade_recovered_reason"], "kr_or_vwap_recovered_pullback")
+        self.assertTrue(pack["fade_recovered_checks"]["pullback_ok"])
+
+    def test_kr_deep_fade_is_not_recovered_shadow(self) -> None:
+        pack = build_live_evidence_pack(
+            market="KR",
+            ticker="456010",
+            features={
+                "current_price": 26250,
+                "ret_3m_pct": 20.88,
+                "ret_5m_pct": 15.87,
+                "opening_range_break": False,
+                "vwap_distance_pct": -7.48,
+                "volume_ratio_open": 81.82,
+                "pullback_from_high_pct": -13.37,
+                "spread_bps": 19.1,
+                "vi_active": False,
+                "momentum_state": "fade",
+                "data_quality": "minute_complete",
+            },
+            action={"ticker": "456010", "action": "BUY_READY"},
+        )
+
+        self.assertEqual(pack["action_ceiling"], "WATCH")
+        self.assertFalse(pack["fade_recovered_shadow"])
+        self.assertFalse(pack["fade_recovered_checks"]["pullback_ok"])
+
+    def test_kr_fade_recovered_shadow_respects_vi_state_payload(self) -> None:
+        pack = build_live_evidence_pack(
+            market="KR",
+            ticker="036540",
+            features={
+                "current_price": 10360,
+                "ret_3m_pct": 6.84,
+                "ret_5m_pct": 6.50,
+                "opening_range_break": True,
+                "vwap_distance_pct": 2.39,
+                "volume_ratio_open": 64.73,
+                "pullback_from_high_pct": -5.04,
+                "momentum_state": "fade",
+                "data_quality": "minute_complete",
+                "vi_state": {"vi_active": True},
+            },
+            action={"ticker": "036540", "action": "BUY_READY"},
+        )
+
+        self.assertFalse(pack["fade_recovered_shadow"])
+        self.assertFalse(pack["fade_recovered_checks"]["vi_safe"])
+        self.assertTrue(pack["post_open_confirmation"]["vi_active"])
+
+    def test_us_fade_does_not_get_kr_recovered_shadow(self) -> None:
+        pack = build_live_evidence_pack(
+            market="US",
+            ticker="APLD",
+            features={
+                "current_price": 10.0,
+                "ret_3m_pct": 5.0,
+                "ret_5m_pct": 2.0,
+                "opening_range_break": True,
+                "vwap_distance_pct": 1.0,
+                "volume_ratio_open": 5.0,
+                "pullback_from_high_pct": -5.0,
+                "momentum_state": "fade",
+                "data_quality": "minute_complete",
+            },
+            action={"ticker": "APLD", "action": "BUY_READY"},
+        )
+
+        self.assertEqual(pack["action_ceiling"], "WATCH")
+        self.assertFalse(pack["fade_recovered_shadow"])
+        self.assertFalse(pack["fade_recovered_checks"]["market_kr"])
+
     def test_fail_closed_reason_becomes_hard_block_when_present(self) -> None:
         pack = build_live_evidence_pack(
             market="KR",
@@ -141,6 +236,32 @@ class LiveEvidencePackTests(unittest.TestCase):
         self.assertEqual(evidence["version"], "live_evidence_pack.v1")
         self.assertEqual(evidence["counts"]["total"], 1)
         self.assertEqual(evidence["packs"]["004710"]["ticker"], "004710")
+
+    def test_attach_summary_counts_fade_recovered_shadow(self) -> None:
+        meta = attach_live_evidence_summary(
+            market="KR",
+            selection_meta={
+                "watchlist": ["036540"],
+                "candidate_actions": [{"ticker": "036540", "action": "BUY_READY"}],
+                "_post_open_features_by_ticker": {
+                    "036540": {
+                        "current_price": 10360,
+                        "ret_3m_pct": 6.84,
+                        "ret_5m_pct": 6.50,
+                        "opening_range_break": True,
+                        "vwap_distance_pct": 2.39,
+                        "volume_ratio_open": 64.73,
+                        "pullback_from_high_pct": -5.04,
+                        "momentum_state": "fade",
+                        "data_quality": "minute_complete",
+                    }
+                },
+            },
+        )
+
+        evidence = meta["_live_evidence"]
+        self.assertEqual(evidence["fade_recovered_shadow"]["count"], 1)
+        self.assertEqual(evidence["fade_recovered_shadow"]["tickers"], ["036540"])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 
@@ -35,6 +36,26 @@ def _boolish(value: Any) -> bool | None:
 def _ticker_key(market: str, ticker: Any) -> str:
     text = str(ticker or "").strip()
     return text.upper() if str(market or "").upper() == "US" else text
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        raw = os.getenv(name)
+        if raw in (None, ""):
+            return float(default)
+        return float(str(raw).replace(",", ""))
+    except Exception:
+        return float(default)
+
+
+def _vi_active(features: dict[str, Any]) -> bool:
+    direct = _boolish((features or {}).get("vi_active"))
+    if direct is not None:
+        return direct is True
+    payload = (features or {}).get("vi_state")
+    if isinstance(payload, dict):
+        return _boolish(payload.get("vi_active")) is True
+    return False
 
 
 def _features_for(meta: dict[str, Any], market: str, ticker: str) -> dict[str, Any]:
@@ -105,6 +126,60 @@ def classify_live_evidence_state(features: dict[str, Any]) -> tuple[str, list[st
     return "confirmed", []
 
 
+def build_fade_recovered_shadow(
+    *,
+    market: str,
+    features: dict[str, Any],
+    data_state: str | None = None,
+    hard_blocks: list[str] | None = None,
+) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    feature_map = dict(features or {})
+    data_quality = str(feature_map.get("data_quality") or "unknown").strip().lower()
+    resolved_data_state = str(data_state or feature_map.get("data_state") or feature_map.get("evidence_data_state") or "").strip().lower()
+    if not resolved_data_state:
+        resolved_data_state, _ = classify_live_evidence_state(feature_map)
+    momentum_state = str(feature_map.get("momentum_state") or "unknown").strip().lower()
+    pullback = _num(feature_map.get("pullback_from_high_pct"))
+    opening_range_break = _boolish(feature_map.get("opening_range_break"))
+    vwap_distance = _num(feature_map.get("vwap_distance_pct"))
+    spread_bps = _num(feature_map.get("spread_bps"))
+    vi_active = _vi_active(feature_map)
+    max_spread_bps = _env_float("KR_CONFIRMATION_MAX_SPREAD_BPS", 0.0)
+    hard_blocked = bool(hard_blocks)
+    or_recovered = opening_range_break is True
+    vwap_recovered = vwap_distance is not None and vwap_distance >= 0
+    checks = {
+        "market_kr": market_key == "KR",
+        "quality_complete": data_quality == "minute_complete",
+        "data_confirmed": resolved_data_state == "confirmed",
+        "momentum_fade": momentum_state == "fade",
+        "pullback_present": pullback is not None,
+        "pullback_ok": pullback is not None and pullback >= -7.0,
+        "or_recovered": or_recovered,
+        "vwap_recovered": vwap_recovered,
+        "vi_safe": not vi_active,
+        "spread_ok": spread_bps is None or max_spread_bps <= 0 or spread_bps <= max_spread_bps,
+        "hard_blocks_clear": not hard_blocked,
+    }
+    recovered = bool(
+        checks["market_kr"]
+        and checks["quality_complete"]
+        and checks["data_confirmed"]
+        and checks["momentum_fade"]
+        and checks["pullback_ok"]
+        and (or_recovered or vwap_recovered)
+        and checks["vi_safe"]
+        and checks["spread_ok"]
+        and checks["hard_blocks_clear"]
+    )
+    return {
+        "fade_recovered_shadow": recovered,
+        "fade_recovered_reason": "kr_or_vwap_recovered_pullback" if recovered else "",
+        "fade_recovered_checks": checks,
+    }
+
+
 def build_live_evidence_pack(
     *,
     market: str,
@@ -153,6 +228,12 @@ def build_live_evidence_pack(
         hard_blocks.append(block_reason)
     if bool(features.get("fail_closed")) and feature_gate_reason:
         hard_blocks.append(feature_gate_reason)
+    fade_recovered = build_fade_recovered_shadow(
+        market=market_key,
+        features=features,
+        data_state=data_state,
+        hard_blocks=hard_blocks,
+    )
 
     positive: list[str] = []
     negative: list[str] = []
@@ -200,6 +281,7 @@ def build_live_evidence_pack(
         "data_quality": data_quality,
         "missing_fields": missing_fields,
         "action_ceiling": action_ceiling,
+        **fade_recovered,
         "positive_evidence": list(dict.fromkeys(positive)),
         "negative_evidence": list(dict.fromkeys(negative)),
         "post_open_confirmation": {
@@ -210,6 +292,9 @@ def build_live_evidence_pack(
             "opening_range_break": _boolish(features.get("opening_range_break")),
             "vwap_distance_pct": _num(features.get("vwap_distance_pct")),
             "volume_ratio_open": _num(features.get("volume_ratio_open")),
+            "pullback_from_high_pct": _num(features.get("pullback_from_high_pct")),
+            "spread_bps": _num(features.get("spread_bps")),
+            "vi_active": _vi_active(features),
             "momentum_state": momentum_state,
         },
         "execution_timing": {
@@ -246,11 +331,16 @@ def summarize_live_evidence(packs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     state_counts: dict[str, int] = {}
     ceiling_counts: dict[str, int] = {}
     missing_counts: dict[str, int] = {}
+    fade_recovered_tickers: list[str] = []
     for pack in packs.values():
         state = str(pack.get("data_state") or "unknown")
         ceiling = str(pack.get("action_ceiling") or "unknown")
         state_counts[state] = state_counts.get(state, 0) + 1
         ceiling_counts[ceiling] = ceiling_counts.get(ceiling, 0) + 1
+        if bool(pack.get("fade_recovered_shadow")):
+            ticker = str(pack.get("ticker") or "")
+            if ticker:
+                fade_recovered_tickers.append(ticker)
         for field in pack.get("missing_fields") or []:
             key = str(field or "")
             if key:
@@ -262,6 +352,10 @@ def summarize_live_evidence(packs: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "data_state": state_counts,
             "action_ceiling": ceiling_counts,
             "missing_fields": missing_counts,
+        },
+        "fade_recovered_shadow": {
+            "count": len(fade_recovered_tickers),
+            "tickers": fade_recovered_tickers[:20],
         },
     }
 

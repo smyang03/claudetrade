@@ -31,6 +31,47 @@ def _safety_ctx(**overrides) -> SafetyContext:
 
 
 class EntryRiskControlTests(unittest.TestCase):
+    def test_kr_one_share_over_budget_allows_when_cash_covers_price(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+
+        with patch.dict(
+            os.environ,
+            {"KR_ALLOW_ONE_SHARE_OVER_BUDGET": "true", "KR_ONE_SHARE_OVER_BUDGET_MAX_KRW": ""},
+            clear=False,
+        ):
+            decision = TradingBot._one_share_over_budget_adjustment(
+                bot,
+                market="KR",
+                price_krw=1_416_000,
+                qty=0,
+                order_budget_krw=110_000,
+                available_budget_krw=3_121_305,
+                cash_krw=3_121_305,
+                strategy="kr_sector_play",
+            )
+
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["adjusted_qty"], 1)
+        self.assertEqual(decision["adjusted_order_cost_krw"], 1_416_000)
+        self.assertGreater(decision["oversize_ratio"], 1.0)
+
+    def test_kr_one_share_over_budget_still_requires_cash(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+
+        decision = TradingBot._one_share_over_budget_adjustment(
+            bot,
+            market="KR",
+            price_krw=1_416_000,
+            qty=0,
+            order_budget_krw=110_000,
+            available_budget_krw=3_121_305,
+            cash_krw=500_000,
+            strategy="kr_sector_play",
+        )
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], "insufficient_cash")
+
     def test_v2_daily_cap_can_be_split_by_market(self) -> None:
         runtime = V2LifecycleRuntime.__new__(V2LifecycleRuntime)
 

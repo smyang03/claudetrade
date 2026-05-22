@@ -27,6 +27,7 @@ Updated: 2026-05-22
 
 | Document | Category | Why It Remains |
 | --- | --- | --- |
+| [source/kr_confirmation_fade_recovery_dev_requirements_20260522.md](source/kr_confirmation_fade_recovery_dev_requirements_20260522.md) | Active Work | KR-only confirmation data_quality bug fix and fade-recovered shadow requirements; no US behavior or PathB operating parameter change. |
 | [source/us_kis_ranking_screener_requirements_20260522.md](source/us_kis_ranking_screener_requirements_20260522.md) | Active Work | US screener should prefer KIS overseas ranking APIs while preserving Yahoo/FMP fallback and order/risk isolation. |
 | [source/live_config_safety_code_requirements_20260521.md](source/live_config_safety_code_requirements_20260521.md) | Safety | `/setorder` must be fail-closed and PathB live gate policy must match KR-on/US-on. |
 | [source/operational_db_code_recheck_20260521.md](source/operational_db_code_recheck_20260521.md) | Truth | V2 canonical performance is the better fill/performance truth; legacy `decisions.db` is not enough for PathB. |

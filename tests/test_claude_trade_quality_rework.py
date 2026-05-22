@@ -614,6 +614,37 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         self.assertEqual(risk_off_result["decisions"]["CRCL"]["action"], "WATCH")
         self.assertIn("risk_off_regime", risk_off_result["decisions"]["CRCL"]["blockers"])
 
+    def test_adaptive_live_condition_marks_kr_fade_recovered_shadow_without_reask(self) -> None:
+        result = build_adaptive_live_condition(
+            market="KR",
+            consensus_mode="MODERATE_BULL",
+            selection_meta={
+                "watchlist": ["036540"],
+                "_post_open_features_by_ticker": {
+                    "036540": {
+                        "current_price": 10360,
+                        "ret_3m_pct": 6.84,
+                        "ret_5m_pct": 6.50,
+                        "opening_range_break": True,
+                        "vwap_distance_pct": 2.39,
+                        "volume_ratio_open": 64.73,
+                        "pullback_from_high_pct": -5.04,
+                        "momentum_state": "fade",
+                        "data_quality": "minute_complete",
+                    }
+                },
+            },
+        )
+
+        decision = result["decisions"]["036540"]
+        self.assertEqual(decision["action"], "WATCH")
+        self.assertEqual(decision["action_ceiling"], "WATCH")
+        self.assertFalse(decision["claude_reask"])
+        self.assertTrue(decision["fade_recovered_shadow"])
+        self.assertEqual(decision["fade_recovered_suggested_action"], "PROBE_READY")
+        self.assertEqual(result["fade_recovered_shadow"], ["036540"])
+        self.assertEqual(result["counts"]["fade_recovered_shadow"], 1)
+
     def test_route_layer_does_not_promote_watch_or_avoid_with_strong_evidence(self) -> None:
         strong_context = {
             "current_price": 183.0,

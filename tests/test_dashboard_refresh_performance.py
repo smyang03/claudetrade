@@ -90,6 +90,47 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertEqual(payload["cumulative"], 2_000.0)
         self.assertEqual(dashboard_server._BROKER_SNAPSHOT_CACHE["live"]["value"]["cumulative"], 2_000.0)
 
+    def test_broker_snapshot_fast_uses_kis_us_krw_truth_for_us_asset_display(self) -> None:
+        now_iso = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+        truth = {
+            "generated_at": now_iso,
+            "markets": {
+                "KR": {
+                    "account_summary": {"cash": 1_941_524.0, "orderable_cash": 1_941_524.0, "total_eval": 1_103_500.0},
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": False,
+                },
+                "US": {
+                    "account_summary": {
+                        "cash": 2259.71,
+                        "orderable_cash": 780.39,
+                        "asset_cash": 2259.71,
+                        "total_eval": 1489.56,
+                        "market_asset_krw": 3_419_331.0,
+                        "asset_cash_krw": 1_179_781.0,
+                        "total_eval_krw": 2_239_550.0,
+                        "kis_exchange_rate": 1503.5,
+                    },
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": False,
+                },
+            },
+        }
+
+        with patch.object(dashboard_server, "_load_broker_truth_snapshot_cached", return_value=truth), patch.object(
+            dashboard_server, "_get_usd_krw_cached", return_value=1400.0
+        ), patch.object(
+            dashboard_server, "_broker_snapshot", side_effect=AssertionError("fast path must not call KIS")
+        ):
+            payload = dashboard_server._broker_snapshot_fast("live")
+
+        self.assertEqual(payload["usd_krw"], 1503.5)
+        self.assertEqual(payload["us_asset_krw"], 3_419_331.0)
+        self.assertAlmostEqual(payload["us_asset_cash_usd"], 1_179_781.0 / 1503.5)
+        self.assertEqual(payload["cumulative"], 1_941_524.0 + 1_103_500.0 + 3_419_331.0)
+
     def test_broker_snapshot_fast_falls_back_to_stale_memory_when_truth_unavailable(self) -> None:
         old_ts = dashboard_server._time.time() - 120
         dashboard_server._BROKER_SNAPSHOT_CACHE["live"] = {

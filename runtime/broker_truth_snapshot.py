@@ -323,15 +323,29 @@ class BrokerTruthSnapshot:
         fills = self._get_today_orders(market)
         open_orders = [row for row in fills if int(row.get("remaining_qty", 0) or 0) > 0]
         today_fills = [row for row in fills if int(row.get("filled_qty", 0) or 0) > 0]
+        account_summary = {
+            "cash": _safe_float(balance.get("cash", 0)),
+            "orderable_cash": _safe_float(balance.get("orderable_cash", balance.get("cash", 0))),
+            "total_eval": _safe_float(balance.get("total_eval", 0)),
+            "total_profit": _safe_float(balance.get("total_profit", 0)),
+            "profit_rate": _safe_float(balance.get("profit_rate", 0)),
+            "currency": str(balance.get("currency") or ("USD" if market == "US" else "KRW")),
+        }
+        for key in (
+            "asset_cash",
+            "kis_total_asset_krw",
+            "kis_domestic_cash_krw",
+            "market_asset_krw",
+            "asset_cash_krw",
+            "total_eval_krw",
+            "purchase_amount_krw",
+            "total_profit_krw",
+            "kis_exchange_rate",
+        ):
+            if key in balance:
+                account_summary[key] = _safe_float(balance.get(key, 0))
         return {
-            "account_summary": {
-                "cash": _safe_float(balance.get("cash", 0)),
-                "orderable_cash": _safe_float(balance.get("orderable_cash", balance.get("cash", 0))),
-                "total_eval": _safe_float(balance.get("total_eval", 0)),
-                "total_profit": _safe_float(balance.get("total_profit", 0)),
-                "profit_rate": _safe_float(balance.get("profit_rate", 0)),
-                "currency": str(balance.get("currency") or ("USD" if market == "US" else "KRW")),
-            },
+            "account_summary": account_summary,
             "positions": [normalize_position(market, row) for row in balance.get("stocks", []) or []],
             "open_orders": open_orders,
             "today_fills": today_fills,

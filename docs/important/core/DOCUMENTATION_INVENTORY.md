@@ -34,6 +34,7 @@ docs/
 
 | File | Why Retained |
 | --- | --- |
+| `kr_confirmation_fade_recovery_dev_requirements_20260522.md` | Active KR-only confirmation data_quality bug fix and fade-recovered shadow requirements. |
 | `us_kis_ranking_screener_requirements_20260522.md` | Active US screener implementation requirements. |
 | `live_config_safety_code_requirements_20260521.md` | Live config and PathB gate safety requirements. |
 | `operational_db_code_recheck_20260521.md` | Operational DB truth and canonical performance evidence. |

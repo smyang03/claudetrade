@@ -35,6 +35,37 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             raw = json.loads(path.read_text(encoding="utf-8"))
             self.assertNotEqual(raw["markets"]["KR"]["account_summary"].get("account_no"), "1234567890")
 
+    def test_collect_market_preserves_us_krw_account_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=path,
+                balance_provider=lambda market, force: {
+                    "cash": 2259.71,
+                    "orderable_cash": 780.39,
+                    "asset_cash": 2259.71,
+                    "total_eval": 1489.56,
+                    "market_asset_krw": 3_419_331,
+                    "asset_cash_krw": 1_179_781,
+                    "total_eval_krw": 2_239_550,
+                    "total_profit_krw": 38_211,
+                    "kis_exchange_rate": 1503.5,
+                    "stocks": [],
+                    "currency": "USD",
+                },
+                ccld_provider=lambda market, day: [],
+            )
+
+            data = snapshot.refresh_market("US", force=True, ttl_sec=30)
+
+            summary = data["markets"]["US"]["account_summary"]
+            self.assertEqual(summary["orderable_cash"], 780.39)
+            self.assertEqual(summary["market_asset_krw"], 3_419_331)
+            self.assertEqual(summary["asset_cash_krw"], 1_179_781)
+            self.assertEqual(summary["total_eval_krw"], 2_239_550)
+            self.assertEqual(summary["kis_exchange_rate"], 1503.5)
+
     def test_missing_and_broken_snapshot_handling(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             missing = BrokerTruthSnapshot(runtime_mode="live", path=Path(tmp) / "missing.json").load_snapshot()

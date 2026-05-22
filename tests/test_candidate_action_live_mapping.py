@@ -1008,6 +1008,81 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         checks = route["runtime_gate"]["kr_confirmation_checks"]
         self.assertFalse(checks["data_quality_present"])
 
+    def test_kr_confirmation_accepts_minute_complete_quality(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+            }
+        )
+
+        state = TradingBot._kr_confirmation_gate_state(
+            bot,
+            "KR",
+            "005930",
+            {
+                "current_price": 70000,
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": 0.3,
+                "data_quality": "minute_complete",
+            },
+        )
+
+        self.assertTrue(state["kr_confirmation_confirmed"])
+        self.assertTrue(state["kr_confirmation_checks"]["data_quality_ok"])
+        self.assertEqual(state["kr_confirmation_reason"], "")
+
+    def test_kr_confirmation_blocks_minute_partial_quality(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+            }
+        )
+
+        state = TradingBot._kr_confirmation_gate_state(
+            bot,
+            "KR",
+            "005930",
+            {
+                "current_price": 70000,
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": 0.3,
+                "data_quality": "minute_partial",
+            },
+        )
+
+        self.assertFalse(state["kr_confirmation_confirmed"])
+        self.assertFalse(state["kr_confirmation_checks"]["data_quality_ok"])
+        self.assertEqual(state["kr_confirmation_reason"], "kr_data_quality_not_confirmed")
+
+    def test_kr_confirmation_blocks_minute_missing_quality(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_CONFIRMATION_GATE_SHADOW": False,
+                "KR_CONFIRMATION_GATE_ENABLED": True,
+            }
+        )
+
+        state = TradingBot._kr_confirmation_gate_state(
+            bot,
+            "KR",
+            "005930",
+            {
+                "current_price": 70000,
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": 0.3,
+                "data_quality": "minute_missing",
+            },
+        )
+
+        self.assertFalse(state["kr_confirmation_confirmed"])
+        self.assertFalse(state["kr_confirmation_checks"]["data_quality_ok"])
+        self.assertEqual(state["kr_confirmation_reason"], "kr_data_quality_not_confirmed")
+
     def test_kr_confirmation_shadow_marks_missing_momentum_confirming(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update(
@@ -1071,6 +1146,53 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["final_action"], "BUY_READY")
         self.assertEqual(route["confirmation_state"], "CONFIRMED")
         self.assertEqual(route["confirmation_reason"], "")
+
+    def test_funnel_snapshot_writes_kr_fade_recovered_shadow_row(self) -> None:
+        bot = _make_bot()
+        meta = {
+            "watchlist": ["036540"],
+            "_live_evidence": {
+                "version": "live_evidence_pack.v1",
+                "fade_recovered_shadow": {"count": 1, "tickers": ["036540"]},
+                "packs": {
+                    "036540": {
+                        "ticker": "036540",
+                        "market": "KR",
+                        "data_quality": "minute_complete",
+                        "data_state": "confirmed",
+                        "action_ceiling": "WATCH",
+                        "fade_recovered_shadow": True,
+                        "fade_recovered_reason": "kr_or_vwap_recovered_pullback",
+                        "fade_recovered_checks": {"pullback_ok": True},
+                        "post_open_confirmation": {
+                            "momentum_state": "fade",
+                            "pullback_from_high_pct": -5.04,
+                            "opening_range_break": True,
+                            "vwap_distance_pct": 2.39,
+                            "spread_bps": 9.67,
+                            "vi_active": False,
+                        },
+                    }
+                },
+            },
+        }
+
+        TradingBot._record_candidate_funnel_snapshot(
+            bot,
+            "KR",
+            selected=["036540"],
+            meta=meta,
+            stages={},
+        )
+
+        events = bot._gate_events
+        snapshot = next(payload for event, _, payload in events if event == "candidate_funnel_snapshot")
+        shadow = next(payload for event, _, payload in events if event == "live_evidence_shadow")
+        self.assertNotIn("packs", snapshot["live_evidence"])
+        self.assertEqual(snapshot["live_evidence"]["fade_recovered_shadow"]["count"], 1)
+        self.assertEqual(shadow["ticker"], "036540")
+        self.assertTrue(shadow["fade_recovered_shadow"])
+        self.assertEqual(shadow["pullback_from_high_pct"], -5.04)
 
     def test_kr_fast_trigger_window_allows_ret_score_inside_window(self) -> None:
         bot = _make_bot()
